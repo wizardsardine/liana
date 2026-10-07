@@ -11,8 +11,10 @@ use iced::{
 };
 
 use crate::{
-    component::button::{ListEntryAccent, LIST_ENTRY_ACCENT_WIDTH},
-    icon,
+    component::{
+        button::{ListEntryAccent, LIST_ENTRY_ACCENT_WIDTH},
+        list,
+    },
     theme::{card::CARD_SHADOW_HOVER, Theme},
 };
 
@@ -86,8 +88,8 @@ impl<'a, Message: 'a> FoldableCard<'a, Message> {
             visible,
             clickable: clickable.into(),
             foldable,
-            chevron_folded: icon::collapsed_icon().into(),
-            chevron_unfolded: icon::collapse_icon().into(),
+            chevron_folded: list::right_chevron(),
+            chevron_unfolded: list::down_chevron(),
             accent: None,
             expanded: None,
             on_toggle: None,
@@ -113,23 +115,6 @@ impl<'a, Message: 'a> FoldableCard<'a, Message> {
     pub fn on_toggle(mut self, on_toggle: impl Fn() -> Message + 'a) -> Self {
         self.on_toggle = Some(Box::new(on_toggle));
         self
-    }
-
-    pub fn chevrons(
-        mut self,
-        folded: impl Into<Element<'a, Message, Theme, Renderer>>,
-        unfolded: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self {
-        self.chevron_folded = folded.into();
-        self.chevron_unfolded = unfolded.into();
-        self
-    }
-
-    pub fn list_chevrons(self) -> Self {
-        self.chevrons(
-            crate::component::list::right_chevron(),
-            crate::component::list::down_chevron(),
-        )
     }
 
     pub fn style(mut self, style: impl Fn(&Theme, button::Status) -> button::Style + 'a) -> Self {
