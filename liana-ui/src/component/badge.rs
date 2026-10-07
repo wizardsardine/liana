@@ -3,7 +3,7 @@ use iced::{Background, Border};
 
 use crate::{
     component::text::{self, Text},
-    icon, image, theme,
+    icon, theme,
     widget::*,
 };
 
@@ -11,7 +11,6 @@ const BADGE_SIZE: u32 = 40;
 pub const AVATAR_SIZE: u32 = 30;
 const AVATAR_TEXT_SIZE: u32 = 12;
 const ICON_SIZE: u32 = BADGE_SIZE / 2;
-const LIANA_ICON_SIZE: u32 = 25;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Tile {
@@ -153,17 +152,6 @@ pub fn avatar<'a, M: 'a>(initials: String) -> Container<'a, M> {
     .center_x(AVATAR_SIZE)
     .center_y(AVATAR_SIZE)
     .style(theme::badge::avatar)
-}
-
-pub fn coin<T>() -> Container<'static, T> {
-    Container::new(
-        image::liana_grey_logo()
-            .height(LIANA_ICON_SIZE)
-            .width(LIANA_ICON_SIZE),
-    )
-    .style(theme::badge::simple)
-    .center_x(BADGE_SIZE)
-    .center_y(BADGE_SIZE)
 }
 
 macro_rules! tile_specs {

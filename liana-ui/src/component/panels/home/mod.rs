@@ -165,7 +165,7 @@ pub fn recovery_warning<'a, M: Clone + 'static>(coin_count: usize, reset: M) -> 
         icon::warning_fill_icon().size(icon::ICON_SIZE_M as u32),
         Space::with_width(15),
         new::h3(t!("home-recovery-warning", count = coin_count)).width(Length::Fill),
-        btn_reset_timelock(Some(reset.clone())),
+        btn_reset_timelock(Some(reset.clone()), true),
     ]
     .align_y(Alignment::Center);
     warning(content)

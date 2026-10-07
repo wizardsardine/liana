@@ -78,6 +78,14 @@ pub fn list_entry(theme: &Theme, status: Status) -> Style {
     style
 }
 
+pub fn list_entry_unfolded(theme: &Theme, status: Status) -> Style {
+    let status = match status {
+        Status::Hovered => Status::Active,
+        status => status,
+    };
+    list_entry(theme, status)
+}
+
 pub fn tab_menu(theme: &Theme, status: Status) -> Style {
     let mut style = button(
         &theme.colors.buttons.tab_menu,

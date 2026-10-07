@@ -630,13 +630,14 @@ pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, t!("btn-no"), BtnWidth::S, msg)
 }
 
-pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(
-        Some(icon::reload_icon()),
-        t!("btn-reset-timelock"),
-        BtnWidth::Auto,
-        msg,
-    )
+pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
+    let icon = Some(icon::reload_icon());
+    let label = t!("btn-reset-timelock");
+    if primary {
+        btn_primary(icon, label, BtnWidth::Auto, msg)
+    } else {
+        btn_tertiary(icon, label, BtnWidth::Auto, msg)
+    }
 }
 
 pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1114,14 +1115,4 @@ pub fn btn_help_link<T: Clone + 'static>(
     msg: Option<T>,
 ) -> Button<'static, T> {
     link(Some(icon::link_icon()), label).on_press_maybe(msg)
-}
-
-pub fn btn_refresh_coin<T: Clone + 'static>(msg: Option<T>, primary: bool) -> Button<'static, T> {
-    let icon = Some(icon::arrow_repeat());
-    let label = t!("coins-refresh-coin");
-    if primary {
-        btn_primary(icon, label, BtnWidth::M, msg)
-    } else {
-        btn_secondary(icon, label, BtnWidth::M, msg)
-    }
 }

@@ -538,8 +538,6 @@ coins-address-label => "Address label:"
 
 coins-block-height => "Block height:"
 
-coins-deposit-transaction-label => "Deposit transaction label:"
-
 coins-first-recovery-in-blocks
 => "First recovery path will be available in {$blocks} blocks";;
 
@@ -547,9 +545,7 @@ coins-not-in-block => "Not in a block"
 
 coins-outpoint => "Outpoint:"
 
-coins-recovery-available => "One or more recovery paths are available"
-
-coins-refresh-coin => "Refresh coin"
+coins-recovery-active => "Recovery path is active"
 
 coins-spend-block-height => "Spend block height:"
 

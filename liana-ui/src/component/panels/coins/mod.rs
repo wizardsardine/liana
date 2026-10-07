@@ -1,15 +1,16 @@
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use iced::{
     widget::{column, row, Space},
-    Alignment, Length,
+    Alignment,
 };
-use liana::label::Label;
 use liana_i18n::t;
 
 use crate::{
     component::{
-        address::address as address_view, amount::amount, badge, button, card,
-        label::display_label, pill, text::new,
+        address::address as address_view,
+        amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
+        button, card, panels, pill,
+        text::new,
     },
     spacing::{HSpacing, VSpacing},
     theme,
@@ -28,25 +29,18 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     outpoint: OutPoint,
     address: &'a Address,
     address_label: Option<&'a str>,
-    tx_label: Option<&'a str>,
     block_height: Option<i32>,
     spend: Option<CoinSpend>,
-    blockheight: u32,
-    timelock: u16,
     seq: u32,
-    coin_label: Label,
-    label_editor: Element<'a, M>,
+    label: Element<'a, M>,
     copy_address: M,
     copy_outpoint: M,
-    refresh: M,
+    reset_timelock: M,
     expanded: bool,
     on_toggle: M,
 ) -> Element<'a, M> {
     let outpoint = outpoint.to_string();
     let address = address.to_string();
-
-    // The label is edited in the details, so the header only shows it while folded.
-    let label = (!expanded).then(|| display_label(&coin_label, new::CAPTION_SPEC, None));
 
     let status = if spend.is_some() {
         pill::spent()
@@ -55,79 +49,77 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     } else {
         pill::coin_sequence(seq)
     };
-    let summary = row![badge::coin(), label, Space::fill_width(), status]
-        .spacing(HSpacing::M)
+    let amount = amount_with_fiat_tooltip(
+        &coin_amount,
+        None::<fn(Amount) -> FiatAmount>,
+        AmountSize::M,
+        false,
+        None,
+    );
+    let right = row![status, amount]
+        .spacing(HSpacing::S)
+        .align_y(Alignment::Center);
+    let header = row![label, Space::fill_width(), right]
         .align_y(Alignment::Center)
-        .width(Length::Fill);
-    let header = row![summary, amount(&coin_amount)]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::XL);
+        .spacing(HSpacing::L)
+        .height(panels::ListEntryHeight::Standard);
 
     let recovery = match (spend, block_height) {
-        (None, Some(b)) if blockheight > b as u32 + timelock as u32 => {
-            Some(new::b5_bold(t!("coins-recovery-available")).style(theme::text::error))
+        (None, Some(_)) if seq == 0 => {
+            Some(new::b2_medium(t!("coins-recovery-active")).style(theme::text::warning))
         }
-        (None, Some(b)) => Some(new::b5_bold(t!(
+        (None, Some(_)) => Some(new::b2_medium(t!(
             "coins-first-recovery-in-blocks",
-            blocks = b as u32 + timelock as u32 - blockheight
+            blocks = seq
         ))),
         _ => None,
     };
 
     let address_label = info_row(
         t!("coins-address-label"),
-        new::small_caption(
+        new::b2(
             address_label
                 .map(str::to_string)
                 .unwrap_or_else(|| t!("common-no-label")),
         )
         .style(theme::text::secondary),
-    )
-    .align_y(Alignment::Center);
+    );
     let copy_address = button::btn_copy(Some(copy_address));
     let address = info_row(
         t!("common-address-label"),
         row![address_view(address), copy_address].align_y(Alignment::Center),
-    )
-    .align_y(Alignment::Center);
-    let deposit = info_row(
-        t!("coins-deposit-transaction-label"),
-        new::small_caption(
-            tx_label
-                .map(str::to_string)
-                .unwrap_or_else(|| t!("common-no-label")),
-        )
-        .style(theme::text::secondary),
-    )
-    .align_y(Alignment::Center);
+    );
     let copy_outpoint = button::btn_copy(Some(copy_outpoint));
     let outpoint_row = info_row(
         t!("coins-outpoint"),
         row![
-            new::small_caption(outpoint).style(theme::text::secondary),
+            new::b2(outpoint).style(theme::text::secondary),
             copy_outpoint
         ]
         .align_y(Alignment::Center),
-    )
-    .align_y(Alignment::Center);
+    );
     let block_height = block_height.map(|b| {
         info_row(
             t!("coins-block-height"),
-            new::small_caption(b.to_string()).style(theme::text::secondary),
+            new::b2(b.to_string()).style(theme::text::secondary),
         )
     });
-    let coin_info = column![address_label, address, deposit, outpoint_row, block_height];
+    let coin_info =
+        column![address_label, address, outpoint_row, block_height].spacing(VSpacing::XS);
 
     let spend: Element<'a, M> = match spend {
         Some(CoinSpend { txid, height }) => {
-            let spend_txid = info_row(t!("coins-spend-txid"), new::small_caption(txid.to_string()));
+            let spend_txid = info_row(
+                t!("coins-spend-txid"),
+                new::b2(txid.to_string()).style(theme::text::secondary),
+            );
             let spend_height = match height {
                 Some(height) => info_row(
                     t!("coins-spend-block-height"),
-                    new::small_caption(height.to_string()),
+                    new::b2(height.to_string()).style(theme::text::secondary),
                 ),
                 None => {
-                    row![new::b5_bold(t!("coins-not-in-block")).style(theme::text::secondary)]
+                    row![new::b2_medium(t!("coins-not-in-block"))]
                 }
             };
             column![spend_txid, spend_height]
@@ -135,26 +127,29 @@ pub fn coin_entry<'a, M: Clone + 'static>(
                 .into()
         }
         None => {
-            let refresh = button::btn_refresh_coin(Some(refresh), seq == 0);
-            column![row![Space::fill_width(), refresh]].into()
+            let reset = button::btn_reset_timelock(Some(reset_timelock), seq == 0);
+            column![row![Space::fill_width(), reset]].into()
         }
     };
 
-    let details = column![label_editor, recovery, coin_info, spend]
-        .padding(10)
-        .spacing(VSpacing::XS);
+    let details = column![recovery, coin_info, spend]
+        .spacing(VSpacing::S)
+        .padding(panels::LIST_ENTRY_PADDING);
 
     card::foldable::FoldableCard::new(None, header, Some(details.into()))
         .expanded(expanded)
         .on_toggle(move || on_toggle.clone())
-        .padding(card::CardPadding::Soft)
+        .style(if expanded {
+            theme::button::list_entry_unfolded
+        } else {
+            theme::button::list_entry
+        })
+        .padding(panels::LIST_ENTRY_PADDING)
         .into()
 }
 
 fn info_row<'a, M: 'a>(key: String, value: impl Into<Element<'a, M>>) -> Row<'a, M> {
-    row![
-        new::b5_bold(key).style(theme::text::secondary),
-        value.into()
-    ]
-    .spacing(HSpacing::S)
+    row![new::b2_medium(key), value.into()]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::S)
 }
