@@ -1,4 +1,5 @@
 pub mod coin_ui;
+pub mod display;
 #[cfg(test)]
 pub mod fixture;
 pub mod graph;
@@ -11,12 +12,12 @@ use std::{
     sync::Arc,
 };
 
-use iced::{advanced::widget::Id, Point, Subscription, Task};
+use iced::{advanced::widget::Id, keyboard::Modifiers, Point, Subscription, Task};
 use liana::miniscript::bitcoin::Txid;
 use liana_ui::{
     component::panels::map::header::HeaderAction,
     widget::{
-        graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId},
+        graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId, Target},
         Element,
     },
 };
@@ -29,7 +30,12 @@ use crate::{
         menu::{MapFocus, Menu},
         message::Message,
         state::{
-            map::{coin_ui::CoinUi, graph::TxGraph},
+            map::{
+                coin_ui::CoinUi,
+                display::{click_action, display_state, ClickAction},
+                graph::TxGraph,
+                selection::{Selection, TagHighlight},
+            },
             State,
         },
         view::{self, MapMessage},
@@ -62,12 +68,23 @@ pub struct StoredLayout {
     pub resave: Vec<ItemId>,
 }
 
+/// View toggles of the header, never recorded.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Toggles {
+    pub area: bool,
+    pub unspent: bool,
+}
+
 pub struct MapPanel {
     graph_id: Id,
     graph: Option<TxGraph>,
     layout: HashMap<ItemId, Point>,
     orders: Orders,
     coin_ui: CoinUi,
+    selection: Selection,
+    hover: Option<Target>,
+    tag_highlight: Option<TagHighlight>,
+    toggles: Toggles,
     zoom: f32,
     loading: bool,
     pending_focus: Option<MapFocus>,
@@ -135,6 +152,10 @@ impl MapPanel {
             layout: HashMap::new(),
             orders: HashMap::new(),
             coin_ui: CoinUi::default(),
+            selection: Selection::default(),
+            hover: None,
+            tag_highlight: None,
+            toggles: Toggles::default(),
             zoom: 1.0,
             loading: false,
             pending_focus: None,
@@ -144,6 +165,26 @@ impl MapPanel {
 
     pub fn set_focus(&mut self, focus: Option<MapFocus>) {
         self.pending_focus = focus;
+    }
+
+    fn on_click(&mut self, target: &Target, modifiers: Modifiers) {
+        let Some(graph) = &self.graph else {
+            return;
+        };
+        match click_action(graph, &self.orders, target, modifiers) {
+            ClickAction::None => return,
+            ClickAction::Select(id) => self.selection.click(id),
+            ClickAction::Toggle(id) => self.selection.command_click(graph, id),
+            ClickAction::Range(id) => self.selection.shift_click(graph, id),
+            ClickAction::Chain(id) => self.selection.command_shift_click(graph, id),
+            ClickAction::TagHighlight(slot) => {
+                self.tag_highlight = graph.slot_coin(slot).and_then(|coin| {
+                    TagHighlight::new(slot, self.coin_ui.coin_tags(&coin).to_vec())
+                });
+                return;
+            }
+        }
+        self.tag_highlight = None;
     }
 
     fn save_layout(
@@ -198,6 +239,18 @@ impl Default for MapPanel {
 
 impl State for MapPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let display = self.graph.as_ref().map(|graph| {
+            display_state(
+                graph,
+                &self.layout,
+                &self.orders,
+                &self.selection,
+                self.hover.as_ref(),
+                self.tag_highlight.as_ref(),
+                &self.coin_ui,
+                self.toggles.unspent,
+            )
+        });
         view::full_dashboard(
             &Menu::Map(None),
             cache,
@@ -207,6 +260,10 @@ impl State for MapPanel {
                 &self.layout,
                 &self.orders,
                 &self.coin_ui,
+                display.as_ref(),
+                self.selection.items(),
+                self.tag_highlight.as_ref(),
+                self.toggles,
                 self.zoom,
                 self.loading,
                 &self.graph_id,
@@ -242,6 +299,9 @@ impl State for MapPanel {
                 } else {
                     graph_view::fit(self.graph_id.clone())
                 };
+                self.hover = None;
+                self.tag_highlight = None;
+                self.selection.retain(|id| graph.item(id).is_some());
                 self.graph = Some(graph);
                 self.loading = false;
                 let save = self.save_layout(daemon, to_save, stored.remove);
@@ -258,7 +318,33 @@ impl State for MapPanel {
                 MapMessage::Header(HeaderAction::Fit) => {
                     return graph_view::fit(self.graph_id.clone());
                 }
-                MapMessage::Graph(GraphEvent::Zoom(zoom)) => self.zoom = zoom,
+                MapMessage::Header(HeaderAction::ToggleArea) => {
+                    self.toggles.area = !self.toggles.area;
+                }
+                MapMessage::Header(HeaderAction::ToggleUnspent) => {
+                    self.toggles.unspent = !self.toggles.unspent;
+                }
+                MapMessage::Graph(event) => match event {
+                    GraphEvent::Zoom(zoom) => self.zoom = zoom,
+                    GraphEvent::Click { target, modifiers } => self.on_click(&target, modifiers),
+                    GraphEvent::EmptyClick => {
+                        self.selection.clear();
+                        self.tag_highlight = None;
+                    }
+                    GraphEvent::Hover(target) => self.hover = target,
+                    GraphEvent::AreaSelected {
+                        items, additive, ..
+                    } => {
+                        self.selection.area(items, additive);
+                        self.tag_highlight = None;
+                    }
+                    GraphEvent::SlotWheel { steps, .. } => {
+                        if let Some(tag) = &mut self.tag_highlight {
+                            tag.cycle(steps);
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             },
             _ => {}
