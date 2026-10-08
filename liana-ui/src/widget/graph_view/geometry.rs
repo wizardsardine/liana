@@ -1,9 +1,11 @@
 //! Single source of the map item geometry and camera math. The map panel
 //! module (`component/panels/map`) must re-export or reuse these, never
 //! redefine them.
-use iced::{mouse, Point, Rectangle, Size, Transformation, Vector};
+use std::{collections::HashSet, time::Duration};
 
-use crate::widget::graph_view::{AnchorSide, Shape};
+use iced::{mouse, time::Instant, Point, Rectangle, Size, Transformation, Vector};
+
+use crate::widget::graph_view::{AnchorSide, ItemId, Shape, Side, Target};
 
 /// Grid unit.
 pub const U: f32 = 12.0;
@@ -46,6 +48,11 @@ pub const MARKER_STUB: f32 = 12.0;
 pub const MARKER_STUB_HEIGHT: f32 = 2.0;
 pub const MARKER_RING: f32 = 8.0;
 pub const MARKER_RING_WIDTH: f32 = 2.0;
+/// Half of the 14 px edge hit stroke, in screen px.
+pub const EDGE_HIT_HALF_WIDTH: f32 = 7.0;
+pub const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+pub const AREA_OPACITY: f32 = 0.7;
+pub const AREA_BORDER_WIDTH: f32 = 1.0;
 
 impl Shape {
     pub fn size(self) -> Size {
@@ -189,6 +196,111 @@ pub fn wheel_delta(delta: mouse::ScrollDelta) -> f32 {
 
 pub fn wheel_zoom_factor(delta: f32) -> f32 {
     (-delta * WHEEL_ZOOM_RATE).exp()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemHit {
+    Body,
+    Slot(Side, usize),
+}
+
+/// What `point` is on inside the item at `position`, all in graph px.
+pub fn hit_item(point: Point, position: Point, shape: Shape) -> Option<ItemHit> {
+    if !Rectangle::new(position, shape.size()).contains(point) {
+        return None;
+    }
+    let Shape::Block { inputs, outputs } = shape else {
+        return Some(ItemHit::Body);
+    };
+    let (lx, ly) = (point.x - position.x, point.y - position.y);
+    let row = (ly / SLOT_HEIGHT) as usize;
+    if lx < INPUT_COLUMN_WIDTH && row < inputs {
+        Some(ItemHit::Slot(Side::Input, row))
+    } else if lx >= BLOCK_WIDTH - OUTPUT_COLUMN_WIDTH && row < outputs {
+        Some(ItemHit::Slot(Side::Output, row))
+    } else {
+        Some(ItemHit::Body)
+    }
+}
+
+fn segment_distance(p: Point, a: Point, b: Point) -> f32 {
+    let ab = b - a;
+    let len_sq = ab.x * ab.x + ab.y * ab.y;
+    let t = if len_sq == 0.0 {
+        0.0
+    } else {
+        (((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len_sq).clamp(0.0, 1.0)
+    };
+    p.distance(Point::new(a.x + t * ab.x, a.y + t * ab.y))
+}
+
+/// Distance from `point` to the sampled polyline of the bezier `curve`.
+pub fn distance_to_curve(point: Point, curve: &[Point; 4]) -> f32 {
+    let samples: Vec<Point> = (0..=BEZIER_SAMPLES)
+        .map(|i| bezier_point(curve, i as f32 / BEZIER_SAMPLES as f32))
+        .collect();
+    samples
+        .windows(2)
+        .map(|w| segment_distance(point, w[0], w[1]))
+        .fold(f32::INFINITY, f32::min)
+}
+
+pub fn rect_from_points(a: Point, b: Point) -> Rectangle {
+    Rectangle::new(
+        Point::new(a.x.min(b.x), a.y.min(b.y)),
+        Size::new((a.x - b.x).abs(), (a.y - b.y).abs()),
+    )
+}
+
+/// Items fully inside `rect`, or touched by it when `crossing`.
+pub fn area_pick(
+    rect: Rectangle,
+    crossing: bool,
+    items: impl IntoIterator<Item = (ItemId, Rectangle)>,
+) -> Vec<ItemId> {
+    items
+        .into_iter()
+        .filter(|(_, item)| {
+            if crossing {
+                rect.intersects(item)
+            } else {
+                item.is_within(&rect)
+            }
+        })
+        .map(|(id, _)| id)
+        .collect()
+}
+
+pub fn snap_to_grid(point: Point) -> Point {
+    Point::new((point.x / U).round() * U, (point.y / U).round() * U)
+}
+
+/// The whole selection when `id` is one of two or more selected items.
+pub fn drag_set(id: ItemId, selected: &HashSet<ItemId>) -> Vec<ItemId> {
+    if selected.len() >= 2 && selected.contains(&id) {
+        let mut items: Vec<ItemId> = selected.iter().copied().collect();
+        items.sort();
+        items
+    } else {
+        vec![id]
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ClickTracker {
+    last: Option<(Target, Instant)>,
+}
+
+impl ClickTracker {
+    /// True when the previous click was on the same target within
+    /// `DOUBLE_CLICK`. A detected double click starts over.
+    pub fn register(&mut self, target: Target, at: Instant) -> bool {
+        let double = self
+            .last
+            .is_some_and(|(last, time)| last == target && at.duration_since(time) <= DOUBLE_CLICK);
+        self.last = if double { None } else { Some((target, at)) };
+        double
+    }
 }
 
 #[cfg(test)]
@@ -375,5 +487,96 @@ mod tests {
             Size::new(696.0, 156.0)
         );
         assert_eq!(Shape::Leaf.size(), Size::new(216.0, 36.0));
+    }
+
+    #[test]
+    fn hit_item_regions() {
+        let block = Shape::Block {
+            inputs: 2,
+            outputs: 3,
+        };
+        let origin = Point::ORIGIN;
+        let hit = |x, y| hit_item(Point::new(x, y), origin, block);
+        assert_eq!(hit(10.0, 10.0), Some(ItemHit::Slot(Side::Input, 0)));
+        assert_eq!(hit(10.0, 60.0), Some(ItemHit::Slot(Side::Input, 1)));
+        assert_eq!(hit(10.0, 100.0), Some(ItemHit::Body));
+        assert_eq!(hit(300.0, 10.0), Some(ItemHit::Body));
+        assert_eq!(hit(600.0, 130.0), Some(ItemHit::Slot(Side::Output, 2)));
+        assert_eq!(hit(700.0, 10.0), None);
+        assert_eq!(
+            hit_item(Point::new(10.0, 10.0), origin, Shape::Leaf),
+            Some(ItemHit::Body)
+        );
+    }
+
+    #[test]
+    fn curve_distance() {
+        let curve = edge_curve(Point::ORIGIN, Point::new(400.0, 0.0));
+        assert!(distance_to_curve(Point::new(100.0, 0.0), &curve) < 0.5);
+        assert!((distance_to_curve(Point::new(200.0, 10.0), &curve) - 10.0).abs() < 0.5);
+        assert!(distance_to_curve(Point::new(200.0, 100.0), &curve) > EDGE_HIT_HALF_WIDTH);
+    }
+
+    #[test]
+    fn area_pick_inside_vs_crossing() {
+        let rect = Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0));
+        let size = Size::new(20.0, 20.0);
+        let items = [
+            (ItemId(1), Rectangle::new(Point::new(10.0, 10.0), size)),
+            (ItemId(2), Rectangle::new(Point::new(90.0, 10.0), size)),
+            (ItemId(3), Rectangle::new(Point::new(200.0, 10.0), size)),
+        ];
+        assert_eq!(area_pick(rect, false, items), vec![ItemId(1)]);
+        assert_eq!(area_pick(rect, true, items), vec![ItemId(1), ItemId(2)]);
+    }
+
+    #[test]
+    fn rect_from_points_normalizes() {
+        assert_eq!(
+            rect_from_points(Point::new(10.0, 50.0), Point::new(-5.0, 20.0)),
+            Rectangle::new(Point::new(-5.0, 20.0), Size::new(15.0, 30.0))
+        );
+    }
+
+    #[test]
+    fn snap_rounds_to_grid() {
+        assert_eq!(snap_to_grid(Point::new(5.9, 6.1)), Point::new(0.0, 12.0));
+        assert_eq!(
+            snap_to_grid(Point::new(-7.0, 18.0)),
+            Point::new(-12.0, 24.0)
+        );
+    }
+
+    #[test]
+    fn drag_set_rules() {
+        let one: HashSet<ItemId> = [ItemId(2)].into();
+        let three: HashSet<ItemId> = [ItemId(3), ItemId(1), ItemId(2)].into();
+        assert_eq!(drag_set(ItemId(9), &three), vec![ItemId(9)]);
+        assert_eq!(drag_set(ItemId(2), &one), vec![ItemId(2)]);
+        assert_eq!(
+            drag_set(ItemId(3), &three),
+            vec![ItemId(1), ItemId(2), ItemId(3)]
+        );
+    }
+
+    #[test]
+    fn double_click() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let a = Target::Frame;
+        let b = Target::Edge(0);
+
+        let mut clicks = ClickTracker::default();
+        assert!(!clicks.register(a, t0));
+        assert!(clicks.register(a, t0 + ms(400)));
+        assert!(!clicks.register(a, t0 + ms(500)));
+
+        let mut clicks = ClickTracker::default();
+        clicks.register(a, t0);
+        assert!(!clicks.register(a, t0 + ms(401)));
+
+        let mut clicks = ClickTracker::default();
+        clicks.register(a, t0);
+        assert!(!clicks.register(b, t0 + ms(100)));
     }
 }

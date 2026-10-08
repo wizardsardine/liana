@@ -11,10 +11,11 @@ use crate::{
     widget::{
         graph_view::{
             geometry::{
-                frame_rect, grid_step, Camera, COIN_EDGE_ACTIVE_WIDTH, COIN_EDGE_OPACITY,
-                COIN_EDGE_WIDTH, COUNTERPARTY_DASH, COUNTERPARTY_EDGE_ACTIVE_WIDTH,
-                COUNTERPARTY_EDGE_WIDTH, EDGE_DIMMED_OPACITY, FRAME_RADIUS, FRAME_WIDTH,
-                GRID_DOT_RADIUS, MARKER_RING, MARKER_RING_WIDTH, MARKER_STUB, MARKER_STUB_HEIGHT,
+                frame_rect, grid_step, Camera, AREA_BORDER_WIDTH, AREA_OPACITY,
+                COIN_EDGE_ACTIVE_WIDTH, COIN_EDGE_OPACITY, COIN_EDGE_WIDTH, COUNTERPARTY_DASH,
+                COUNTERPARTY_EDGE_ACTIVE_WIDTH, COUNTERPARTY_EDGE_WIDTH, EDGE_DIMMED_OPACITY,
+                FRAME_RADIUS, FRAME_WIDTH, GRID_DOT_RADIUS, MARKER_RING, MARKER_RING_WIDTH,
+                MARKER_STUB, MARKER_STUB_HEIGHT,
             },
             EdgeKind,
         },
@@ -167,4 +168,23 @@ pub fn markers(renderer: &mut Renderer, palette: &Graph, points: &[Point]) {
             palette.marker_fill,
         );
     }
+}
+
+/// Selection rectangle in absolute screen px: solid when picking items fully
+/// inside, dashed when picking every item touched.
+pub fn area(renderer: &mut Renderer, palette: &Graph, rect: Rectangle, crossing: bool) {
+    let (color, fill) = if crossing {
+        (palette.area_crossing, palette.area_crossing_fill)
+    } else {
+        (palette.area_inside, palette.area_inside_fill)
+    };
+    let border = Border::default().color(color).width(AREA_BORDER_WIDTH);
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: rect,
+            border: if crossing { border.dashed() } else { border },
+            ..renderer::Quad::default()
+        },
+        fill.scale_alpha(AREA_OPACITY),
+    );
 }
