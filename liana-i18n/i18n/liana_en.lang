@@ -1453,14 +1453,109 @@ map-freeze => "Freeze"
 
 map-freeze-tooltip => "A frozen coin is never used to fund a transaction"
 
+map-key-click => "Click"
+
+map-key-click-red-leaf => "Click red leaf"
+
+map-key-click-slot => "Click slot"
+
+map-key-double-click-leaf => "Double-click leaf"
+
+map-key-double-click-red-leaf => "Double-click red leaf"
+
+map-key-double-click-slot => "Double-click slot"
+
+map-key-double-click-tx => "Double-click transaction"
+
+map-key-drag => "Drag"
+
+map-key-drag-canvas => "Drag empty canvas"
+
+map-key-drag-slot => "Drag slot"
+
+map-key-esc => "Esc"
+
+map-key-hold => "Hold {$key}"
+
+map-key-shift => "Shift"
+
+map-key-up-down => "Up or down"
+
+map-key-wheel => "Wheel"
+
+map-key-wheel-slot => "Wheel on slot"
+
 map-leaf-reuse-tooltip
 => "Address reuse: this address appears in {$count} outputs. Click to highlight them, double-click to list them.";;
 
 map-loading => "Building the map from your transactions"
 
+map-reuse-description
+=> "This address appears in {$count} outputs. Reusing an address links these payments together on chain. Pick one to go to its leaf on the map.";;
+
+map-reuse-title => "Address reuse"
+
 map-select-frozen-tooltip => "Unfreeze this coin to select it"
 
 map-select-tooltip => "Add this coin to the coin selection"
+
+map-shortcut-add-area => "Add an area"
+
+map-shortcut-area => "Area, left to right fully inside, right to left touched"
+
+map-shortcut-clear => "Clear the selection, close a dialog"
+
+map-shortcut-edit-leaf => "Edit a leaf label"
+
+map-shortcut-edit-slot => "Edit a slot label, coin actions"
+
+map-shortcut-edit-tx => "Edit a transaction label"
+
+map-shortcut-help => "This help"
+
+map-shortcut-move => "Move a block, a leaf or the selection"
+
+map-shortcut-pan => "Pan"
+
+map-shortcut-redo => "Redo"
+
+map-shortcut-reorder => "Reorder a slot"
+
+map-shortcut-reuse-highlight => "Highlight every output to a reused address"
+
+map-shortcut-reuse-list => "List them"
+
+map-shortcut-reuse-select
+=> "Select every output to a reused address, nothing selected";;
+
+map-shortcut-select-chain => "The whole chain"
+
+map-shortcut-select-one => "Select one item"
+
+map-shortcut-select-path
+=> "Everything chained between the last clicked item and this one";;
+
+map-shortcut-switch-tag => "Switch the highlighted tag"
+
+map-shortcut-tag-highlight => "Highlight the coins sharing a slot tag"
+
+map-shortcut-toggle-one => "Add or remove one item"
+
+map-shortcut-undo => "Undo"
+
+map-shortcut-unspent => "Highlight unspent coins"
+
+map-shortcut-zoom => "Zoom around the cursor"
+
+map-shortcuts-edit => "Edit"
+
+map-shortcuts-navigate => "Navigate"
+
+map-shortcuts-select => "Select"
+
+map-shortcuts-title => "Shortcuts"
+
+map-shortcuts-view => "View"
 
 map-slot-counterparty-output => "Output to a counterparty"
 
