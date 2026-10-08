@@ -9,16 +9,19 @@ use super::{
     tooltip,
 };
 use crate::{
+    component::{amount::DisplayAmount, text::command_key},
     font::{BOLD, MANROPE_SEMIBOLD, MEDIUM},
     icon::{self, ICON_SIZE_L},
+    image,
     theme::{self, button::round_icon_btn, Theme},
     widget::*,
 };
+use bitcoin::Amount;
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        container, row,
+        container, row, svg,
         tooltip::Position,
         Space,
     },
@@ -845,6 +848,184 @@ pub fn btn_export_psbt<'a, T: Clone + 'a>(saved: bool, msg: Option<T>) -> Contai
             Position::Top,
         )
     }
+}
+
+pub fn btn_map<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(
+        Some(icon::geo_alt_fill_icon()),
+        t!("btn-map"),
+        BtnWidth::M,
+        msg,
+    )
+}
+
+pub fn btn_show_on_map<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(
+        Some(icon::geo_alt_fill_icon()),
+        t!("btn-show-on-map"),
+        BtnWidth::L,
+        msg,
+    )
+}
+
+/// Compact tertiary button of the map header.
+pub fn btn_reset_layout<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    button_with_theme(
+        Some(icon::arrow_counterclockwise_icon()),
+        t!("btn-reset-layout"),
+        theme::button::tertiary,
+        true,
+    )
+    .on_press_maybe(msg)
+}
+
+const TOOLBAR_ICON_SIZE: u32 = 20;
+const TOOLBAR_BUTTON_SIZE: u32 = 32;
+
+fn toolbar_button<'a, T: Clone + 'a>(
+    icon: impl Into<Element<'a, T>>,
+    tip: String,
+    on: bool,
+    msg: Option<T>,
+) -> Container<'a, T> {
+    let icon = Container::new(icon)
+        .center_x(TOOLBAR_BUTTON_SIZE)
+        .center_y(TOOLBAR_BUTTON_SIZE);
+    let button = Button::new(icon)
+        .padding(0)
+        .style(theme::button::toolbar_toggle(on))
+        .on_press_maybe(msg);
+    tooltip::tooltip_custom(caption(tip), button, Position::Bottom)
+}
+
+fn toolbar_svg(svg: Svg<'static>, on: bool, enabled: bool) -> Svg<'static> {
+    svg.width(TOOLBAR_ICON_SIZE)
+        .height(TOOLBAR_ICON_SIZE)
+        .style(move |theme, status| {
+            let color = if enabled && (on || status == svg::Status::Hovered) {
+                theme.colors.general.accent
+            } else {
+                theme.colors.buttons.transparent.active.text
+            };
+            let alpha = if enabled { color.a } else { color.a * 0.5 };
+            svg::Style {
+                color: Some(Color { a: alpha, ..color }),
+            }
+        })
+}
+
+pub fn btn_undo<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let tip = t!("btn-undo-tooltip", key = command_key());
+    toolbar_button(
+        icon::arrow_90deg_left_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_redo<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let tip = t!("btn-redo-tooltip", key = command_key());
+    toolbar_button(
+        icon::arrow_90deg_right_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_shortcuts<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::tooltip_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-shortcuts-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_zoom_in<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::zoom_in_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-zoom-in-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_zoom_out<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::zoom_out_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-zoom-out-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_fit<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::arrows_fullscreen_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-fit-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_align_h<'a, T: Clone + 'a>(count: usize, msg: Option<T>) -> Container<'a, T> {
+    let tip = if msg.is_some() {
+        t!("btn-align-h-tooltip", count = count)
+    } else {
+        t!("btn-align-h-disabled-tooltip")
+    };
+    toolbar_button(
+        icon::align_middle_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_align_v<'a, T: Clone + 'a>(count: usize, msg: Option<T>) -> Container<'a, T> {
+    let tip = if msg.is_some() {
+        t!("btn-align-v-tooltip", count = count)
+    } else {
+        t!("btn-align-v-disabled-tooltip")
+    };
+    toolbar_button(
+        icon::align_center_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_select_area<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
+    let tip = t!("btn-select-area-tooltip", key = command_key());
+    toolbar_button(
+        icon::bounding_box_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        on,
+        msg,
+    )
+}
+
+pub fn btn_highlight_unspent<'a, T: Clone + 'a>(
+    on: bool,
+    count: usize,
+    total: &Amount,
+    msg: Option<T>,
+) -> Container<'a, T> {
+    let tip = t!(
+        "btn-highlight-unspent-tooltip",
+        count = count,
+        amount = total.to_formatted_string()
+    );
+    let icon: Element<'a, T> = toolbar_svg(image::unspent_marker_icon(), on, msg.is_some()).into();
+    toolbar_button(icon, tip, on, msg)
+}
+
+pub fn btn_snap<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
+    let icon: Element<'a, T> = toolbar_svg(image::snap_grid_icon(), on, msg.is_some()).into();
+    toolbar_button(icon, t!("btn-snap-tooltip"), on, msg)
 }
 
 pub fn btn_import<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {

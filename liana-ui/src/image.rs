@@ -83,3 +83,17 @@ pub fn key_mark_icon() -> Svg<'static> {
     let h = Handle::from_memory(KEY_MARK_ICON.to_vec());
     Svg::new(h)
 }
+
+const UNSPENT_MARKER_ICON: &[u8] = include_bytes!("../static/icons/unspent-marker.svg");
+
+pub fn unspent_marker_icon() -> Svg<'static> {
+    let h = Handle::from_memory(UNSPENT_MARKER_ICON.to_vec());
+    Svg::new(h)
+}
+
+const SNAP_GRID_ICON: &[u8] = include_bytes!("../static/icons/snap-grid.svg");
+
+pub fn snap_grid_icon() -> Svg<'static> {
+    let h = Handle::from_memory(SNAP_GRID_ICON.to_vec());
+    Svg::new(h)
+}

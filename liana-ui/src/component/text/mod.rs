@@ -9,6 +9,7 @@ use iced::{
     advanced::text::{self as advanced_text, Paragraph as _, Shaping},
     Font, Pixels, Renderer, Size,
 };
+use liana_i18n::t;
 use std::fmt::Display;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -130,6 +131,15 @@ pub fn format_datetime(time: DateTime<Utc>) -> String {
     time.with_timezone(&Local)
         .format("%b %-d, %Y - %H:%M:%S")
         .to_string()
+}
+
+/// Name of the command modifier key on this platform.
+pub fn command_key() -> String {
+    if cfg!(target_os = "macos") {
+        t!("common-key-cmd")
+    } else {
+        t!("common-key-ctrl")
+    }
 }
 
 const SHORT_MARKER: &str = "[...]";
