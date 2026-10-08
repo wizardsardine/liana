@@ -4,7 +4,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::{btn_export, btn_see_more},
+        button::{btn_export, btn_map, btn_see_more},
         panels::home::payment,
         text::new,
     },
@@ -24,9 +24,11 @@ pub fn transactions_view(
     processing: bool,
 ) -> Element<'_, Message> {
     let export = btn_export(Some(ImportExportMessage::Open.into()));
+    let map = btn_map(Some(Message::Menu(Menu::Map(None))));
     let header = row![
         new::d2(Menu::Transactions.title()),
         Space::fill_width(),
+        map,
         export
     ]
     .align_y(Alignment::Center)

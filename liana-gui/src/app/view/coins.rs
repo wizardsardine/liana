@@ -1,22 +1,26 @@
 use std::collections::HashMap;
 
-use iced::{widget::column, Alignment, Length};
+use iced::{
+    widget::{column, row, Space},
+    Alignment,
+};
 
 use liana_ui::{
     component::{
+        button::btn_map,
         form,
         label::{display_label, LABEL_DISPLAY_MAX_CHARS},
         panels::coins,
         text::new,
     },
-    spacing::VSpacing,
-    widget::{Column, Container, Element},
+    spacing::{HSpacing, VSpacing},
+    widget::{Column, Element, SpaceExt},
 };
 
 use crate::{
     app::{
         cache::Cache,
-        menu::Menu,
+        menu::{MapFocus, Menu},
         view::{
             label::{self, LabelSize},
             message::Message,
@@ -34,7 +38,10 @@ pub fn coins_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
-    let title = Container::new(new::d2(Menu::Coins.title())).width(Length::Fill);
+    let map = btn_map(Some(Message::Menu(Menu::Map(None))));
+    let header = row![new::d2(Menu::Coins.title()), Space::fill_width(), map]
+        .align_y(Alignment::Center)
+        .spacing(HSpacing::M);
 
     let list =
         coins
@@ -52,7 +59,7 @@ pub fn coins_view<'a>(
                 ))
             });
 
-    column![title, list]
+    column![header, list]
         .align_x(Alignment::Center)
         .spacing(VSpacing::XL)
         .into()
@@ -105,6 +112,7 @@ fn coin_list_view<'a>(
         Message::Clipboard(address),
         Message::Clipboard(outpoint),
         Message::Menu(Menu::RefreshCoins(vec![coin.outpoint])),
+        Message::Menu(Menu::Map(Some(MapFocus::Coin(coin.outpoint)))),
         expanded,
         Message::Select(index),
     )

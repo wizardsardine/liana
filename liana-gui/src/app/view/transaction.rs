@@ -10,7 +10,7 @@ use liana_ui::{
     component::{
         button::{
             self, btn_bump_fee, btn_cancel_transaction, btn_confirm, btn_delete,
-            btn_go_to_replacement, btn_previous, btn_save,
+            btn_go_to_replacement, btn_previous, btn_save, btn_show_on_map,
         },
         form,
         modal::{modal_view, ModalWidth},
@@ -28,7 +28,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{MapFocus, Menu},
         view::{
             self,
             label::{self, LabelSize},
@@ -198,9 +198,20 @@ pub fn tx_view<'a>(
             row![recovery, psbts::status_pill(tx.status)]
         }
     };
-    let label_row = row![label, pills.spacing(VSpacing::L).align_y(Alignment::Center)]
-        .spacing(VSpacing::L)
-        .align_y(Alignment::Center);
+    let show_on_map = match &detail {
+        TxDetail::Transaction(tx) => Some(row![
+            Space::fill_width(),
+            btn_show_on_map(Some(Message::Menu(Menu::Map(Some(MapFocus::Tx(tx.txid))))))
+        ]),
+        TxDetail::Psbt { .. } => None,
+    };
+    let label_row = row![
+        label,
+        pills.spacing(VSpacing::L).align_y(Alignment::Center),
+        show_on_map
+    ]
+    .spacing(VSpacing::L)
+    .align_y(Alignment::Center);
     let amount_row = transactions::amount_row(wallet_tx.kind().payment_kind(), wallet_tx.amount());
     let feerate = match &detail {
         TxDetail::Transaction(tx) => tx
