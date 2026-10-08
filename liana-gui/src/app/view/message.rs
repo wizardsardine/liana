@@ -1,6 +1,6 @@
 use liana_ui::{
     component::panels::{map::header::HeaderAction, spend::FeeLevel},
-    widget::graph_view::GraphEvent,
+    widget::graph_view::{GraphEvent, ItemId},
 };
 
 use crate::{
@@ -69,6 +69,21 @@ pub enum MapMessage {
     TagToggled(usize),
     TagCreate,
     ClearCoinSelection,
+    Key(MapKey),
+    /// Leaf to jump to.
+    ReuseRowSelected(ItemId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapKey {
+    Undo,
+    Redo,
+    Shortcuts,
+    Unspent,
+    Escape,
+    /// Escape taken by a focused text input.
+    EscapeInInput,
+    Command(bool),
 }
 
 #[derive(Debug, Clone)]
