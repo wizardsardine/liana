@@ -11,7 +11,7 @@ use liana::{
 use liana_ui::widget::graph_view::{ItemId, Side};
 use lianad::commands::GraphItem;
 
-use crate::daemon::model::{Coin, HistoryTransaction, Payment, TransactionKind};
+use crate::daemon::model::{Coin, HistoryTransaction, LabelsLoader, Payment, TransactionKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SlotRef {
@@ -626,6 +626,14 @@ impl TxGraph {
     }
 }
 
+impl LabelsLoader for TxGraph {
+    fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
+        for tx in &mut self.txs {
+            tx.history.load_labels(new_labels);
+        }
+    }
+}
+
 fn leaf_graph_item(leaf: &Leaf) -> GraphItem {
     match leaf.kind {
         LeafKind::Payment | LeafKind::CounterpartyOutput => GraphItem::OutputLeaf(leaf.outpoint),
@@ -990,5 +998,65 @@ mod tests {
         assert!(graph.is_empty());
         assert_eq!(graph.item_ids().count(), 0);
         assert_eq!(graph.path(0, 0), None);
+    }
+
+    #[test]
+    fn labels_loader_updates_graph() {
+        let f = fixture::sample_wallet();
+        let mut graph = TxGraph::new(f.txs, &f.coins);
+        let (txid, landlord) = (f.ids.salary, f.landlord);
+        let salary = index(&graph, txid);
+        let coin = SlotRef {
+            tx: salary,
+            side: Side::Output,
+            index: 0,
+        };
+        let leaf = graph
+            .leaves()
+            .iter()
+            .position(|leaf| leaf.address.as_ref() == Some(&landlord))
+            .unwrap();
+        let saved = |value: Option<&str>| {
+            HashMap::from([
+                (txid.to_string(), value.map(str::to_string)),
+                (
+                    OutPoint::new(txid, 0).to_string(),
+                    value.map(str::to_string),
+                ),
+                (landlord.to_string(), value.map(str::to_string)),
+            ])
+        };
+
+        graph.load_labels(&saved(Some("New")));
+        let new = Label::Own("New".to_string());
+        assert_eq!(graph.tx_label(salary), new);
+        assert_eq!(graph.slot_label(coin), new);
+        assert_eq!(graph.leaf_label(leaf), new);
+
+        graph.load_labels(&saved(None));
+        assert_eq!(graph.tx_label(salary), Label::None);
+        assert_eq!(graph.slot_label(coin), Label::None);
+        assert_eq!(graph.leaf_label(leaf), Label::None);
+    }
+
+    #[test]
+    fn labels_loader_keeps_default_labels() {
+        let f = fixture::sample_wallet();
+        let mut graph = TxGraph::new(f.txs, &f.coins);
+        let transfer = index(&graph, f.ids.self_transfer);
+        let coin = SlotRef {
+            tx: transfer,
+            side: Side::Output,
+            index: 0,
+        };
+        let key = OutPoint::new(f.ids.self_transfer, 0).to_string();
+        let default = Label::Funding("Savings".to_string());
+        assert_eq!(graph.slot_label(coin), default);
+
+        graph.load_labels(&HashMap::from([(key.clone(), Some("Mine".to_string()))]));
+        assert_eq!(graph.slot_label(coin), Label::Own("Mine".to_string()));
+
+        graph.load_labels(&HashMap::from([(key, None)]));
+        assert_eq!(graph.slot_label(coin), default);
     }
 }

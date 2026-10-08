@@ -15,31 +15,42 @@ use liana::{
     miniscript::bitcoin::{Amount, OutPoint, SignedAmount},
 };
 use liana_ui::{
-    component::panels::map::{
-        block::{block, BlockState, SlotKind, SlotReorder, SlotState, SlotView},
-        header::map_header,
-        leaf::{self, LeafState},
-        overlays::{empty_state, legend, loading_state, tag_status_bar},
+    component::{
+        form,
+        modal::{modal_view, ModalWidth},
+        panels::map::{
+            block::{block, BlockState, SlotKind, SlotReorder, SlotState, SlotView},
+            header::map_header,
+            leaf::{self, LeafState},
+            modals::{coin_action_bar, label_modal_body, tag_popover, LabelSubject, TxDirection},
+            overlays::{coin_selection_bar, empty_state, legend, loading_state, tag_status_bar},
+        },
     },
     widget::{
         graph_view::{
             Anchor, AnchorSide, Edge, EdgeKind, GraphItem, GraphView, ItemId, Shape, Side,
         },
-        Container, Element,
+        text_input, Container, Element,
     },
 };
 
-use crate::app::{
-    state::map::{
-        coin_ui::CoinUi,
-        display::DisplayState,
-        display_row,
-        edit::live_column,
-        graph::{InputSlot, LeafKind, OutputSlot, SlotRef, TxGraph},
-        selection::TagHighlight,
-        LiveReorder, Orders, Toggles,
+use crate::{
+    app::{
+        state::map::{
+            coin_ui::CoinUi,
+            display::{label_key, DisplayState},
+            display_row,
+            edit::live_column,
+            graph::{InputSlot, LeafKind, OutputSlot, SlotRef, TxGraph},
+            selection::TagHighlight,
+            LabelTarget, LiveReorder, Orders, Toggles,
+        },
+        view::{
+            label::{label_field, LabelSize},
+            MapMessage, Message,
+        },
     },
-    view::{MapMessage, Message},
+    daemon::model::TransactionKind,
 };
 
 /// What a block shows, owned so `lazy` rebuilds it only when it changes.
@@ -413,6 +424,25 @@ pub fn map_view<'a>(
                     .grid(toggles.snap)
                     .on_event(|event| Message::Map(MapMessage::Graph(event)));
                 let legend = Container::new(legend()).padding(16);
+                let selection_bar = (!coin_ui.selected().is_empty()).then(|| {
+                    let total: Amount = coin_ui
+                        .selected()
+                        .iter()
+                        .filter_map(|coin| graph.coin(coin))
+                        .map(|coin| coin.amount)
+                        .sum();
+                    let bar = coin_selection_bar(
+                        coin_ui.selected().len(),
+                        &total,
+                        Message::Map(MapMessage::ClearCoinSelection),
+                    );
+                    let bar: Element<'a, Message> = Container::new(bar)
+                        .center_x(Length::Fill)
+                        .align_bottom(Length::Fill)
+                        .padding([16, 0])
+                        .into();
+                    bar
+                });
                 let tag_bar = tag_highlight.filter(|tag| tag.has_many()).and_then(|tag| {
                     let (position, count) = tag.position();
                     let info = coin_ui.tag(tag.active_tag())?;
@@ -425,6 +455,7 @@ pub fn map_view<'a>(
                 });
                 stack![graph_view, legend]
                     .extend(tag_bar)
+                    .extend(selection_bar)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .into()
@@ -435,4 +466,110 @@ pub fn map_view<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// Label modal of `target` (spec 12.1), `None` when the target is not in the graph.
+pub fn label_modal<'a>(
+    graph: &'a TxGraph,
+    target: LabelTarget,
+    editing: &'a HashMap<String, form::Value<String>>,
+    coin_ui: &CoinUi,
+    tag_filter: Option<&str>,
+    tag_input_id: &text_input::Id,
+) -> Option<Element<'a, Message>> {
+    let key = label_key(graph, &target)?;
+    let (label, subject, coin) = match target {
+        LabelTarget::Tx(index) => {
+            let tx = graph.txs().get(index)?;
+            let direction = if tx.kind == TransactionKind::SendToSelf {
+                TxDirection::Moved
+            } else if tx.net.is_negative() {
+                TxDirection::Sent
+            } else {
+                TxDirection::Received
+            };
+            let subject = LabelSubject::Transaction {
+                amount: tx.net.unsigned_abs(),
+                direction,
+                time: tx.history.datetime(),
+            };
+            (graph.tx_label(index), subject, None)
+        }
+        LabelTarget::Slot(slot) => {
+            let tx = graph.txs().get(slot.tx)?;
+            let subject = match slot.side {
+                Side::Input => match tx.inputs.get(slot.index)? {
+                    InputSlot::OurCoin { amount, .. } => LabelSubject::Amount(*amount),
+                    InputSlot::CounterpartyCoin { .. } => LabelSubject::UnknownAmount,
+                },
+                Side::Output => match tx.outputs.get(slot.index)? {
+                    OutputSlot::OurCoin { amount, .. }
+                    | OutputSlot::Payment { amount, .. }
+                    | OutputSlot::CounterpartyOutput { amount, .. } => {
+                        LabelSubject::Amount(*amount)
+                    }
+                },
+            };
+            (graph.slot_label(slot), subject, graph.slot_coin(slot))
+        }
+        LabelTarget::Leaf(index) => (
+            graph.address_label(index),
+            LabelSubject::Leaf(key.clone()),
+            None,
+        ),
+    };
+    let label = label_field(
+        vec![key.clone()],
+        editing.get(&key),
+        &label,
+        LabelSize::Display,
+    );
+    let tags = coin
+        .iter()
+        .flat_map(|coin| coin_ui.coin_tags(coin))
+        .filter_map(|id| coin_ui.tag(*id))
+        .map(|tag| (tag.name.clone(), tag.color))
+        .collect();
+    let action_bar = coin.filter(|coin| graph.is_unspent(coin)).map(|coin| {
+        let popover = tag_filter.map(|filter| {
+            let registry = coin_ui
+                .tags()
+                .iter()
+                .enumerate()
+                .map(|(id, tag)| {
+                    (
+                        tag.name.clone(),
+                        tag.color,
+                        coin_ui.coin_tags(&coin).contains(&id),
+                    )
+                })
+                .collect();
+            tag_popover(
+                tag_input_id.clone(),
+                filter,
+                |text| Message::Map(MapMessage::TagFilterEdited(text)),
+                Message::Map(MapMessage::TagCreate),
+                registry,
+                |id| Message::Map(MapMessage::TagToggled(id)),
+                Message::Map(MapMessage::TagCreate),
+            )
+        });
+        coin_action_bar(
+            coin_ui.is_selected(&coin),
+            coin_ui.is_frozen(&coin),
+            tag_filter.is_some(),
+            popover,
+            Message::Map(MapMessage::ToggleCoinSelected),
+            Message::Map(MapMessage::ToggleFrozen),
+            Message::Map(MapMessage::ToggleTagPopover),
+        )
+    });
+    let body = label_modal_body(label, subject, tags, action_bar);
+    Some(modal_view(
+        None::<String>,
+        None,
+        Some(Message::Map(MapMessage::CloseModal)),
+        ModalWidth::S,
+        body,
+    ))
 }
