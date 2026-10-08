@@ -1,4 +1,7 @@
-use liana_ui::component::panels::spend::FeeLevel;
+use liana_ui::{
+    component::panels::{map::header::HeaderAction, spend::FeeLevel},
+    widget::graph_view::GraphEvent,
+};
 
 use crate::{
     app::menu::Menu,
@@ -44,12 +47,19 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    Map(MapMessage),
 }
 
 impl Close for Message {
     fn close() -> Self {
         Self::Close
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum MapMessage {
+    Header(HeaderAction),
+    Graph(GraphEvent),
 }
 
 #[derive(Debug, Clone)]

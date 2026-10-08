@@ -5,3 +5,361 @@ pub mod graph;
 pub mod history;
 pub mod layout;
 pub mod selection;
+
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
+
+use iced::{advanced::widget::Id, Point, Subscription, Task};
+use liana::miniscript::bitcoin::Txid;
+use liana_ui::{
+    component::panels::map::header::HeaderAction,
+    widget::{
+        graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId},
+        Element,
+    },
+};
+use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
+
+use crate::{
+    app::{
+        cache::Cache,
+        error::Error,
+        menu::{MapFocus, Menu},
+        message::Message,
+        state::{
+            map::{coin_ui::CoinUi, graph::TxGraph},
+            State,
+        },
+        view::{self, MapMessage},
+        wallet::Wallet,
+    },
+    daemon::{
+        model::{Coin, HistoryTransaction},
+        Daemon,
+    },
+};
+
+/// Display orders (inputs, outputs) per transaction, `None` = true order.
+pub type Orders = HashMap<Txid, (history::Order, history::Order)>;
+
+#[derive(Debug)]
+pub struct MapData {
+    pub txs: Vec<HistoryTransaction>,
+    pub coins: Vec<Coin>,
+    pub layout: Vec<GraphLayoutEntry>,
+}
+
+/// The stored layout, checked against the current graph.
+#[derive(Debug, Default)]
+pub struct StoredLayout {
+    pub positions: HashMap<ItemId, Point>,
+    pub orders: Orders,
+    /// Entries whose item is not on the map anymore.
+    pub remove: Vec<LayoutItem>,
+    /// Transactions whose stored order was dropped.
+    pub resave: Vec<ItemId>,
+}
+
+pub struct MapPanel {
+    graph_id: Id,
+    graph: Option<TxGraph>,
+    layout: HashMap<ItemId, Point>,
+    orders: Orders,
+    coin_ui: CoinUi,
+    zoom: f32,
+    loading: bool,
+    pending_focus: Option<MapFocus>,
+    warning: Option<Error>,
+}
+
+/// Display row of the slot at true index `index` (`order[row]` is the true index).
+pub fn display_row(order: Option<&[u32]>, index: usize) -> usize {
+    order
+        .and_then(|order| {
+            order
+                .iter()
+                .position(|&true_index| true_index as usize == index)
+        })
+        .unwrap_or(index)
+}
+
+/// A stored order is usable when it lists every slot exactly once.
+fn is_valid_order(order: &[u32], len: usize) -> bool {
+    let mut seen = vec![false; len];
+    order.len() == len
+        && order.iter().all(|&index| {
+            let index = index as usize;
+            index < len && !std::mem::replace(&mut seen[index], true)
+        })
+}
+
+pub fn split_stored(graph: &TxGraph, entries: Vec<GraphLayoutEntry>) -> StoredLayout {
+    let mut stored = StoredLayout::default();
+    for entry in entries {
+        let Some(id) = graph.item_id(&entry.item) else {
+            stored.remove.push(entry.item);
+            continue;
+        };
+        if let Some((x, y)) = entry.position {
+            stored.positions.insert(id, Point::new(x as f32, y as f32));
+        }
+        let LayoutItem::Tx(txid) = &entry.item else {
+            continue;
+        };
+        let Some(tx) = graph.tx_index(txid) else {
+            continue;
+        };
+        let tx = &graph.txs()[tx];
+        let keep = |order: Option<Vec<u32>>, len: usize| order.filter(|o| is_valid_order(o, len));
+        let input_order = keep(entry.input_order.clone(), tx.inputs.len());
+        let output_order = keep(entry.output_order.clone(), tx.outputs.len());
+        if input_order != entry.input_order || output_order != entry.output_order {
+            stored.resave.push(id);
+        }
+        if input_order.is_some() || output_order.is_some() {
+            stored
+                .orders
+                .insert(tx.history.txid, (input_order, output_order));
+        }
+    }
+    stored
+}
+
+impl MapPanel {
+    pub fn new() -> Self {
+        Self {
+            graph_id: Id::unique(),
+            graph: None,
+            layout: HashMap::new(),
+            orders: HashMap::new(),
+            coin_ui: CoinUi::default(),
+            zoom: 1.0,
+            loading: false,
+            pending_focus: None,
+            warning: None,
+        }
+    }
+
+    pub fn set_focus(&mut self, focus: Option<MapFocus>) {
+        self.pending_focus = focus;
+    }
+
+    fn save_layout(
+        &self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        items: impl IntoIterator<Item = ItemId>,
+        remove: Vec<LayoutItem>,
+    ) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let set: Vec<GraphLayoutEntry> = items
+            .into_iter()
+            .filter_map(|id| {
+                let item = graph.graph_item(id)?;
+                let (input_order, output_order) = match &item {
+                    LayoutItem::Tx(txid) => self.orders.get(txid).cloned().unwrap_or_default(),
+                    _ => (None, None),
+                };
+                Some(GraphLayoutEntry {
+                    item,
+                    position: self
+                        .layout
+                        .get(&id)
+                        .map(|p| (f64::from(p.x), f64::from(p.y))),
+                    input_order,
+                    output_order,
+                })
+            })
+            .collect();
+        if set.is_empty() && remove.is_empty() {
+            return Task::none();
+        }
+        Task::perform(
+            async move {
+                daemon
+                    .update_graph_layout(&set, &remove)
+                    .await
+                    .map_err(Into::into)
+            },
+            Message::MapLayoutSaved,
+        )
+    }
+}
+
+impl Default for MapPanel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl State for MapPanel {
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        view::full_dashboard(
+            &Menu::Map(None),
+            cache,
+            self.warning.as_ref(),
+            view::map::map_view(
+                self.graph.as_ref(),
+                &self.layout,
+                &self.orders,
+                &self.coin_ui,
+                self.zoom,
+                self.loading,
+                &self.graph_id,
+            ),
+        )
+    }
+
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        match message {
+            Message::MapLoaded(Err(e)) => {
+                self.loading = false;
+                self.warning = Some(e);
+            }
+            Message::MapLoaded(Ok(data)) => {
+                let graph = TxGraph::new(data.txs, &data.coins);
+                let stored = split_stored(&graph, data.layout);
+                let placed = layout::place(&graph, &stored.positions);
+                let to_save: BTreeSet<ItemId> = placed
+                    .keys()
+                    .copied()
+                    .chain(stored.resave.iter().copied())
+                    .collect();
+                self.layout = stored.positions;
+                self.layout.extend(placed);
+                self.orders = stored.orders;
+                let fit = if graph.is_empty() {
+                    Task::none()
+                } else {
+                    graph_view::fit(self.graph_id.clone())
+                };
+                self.graph = Some(graph);
+                self.loading = false;
+                let save = self.save_layout(daemon, to_save, stored.remove);
+                return Task::batch([save, fit]);
+            }
+            Message::MapLayoutSaved(Err(e)) => self.warning = Some(e),
+            Message::View(view::Message::Map(message)) => match message {
+                MapMessage::Header(HeaderAction::ZoomIn) => {
+                    return graph_view::zoom_by(self.graph_id.clone(), ZOOM_STEP);
+                }
+                MapMessage::Header(HeaderAction::ZoomOut) => {
+                    return graph_view::zoom_by(self.graph_id.clone(), 1.0 / ZOOM_STEP);
+                }
+                MapMessage::Header(HeaderAction::Fit) => {
+                    return graph_view::fit(self.graph_id.clone());
+                }
+                MapMessage::Graph(GraphEvent::Zoom(zoom)) => self.zoom = zoom,
+                _ => {}
+            },
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
+
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        _wallet: Arc<Wallet>,
+    ) -> Task<Message> {
+        self.loading = true;
+        self.warning = None;
+        Task::perform(
+            async move {
+                let coins = daemon.list_all_coins().await?;
+                let txs = daemon.get_all_history_txs(&coins).await?;
+                let layout = daemon.get_graph_layout().await?;
+                Ok(MapData { txs, coins, layout })
+            },
+            Message::MapLoaded,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use liana::miniscript::bitcoin::{OutPoint, Txid};
+    use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
+
+    use crate::app::state::map::{display_row, fixture, graph::TxGraph, split_stored};
+
+    fn entry(item: LayoutItem) -> GraphLayoutEntry {
+        GraphLayoutEntry {
+            item,
+            position: Some((10.0, 20.0)),
+            input_order: None,
+            output_order: None,
+        }
+    }
+
+    fn unknown_outpoint() -> OutPoint {
+        OutPoint::new(
+            Txid::from_str("00000000000000000000000000000000000000000000000000000000000000ff")
+                .unwrap(),
+            0,
+        )
+    }
+
+    #[test]
+    fn stale_entries_are_removed() {
+        let graph = fixture::graph();
+        let unknown_tx = LayoutItem::Tx(unknown_outpoint().txid);
+        let orphan = LayoutItem::OutputLeaf(unknown_outpoint());
+        let stored = split_stored(&graph, vec![entry(unknown_tx), entry(orphan)]);
+        assert_eq!(stored.remove, vec![unknown_tx, orphan]);
+        assert!(stored.positions.is_empty());
+    }
+
+    #[test]
+    fn wrong_order_length_is_ignored() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let txid = f.ids.batch;
+        let mut bad = entry(LayoutItem::Tx(txid));
+        bad.output_order = Some(vec![0]);
+        let stored = split_stored(&graph, vec![bad]);
+        let id = graph.tx_item(graph.tx_index(&txid).unwrap());
+        assert_eq!(stored.resave, vec![id]);
+        assert!(stored.orders.is_empty());
+        assert!(stored.positions.contains_key(&id));
+    }
+
+    #[test]
+    fn known_entries_are_kept() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let txid = f.ids.batch;
+        let slots = graph.txs()[graph.tx_index(&txid).unwrap()].outputs.len() as u32;
+        let order: Vec<u32> = (0..slots).rev().collect();
+        let mut kept = entry(LayoutItem::Tx(txid));
+        kept.output_order = Some(order.clone());
+        let stored = split_stored(&graph, vec![kept]);
+        assert!(stored.remove.is_empty());
+        assert!(stored.resave.is_empty());
+        assert_eq!(stored.orders[&txid], (None, Some(order)));
+        assert_eq!(stored.positions.len(), 1);
+    }
+
+    #[test]
+    fn display_row_inverts_order() {
+        let order = [2, 0, 1];
+        assert_eq!(display_row(Some(&order), 2), 0);
+        assert_eq!(display_row(Some(&order), 0), 1);
+        assert_eq!(display_row(Some(&order), 1), 2);
+        assert_eq!(display_row(None, 2), 2);
+    }
+}
