@@ -864,6 +864,15 @@ impl Palette {
                 },
                 badge_ink: color::LIGHT_BLACK,
             },
+            graph: Graph {
+                grid_dot: color::GREY_5,
+                edge_coin: color::GREEN,
+                edge_counterparty: color::GREY_3,
+                edge_counterparty_active: color::WHITE,
+                frame: color::GREEN,
+                marker: color::GREEN,
+                marker_fill: color::LIGHT_BLACK,
+            },
         }
     }
 }

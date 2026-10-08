@@ -3,7 +3,7 @@
 //! redefine them.
 use iced::{mouse, Point, Rectangle, Size, Transformation, Vector};
 
-use crate::widget::graph_view::Shape;
+use crate::widget::graph_view::{AnchorSide, Shape};
 
 /// Grid unit.
 pub const U: f32 = 12.0;
@@ -27,6 +27,25 @@ pub const WHEEL_ZOOM_RATE: f32 = 0.0015;
 pub const WHEEL_LINE_PX: f32 = 100.0;
 /// Screen px a pressed pointer may move before it counts as a drag.
 pub const CLICK_THRESHOLD: f32 = 5.0;
+
+pub const FRAME_PADDING: f32 = 24.0;
+pub const FRAME_RADIUS: f32 = 20.0;
+pub const FRAME_WIDTH: f32 = 2.0;
+pub const GRID_MIN_SCREEN_STEP: f32 = 10.0;
+pub const GRID_DOT_RADIUS: f32 = 1.3;
+pub const EDGE_MIN_DX: f32 = 50.0;
+pub const BEZIER_SAMPLES: usize = 24;
+pub const COIN_EDGE_WIDTH: f32 = 2.0;
+pub const COIN_EDGE_ACTIVE_WIDTH: f32 = 3.0;
+pub const COIN_EDGE_OPACITY: f32 = 0.5;
+pub const COUNTERPARTY_EDGE_WIDTH: f32 = 1.5;
+pub const COUNTERPARTY_EDGE_ACTIVE_WIDTH: f32 = 2.5;
+pub const COUNTERPARTY_DASH: [f32; 2] = [6.0, 5.0];
+pub const EDGE_DIMMED_OPACITY: f32 = 0.15;
+pub const MARKER_STUB: f32 = 12.0;
+pub const MARKER_STUB_HEIGHT: f32 = 2.0;
+pub const MARKER_RING: f32 = 8.0;
+pub const MARKER_RING_WIDTH: f32 = 2.0;
 
 impl Shape {
     pub fn size(self) -> Size {
@@ -109,6 +128,54 @@ impl Camera {
             zoom,
         }
     }
+}
+
+/// Where an edge attaches, in graph px. `row` is fractional so a slot being
+/// reordered can sit between two rows.
+pub fn anchor_point(side: AnchorSide, row: f32, position: Point, shape: Shape) -> Point {
+    let slot_y = position.y + row * SLOT_HEIGHT + SLOT_HEIGHT / 2.0;
+    let right = position.x + shape.size().width;
+    match side {
+        AnchorSide::Input => Point::new(position.x, slot_y),
+        AnchorSide::Output => Point::new(right, slot_y),
+        AnchorSide::LeafLeft => Point::new(position.x, position.y + LEAF_HEIGHT / 2.0),
+        AnchorSide::LeafRight => Point::new(right, position.y + LEAF_HEIGHT / 2.0),
+    }
+}
+
+/// Bezier control polygon of an edge.
+pub fn edge_curve(from: Point, to: Point) -> [Point; 4] {
+    let dx = EDGE_MIN_DX.max((to.x - from.x).abs() / 2.0);
+    [
+        from,
+        Point::new(from.x + dx, from.y),
+        Point::new(to.x - dx, to.y),
+        to,
+    ]
+}
+
+pub fn bezier_point(curve: &[Point; 4], t: f32) -> Point {
+    let u = 1.0 - t;
+    let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+    Point::new(
+        a * curve[0].x + b * curve[1].x + c * curve[2].x + d * curve[3].x,
+        a * curve[0].y + b * curve[1].y + c * curve[2].y + d * curve[3].y,
+    )
+}
+
+/// Dot grid step in graph px. Doubles past the spec's single doubling when the
+/// step is still too tight, otherwise a far zoom-out would draw hundreds of
+/// thousands of dots.
+pub fn grid_step(zoom: f32) -> f32 {
+    let mut step = U;
+    while step * zoom < GRID_MIN_SCREEN_STEP {
+        step *= 2.0;
+    }
+    step
+}
+
+pub fn frame_rect(members: Rectangle) -> Rectangle {
+    members.expand(FRAME_PADDING)
 }
 
 /// Vertical wheel delta in px, positive when scrolling down (iced reports
@@ -227,6 +294,66 @@ mod tests {
         let down = wheel_delta(mouse::ScrollDelta::Pixels { x: 0.0, y: -30.0 });
         assert_eq!(down, 30.0);
         assert!(wheel_zoom_factor(down) < 1.0);
+    }
+
+    #[test]
+    fn anchor_points() {
+        let block = Shape::Block {
+            inputs: 3,
+            outputs: 5,
+        };
+        let position = Point::new(120.0, 240.0);
+        assert_eq!(
+            anchor_point(AnchorSide::Input, 2.0, position, block),
+            Point::new(120.0, 240.0 + 2.0 * 48.0 + 24.0)
+        );
+        assert_eq!(
+            anchor_point(AnchorSide::Output, 0.0, position, block),
+            Point::new(120.0 + 696.0, 264.0)
+        );
+        assert_eq!(
+            anchor_point(AnchorSide::LeafLeft, 0.0, Point::ORIGIN, Shape::Leaf),
+            Point::new(0.0, 18.0)
+        );
+        assert_eq!(
+            anchor_point(AnchorSide::LeafRight, 0.0, Point::ORIGIN, Shape::Leaf),
+            Point::new(216.0, 18.0)
+        );
+    }
+
+    #[test]
+    fn edge_curve_min_dx() {
+        let c = edge_curve(Point::ORIGIN, Point::new(40.0, 100.0));
+        assert_eq!(c[1], Point::new(50.0, 0.0));
+        assert_eq!(c[2], Point::new(-10.0, 100.0));
+        let c = edge_curve(Point::ORIGIN, Point::new(400.0, 0.0));
+        assert_eq!(c[1], Point::new(200.0, 0.0));
+        assert_eq!(c[2], Point::new(200.0, 0.0));
+    }
+
+    #[test]
+    fn bezier_endpoints() {
+        let c = edge_curve(Point::new(10.0, 20.0), Point::new(300.0, 90.0));
+        assert!(close_point(bezier_point(&c, 0.0), c[0]));
+        assert!(close_point(bezier_point(&c, 1.0), c[3]));
+        let flat = edge_curve(Point::ORIGIN, Point::new(400.0, 0.0));
+        assert!(close(bezier_point(&flat, 0.5).y, 0.0));
+    }
+
+    #[test]
+    fn grid_step_adapts() {
+        assert_eq!(grid_step(1.0), 12.0);
+        assert_eq!(grid_step(0.5), 24.0);
+        assert!(grid_step(0.1) * 0.1 >= GRID_MIN_SCREEN_STEP);
+    }
+
+    #[test]
+    fn frame_rect_padding() {
+        let members = Rectangle::new(Point::ORIGIN, Size::new(100.0, 50.0));
+        assert_eq!(
+            frame_rect(members),
+            Rectangle::new(Point::new(-24.0, -24.0), Size::new(148.0, 98.0))
+        );
     }
 
     #[test]

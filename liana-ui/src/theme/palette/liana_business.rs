@@ -838,6 +838,15 @@ impl Palette {
                 },
                 badge_ink: color::WHITE,
             },
+            graph: Graph {
+                grid_dot: color::LIGHT_BORDER,
+                edge_coin: color::BUSINESS_BLUE,
+                edge_counterparty: color::DARK_TEXT_TERTIARY,
+                edge_counterparty_active: color::BUSINESS_BLACK,
+                frame: color::BUSINESS_BLUE,
+                marker: color::BUSINESS_BLUE,
+                marker_fill: color::LIGHT_BG,
+            },
         }
     }
 }
