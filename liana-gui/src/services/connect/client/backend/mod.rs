@@ -17,8 +17,8 @@ use liana::{
 use lianad::{
     bip329::Labels,
     commands::{
-        CoinStatus, CreateRecoveryWarning, GetInfoDescriptors, LCSpendInfo, LabelItem,
-        UpdateDerivIndexesResult,
+        CoinStatus, CreateRecoveryWarning, GetInfoDescriptors, GraphItem, GraphLayoutEntry,
+        GraphWallet, LCSpendInfo, LabelItem, UpdateDerivIndexesResult,
     },
     config::Config,
 };
@@ -1160,6 +1160,26 @@ impl Daemon for BackendWalletClient {
             .await?;
 
         Ok(res.labels)
+    }
+
+    async fn get_graph_layout(&self) -> Result<Vec<GraphLayoutEntry>, DaemonError> {
+        Ok(Vec::new())
+    }
+
+    async fn update_graph_layout(
+        &self,
+        _set: &[GraphLayoutEntry],
+        _remove: &[GraphItem],
+    ) -> Result<(), DaemonError> {
+        Ok(())
+    }
+
+    async fn get_graph_wallets(&self) -> Result<Vec<GraphWallet>, DaemonError> {
+        Ok(Vec::new())
+    }
+
+    async fn update_graph_wallets(&self, _wallets: &[GraphWallet]) -> Result<(), DaemonError> {
+        Ok(())
     }
 }
 
