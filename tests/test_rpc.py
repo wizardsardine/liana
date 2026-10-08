@@ -1968,3 +1968,77 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], [rbf_1_outpoint])["coins"]
         )
     )
+
+
+def test_graph_layout(lianad):
+    txid = "00" * 32
+    assert lianad.rpc.getgraphlayout() == {"entries": []}
+
+    entry = {
+        "item": f"tx:{txid}",
+        "position": [12.0, 24.0],
+        "input_order": [1, 0],
+        "output_order": None,
+        "lane_position": [0.0, 8.0],
+    }
+    lianad.rpc.updategraphlayout([entry], [])
+    assert lianad.rpc.getgraphlayout() == {"entries": [entry]}
+
+    moved = {**entry, "position": [48.0, 96.0], "lane_position": [64.0, 8.0]}
+    lianad.rpc.updategraphlayout([moved], [])
+    assert lianad.rpc.getgraphlayout() == {"entries": [moved]}
+
+    lianad.rpc.updategraphlayout([], [f"tx:{txid}"])
+    assert lianad.rpc.getgraphlayout() == {"entries": []}
+
+    with pytest.raises(RpcError, match="output_order must be a non-empty permutation"):
+        lianad.rpc.updategraphlayout([{**entry, "output_order": [0, 0]}], [])
+    with pytest.raises(RpcError, match="only allowed on a transaction"):
+        lianad.rpc.updategraphlayout(
+            [{"item": f"out:{txid}:0", "input_order": [0]}], []
+        )
+    assert lianad.rpc.getgraphlayout() == {"entries": []}
+
+
+def test_graph_wallets(lianad):
+    assert lianad.rpc.getgraphwallets() == {"wallets": []}
+
+    wallet = {
+        "wallet": "a1b2c3d4-1700000000",
+        "selected": True,
+        "offset": [-120.0, 640.5],
+        "lane": 1,
+        "displayed": False,
+        "lane_height": 420.5,
+    }
+    lianad.rpc.updategraphwallets([wallet])
+    assert lianad.rpc.getgraphwallets() == {"wallets": [wallet]}
+
+    unselected = {**wallet, "selected": False}
+    lianad.rpc.updategraphwallets([unselected])
+    assert lianad.rpc.getgraphwallets() == {"wallets": [unselected]}
+
+    # Without lane, displayed nor lane_height, the lane is not ordered, is displayed and is
+    # automatically sized.
+    other = {"wallet": "e5f6a7b8-1700000001", "selected": True}
+    lianad.rpc.updategraphwallets([other])
+    stored = {
+        "wallets": [
+            unselected,
+            {
+                **other,
+                "offset": None,
+                "lane": None,
+                "displayed": True,
+                "lane_height": None,
+            },
+        ]
+    }
+    assert lianad.rpc.getgraphwallets() == stored
+
+    with pytest.raises(RpcError, match="wallet must not be empty"):
+        lianad.rpc.updategraphwallets([{**wallet, "wallet": ""}])
+    assert lianad.rpc.getgraphwallets() == stored
+    with pytest.raises(RpcError, match="lane_height must be finite and positive"):
+        lianad.rpc.updategraphwallets([{**wallet, "lane_height": 0.0}])
+    assert lianad.rpc.getgraphwallets() == stored

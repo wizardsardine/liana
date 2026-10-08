@@ -1,5 +1,5 @@
 use crate::{
-    commands::{CoinStatus, LabelItem},
+    commands::{CoinStatus, GraphItem, GraphLayoutEntry, GraphWallet, LabelItem},
     jsonrpc::rpc::{Error, Params, Request, Response},
     DaemonControl,
 };
@@ -482,6 +482,127 @@ fn get_labels_bip329(control: &DaemonControl, params: Params) -> Result<serde_js
     Ok(serde_json::json!(control.get_labels_bip329(offset, limit)))
 }
 
+/// Whether `order` is a non-empty permutation of `0..order.len()`.
+fn is_permutation(order: &[u32]) -> bool {
+    let mut seen = vec![false; order.len()];
+    for &index in order {
+        match seen.get_mut(index as usize) {
+            Some(slot) if !*slot => *slot = true,
+            _ => return false,
+        }
+    }
+    !order.is_empty()
+}
+
+fn validate_graph_layout_entry(entry: &GraphLayoutEntry) -> Result<(), Error> {
+    let item = entry.item;
+    for (name, position) in [
+        ("position", entry.position),
+        ("lane_position", entry.lane_position),
+    ] {
+        if let Some((x, y)) = position {
+            if !x.is_finite() || !y.is_finite() {
+                return Err(Error::invalid_params(format!(
+                    "Invalid 'set' entry '{item}': {name} must be finite."
+                )));
+            }
+        }
+    }
+    for (name, order) in [
+        ("input_order", &entry.input_order),
+        ("output_order", &entry.output_order),
+    ] {
+        let Some(order) = order else { continue };
+        if !matches!(item, GraphItem::Tx(_)) {
+            return Err(Error::invalid_params(format!(
+                "Invalid 'set' entry '{item}': {name} is only allowed on a transaction."
+            )));
+        }
+        if !is_permutation(order) {
+            return Err(Error::invalid_params(format!(
+                "Invalid 'set' entry '{item}': {name} must be a non-empty permutation of 0..len."
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn update_graph_layout(
+    control: &DaemonControl,
+    params: Params,
+) -> Result<serde_json::Value, Error> {
+    let set: Vec<GraphLayoutEntry> = params
+        .get(0, "set")
+        .map(|set| {
+            serde_json::from_value::<Vec<GraphLayoutEntry>>(set.clone())
+                .map_err(|e| Error::invalid_params(format!("Invalid 'set' entry: {e}")))
+        })
+        .transpose()?
+        .unwrap_or_default(); // missing is same as empty array
+    for entry in &set {
+        validate_graph_layout_entry(entry)?;
+    }
+    let remove: Vec<GraphItem> = params
+        .get(1, "remove")
+        .map(|remove| {
+            remove
+                .as_array()
+                .and_then(|arr| {
+                    arr.iter()
+                        .map(|item| item.as_str().and_then(|s| GraphItem::from_str(s).ok()))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| Error::invalid_params("Invalid 'remove' parameter."))
+        })
+        .transpose()?
+        .unwrap_or_default(); // missing is same as empty array
+
+    control.update_graph_layout(&set, &remove);
+    Ok(serde_json::json!({}))
+}
+
+fn validate_graph_wallet(wallet: &GraphWallet) -> Result<(), Error> {
+    if wallet.wallet.is_empty() {
+        return Err(Error::invalid_params(
+            "Invalid 'wallets' entry: wallet must not be empty.",
+        ));
+    }
+    if let Some((x, y)) = wallet.offset {
+        if !x.is_finite() || !y.is_finite() {
+            return Err(Error::invalid_params(format!(
+                "Invalid 'wallets' entry '{}': offset must be finite.",
+                wallet.wallet
+            )));
+        }
+    }
+    if let Some(height) = wallet.lane_height {
+        if !height.is_finite() || height <= 0.0 {
+            return Err(Error::invalid_params(format!(
+                "Invalid 'wallets' entry '{}': lane_height must be finite and positive.",
+                wallet.wallet
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn update_graph_wallets(
+    control: &DaemonControl,
+    params: Params,
+) -> Result<serde_json::Value, Error> {
+    let wallets = params
+        .get(0, "wallets")
+        .ok_or_else(|| Error::invalid_params("Missing 'wallets' parameter."))?;
+    let wallets: Vec<GraphWallet> = serde_json::from_value(wallets.clone())
+        .map_err(|e| Error::invalid_params(format!("Invalid 'wallets' entry: {e}")))?;
+    for wallet in &wallets {
+        validate_graph_wallet(wallet)?;
+    }
+
+    control.update_graph_wallets(&wallets);
+    Ok(serde_json::json!({}))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -589,10 +710,269 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
                 .ok_or_else(|| Error::invalid_params("Missing 'offset' and 'limit' parameters."))?;
             get_labels_bip329(control, params)?
         }
+        "getgraphlayout" => serde_json::json!(&control.get_graph_layout()),
+        "updategraphlayout" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'set' and 'remove' parameters."))?;
+            update_graph_layout(control, params)?
+        }
+        "getgraphwallets" => serde_json::json!(&control.get_graph_wallets()),
+        "updategraphwallets" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'wallets' parameter."))?;
+            update_graph_wallets(control, params)?
+        }
         _ => {
             return Err(Error::method_not_found());
         }
     };
 
     Ok(Response::success(req.id, result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutils::{DummyBitcoind, DummyLiana, DEFAULT_TIMELOCK};
+
+    use serde_json::json;
+
+    const TXID: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    fn params(value: serde_json::Value) -> Params {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn graph_layout_round_trip() {
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
+        let control = ms.control();
+        assert!(control.get_graph_layout().entries.is_empty());
+
+        let tx_entry = json!({
+            "item": format!("tx:{TXID}"),
+            "position": [12.0, 24.0],
+            "input_order": [1, 0],
+            "output_order": null,
+            "lane_position": [80.0, -4.0],
+        });
+        let leaf_entry = json!({
+            "item": format!("out:{TXID}:0"),
+            "position": [1.5, -2.5],
+        });
+        let res = update_graph_layout(control, params(json!([[tx_entry, leaf_entry], []])));
+        assert_eq!(res.unwrap(), json!({}));
+        let entries = control.get_graph_layout().entries;
+        assert_eq!(
+            entries,
+            serde_json::from_value::<Vec<GraphLayoutEntry>>(json!([tx_entry, leaf_entry])).unwrap()
+        );
+
+        update_graph_layout(
+            control,
+            params(json!({"remove": [format!("out:{TXID}:0")]})),
+        )
+        .unwrap();
+        assert_eq!(control.get_graph_layout().entries.len(), 1);
+
+        update_graph_layout(
+            control,
+            params(json!({"set": [{"item": format!("in:{TXID}:1")}]})),
+        )
+        .unwrap();
+        let entries = control.get_graph_layout().entries;
+        assert_eq!(entries.len(), 2);
+        let bare = &entries[1];
+        assert_eq!(
+            bare.item,
+            GraphItem::from_str(&format!("in:{TXID}:1")).unwrap()
+        );
+        assert!(bare.position.is_none());
+        assert!(bare.input_order.is_none());
+        assert!(bare.output_order.is_none());
+        assert!(bare.lane_position.is_none());
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn graph_layout_invalid_params() {
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
+        let control = ms.control();
+        let existing = json!({"item": format!("tx:{TXID}"), "position": [1.0, 2.0]});
+        update_graph_layout(control, params(json!([[existing], []]))).unwrap();
+        let before = control.get_graph_layout().entries;
+
+        let tx = format!("tx:{TXID}");
+        let out = format!("out:{TXID}:0");
+        let invalid = [
+            json!([[{"item": "tx:nothex"}], []]),
+            json!([[{"item": out, "input_order": [0]}], []]),
+            json!([[{"item": tx, "output_order": [0, 0]}], []]),
+            json!([[{"item": tx, "output_order": [0, 2]}], []]),
+            json!([[{"item": tx, "output_order": []}], []]),
+            json!([[], ["foo"]]),
+            json!([[], [1]]),
+            json!([[{"item": tx, "lane_position": [0.0]}], []]),
+            // A valid entry next to an invalid one must not be written.
+            json!([[{"item": out, "position": [0.0, 0.0]}, {"item": tx, "input_order": [1]}], []]),
+        ];
+        for p in invalid {
+            assert!(
+                update_graph_layout(control, params(p.clone())).is_err(),
+                "{}",
+                p
+            );
+            assert_eq!(control.get_graph_layout().entries, before, "{p}");
+        }
+
+        let item = GraphItem::from_str(&tx).unwrap();
+        for (position, lane_position) in [
+            (Some((f64::INFINITY, 0.0)), None),
+            (None, Some((0.0, f64::NAN))),
+        ] {
+            let not_finite = GraphLayoutEntry {
+                item,
+                position,
+                input_order: None,
+                output_order: None,
+                lane_position,
+            };
+            assert!(validate_graph_layout_entry(&not_finite).is_err());
+        }
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn graph_wallets_round_trip() {
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
+        let control = ms.control();
+        assert!(control.get_graph_wallets().wallets.is_empty());
+
+        let first = json!({
+            "wallet": "a1b2c3d4-1700000000",
+            "selected": true,
+            "offset": [-10.0, 20.5],
+            "lane": 1,
+            "displayed": false,
+            "lane_height": 420.5,
+        });
+        let second = json!({
+            "wallet": "e5f6a7b8-1700000001",
+            "selected": false,
+            "offset": null,
+            "lane": null,
+            "displayed": true,
+            "lane_height": null,
+        });
+        let res = update_graph_wallets(control, params(json!([[first, second]])));
+        assert_eq!(res.unwrap(), json!({}));
+        assert_eq!(
+            control.get_graph_wallets().wallets,
+            vec![
+                GraphWallet {
+                    wallet: "a1b2c3d4-1700000000".to_string(),
+                    selected: true,
+                    offset: Some((-10.0, 20.5)),
+                    lane: Some(1),
+                    displayed: false,
+                    lane_height: Some(420.5),
+                },
+                GraphWallet {
+                    wallet: "e5f6a7b8-1700000001".to_string(),
+                    selected: false,
+                    offset: None,
+                    lane: None,
+                    displayed: true,
+                    lane_height: None,
+                },
+            ]
+        );
+
+        let unselected = json!({
+            "wallet": "a1b2c3d4-1700000000",
+            "selected": false,
+            "offset": [-10.0, 20.5],
+            "lane": 0,
+            "displayed": true,
+            "lane_height": null,
+        });
+        update_graph_wallets(control, params(json!({"wallets": [unselected]}))).unwrap();
+        assert_eq!(
+            control.get_graph_wallets().wallets,
+            serde_json::from_value::<Vec<GraphWallet>>(json!([unselected, second])).unwrap()
+        );
+
+        // An entry without lane, displayed nor lane_height is not ordered, displayed and
+        // automatically sized.
+        let minimal = json!({"wallet": "e5f6a7b8-1700000001", "selected": true});
+        update_graph_wallets(control, params(json!([[minimal]]))).unwrap();
+        assert_eq!(
+            control.get_graph_wallets().wallets[1],
+            GraphWallet {
+                wallet: "e5f6a7b8-1700000001".to_string(),
+                selected: true,
+                offset: None,
+                lane: None,
+                displayed: true,
+                lane_height: None,
+            }
+        );
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn graph_wallets_invalid_params() {
+        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DEFAULT_TIMELOCK);
+        let control = ms.control();
+        let existing = json!({"wallet": "a1b2c3d4-1700000000", "selected": true});
+        update_graph_wallets(control, params(json!([[existing]]))).unwrap();
+        let before = control.get_graph_wallets().wallets;
+
+        let invalid = [
+            json!([]),
+            json!([[{"wallet": "", "selected": true}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001"}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": 1}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true, "offset": [0.0]}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true, "lane": -1}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true, "displayed": 1}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true, "lane_height": "1"}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true, "lane_height": 0.0}]]),
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true, "lane_height": -12.0}]]),
+            json!([{"wallet": "e5f6a7b8-1700000001", "selected": true}]),
+            // A valid entry next to an invalid one must not be written.
+            json!([[{"wallet": "e5f6a7b8-1700000001", "selected": true}, {"wallet": "", "selected": true}]]),
+        ];
+        for p in invalid {
+            assert!(
+                update_graph_wallets(control, params(p.clone())).is_err(),
+                "{}",
+                p
+            );
+            assert_eq!(control.get_graph_wallets().wallets, before, "{p}");
+        }
+
+        let not_finite = GraphWallet {
+            wallet: "e5f6a7b8-1700000001".to_string(),
+            selected: true,
+            offset: Some((f64::NAN, 0.0)),
+            lane: None,
+            displayed: true,
+            lane_height: None,
+        };
+        assert!(validate_graph_wallet(&not_finite).is_err());
+        let infinite_height = GraphWallet {
+            offset: None,
+            lane_height: Some(f64::INFINITY),
+            ..not_finite
+        };
+        assert!(validate_graph_wallet(&infinite_height).is_err());
+
+        ms.shutdown();
+    }
 }
