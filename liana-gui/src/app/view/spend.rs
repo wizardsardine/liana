@@ -19,7 +19,7 @@ use liana_ui::{
         panels::spend::{self, DustWarning},
         text::new,
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -60,19 +60,14 @@ pub fn spend_view<'a>(
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
 
-    let warnings = (!(spend_warnings.is_empty() || saved)).then_some({
-        let rows = spend_warnings.iter().map(|warning| {
-            let text = match warning {
-                CreateRecoveryWarning::ToOwnAddress => t!("spend-warning-recovery-own-address"),
-                // Worded by the daemon or the Connect API, so it stays as it comes.
-                CreateRecoveryWarning::String(warning) => warning.clone(),
-            };
-            let warn_icon = icon::warning_icon().style(theme::text::warning);
-            let warn_text = new::caption(text).style(theme::text::warning);
-            row![warn_icon, warn_text].spacing(5).into()
-        });
-        Column::with_children(rows).padding(15).spacing(5)
-    });
+    let warnings = spend_warnings
+        .iter()
+        .map(|warning| match warning {
+            CreateRecoveryWarning::ToOwnAddress => t!("spend-warning-recovery-own-address"),
+            // Worded by the daemon or the Connect API, so it stays as it comes.
+            CreateRecoveryWarning::String(warning) => warning.clone(),
+        })
+        .collect();
 
     let detail = TxDetail::Psbt {
         tx,
@@ -81,9 +76,9 @@ pub fn spend_view<'a>(
         saved,
         currently_signing,
         previous: true,
+        warnings,
     };
-    let detail = tx_view(cache, detail, labels_editing, fiat_converter);
-    let content = column![warnings, detail].spacing(80);
+    let content = tx_view(cache, detail, labels_editing, fiat_converter);
 
     dashboard(
         if is_recovery {
