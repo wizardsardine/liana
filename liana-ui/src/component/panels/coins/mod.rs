@@ -36,6 +36,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     copy_address: M,
     copy_outpoint: M,
     reset_timelock: M,
+    show_on_map: M,
     expanded: bool,
     on_toggle: M,
 ) -> Element<'a, M> {
@@ -107,6 +108,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let coin_info =
         column![address_label, address, outpoint_row, block_height].spacing(VSpacing::XS);
 
+    let show_on_map = button::btn_show_on_map(Some(show_on_map));
     let spend: Element<'a, M> = match spend {
         Some(CoinSpend { txid, height }) => {
             let spend_txid = info_row(
@@ -122,13 +124,16 @@ pub fn coin_entry<'a, M: Clone + 'static>(
                     row![new::b2_medium(t!("coins-not-in-block"))]
                 }
             };
-            column![spend_txid, spend_height]
+            let actions = row![Space::fill_width(), show_on_map];
+            column![spend_txid, spend_height, actions]
                 .spacing(VSpacing::XS)
                 .into()
         }
         None => {
             let reset = button::btn_reset_timelock(Some(reset_timelock), seq == 0);
-            column![row![Space::fill_width(), reset]].into()
+            row![Space::fill_width(), show_on_map, reset]
+                .spacing(HSpacing::S)
+                .into()
         }
     };
 

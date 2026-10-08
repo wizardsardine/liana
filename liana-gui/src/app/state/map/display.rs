@@ -12,6 +12,7 @@ use liana_ui::{
 
 use crate::app::state::map::{
     coin_ui::CoinUi,
+    focus::ShowOnMap,
     graph::{InputSlot, LeafKind, MapItem, OutputSlot, SlotRef, TxGraph},
     layout,
     selection::{self, Selection, TagHighlight},
@@ -143,8 +144,12 @@ pub fn display_state(
     coin_ui: &CoinUi,
     unspent: bool,
     reuse: Option<&Address>,
+    show_on_map: Option<&ShowOnMap>,
 ) -> DisplayState {
     let mut siblings = selection::siblings(graph, selection);
+    if let Some(leaf) = show_on_map.and_then(|show| show.leaf) {
+        siblings.insert(graph.leaf_item(leaf));
+    }
     if let Some(address) = reuse {
         siblings.extend(
             graph
@@ -206,10 +211,15 @@ pub fn display_state(
         let id = graph.leaf_item(index);
         selection.contains(id) || siblings.contains(&id)
     };
-    let highlighted: HashSet<SlotRef> = (0..graph.leaves().len())
+    let mut highlighted: HashSet<SlotRef> = (0..graph.leaves().len())
         .filter(|index| leaf_lit(*index))
         .map(|index| graph.leaves()[index].slot())
         .collect();
+    highlighted.extend(
+        show_on_map
+            .iter()
+            .flat_map(|show| show.slots.iter().copied()),
+    );
 
     let blocks = (0..graph.txs().len())
         .map(|tx| {
@@ -352,6 +362,7 @@ mod tests {
         coin_ui::CoinUi,
         display::{click_action, display_state, label_key, slot_ref, ClickAction, DisplayState},
         fixture,
+        focus::ShowOnMap,
         graph::{OutputSlot, SlotRef, TxGraph},
         layout,
         selection::{Selection, TagHighlight},
@@ -378,6 +389,7 @@ mod tests {
             tag,
             coin_ui,
             unspent,
+            None,
             None,
         )
     }
@@ -626,6 +638,7 @@ mod tests {
             &CoinUi::default(),
             false,
             Some(&f.landlord),
+            None,
         );
         let leaves = graph.leaves_on_address(&f.landlord);
         assert_eq!(leaves.len(), 4);
@@ -633,6 +646,41 @@ mod tests {
             assert_eq!(s.leaves[*index].0, LeafState::Sibling);
             assert!(s.leaf_edges[*index]);
         }
+    }
+
+    #[test]
+    fn show_on_map_marks_slots_highlighted() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let layout = layout::place(&graph, &HashMap::new());
+        let tx = graph.tx_index(&f.ids.rent[0]).unwrap();
+        let OutputSlot::Payment { leaf, .. } = graph.txs()[tx].outputs[0] else {
+            panic!("rent output 0 is a payment");
+        };
+        let slot = SlotRef {
+            tx,
+            side: Side::Output,
+            index: 0,
+        };
+        let show = ShowOnMap {
+            slots: vec![slot],
+            leaf: Some(leaf),
+        };
+        let s = display_state(
+            &graph,
+            &layout,
+            &Orders::new(),
+            &Selection::default(),
+            None,
+            None,
+            &CoinUi::default(),
+            false,
+            None,
+            Some(&show),
+        );
+        assert_eq!(s.slots[&slot], SlotState::Highlighted);
+        assert_eq!(s.leaves[leaf].0, LeafState::Sibling);
+        assert!(s.leaf_edges[leaf]);
     }
 
     #[test]

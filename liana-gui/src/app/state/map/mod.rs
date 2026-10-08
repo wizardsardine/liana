@@ -3,6 +3,7 @@ pub mod display;
 pub mod edit;
 #[cfg(test)]
 pub mod fixture;
+pub mod focus;
 pub mod graph;
 pub mod history;
 pub mod layout;
@@ -46,6 +47,7 @@ use crate::{
             map::{
                 coin_ui::CoinUi,
                 display::{click_action, display_state, label_key, slot_ref, ClickAction},
+                focus::{resolve_focus, FocusLanding, ShowOnMap},
                 graph::{MapItem, SlotRef, TxGraph},
                 history::{Change, History},
                 selection::{Selection, TagHighlight},
@@ -186,6 +188,7 @@ pub struct MapPanel {
     selection: Selection,
     hover: Option<Target>,
     tag_highlight: Option<TagHighlight>,
+    show_on_map: Option<ShowOnMap>,
     toggles: Toggles,
     history: History,
     reorder: Option<LiveReorder>,
@@ -271,6 +274,7 @@ impl MapPanel {
             selection: Selection::default(),
             hover: None,
             tag_highlight: None,
+            show_on_map: None,
             toggles: Toggles::default(),
             history: History::default(),
             reorder: None,
@@ -311,10 +315,12 @@ impl MapPanel {
                 self.tag_highlight = graph.slot_coin(slot).and_then(|coin| {
                     TagHighlight::new(slot, self.coin_ui.coin_tags(&coin).to_vec())
                 });
+                self.show_on_map = None;
                 return;
             }
         }
         self.tag_highlight = None;
+        self.show_on_map = None;
     }
 
     /// Records a move of items, applies it and persists the touched items.
@@ -367,9 +373,20 @@ impl MapPanel {
         self.save_layout(daemon, touched, vec![])
     }
 
+    /// Applies the selection or highlights of a resolved focus and returns its target rect.
+    fn land(&mut self, landing: FocusLanding) -> Rectangle {
+        self.selection.clear();
+        if let Some(block) = landing.select {
+            self.selection.click(block);
+        }
+        self.show_on_map = landing.highlight;
+        landing.rect
+    }
+
     fn clear_selection(&mut self) {
         self.selection.clear();
         self.tag_highlight = None;
+        self.show_on_map = None;
     }
 
     /// Cancels the unsaved edit of the open label modal.
@@ -532,6 +549,7 @@ impl State for MapPanel {
                     Some(MapModal::Reuse(address)) => Some(address),
                     _ => None,
                 },
+                self.show_on_map.as_ref(),
             )
         });
         let align_count = self
@@ -605,19 +623,33 @@ impl State for MapPanel {
                 self.layout = stored.positions;
                 self.layout.extend(placed);
                 self.orders = stored.orders;
+                self.hover = None;
+                self.tag_highlight = None;
+                self.show_on_map = None;
+                self.reorder = None;
+                self.selection.retain(|id| graph.item(id).is_some());
+                let landing = self
+                    .pending_focus
+                    .take()
+                    .and_then(|focus| resolve_focus(&graph, &self.layout, &self.orders, &focus));
                 let fit = if graph.is_empty() {
                     Task::none()
                 } else {
                     graph_view::fit(self.graph_id.clone())
                 };
-                self.hover = None;
-                self.tag_highlight = None;
-                self.reorder = None;
-                self.selection.retain(|id| graph.item(id).is_some());
                 self.graph = Some(graph);
                 self.loading = false;
                 let save = self.save_layout(daemon, to_save, stored.remove);
-                return Task::batch([save, fit]);
+                return match landing {
+                    Some(landing) => {
+                        let target = self.land(landing);
+                        Task::batch([
+                            save,
+                            fit.chain(graph_view::focus(self.graph_id.clone(), target)),
+                        ])
+                    }
+                    None => Task::batch([save, fit]),
+                };
             }
             Message::MapLayoutSaved(Err(e)) => self.warning = Some(e),
             Message::View(view::Message::Label(ref items, LabelMessage::Confirm)) => {
@@ -692,6 +724,7 @@ impl State for MapPanel {
                     self.modal = None;
                     self.selection.click(leaf);
                     self.tag_highlight = None;
+                    self.show_on_map = None;
                     let Some(at) = self.layout.get(&leaf) else {
                         return Task::none();
                     };
@@ -836,6 +869,7 @@ impl State for MapPanel {
                     } => {
                         self.selection.area(items, additive);
                         self.tag_highlight = None;
+                        self.show_on_map = None;
                     }
                     GraphEvent::SlotWheel { steps, .. } => {
                         if let Some(tag) = &mut self.tag_highlight {
@@ -923,10 +957,12 @@ mod tests {
         keyboard::{key::Named, Key, Modifiers},
     };
 
+    use liana_ui::widget::graph_view::Target;
+
     use crate::app::{
         state::map::{
-            display_row, escape_action, fixture, graph::TxGraph, key_action, split_stored,
-            EscapeAction,
+            display_row, escape_action, fixture, focus::ShowOnMap, graph::TxGraph, key_action,
+            split_stored, EscapeAction, MapPanel,
         },
         view::MapKey,
     };
@@ -991,6 +1027,22 @@ mod tests {
         assert!(stored.resave.is_empty());
         assert_eq!(stored.orders[&txid], (None, Some(order)));
         assert_eq!(stored.positions.len(), 1);
+    }
+
+    #[test]
+    fn click_clears_show_on_map() {
+        let mut panel = MapPanel::new();
+        let graph = fixture::graph();
+        let id = graph.tx_item(0);
+        panel.graph = Some(graph);
+        panel.show_on_map = Some(ShowOnMap {
+            slots: Vec::new(),
+            leaf: None,
+        });
+        panel.on_click(&Target::Frame, Modifiers::empty());
+        assert!(panel.show_on_map.is_some());
+        panel.on_click(&Target::Item(id), Modifiers::empty());
+        assert!(panel.show_on_map.is_none());
     }
 
     #[test]

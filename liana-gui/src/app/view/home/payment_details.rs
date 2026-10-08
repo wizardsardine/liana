@@ -9,7 +9,7 @@ use liana::miniscript::bitcoin::{self, Amount};
 use liana_ui::{
     component::{
         amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
-        button::btn_see_more_details,
+        button::{btn_see_more_details, btn_show_on_map},
         form,
         panels::{fees_row, home::payment::kind_icon, transactions},
         pill, section,
@@ -22,7 +22,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{MapFocus, Menu},
         view::{
             dashboard,
             label::{self, LabelSize},
@@ -89,7 +89,10 @@ pub fn payment_details_view<'a>(
     let miner_fee = fees_row(tx.wallet_tx.fee(), feerate, to_fiat);
 
     let see_details = btn_see_more_details(Message::Menu(Menu::TransactionPreSelected(tx.txid)));
-    let btn_row = row![Space::fill_width(), see_details];
+    let show_on_map = btn_show_on_map(Some(Message::Menu(Menu::Map(Some(MapFocus::Coin(
+        bitcoin::OutPoint::new(tx.txid, output_index as u32),
+    ))))));
+    let btn_row = row![Space::fill_width(), show_on_map, see_details].spacing(HSpacing::M);
     let transaction = column![transaction, miner_fee, btn_row].spacing(VSpacing::XL);
 
     let content = column![payment, transaction].spacing(80);
