@@ -1,15 +1,23 @@
 //! Generic pan/zoom graph canvas. It takes no gui types: children are placed
 //! at graph coordinates and shown through a camera.
-use std::any::Any;
+use std::{
+    any::Any,
+    cell::Cell,
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use iced::{
     advanced::{
+        graphics::geometry::Renderer as _,
         layout::{self, Layout},
         renderer,
         widget::{tree, Id, Operation, Tree, Widget},
         Clipboard, Renderer as _, Shell,
     },
-    mouse, Event, Length, Point, Rectangle, Size, Transformation,
+    mouse,
+    widget::canvas,
+    Event, Length, Point, Rectangle, Size, Transformation, Vector,
 };
 use iced_runtime::{task, Action, Task};
 
@@ -18,9 +26,12 @@ use crate::{
     widget::{Element, Renderer},
 };
 
+mod draw;
 pub mod geometry;
 
-use geometry::{wheel_delta, wheel_zoom_factor, Camera, CLICK_THRESHOLD, FOCUS_ZOOM};
+use geometry::{
+    anchor_point, edge_curve, wheel_delta, wheel_zoom_factor, Camera, CLICK_THRESHOLD, FOCUS_ZOOM,
+};
 
 /// Opaque id chosen by the app, unique per item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -41,30 +52,112 @@ pub struct GraphItem<'a, M> {
     pub content: Element<'a, M>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnchorSide {
+    Input,
+    Output,
+    LeafLeft,
+    LeafRight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Anchor {
+    pub item: ItemId,
+    pub side: AnchorSide,
+    /// Display row (after any slot reorder), ignored for leaves.
+    pub row: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeKind {
+    Coin,
+    Counterparty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Edge {
+    pub from: Anchor,
+    pub to: Anchor,
+    pub kind: EdgeKind,
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GraphEvent {
     Zoom(f32),
 }
 
 /// Items must be passed in a stable order: child state is diffed by index.
+/// Anchor rows are display rows.
 pub struct GraphView<'a, M> {
     id: Id,
     items: Vec<GraphItem<'a, M>>,
+    edges: Vec<Edge>,
+    frame: Option<Rectangle>,
+    markers: Vec<Anchor>,
+    grid: bool,
+    dim_edges: bool,
     on_event: Option<Box<dyn Fn(GraphEvent) -> M + 'a>>,
 }
 
 impl<'a, M> GraphView<'a, M> {
-    pub fn new(id: impl Into<Id>, items: Vec<GraphItem<'a, M>>) -> Self {
+    pub fn new(id: impl Into<Id>, items: Vec<GraphItem<'a, M>>, edges: Vec<Edge>) -> Self {
         Self {
             id: id.into(),
             items,
+            edges,
+            frame: None,
+            markers: Vec::new(),
+            grid: true,
+            dim_edges: false,
             on_event: None,
         }
+    }
+
+    /// Selection members bounding box in graph px; the padding is added here.
+    pub fn frame(mut self, frame: Option<Rectangle>) -> Self {
+        self.frame = frame;
+        self
+    }
+
+    /// Output anchors holding an unspent coin of ours.
+    pub fn markers(mut self, markers: Vec<Anchor>) -> Self {
+        self.markers = markers;
+        self
+    }
+
+    pub fn grid(mut self, grid: bool) -> Self {
+        self.grid = grid;
+        self
+    }
+
+    /// Draws every edge at a reduced alpha. Markers are not dimmed.
+    pub fn dim_edges(mut self, dim: bool) -> Self {
+        self.dim_edges = dim;
+        self
     }
 
     pub fn on_event(mut self, f: impl Fn(GraphEvent) -> M + 'a) -> Self {
         self.on_event = Some(Box::new(f));
         self
+    }
+
+    /// Where each item is now, in graph px.
+    fn placements(&self) -> HashMap<ItemId, (Point, Shape)> {
+        self.items
+            .iter()
+            .map(|item| (item.id, (item.position, item.shape)))
+            .collect()
+    }
+
+    fn anchor_point(placements: &HashMap<ItemId, (Point, Shape)>, anchor: Anchor) -> Option<Point> {
+        let (position, shape) = placements.get(&anchor.item)?;
+        Some(anchor_point(
+            anchor.side,
+            anchor.row as f32,
+            *position,
+            *shape,
+        ))
     }
 
     fn publish(&self, shell: &mut Shell<'_, M>, event: GraphEvent) {
@@ -90,6 +183,8 @@ struct State {
     /// Union of the item rects, in graph px.
     content: Option<Rectangle>,
     published_zoom: Option<f32>,
+    edges_cache: canvas::Cache,
+    edges_key: Cell<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -216,6 +311,49 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         let inverse = transformation.inverse();
         let child_cursor = state.child_cursor(cursor, bounds, inverse);
         let child_viewport = clip * inverse;
+        let placements = self.placements();
+        let palette = &theme.colors.graph;
+        let curves: Vec<_> = self
+            .edges
+            .iter()
+            .filter_map(|edge| {
+                let from = Self::anchor_point(&placements, edge.from)?;
+                let to = Self::anchor_point(&placements, edge.to)?;
+                let curve = edge_curve(from, to).map(|p| state.camera.to_screen(p));
+                Some((edge.kind, edge.active, curve))
+            })
+            .collect();
+        let mut hasher = DefaultHasher::new();
+        for (kind, active, curve) in &curves {
+            (*kind as u8, *active).hash(&mut hasher);
+            for p in curve {
+                (p.x.to_bits(), p.y.to_bits()).hash(&mut hasher);
+            }
+        }
+        (
+            self.dim_edges,
+            bounds.width.to_bits(),
+            bounds.height.to_bits(),
+        )
+            .hash(&mut hasher);
+        let key = hasher.finish();
+        if state.edges_key.replace(key) != key {
+            state.edges_cache.clear();
+        }
+        let edges = state.edges_cache.draw(renderer, bounds.size(), |frame| {
+            draw::edges(frame, palette, &curves, self.dim_edges)
+        });
+        renderer.with_layer(clip, |renderer| {
+            if self.grid {
+                draw::grid(renderer, palette, bounds, clip, state.camera);
+            }
+            if let Some(members) = self.frame {
+                draw::frame(renderer, palette, bounds, state.camera, members);
+            }
+            renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+                renderer.draw_geometry(edges);
+            });
+        });
         renderer.with_layer(clip, |renderer| {
             renderer.with_transformation(transformation, |renderer| {
                 for ((item, child), child_layout) in
@@ -238,6 +376,18 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                         &child_viewport,
                     );
                 }
+            });
+        });
+        let marker_points: Vec<Point> = self
+            .markers
+            .iter()
+            .filter_map(|anchor| Self::anchor_point(&placements, *anchor))
+            .collect();
+        renderer.with_layer(clip, |renderer| {
+            // Marker points are graph coordinates, not absolute ones like child layouts.
+            let markers = transformation * Transformation::translate(bounds.x, bounds.y);
+            renderer.with_transformation(markers, |renderer| {
+                draw::markers(renderer, palette, &marker_points);
             });
         });
     }

@@ -29,6 +29,7 @@ pub struct Palette {
     pub menus: Menus,
     pub spinner: Spinner,
     pub timeline: Timeline,
+    pub graph: Graph,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -335,6 +336,18 @@ pub struct TimelineTone {
 pub struct Spinner {
     pub track: iced::Color,
     pub arc: iced::Color,
+}
+
+/// Colors of the graph view canvas layers.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Graph {
+    pub grid_dot: iced::Color,
+    pub edge_coin: iced::Color,
+    pub edge_counterparty: iced::Color,
+    pub edge_counterparty_active: iced::Color,
+    pub frame: iced::Color,
+    pub marker: iced::Color,
+    pub marker_fill: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
