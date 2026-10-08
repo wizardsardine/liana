@@ -1,6 +1,7 @@
 mod coins;
 pub mod export;
 mod label;
+pub mod map;
 mod psbt;
 mod psbts;
 mod receive;
