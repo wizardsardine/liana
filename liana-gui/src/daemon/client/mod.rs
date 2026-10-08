@@ -5,7 +5,10 @@ use std::iter::FromIterator;
 use async_trait::async_trait;
 use lianad::{
     bip329::Labels,
-    commands::{CreateRecoveryWarning, GetLabelsBip329Result, UpdateDerivIndexesResult},
+    commands::{
+        CreateRecoveryWarning, GetGraphLayoutResult, GetGraphWalletsResult, GetLabelsBip329Result,
+        GraphItem, GraphLayoutEntry, GraphWallet, UpdateDerivIndexesResult,
+    },
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -252,7 +255,121 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
             self.call("getlabelsbip329", Some(vec![json!(offset), json!(limit)]))?;
         Ok(res.labels)
     }
+
+    async fn get_graph_layout(&self) -> Result<Vec<GraphLayoutEntry>, DaemonError> {
+        let res: GetGraphLayoutResult = self.call("getgraphlayout", Option::<Request>::None)?;
+        Ok(res.entries)
+    }
+
+    async fn update_graph_layout(
+        &self,
+        set: &[GraphLayoutEntry],
+        remove: &[GraphItem],
+    ) -> Result<(), DaemonError> {
+        let _res: serde_json::Value =
+            self.call("updategraphlayout", Some(vec![json!(set), json!(remove)]))?;
+        Ok(())
+    }
+
+    async fn get_graph_wallets(&self) -> Result<Vec<GraphWallet>, DaemonError> {
+        let res: GetGraphWalletsResult = self.call("getgraphwallets", Option::<Request>::None)?;
+        Ok(res.wallets)
+    }
+
+    async fn update_graph_wallets(&self, wallets: &[GraphWallet]) -> Result<(), DaemonError> {
+        let _res: serde_json::Value =
+            self.call("updategraphwallets", Some(vec![json!(wallets)]))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Request {}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use liana::miniscript::bitcoin::{OutPoint, Txid};
+    use lianad::commands::{
+        GetGraphLayoutResult, GetGraphWalletsResult, GraphItem, GraphLayoutEntry, GraphWallet,
+    };
+    use serde_json::json;
+
+    use super::{Lianad, Request};
+    use crate::daemon::Daemon;
+
+    #[tokio::test]
+    async fn lianad_client_graph_layout_requests() {
+        let txid =
+            Txid::from_str("f7bd1b2a995b689d326e51eb742eb1088c4a8f110d9cb56128fd553acc9f88e5")
+                .unwrap();
+        let outpoint = OutPoint { txid, vout: 0 };
+        let entry = GraphLayoutEntry {
+            item: GraphItem::Tx(txid),
+            position: Some((12.5, -40.0)),
+            input_order: Some(vec![1, 0]),
+            output_order: None,
+        };
+        let daemon = Lianad::new(
+            crate::utils::mock::Daemon::new(vec![
+                (
+                    Some(json!({"method": "getgraphlayout", "params": Option::<Request>::None})),
+                    Ok(json!(GetGraphLayoutResult {
+                        entries: vec![entry.clone()]
+                    })),
+                ),
+                (
+                    Some(json!({
+                        "method": "updategraphlayout",
+                        "params": [[entry], [format!("out:{}:0", txid)]],
+                    })),
+                    Ok(json!({})),
+                ),
+            ])
+            .run(),
+        );
+
+        assert_eq!(
+            daemon.get_graph_layout().await.unwrap(),
+            vec![entry.clone()]
+        );
+        daemon
+            .update_graph_layout(&[entry], &[GraphItem::OutputLeaf(outpoint)])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn lianad_client_graph_wallets_requests() {
+        let wallet = GraphWallet {
+            wallet: "a1b2c3d4-1700000000".to_string(),
+            selected: true,
+            offset: Some((-120.0, 640.5)),
+        };
+        let daemon = Lianad::new(
+            crate::utils::mock::Daemon::new(vec![
+                (
+                    Some(json!({"method": "getgraphwallets", "params": Option::<Request>::None})),
+                    Ok(json!(GetGraphWalletsResult {
+                        wallets: vec![wallet.clone()]
+                    })),
+                ),
+                (
+                    Some(json!({
+                        "method": "updategraphwallets",
+                        "params": [[wallet]],
+                    })),
+                    Ok(json!({})),
+                ),
+            ])
+            .run(),
+        );
+
+        assert_eq!(
+            daemon.get_graph_wallets().await.unwrap(),
+            vec![wallet.clone()]
+        );
+        daemon.update_graph_wallets(&[wallet]).await.unwrap();
+    }
+}
