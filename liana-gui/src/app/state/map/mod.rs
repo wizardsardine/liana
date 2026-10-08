@@ -1,5 +1,6 @@
 pub mod coin_ui;
 pub mod display;
+pub mod edit;
 #[cfg(test)]
 pub mod fixture;
 pub mod graph;
@@ -17,7 +18,7 @@ use liana::miniscript::bitcoin::Txid;
 use liana_ui::{
     component::panels::map::header::HeaderAction,
     widget::{
-        graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId, Target},
+        graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId, Side, Target},
         Element,
     },
 };
@@ -33,7 +34,8 @@ use crate::{
             map::{
                 coin_ui::CoinUi,
                 display::{click_action, display_state, ClickAction},
-                graph::TxGraph,
+                graph::{MapItem, TxGraph},
+                history::{Change, History},
                 selection::{Selection, TagHighlight},
             },
             State,
@@ -73,6 +75,17 @@ pub struct StoredLayout {
 pub struct Toggles {
     pub area: bool,
     pub unspent: bool,
+    pub snap: bool,
+}
+
+/// Slot drag in progress, view only and never recorded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveReorder {
+    pub item: ItemId,
+    pub side: Side,
+    pub from: usize,
+    pub to: usize,
+    pub offset_y: f32,
 }
 
 pub struct MapPanel {
@@ -85,6 +98,8 @@ pub struct MapPanel {
     hover: Option<Target>,
     tag_highlight: Option<TagHighlight>,
     toggles: Toggles,
+    history: History,
+    reorder: Option<LiveReorder>,
     zoom: f32,
     loading: bool,
     pending_focus: Option<MapFocus>,
@@ -156,6 +171,8 @@ impl MapPanel {
             hover: None,
             tag_highlight: None,
             toggles: Toggles::default(),
+            history: History::default(),
+            reorder: None,
             zoom: 1.0,
             loading: false,
             pending_focus: None,
@@ -185,6 +202,45 @@ impl MapPanel {
             }
         }
         self.tag_highlight = None;
+    }
+
+    /// Records a move of items, applies it and persists the touched items.
+    fn commit_move(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        moves: Vec<(ItemId, Point, Point)>,
+    ) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let change = Change::Move(
+            moves
+                .iter()
+                .filter_map(|(id, before, after)| Some((graph.graph_item(*id)?, *before, *after)))
+                .collect(),
+        );
+        let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
+        if touched.is_empty() {
+            return Task::none();
+        }
+        self.history.record(change);
+        self.save_layout(daemon, touched, vec![])
+    }
+
+    /// Applies the change returned by `History::undo` or `History::redo`.
+    fn apply_history(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        change: Option<Change>,
+    ) -> Task<Message> {
+        let (Some(change), Some(graph)) = (change, &self.graph) else {
+            return Task::none();
+        };
+        if self.coin_ui.apply(&change) {
+            return Task::none();
+        }
+        let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
+        self.save_layout(daemon, touched, vec![])
     }
 
     fn save_layout(
@@ -251,6 +307,11 @@ impl State for MapPanel {
                 self.toggles.unspent,
             )
         });
+        let align_count = self
+            .graph
+            .as_ref()
+            .and_then(|graph| layout::align_targets(graph, &self.selection.selected_txs(graph)))
+            .map_or(0, |targets| targets.len());
         view::full_dashboard(
             &Menu::Map(None),
             cache,
@@ -264,6 +325,10 @@ impl State for MapPanel {
                 self.selection.items(),
                 self.tag_highlight.as_ref(),
                 self.toggles,
+                self.history.can_undo(),
+                self.history.can_redo(),
+                align_count,
+                self.reorder,
                 self.zoom,
                 self.loading,
                 &self.graph_id,
@@ -301,6 +366,7 @@ impl State for MapPanel {
                 };
                 self.hover = None;
                 self.tag_highlight = None;
+                self.reorder = None;
                 self.selection.retain(|id| graph.item(id).is_some());
                 self.graph = Some(graph);
                 self.loading = false;
@@ -324,7 +390,117 @@ impl State for MapPanel {
                 MapMessage::Header(HeaderAction::ToggleUnspent) => {
                     self.toggles.unspent = !self.toggles.unspent;
                 }
+                MapMessage::Header(HeaderAction::ToggleSnap) => {
+                    self.toggles.snap = !self.toggles.snap;
+                }
+                MapMessage::Header(HeaderAction::Undo) if self.reorder.is_none() => {
+                    let change = self.history.undo();
+                    return self.apply_history(daemon, change);
+                }
+                MapMessage::Header(HeaderAction::Redo) if self.reorder.is_none() => {
+                    let change = self.history.redo();
+                    return self.apply_history(daemon, change);
+                }
+                MapMessage::Header(
+                    action @ (HeaderAction::AlignHorizontal | HeaderAction::AlignVertical),
+                ) => {
+                    let Some(graph) = &self.graph else {
+                        return Task::none();
+                    };
+                    let Some(targets) =
+                        layout::align_targets(graph, &self.selection.selected_txs(graph))
+                    else {
+                        return Task::none();
+                    };
+                    let align = if action == HeaderAction::AlignHorizontal {
+                        layout::align_horizontal
+                    } else {
+                        layout::align_vertical
+                    };
+                    let moves = align(graph, &self.layout, &targets, self.toggles.snap)
+                        .into_iter()
+                        .filter_map(|(id, after)| Some((id, *self.layout.get(&id)?, after)))
+                        .collect();
+                    return self.commit_move(daemon, moves);
+                }
+                MapMessage::Header(HeaderAction::ResetLayout) => {
+                    let Some(graph) = &self.graph else {
+                        return Task::none();
+                    };
+                    let change = Change::Layout {
+                        before: edit::layout_state(graph, &self.layout, &self.orders),
+                        after: edit::layout_state(graph, &layout::reset(graph), &Orders::new()),
+                    };
+                    let touched = edit::apply_layout_change(
+                        graph,
+                        &mut self.layout,
+                        &mut self.orders,
+                        &change,
+                    );
+                    self.history.record(change);
+                    let save = self.save_layout(daemon, touched, vec![]);
+                    return Task::batch([save, graph_view::fit(self.graph_id.clone())]);
+                }
                 MapMessage::Graph(event) => match event {
+                    GraphEvent::Moved { items, delta } => {
+                        let moves =
+                            edit::moved_positions(&self.layout, &items, delta, self.toggles.snap);
+                        return self.commit_move(daemon, moves);
+                    }
+                    GraphEvent::SlotDrag {
+                        item,
+                        side,
+                        from,
+                        to_display_index,
+                        offset_y,
+                    } => {
+                        self.reorder = Some(LiveReorder {
+                            item,
+                            side,
+                            from,
+                            to: to_display_index,
+                            offset_y,
+                        });
+                    }
+                    GraphEvent::SlotDropped {
+                        item,
+                        side,
+                        from,
+                        to,
+                    } => {
+                        self.reorder = None;
+                        let Some(graph) = &self.graph else {
+                            return Task::none();
+                        };
+                        let Some(MapItem::Tx(tx)) = graph.item(item) else {
+                            return Task::none();
+                        };
+                        if from == to {
+                            return Task::none();
+                        }
+                        let tx = &graph.txs()[tx];
+                        let txid = tx.history.txid;
+                        let stored = self.orders.get(&txid).cloned().unwrap_or_default();
+                        let (len, before) = match side {
+                            Side::Input => (tx.inputs.len(), stored.0),
+                            Side::Output => (tx.outputs.len(), stored.1),
+                        };
+                        let after = edit::reorder_column(before.as_deref(), len, from, to);
+                        let change = Change::Reorder {
+                            tx: txid,
+                            side,
+                            before,
+                            after,
+                        };
+                        let touched = edit::apply_layout_change(
+                            graph,
+                            &mut self.layout,
+                            &mut self.orders,
+                            &change,
+                        );
+                        self.history.record(change);
+                        return self.save_layout(daemon, touched, vec![]);
+                    }
                     GraphEvent::Zoom(zoom) => self.zoom = zoom,
                     GraphEvent::Click { target, modifiers } => self.on_click(&target, modifiers),
                     GraphEvent::EmptyClick => {
