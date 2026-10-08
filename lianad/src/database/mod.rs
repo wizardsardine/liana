@@ -7,14 +7,18 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbBlockInfo, DbCoin, DbTip, DbWalletTransaction},
+        schema::{
+            DbBlockInfo, DbCoin, DbGraphLayoutEntry, DbGraphWallet, DbTip, DbWalletTransaction,
+        },
         SqliteConn, SqliteDb,
     },
 };
 
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     iter::FromIterator,
+    str::FromStr,
     sync,
 };
 
@@ -22,6 +26,7 @@ use bip329::Labels;
 use liana::label::Label;
 pub use liana::label::LabelItem;
 use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Information about the wallet.
 ///
@@ -210,6 +215,18 @@ pub trait DatabaseConnection {
 
     /// Dump all labels
     fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
+
+    /// Stored transaction map layout entries, in insertion order.
+    fn graph_layout(&mut self) -> Vec<GraphLayoutEntry>;
+
+    /// Replace the `set` entries, then delete the `remove` items, atomically.
+    fn update_graph_layout(&mut self, set: &[GraphLayoutEntry], remove: &[GraphItem]);
+
+    /// Other wallets shown on the transaction map, in insertion order.
+    fn graph_wallets(&mut self) -> Vec<GraphWallet>;
+
+    /// Replace the stored entries of these wallets, creating the missing ones, atomically.
+    fn update_graph_wallets(&mut self, wallets: &[GraphWallet]);
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -410,6 +427,28 @@ impl DatabaseConnection for SqliteConn {
         Labels::new(labels)
     }
 
+    fn graph_layout(&mut self) -> Vec<GraphLayoutEntry> {
+        self.graph_layout()
+            .into_iter()
+            .map(GraphLayoutEntry::from)
+            .collect()
+    }
+
+    fn update_graph_layout(&mut self, set: &[GraphLayoutEntry], remove: &[GraphItem]) {
+        self.update_graph_layout(set, remove)
+    }
+
+    fn graph_wallets(&mut self) -> Vec<GraphWallet> {
+        self.graph_wallets()
+            .into_iter()
+            .map(GraphWallet::from)
+            .collect()
+    }
+
+    fn update_graph_wallets(&mut self, wallets: &[GraphWallet]) {
+        self.update_graph_wallets(wallets)
+    }
+
     fn rollback_tip(&mut self, new_tip: &BlockChainTip) {
         self.rollback_tip(new_tip)
     }
@@ -511,6 +550,46 @@ impl std::convert::From<DbCoin> for Coin {
     }
 }
 
+impl From<DbGraphLayoutEntry> for GraphLayoutEntry {
+    fn from(db_entry: DbGraphLayoutEntry) -> GraphLayoutEntry {
+        let DbGraphLayoutEntry {
+            item,
+            position,
+            input_order,
+            output_order,
+            lane_position,
+        } = db_entry;
+        GraphLayoutEntry {
+            item,
+            position,
+            input_order,
+            output_order,
+            lane_position,
+        }
+    }
+}
+
+impl From<DbGraphWallet> for GraphWallet {
+    fn from(db_wallet: DbGraphWallet) -> GraphWallet {
+        let DbGraphWallet {
+            wallet,
+            selected,
+            offset,
+            lane,
+            displayed,
+            lane_height,
+        } = db_wallet;
+        GraphWallet {
+            wallet,
+            selected,
+            offset,
+            lane,
+            displayed,
+            lane_height,
+        }
+    }
+}
+
 impl Coin {
     pub fn is_confirmed(&self) -> bool {
         self.block_info.is_some()
@@ -592,6 +671,98 @@ impl CoinStatus {
     }
 }
 
+/// An item of the transaction map.
+///
+/// The same outpoint can be a payment leaf of one transaction and a counterparty coin leaf of
+/// another, hence the two leaf kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum GraphItem {
+    Tx(bitcoin::Txid),
+    OutputLeaf(bitcoin::OutPoint),
+    InputLeaf(bitcoin::OutPoint),
+}
+
+impl fmt::Display for GraphItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GraphItem::Tx(txid) => write!(f, "tx:{txid}"),
+            GraphItem::OutputLeaf(outpoint) => write!(f, "out:{outpoint}"),
+            GraphItem::InputLeaf(outpoint) => write!(f, "in:{outpoint}"),
+        }
+    }
+}
+
+impl FromStr for GraphItem {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let err = || format!("Invalid graph item '{s}'");
+        let (kind, value) = s.split_once(':').ok_or_else(err)?;
+        match kind {
+            "tx" => bitcoin::Txid::from_str(value)
+                .map(GraphItem::Tx)
+                .map_err(|_| err()),
+            "out" => bitcoin::OutPoint::from_str(value)
+                .map(GraphItem::OutputLeaf)
+                .map_err(|_| err()),
+            "in" => bitcoin::OutPoint::from_str(value)
+                .map(GraphItem::InputLeaf)
+                .map_err(|_| err()),
+            _ => Err(err()),
+        }
+    }
+}
+
+impl Serialize for GraphItem {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for GraphItem {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        GraphItem::from_str(&s).map_err(de::Error::custom)
+    }
+}
+
+/// Stored layout of a transaction map item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphLayoutEntry {
+    pub item: GraphItem,
+    /// Top-left corner in graph coordinates.
+    pub position: Option<(f64, f64)>,
+    /// Display order of the input slots: `input_order[row]` is the true input index shown at
+    /// display row `row`. `None` means the true transaction order. Only used for `GraphItem::Tx`.
+    pub input_order: Option<Vec<u32>>,
+    /// Same as `input_order`, for the output slots.
+    pub output_order: Option<Vec<u32>>,
+    /// Top-left corner in the item's wallet lane, relative to the lane top.
+    pub lane_position: Option<(f64, f64)>,
+}
+
+/// Another wallet shown on the transaction map.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphWallet {
+    /// Identifier of the other wallet.
+    pub wallet: String,
+    pub selected: bool,
+    /// Offset of the other wallet's items in graph coordinates.
+    pub offset: Option<(f64, f64)>,
+    /// Position of the wallet's lane, `None` until the lanes are ordered.
+    pub lane: Option<u32>,
+    /// Whether the wallet's lane is displayed.
+    #[serde(default = "default_displayed")]
+    pub displayed: bool,
+    /// Height of the wallet's lane in graph coordinates, `None` for automatic.
+    #[serde(default)]
+    pub lane_height: Option<f64>,
+}
+
+fn default_displayed() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +784,62 @@ mod tests {
         assert_eq!(
             CoinStatus::from_arg(CoinStatus::Spent.to_arg()),
             Some(CoinStatus::Spent)
+        );
+    }
+
+    #[test]
+    fn graph_item_string_form() {
+        let txid = bitcoin::Txid::from_str(
+            "0b7d8cd7a8ff5e2f4a9c1f6c3ad4b26a5e9d3c2b1a0f9e8d7c6b5a4938271605",
+        )
+        .unwrap();
+        let outpoint = bitcoin::OutPoint { txid, vout: 3 };
+        let cases = [
+            (GraphItem::Tx(txid), format!("tx:{txid}")),
+            (GraphItem::OutputLeaf(outpoint), format!("out:{txid}:3")),
+            (GraphItem::InputLeaf(outpoint), format!("in:{txid}:3")),
+        ];
+        for (item, string) in cases {
+            assert_eq!(item.to_string(), string);
+            assert_eq!(GraphItem::from_str(&string), Ok(item));
+            let json = serde_json::to_string(&item).unwrap();
+            assert_eq!(json, format!("\"{string}\""));
+            assert_eq!(serde_json::from_str::<GraphItem>(&json).unwrap(), item);
+        }
+
+        for invalid in [
+            txid.to_string(),
+            format!("foo:{txid}"),
+            format!("tx:{txid}:0"),
+            format!("out:{txid}"),
+        ] {
+            assert!(GraphItem::from_str(&invalid).is_err());
+        }
+
+        let entry = GraphLayoutEntry {
+            item: GraphItem::Tx(txid),
+            position: Some((12.0, -24.5)),
+            input_order: Some(vec![1, 0]),
+            output_order: None,
+            lane_position: Some((256.0, 8.0)),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert_eq!(
+            serde_json::from_str::<GraphLayoutEntry>(&json).unwrap(),
+            entry
+        );
+
+        let bare: GraphLayoutEntry =
+            serde_json::from_str(&format!("{{\"item\": \"tx:{txid}\"}}")).unwrap();
+        assert_eq!(
+            bare,
+            GraphLayoutEntry {
+                item: GraphItem::Tx(txid),
+                position: None,
+                input_order: None,
+                output_order: None,
+                lane_position: None,
+            }
         );
     }
 }
