@@ -14,6 +14,7 @@ use crate::{
     app::{
         cache::{DaemonCache, FiatPrice},
         error::Error,
+        state::MapData,
         view,
         wallet::Wallet,
     },
@@ -69,6 +70,8 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
+    MapLoaded(Result<MapData, Error>),
+    MapLayoutSaved(Result<(), Error>),
 }
 
 impl From<ImportExportMessage> for Message {

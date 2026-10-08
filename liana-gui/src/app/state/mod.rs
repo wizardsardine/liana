@@ -39,6 +39,7 @@ use crate::daemon::{
 use crate::utils::now;
 pub use coins::CoinsPanel;
 use label::LabelsEdited;
+pub use map::{MapData, MapPanel};
 pub use psbts::PsbtsPanel;
 pub use receive::ReceivePanel;
 pub use settings::{LianaSettingsUI, SettingsState};
