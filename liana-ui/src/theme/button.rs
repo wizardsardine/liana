@@ -1,4 +1,4 @@
-use iced::border::Dash;
+use iced::border::{Dash, Radius};
 use iced::widget::button::{Catalog, Status, Style, StyleFn};
 use iced::{Background, Border, Color};
 
@@ -163,6 +163,33 @@ pub fn toolbar_toggle(on: bool) -> impl Fn(&Theme, Status) -> Style {
             Status::Active => {}
         }
         style
+    }
+}
+
+/// Style of one segment of the segmented pill: `cold` is the freeze tone.
+pub fn pill_segment(theme: &Theme, status: Status, on: bool, cold: bool, radius: Radius) -> Style {
+    let (background, text) = match (on, cold) {
+        (true, false) => (color::TRANSPARENT_GREEN, theme.colors.general.accent),
+        (true, true) => (color::GREY_5, theme.colors.text.accent),
+        (false, _) if status == Status::Hovered => (color::TRANSPARENT, theme.colors.text.primary),
+        (false, _) => (color::TRANSPARENT, theme.colors.text.secondary),
+    };
+    let fade = |c: Color| {
+        if status == Status::Disabled {
+            Color { a: c.a * 0.5, ..c }
+        } else {
+            c
+        }
+    };
+    Style {
+        background: Some(Background::Color(fade(background))),
+        text_color: fade(text),
+        border: Border {
+            radius,
+            ..Default::default()
+        },
+        shadow: Default::default(),
+        snap: false,
     }
 }
 

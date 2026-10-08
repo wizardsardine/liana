@@ -1,13 +1,17 @@
 use std::num::ParseFloatError;
 
-pub use bitcoin::Amount;
+pub use bitcoin::{Amount, SignedAmount};
 use iced::{
-    widget::{row, Space},
+    widget::{row, text::Style, Space},
     Alignment,
 };
 use liana_i18n::t;
 
-use crate::{component::text::*, theme::amount, widget::*};
+use crate::{
+    component::text::*,
+    theme::{amount, Theme},
+    widget::*,
+};
 
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
@@ -112,18 +116,53 @@ fn split_at_first_non_zero(s: String) -> Option<(String, String)> {
 // Build the rendering elements for displaying a Bitcoin amount.
 // The text should be bolded beginning where the BTC amount is non-zero.
 fn render_amount<'a, T: 'a>(amount: String, font: TextSpec, blink: bool) -> Row<'a, T> {
+    render_amount_with_style(
+        amount,
+        font,
+        move |theme| amount::zeroes(theme, blink),
+        move |theme| amount::sats(theme, blink),
+    )
+}
+
+fn render_amount_with_style<'a, T: 'a>(
+    amount: String,
+    font: TextSpec,
+    zeroes: impl Fn(&Theme) -> Style + Copy + 'a,
+    sats: impl Fn(&Theme) -> Style + Copy + 'a,
+) -> Row<'a, T> {
     let size = font.size.unwrap_or(P1_SIZE);
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
-    let (zeroes, after) = match split_at_first_non_zero(amount) {
+    let (zeroes_text, after) = match split_at_first_non_zero(amount) {
         Some((b, a)) => (b, a),
         None => (String::from("0.00 000 000"), String::from("")),
     };
 
-    let sats = apply(after, font).style(move |theme| amount::sats(theme, blink));
-    let zeroes = apply(zeroes, font).style(move |theme| amount::zeroes(theme, blink));
-    let btc = apply("BTC", font).style(move |theme| amount::zeroes(theme, blink));
+    let sats = apply(after, font).style(sats);
+    let btc = apply("BTC", font).style(zeroes);
+    let zeroes = apply(zeroes_text, font).style(zeroes);
     row![zeroes, sats, Space::with_width(spacing), btc].align_y(iced::Alignment::Center)
+}
+
+const SIGN_SPACING: u32 = 2;
+
+/// Signed amount: receive color and `+` when positive, spend color and `-` when negative.
+pub fn signed_amount<'a, T: 'a>(a: &SignedAmount, font: TextSpec) -> Row<'a, T> {
+    let (sign, tone): (Option<&str>, fn(&Theme) -> Style) = if a.is_positive() {
+        (Some("+"), amount::receive)
+    } else if a.is_negative() {
+        (Some("-"), amount::spend)
+    } else {
+        (None, |theme| amount::sats(theme, false))
+    };
+    let sign = sign.map(|s| row![apply(s, font).style(tone), Space::with_width(SIGN_SPACING)]);
+    let value = render_amount_with_style(
+        a.unsigned_abs().to_formatted_string(),
+        font,
+        |theme| amount::zeroes(theme, false),
+        tone,
+    );
+    row![sign, value].align_y(Alignment::Center)
 }
 
 macro_rules! currency_enum {

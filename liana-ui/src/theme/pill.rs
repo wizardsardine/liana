@@ -1,4 +1,4 @@
-use iced::{widget::container::Style, Background, Border};
+use iced::{widget::container::Style, Background, Border, Color};
 
 use super::{card::CARD_SHADOW, palette::ContainerPalette, styles};
 
@@ -48,4 +48,19 @@ pub fn fingerprint(theme: &crate::theme::Theme) -> ::iced::widget::container::St
         shadow: CARD_SHADOW,
         ..Default::default()
     }
+}
+
+pub fn tag(theme: &crate::theme::Theme, color: Color) -> Style {
+    let mut style = simple(theme);
+    style.text_color = Some(color);
+    style.border.color = color;
+    style
+}
+
+pub fn key_chip(theme: &crate::theme::Theme) -> Style {
+    let mut style = simple(theme);
+    style.border.width = 1.0;
+    style.border.radius = 6.0.into();
+    style.text_color = Some(theme.colors.text.primary);
+    style
 }
