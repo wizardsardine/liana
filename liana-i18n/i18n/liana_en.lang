@@ -1429,6 +1429,33 @@ loader-sync-progress-2
 loader-sync-progress-3
 => "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";;
 
+map-block-fee => "Fee {$amount} BTC"
+
+map-block-fee-unknown => "Fee unknown"
+
+map-slot-counterparty-output => "Output to a counterparty"
+
+map-slot-frozen => "Frozen"
+
+map-slot-hint
+=> "{$what}. Click to highlight its tag, double-click to edit, drag up or down to reorder.";;
+
+map-slot-our-coin-spent => "Our coin, spent"
+
+map-slot-our-coin-unspent => "Our coin, unspent"
+
+map-slot-payment => "Payment to a counterparty"
+
+map-slot-selected => "Selected for spending"
+
+map-slot-spends-counterparty-coin => "Spends a counterparty coin"
+
+map-slot-spends-our-coin => "Spends one of our coins"
+
+map-slot-tags => "Tags: {$tags}"
+
+map-unknown-amount => "Unknown amount"
+
 menu-coins-utxos => "Coins/UTXOs"
 
 menu-dashboard => "Dashboard"
