@@ -10,7 +10,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         text::{apply, truncate, TextSpec},
-        tooltip::tooltip_custom,
+        tooltip::{tooltip_custom, tooltip_unsnapped},
     },
     icon, theme,
     widget::{Element, SpaceExt},
@@ -29,6 +29,29 @@ pub fn display_label<'a, M: 'a>(
     spec: TextSpec,
     max_len: Option<usize>,
 ) -> Element<'a, M> {
+    label_view(label, spec, max_len, true)
+}
+
+/// `display_label` with tooltips not clamped into the window, for `GraphView` items.
+pub fn display_label_unsnapped<'a, M: 'a>(
+    label: &Label,
+    spec: TextSpec,
+    max_len: Option<usize>,
+) -> Element<'a, M> {
+    label_view(label, spec, max_len, false)
+}
+
+fn label_view<'a, M: 'a>(
+    label: &Label,
+    spec: TextSpec,
+    max_len: Option<usize>,
+    snap: bool,
+) -> Element<'a, M> {
+    let tooltip = if snap {
+        tooltip_custom
+    } else {
+        tooltip_unsnapped
+    };
     let (label, inherited_from) = match label {
         Label::Own(label) => (label.clone(), None),
         Label::Payment(label) => (label.clone(), Some(t!("label-inherited-payment"))),
@@ -40,7 +63,7 @@ pub fn display_label<'a, M: 'a>(
     let text: Element<'a, M> = match max_len {
         Some(max_len) if label.chars().count() > max_len => {
             let short = apply(truncate(&label, max_len), spec).style(theme::text::primary);
-            tooltip_custom(
+            tooltip(
                 apply(label, spec),
                 short,
                 iced::widget::tooltip::Position::Top,
@@ -51,7 +74,7 @@ pub fn display_label<'a, M: 'a>(
     };
     let info = inherited_from.map(|help| {
         let icon = icon::tooltip_icon().style(theme::text::secondary);
-        tooltip_custom(
+        tooltip(
             iced::widget::text(help),
             icon,
             iced::widget::tooltip::Position::Top,

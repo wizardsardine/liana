@@ -3,7 +3,7 @@ use std::num::ParseFloatError;
 pub use bitcoin::{Amount, SignedAmount};
 use iced::{
     widget::{row, text::Style, Space},
-    Alignment,
+    Alignment, Color,
 };
 use liana_i18n::t;
 
@@ -31,6 +31,22 @@ pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
 /// Amount with default colors.
 pub fn amount_with_font<'a, T: 'a>(a: &Amount, font: TextSpec) -> Row<'a, T> {
     render_amount(a.to_formatted_string(), font, false)
+}
+
+/// Amount with default colors at `alpha` opacity.
+pub fn amount_with_font_alpha<'a, T: 'a>(a: &Amount, font: TextSpec, alpha: f32) -> Row<'a, T> {
+    let fade = move |style: Style| Style {
+        color: style.color.map(|c| Color {
+            a: c.a * alpha,
+            ..c
+        }),
+    };
+    render_amount_with_style(
+        a.to_formatted_string(),
+        font,
+        move |theme| fade(amount::zeroes(theme, false)),
+        move |theme| fade(amount::sats(theme, false)),
+    )
 }
 
 /// Amount with the given size and colors.

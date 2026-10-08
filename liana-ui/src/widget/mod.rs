@@ -5,6 +5,7 @@ pub mod graph_view;
 mod menu;
 pub mod menu_button;
 pub mod modal;
+pub mod outline;
 pub mod text_input;
 
 use iced::Length;
@@ -16,6 +17,7 @@ pub type Element<'a, Message> = iced::Element<'a, Message, Theme, Renderer>;
 pub type Container<'a, Message> = iced::widget::Container<'a, Message, Theme, Renderer>;
 pub type Column<'a, Message> = iced::widget::Column<'a, Message, Theme, Renderer>;
 pub type Row<'a, Message> = iced::widget::Row<'a, Message, Theme, Renderer>;
+pub type Outline<'a, Message> = outline::Outline<'a, Message>;
 pub type Stack<'a, Message> = iced::widget::Stack<'a, Message, Theme, Renderer>;
 pub type Button<'a, Message> = iced::widget::Button<'a, Message, Theme, Renderer>;
 pub type BistateButton<'a, Message> = copy_button::BistateButton<'a, Message, Theme, Renderer>;

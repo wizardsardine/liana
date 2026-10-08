@@ -1,5 +1,6 @@
 pub mod coins;
 pub mod home;
+pub mod map;
 pub mod psbts;
 pub mod receive;
 pub mod recovery;
