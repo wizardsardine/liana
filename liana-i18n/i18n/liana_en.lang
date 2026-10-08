@@ -1578,9 +1578,17 @@ map-slot-spends-our-coin => "Spends one of our coins"
 
 map-slot-tags => "Tags: {$tags}"
 
+map-tag-business => "Business"
+
 map-tag-create => "Create tag \"{$name}\""
 
 map-tag-filter-placeholder => "Filter or create a tag"
+
+map-tag-non-kyc => "Non-KYC"
+
+map-tag-savings => "Savings"
+
+map-tag-spending => "Spending"
 
 map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
 
