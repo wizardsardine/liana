@@ -8,8 +8,10 @@ use iced::{
     Alignment, Length,
 };
 
-use liana_ui::component::button::{btn_edit, btn_remove, btn_set};
-use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
+use liana_ui::component::{
+    button::{btn_chevron, btn_edit, btn_remove, btn_set},
+    text::{p1_bold, p2_regular, H3_SIZE},
+};
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::str::FromStr;
@@ -48,14 +50,7 @@ fn descriptor_type_label(use_taproot: bool) -> String {
 /// The descriptor type as a status line: the current choice with a tooltip, and
 /// a chevron unfolding the two options.
 pub fn descriptor_type<'a>(use_taproot: bool, editing: bool) -> Element<'a, Message> {
-    let chevron = Button::new(if editing {
-        icon::collapsed_icon()
-    } else {
-        icon::collapse_icon()
-    })
-    .padding(0)
-    .style(theme::button::transparent)
-    .on_press(Message::ShowDescriptorTypeOptions(!editing));
+    let chevron = btn_chevron(editing, Message::ShowDescriptorTypeOptions(!editing));
     let status = row![
         new::caption(t!("installer-descriptor-type")).style(theme::text::secondary),
         tooltip::tooltip_with_style(

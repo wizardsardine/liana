@@ -1084,3 +1084,14 @@ pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: impl Display, msg: T) -> Button<'a, T> {
     button_compact(word, theme::button::tertiary, Some(msg)).width(BtnWidth::S)
 }
+
+pub fn btn_chevron<'a, T: Clone + 'a>(unfolded: bool, msg: T) -> Button<'a, T> {
+    Button::new(if unfolded {
+        icon::collapsed_icon()
+    } else {
+        icon::collapse_icon()
+    })
+    .padding(0)
+    .style(theme::button::transparent)
+    .on_press(msg)
+}

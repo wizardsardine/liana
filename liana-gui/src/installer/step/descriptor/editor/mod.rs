@@ -393,7 +393,7 @@ impl Step for DefineDescriptor {
                                 return Task::perform(async move { key }, Message::Clipboard);
                             }
                             message::DefineKey::OpenUrl(url) => {
-                                return Task::perform(async move { url }, Message::OpenUrl);
+                                return Task::done(Message::OpenUrl(url));
                             }
 
                             message::DefineKey::EditAlias => {

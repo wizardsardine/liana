@@ -137,11 +137,11 @@ pub fn trash_icon() -> Text<'static> {
     bootstrap_icon('\u{F5DE}')
 }
 
-pub fn collapse_icon() -> Text<'static> {
+pub fn collapse_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F285}')
 }
 
-pub fn collapsed_icon() -> Text<'static> {
+pub fn collapsed_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F282}')
 }
 
