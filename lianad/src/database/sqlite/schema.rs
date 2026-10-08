@@ -1,3 +1,5 @@
+use crate::database::GraphItem;
+
 use bip329::Label;
 use liana::{descriptors::LianaDescriptor, label};
 
@@ -133,6 +135,31 @@ CREATE TABLE labels (
     item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
     item TEXT UNIQUE NOT NULL,
     value TEXT NOT NULL
+);
+
+/* Transaction map layout: position of a map item (a transaction or a leaf) and
+ * display order of a transaction's input and output slots, as comma separated
+ * indices.
+ */
+CREATE TABLE graph_layout (
+    id INTEGER PRIMARY KEY NOT NULL,
+    item TEXT UNIQUE NOT NULL,
+    x REAL,
+    y REAL,
+    input_order TEXT,
+    output_order TEXT
+);
+
+/* Other wallets shown on this wallet's transaction map: whether each one is
+ * selected, and the offset of its map items. The row is kept when unselected
+ * so the offset is remembered.
+ */
+CREATE TABLE graph_wallets (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet TEXT UNIQUE NOT NULL,
+    selected INTEGER NOT NULL CHECK (selected IN (0,1)),
+    x REAL,
+    y REAL
 );
 ";
 
@@ -486,6 +513,93 @@ impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
             item_kind: item_kind.into(),
             item,
             value,
+        })
+    }
+}
+
+/// A row in the "graph_layout" table
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbGraphLayoutEntry {
+    pub item: GraphItem,
+    pub position: Option<(f64, f64)>,
+    pub input_order: Option<Vec<u32>>,
+    pub output_order: Option<Vec<u32>>,
+}
+
+/// Encode a slot display order as comma separated indices.
+pub fn order_column(order: Option<&[u32]>) -> Option<String> {
+    order.map(|order| {
+        order
+            .iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    })
+}
+
+fn order_from_column(text: Option<String>) -> Option<Vec<u32>> {
+    text.map(|text| {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        text.split(',')
+            .map(|index| index.parse().expect("Insane database: invalid slot order"))
+            .collect()
+    })
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbGraphLayoutEntry {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let item: String = row.get(1)?;
+        let x: Option<f64> = row.get(2)?;
+        let y: Option<f64> = row.get(3)?;
+        let input_order: Option<String> = row.get(4)?;
+        let output_order: Option<String> = row.get(5)?;
+
+        let position = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => panic!("Insane database: graph layout position with a single coordinate"),
+        };
+
+        Ok(DbGraphLayoutEntry {
+            item: GraphItem::from_str(&item).expect("Insane database: invalid graph item"),
+            position,
+            input_order: order_from_column(input_order),
+            output_order: order_from_column(output_order),
+        })
+    }
+}
+
+/// A row in the "graph_wallets" table
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbGraphWallet {
+    pub wallet: String,
+    pub selected: bool,
+    pub offset: Option<(f64, f64)>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbGraphWallet {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let wallet: String = row.get(1)?;
+        let selected: bool = row.get(2)?;
+        let x: Option<f64> = row.get(3)?;
+        let y: Option<f64> = row.get(4)?;
+
+        let offset = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => panic!("Insane database: graph wallet offset with a single coordinate"),
+        };
+
+        Ok(DbGraphWallet {
+            wallet,
+            selected,
+            offset,
         })
     }
 }

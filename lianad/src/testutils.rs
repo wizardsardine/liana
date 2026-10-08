@@ -3,7 +3,7 @@ use crate::{
     config::{BitcoinConfig, Config},
     database::{
         BlockInfo, Coin, CoinStatus, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface,
-        LabelItem, Wallet, WalletTransaction,
+        GraphItem, GraphLayoutEntry, GraphWallet, LabelItem, Wallet, WalletTransaction,
     },
     datadir::DataDirectory,
     DaemonControl, DaemonHandle,
@@ -160,6 +160,8 @@ struct DummyDbState {
     coin_default_labels: HashMap<bitcoin::OutPoint, Label>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     labels: HashMap<LabelItem, String>,
+    graph_layout: Vec<GraphLayoutEntry>,
+    graph_wallets: Vec<GraphWallet>,
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
@@ -198,6 +200,8 @@ impl DummyDatabase {
                 coin_default_labels: HashMap::new(),
                 spend_txs: HashMap::new(),
                 labels: HashMap::new(),
+                graph_layout: Vec::new(),
+                graph_wallets: Vec::new(),
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
@@ -643,6 +647,39 @@ impl DatabaseConnection for DummyDatabase {
 
     fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {
         todo!()
+    }
+
+    fn graph_layout(&mut self) -> Vec<GraphLayoutEntry> {
+        self.db.read().unwrap().graph_layout.clone()
+    }
+
+    fn update_graph_layout(&mut self, set: &[GraphLayoutEntry], remove: &[GraphItem]) {
+        let mut db = self.db.write().unwrap();
+        for entry in set {
+            match db.graph_layout.iter_mut().find(|e| e.item == entry.item) {
+                Some(stored) => *stored = entry.clone(),
+                None => db.graph_layout.push(entry.clone()),
+            }
+        }
+        db.graph_layout.retain(|e| !remove.contains(&e.item));
+    }
+
+    fn graph_wallets(&mut self) -> Vec<GraphWallet> {
+        self.db.read().unwrap().graph_wallets.clone()
+    }
+
+    fn update_graph_wallets(&mut self, wallets: &[GraphWallet]) {
+        let mut db = self.db.write().unwrap();
+        for wallet in wallets {
+            match db
+                .graph_wallets
+                .iter_mut()
+                .find(|w| w.wallet == wallet.wallet)
+            {
+                Some(stored) => *stored = wallet.clone(),
+                None => db.graph_wallets.push(wallet.clone()),
+            }
+        }
     }
 }
 

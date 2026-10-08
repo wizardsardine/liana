@@ -15,15 +15,16 @@ use crate::{
     database::{
         sqlite::{
             schema::{
-                default_label_columns, DbAddress, DbCoin, DbLabel, DbLabelledKind,
-                DbSpendTransaction, DbTip, DbWallet, DbWalletTransaction, SCHEMA,
+                default_label_columns, order_column, DbAddress, DbCoin, DbGraphLayoutEntry,
+                DbGraphWallet, DbLabel, DbLabelledKind, DbSpendTransaction, DbTip, DbWallet,
+                DbWalletTransaction, SCHEMA,
             },
             utils::{
                 create_fresh_db, curr_timestamp, db_exec, db_query, db_tx_query, db_version,
                 maybe_apply_migration, LOOK_AHEAD_LIMIT,
             },
         },
-        Coin, CoinStatus, LabelItem,
+        Coin, CoinStatus, GraphItem, GraphLayoutEntry, GraphWallet, LabelItem,
     },
 };
 use liana::{descriptors::LianaDescriptor, label::Label};
@@ -43,7 +44,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 9;
+const DB_VERSION: i64 = 10;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -687,6 +688,72 @@ impl SqliteConn {
             rusqlite::params![limit, offset],
             |row| row.try_into(),
         )
+        .expect("Db must not fail")
+    }
+
+    pub fn graph_layout(&mut self) -> Vec<DbGraphLayoutEntry> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM graph_layout ORDER BY id",
+            rusqlite::params![],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
+
+    pub fn update_graph_layout(&mut self, set: &[GraphLayoutEntry], remove: &[GraphItem]) {
+        db_exec(&mut self.conn, |db_tx| {
+            for entry in set {
+                let (x, y) = entry.position.unzip();
+                db_tx.execute(
+                    "INSERT INTO graph_layout (item, x, y, input_order, output_order) \
+                    VALUES (?1, ?2, ?3, ?4, ?5) \
+                    ON CONFLICT(item) DO UPDATE SET x=excluded.x, y=excluded.y, \
+                    input_order=excluded.input_order, output_order=excluded.output_order",
+                    rusqlite::params![
+                        entry.item.to_string(),
+                        x,
+                        y,
+                        order_column(entry.input_order.as_deref()),
+                        order_column(entry.output_order.as_deref()),
+                    ],
+                )?;
+            }
+            for item in remove {
+                db_tx.execute(
+                    "DELETE FROM graph_layout WHERE item = ?1",
+                    rusqlite::params![item.to_string()],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Db must not fail")
+    }
+
+    pub fn graph_wallets(&mut self) -> Vec<DbGraphWallet> {
+        db_query(
+            &mut self.conn,
+            "SELECT * FROM graph_wallets ORDER BY id",
+            rusqlite::params![],
+            |row| row.try_into(),
+        )
+        .expect("Db must not fail")
+    }
+
+    pub fn update_graph_wallets(&mut self, wallets: &[GraphWallet]) {
+        db_exec(&mut self.conn, |db_tx| {
+            for wallet in wallets {
+                let (x, y) = wallet.offset.unzip();
+                db_tx.execute(
+                    "INSERT INTO graph_wallets (wallet, selected, x, y) \
+                    VALUES (?1, ?2, ?3, ?4) \
+                    ON CONFLICT(wallet) DO UPDATE SET selected=excluded.selected, \
+                    x=excluded.x, y=excluded.y",
+                    rusqlite::params![wallet.wallet, wallet.selected, x, y],
+                )?;
+            }
+            Ok(())
+        })
         .expect("Db must not fail")
     }
 
@@ -1482,6 +1549,134 @@ CREATE TABLE labels (
             conn.update_labels(&txids_labels);
             let db_labels = conn.db_labels(&items);
             assert!(db_labels.is_empty());
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_graph_layout_update() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let txid = bitcoin::Txid::from_slice(&[1; 32]).unwrap();
+            let outpoint = bitcoin::OutPoint { txid, vout: 1 };
+            let mut conn = db.connection().unwrap();
+            assert!(conn.graph_layout().is_empty());
+
+            let tx = DbGraphLayoutEntry {
+                item: GraphItem::Tx(txid),
+                position: Some((10.0, -20.5)),
+                input_order: Some(vec![2, 0, 1]),
+                output_order: Some(vec![1, 0]),
+            };
+            let output_leaf = DbGraphLayoutEntry {
+                item: GraphItem::OutputLeaf(outpoint),
+                position: Some((300.0, 40.0)),
+                input_order: None,
+                output_order: None,
+            };
+            let as_entry = |e: &DbGraphLayoutEntry| GraphLayoutEntry {
+                item: e.item,
+                position: e.position,
+                input_order: e.input_order.clone(),
+                output_order: e.output_order.clone(),
+            };
+            conn.update_graph_layout(&[as_entry(&tx), as_entry(&output_leaf)], &[]);
+            assert_eq!(conn.graph_layout(), vec![tx.clone(), output_leaf.clone()]);
+
+            // Setting an item again replaces the whole entry.
+            let tx = DbGraphLayoutEntry {
+                position: Some((11.0, 22.0)),
+                output_order: None,
+                ..tx
+            };
+            conn.update_graph_layout(&[as_entry(&tx)], &[]);
+            assert_eq!(conn.graph_layout(), vec![tx.clone(), output_leaf.clone()]);
+
+            // The same outpoint can also be an input leaf.
+            let input_leaf = DbGraphLayoutEntry {
+                item: GraphItem::InputLeaf(outpoint),
+                position: Some((-5.0, 6.0)),
+                input_order: None,
+                output_order: None,
+            };
+            conn.update_graph_layout(&[as_entry(&input_leaf)], &[]);
+            assert_eq!(conn.graph_layout().len(), 3);
+
+            // Empty orders round trip as empty, not as missing.
+            let tx = DbGraphLayoutEntry {
+                input_order: Some(vec![]),
+                output_order: Some(vec![]),
+                ..tx
+            };
+            conn.update_graph_layout(&[as_entry(&tx)], &[]);
+            assert_eq!(
+                conn.graph_layout(),
+                vec![tx.clone(), output_leaf.clone(), input_leaf.clone()]
+            );
+
+            let never_stored = GraphItem::Tx(bitcoin::Txid::from_slice(&[2; 32]).unwrap());
+            conn.update_graph_layout(&[], &[output_leaf.item, never_stored]);
+            assert_eq!(conn.graph_layout(), vec![tx.clone(), input_leaf.clone()]);
+
+            // An item both set and removed ends up removed.
+            conn.update_graph_layout(&[as_entry(&tx)], &[tx.item]);
+            assert_eq!(conn.graph_layout(), vec![input_leaf]);
+        }
+
+        fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn db_graph_wallets_update() {
+        let (tmp_dir, _, _, db) = dummy_db();
+
+        {
+            let mut conn = db.connection().unwrap();
+            assert!(conn.graph_wallets().is_empty());
+
+            let first = DbGraphWallet {
+                wallet: "a1b2c3d4-1700000000".to_string(),
+                selected: true,
+                offset: Some((-120.0, 640.5)),
+            };
+            let second = DbGraphWallet {
+                wallet: "e5f6a7b8-1700000001".to_string(),
+                selected: false,
+                offset: None,
+            };
+            let as_wallet = |w: &DbGraphWallet| GraphWallet {
+                wallet: w.wallet.clone(),
+                selected: w.selected,
+                offset: w.offset,
+            };
+            conn.update_graph_wallets(&[as_wallet(&first), as_wallet(&second)]);
+            assert_eq!(conn.graph_wallets(), vec![first.clone(), second.clone()]);
+
+            // Unselecting a wallet keeps its row and its offset.
+            let first = DbGraphWallet {
+                selected: false,
+                ..first
+            };
+            conn.update_graph_wallets(&[as_wallet(&first)]);
+            assert_eq!(conn.graph_wallets(), vec![first.clone(), second.clone()]);
+
+            // Setting a wallet again replaces the whole entry.
+            let second = DbGraphWallet {
+                selected: true,
+                offset: Some((0.0, 80.0)),
+                ..second
+            };
+            conn.update_graph_wallets(&[as_wallet(&second)]);
+            assert_eq!(conn.graph_wallets(), vec![first.clone(), second.clone()]);
+
+            let first = DbGraphWallet {
+                offset: None,
+                ..first
+            };
+            conn.update_graph_wallets(&[as_wallet(&first)]);
+            assert_eq!(conn.graph_wallets(), vec![first, second]);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
@@ -3206,7 +3401,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v0_to_v9_migration() {
+    fn v0_to_v10_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
@@ -3312,7 +3507,7 @@ CREATE TABLE labels (
         {
             let mut conn = db.connection().unwrap();
             let version = conn.db_version();
-            assert_eq!(version, 9);
+            assert_eq!(version, 10);
         }
 
         // The default labels are not computed yet.
@@ -3387,6 +3582,46 @@ CREATE TABLE labels (
             assert_eq!(db_labels[0].value, "hello");
         }
 
+        // The graph layout table has been created.
+        {
+            let mut conn = db.connection().unwrap();
+            let entry = GraphLayoutEntry {
+                item: GraphItem::Tx(bitcoin::Txid::from_slice(&[1; 32]).unwrap()),
+                position: Some((1.0, 2.0)),
+                input_order: None,
+                output_order: None,
+            };
+            conn.update_graph_layout(&[entry.clone()], &[]);
+            assert_eq!(
+                conn.graph_layout(),
+                vec![DbGraphLayoutEntry {
+                    item: entry.item,
+                    position: entry.position,
+                    input_order: None,
+                    output_order: None,
+                }]
+            );
+        }
+
+        // The graph wallets table has been created.
+        {
+            let mut conn = db.connection().unwrap();
+            let wallet = GraphWallet {
+                wallet: "a1b2c3d4-1700000000".to_string(),
+                selected: true,
+                offset: Some((3.0, 4.0)),
+            };
+            conn.update_graph_wallets(&[wallet.clone()]);
+            assert_eq!(
+                conn.graph_wallets(),
+                vec![DbGraphWallet {
+                    wallet: wallet.wallet,
+                    selected: wallet.selected,
+                    offset: wallet.offset,
+                }]
+            );
+        }
+
         // In v6, we can get and set the last poll timestamp.
         {
             let mut conn = db.connection().unwrap();
@@ -3399,7 +3634,7 @@ CREATE TABLE labels (
     }
 
     #[test]
-    fn v3_to_v9_migration() {
+    fn v3_to_v10_migration() {
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
@@ -3551,10 +3786,10 @@ CREATE TABLE labels (
 
             // Migrate the DB.
             maybe_apply_migration(&db_path, &bitcoin_txs).unwrap();
-            assert_eq!(conn.db_version(), 9);
+            assert_eq!(conn.db_version(), 10);
             // Migrating twice will be a no-op. No need to pass `bitcoin_txs` second time.
             maybe_apply_migration(&db_path, &[]).unwrap();
-            assert!(conn.db_version() == 9);
+            assert!(conn.db_version() == 10);
 
             // Compare the `DbCoin`s with the expected values.
             let coins_post = conn.coins(&[], &[]);

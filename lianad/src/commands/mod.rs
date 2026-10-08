@@ -15,7 +15,7 @@ use crate::{
     DaemonControl, VERSION,
 };
 
-pub use crate::database::{CoinStatus, LabelItem};
+pub use crate::database::{CoinStatus, GraphItem, GraphLayoutEntry, GraphWallet, LabelItem};
 
 use liana::{
     descriptors,
@@ -866,6 +866,30 @@ impl DaemonControl {
         }
     }
 
+    pub fn get_graph_layout(&self) -> GetGraphLayoutResult {
+        let mut db_conn = self.db.connection();
+        GetGraphLayoutResult {
+            entries: db_conn.graph_layout(),
+        }
+    }
+
+    pub fn update_graph_layout(&self, set: &[GraphLayoutEntry], remove: &[GraphItem]) {
+        let mut db_conn = self.db.connection();
+        db_conn.update_graph_layout(set, remove);
+    }
+
+    pub fn get_graph_wallets(&self) -> GetGraphWalletsResult {
+        let mut db_conn = self.db.connection();
+        GetGraphWalletsResult {
+            wallets: db_conn.graph_wallets(),
+        }
+    }
+
+    pub fn update_graph_wallets(&self, wallets: &[GraphWallet]) {
+        let mut db_conn = self.db.connection();
+        db_conn.update_graph_wallets(wallets);
+    }
+
     pub fn list_spend(
         &self,
         txids: Option<Vec<bitcoin::Txid>>,
@@ -1409,6 +1433,16 @@ pub struct GetLabelsResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLabelsBip329Result {
     pub labels: crate::bip329::Labels,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetGraphLayoutResult {
+    pub entries: Vec<GraphLayoutEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetGraphWalletsResult {
+    pub wallets: Vec<GraphWallet>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
