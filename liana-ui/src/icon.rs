@@ -261,6 +261,66 @@ pub fn file_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F392}')
 }
 
+pub fn diagram_3_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F2EE}')
+}
+
+pub fn geo_alt_fill_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F3E7}')
+}
+
+pub fn arrow_90deg_left_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F10F}')
+}
+
+pub fn arrow_90deg_right_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F110}')
+}
+
+pub fn arrow_counterclockwise_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F117}')
+}
+
+pub fn bounding_box_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F1B6}')
+}
+
+pub fn align_middle_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F106}')
+}
+
+pub fn align_center_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F104}')
+}
+
+pub fn zoom_in_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F62C}')
+}
+
+pub fn zoom_out_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F62D}')
+}
+
+pub fn arrows_fullscreen_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F14D}')
+}
+
+pub fn tag_fill_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F5AF}')
+}
+
+pub fn snow_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F56D}')
+}
+
+pub fn check_square_fill_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F26C}')
+}
+
+pub fn exclamation_circle_fill_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F332}')
+}
+
 pub fn arrow_repeat() -> Text<'static> {
     iconex_icon('\u{46BB}')
 }

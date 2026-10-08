@@ -3,6 +3,7 @@ use iced::widget::button::{Catalog, Status, Style, StyleFn};
 use iced::{Background, Border, Color};
 
 use super::{card::CARD_RADIUS, palette::Button, Theme};
+use crate::color;
 
 pub const BUTTON_RADIUS: f32 = 12.0;
 /// On/off length of the auxiliary button's dashed border, in logical pixels.
@@ -137,6 +138,32 @@ pub fn transparent_primary_text(theme: &Theme, status: Status) -> Style {
     );
     style.text_color = theme.colors.text.primary;
     style
+}
+
+/// Style of the icon-only map toolbar buttons: the 1 px border is always
+/// present so toggling never changes the size.
+pub fn toolbar_toggle(on: bool) -> impl Fn(&Theme, Status) -> Style {
+    move |theme, status| {
+        let accent = theme.colors.general.accent;
+        let mut style = transparent(theme, status);
+        style.border = Border {
+            radius: BUTTON_RADIUS.into(),
+            width: 1.0,
+            color: Color::TRANSPARENT,
+            ..Default::default()
+        };
+        match status {
+            Status::Disabled => {}
+            _ if on => {
+                style.background = Some(Background::Color(color::TRANSPARENT_GREEN));
+                style.text_color = accent;
+                style.border.color = accent;
+            }
+            Status::Hovered | Status::Pressed => style.text_color = accent,
+            Status::Active => {}
+        }
+        style
+    }
 }
 
 pub fn breadcrumb(theme: &Theme, _status: Status) -> Style {

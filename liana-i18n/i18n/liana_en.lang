@@ -17,6 +17,16 @@ btn-add-safety-net => "Add Safety Net"
 
 btn-add-wallet => "Add wallet"
 
+btn-align-h-disabled-tooltip
+=> "Align horizontally: select a transaction of a chain, or group several transactions";;
+
+btn-align-h-tooltip => "Align {$count} transactions in a row, oldest on the left"
+
+btn-align-v-disabled-tooltip
+=> "Align vertically: select a transaction of a chain, or group several transactions";;
+
+btn-align-v-tooltip => "Stack {$count} transactions in a column, oldest on top"
+
 btn-apply => "Apply"
 
 btn-approve => "Approve"
@@ -71,6 +81,8 @@ btn-fee-level-low => "Low"
 
 btn-fee-level-medium => "Medium"
 
+btn-fit-tooltip => "Fit to screen"
+
 btn-generate => "Generate"
 
 btn-generate-address => "Generate address"
@@ -83,6 +95,9 @@ btn-go-to-replacement => "Go to replacement"
 
 btn-go-to-rescan => "Go to rescan"
 
+btn-highlight-unspent-tooltip
+=> "{ $count ->\n    [one] Highlight unspent coins (U): 1 coin, {$amount} BTC\n   *[other] Highlight unspent coins (U): {$count} coins, {$amount} BTC\n}";;
+
 btn-ignore => "Ignore"
 
 btn-import => "Import"
@@ -92,6 +107,8 @@ btn-keep-my-changes => "Keep my changes"
 btn-login => "Login"
 
 btn-manage-keys => "Manage Keys"
+
+btn-map => "Map"
 
 btn-mark-keys-ready => "Mark keys as ready"
 
@@ -113,6 +130,8 @@ btn-previous-arrow => "< Previous"
 
 btn-processing => "Processing..."
 
+btn-redo-tooltip => "Redo ({$key}+Shift+Z or {$key}+Y)"
+
 btn-register-on-device => "Register on device"
 
 btn-reload => "Reload"
@@ -120,6 +139,8 @@ btn-reload => "Reload"
 btn-replace => "Replace"
 
 btn-resend-token => "Resend token"
+
+btn-reset-layout => "Reset layout"
 
 btn-reset-timelock => "Reset timelock"
 
@@ -130,6 +151,9 @@ btn-save => "Save"
 btn-see-more-details => "See more details"
 
 btn-select => "Select"
+
+btn-select-area-tooltip
+=> "Select an area: drag on the canvas to group several items (or hold {$key})";;
 
 btn-send-for-approval => "Send for approval"
 
@@ -143,6 +167,10 @@ btn-set-keys => "Set keys"
 
 btn-share-xpubs => "Share Xpubs"
 
+btn-shortcuts-tooltip => "Shortcuts (?)"
+
+btn-show-on-map => "Show on map"
+
 btn-show-qr => "Show QR Code"
 
 btn-sign => "Sign"
@@ -151,6 +179,9 @@ btn-skip => "Skip"
 
 btn-skip-registration => "Skip registration"
 
+btn-snap-tooltip
+=> "Snap to grid: dragged blocks and leaves align to the canvas grid";;
+
 btn-split-tab => "Split"
 
 btn-start-rescan => "Start rescan"
@@ -158,6 +189,8 @@ btn-start-rescan => "Start rescan"
 btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
+
+btn-undo-tooltip => "Undo ({$key}+Z)"
 
 btn-unlock-all => "Unlock all"
 
@@ -168,6 +201,10 @@ btn-updating => "Updating"
 btn-verify-on-device => "Verify on hardware device"
 
 btn-yes => "Yes"
+
+btn-zoom-in-tooltip => "Zoom in"
+
+btn-zoom-out-tooltip => "Zoom out"
 
 business-access-error => "Access Error"
 
@@ -586,6 +623,10 @@ common-feerate => "Feerate"
 common-feerate-value => "({$rate} sats/vbyte)"
 
 common-fetching => "Fetching ..."
+
+common-key-cmd => "Cmd"
+
+common-key-ctrl => "Ctrl"
 
 common-learn-more => "Learn more"
 
