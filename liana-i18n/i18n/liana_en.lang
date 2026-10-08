@@ -1475,6 +1475,8 @@ map-slot-tags => "Tags: {$tags}"
 
 map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
 
+map-title => "Map"
+
 map-unknown-amount => "Unknown amount"
 
 menu-coins-utxos => "Coins/UTXOs"
