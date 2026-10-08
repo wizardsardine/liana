@@ -12,7 +12,7 @@ use iced::{
 };
 use liana::{
     label::Label,
-    miniscript::bitcoin::{Amount, OutPoint, SignedAmount},
+    miniscript::bitcoin::{Address, Amount, OutPoint, SignedAmount},
 };
 use liana_ui::{
     component::{
@@ -22,7 +22,10 @@ use liana_ui::{
             block::{block, BlockState, SlotKind, SlotReorder, SlotState, SlotView},
             header::map_header,
             leaf::{self, LeafState},
-            modals::{coin_action_bar, label_modal_body, tag_popover, LabelSubject, TxDirection},
+            modals::{
+                coin_action_bar, label_modal_body, reuse_modal_body, shortcuts_modal_body,
+                tag_popover, LabelSubject, TxDirection,
+            },
             overlays::{coin_selection_bar, empty_state, legend, loading_state, tag_status_bar},
         },
     },
@@ -51,6 +54,7 @@ use crate::{
         },
     },
     daemon::model::TransactionKind,
+    t,
 };
 
 /// What a block shows, owned so `lazy` rebuilds it only when it changes.
@@ -105,6 +109,7 @@ pub fn map_view<'a>(
     selected: &HashSet<ItemId>,
     tag_highlight: Option<&TagHighlight>,
     toggles: Toggles,
+    command_held: bool,
     can_undo: bool,
     can_redo: bool,
     align_count: usize,
@@ -121,7 +126,7 @@ pub fn map_view<'a>(
         enabled,
         can_undo,
         can_redo,
-        toggles.area,
+        toggles.area || command_held,
         toggles.unspent,
         toggles.snap,
         unspent.len(),
@@ -572,4 +577,46 @@ pub fn label_modal<'a>(
         ModalWidth::S,
         body,
     ))
+}
+
+/// Address reuse modal (spec 12.4), `None` when the address has no leaf.
+pub fn reuse_modal<'a>(graph: &TxGraph, address: &Address) -> Option<Element<'a, Message>> {
+    let leaves = graph.leaves_on_address(address);
+    let address_label = graph.address_label(*leaves.first()?);
+    let outputs = leaves
+        .iter()
+        .filter_map(|&index| {
+            let leaf = &graph.leaves()[index];
+            let tx = &graph.txs()[leaf.tx];
+            let amount = match tx.outputs.get(leaf.index)? {
+                OutputSlot::OurCoin { amount, .. }
+                | OutputSlot::Payment { amount, .. }
+                | OutputSlot::CounterpartyOutput { amount, .. } => *amount,
+            };
+            Some((
+                graph.tx_label(leaf.tx),
+                tx.history.datetime(),
+                amount,
+                Message::Map(MapMessage::ReuseRowSelected(graph.leaf_item(index))),
+            ))
+        })
+        .collect();
+    let body = reuse_modal_body(
+        &address_label,
+        &address.to_string(),
+        outputs,
+        Message::Map(MapMessage::CloseModal),
+    );
+    Some(modal_view(None::<String>, None, None, ModalWidth::M, body))
+}
+
+/// Shortcuts help modal (spec 12.5).
+pub fn shortcuts_modal<'a>() -> Element<'a, Message> {
+    modal_view(
+        Some(t!("map-shortcuts-title")),
+        None,
+        Some(Message::Map(MapMessage::CloseModal)),
+        ModalWidth::M,
+        shortcuts_modal_body(),
+    )
 }

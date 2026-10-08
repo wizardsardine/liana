@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{keyboard::Modifiers, Point, Rectangle};
+use liana::miniscript::bitcoin::Address;
 use liana_ui::{
     component::panels::map::{
         block::{BlockState, SlotState},
@@ -141,8 +142,17 @@ pub fn display_state(
     tag: Option<&TagHighlight>,
     coin_ui: &CoinUi,
     unspent: bool,
+    reuse: Option<&Address>,
 ) -> DisplayState {
-    let siblings = selection::siblings(graph, selection);
+    let mut siblings = selection::siblings(graph, selection);
+    if let Some(address) = reuse {
+        siblings.extend(
+            graph
+                .leaves_on_address(address)
+                .iter()
+                .map(|leaf| graph.leaf_item(*leaf)),
+        );
+    }
     let in_group = selection.is_group();
     let single_tx = selection
         .items()
@@ -368,6 +378,7 @@ mod tests {
             tag,
             coin_ui,
             unspent,
+            None,
         )
     }
 
@@ -598,6 +609,30 @@ mod tests {
             .filter(|(state, _)| *state == LeafState::Sibling)
             .count();
         assert_eq!(siblings, 3);
+    }
+
+    #[test]
+    fn reuse_highlights_every_leaf_of_the_address() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let layout = layout::place(&graph, &HashMap::new());
+        let s = display_state(
+            &graph,
+            &layout,
+            &Orders::new(),
+            &Selection::default(),
+            None,
+            None,
+            &CoinUi::default(),
+            false,
+            Some(&f.landlord),
+        );
+        let leaves = graph.leaves_on_address(&f.landlord);
+        assert_eq!(leaves.len(), 4);
+        for index in leaves {
+            assert_eq!(s.leaves[*index].0, LeafState::Sibling);
+            assert!(s.leaf_edges[*index]);
+        }
     }
 
     #[test]

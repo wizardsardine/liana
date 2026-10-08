@@ -14,12 +14,21 @@ use std::{
     sync::Arc,
 };
 
-use iced::{advanced::widget::Id, keyboard::Modifiers, Point, Subscription, Task};
-use liana::miniscript::bitcoin::{OutPoint, Txid};
+use iced::{
+    advanced::widget::Id,
+    event,
+    keyboard::{self, key::Named, Modifiers},
+    window, Event, Point, Rectangle, Size, Subscription, Task,
+};
+use liana::miniscript::bitcoin::{Address, OutPoint, Txid};
 use liana_ui::{
     component::panels::map::header::HeaderAction,
     widget::{
-        graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId, Side, Target},
+        graph_view::{
+            self,
+            geometry::{LEAF_HEIGHT, LEAF_WIDTH, ZOOM_STEP},
+            GraphEvent, ItemId, Side, Target,
+        },
         modal::Modal,
         text_input, Element,
     },
@@ -43,7 +52,7 @@ use crate::{
             },
             State,
         },
-        view::{self, LabelMessage, MapMessage},
+        view::{self, LabelMessage, MapKey, MapMessage},
         wallet::Wallet,
     },
     daemon::{
@@ -99,9 +108,73 @@ pub enum LabelTarget {
     Leaf(usize),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MapModal {
     Label(LabelTarget),
+    Reuse(Address),
+}
+
+/// What Esc does, first match wins (spec 14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EscapeAction {
+    CloseHelp,
+    ClosePopover,
+    CloseModal,
+    ClearSelection,
+}
+
+pub fn escape_action(help: bool, popover: bool, modal: bool) -> EscapeAction {
+    if help {
+        EscapeAction::CloseHelp
+    } else if popover {
+        EscapeAction::ClosePopover
+    } else if modal {
+        EscapeAction::CloseModal
+    } else {
+        EscapeAction::ClearSelection
+    }
+}
+
+/// Keys are only taken when no widget handled them, except Esc captured by a text input.
+pub fn key_action(
+    key: &keyboard::Key,
+    modifiers: Modifiers,
+    status: event::Status,
+) -> Option<MapKey> {
+    let ignored = status == event::Status::Ignored;
+    let command = modifiers.command();
+    match key {
+        keyboard::Key::Named(Named::Escape) => match status {
+            event::Status::Ignored if !command => Some(MapKey::Escape),
+            event::Status::Captured => Some(MapKey::EscapeInInput),
+            _ => None,
+        },
+        keyboard::Key::Character(c) if ignored => match c.as_str() {
+            "z" | "Z" if command => Some(if modifiers.shift() {
+                MapKey::Redo
+            } else {
+                MapKey::Undo
+            }),
+            "y" | "Y" if command => Some(MapKey::Redo),
+            "?" if !command => Some(MapKey::Shortcuts),
+            "u" | "U" if !command => Some(MapKey::Unspent),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn map_event(event: Event, status: event::Status, _: window::Id) -> Option<Message> {
+    let key = match event {
+        Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+            key_action(&key, modifiers, status)?
+        }
+        Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+            MapKey::Command(modifiers.command())
+        }
+        _ => return None,
+    };
+    Some(Message::View(view::Message::Map(MapMessage::Key(key))))
 }
 
 pub struct MapPanel {
@@ -121,6 +194,9 @@ pub struct MapPanel {
     pending_focus: Option<MapFocus>,
     warning: Option<Error>,
     modal: Option<MapModal>,
+    /// The help sits above any other modal.
+    shortcuts_open: bool,
+    command_held: bool,
     /// Filter text of the open tag popover.
     tag_popover: Option<String>,
     tag_input_id: text_input::Id,
@@ -203,6 +279,8 @@ impl MapPanel {
             pending_focus: None,
             warning: None,
             modal: None,
+            shortcuts_open: false,
+            command_held: false,
             tag_popover: None,
             tag_input_id: text_input::Id::unique(),
             labels_edited: LabelsEdited::default(),
@@ -295,6 +373,37 @@ impl MapPanel {
         }
         let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
         self.save_layout(daemon, touched, vec![])
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.tag_highlight = None;
+    }
+
+    /// Cancels the unsaved edit of the open label modal.
+    fn cancel_label_edit(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        let key = match (&self.graph, &self.modal) {
+            (Some(graph), Some(MapModal::Label(target))) => label_key(graph, target),
+            _ => None,
+        };
+        match key {
+            Some(key) => {
+                let cancel = view::Message::Label(vec![key], LabelMessage::Cancel);
+                self.forward_label(daemon, Message::View(cancel))
+            }
+            None => Task::none(),
+        }
+    }
+
+    /// Closes the help, else the popover and the modal.
+    fn close_modal(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        if mem::take(&mut self.shortcuts_open) {
+            return Task::none();
+        }
+        self.tag_popover = None;
+        let cancel = self.cancel_label_edit(daemon);
+        self.modal = None;
+        cancel
     }
 
     /// The unspent coin of ours held by the slot of the open label modal.
@@ -426,6 +535,10 @@ impl State for MapPanel {
                 self.tag_highlight.as_ref(),
                 &self.coin_ui,
                 self.toggles.unspent,
+                match &self.modal {
+                    Some(MapModal::Reuse(address)) => Some(address),
+                    _ => None,
+                },
             )
         });
         let align_count = self
@@ -446,6 +559,7 @@ impl State for MapPanel {
                 self.selection.items(),
                 self.tag_highlight.as_ref(),
                 self.toggles,
+                self.command_held,
                 self.history.can_undo(),
                 self.history.can_redo(),
                 align_count,
@@ -464,13 +578,20 @@ impl State for MapPanel {
                 self.tag_popover.as_deref(),
                 &self.tag_input_id,
             ),
+            (Some(graph), Some(MapModal::Reuse(address))) => view::map::reuse_modal(graph, address),
             _ => None,
         };
-        match modal {
-            Some(modal) => Modal::new(dashboard, modal)
-                .on_blur(Some(view::Message::Map(MapMessage::CloseModal)))
-                .into(),
+        let close = Some(view::Message::Map(MapMessage::CloseModal));
+        let base = match modal {
+            Some(modal) => Modal::new(dashboard, modal).on_blur(close.clone()).into(),
             None => dashboard,
+        };
+        if self.shortcuts_open {
+            Modal::new(base, view::map::shortcuts_modal())
+                .on_blur(close)
+                .into()
+        } else {
+            base
         }
     }
 
@@ -538,19 +659,57 @@ impl State for MapPanel {
                 MapMessage::Header(HeaderAction::ToggleArea) => {
                     self.toggles.area = !self.toggles.area;
                 }
-                MapMessage::Header(HeaderAction::ToggleUnspent) => {
+                MapMessage::Header(HeaderAction::ToggleUnspent)
+                | MapMessage::Key(MapKey::Unspent) => {
                     self.toggles.unspent = !self.toggles.unspent;
                 }
                 MapMessage::Header(HeaderAction::ToggleSnap) => {
                     self.toggles.snap = !self.toggles.snap;
                 }
-                MapMessage::Header(HeaderAction::Undo) if self.reorder.is_none() => {
+                MapMessage::Header(HeaderAction::Undo) | MapMessage::Key(MapKey::Undo)
+                    if self.reorder.is_none() =>
+                {
                     let change = self.history.undo();
                     return self.apply_history(daemon, change);
                 }
-                MapMessage::Header(HeaderAction::Redo) if self.reorder.is_none() => {
+                MapMessage::Header(HeaderAction::Redo) | MapMessage::Key(MapKey::Redo)
+                    if self.reorder.is_none() =>
+                {
                     let change = self.history.redo();
                     return self.apply_history(daemon, change);
+                }
+                MapMessage::Header(HeaderAction::Shortcuts)
+                | MapMessage::Key(MapKey::Shortcuts) => {
+                    self.shortcuts_open = !self.shortcuts_open;
+                }
+                MapMessage::Key(MapKey::Command(held)) => self.command_held = held,
+                MapMessage::Key(MapKey::Escape) => {
+                    match escape_action(
+                        self.shortcuts_open,
+                        self.tag_popover.is_some(),
+                        self.modal.is_some(),
+                    ) {
+                        EscapeAction::CloseHelp | EscapeAction::CloseModal => {
+                            return self.close_modal(daemon);
+                        }
+                        EscapeAction::ClosePopover => self.tag_popover = None,
+                        EscapeAction::ClearSelection => self.clear_selection(),
+                    }
+                }
+                MapMessage::Key(MapKey::EscapeInInput) => {
+                    if self.tag_popover.take().is_none() {
+                        return self.cancel_label_edit(daemon);
+                    }
+                }
+                MapMessage::ReuseRowSelected(leaf) => {
+                    self.modal = None;
+                    self.selection.click(leaf);
+                    self.tag_highlight = None;
+                    let Some(at) = self.layout.get(&leaf) else {
+                        return Task::none();
+                    };
+                    let target = Rectangle::new(*at, Size::new(LEAF_WIDTH, LEAF_HEIGHT));
+                    return graph_view::focus(self.graph_id.clone(), target);
                 }
                 MapMessage::Header(
                     action @ (HeaderAction::AlignHorizontal | HeaderAction::AlignVertical),
@@ -661,6 +820,13 @@ impl State for MapPanel {
                         let label = match target {
                             Target::Item(id) => match graph.item(id) {
                                 Some(MapItem::Tx(tx)) => Some(LabelTarget::Tx(tx)),
+                                Some(MapItem::Leaf(leaf)) => {
+                                    let leaf = &graph.leaves()[leaf];
+                                    if let (true, Some(address)) = (leaf.reused, &leaf.address) {
+                                        self.modal = Some(MapModal::Reuse(address.clone()));
+                                    }
+                                    None
+                                }
                                 _ => None,
                             },
                             Target::Slot(item, side, row) => {
@@ -673,10 +839,7 @@ impl State for MapPanel {
                             self.modal = Some(MapModal::Label(label));
                         }
                     }
-                    GraphEvent::EmptyClick => {
-                        self.selection.clear();
-                        self.tag_highlight = None;
-                    }
+                    GraphEvent::EmptyClick => self.clear_selection(),
                     GraphEvent::Hover(target) => self.hover = target,
                     GraphEvent::AreaSelected {
                         items, additive, ..
@@ -690,18 +853,7 @@ impl State for MapPanel {
                         }
                     }
                 },
-                MapMessage::CloseModal => {
-                    self.tag_popover = None;
-                    let key = match (&self.graph, &self.modal) {
-                        (Some(graph), Some(MapModal::Label(target))) => label_key(graph, target),
-                        _ => None,
-                    };
-                    self.modal = None;
-                    if let Some(key) = key {
-                        let cancel = view::Message::Label(vec![key], LabelMessage::Cancel);
-                        return self.forward_label(daemon, Message::View(cancel));
-                    }
-                }
+                MapMessage::CloseModal => return self.close_modal(daemon),
                 MapMessage::ToggleCoinSelected => self.coin_action(CoinUi::toggle_selected),
                 MapMessage::ToggleFrozen => {
                     self.coin_action(|coin_ui, coin| Some(coin_ui.toggle_frozen(coin)));
@@ -735,11 +887,13 @@ impl State for MapPanel {
 
     fn interrupt(&mut self) {
         self.modal = None;
+        self.shortcuts_open = false;
+        self.command_held = false;
         self.tag_popover = None;
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        event::listen_with(map_event)
     }
 
     fn reload(
@@ -750,6 +904,7 @@ impl State for MapPanel {
         self.loading = true;
         self.warning = None;
         self.modal = None;
+        self.shortcuts_open = false;
         self.tag_popover = None;
         self.labels_edited = LabelsEdited::default();
         self.pending_label = None;
@@ -773,7 +928,22 @@ mod tests {
     use liana::miniscript::bitcoin::{OutPoint, Txid};
     use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
 
-    use crate::app::state::map::{display_row, fixture, graph::TxGraph, split_stored};
+    use iced::{
+        event::Status,
+        keyboard::{key::Named, Key, Modifiers},
+    };
+
+    use crate::app::{
+        state::map::{
+            display_row, escape_action, fixture, graph::TxGraph, key_action, split_stored,
+            EscapeAction,
+        },
+        view::MapKey,
+    };
+
+    fn character(c: &str) -> Key {
+        Key::Character(c.into())
+    }
 
     fn entry(item: LayoutItem) -> GraphLayoutEntry {
         GraphLayoutEntry {
@@ -839,5 +1009,54 @@ mod tests {
         assert_eq!(display_row(Some(&order), 0), 1);
         assert_eq!(display_row(Some(&order), 1), 2);
         assert_eq!(display_row(None, 2), 2);
+    }
+
+    #[test]
+    fn key_action_undo_redo() {
+        let ctrl = Modifiers::CTRL;
+        let undo = key_action(&character("z"), ctrl, Status::Ignored);
+        assert_eq!(undo, Some(MapKey::Undo));
+        let redo = key_action(&character("Z"), ctrl | Modifiers::SHIFT, Status::Ignored);
+        assert_eq!(redo, Some(MapKey::Redo));
+        let redo = key_action(&character("y"), ctrl, Status::Ignored);
+        assert_eq!(redo, Some(MapKey::Redo));
+    }
+
+    #[test]
+    fn key_action_plain_keys() {
+        let none = Modifiers::empty();
+        let help = key_action(&character("?"), Modifiers::SHIFT, Status::Ignored);
+        assert_eq!(help, Some(MapKey::Shortcuts));
+        let unspent = key_action(&character("u"), none, Status::Ignored);
+        assert_eq!(unspent, Some(MapKey::Unspent));
+        assert_eq!(key_action(&character("z"), none, Status::Ignored), None);
+    }
+
+    #[test]
+    fn key_action_leaves_text_inputs_alone() {
+        let undo = key_action(&character("z"), Modifiers::CTRL, Status::Captured);
+        assert_eq!(undo, None);
+        let esc = Key::Named(Named::Escape);
+        let none = Modifiers::empty();
+        assert_eq!(
+            key_action(&esc, none, Status::Ignored),
+            Some(MapKey::Escape)
+        );
+        assert_eq!(
+            key_action(&esc, none, Status::Captured),
+            Some(MapKey::EscapeInInput)
+        );
+        assert_eq!(key_action(&esc, Modifiers::CTRL, Status::Ignored), None);
+    }
+
+    #[test]
+    fn escape_action_precedence() {
+        assert_eq!(escape_action(true, true, true), EscapeAction::CloseHelp);
+        assert_eq!(escape_action(false, true, true), EscapeAction::ClosePopover);
+        assert_eq!(escape_action(false, false, true), EscapeAction::CloseModal);
+        assert_eq!(
+            escape_action(false, false, false),
+            EscapeAction::ClearSelection
+        );
     }
 }
