@@ -71,6 +71,7 @@ pub fn psbt_view<'a>(
         saved,
         currently_signing,
         previous: false,
+        warnings: Vec::new(),
     };
     let content = tx_view(cache, detail, labels_editing, fiat_converter);
     dashboard(&Menu::PSBTs, cache, warning, content)

@@ -155,6 +155,7 @@ pub enum TxDetail<'a> {
         saved: bool,
         currently_signing: bool,
         previous: bool,
+        warnings: Vec<String>,
     },
 }
 
@@ -298,6 +299,17 @@ fn overview<'a>(detail: &TxDetail<'a>, txid: String) -> Element<'a, Message> {
         panels::txid_row(txid.clone(), Message::Clipboard(txid))
     ]
     .spacing(VSpacing::SM);
+    let warnings = match detail {
+        TxDetail::Psbt { warnings, .. } if !warnings.is_empty() => {
+            let rows = warnings.iter().map(|text| {
+                let warn_icon = icon::warning_icon().style(theme::text::warning);
+                let warn_text = new::caption(text.clone()).style(theme::text::warning);
+                row![warn_icon, warn_text].spacing(HSpacing::S).into()
+            });
+            Some(Column::with_children(rows).spacing(VSpacing::XS))
+        }
+        _ => None,
+    };
     let signatures = match detail {
         TxDetail::Transaction(_) => None,
         TxDetail::Psbt {
@@ -336,5 +348,7 @@ fn overview<'a>(detail: &TxDetail<'a>, txid: String) -> Element<'a, Message> {
             ))
         }
     };
-    column![ids, signatures].spacing(VSpacing::L).into()
+    column![ids, warnings, signatures]
+        .spacing(VSpacing::L)
+        .into()
 }
