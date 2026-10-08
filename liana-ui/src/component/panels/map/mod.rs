@@ -1,6 +1,7 @@
 pub mod block;
 pub mod header;
 pub mod leaf;
+pub mod modals;
 pub mod overlays;
 
 pub use crate::widget::graph_view::geometry::{
