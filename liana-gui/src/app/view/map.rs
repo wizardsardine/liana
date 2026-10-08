@@ -16,7 +16,7 @@ use liana::{
 };
 use liana_ui::{
     component::panels::map::{
-        block::{block, BlockState, SlotKind, SlotState, SlotView},
+        block::{block, BlockState, SlotKind, SlotReorder, SlotState, SlotView},
         header::map_header,
         leaf::{self, LeafState},
         overlays::{empty_state, legend, loading_state, tag_status_bar},
@@ -34,9 +34,10 @@ use crate::app::{
         coin_ui::CoinUi,
         display::DisplayState,
         display_row,
+        edit::live_column,
         graph::{InputSlot, LeafKind, OutputSlot, SlotRef, TxGraph},
         selection::TagHighlight,
-        Orders, Toggles,
+        LiveReorder, Orders, Toggles,
     },
     view::{MapMessage, Message},
 };
@@ -51,6 +52,7 @@ struct BlockDisplay {
     outputs: Vec<SlotView>,
     state: BlockState,
     group_member: bool,
+    reorder: Option<SlotReorder>,
 }
 
 impl Hash for BlockDisplay {
@@ -64,6 +66,11 @@ impl Hash for BlockDisplay {
         self.outputs.hash(state);
         self.state.hash(state);
         self.group_member.hash(state);
+        if let Some(reorder) = &self.reorder {
+            reorder.side.hash(state);
+            reorder.index.hash(state);
+            reorder.offset_y.to_bits().hash(state);
+        }
     }
 }
 
@@ -87,6 +94,10 @@ pub fn map_view<'a>(
     selected: &HashSet<ItemId>,
     tag_highlight: Option<&TagHighlight>,
     toggles: Toggles,
+    can_undo: bool,
+    can_redo: bool,
+    align_count: usize,
+    reorder: Option<LiveReorder>,
     zoom: f32,
     loading: bool,
     graph_id: &Id,
@@ -97,14 +108,14 @@ pub fn map_view<'a>(
     let header = map_header(
         zoom,
         enabled,
-        false,
-        false,
+        can_undo,
+        can_redo,
         toggles.area,
         toggles.unspent,
-        false,
+        toggles.snap,
         unspent.len(),
         &unspent_total,
-        0,
+        align_count,
         |action| Message::Map(MapMessage::Header(action)),
     );
 
@@ -244,6 +255,28 @@ pub fn map_view<'a>(
                         },
                     ));
 
+                    let (inputs, outputs, slot_reorder) = match reorder.filter(|r| r.item == id) {
+                        Some(r) => {
+                            let slot_reorder = SlotReorder {
+                                side: r.side,
+                                index: r.to,
+                                offset_y: r.offset_y,
+                            };
+                            match r.side {
+                                Side::Input => (
+                                    live_column(&inputs, r.from, r.to),
+                                    outputs,
+                                    Some(slot_reorder),
+                                ),
+                                Side::Output => (
+                                    inputs,
+                                    live_column(&outputs, r.from, r.to),
+                                    Some(slot_reorder),
+                                ),
+                            }
+                        }
+                        None => (inputs, outputs, None),
+                    };
                     let shape = Shape::Block {
                         inputs: inputs.len(),
                         outputs: outputs.len(),
@@ -257,6 +290,7 @@ pub fn map_view<'a>(
                         outputs,
                         state: display.blocks[index].0,
                         group_member: display.blocks[index].1,
+                        reorder: slot_reorder,
                     };
                     let content = lazy(display, |d| {
                         block(
@@ -266,7 +300,7 @@ pub fn map_view<'a>(
                             d.fee,
                             d.inputs.clone(),
                             d.outputs.clone(),
-                            None,
+                            d.reorder,
                             d.state,
                             d.group_member,
                         )
@@ -375,7 +409,8 @@ pub fn map_view<'a>(
                     .area_mode(toggles.area)
                     .dim_edges(toggles.unspent)
                     .wheel_slot(wheel_slot)
-                    .grid(false)
+                    .snap(toggles.snap)
+                    .grid(toggles.snap)
                     .on_event(|event| Message::Map(MapMessage::Graph(event)));
                 let legend = Container::new(legend()).padding(16);
                 let tag_bar = tag_highlight.filter(|tag| tag.has_many()).and_then(|tag| {
