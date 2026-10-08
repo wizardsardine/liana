@@ -1,4 +1,6 @@
 pub mod block;
+pub mod leaf;
+pub mod overlays;
 
 pub use crate::widget::graph_view::geometry::{
     BLOCK_MIN_HEIGHT, BLOCK_WIDTH, INPUT_COLUMN_WIDTH, LEAF_HEIGHT, LEAF_WIDTH,
