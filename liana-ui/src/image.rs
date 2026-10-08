@@ -97,3 +97,18 @@ pub fn snap_grid_icon() -> Svg<'static> {
     let h = Handle::from_memory(SNAP_GRID_ICON.to_vec());
     Svg::new(h)
 }
+
+const LEGEND_COIN_EDGE: &[u8] = include_bytes!("../static/icons/legend-coin-edge.svg");
+
+pub fn legend_coin_edge() -> Svg<'static> {
+    let h = Handle::from_memory(LEGEND_COIN_EDGE.to_vec());
+    Svg::new(h)
+}
+
+const LEGEND_COUNTERPARTY_EDGE: &[u8] =
+    include_bytes!("../static/icons/legend-counterparty-edge.svg");
+
+pub fn legend_counterparty_edge() -> Svg<'static> {
+    let h = Handle::from_memory(LEGEND_COUNTERPARTY_EDGE.to_vec());
+    Svg::new(h)
+}

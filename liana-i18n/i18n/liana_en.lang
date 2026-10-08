@@ -1433,6 +1433,25 @@ map-block-fee => "Fee {$amount} BTC"
 
 map-block-fee-unknown => "Fee unknown"
 
+map-coins-selected
+=> "{ $count ->\n    [one] 1 coin selected\n   *[other] {$count} coins selected\n}";;
+
+map-empty-description
+=> "Each transaction of this wallet will appear here as a block once it is received or sent.";;
+
+map-empty-title => "No transactions to map yet"
+
+map-leaf-reuse-tooltip
+=> "Address reuse: this address appears in {$count} outputs. Click to highlight them, double-click to list them.";;
+
+map-legend-coin => "Our coin"
+
+map-legend-counterparty => "Counterparty link"
+
+map-legend-unspent => "Unspent coin"
+
+map-loading => "Building the map from your transactions"
+
 map-slot-counterparty-output => "Output to a counterparty"
 
 map-slot-frozen => "Frozen"
@@ -1453,6 +1472,8 @@ map-slot-spends-counterparty-coin => "Spends a counterparty coin"
 map-slot-spends-our-coin => "Spends one of our coins"
 
 map-slot-tags => "Tags: {$tags}"
+
+map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
 
 map-unknown-amount => "Unknown amount"
 
