@@ -1,8 +1,9 @@
 use iced::{
     alignment::Horizontal,
-    widget::{column, row, text::Style, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
+use liana::label::Label;
 use liana_i18n::t;
 use std::fmt::{self, Display};
 
@@ -14,25 +15,18 @@ use crate::{
         amount::{self, amount_with_fiat, AmountSize, Currency, DisplayAmount, FiatAmount},
         button, card,
         checkbox::{labelled_checkbox, labelled_radio},
-        form, pill, scrollable, section,
+        form,
+        label::display_label,
+        pill, scrollable, section,
         text::{caption, new, P1_SIZE},
         tooltip,
     },
-    icon,
-    theme::{self, Theme},
+    icon, theme,
     widget::{Column, Container, Element, SpaceExt, Stack},
 };
 
 const COIN_LIST_MAX_HEIGHT: f32 = 300.0;
 const FEERATE_INPUT_WIDTH: f32 = 150.0;
-
-pub enum CoinLabel {
-    /// Label set on this coin.
-    Outpoint(String),
-    /// Label inherited from the parent transaction.
-    Transaction(String),
-    None,
-}
 
 pub enum CoinStatus {
     Spent,
@@ -405,37 +399,14 @@ fn label_len(available_width: f32) -> usize {
 }
 
 pub fn coin_row<'a, M: Clone + 'static>(
-    label: CoinLabel,
+    label: &Label,
     amount: &Amount,
     status: CoinStatus,
     selected: bool,
     toggle: M,
     available_width: f32,
 ) -> Element<'a, M> {
-    fn font<'a>(txt: impl Display) -> iced::widget::Text<'a, Theme> {
-        new::b3_medium(txt)
-    }
-    fn label_style(theme: &Theme) -> Style {
-        theme::amount::sats(theme, false)
-    }
-    let max_len = label_len(available_width);
-    let short = |s: String| -> String {
-        if s.chars().count() > max_len {
-            format!("{}…", s.chars().take(max_len).collect::<String>())
-        } else {
-            s
-        }
-    };
-    let coin_label: Element<M> = match label {
-        CoinLabel::Outpoint(label) => font(short(label)).style(label_style).into(),
-        CoinLabel::Transaction(label) => {
-            let from = font(t!("common-from")).style(|t| theme::amount::zeroes(t, false));
-            row![from, font(short(label)).style(label_style)]
-                .spacing(5)
-                .into()
-        }
-        CoinLabel::None => font("").style(label_style).into(),
-    };
+    let coin_label = display_label(label, new::B3_MEDIUM_SPEC, Some(label_len(available_width)));
 
     let timelock_pill: Container<M> = match status {
         CoinStatus::Spent => pill::spent(),

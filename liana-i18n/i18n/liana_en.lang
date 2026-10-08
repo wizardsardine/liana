@@ -61,8 +61,6 @@ btn-edit => "Edit"
 
 btn-edit-keys => "Edit keys"
 
-btn-edit-label => "Edit label"
-
 btn-email-wizardsardine => "Email WS"
 
 btn-export => "Export"
@@ -129,7 +127,7 @@ btn-retry => "Retry"
 
 btn-save => "Save"
 
-btn-see-transaction-details => "See transaction details"
+btn-see-more-details => "See more details"
 
 btn-select => "Select"
 
@@ -592,8 +590,6 @@ common-feerate => "Feerate"
 common-feerate-value => "({$rate} sats/vbyte)"
 
 common-fetching => "Fetching ..."
-
-common-from => "From"
 
 common-learn-more => "Learn more"
 
@@ -1295,6 +1291,18 @@ label-edit => "Edit label"
 
 label-external-output => "(External Output)"
 
+label-inherited-address
+=> "This label was inherited from the one assigned to its address. You can change it anytime";;
+
+label-inherited-funding
+=> "This label was inherited from the one assigned to the coins funding it. You can change it anytime";;
+
+label-inherited-payment
+=> "This label was inherited from the one assigned to its payment. You can change it anytime";;
+
+label-inherited-transaction
+=> "This label was inherited from the one assigned to its transaction. You can change it anytime";;
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
 label-label => "Label"
@@ -1406,14 +1414,6 @@ network-this-is-a => "THIS IS A{ \" \" }"
 
 network-wallet => "{$network} WALLET"
 
-payment-address-label => "address label: {$label}"
-
-payment-incoming => "Incoming payment"
-
-payment-outgoing => "Outgoing payment"
-
-payment-title => "Payment"
-
 pill-active => "Active"
 
 pill-always-available => "Always available"
@@ -1458,6 +1458,10 @@ pill-key-safety-net => "Safety Net"
 pill-key-safety-net-tooltip => "Professional third party recovery key"
 
 pill-not-in-policy => "Not in policy yet"
+
+pill-payjoin => "Payjoin"
+
+pill-payjoin-tooltip => "This transaction also spends coins that are not ours"
 
 pill-recovery-available-tooltip => "Recovery option(s) already available"
 
@@ -1537,7 +1541,7 @@ psbt-broadcast-transaction => "Broadcast the transaction"
 psbt-change => "Change"
 
 psbt-coins-spent
-=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}";;
+=> "{ $count ->\n    [one] 1 Coin spent\n   *[other] {$count} Coins spent\n}";;
 
 psbt-delete-success => "Successfully deleted this transaction."
 
@@ -1545,16 +1549,12 @@ psbt-delete-this => "Delete this PSBT"
 
 psbt-device-sign-failed => "Device failed to sign"
 
-psbt-finalizing-requires => "Finalizing this transaction requires:"
+psbt-fully-signed-by => "Signed by"
 
-psbt-missing-inputs => "Missing information about transaction inputs"
+psbt-payments => "{ $count ->\n    [one] 1 Payment\n   *[other] {$count} Payments\n}"
 
-psbt-more-signatures
-=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
-
-psbt-not-ready => "Not ready"
-
-psbt-payments => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+psbt-requires-signatures
+=> "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}";;
 
 psbt-save-transaction => "Save this transaction"
 
@@ -1562,11 +1562,9 @@ psbt-select-signing-device => "Select signing device to sign with:"
 
 psbt-sign-save-before-export => "Sign or save the transaction first to enable export"
 
-psbt-signed-by => "signed by"
+psbt-signatures => "Signatures"
 
-psbt-status => "Status"
-
-psbt-title => "PSBT"
+psbt-signatures-count => "{$count} of {$threshold}"
 
 psbt-transaction-broadcast => "Transaction is broadcast"
 
@@ -1575,7 +1573,7 @@ psbt-transaction-saved => "Transaction is saved"
 psbts-hide-confirmed => "Hide confirmed transactions"
 
 psbts-signatures-collected
-=> "{ $count ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
+=> "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
 
 receive-address-label-placeholder => "Enter an address label"
 
@@ -1837,11 +1835,9 @@ transactions-cancel-tooltip
 
 transactions-date => "Date:"
 
-transactions-incoming => "Incoming transaction"
+transactions-date-unconfirmed => "not included in a block yet"
 
-transactions-miner-fee => "Miner fee:{ \" \" }"
-
-transactions-outgoing => "Outgoing transaction"
+transactions-miner-fee => "Miner fee:"
 
 transactions-rbf-bump-help
 => "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction.";;
@@ -1871,6 +1867,6 @@ transactions-replacement => "Transaction replacement"
 
 transactions-transaction => "Transaction"
 
-transactions-txid => "Tx ID"
+transactions-txid => "Tx ID:"
 
 warning-hardware-wallet-error => "Hardware wallet error"

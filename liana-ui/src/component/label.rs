@@ -4,10 +4,15 @@ use iced::{
     widget::{column, row, Space},
     Alignment,
 };
+use liana::label::Label;
 use liana_i18n::t;
 
 use crate::{
-    component::text::new,
+    component::{
+        text::{apply, truncate, TextSpec},
+        tooltip::tooltip_custom,
+    },
+    icon, theme,
     widget::{Element, SpaceExt},
 };
 
@@ -17,14 +22,48 @@ use super::{
     modal::modal_view,
 };
 
-pub fn editable_label<'a, M: 'a + Clone>(label: impl Display, msg: M) -> Element<'a, M> {
-    let mut label = label.to_string();
-    if label.is_empty() {
-        label = t!("common-no-label-parenthesized");
-    }
+pub fn display_label<'a, M: 'a>(
+    label: &Label,
+    spec: TextSpec,
+    max_len: Option<usize>,
+) -> Element<'a, M> {
+    let (label, inherited_from) = match label {
+        Label::Own(label) => (label.clone(), None),
+        Label::Payment(label) => (label.clone(), Some(t!("label-inherited-payment"))),
+        Label::Transaction(label) => (label.clone(), Some(t!("label-inherited-transaction"))),
+        Label::Address(label) => (label.clone(), Some(t!("label-inherited-address"))),
+        Label::Funding(label) => (label.clone(), Some(t!("label-inherited-funding"))),
+        Label::None => (t!("common-no-label-parenthesized"), None),
+    };
+    let text: Element<'a, M> = match max_len {
+        Some(max_len) if label.chars().count() > max_len => {
+            let short = apply(truncate(&label, max_len), spec).style(theme::text::primary);
+            tooltip_custom(
+                apply(label, spec),
+                short,
+                iced::widget::tooltip::Position::Top,
+            )
+            .into()
+        }
+        _ => apply(label, spec).style(theme::text::primary).into(),
+    };
+    let info = inherited_from.map(|help| {
+        let icon = icon::tooltip_icon().style(theme::text::secondary);
+        tooltip_custom(
+            iced::widget::text(help),
+            icon,
+            iced::widget::tooltip::Position::Top,
+        )
+    });
+    row![text, info]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+pub fn editable_label<'a, M: 'a + Clone>(label: &Label, spec: TextSpec, msg: M) -> Element<'a, M> {
     let edit = btn_icon_edit(Some(msg));
-    let label = new::h2(label);
-    row![label, edit]
+    row![display_label(label, spec, None), edit]
         .spacing(10)
         .align_y(Alignment::Center)
         .into()

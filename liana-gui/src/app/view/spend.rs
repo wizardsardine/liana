@@ -7,7 +7,7 @@ use iced::{
 
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{bip32::Fingerprint, Amount, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, Amount},
 };
 
 use lianad::commands::CreateRecoveryWarning;
@@ -19,7 +19,7 @@ use liana_ui::{
         panels::spend::{self, DustWarning},
         text::new,
     },
-    icon, theme,
+    theme,
     widget::*,
 };
 
@@ -29,7 +29,12 @@ use crate::{
         error::Error,
         menu::Menu,
         state::{FeeMode, Recipient},
-        view::{dashboard, message::*, psbt, FiatAmountConverter},
+        view::{
+            dashboard,
+            message::*,
+            transaction::{tx_view, TxDetail},
+            FiatAmountConverter,
+        },
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
     t,
@@ -44,9 +49,9 @@ pub fn spend_view<'a>(
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    network: Network,
     currently_signing: bool,
     warning: Option<&'a Error>,
+    fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
     let is_recovery = tx
         .psbt
@@ -55,64 +60,25 @@ pub fn spend_view<'a>(
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
 
-    let title = Container::new(new::d2(if is_recovery {
-        Menu::Recovery.title()
-    } else {
-        Menu::CreateSpendTx.title()
-    }))
-    .width(Length::Fill);
+    let warnings = spend_warnings
+        .iter()
+        .map(|warning| match warning {
+            CreateRecoveryWarning::ToOwnAddress => t!("spend-warning-recovery-own-address"),
+            // Worded by the daemon or the Connect API, so it stays as it comes.
+            CreateRecoveryWarning::String(warning) => warning.clone(),
+        })
+        .collect();
 
-    let warnings = (!(spend_warnings.is_empty() || saved)).then_some({
-        let rows = spend_warnings.iter().map(|warning| {
-            let text = match warning {
-                CreateRecoveryWarning::ToOwnAddress => t!("spend-warning-recovery-own-address"),
-                // Worded by the daemon or the Connect API, so it stays as it comes.
-                CreateRecoveryWarning::String(warning) => warning.clone(),
-            };
-            let warn_icon = icon::warning_icon().style(theme::text::warning);
-            let warn_text = new::caption(text).style(theme::text::warning);
-            row![warn_icon, warn_text].spacing(5).into()
-        });
-        Column::with_children(rows).padding(15).spacing(5)
-    });
-
-    let spend_overview =
-        psbt::spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved);
-
-    let inputs = psbt::inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
-    let outputs = psbt::outputs_view(
-        &tx.psbt.unsigned_tx,
-        network,
-        &tx.change_indexes,
-        &tx.labels,
-        labels_editing,
-        tx.is_single_payment().is_some(),
-        false,
-    );
-    let inputs_outputs = column![inputs, outputs].spacing(20);
-
-    let bottom_row = if saved {
-        let delete = button::btn_delete(
-            (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
-        );
-        row![delete].width(Length::Fill)
-    } else {
-        let previous = button::btn_previous((!currently_signing).then_some(Message::Previous));
-        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
-        let save = button::btn_save(save_msg, false);
-        row![previous, Space::fill_width(), save].width(Length::Fill)
-    };
-
-    let header = psbt::spend_header(tx, labels_editing);
-    let content = column![
-        title,
-        header,
+    let detail = TxDetail::Psbt {
+        tx,
+        desc_info,
+        key_aliases,
+        saved,
+        currently_signing,
+        previous: true,
         warnings,
-        spend_overview,
-        inputs_outputs,
-        bottom_row,
-    ]
-    .spacing(20);
+    };
+    let content = tx_view(cache, detail, labels_editing, fiat_converter);
 
     dashboard(
         if is_recovery {
@@ -429,14 +395,6 @@ fn coin_list_view<'a>(
     selected: bool,
     available_width: f32,
 ) -> Element<'a, Message> {
-    let label = if let Some(label) = coins_labels.get(&coin.outpoint.to_string()) {
-        spend::CoinLabel::Outpoint(label.clone())
-    } else if let Some(label) = coins_labels.get(&coin.outpoint.txid.to_string()) {
-        spend::CoinLabel::Transaction(label.clone())
-    } else {
-        spend::CoinLabel::None
-    };
-
     let status = if coin.spend_info.is_some() {
         spend::CoinStatus::Spent
     } else if coin.block_height.is_none() {
@@ -445,8 +403,12 @@ fn coin_list_view<'a>(
         spend::CoinStatus::Sequence(remaining_sequence(coin, blockheight, timelock))
     };
 
+    let own_label = coins_labels
+        .get(&coin.outpoint.to_string())
+        .map(String::as_str);
+    let label = liana::label::resolve(own_label, &coin.default_label);
     spend::coin_row(
-        label,
+        &label,
         &coin.amount,
         status,
         selected,

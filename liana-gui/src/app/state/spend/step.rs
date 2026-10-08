@@ -1182,12 +1182,6 @@ impl Step for SaveSpend {
                     label.clone(),
                 );
             }
-        } else if let Some(recipient) = draft.recipients.first() {
-            if !recipient.label.value.is_empty() {
-                let label = recipient.label.value.clone();
-                tx.labels
-                    .insert(tx.psbt.unsigned_tx.compute_txid().to_string(), label);
-            }
         }
 
         self.spend = Some((
@@ -1237,13 +1231,13 @@ impl Step for SaveSpend {
             &psbt_state.desc_policy,
             &psbt_state.wallet.keys_aliases,
             psbt_state.labels_edited.cache(),
-            cache.network,
             if let Some(psbt::PsbtModal::Sign(m)) = &psbt_state.modal {
                 m.is_signing()
             } else {
                 false
             },
             psbt_state.warning.as_ref(),
+            fiat_converter_for_wallet(&psbt_state.wallet, cache),
         );
         if let Some(modal) = &psbt_state.modal {
             modal.as_ref().view(content)

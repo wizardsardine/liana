@@ -7,8 +7,8 @@ use iced::{
 
 use liana_ui::{
     component::{
-        address::address as address_view, amount::amount, badge, button, card, form, pill,
-        text::new,
+        address::address as address_view, amount::amount, badge, button, card, form,
+        label::display_label, pill, text::new,
     },
     icon,
     spacing::{HSpacing, VSpacing},
@@ -20,13 +20,14 @@ use crate::{
     app::{
         cache::Cache,
         menu::Menu,
-        view::{label, message::Message},
+        view::{
+            label::{self, LabelSize},
+            message::Message,
+        },
     },
     daemon::model::{remaining_sequence, Coin},
     t,
 };
-
-const LABEL_BODY_SIZE: u32 = 16;
 
 pub fn coins_view<'a>(
     cache: &Cache,
@@ -74,18 +75,16 @@ fn coin_list_view<'a>(
     let txid = coin.outpoint.txid.to_string();
     let seq = remaining_sequence(coin, blockheight, timelock);
 
+    let coin_label = liana::label::resolve(
+        labels.get(&outpoint).map(String::as_str),
+        &coin.default_label,
+    );
+
     // The label is edited in the details, so the header only shows it while folded.
     let label: Option<Element<'a, Message>> = if expanded {
         None
-    } else if let Some(label) = labels.get(&outpoint).filter(|label| !label.is_empty()) {
-        Some(new::caption(label).into())
     } else {
-        labels.get(&txid).map(|label| {
-            // It is not possible to know if a coin is a change coin or not so for now, From is
-            // enough
-            let from = new::caption(t!("common-from")).style(theme::text::secondary);
-            row![from, new::caption(label)].spacing(HSpacing::S).into()
-        })
+        Some(display_label(&coin_label, new::CAPTION_SPEC, None))
     };
     let label =
         Container::new(label.unwrap_or_else(|| Space::fill_width().into())).width(Length::Fill);
@@ -106,15 +105,12 @@ fn coin_list_view<'a>(
         .spacing(HSpacing::XL);
 
     let details = {
-        let label_editor = if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(vec![outpoint.clone()], label, LABEL_BODY_SIZE)
-        } else {
-            label::label_editable(
-                vec![outpoint.clone()],
-                labels.get(&outpoint),
-                LABEL_BODY_SIZE,
-            )
-        };
+        let label_editor = label::label_field(
+            vec![outpoint.clone()],
+            labels_editing.get(&outpoint),
+            &coin_label,
+            LabelSize::Body,
+        );
         let label_editor = Container::new(label_editor).width(Length::Fill);
 
         let recovery = match (coin.spend_info, coin.block_height) {

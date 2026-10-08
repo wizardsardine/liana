@@ -65,13 +65,8 @@ fn psbt_list_entry(i: usize, tx: &SpendTx, available_width: f32) -> Element<'_, 
         threshold: info.threshold,
     };
 
-    let label = tx
-        .labels
-        .get(&tx.psbt.unsigned_tx.compute_txid().to_string())
-        .map(String::as_str);
-
     psbts::list_entry(
-        label,
+        &tx.label(),
         tx.is_send_to_self(),
         tx.is_batch(),
         !tx.sigs.recovery_paths().is_empty(),
