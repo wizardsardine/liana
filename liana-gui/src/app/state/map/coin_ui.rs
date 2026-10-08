@@ -113,6 +113,10 @@ impl CoinUi {
         &self.selected
     }
 
+    pub fn clear_selected(&mut self) {
+        self.selected.clear();
+    }
+
     /// `None` while the coin is frozen.
     pub fn toggle_selected(&mut self, coin: OutPoint) -> Option<Change> {
         if self.is_frozen(&coin) {

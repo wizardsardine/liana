@@ -60,6 +60,15 @@ impl Close for Message {
 pub enum MapMessage {
     Header(HeaderAction),
     Graph(GraphEvent),
+    CloseModal,
+    ToggleCoinSelected,
+    ToggleFrozen,
+    ToggleTagPopover,
+    TagFilterEdited(String),
+    /// Tag registry index.
+    TagToggled(usize),
+    TagCreate,
+    ClearCoinSelection,
 }
 
 #[derive(Debug, Clone)]

@@ -582,7 +582,12 @@ impl<S: SettingsTrait> App<S> {
             Message::View(view::Message::Map(view::MapMessage::Header(HeaderAction::Back))) => {
                 self.panels.map.interrupt();
                 self.panels.current = self.panels.map_return.clone();
-                Task::none()
+                let changes = self.panels.map.take_label_changes();
+                if changes.is_empty() {
+                    Task::none()
+                } else {
+                    Task::done(Message::LabelsUpdated(Ok(changes)))
+                }
             }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {

@@ -11,10 +11,10 @@ use liana_ui::{
 
 use crate::app::state::map::{
     coin_ui::CoinUi,
-    graph::{MapItem, OutputSlot, SlotRef, TxGraph},
+    graph::{InputSlot, LeafKind, MapItem, OutputSlot, SlotRef, TxGraph},
     layout,
     selection::{self, Selection, TagHighlight},
-    Orders,
+    LabelTarget, Orders,
 };
 
 /// Inverse of `display_row`: the true index of the slot shown at `row`.
@@ -47,6 +47,35 @@ pub fn slot_ref(
         side,
         index: true_index(order, row),
     })
+}
+
+/// Key of the label edited from `target` (spec 12.1), in the `LabelItem` string format.
+pub fn label_key(graph: &TxGraph, target: &LabelTarget) -> Option<String> {
+    match *target {
+        LabelTarget::Tx(tx) => Some(graph.txs().get(tx)?.history.txid.to_string()),
+        LabelTarget::Slot(slot) => {
+            let tx = graph.txs().get(slot.tx)?;
+            let outpoint = match slot.side {
+                Side::Input => match tx.inputs.get(slot.index)? {
+                    InputSlot::OurCoin { outpoint, .. }
+                    | InputSlot::CounterpartyCoin { outpoint, .. } => outpoint,
+                },
+                Side::Output => match tx.outputs.get(slot.index)? {
+                    OutputSlot::OurCoin { outpoint, .. }
+                    | OutputSlot::Payment { outpoint, .. }
+                    | OutputSlot::CounterpartyOutput { outpoint, .. } => outpoint,
+                },
+            };
+            Some(outpoint.to_string())
+        }
+        LabelTarget::Leaf(leaf) => {
+            let leaf = graph.leaves().get(leaf)?;
+            Some(match (leaf.kind, &leaf.address) {
+                (LeafKind::CounterpartyCoin, _) | (_, None) => leaf.outpoint.to_string(),
+                (_, Some(address)) => address.to_string(),
+            })
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,7 +329,7 @@ mod tests {
     use std::collections::HashMap;
 
     use iced::{keyboard::Modifiers, Rectangle};
-    use liana::miniscript::bitcoin::Address;
+    use liana::miniscript::bitcoin::{Address, OutPoint, Txid};
     use liana_ui::{
         component::panels::map::{
             block::{BlockState, SlotState},
@@ -311,12 +340,12 @@ mod tests {
 
     use crate::app::state::map::{
         coin_ui::CoinUi,
-        display::{click_action, display_state, slot_ref, ClickAction, DisplayState},
+        display::{click_action, display_state, label_key, slot_ref, ClickAction, DisplayState},
         fixture,
         graph::{OutputSlot, SlotRef, TxGraph},
         layout,
         selection::{Selection, TagHighlight},
-        Orders,
+        LabelTarget, Orders,
     };
 
     const NONE: Modifiers = Modifiers::empty();
@@ -623,5 +652,93 @@ mod tests {
         };
         assert_eq!(s.frame, Some(rect(0).union(&rect(1))));
         assert_eq!(s.blocks[0], (BlockState::Default, true));
+    }
+
+    fn slot(graph: &TxGraph, txid: Txid, side: Side, index: usize) -> LabelTarget {
+        LabelTarget::Slot(SlotRef {
+            tx: graph.tx_index(&txid).unwrap(),
+            side,
+            index,
+        })
+    }
+
+    fn leaf_of(graph: &TxGraph, outpoint: OutPoint) -> LabelTarget {
+        LabelTarget::Leaf(
+            graph
+                .leaves()
+                .iter()
+                .position(|leaf| leaf.outpoint == outpoint)
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn label_key_transaction() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let target = LabelTarget::Tx(graph.tx_index(&f.ids.salary).unwrap());
+        assert_eq!(label_key(&graph, &target), Some(f.ids.salary.to_string()));
+    }
+
+    #[test]
+    fn label_key_own_output_slot_is_the_coin() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let target = slot(&graph, f.ids.salary, Side::Output, 0);
+        let coin = OutPoint::new(f.ids.salary, 0);
+        assert_eq!(label_key(&graph, &target), Some(coin.to_string()));
+    }
+
+    #[test]
+    fn label_key_own_input_slot_is_the_spent_coin() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let target = slot(&graph, f.ids.rent[0], Side::Input, 0);
+        let coin = OutPoint::new(f.ids.salary, 0);
+        assert_eq!(label_key(&graph, &target), Some(coin.to_string()));
+    }
+
+    #[test]
+    fn label_key_counterparty_input_slot_is_its_leaf_key() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let target = slot(&graph, f.ids.salary, Side::Input, 0);
+        let leaf = leaf_of(&graph, fixture::foreign(1));
+        assert_eq!(
+            label_key(&graph, &target),
+            Some(fixture::foreign(1).to_string())
+        );
+        assert_eq!(label_key(&graph, &target), label_key(&graph, &leaf));
+    }
+
+    #[test]
+    fn label_key_payment_output_slot_is_the_outpoint() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let target = slot(&graph, f.ids.rent[0], Side::Output, 0);
+        let outpoint = OutPoint::new(f.ids.rent[0], 0);
+        assert!(matches!(
+            graph.txs()[graph.tx_index(&f.ids.rent[0]).unwrap()].outputs[0],
+            OutputSlot::Payment { .. }
+        ));
+        assert_eq!(label_key(&graph, &target), Some(outpoint.to_string()));
+    }
+
+    #[test]
+    fn label_key_address_leaf_is_the_address() {
+        let f = fixture::sample_wallet();
+        let graph = TxGraph::new(f.txs, &f.coins);
+        let target = leaf_of(&graph, OutPoint::new(f.ids.rent[0], 0));
+        assert_eq!(label_key(&graph, &target), Some(f.landlord.to_string()));
+    }
+
+    #[test]
+    fn label_key_counterparty_coin_leaf_is_the_outpoint() {
+        let graph = fixture::graph();
+        let target = leaf_of(&graph, fixture::foreign(1));
+        assert_eq!(
+            label_key(&graph, &target),
+            Some(fixture::foreign(1).to_string())
+        );
     }
 }

@@ -10,16 +10,18 @@ pub mod selection;
 
 use std::{
     collections::{BTreeSet, HashMap},
+    mem,
     sync::Arc,
 };
 
 use iced::{advanced::widget::Id, keyboard::Modifiers, Point, Subscription, Task};
-use liana::miniscript::bitcoin::Txid;
+use liana::miniscript::bitcoin::{OutPoint, Txid};
 use liana_ui::{
     component::panels::map::header::HeaderAction,
     widget::{
         graph_view::{self, geometry::ZOOM_STEP, GraphEvent, ItemId, Side, Target},
-        Element,
+        modal::Modal,
+        text_input, Element,
     },
 };
 use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
@@ -31,20 +33,21 @@ use crate::{
         menu::{MapFocus, Menu},
         message::Message,
         state::{
+            label::{label_item_from_str, LabelsEdited},
             map::{
                 coin_ui::CoinUi,
-                display::{click_action, display_state, ClickAction},
-                graph::{MapItem, TxGraph},
+                display::{click_action, display_state, label_key, slot_ref, ClickAction},
+                graph::{MapItem, SlotRef, TxGraph},
                 history::{Change, History},
                 selection::{Selection, TagHighlight},
             },
             State,
         },
-        view::{self, MapMessage},
+        view::{self, LabelMessage, MapMessage},
         wallet::Wallet,
     },
     daemon::{
-        model::{Coin, HistoryTransaction},
+        model::{Coin, HistoryTransaction, LabelsLoader},
         Daemon,
     },
 };
@@ -88,6 +91,19 @@ pub struct LiveReorder {
     pub offset_y: f32,
 }
 
+/// Transaction and leaf indices of the current graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelTarget {
+    Tx(usize),
+    Slot(SlotRef),
+    Leaf(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapModal {
+    Label(LabelTarget),
+}
+
 pub struct MapPanel {
     graph_id: Id,
     graph: Option<TxGraph>,
@@ -104,6 +120,15 @@ pub struct MapPanel {
     loading: bool,
     pending_focus: Option<MapFocus>,
     warning: Option<Error>,
+    modal: Option<MapModal>,
+    /// Filter text of the open tag popover.
+    tag_popover: Option<String>,
+    tag_input_id: text_input::Id,
+    labels_edited: LabelsEdited,
+    /// Item key and its own label before the save in flight.
+    pending_label: Option<(String, Option<String>)>,
+    /// Labels saved since the map was entered, forwarded to the origin panel on Back.
+    label_changes: HashMap<String, Option<String>>,
 }
 
 /// Display row of the slot at true index `index` (`order[row]` is the true index).
@@ -177,7 +202,17 @@ impl MapPanel {
             loading: false,
             pending_focus: None,
             warning: None,
+            modal: None,
+            tag_popover: None,
+            tag_input_id: text_input::Id::unique(),
+            labels_edited: LabelsEdited::default(),
+            pending_label: None,
+            label_changes: HashMap::new(),
         }
+    }
+
+    pub fn take_label_changes(&mut self) -> HashMap<String, Option<String>> {
+        mem::take(&mut self.label_changes)
     }
 
     pub fn set_focus(&mut self, focus: Option<MapFocus>) {
@@ -236,11 +271,90 @@ impl MapPanel {
         let (Some(change), Some(graph)) = (change, &self.graph) else {
             return Task::none();
         };
+        if let Change::Label { item, after, .. } = change {
+            return Task::perform(
+                async move {
+                    daemon
+                        .update_labels(&HashMap::from([(item.clone(), after.clone())]))
+                        .await?;
+                    Ok(HashMap::from([(item.to_string(), after)]))
+                },
+                Message::LabelsUpdated,
+            );
+        }
         if self.coin_ui.apply(&change) {
             return Task::none();
         }
         let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
         self.save_layout(daemon, touched, vec![])
+    }
+
+    /// The unspent coin of ours held by the slot of the open label modal.
+    fn modal_coin(&self) -> Option<OutPoint> {
+        let (Some(graph), Some(MapModal::Label(LabelTarget::Slot(slot)))) =
+            (&self.graph, &self.modal)
+        else {
+            return None;
+        };
+        graph.slot_coin(*slot).filter(|coin| graph.is_unspent(coin))
+    }
+
+    /// Applies a coin action to the modal coin and records it.
+    fn coin_action(&mut self, action: impl FnOnce(&mut CoinUi, OutPoint) -> Option<Change>) {
+        let Some(coin) = self.modal_coin() else {
+            return;
+        };
+        if let Some(change) = action(&mut self.coin_ui, coin) {
+            self.history.record(change);
+        }
+    }
+
+    /// Own label of the item `key` in the transaction owning the open label modal.
+    fn own_label(&self, key: &str) -> Option<String> {
+        let (Some(graph), Some(MapModal::Label(target))) = (&self.graph, &self.modal) else {
+            return None;
+        };
+        let tx = match *target {
+            LabelTarget::Tx(tx) => tx,
+            LabelTarget::Slot(slot) => slot.tx,
+            LabelTarget::Leaf(leaf) => graph.leaves().get(leaf)?.tx,
+        };
+        graph.txs().get(tx)?.history.labels.get(key).cloned()
+    }
+
+    fn forward_label(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        message: Message,
+    ) -> Task<Message> {
+        let targets = self
+            .graph
+            .iter_mut()
+            .map(|graph| graph as &mut dyn LabelsLoader);
+        match self.labels_edited.update(daemon, message, targets) {
+            Ok(task) => task,
+            Err(e) => {
+                self.warning = Some(e);
+                self.pending_label = None;
+                Task::none()
+            }
+        }
+    }
+
+    /// Records the user save matching `saved` and keeps the labels for the origin panel.
+    fn labels_saved(&mut self, saved: HashMap<String, Option<String>>) {
+        let pending = self
+            .pending_label
+            .take_if(|(key, _)| saved.contains_key(key));
+        if let Some((key, before)) = pending {
+            let after = saved.get(&key).cloned().flatten();
+            self.history.record(Change::Label {
+                item: label_item_from_str(&key),
+                before,
+                after,
+            });
+        }
+        self.label_changes.extend(saved);
     }
 
     fn save_layout(
@@ -312,7 +426,7 @@ impl State for MapPanel {
             .as_ref()
             .and_then(|graph| layout::align_targets(graph, &self.selection.selected_txs(graph)))
             .map_or(0, |targets| targets.len());
-        view::full_dashboard(
+        let dashboard = view::full_dashboard(
             &Menu::Map(None),
             cache,
             self.warning.as_ref(),
@@ -333,7 +447,22 @@ impl State for MapPanel {
                 self.loading,
                 &self.graph_id,
             ),
-        )
+        );
+        let modal = match (&self.graph, &self.modal) {
+            (Some(graph), Some(MapModal::Label(target))) => view::map::label_modal(
+                graph,
+                *target,
+                self.labels_edited.cache(),
+                &self.coin_ui,
+                self.tag_popover.as_deref(),
+                &self.tag_input_id,
+            ),
+            _ => None,
+        };
+        // Always the same tree, so the graph view keeps its camera when a modal opens or closes.
+        Modal::with_optional(dashboard, modal)
+            .on_blur(Some(view::Message::Map(MapMessage::CloseModal)))
+            .into()
     }
 
     fn update(
@@ -374,6 +503,19 @@ impl State for MapPanel {
                 return Task::batch([save, fit]);
             }
             Message::MapLayoutSaved(Err(e)) => self.warning = Some(e),
+            Message::View(view::Message::Label(ref items, LabelMessage::Confirm)) => {
+                self.pending_label = items.first().map(|key| (key.clone(), self.own_label(key)));
+                return self.forward_label(daemon, message);
+            }
+            Message::View(view::Message::Label(..)) => return self.forward_label(daemon, message),
+            Message::LabelsUpdated(res) => {
+                let saved = res.as_ref().ok().cloned();
+                let task = self.forward_label(daemon, Message::LabelsUpdated(res));
+                if let Some(saved) = saved {
+                    self.labels_saved(saved);
+                }
+                return task;
+            }
             Message::View(view::Message::Map(message)) => match message {
                 MapMessage::Header(HeaderAction::ZoomIn) => {
                     return graph_view::zoom_by(self.graph_id.clone(), ZOOM_STEP);
@@ -503,6 +645,26 @@ impl State for MapPanel {
                     }
                     GraphEvent::Zoom(zoom) => self.zoom = zoom,
                     GraphEvent::Click { target, modifiers } => self.on_click(&target, modifiers),
+                    GraphEvent::DoubleClick { target } => {
+                        let Some(graph) = &self.graph else {
+                            return Task::none();
+                        };
+                        let label = match target {
+                            Target::Item(id) => match graph.item(id) {
+                                Some(MapItem::Tx(tx)) => Some(LabelTarget::Tx(tx)),
+                                Some(MapItem::Leaf(leaf)) => Some(LabelTarget::Leaf(leaf)),
+                                None => None,
+                            },
+                            Target::Slot(item, side, row) => {
+                                slot_ref(graph, &self.orders, item, side, row)
+                                    .map(LabelTarget::Slot)
+                            }
+                            Target::Edge(_) | Target::Frame => None,
+                        };
+                        if let Some(label) = label {
+                            self.modal = Some(MapModal::Label(label));
+                        }
+                    }
                     GraphEvent::EmptyClick => {
                         self.selection.clear();
                         self.tag_highlight = None;
@@ -519,13 +681,53 @@ impl State for MapPanel {
                             tag.cycle(steps);
                         }
                     }
-                    _ => {}
                 },
+                MapMessage::CloseModal => {
+                    self.tag_popover = None;
+                    let key = match (&self.graph, &self.modal) {
+                        (Some(graph), Some(MapModal::Label(target))) => label_key(graph, target),
+                        _ => None,
+                    };
+                    self.modal = None;
+                    if let Some(key) = key {
+                        let cancel = view::Message::Label(vec![key], LabelMessage::Cancel);
+                        return self.forward_label(daemon, Message::View(cancel));
+                    }
+                }
+                MapMessage::ToggleCoinSelected => self.coin_action(CoinUi::toggle_selected),
+                MapMessage::ToggleFrozen => {
+                    self.coin_action(|coin_ui, coin| Some(coin_ui.toggle_frozen(coin)));
+                }
+                MapMessage::ToggleTagPopover => {
+                    if self.tag_popover.take().is_none() {
+                        self.tag_popover = Some(String::new());
+                        return text_input::focus(self.tag_input_id.clone());
+                    }
+                }
+                MapMessage::TagFilterEdited(text) => {
+                    if let Some(filter) = &mut self.tag_popover {
+                        *filter = text;
+                    }
+                }
+                MapMessage::TagToggled(tag) => {
+                    self.coin_action(|coin_ui, coin| Some(coin_ui.toggle_tag(coin, tag)));
+                }
+                MapMessage::TagCreate => {
+                    if let Some(name) = self.tag_popover.as_mut().map(mem::take) {
+                        self.coin_action(|coin_ui, coin| coin_ui.add_tag_by_name(coin, &name));
+                    }
+                }
+                MapMessage::ClearCoinSelection => self.coin_ui.clear_selected(),
                 _ => {}
             },
             _ => {}
         }
         Task::none()
+    }
+
+    fn interrupt(&mut self) {
+        self.modal = None;
+        self.tag_popover = None;
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -539,6 +741,11 @@ impl State for MapPanel {
     ) -> Task<Message> {
         self.loading = true;
         self.warning = None;
+        self.modal = None;
+        self.tag_popover = None;
+        self.labels_edited = LabelsEdited::default();
+        self.pending_label = None;
+        self.label_changes.clear();
         Task::perform(
             async move {
                 let coins = daemon.list_all_coins().await?;
