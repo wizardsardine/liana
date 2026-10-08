@@ -348,6 +348,10 @@ pub struct Graph {
     pub frame: iced::Color,
     pub marker: iced::Color,
     pub marker_fill: iced::Color,
+    pub area_inside: iced::Color,
+    pub area_inside_fill: iced::Color,
+    pub area_crossing: iced::Color,
+    pub area_crossing_fill: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

@@ -3,7 +3,7 @@
 use std::{
     any::Any,
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
 };
 
@@ -15,14 +15,18 @@ use iced::{
         widget::{tree, Id, Operation, Tree, Widget},
         Clipboard, Renderer as _, Shell,
     },
-    mouse,
+    border, keyboard, mouse,
+    time::Instant,
     widget::canvas,
     Event, Length, Point, Rectangle, Size, Transformation, Vector,
 };
 use iced_runtime::{task, Action, Task};
 
 use crate::{
-    theme::Theme,
+    theme::{
+        card::{CARD_RADIUS, CARD_SHADOW_HOVER},
+        Theme,
+    },
     widget::{Element, Renderer},
 };
 
@@ -30,8 +34,12 @@ mod draw;
 pub mod geometry;
 
 use geometry::{
-    anchor_point, edge_curve, wheel_delta, wheel_zoom_factor, Camera, CLICK_THRESHOLD, FOCUS_ZOOM,
+    anchor_point, area_pick, distance_to_curve, drag_set, edge_curve, frame_rect, hit_item,
+    rect_from_points, snap_to_grid, wheel_delta, wheel_zoom_factor, Camera, ClickTracker, ItemHit,
+    CLICK_THRESHOLD, EDGE_HIT_HALF_WIDTH, FOCUS_ZOOM,
 };
+
+type Curve = (EdgeKind, bool, [Point; 4]);
 
 /// Opaque id chosen by the app, unique per item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -82,9 +90,49 @@ pub struct Edge {
     pub active: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Side {
+    Input,
+    Output,
+}
+
+/// What the pointer is on. Slot rows are display rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Item(ItemId),
+    Slot(ItemId, Side, usize),
+    /// Index into the edges passed to `GraphView::new`.
+    Edge(usize),
+    Frame,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GraphEvent {
     Zoom(f32),
+    Click {
+        target: Target,
+        modifiers: keyboard::Modifiers,
+    },
+    DoubleClick {
+        target: Target,
+    },
+    /// Published only when the hovered target changes.
+    Hover(Option<Target>),
+    /// Raw graph px delta. With snap on, each item lands on
+    /// `geometry::snap_to_grid(position + delta)`.
+    Moved {
+        items: Vec<ItemId>,
+        delta: Vector,
+    },
+    /// `rect` in graph px; `items` already picked (inside, or touched when
+    /// `crossing`).
+    AreaSelected {
+        rect: Rectangle,
+        crossing: bool,
+        additive: bool,
+        items: Vec<ItemId>,
+    },
+    EmptyClick,
 }
 
 /// Items must be passed in a stable order: child state is diffed by index.
@@ -97,6 +145,9 @@ pub struct GraphView<'a, M> {
     markers: Vec<Anchor>,
     grid: bool,
     dim_edges: bool,
+    selected: HashSet<ItemId>,
+    snap: bool,
+    area_mode: bool,
     on_event: Option<Box<dyn Fn(GraphEvent) -> M + 'a>>,
 }
 
@@ -110,6 +161,9 @@ impl<'a, M> GraphView<'a, M> {
             markers: Vec::new(),
             grid: true,
             dim_edges: false,
+            selected: HashSet::new(),
+            snap: false,
+            area_mode: false,
             on_event: None,
         }
     }
@@ -137,17 +191,130 @@ impl<'a, M> GraphView<'a, M> {
         self
     }
 
+    /// Dragging a member of two or more selected items moves all of them.
+    pub fn selected(mut self, selected: &HashSet<ItemId>) -> Self {
+        self.selected = selected.clone();
+        self
+    }
+
+    /// Dragged items land on the grid, each on its own.
+    pub fn snap(mut self, snap: bool) -> Self {
+        self.snap = snap;
+        self
+    }
+
+    /// Dragging on empty canvas draws an area instead of panning.
+    pub fn area_mode(mut self, area_mode: bool) -> Self {
+        self.area_mode = area_mode;
+        self
+    }
+
     pub fn on_event(mut self, f: impl Fn(GraphEvent) -> M + 'a) -> Self {
         self.on_event = Some(Box::new(f));
         self
     }
 
-    /// Where each item is now, in graph px.
-    fn placements(&self) -> HashMap<ItemId, (Point, Shape)> {
+    /// Where each item is now, in graph px, including the live drag.
+    fn placements(&self, state: &State) -> HashMap<ItemId, (Point, Shape)> {
+        let drag = match &state.interaction {
+            Interaction::DraggingItems { items, delta, .. } => Some((items, *delta)),
+            _ => None,
+        };
         self.items
             .iter()
-            .map(|item| (item.id, (item.position, item.shape)))
+            .map(|item| {
+                let mut position = item.position;
+                if let Some((items, delta)) = drag {
+                    if items.contains(&item.id) {
+                        position += delta;
+                        if self.snap {
+                            position = snap_to_grid(position);
+                        }
+                    }
+                }
+                (item.id, (position, item.shape))
+            })
             .collect()
+    }
+
+    /// Selection bounding box, moved with the raw delta when the whole
+    /// selection is being dragged.
+    fn frame_members(&self, state: &State) -> Option<Rectangle> {
+        let members = self.frame?;
+        match &state.interaction {
+            Interaction::DraggingItems { items, delta, .. }
+                if !self.selected.is_empty()
+                    && self.selected.iter().all(|id| items.contains(id)) =>
+            {
+                Some(members + *delta)
+            }
+            _ => Some(members),
+        }
+    }
+
+    fn screen_curve(
+        &self,
+        state: &State,
+        placements: &HashMap<ItemId, (Point, Shape)>,
+        edge: &Edge,
+    ) -> Option<Curve> {
+        let from = Self::anchor_point(placements, edge.from)?;
+        let to = Self::anchor_point(placements, edge.to)?;
+        let curve = edge_curve(from, to).map(|p| state.camera.to_screen(p));
+        Some((edge.kind, edge.active, curve))
+    }
+
+    /// `cursor` is absolute.
+    fn hit_test(&self, state: &State, bounds: Rectangle, cursor: Point) -> Option<Target> {
+        let local = Point::new(cursor.x - bounds.x, cursor.y - bounds.y);
+        let graph = state.camera.to_graph(local);
+        let placements = self.placements(state);
+        let dragged: &[ItemId] = match &state.interaction {
+            Interaction::DraggingItems { items, .. } => items,
+            _ => &[],
+        };
+        let order = dragged
+            .iter()
+            .copied()
+            .chain(self.items.iter().rev().map(|item| item.id));
+        for id in order {
+            let Some((position, shape)) = placements.get(&id) else {
+                continue;
+            };
+            match hit_item(graph, *position, *shape) {
+                Some(ItemHit::Body) => return Some(Target::Item(id)),
+                Some(ItemHit::Slot(side, row)) => return Some(Target::Slot(id, side, row)),
+                None => {}
+            }
+        }
+        let edge = self.edges.iter().enumerate().find_map(|(index, edge)| {
+            let (_, _, curve) = self.screen_curve(state, &placements, edge)?;
+            (distance_to_curve(local, &curve) < EDGE_HIT_HALF_WIDTH).then_some(Target::Edge(index))
+        });
+        edge.or_else(|| {
+            let members = self
+                .frame_members(state)
+                .filter(|_| !self.selected.is_empty())?;
+            frame_rect(members).contains(graph).then_some(Target::Frame)
+        })
+    }
+
+    /// Publishes `Hover` when the target under the cursor changed.
+    fn refresh_hover(
+        &self,
+        state: &mut State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        shell: &mut Shell<'_, M>,
+    ) {
+        let hover = cursor
+            .position()
+            .filter(|_| cursor.is_over(bounds))
+            .and_then(|position| self.hit_test(state, bounds, position));
+        if hover != state.hover {
+            state.hover = hover;
+            self.publish(shell, GraphEvent::Hover(hover));
+        }
     }
 
     fn anchor_point(placements: &HashMap<ItemId, (Point, Shape)>, anchor: Anchor) -> Option<Point> {
@@ -179,6 +346,9 @@ impl<'a, M> GraphView<'a, M> {
 struct State {
     camera: Camera,
     interaction: Interaction,
+    modifiers: keyboard::Modifiers,
+    hover: Option<Target>,
+    clicks: ClickTracker,
     size: Size,
     /// Union of the item rects, in graph px.
     content: Option<Rectangle>,
@@ -195,10 +365,24 @@ enum Interaction {
     Pressed {
         origin: Point,
         camera: Camera,
+        target: Option<Target>,
+        modifiers: keyboard::Modifiers,
     },
     Panning {
         origin: Point,
         camera: Camera,
+    },
+    /// `delta` is in graph px.
+    DraggingItems {
+        origin: Point,
+        items: Vec<ItemId>,
+        delta: Vector,
+    },
+    /// `origin` and `current` are absolute screen px.
+    Area {
+        origin: Point,
+        current: Point,
+        additive: bool,
     },
 }
 
@@ -210,6 +394,10 @@ enum CameraRequest {
 }
 
 impl State {
+    fn area_active(&self, view_area_mode: bool) -> bool {
+        view_area_mode || self.modifiers.command() || self.modifiers.shift()
+    }
+
     fn apply(&mut self, request: CameraRequest) {
         self.camera = match request {
             CameraRequest::Fit => self
@@ -311,17 +499,16 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         let inverse = transformation.inverse();
         let child_cursor = state.child_cursor(cursor, bounds, inverse);
         let child_viewport = clip * inverse;
-        let placements = self.placements();
+        let placements = self.placements(state);
         let palette = &theme.colors.graph;
-        let curves: Vec<_> = self
+        let dragged: &[ItemId] = match &state.interaction {
+            Interaction::DraggingItems { items, .. } => items,
+            _ => &[],
+        };
+        let curves: Vec<Curve> = self
             .edges
             .iter()
-            .filter_map(|edge| {
-                let from = Self::anchor_point(&placements, edge.from)?;
-                let to = Self::anchor_point(&placements, edge.to)?;
-                let curve = edge_curve(from, to).map(|p| state.camera.to_screen(p));
-                Some((edge.kind, edge.active, curve))
-            })
+            .filter_map(|edge| self.screen_curve(state, &placements, edge))
             .collect();
         let mut hasher = DefaultHasher::new();
         for (kind, active, curve) in &curves {
@@ -347,7 +534,7 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             if self.grid {
                 draw::grid(renderer, palette, bounds, clip, state.camera);
             }
-            if let Some(members) = self.frame {
+            if let Some(members) = self.frame_members(state) {
                 draw::frame(renderer, palette, bounds, state.camera, members);
             }
             renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
@@ -359,10 +546,11 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 for ((item, child), child_layout) in
                     self.items.iter().zip(&tree.children).zip(layout.children())
                 {
-                    if child_layout
-                        .bounds()
-                        .intersection(&child_viewport)
-                        .is_none()
+                    if dragged.contains(&item.id)
+                        || child_layout
+                            .bounds()
+                            .intersection(&child_viewport)
+                            .is_none()
                     {
                         continue;
                     }
@@ -378,6 +566,44 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 }
             });
         });
+        renderer.with_layer(clip, |renderer| {
+            for ((item, child), child_layout) in
+                self.items.iter().zip(&tree.children).zip(layout.children())
+            {
+                if !dragged.contains(&item.id) {
+                    continue;
+                }
+                let Some((position, _)) = placements.get(&item.id) else {
+                    continue;
+                };
+                let offset = *position - item.position;
+                let child_bounds = child_layout.bounds();
+                let radius = CARD_RADIUS.min(child_bounds.height / 2.0);
+                renderer.with_transformation(
+                    transformation * Transformation::translate(offset.x, offset.y),
+                    |renderer| {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: child_bounds.shrink(1.0),
+                                shadow: CARD_SHADOW_HOVER,
+                                border: border::rounded(radius),
+                                ..renderer::Quad::default()
+                            },
+                            CARD_SHADOW_HOVER.color,
+                        );
+                        item.content.as_widget().draw(
+                            child,
+                            renderer,
+                            theme,
+                            style,
+                            child_layout,
+                            mouse::Cursor::Unavailable,
+                            &child_viewport,
+                        );
+                    },
+                );
+            }
+        });
         let marker_points: Vec<Point> = self
             .markers
             .iter()
@@ -389,6 +615,17 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             renderer.with_transformation(markers, |renderer| {
                 draw::markers(renderer, palette, &marker_points);
             });
+            if let Interaction::Area {
+                origin, current, ..
+            } = state.interaction
+            {
+                draw::area(
+                    renderer,
+                    palette,
+                    rect_from_points(origin, current),
+                    current.x < origin.x,
+                );
+            }
         });
     }
 
@@ -432,39 +669,159 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         }
 
         match event {
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.modifiers = *modifiers;
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::CursorLeft) => {
+                if let Interaction::Idle = state.interaction {
+                    self.refresh_hover(state, bounds, mouse::Cursor::Unavailable, shell);
+                }
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let (Interaction::Idle, Some(origin)) = (&state.interaction, cursor.position()) {
                     if cursor.is_over(bounds) {
                         state.interaction = Interaction::Pressed {
                             origin,
                             camera: state.camera,
+                            target: self.hit_test(state, bounds, origin),
+                            modifiers: state.modifiers,
                         };
                         shell.capture_event();
                     }
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let (
-                    Interaction::Pressed { origin, camera }
-                    | Interaction::Panning { origin, camera },
-                    Some(position),
-                ) = (&state.interaction, cursor.position())
+                let Some(position) = cursor.position() else {
+                    return;
+                };
+                if let Interaction::Idle = state.interaction {
+                    self.refresh_hover(state, bounds, cursor, shell);
+                }
+                if let Interaction::Pressed {
+                    origin,
+                    camera,
+                    target,
+                    modifiers,
+                } = state.interaction.clone()
                 {
-                    let (origin, camera) = (*origin, *camera);
-                    let panning = matches!(state.interaction, Interaction::Panning { .. });
-                    if panning || origin.distance(position) > CLICK_THRESHOLD {
-                        state.interaction = Interaction::Panning { origin, camera };
-                        state.camera.offset = camera.offset + (position - origin);
-                        shell.request_redraw();
-                        shell.capture_event();
+                    if origin.distance(position) > CLICK_THRESHOLD {
+                        let area = state.area_active(self.area_mode);
+                        match target {
+                            Some(Target::Item(id)) => {
+                                state.interaction = Interaction::DraggingItems {
+                                    origin,
+                                    items: drag_set(id, &self.selected),
+                                    delta: Vector::ZERO,
+                                };
+                            }
+                            Some(Target::Frame) => {
+                                let mut items: Vec<ItemId> =
+                                    self.selected.iter().copied().collect();
+                                items.sort();
+                                state.interaction = Interaction::DraggingItems {
+                                    origin,
+                                    items,
+                                    delta: Vector::ZERO,
+                                };
+                            }
+                            Some(Target::Slot(..)) => {}
+                            None | Some(Target::Edge(_)) if area => {
+                                state.interaction = Interaction::Area {
+                                    origin,
+                                    current: position,
+                                    additive: modifiers.shift(),
+                                };
+                            }
+                            None | Some(Target::Edge(_)) => {
+                                state.interaction = Interaction::Panning { origin, camera };
+                            }
+                        }
                     }
+                }
+                match &mut state.interaction {
+                    Interaction::Panning { origin, camera } => {
+                        state.camera.offset = camera.offset + (position - *origin);
+                    }
+                    Interaction::DraggingItems { origin, delta, .. } => {
+                        *delta = (position - *origin) * (1.0 / state.camera.zoom);
+                    }
+                    Interaction::Area { current, .. } => *current = position,
+                    _ => {}
+                }
+                if !matches!(
+                    state.interaction,
+                    Interaction::Idle | Interaction::Pressed { .. }
+                ) {
+                    shell.request_redraw();
+                    shell.capture_event();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if !matches!(state.interaction, Interaction::Idle) {
-                    state.interaction = Interaction::Idle;
-                    shell.capture_event();
+                let interaction = std::mem::take(&mut state.interaction);
+                if matches!(interaction, Interaction::Idle) {
+                    return;
                 }
+                match interaction {
+                    Interaction::Pressed {
+                        origin,
+                        target,
+                        modifiers,
+                        ..
+                    } if cursor
+                        .position()
+                        .is_some_and(|p| origin.distance(p) <= CLICK_THRESHOLD) =>
+                    {
+                        match target {
+                            None => self.publish(shell, GraphEvent::EmptyClick),
+                            Some(Target::Edge(_)) => {}
+                            Some(target) => {
+                                let event = if state.clicks.register(target, Instant::now()) {
+                                    GraphEvent::DoubleClick { target }
+                                } else {
+                                    GraphEvent::Click { target, modifiers }
+                                };
+                                self.publish(shell, event);
+                            }
+                        }
+                    }
+                    Interaction::DraggingItems { items, delta, .. } if delta != Vector::ZERO => {
+                        self.publish(shell, GraphEvent::Moved { items, delta });
+                    }
+                    Interaction::Area {
+                        origin,
+                        current,
+                        additive,
+                    } => {
+                        let to_graph = |p: Point| {
+                            state
+                                .camera
+                                .to_graph(Point::new(p.x - bounds.x, p.y - bounds.y))
+                        };
+                        let rect = rect_from_points(to_graph(origin), to_graph(current));
+                        let crossing = current.x < origin.x;
+                        let items = area_pick(
+                            rect,
+                            crossing,
+                            self.items.iter().map(|item| {
+                                (item.id, Rectangle::new(item.position, item.shape.size()))
+                            }),
+                        );
+                        self.publish(
+                            shell,
+                            GraphEvent::AreaSelected {
+                                rect,
+                                crossing,
+                                additive,
+                                items,
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+                shell.capture_event();
+                shell.request_redraw();
+                self.refresh_hover(state, bounds, cursor, shell);
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 if let Some(anchor) = cursor.position_in(bounds) {
@@ -490,13 +847,18 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
     ) -> mouse::Interaction {
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<State>();
-        if matches!(state.interaction, Interaction::Panning { .. }) {
-            return mouse::Interaction::Grabbing;
+        match state.interaction {
+            Interaction::Panning { .. } | Interaction::DraggingItems { .. } => {
+                return mouse::Interaction::Grabbing;
+            }
+            Interaction::Area { .. } => return mouse::Interaction::Crosshair,
+            Interaction::Idle | Interaction::Pressed { .. } => {}
         }
         let inverse = state.camera.transformation(bounds).inverse();
         let child_cursor = state.child_cursor(cursor, bounds, inverse);
         let child_viewport = bounds.intersection(viewport).unwrap_or(bounds) * inverse;
-        self.items
+        let children = self
+            .items
             .iter()
             .zip(&tree.children)
             .zip(layout.children())
@@ -510,7 +872,18 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 )
             })
             .max()
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if children != mouse::Interaction::None || !cursor.is_over(bounds) {
+            return children;
+        }
+        match state.hover {
+            Some(Target::Slot(..)) => mouse::Interaction::Pointer,
+            Some(Target::Item(_) | Target::Frame) => mouse::Interaction::Grab,
+            None | Some(Target::Edge(_)) if state.area_active(self.area_mode) => {
+                mouse::Interaction::Crosshair
+            }
+            None | Some(Target::Edge(_)) => mouse::Interaction::None,
+        }
     }
 
     fn operate(

@@ -846,6 +846,10 @@ impl Palette {
                 frame: color::BUSINESS_BLUE,
                 marker: color::BUSINESS_BLUE,
                 marker_fill: color::LIGHT_BG,
+                area_inside: color::BUSINESS_BLUE_DARK,
+                area_inside_fill: color::TRANSPARENT_BUSINESS_BLUE,
+                area_crossing: color::BUSINESS_BLUE,
+                area_crossing_fill: color::TRANSPARENT_GREEN,
             },
         }
     }

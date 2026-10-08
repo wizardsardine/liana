@@ -872,6 +872,10 @@ impl Palette {
                 frame: color::GREEN,
                 marker: color::GREEN,
                 marker_fill: color::LIGHT_BLACK,
+                area_inside: color::GREEN,
+                area_inside_fill: color::TRANSPARENT_BUSINESS_BLUE,
+                area_crossing: color::GREEN,
+                area_crossing_fill: color::TRANSPARENT_GREEN,
             },
         }
     }
