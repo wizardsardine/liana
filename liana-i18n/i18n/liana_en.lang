@@ -1429,9 +1429,17 @@ loader-sync-progress-2
 loader-sync-progress-3
 => "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";;
 
+map-add-tag-tooltip => "Add a tag"
+
 map-block-fee => "Fee {$amount} BTC"
 
 map-block-fee-unknown => "Fee unknown"
+
+map-caption-moved => "Moved, {$date}"
+
+map-caption-received => "Received, {$date}"
+
+map-caption-sent => "Sent, {$date}"
 
 map-coins-selected
 => "{ $count ->\n    [one] 1 coin selected\n   *[other] {$count} coins selected\n}";;
@@ -1440,6 +1448,10 @@ map-empty-description
 => "Each transaction of this wallet will appear here as a block once it is received or sent.";;
 
 map-empty-title => "No transactions to map yet"
+
+map-freeze => "Freeze"
+
+map-freeze-tooltip => "A frozen coin is never used to fund a transaction"
 
 map-leaf-reuse-tooltip
 => "Address reuse: this address appears in {$count} outputs. Click to highlight them, double-click to list them.";;
@@ -1451,6 +1463,10 @@ map-legend-counterparty => "Counterparty link"
 map-legend-unspent => "Unspent coin"
 
 map-loading => "Building the map from your transactions"
+
+map-select-frozen-tooltip => "Unfreeze this coin to select it"
+
+map-select-tooltip => "Add this coin to the coin selection"
 
 map-slot-counterparty-output => "Output to a counterparty"
 
@@ -1472,6 +1488,10 @@ map-slot-spends-counterparty-coin => "Spends a counterparty coin"
 map-slot-spends-our-coin => "Spends one of our coins"
 
 map-slot-tags => "Tags: {$tags}"
+
+map-tag-create => "Create tag \"{$name}\""
+
+map-tag-filter-placeholder => "Filter or create a tag"
 
 map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
 

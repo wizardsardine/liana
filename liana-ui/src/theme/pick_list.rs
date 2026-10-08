@@ -1,11 +1,13 @@
 use iced::widget::overlay::menu::Style as MenuStyle;
 use iced::{
-    widget::pick_list::{Catalog, Status, Style, StyleFn},
-    Border, Shadow,
+    widget::{
+        button, container,
+        pick_list::{Catalog, Status, Style, StyleFn},
+    },
+    Background, Border, Shadow,
 };
 
-use super::palette::Menu;
-use super::Theme;
+use super::{card::CARD_SHADOW_HOVER, palette::Menu, Theme};
 
 const PICK_LIST_RADIUS: f32 = 4.0;
 
@@ -49,6 +51,38 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
 
 pub fn menu(theme: &Theme) -> MenuStyle {
     theme.colors.menus.pick_list.into()
+}
+
+/// Pick list menu look for a container, with the hover shadow.
+pub fn menu_container(theme: &Theme) -> container::Style {
+    let menu = theme.colors.menus.pick_list;
+    container::Style {
+        background: Some(Background::Color(menu.background)),
+        border: Border {
+            color: menu.border,
+            width: 1.0,
+            radius: PICK_LIST_RADIUS.into(),
+            ..Default::default()
+        },
+        shadow: CARD_SHADOW_HOVER,
+        ..Default::default()
+    }
+}
+
+/// Pick list option look for a button.
+pub fn option(theme: &Theme, status: button::Status) -> button::Style {
+    let menu = theme.colors.menus.pick_list;
+    match status {
+        button::Status::Active | button::Status::Disabled => button::Style {
+            text_color: menu.text,
+            ..Default::default()
+        },
+        button::Status::Hovered | button::Status::Pressed => button::Style {
+            background: Some(Background::Color(menu.selected_background)),
+            text_color: menu.selected_text,
+            ..Default::default()
+        },
+    }
 }
 
 impl From<Menu> for MenuStyle {
