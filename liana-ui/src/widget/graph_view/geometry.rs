@@ -53,6 +53,9 @@ pub const EDGE_HIT_HALF_WIDTH: f32 = 7.0;
 pub const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 pub const AREA_OPACITY: f32 = 0.7;
 pub const AREA_BORDER_WIDTH: f32 = 1.0;
+/// Accumulated wheel delta that cycles the tag highlight by one step.
+pub const TAG_WHEEL_STEP: f32 = 40.0;
+pub const FOCUS_DURATION: Duration = Duration::from_millis(520);
 
 impl Shape {
     pub fn size(self) -> Size {
@@ -135,6 +138,45 @@ impl Camera {
             zoom,
         }
     }
+}
+
+/// Display row a slot dragged to `offset_y` (top, from the column top) lands on.
+pub fn reorder_target(offset_y: f32, rows: usize) -> usize {
+    ((offset_y / SLOT_HEIGHT).round().max(0.0) as usize).min(rows.saturating_sub(1))
+}
+
+/// Live row of the slot at `row` while the slot at `from` is dragged to
+/// `offset_y` and would land on `to`.
+pub fn reordered_row(row: usize, from: usize, to: usize, offset_y: f32) -> f32 {
+    if row == from {
+        offset_y / SLOT_HEIGHT
+    } else if from < to && row > from && row <= to {
+        row as f32 - 1.0
+    } else if to < from && row >= to && row < from {
+        row as f32 + 1.0
+    } else {
+        row as f32
+    }
+}
+
+/// Adds `delta` to `accumulated`; returns the remainder and the whole steps.
+pub fn accumulate_wheel(accumulated: f32, delta: f32) -> (f32, i32) {
+    let total = accumulated + delta;
+    let steps = (total / TAG_WHEEL_STEP).trunc() as i32;
+    (total - steps as f32 * TAG_WHEEL_STEP, steps)
+}
+
+/// Interpolates the graph point at the widget center and the zoom, which keeps
+/// the motion straight on screen.
+pub fn interpolate_camera(from: Camera, to: Camera, t: f32, size: Size) -> Camera {
+    let center = Point::new(size.width / 2.0, size.height / 2.0);
+    let (a, b) = (from.to_graph(center), to.to_graph(center));
+    let lerp = |x: f32, y: f32| x + (y - x) * t;
+    Camera::centered_on(
+        Point::new(lerp(a.x, b.x), lerp(a.y, b.y)),
+        lerp(from.zoom, to.zoom),
+        size,
+    )
 }
 
 /// Where an edge attaches, in graph px. `row` is fractional so a slot being
@@ -305,6 +347,8 @@ impl ClickTracker {
 
 #[cfg(test)]
 mod tests {
+    use iced::{animation::Easing, Animation};
+
     use super::*;
 
     fn close(a: f32, b: f32) -> bool {
@@ -557,6 +601,67 @@ mod tests {
             drag_set(ItemId(3), &three),
             vec![ItemId(1), ItemId(2), ItemId(3)]
         );
+    }
+
+    #[test]
+    fn reorder_target_clamps() {
+        assert_eq!(reorder_target(0.0, 5), 0);
+        assert_eq!(reorder_target(70.0, 5), 1);
+        assert_eq!(reorder_target(1000.0, 5), 4);
+        assert_eq!(reorder_target(-10.0, 5), 0);
+    }
+
+    #[test]
+    fn reordered_rows_follow() {
+        assert!(close(reordered_row(1, 1, 3, 130.0), 130.0 / 48.0));
+        assert_eq!(reordered_row(2, 1, 3, 130.0), 1.0);
+        assert_eq!(reordered_row(3, 1, 3, 130.0), 2.0);
+        assert_eq!(reordered_row(4, 1, 3, 130.0), 4.0);
+        assert_eq!(reordered_row(0, 1, 3, 130.0), 0.0);
+        assert_eq!(reordered_row(1, 3, 1, 60.0), 2.0);
+        assert_eq!(reordered_row(2, 3, 1, 60.0), 3.0);
+    }
+
+    #[test]
+    fn wheel_accumulates() {
+        assert_eq!(accumulate_wheel(0.0, 30.0), (30.0, 0));
+        assert_eq!(accumulate_wheel(30.0, 15.0), (5.0, 1));
+        assert_eq!(accumulate_wheel(0.0, -85.0), (-5.0, -2));
+    }
+
+    #[test]
+    fn camera_interpolation() {
+        let size = Size::new(900.0, 500.0);
+        let from = Camera {
+            offset: Vector::new(30.0, -20.0),
+            zoom: 0.5,
+        };
+        let to = Camera::centered_on(Point::new(400.0, 300.0), 1.5, size);
+        let same = |a: Camera, b: Camera| {
+            close(a.zoom, b.zoom) && close(a.offset.x, b.offset.x) && close(a.offset.y, b.offset.y)
+        };
+        assert!(same(interpolate_camera(from, to, 0.0, size), from));
+        assert!(same(interpolate_camera(from, to, 1.0, size), to));
+        let center = Point::new(450.0, 250.0);
+        let mid = interpolate_camera(from, to, 0.5, size);
+        assert!(close(mid.zoom, 1.0));
+        let (a, b) = (from.to_graph(center), to.to_graph(center));
+        assert!(close_point(
+            mid.to_graph(center),
+            Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
+        ));
+    }
+
+    #[test]
+    fn focus_easing() {
+        let start = Instant::now();
+        let animation = Animation::new(false)
+            .easing(Easing::EaseInOutCubic)
+            .duration(FOCUS_DURATION)
+            .go(true, start);
+        let mid = animation.interpolate(0.0, 1.0, start + Duration::from_millis(260));
+        assert!((mid - 0.5).abs() < 0.05);
+        assert!(!animation.is_animating(start + Duration::from_millis(521)));
     }
 
     #[test]

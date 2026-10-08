@@ -11,14 +11,15 @@ use iced::{
     advanced::{
         graphics::geometry::Renderer as _,
         layout::{self, Layout},
-        renderer,
+        overlay as iced_overlay, renderer,
         widget::{tree, Id, Operation, Tree, Widget},
         Clipboard, Renderer as _, Shell,
     },
+    animation::Easing,
     border, keyboard, mouse,
     time::Instant,
     widget::canvas,
-    Event, Length, Point, Rectangle, Size, Transformation, Vector,
+    window, Animation, Event, Length, Point, Rectangle, Size, Transformation, Vector,
 };
 use iced_runtime::{task, Action, Task};
 
@@ -32,11 +33,13 @@ use crate::{
 
 mod draw;
 pub mod geometry;
+mod overlay;
 
 use geometry::{
-    anchor_point, area_pick, distance_to_curve, drag_set, edge_curve, frame_rect, hit_item,
-    rect_from_points, snap_to_grid, wheel_delta, wheel_zoom_factor, Camera, ClickTracker, ItemHit,
-    CLICK_THRESHOLD, EDGE_HIT_HALF_WIDTH, FOCUS_ZOOM,
+    accumulate_wheel, anchor_point, area_pick, distance_to_curve, drag_set, edge_curve, frame_rect,
+    hit_item, interpolate_camera, rect_from_points, reorder_target, reordered_row, snap_to_grid,
+    wheel_delta, wheel_zoom_factor, Camera, ClickTracker, ItemHit, CLICK_THRESHOLD,
+    EDGE_HIT_HALF_WIDTH, FOCUS_DURATION, FOCUS_ZOOM, SLOT_HEIGHT,
 };
 
 type Curve = (EdgeKind, bool, [Point; 4]);
@@ -54,7 +57,9 @@ pub enum Shape {
 pub struct GraphItem<'a, M> {
     pub id: ItemId,
     /// Top-left corner in graph px. The child is laid out with max size
-    /// `shape.size()`, so use fixed or `Fill` sizes inside.
+    /// `shape.size()`, so use fixed or `Fill` sizes inside. Tooltips inside
+    /// must use `.snap_within_viewport(false)`: their overlay is drawn at the
+    /// map scale and iced would clamp it in graph coordinates.
     pub position: Point,
     pub shape: Shape,
     pub content: Element<'a, M>,
@@ -133,6 +138,31 @@ pub enum GraphEvent {
         items: Vec<ItemId>,
     },
     EmptyClick,
+    /// Live while a slot is dragged. `offset_y`: top of the dragged slot from
+    /// its column top, graph px, clamped to the column. During the drag the
+    /// app keeps passing edges and markers in the committed display order: the
+    /// widget remaps that column live.
+    SlotDrag {
+        item: ItemId,
+        side: Side,
+        from: usize,
+        to_display_index: usize,
+        offset_y: f32,
+    },
+    /// End of a slot drag, also when `from == to` (it ends the live state).
+    SlotDropped {
+        item: ItemId,
+        side: Side,
+        from: usize,
+        to: usize,
+    },
+    /// Wheel steps over the `wheel_slot`, positive when scrolling down.
+    SlotWheel {
+        item: ItemId,
+        side: Side,
+        row: usize,
+        steps: i32,
+    },
 }
 
 /// Items must be passed in a stable order: child state is diffed by index.
@@ -148,6 +178,7 @@ pub struct GraphView<'a, M> {
     selected: HashSet<ItemId>,
     snap: bool,
     area_mode: bool,
+    wheel_slot: Option<(ItemId, Side, usize)>,
     on_event: Option<Box<dyn Fn(GraphEvent) -> M + 'a>>,
 }
 
@@ -164,6 +195,7 @@ impl<'a, M> GraphView<'a, M> {
             selected: HashSet::new(),
             snap: false,
             area_mode: false,
+            wheel_slot: None,
             on_event: None,
         }
     }
@@ -206,6 +238,12 @@ impl<'a, M> GraphView<'a, M> {
     /// Dragging on empty canvas draws an area instead of panning.
     pub fn area_mode(mut self, area_mode: bool) -> Self {
         self.area_mode = area_mode;
+        self
+    }
+
+    /// The slot whose tag highlight cycles with the wheel instead of zooming.
+    pub fn wheel_slot(mut self, slot: Option<(ItemId, Side, usize)>) -> Self {
+        self.wheel_slot = slot;
         self
     }
 
@@ -258,8 +296,8 @@ impl<'a, M> GraphView<'a, M> {
         placements: &HashMap<ItemId, (Point, Shape)>,
         edge: &Edge,
     ) -> Option<Curve> {
-        let from = Self::anchor_point(placements, edge.from)?;
-        let to = Self::anchor_point(placements, edge.to)?;
+        let from = Self::anchor_point(state, placements, edge.from)?;
+        let to = Self::anchor_point(state, placements, edge.to)?;
         let curve = edge_curve(from, to).map(|p| state.camera.to_screen(p));
         Some((edge.kind, edge.active, curve))
     }
@@ -317,11 +355,37 @@ impl<'a, M> GraphView<'a, M> {
         }
     }
 
-    fn anchor_point(placements: &HashMap<ItemId, (Point, Shape)>, anchor: Anchor) -> Option<Point> {
+    /// Row of `anchor`, remapped live when its column is being reordered.
+    fn anchor_row(state: &State, anchor: Anchor) -> f32 {
+        match state.interaction {
+            Interaction::ReorderingSlot {
+                item,
+                side,
+                from,
+                rows,
+                offset_y,
+                ..
+            } if item == anchor.item
+                && matches!(
+                    (anchor.side, side),
+                    (AnchorSide::Input, Side::Input) | (AnchorSide::Output, Side::Output)
+                ) =>
+            {
+                reordered_row(anchor.row, from, reorder_target(offset_y, rows), offset_y)
+            }
+            _ => anchor.row as f32,
+        }
+    }
+
+    fn anchor_point(
+        state: &State,
+        placements: &HashMap<ItemId, (Point, Shape)>,
+        anchor: Anchor,
+    ) -> Option<Point> {
         let (position, shape) = placements.get(&anchor.item)?;
         Some(anchor_point(
             anchor.side,
-            anchor.row as f32,
+            Self::anchor_row(state, anchor),
             *position,
             *shape,
         ))
@@ -353,8 +417,17 @@ struct State {
     /// Union of the item rects, in graph px.
     content: Option<Rectangle>,
     published_zoom: Option<f32>,
+    wheel_accumulated: f32,
+    animation: Option<CameraAnimation>,
     edges_cache: canvas::Cache,
     edges_key: Cell<u64>,
+}
+
+#[derive(Debug)]
+struct CameraAnimation {
+    from: Camera,
+    to: Camera,
+    progress: Animation<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -384,6 +457,15 @@ enum Interaction {
         current: Point,
         additive: bool,
     },
+    /// `offset_y` is the top of the dragged slot from its column top, graph px.
+    ReorderingSlot {
+        origin: Point,
+        item: ItemId,
+        side: Side,
+        from: usize,
+        rows: usize,
+        offset_y: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -399,19 +481,32 @@ impl State {
     }
 
     fn apply(&mut self, request: CameraRequest) {
-        self.camera = match request {
-            CameraRequest::Fit => self
-                .content
-                .map(|content| Camera::fit(content, self.size))
-                .unwrap_or_default(),
-            CameraRequest::ZoomBy(factor) => self.camera.zoom_around(
-                Point::new(self.size.width / 2.0, self.size.height / 2.0),
-                factor,
-            ),
-            CameraRequest::Focus(target) => {
-                Camera::centered_on(target.center(), FOCUS_ZOOM, self.size)
+        self.animation = None;
+        match request {
+            CameraRequest::Fit => {
+                self.camera = self
+                    .content
+                    .map(|content| Camera::fit(content, self.size))
+                    .unwrap_or_default();
             }
-        };
+            CameraRequest::ZoomBy(factor) => {
+                self.camera = self.camera.zoom_around(
+                    Point::new(self.size.width / 2.0, self.size.height / 2.0),
+                    factor,
+                );
+            }
+            CameraRequest::Focus(target) => {
+                let mut progress = Animation::new(false)
+                    .easing(Easing::EaseInOutCubic)
+                    .duration(FOCUS_DURATION);
+                progress.go_mut(true, Instant::now());
+                self.animation = Some(CameraAnimation {
+                    from: self.camera,
+                    to: Camera::centered_on(target.center(), FOCUS_ZOOM, self.size),
+                    progress,
+                });
+            }
+        }
         self.interaction = Interaction::Idle;
     }
 
@@ -607,7 +702,7 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         let marker_points: Vec<Point> = self
             .markers
             .iter()
-            .filter_map(|anchor| Self::anchor_point(&placements, *anchor))
+            .filter_map(|anchor| Self::anchor_point(state, &placements, *anchor))
             .collect();
         renderer.with_layer(clip, |renderer| {
             // Marker points are graph coordinates, not absolute ones like child layouts.
@@ -706,6 +801,7 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 } = state.interaction.clone()
                 {
                     if origin.distance(position) > CLICK_THRESHOLD {
+                        state.animation = None;
                         let area = state.area_active(self.area_mode);
                         match target {
                             Some(Target::Item(id)) => {
@@ -725,7 +821,24 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                                     delta: Vector::ZERO,
                                 };
                             }
-                            Some(Target::Slot(..)) => {}
+                            Some(Target::Slot(id, side, from)) => {
+                                let rows = self.items.iter().find(|item| item.id == id).map_or(
+                                    0,
+                                    |item| match (item.shape, side) {
+                                        (Shape::Block { inputs, .. }, Side::Input) => inputs,
+                                        (Shape::Block { outputs, .. }, Side::Output) => outputs,
+                                        (Shape::Leaf, _) => 0,
+                                    },
+                                );
+                                state.interaction = Interaction::ReorderingSlot {
+                                    origin,
+                                    item: id,
+                                    side,
+                                    from,
+                                    rows,
+                                    offset_y: from as f32 * SLOT_HEIGHT,
+                                };
+                            }
                             None | Some(Target::Edge(_)) if area => {
                                 state.interaction = Interaction::Area {
                                     origin,
@@ -747,6 +860,30 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                         *delta = (position - *origin) * (1.0 / state.camera.zoom);
                     }
                     Interaction::Area { current, .. } => *current = position,
+                    Interaction::ReorderingSlot {
+                        origin,
+                        item,
+                        side,
+                        from,
+                        rows,
+                        offset_y,
+                    } => {
+                        let max = rows.saturating_sub(1) as f32 * SLOT_HEIGHT;
+                        let next = (*from as f32 * SLOT_HEIGHT
+                            + (position.y - origin.y) / state.camera.zoom)
+                            .clamp(0.0, max);
+                        if next != *offset_y {
+                            *offset_y = next;
+                            let event = GraphEvent::SlotDrag {
+                                item: *item,
+                                side: *side,
+                                from: *from,
+                                to_display_index: reorder_target(next, *rows),
+                                offset_y: next,
+                            };
+                            self.publish(shell, event);
+                        }
+                    }
                     _ => {}
                 }
                 if !matches!(
@@ -788,6 +925,25 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                     Interaction::DraggingItems { items, delta, .. } if delta != Vector::ZERO => {
                         self.publish(shell, GraphEvent::Moved { items, delta });
                     }
+                    Interaction::ReorderingSlot {
+                        item,
+                        side,
+                        from,
+                        rows,
+                        offset_y,
+                        ..
+                    } => {
+                        let to = reorder_target(offset_y, rows);
+                        self.publish(
+                            shell,
+                            GraphEvent::SlotDropped {
+                                item,
+                                side,
+                                from,
+                                to,
+                            },
+                        );
+                    }
                     Interaction::Area {
                         origin,
                         current,
@@ -825,10 +981,50 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 if let Some(anchor) = cursor.position_in(bounds) {
-                    let factor = wheel_zoom_factor(wheel_delta(*delta));
-                    state.camera = state.camera.zoom_around(anchor, factor);
-                    shell.request_redraw();
+                    let amount = wheel_delta(*delta);
+                    let slot =
+                        match self.hit_test(state, bounds, cursor.position().unwrap_or_default()) {
+                            Some(Target::Slot(item, side, row))
+                                if self.wheel_slot == Some((item, side, row)) =>
+                            {
+                                Some((item, side, row))
+                            }
+                            _ => None,
+                        };
+                    if let Some((item, side, row)) = slot {
+                        let (rest, steps) = accumulate_wheel(state.wheel_accumulated, amount);
+                        state.wheel_accumulated = rest;
+                        if steps != 0 {
+                            self.publish(
+                                shell,
+                                GraphEvent::SlotWheel {
+                                    item,
+                                    side,
+                                    row,
+                                    steps,
+                                },
+                            );
+                        }
+                    } else {
+                        state.wheel_accumulated = 0.0;
+                        state.animation = None;
+                        state.camera = state.camera.zoom_around(anchor, wheel_zoom_factor(amount));
+                        shell.request_redraw();
+                    }
                     shell.capture_event();
+                }
+            }
+            Event::Window(window::Event::RedrawRequested(now)) => {
+                if let Some(animation) = state.animation.take() {
+                    if animation.progress.is_animating(*now) {
+                        let t = animation.progress.interpolate(0.0, 1.0, *now);
+                        state.camera =
+                            interpolate_camera(animation.from, animation.to, t, state.size);
+                        state.animation = Some(animation);
+                        shell.request_redraw();
+                    } else {
+                        state.camera = animation.to;
+                    }
                 }
             }
             _ => {}
@@ -848,7 +1044,9 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<State>();
         match state.interaction {
-            Interaction::Panning { .. } | Interaction::DraggingItems { .. } => {
+            Interaction::Panning { .. }
+            | Interaction::DraggingItems { .. }
+            | Interaction::ReorderingSlot { .. } => {
                 return mouse::Interaction::Grabbing;
             }
             Interaction::Area { .. } => return mouse::Interaction::Crosshair,
@@ -884,6 +1082,41 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             }
             None | Some(Target::Edge(_)) => mouse::Interaction::None,
         }
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<iced_overlay::Element<'b, M, Theme, Renderer>> {
+        let state = tree.state.downcast_ref::<State>();
+        if !matches!(state.interaction, Interaction::Idle) {
+            return None;
+        }
+        let transformation = Transformation::translate(translation.x, translation.y)
+            * state.camera.transformation(layout.bounds());
+        let viewport = *viewport * transformation.inverse();
+        let children: Vec<_> = self
+            .items
+            .iter_mut()
+            .zip(&mut tree.children)
+            .zip(layout.children())
+            .filter_map(|((item, child), child_layout)| {
+                item.content
+                    .as_widget_mut()
+                    .overlay(child, child_layout, renderer, &viewport, Vector::ZERO)
+                    .map(|content| {
+                        iced_overlay::Element::new(Box::new(overlay::Transformed::new(
+                            content,
+                            transformation,
+                        )))
+                    })
+            })
+            .collect();
+        (!children.is_empty()).then(|| iced_overlay::Group::with_children(children).overlay())
     }
 
     fn operate(
