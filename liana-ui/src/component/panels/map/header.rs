@@ -34,7 +34,8 @@ pub enum HeaderAction {
 }
 
 /// Map toolbar. `enabled` is false while the map is empty or loading, `align_count` is the
-/// number of transactions the align buttons would move.
+/// number of transactions the align buttons would move, `other_wallets` enables the other
+/// wallets button.
 #[allow(clippy::too_many_arguments)]
 pub fn map_header<'a, M: Clone + 'a>(
     zoom: f32,
@@ -47,6 +48,7 @@ pub fn map_header<'a, M: Clone + 'a>(
     unspent_count: usize,
     unspent_total: &Amount,
     align_count: usize,
+    other_wallets: bool,
     on_action: impl Fn(HeaderAction) -> M,
 ) -> Element<'a, M> {
     let msg = |action, active: bool| active.then(|| on_action(action));
@@ -64,7 +66,7 @@ pub fn map_header<'a, M: Clone + 'a>(
     let redo = button::btn_redo(msg(HeaderAction::Redo, enabled && can_redo));
     let shortcuts = button::btn_shortcuts(msg(HeaderAction::Shortcuts, true));
     let reset = button::btn_reset_layout(msg(HeaderAction::ResetLayout, enabled));
-    let other_wallets = button::btn_other_wallets(msg(HeaderAction::OtherWallets, true));
+    let other_wallets = button::btn_other_wallets(msg(HeaderAction::OtherWallets, other_wallets));
 
     let area = button::btn_select_area(area_on, msg(HeaderAction::ToggleArea, enabled));
     let unspent = button::btn_highlight_unspent(

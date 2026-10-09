@@ -14,7 +14,8 @@ use crate::{
     app::{
         cache::{DaemonCache, FiatPrice},
         error::Error,
-        state::MapWallet,
+        settings::WalletId,
+        state::{map::wallets::OtherWallet, MapWallet},
         view,
         wallet::Wallet,
     },
@@ -72,6 +73,9 @@ pub enum Message {
     Export(ImportExportMessage),
     MapLoaded(Result<Vec<MapWallet>, Error>),
     MapLayoutSaved(Result<(), Error>),
+    MapWalletsListed(Result<Vec<OtherWallet>, Error>),
+    /// Labels saved to another wallet of the map.
+    MapWalletLabelsSaved(WalletId, Result<HashMap<String, Option<String>>, Error>),
 }
 
 impl From<ImportExportMessage> for Message {

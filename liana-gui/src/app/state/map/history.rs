@@ -6,7 +6,10 @@ use liana_ui::widget::graph_view::Side;
 use lianad::commands::GraphItem;
 
 use crate::{
-    app::{settings::WalletId, state::map::coin_ui::TagId},
+    app::{
+        settings::WalletId,
+        state::map::{coin_ui::TagId, wallets::WalletKey},
+    },
     daemon::model::LabelItem,
 };
 
@@ -43,7 +46,9 @@ pub enum Change {
         before: LayoutState,
         after: LayoutState,
     },
+    /// `wallet`: the wallet the label is saved to.
     Label {
+        wallet: WalletKey,
         item: LabelItem,
         before: Option<String>,
         after: Option<String>,
@@ -105,10 +110,12 @@ impl Change {
                 after: before,
             },
             Change::Label {
+                wallet,
                 item,
                 before,
                 after,
             } => Change::Label {
+                wallet,
                 item,
                 before: after,
                 after: before,
@@ -269,6 +276,7 @@ mod tests {
                 after: LayoutState::default(),
             },
             Change::Label {
+                wallet: WalletKey::Other(WalletId::new("b".to_string(), None)),
                 item: LabelItem::OutPoint(fixture::foreign(1)),
                 before: None,
                 after: Some("a".to_string()),

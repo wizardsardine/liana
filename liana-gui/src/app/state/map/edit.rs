@@ -387,6 +387,7 @@ mod tests {
                 selected: true,
             },
             Change::Label {
+                wallet: WalletKey::Current,
                 item: LabelItem::OutPoint(foreign(1)),
                 before: None,
                 after: Some("a".to_string()),

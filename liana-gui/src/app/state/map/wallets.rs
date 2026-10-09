@@ -1,15 +1,22 @@
+use std::collections::HashMap;
+
+use iced::Vector;
 use liana::miniscript::bitcoin::Network;
 use lianad::{
-    commands::{GraphItem, GraphLayoutEntry},
+    commands::{GraphItem, GraphLayoutEntry, GraphWallet},
     datadir::DataDirectory,
     offline::{OfflineError, WalletDb},
 };
 
 use crate::{
-    app::settings::{LianaSettings, SettingsError, WalletId},
+    app::{
+        error::Error,
+        settings::{LianaSettings, SettingsError, WalletId},
+        state::map::{graph::WalletTxs, offsets::WalletLayout, MapWallet},
+    },
     daemon::{
         history_txs, label_items,
-        model::{Coin, HistoryTransaction},
+        model::{Coin, HistoryTransaction, LabelItem},
         set_labels, wallet_txids,
     },
     dir::NetworkDirectory,
@@ -118,6 +125,55 @@ pub fn save_wallet_layout(
 ) -> Result<(), OfflineError> {
     WalletDb::open(&wallet.datadir, network)?.update_graph_layout(set, remove);
     Ok(())
+}
+
+/// Writes labels of `wallet` to its database, blocking.
+pub fn save_wallet_labels(
+    wallet: &OtherWallet,
+    network: Network,
+    items: &HashMap<LabelItem, Option<String>>,
+) -> Result<(), OfflineError> {
+    WalletDb::open(&wallet.datadir, network)?.update_labels(items);
+    Ok(())
+}
+
+/// The wallets selected in `rows` that can be read, each with its stored offset, blocking.
+pub fn load_selected(
+    network_dir: &NetworkDirectory,
+    network: Network,
+    current: &WalletId,
+    rows: &[GraphWallet],
+) -> Result<Vec<MapWallet>, Error> {
+    let mut wallets = Vec::new();
+    if !rows.iter().any(|row| row.selected) {
+        return Ok(wallets);
+    }
+    for other in other_wallets(network_dir, network, current)? {
+        let Some(row) = rows
+            .iter()
+            .find(|row| row.selected && row.wallet == other.id.to_string())
+        else {
+            continue;
+        };
+        if other.status != WalletStatus::Available {
+            continue;
+        }
+        let data = load_wallet(&other, network)?;
+        wallets.push(MapWallet {
+            txs: WalletTxs {
+                key: data.key,
+                checksum: data.checksum,
+                txs: data.txs,
+                coins: data.coins,
+            },
+            layout: WalletLayout {
+                entries: data.layout,
+                offset: row.offset.map(|(x, y)| Vector::new(x as f32, y as f32)),
+            },
+            other: Some(other),
+        });
+    }
+    Ok(wallets)
 }
 
 #[cfg(test)]

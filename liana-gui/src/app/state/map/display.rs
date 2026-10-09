@@ -16,6 +16,7 @@ use crate::app::state::map::{
     graph::{InputSlot, LeafKind, MapItem, OutputSlot, SlotRef, TxGraph},
     layout,
     selection::{self, Selection, TagHighlight},
+    wallets::WalletKey,
     LabelTarget, Orders,
 };
 
@@ -80,6 +81,20 @@ pub fn label_key(graph: &TxGraph, target: &LabelTarget) -> Option<String> {
     }
 }
 
+/// The wallet the label edited from `target` is saved to: the coin's wallet for a slot holding
+/// one, else the primary wallet of the transaction.
+pub fn label_wallet<'a>(graph: &'a TxGraph, target: &LabelTarget) -> Option<&'a WalletKey> {
+    let tx = match *target {
+        LabelTarget::Tx(tx) => tx,
+        LabelTarget::Slot(slot) => match graph.slot_wallet(slot) {
+            Some(wallet) => return Some(wallet),
+            None => slot.tx,
+        },
+        LabelTarget::Leaf(leaf) => graph.leaves().get(leaf)?.tx,
+    };
+    Some(graph.txs().get(tx)?.primary())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClickAction {
     None,
@@ -91,6 +106,8 @@ pub enum ClickAction {
     Range(ItemId),
     /// Command and shift click: add the whole chain.
     Chain(ItemId),
+    /// Command and alt click: every item of the item's wallet.
+    SelectWallet(ItemId),
     /// Plain click on a slot.
     TagHighlight(SlotRef),
 }
@@ -102,11 +119,12 @@ pub fn click_action(
     target: &Target,
     modifiers: Modifiers,
 ) -> ClickAction {
-    let modified = |id: ItemId| match (modifiers.command(), modifiers.shift()) {
-        (false, false) => ClickAction::Select(id),
-        (true, false) => ClickAction::Toggle(id),
-        (false, true) => ClickAction::Range(id),
-        (true, true) => ClickAction::Chain(id),
+    let modified = |id: ItemId| match (modifiers.command(), modifiers.alt(), modifiers.shift()) {
+        (true, true, _) => ClickAction::SelectWallet(id),
+        (false, _, false) => ClickAction::Select(id),
+        (true, false, false) => ClickAction::Toggle(id),
+        (false, _, true) => ClickAction::Range(id),
+        (true, false, true) => ClickAction::Chain(id),
     };
     match *target {
         Target::Item(id) => modified(id),
@@ -358,7 +376,10 @@ mod tests {
 
     use crate::app::state::map::{
         coin_ui::CoinUi,
-        display::{click_action, display_state, label_key, slot_ref, ClickAction, DisplayState},
+        display::{
+            click_action, display_state, label_key, label_wallet, slot_ref, ClickAction,
+            DisplayState,
+        },
         fixture,
         focus::ShowOnMap,
         graph::{OutputSlot, SlotRef, TxGraph},
@@ -447,6 +468,32 @@ mod tests {
         let modifiers = Modifiers::COMMAND | Modifiers::SHIFT;
         let action = click_action(&graph, &Orders::new(), &Target::Item(id), modifiers);
         assert_eq!(action, ClickAction::Chain(id));
+    }
+
+    #[test]
+    fn command_alt_click_selects_the_wallet() {
+        let graph = fixture::graph();
+        let modifiers = Modifiers::COMMAND | Modifiers::ALT;
+        let tx = graph.tx_item(1);
+        let leaf = graph.leaf_item(0);
+        let targets = [
+            (Target::Item(tx), tx),
+            (Target::Slot(tx, Side::Input, 0), tx),
+            (Target::Item(leaf), leaf),
+        ];
+        for (target, id) in targets {
+            let action = click_action(&graph, &Orders::new(), &target, modifiers);
+            assert_eq!(action, ClickAction::SelectWallet(id));
+            let with_shift = click_action(
+                &graph,
+                &Orders::new(),
+                &target,
+                modifiers | Modifiers::SHIFT,
+            );
+            assert_eq!(with_shift, ClickAction::SelectWallet(id));
+        }
+        let alt = click_action(&graph, &Orders::new(), &Target::Item(tx), Modifiers::ALT);
+        assert_eq!(alt, ClickAction::Select(tx));
     }
 
     #[test]
@@ -752,6 +799,26 @@ mod tests {
                 .position(|leaf| leaf.outpoint == outpoint)
                 .unwrap(),
         )
+    }
+
+    #[test]
+    fn label_wallet_is_the_owner() {
+        let two = fixture::two_wallets("a", "b");
+        let (payment, spend) = (two.payment, two.spend);
+        let graph = TxGraph::new(two.wallets);
+        let tx = graph.tx_index(&payment).unwrap();
+        let wallet = |target: LabelTarget| label_wallet(&graph, &target).cloned();
+        assert_eq!(wallet(LabelTarget::Tx(tx)), Some(WalletKey::Current));
+        assert_eq!(
+            wallet(slot(&graph, payment, Side::Output, 0)),
+            Some(two.b.clone())
+        );
+        assert_eq!(
+            wallet(slot(&graph, payment, Side::Output, 1)),
+            Some(WalletKey::Current)
+        );
+        let shop = graph.txs()[graph.tx_index(&spend).unwrap()].leaves[0];
+        assert_eq!(wallet(LabelTarget::Leaf(shop)), Some(two.b));
     }
 
     #[test]
