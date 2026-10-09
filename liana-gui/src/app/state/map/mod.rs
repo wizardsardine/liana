@@ -13,6 +13,7 @@ pub mod layout;
 pub mod offsets;
 pub mod selection;
 pub mod topology;
+pub mod untangle;
 pub mod wallets;
 
 use std::{
@@ -594,10 +595,12 @@ impl MapPanel {
             }
             PlacementKind::Lanes => {
                 let reset = lanes::reset(graph, &displayed);
+                self.lane_heights.extend(reset.heights);
+                self.resized_heights.clear();
                 let none = Offsets::default();
                 (
                     edit::layout_state(graph, &self.lane_layout, &self.orders, &none),
-                    edit::layout_state(graph, &reset, &Orders::new(), &none),
+                    edit::layout_state(graph, &reset.positions, &reset.orders, &none),
                 )
             }
         };
@@ -606,13 +609,36 @@ impl MapPanel {
             before,
             after,
         };
+        let rows = self.save_rows(daemon.clone());
+        Task::batch([self.commit_layout(daemon, change), rows])
+    }
+
+    /// Untangles the lanes from their current positions and slot orders as one change.
+    fn commit_tidy_up(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let displayed = lanes::displayed(&self.lanes);
+        let untangled = lanes::untangled(graph, &displayed, &self.lane_layout, &self.orders);
+        let none = Offsets::default();
+        let change = Change::Layout {
+            placement: PlacementKind::Lanes,
+            before: edit::layout_state(graph, &self.lane_layout, &self.orders, &none),
+            after: edit::layout_state(graph, &untangled.positions, &untangled.orders, &none),
+        };
+        self.lane_heights.extend(untangled.heights);
+        self.commit_layout(daemon, change)
+    }
+
+    /// Records a layout change, applies it and persists the touched items.
+    fn commit_layout(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        change: Change,
+    ) -> Task<Message> {
         let touched = self.apply_layout_change(&change);
         self.history.record(change);
-        if placement == PlacementKind::Lanes {
-            self.resized_heights.clear();
-        }
-        let rows = self.save_rows(daemon.clone());
-        Task::batch([self.save_layout(daemon, touched, HashMap::new()), rows])
+        self.save_layout(daemon, touched, HashMap::new())
     }
 
     /// Records a drag of every item of a wallet as a move of its offset.
@@ -1843,6 +1869,9 @@ impl State for MapPanel {
                         .collect();
                     return self.commit_move(daemon, placement, moves);
                 }
+                MapMessage::Header(HeaderAction::TidyUp) if self.toggles.lanes => {
+                    return self.commit_tidy_up(daemon);
+                }
                 MapMessage::Header(HeaderAction::ResetLayout) => {
                     let reset = self.commit_reset(daemon, self.placement());
                     return Task::batch([reset, graph_view::fit(self.graph_id.clone())]);
@@ -2750,7 +2779,7 @@ mod tests {
 
         send(&mut panel, MapMessage::Header(HeaderAction::ResetLayout));
         let graph = panel.graph.as_ref().unwrap();
-        let lane_reset = lanes::reset(graph, &wallets);
+        let lane_reset = lanes::reset(graph, &wallets).positions;
         assert_eq!(panel.lane_layout, lane_reset);
         assert_eq!(panel.layout, global);
         assert_eq!(panel.offsets, offsets);
@@ -2768,5 +2797,33 @@ mod tests {
         assert_eq!(panel.layout, global);
         assert_eq!(panel.offsets, offsets);
         assert_eq!(panel.lane_layout, lane_reset);
+    }
+
+    #[test]
+    fn tidy_up_is_one_change_of_the_lanes() {
+        let (two, mut panel) = two_wallet_panel();
+        let payment = item(&panel, &two.payment);
+        assert_eq!(panel.lane_layout[&payment], Point::new(1392.0, 0.0));
+        drag(&mut panel, vec![payment], Vector::new(48.0, 360.0));
+        let dragged = panel.lane_layout.clone();
+
+        send(&mut panel, MapMessage::Header(HeaderAction::TidyUp));
+        // Back on the row of its funding parent, at the x it was dragged to.
+        assert_eq!(panel.lane_layout[&payment], Point::new(1440.0, 0.0));
+        assert_eq!(panel.lane_heights[&WalletKey::Current], 252.0);
+        let tidy = panel.lane_layout.clone();
+
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.lane_layout, dragged);
+        send(&mut panel, MapMessage::Header(HeaderAction::Redo));
+        assert_eq!(panel.lane_layout, tidy);
+
+        // With the lanes off it does nothing yet.
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        drag(&mut panel, vec![payment], Vector::new(0.0, 360.0));
+        let (global, lane) = (panel.layout.clone(), panel.lane_layout.clone());
+        send(&mut panel, MapMessage::Header(HeaderAction::TidyUp));
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.lane_layout, lane);
     }
 }

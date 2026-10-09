@@ -198,6 +198,8 @@ btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
 
+btn-tidy-up-tooltip => "Tidy up: untangle the coin links of the lanes"
+
 btn-undo-tooltip => "Undo ({$key}+Z)"
 
 btn-unlock-all => "Unlock all"

@@ -22,6 +22,7 @@ pub enum HeaderAction {
     Redo,
     Shortcuts,
     ResetLayout,
+    TidyUp,
     OtherWallets,
     ToggleArea,
     ToggleUnspent,
@@ -69,6 +70,7 @@ pub fn map_header<'a, M: Clone + 'a>(
     let redo = button::btn_redo(msg(HeaderAction::Redo, enabled && can_redo));
     let shortcuts = button::btn_shortcuts(msg(HeaderAction::Shortcuts, true));
     let reset = button::btn_reset_layout(msg(HeaderAction::ResetLayout, enabled));
+    let tidy_up = button::btn_tidy_up(msg(HeaderAction::TidyUp, enabled && lanes_on));
     let other_wallets = button::btn_other_wallets(msg(HeaderAction::OtherWallets, other_wallets));
 
     let area = button::btn_select_area(area_on, msg(HeaderAction::ToggleArea, enabled));
@@ -112,6 +114,7 @@ pub fn map_header<'a, M: Clone + 'a>(
         redo,
         shortcuts,
         reset,
+        tidy_up,
         sep(),
         other_wallets,
         sep(),

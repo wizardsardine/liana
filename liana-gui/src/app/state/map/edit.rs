@@ -481,7 +481,7 @@ mod tests {
         offsets.set(two.b.clone(), Vector::new(480.0, -240.0));
         let kept = offsets.clone();
         let funding = graph.tx_item(graph.tx_index(&two.funding).unwrap());
-        let mut lane_layout = lanes::reset(&graph, &wallets);
+        let mut lane_layout = lanes::reset(&graph, &wallets).positions;
         lane_layout.insert(funding, Point::new(96.0, 48.0));
         let initial = lane_layout.clone();
         let mut orders = Orders::new();
@@ -489,11 +489,16 @@ mod tests {
         let reset = Change::Layout {
             placement: PlacementKind::Lanes,
             before: layout_state(&graph, &lane_layout, &orders, &none),
-            after: layout_state(&graph, &lanes::reset(&graph, &wallets), &orders, &none),
+            after: layout_state(
+                &graph,
+                &lanes::reset(&graph, &wallets).positions,
+                &orders,
+                &none,
+            ),
         };
 
         apply_layout_change(&graph, &mut lane_layout, &mut orders, &mut offsets, &reset);
-        assert_eq!(lane_layout, lanes::reset(&graph, &wallets));
+        assert_eq!(lane_layout, lanes::reset(&graph, &wallets).positions);
         assert_eq!(offsets, kept);
 
         apply_layout_change(

@@ -1041,6 +1041,15 @@ pub fn btn_lanes<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T
     )
 }
 
+pub fn btn_tidy_up<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::magic_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-tidy-up-tooltip"),
+        false,
+        msg,
+    )
+}
+
 pub fn btn_snap<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
     let icon: Element<'a, T> = toolbar_svg(image::snap_grid_icon(), on, msg.is_some()).into();
     toolbar_button(icon, t!("btn-snap-tooltip"), on, msg)

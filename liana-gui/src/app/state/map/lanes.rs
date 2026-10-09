@@ -5,11 +5,14 @@ use liana_ui::widget::graph_view::ItemId;
 use lianad::commands::GraphWallet;
 
 use crate::app::state::map::{
-    graph::{TxGraph, WalletTxs},
+    display_row,
+    graph::{LeafKind, TxGraph, WalletTxs},
+    history::Order,
     layout,
     offsets::{Offsets, WalletLayout},
+    untangle::{untangle, Arrangement, Layered, Link, Node, Slot},
     wallets::{WalletKey, WalletStore},
-    MapWallet,
+    MapWallet, Orders,
 };
 
 /// A wallet loaded on the map, in lane order.
@@ -132,12 +135,153 @@ pub fn shown(
         .collect()
 }
 
-/// Default positions in their lanes of the items of `wallets`.
-pub fn reset(graph: &TxGraph, wallets: &[WalletKey]) -> HashMap<ItemId, Point> {
-    wallets
+/// Positions in their lanes, slot display orders and lane heights of untangled lanes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Untangled {
+    pub positions: HashMap<ItemId, Point>,
+    pub orders: Orders,
+    pub heights: HashMap<WalletKey, f32>,
+}
+
+/// Display order of a column, `None` for the true order.
+fn column_order(order: &[usize]) -> Order {
+    let identity = order.iter().copied().eq(0..order.len());
+    (!identity).then(|| order.iter().map(|index| *index as u32).collect())
+}
+
+/// A transaction of a displayed wallet: its index, its lane and its position in the lane.
+type LaneTx = (usize, usize, Point);
+
+/// The transactions at `txs` and their coin links between them.
+fn layered(graph: &TxGraph, lanes: usize, txs: &[LaneTx]) -> Layered {
+    let node_of: HashMap<usize, usize> = txs
+        .iter()
+        .enumerate()
+        .map(|(node, (tx, ..))| (*tx, node))
+        .collect();
+    let nodes = txs
+        .iter()
+        .map(|(tx, lane, at)| {
+            let map_tx = &graph.txs()[*tx];
+            let input_leaf =
+                |leaf: &usize| graph.leaves()[*leaf].kind == LeafKind::CounterpartyCoin;
+            Node {
+                lane: *lane,
+                x: at.x,
+                inputs: map_tx.inputs.len(),
+                outputs: map_tx.outputs.len(),
+                input_leaves: map_tx.leaves.iter().any(input_leaf),
+                output_leaves: !map_tx.leaves.iter().all(input_leaf),
+            }
+        })
+        .collect();
+    let links = graph
+        .coin_edges()
+        .iter()
+        .filter_map(|edge| {
+            let slot = |tx: usize, index: usize| {
+                Some(Slot {
+                    node: *node_of.get(&tx)?,
+                    index,
+                })
+            };
+            Some(Link {
+                from: slot(edge.from.tx, edge.from.index)?,
+                to: slot(edge.to.tx, edge.to.index)?,
+            })
+        })
+        .collect();
+    Layered::new(lanes, nodes, links)
+}
+
+/// The transactions at `txs` with their slot display `orders`.
+fn arrangement(graph: &TxGraph, txs: &[LaneTx], orders: &Orders) -> Arrangement {
+    let display_order = |order: &Order, len: usize| match order {
+        Some(order) => order.iter().map(|index| *index as usize).collect(),
+        None => (0..len).collect(),
+    };
+    let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
+    for (tx, ..) in txs {
+        let map_tx = &graph.txs()[*tx];
+        let (input_order, output_order) = orders
+            .get(&map_tx.history().txid)
+            .cloned()
+            .unwrap_or_default();
+        inputs.push(display_order(&input_order, map_tx.inputs.len()));
+        outputs.push(display_order(&output_order, map_tx.outputs.len()));
+    }
+    Arrangement {
+        tops: txs.iter().map(|(.., at)| at.y).collect(),
+        inputs,
+        outputs,
+    }
+}
+
+/// The items of `wallets` untangled from their positions in the lanes `start` and the slot
+/// `orders`: each transaction keeps its lane and x and changes row, its leaves land next to
+/// their slots. A transaction missing from `start` is left out.
+pub fn untangled(
+    graph: &TxGraph,
+    wallets: &[WalletKey],
+    start: &HashMap<ItemId, Point>,
+    orders: &Orders,
+) -> Untangled {
+    let txs: Vec<LaneTx> = (0..graph.txs().len())
+        .filter_map(|tx| {
+            let lane = wallets
+                .iter()
+                .position(|wallet| wallet == graph.txs()[tx].primary())?;
+            Some((tx, lane, *start.get(&graph.tx_item(tx))?))
+        })
+        .collect();
+    let layered = layered(graph, wallets.len(), &txs);
+    let arrangement = untangle(&layered, &arrangement(graph, &txs, orders));
+
+    let mut positions = HashMap::new();
+    let mut untangled_orders = Orders::new();
+    for (node, (tx, _, at)) in txs.iter().enumerate() {
+        let map_tx = &graph.txs()[*tx];
+        let order = (
+            column_order(&arrangement.inputs[node]),
+            column_order(&arrangement.outputs[node]),
+        );
+        let block = Point::new(at.x, arrangement.tops[node]);
+        positions.insert(graph.tx_item(*tx), block);
+        for leaf in &map_tx.leaves {
+            let leaf_ref = &graph.leaves()[*leaf];
+            let column = match leaf_ref.kind {
+                LeafKind::CounterpartyCoin => &order.0,
+                LeafKind::Payment | LeafKind::CounterpartyOutput => &order.1,
+            };
+            let row = display_row(column.as_deref(), leaf_ref.index);
+            positions.insert(
+                graph.leaf_item(*leaf),
+                layout::leaf_position(leaf_ref.kind, block, row),
+            );
+        }
+        if order != (None, None) {
+            untangled_orders.insert(map_tx.history().txid, order);
+        }
+    }
+    let heights = wallets
+        .iter()
+        .cloned()
+        .zip(arrangement.lane_heights(&layered))
+        .collect();
+    Untangled {
+        positions,
+        orders: untangled_orders,
+        heights,
+    }
+}
+
+/// Default positions in their lanes of the items of `wallets`, untangled.
+pub fn reset(graph: &TxGraph, wallets: &[WalletKey]) -> Untangled {
+    let defaults: HashMap<ItemId, Point> = wallets
         .iter()
         .flat_map(|wallet| layout::reset_lane(graph, wallet))
-        .collect()
+        .collect();
+    untangled(graph, wallets, &defaults, &Orders::new())
 }
 
 /// Tops of lanes `heights` tall stacked down from 0 in their order.
@@ -222,9 +366,9 @@ mod tests {
             graph::{OutputSlot, TxGraph, WalletTxs},
             lanes::{
                 displayed, moved, reset, rows, shown, split_loaded, stacked_bands, stacked_tops,
-                Band, WalletLane,
+                untangled, Band, WalletLane,
             },
-            layout::{self, item_size, lane_height, BLOCK_CLEARANCE, LANE_GAP},
+            layout::{self, item_size, BLOCK_CLEARANCE, LANE_GAP},
             offsets::{Offsets, WalletLayout},
             wallets::WalletKey,
             MapWallet,
@@ -266,12 +410,8 @@ mod tests {
         two: &TwoWallets,
         graph: &TxGraph,
     ) -> (HashMap<ItemId, Point>, HashMap<WalletKey, f32>) {
-        let wallets = [WalletKey::Current, two.b.clone()];
-        let heights = wallets
-            .iter()
-            .map(|wallet| (wallet.clone(), lane_height(graph, wallet)))
-            .collect();
-        (reset(graph, &wallets), heights)
+        let reset = reset(graph, &[WalletKey::Current, two.b.clone()]);
+        (reset.positions, reset.heights)
     }
 
     #[test]
@@ -389,18 +529,54 @@ mod tests {
     }
 
     #[test]
-    fn reset_places_the_lanes_by_default() {
+    fn reset_untangles_the_default_lanes() {
         let (two, graph) = two_wallets();
-        let mut expected = layout::reset_lane(&graph, &WalletKey::Current);
-        expected.extend(layout::reset_lane(&graph, &two.b));
+        let wallets = [WalletKey::Current, two.b.clone()];
+        let lanes = reset(&graph, &wallets);
+        let item = |txid| graph.tx_item(graph.tx_index(&txid).unwrap());
+        // By default the payment is one row below its funding parent: untangled, it lines its
+        // input up with the funding output.
         assert_eq!(
-            reset(&graph, &[WalletKey::Current, two.b.clone()]),
-            expected
+            layout::reset_lane(&graph, &WalletKey::Current)[&item(two.payment)],
+            Point::new(1392.0, 180.0)
         );
         assert_eq!(
-            reset(&graph, &[two.b.clone()]),
-            layout::reset_lane(&graph, &two.b)
+            [two.funding, two.payment, two.spend].map(|txid| lanes.positions[&item(txid)]),
+            [
+                Point::new(0.0, 0.0),
+                Point::new(1392.0, 0.0),
+                Point::new(2784.0, 0.0)
+            ]
         );
+        assert_eq!(lanes.positions.len(), graph.item_ids().count());
+        assert!(lanes.orders.is_empty());
+        assert_eq!(
+            lanes.heights,
+            HashMap::from([(WalletKey::Current, 252.0), (two.b.clone(), 252.0)])
+        );
+
+        let alone = reset(&graph, &[two.b.clone()]);
+        let mut ids: Vec<ItemId> = alone.positions.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, graph.wallet_items(&two.b));
+    }
+
+    #[test]
+    fn untangled_keeps_the_x_and_the_lanes() {
+        let (two, graph) = two_wallets();
+        let wallets = [WalletKey::Current, two.b.clone()];
+        let mut start = reset(&graph, &wallets).positions;
+        for (k, tx) in (0..graph.txs().len()).enumerate() {
+            let id = graph.tx_item(tx);
+            start.insert(id, start[&id] + Vector::new(24.0 * k as f32, 600.0));
+        }
+        let lanes = untangled(&graph, &wallets, &start, &HashMap::new());
+        for tx in 0..graph.txs().len() {
+            let id = graph.tx_item(tx);
+            assert_eq!(lanes.positions[&id].x, start[&id].x);
+            assert_eq!(lanes.positions[&id].y, 0.0);
+        }
+        assert_eq!(lanes, untangled(&graph, &wallets, &start, &HashMap::new()));
     }
 
     #[test]

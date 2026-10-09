@@ -13,7 +13,7 @@ use crate::app::state::map::{
 
 /// Horizontal distance from a parent to a linked transaction with the lanes off.
 const COLUMN_PITCH: f32 = 86.0 * U;
-const LEAF_OFFSET: f32 = 6.0 * U;
+pub const LEAF_OFFSET: f32 = 6.0 * U;
 pub const BLOCK_CLEARANCE: f32 = 2.0 * U;
 const LEAF_CLEARANCE: f32 = U;
 const UNLINKED_GAP: f32 = 10.0 * U;
@@ -54,6 +54,15 @@ fn clearance(graph: &TxGraph, a: ItemId, b: ItemId) -> f32 {
 /// Top of the leaf next to slot `index`, below the top of its block.
 fn leaf_inset(index: usize) -> f32 {
     index as f32 * SLOT_HEIGHT + LEAF_TOP_INSET
+}
+
+/// Position of a leaf next to the slot shown at `row` of its block at `block`.
+pub fn leaf_position(kind: LeafKind, block: Point, row: usize) -> Point {
+    let x = match kind {
+        LeafKind::CounterpartyCoin => block.x - LEAF_OFFSET - LEAF_WIDTH,
+        _ => block.x + BLOCK_WIDTH + LEAF_OFFSET,
+    };
+    Point::new(x, block.y + leaf_inset(row))
 }
 
 /// Height of a transaction with its leaves next to their slots.
@@ -187,12 +196,8 @@ fn place_items(
                 continue;
             }
             let leaf = &graph.leaves()[*leaf];
-            let x = match leaf.kind {
-                LeafKind::CounterpartyCoin => position.x - LEAF_OFFSET - LEAF_WIDTH,
-                _ => position.x + BLOCK_WIDTH + LEAF_OFFSET,
-            };
-            let y = position.y + leaf_inset(leaf.index);
-            let at = settle(graph, &occupied, leaf_id, Point::new(x, y));
+            let at = leaf_position(leaf.kind, position, leaf.index);
+            let at = settle(graph, &occupied, leaf_id, at);
             occupied.push((leaf_id, Rectangle::new(at, item_size(graph, leaf_id))));
             placed.insert(leaf_id, at);
         }
@@ -414,6 +419,7 @@ mod tests {
         state::map::{
             fixture::{self, foreign, ours, Builder},
             graph::{LeafKind, TxGraph, WalletTxs},
+            lanes,
             layout::{
                 align_horizontal, align_targets, align_vertical, clearance, item_size, lane_height,
                 new_offset, overlaps, place, place_lane, reset, reset_lane,
@@ -788,6 +794,23 @@ mod tests {
         let graph = fixture::graph();
         let layout = reset_lane(&graph, &WalletKey::Current);
         let ids: Vec<ItemId> = graph.item_ids().collect();
+        for (i, a) in ids.iter().enumerate() {
+            for b in &ids[i + 1..] {
+                assert!(!overlaps(
+                    rect(&graph, &layout, *a),
+                    rect(&graph, &layout, *b),
+                    clearance(&graph, *a, *b)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn untangled_lanes_have_no_overlap() {
+        let graph = fixture::graph();
+        let layout = lanes::reset(&graph, &[WalletKey::Current]).positions;
+        let ids: Vec<ItemId> = graph.item_ids().collect();
+        assert_eq!(layout.len(), ids.len());
         for (i, a) in ids.iter().enumerate() {
             for b in &ids[i + 1..] {
                 assert!(!overlaps(

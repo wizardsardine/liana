@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::app::state::map::{
     graph::{InputSlot, OutputSlot, TxGraph},
@@ -11,14 +11,14 @@ pub const TOPOLOGY_VERSION: u32 = 2;
 
 /// The map graph with every identifier replaced by an index: no txid, outpoint, address,
 /// amount, label, height, time or wallet name.
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Topology {
     pub version: u32,
     pub wallets: usize,
     pub txs: Vec<TopoTx>,
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct TopoTx {
     /// Position in the left to right order of the lanes placement.
     pub order: usize,
@@ -30,13 +30,13 @@ pub struct TopoTx {
 }
 
 /// The other end of a coin link: a transaction `order` and its slot index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Peer {
     pub tx: usize,
     pub slot: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TopoInput {
     /// Coin of the wallet at lane `wallet`, created by output `from` when it is on the map.
@@ -45,7 +45,7 @@ pub enum TopoInput {
     External,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TopoOutput {
     /// Coin of the wallet at lane `wallet`, spent by input `to` when it is on the map.
