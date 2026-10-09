@@ -20,7 +20,7 @@ use std::{
     str::{self, FromStr},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 
 pub mod keys;
 pub use keys::*;
@@ -88,7 +88,7 @@ fn key_is_for_path(
 
 /// A [SinglePathLianaDesc] that contains multipath keys for (and only for) the receive keychain
 /// and the change keychain.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LianaDescriptor {
     multi_desc: descriptor::Descriptor<descriptor::DescriptorPublicKey>,
     receive_desc: SinglePathLianaDesc,
@@ -103,6 +103,23 @@ pub struct SinglePathLianaDesc(descriptor::Descriptor<descriptor::DescriptorPubl
 /// Derived (containing only raw Bitcoin public keys) version of the inheritance descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DerivedSinglePathLianaDesc(descriptor::Descriptor<DerivedPublicKey>);
+
+// Only the multipath descriptor is read: the receive and change descriptors are always recomputed
+// from it, so a serialized value can't carry caches that don't match its displayed descriptor.
+impl<'de> Deserialize<'de> for LianaDescriptor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct MultiDesc {
+            multi_desc: String,
+        }
+
+        let MultiDesc { multi_desc } = MultiDesc::deserialize(deserializer)?;
+        LianaDescriptor::from_str(&multi_desc).map_err(de::Error::custom)
+    }
+}
 
 impl fmt::Display for LianaDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -2437,5 +2454,40 @@ mod tests {
         assert_eq!(p_unspendable, unspendable);
     }
 
-    // TODO: test error conditions of deserialization.
+    #[test]
+    fn deserialization_recomputes_receive_and_change_descriptors() {
+        let victim = LianaDescriptor::from_str("wsh(or_d(pk([abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*),and_v(v:pkh([abcdef02]xpub688Hn4wScQAAiYJLPg9yH27hUpfZAUnmJejRQBCiwfP5PEDzjWMNW1wChcninxr5gyavFqbbDjdV1aK5USJz8NDVjUy7FRQaaqqXHh5SbXe/<0;1>/*),older(52560))))").unwrap();
+        let attacker = LianaDescriptor::from_str("wsh(or_d(pk([11111111]xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*),and_v(v:pkh([22222222]xpub6AA2N8RALRYgLD6jT1iXYCEDkndTeZndMtWPbtNX6sY5dPiLtf2T88ahdxrGXMUPoNadgR86sFhBXWQVgifPzDYbY9ZtwK4gqzx4y5Da1DW/<0;1>/*),older(52560))))").unwrap();
+
+        let serialized = serde_json::to_value(&victim).unwrap();
+        assert_eq!(
+            serde_json::from_value::<LianaDescriptor>(serialized.clone()).unwrap(),
+            victim
+        );
+
+        // Substituted receive and change descriptors are ignored.
+        let attacker_serialized = serde_json::to_value(&attacker).unwrap();
+        let mut tampered = serialized.clone();
+        tampered["receive_desc"] = attacker_serialized["receive_desc"].clone();
+        tampered["change_desc"] = attacker_serialized["change_desc"].clone();
+        assert_eq!(
+            serde_json::from_value::<LianaDescriptor>(tampered).unwrap(),
+            victim
+        );
+
+        // Only the multipath descriptor is needed.
+        let multi_only = serde_json::json!({ "multi_desc": serialized["multi_desc"] });
+        assert_eq!(
+            serde_json::from_value::<LianaDescriptor>(multi_only).unwrap(),
+            victim
+        );
+
+        // A multipath descriptor that is not a valid Liana descriptor is rejected.
+        let not_liana = serde_json::json!({
+            "multi_desc": "wpkh(xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*)"
+        });
+        assert!(serde_json::from_value::<LianaDescriptor>(not_liana).is_err());
+
+        assert!(serde_json::from_value::<LianaDescriptor>(serde_json::json!({})).is_err());
+    }
 }
