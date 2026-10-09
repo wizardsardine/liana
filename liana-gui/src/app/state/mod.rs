@@ -32,7 +32,7 @@ const HOME_RELOAD_MIN_TTL: Duration = Duration::from_secs(3);
 
 use crate::daemon::model::{coin_is_owned, LabelsLoader};
 use crate::daemon::{
-    model::{remaining_sequence, Coin, HistoryTransaction, Payment},
+    model::{remaining_sequence, Coin, HistoryCursor, HistoryTransaction, Payment, PaymentsPage},
     Daemon,
 };
 use crate::utils::now;
@@ -139,6 +139,7 @@ fn coins_summary(
 pub struct Payments {
     list: Vec<Payment>,
     is_last_page: bool,
+    next_cursor: Option<HistoryCursor>,
     loaded_page_count: usize,
 }
 
@@ -260,21 +261,23 @@ impl State for Home {
             },
             Message::Payments(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(events) => {
+                Ok(page) => {
                     self.warning = None;
-                    self.payments.list = events;
+                    self.payments.list = page.payments;
                     self.payments.loaded_page_count = 1;
-                    self.payments.is_last_page =
-                        (self.payments.list.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments.next_cursor = page.next_cursor;
+                    self.payments.is_last_page = page.next_cursor.is_none();
                 }
             },
             Message::PaymentsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(events) => {
+                Ok(page) => {
                     self.processing = false;
                     self.warning = None;
                     self.payments.loaded_page_count += 1;
-                    self.payments.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments.next_cursor = page.next_cursor;
+                    self.payments.is_last_page = page.next_cursor.is_none();
+                    let events = page.payments;
                     if let Some(event) = events.first() {
                         if let Some(position) = self
                             .payments
@@ -368,44 +371,19 @@ impl State for Home {
                 }
             }
             Message::View(view::Message::Next) => {
-                if let Some(last) = self.payments.list.last() {
+                if let Some(cursor) = self.payments.next_cursor {
                     let daemon = daemon.clone();
-                    let last_event_date = last.time.unwrap();
                     self.processing = true;
                     return Task::perform(
                         async move {
-                            let last_event_date = last_event_date.timestamp() as u32;
-                            let mut limit = HISTORY_EVENT_PAGE_SIZE;
-                            let mut events = daemon
-                                .list_confirmed_payments(0_u32, last_event_date, limit)
+                            let page = daemon
+                                .list_confirmed_payments_page(
+                                    cursor.time,
+                                    Some(cursor.txid),
+                                    HISTORY_EVENT_PAGE_SIZE,
+                                )
                                 .await?;
-
-                            // because gethistory cursor is inclusive and use blocktime
-                            // multiple events can occur in the same block.
-                            // If there are more events in the same block than the
-                            // HISTORY_EVENT_PAGE_SIZE they cannot be retrieved by changing
-                            // the cursor value (blocktime) but by increasing the limit.
-                            //
-                            // 1. Check if the events retrieved have all the same blocktime
-                            let blocktime = if let Some(event) = events.first() {
-                                event.time
-                            } else {
-                                return Ok(events);
-                            };
-
-                            // 2. Retrieve a larger batch of event with the same cursor but
-                            //    a larger limit.
-                            while !events.iter().any(|evt| evt.time != blocktime)
-                                && events.len() as u64 == limit
-                            {
-                                // increments of the equivalent of one page more.
-                                limit += HISTORY_EVENT_PAGE_SIZE;
-                                events = daemon
-                                    .list_confirmed_payments(0, last_event_date, limit)
-                                    .await?;
-                            }
-                            events.sort_by(|a, b| a.compare(b));
-                            Ok(events)
+                            Ok(page)
                         },
                         Message::PaymentsExtension,
                     );
@@ -437,14 +415,16 @@ impl State for Home {
         Task::batch(vec![
             Task::perform(
                 async move {
-                    let mut payments = daemon
-                        .list_confirmed_payments(0, now, HISTORY_EVENT_PAGE_SIZE)
+                    let page = daemon
+                        .list_confirmed_payments_page(now, None, HISTORY_EVENT_PAGE_SIZE)
                         .await?;
-                    payments.sort_by(|a, b| a.compare(b));
 
-                    let mut pending_payments = daemon.list_pending_payments().await?;
-                    pending_payments.extend(payments);
-                    Ok(pending_payments)
+                    let mut payments = daemon.list_pending_payments().await?;
+                    payments.extend(page.payments);
+                    Ok(PaymentsPage {
+                        payments,
+                        next_cursor: page.next_cursor,
+                    })
                 },
                 Message::Payments,
             ),

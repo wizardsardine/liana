@@ -355,6 +355,38 @@ pub trait Daemon: Debug {
         self.txs_to_historytxs(txs).await
     }
 
+    /// Returns a page of at least `limit` confirmed transactions with a block time
+    /// lower than or equal to `before`, sorted by descending block time, together with
+    /// the cursor to request the next page.
+    ///
+    /// The default implementation relies on `list_confirmed_txs`, whose cursor is an
+    /// inclusive block time: transactions sharing the block time of the cursor are
+    /// returned again and must be deduplicated by the caller. If a page holds only
+    /// transactions from the same block, the limit is increased until a transaction from
+    /// another block is retrieved, otherwise the next page could never be reached.
+    /// `before_txid` is ignored.
+    async fn list_history_page(
+        &self,
+        before: u32,
+        _before_txid: Option<Txid>,
+        limit: u64,
+    ) -> Result<model::HistoryPage, DaemonError> {
+        let mut page_limit = limit;
+        let mut txs = self.list_history_txs(0, before, page_limit).await?;
+        let blocktime = txs.first().map(|tx| tx.time);
+        while txs.len() as u64 >= page_limit && txs.iter().all(|tx| Some(tx.time) == blocktime) {
+            page_limit += limit;
+            txs = self.list_history_txs(0, before, page_limit).await?;
+        }
+        txs.sort_by(|a, b| a.compare(b));
+        let next_cursor = if txs.len() as u64 >= page_limit {
+            txs.last().and_then(model::HistoryCursor::from_tx)
+        } else {
+            None
+        };
+        Ok(model::HistoryPage { txs, next_cursor })
+    }
+
     async fn get_history_txs(
         &self,
         txids: &[Txid],
@@ -433,22 +465,25 @@ pub trait Daemon: Debug {
         Ok(events)
     }
 
-    /// returns a sorted list of payments.
-    async fn list_confirmed_payments(
+    /// Returns the sorted payments of a page of confirmed transactions, see
+    /// `list_history_page`.
+    async fn list_confirmed_payments_page(
         &self,
-        start: u32,
-        end: u32,
+        before: u32,
+        before_txid: Option<Txid>,
         limit: u64,
-    ) -> Result<Vec<model::Payment>, DaemonError> {
-        let mut txs = self.list_history_txs(start, end, limit).await?;
-        txs.sort_by(|a, b| b.time.cmp(&a.time));
-        let events = txs.into_iter().fold(Vec::new(), |mut array, tx| {
-            let mut events = model::payments_from_tx(tx);
-            array.append(&mut events);
-            array
-        });
-
-        Ok(events)
+    ) -> Result<model::PaymentsPage, DaemonError> {
+        let page = self.list_history_page(before, before_txid, limit).await?;
+        let mut payments: Vec<model::Payment> = page
+            .txs
+            .into_iter()
+            .flat_map(model::payments_from_tx)
+            .collect();
+        payments.sort_by(|a, b| a.compare(b));
+        Ok(model::PaymentsPage {
+            payments,
+            next_cursor: page.next_cursor,
+        })
     }
 
     /// Reimplemented by LianaLite backend

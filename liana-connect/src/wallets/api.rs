@@ -262,6 +262,12 @@ pub struct Payment {
 #[derive(Deserialize)]
 pub struct ListPayments {
     pub payments: Vec<Payment>,
+    /// Block time of the last confirmed payment of the page, `None` if the page is not full.
+    #[serde(default)]
+    pub next_cursor: Option<i64>,
+    /// Txid of the last confirmed payment of the page, `None` if the page is not full.
+    #[serde(default)]
+    pub next_cursor_txid: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -318,6 +324,12 @@ pub struct Transaction {
 #[derive(Deserialize)]
 pub struct ListTransactions {
     pub transactions: Vec<Transaction>,
+    /// Block time of the last confirmed transaction of the page, `None` if the page is not full.
+    #[serde(default)]
+    pub next_cursor: Option<i64>,
+    /// Txid of the last confirmed transaction of the page, `None` if the page is not full.
+    #[serde(default)]
+    pub next_cursor_txid: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -597,6 +609,37 @@ mod tests {
         .unwrap();
 
         assert_eq!(psbt.status, SpendStatus::Unknown);
+    }
+
+    #[test]
+    fn list_transactions_cursor_defaults_to_none() {
+        let list: ListTransactions = serde_json::from_value(serde_json::json!({
+            "transactions": [],
+        }))
+        .unwrap();
+        assert!(list.next_cursor.is_none());
+        assert!(list.next_cursor_txid.is_none());
+
+        let list: ListTransactions = serde_json::from_value(serde_json::json!({
+            "transactions": [],
+            "next_cursor": 1_700_000_000,
+            "next_cursor_txid": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b",
+        }))
+        .unwrap();
+        assert_eq!(list.next_cursor, Some(1_700_000_000));
+        assert_eq!(
+            list.next_cursor_txid.as_deref(),
+            Some("4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b")
+        );
+
+        let list: ListPayments = serde_json::from_value(serde_json::json!({
+            "payments": [],
+            "next_cursor": null,
+            "next_cursor_txid": null,
+        }))
+        .unwrap();
+        assert!(list.next_cursor.is_none());
+        assert!(list.next_cursor_txid.is_none());
     }
 
     #[test]
