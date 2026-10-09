@@ -1,8 +1,9 @@
 use std::fmt::Display;
 
 use iced::{
-    widget::{container::Style, row, tooltip, Space},
-    Alignment, Font, Length,
+    border::Radius,
+    widget::{container, container::Style, row, tooltip, Space},
+    Alignment, Background, Border, Color, Font, Length,
 };
 use iced_core::text::{LineHeight, Shaping};
 use liana_i18n::t;
@@ -233,6 +234,7 @@ macro_rules! pills {
 pills! {
     recovery,       "common-recovery",     "pill-recovery-tooltip",     M, simple;
     batch,          "pill-batch",        "pill-batch-tooltip",        M, simple;
+    payjoin,        "pill-payjoin",      "pill-payjoin-tooltip",      M, simple;
     deprecated,     "pill-deprecated",   "pill-deprecated-tooltip",   M, simple;
     spent,          "pill-spent",        "pill-spent-tooltip",        M, simple;
     unsigned,       "pill-unsigned",     "pill-unsigned-tooltip",     M, soft_warning;
@@ -405,18 +407,137 @@ pub fn xpub_set<'a, T: 'a>() -> Container<'a, T> {
     compact_pill(t!("pill-xpub-set"), PillWidth::S, theme::pill::success)
 }
 
-pub fn xpub_not_set<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill(t!("pill-xpub-not-set"), PillWidth::S, theme::pill::warning)
+pub fn unconfirmed_compact<'a, T: 'a>() -> Container<'a, T> {
+    compact_pill(
+        t!("pill-unconfirmed"),
+        PillWidth::Shrink,
+        theme::pill::simple_fill,
+    )
 }
 
-pub fn unconfirmed_compact<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill_body_with_text_size_and_font(
-        t!("pill-unconfirmed"),
-        PillWidth::M,
-        theme::pill::simple_fill,
-        PILL_FONT,
-        PILL_FONT_SIZE_COMPACT,
-    )
+pub fn tag_dot<'a, T: 'a>(color: Color, size: u32) -> Container<'a, T> {
+    Container::new(Space::new())
+        .width(size)
+        .height(size)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(color)),
+            border: Border {
+                radius: (size as f32 / 2.0).into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+}
+
+fn compact_label<'a>(label: impl Display) -> widget::Text<'a> {
+    iced::widget::text!("{label}")
+        .shaping(Shaping::Advanced)
+        .font(PILL_FONT_COMPACT)
+        .size(PILL_FONT_SIZE_COMPACT)
+        .line_height(COMPACT_LINE_HEIGHT)
+}
+
+pub fn tag_chip<'a, T: 'a>(name: impl Display, color: Color) -> Container<'a, T> {
+    let dot = tag_dot(color, 8);
+    let label = compact_label(name);
+    Container::new(row![dot, label].spacing(6).align_y(Alignment::Center))
+        .padding([4, 10])
+        .style(move |theme| theme::pill::tag(theme, color))
+}
+
+pub fn key_chip<'a, T: 'a>(key: impl Display) -> Container<'a, T> {
+    Container::new(compact_label(key))
+        .padding([2, 8])
+        .style(theme::pill::key_chip)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentTone {
+    Accent,
+    Cold,
+}
+
+pub struct Segment<'a, T> {
+    pub icon: widget::Text<'a>,
+    pub label: Option<String>,
+    pub tooltip: Option<String>,
+    pub tone: SegmentTone,
+    pub on: bool,
+    /// `None` disables the segment.
+    pub msg: Option<T>,
+}
+
+/// Pill of adjacent action segments sharing one border.
+pub fn segmented_pill<'a, T: Clone + 'a>(segments: Vec<Segment<'a, T>>) -> Container<'a, T> {
+    // The pill radius minus its border width.
+    const INNER_RADIUS: f32 = 23.0;
+    // Compact line box plus the vertical padding.
+    const SEGMENT_HEIGHT: u32 = 32;
+    let count = segments.len();
+    let mut items = row![].align_y(Alignment::Center);
+    for (index, segment) in segments.into_iter().enumerate() {
+        if index > 0 {
+            let separator = Container::new(Space::new())
+                .width(2)
+                .height(SEGMENT_HEIGHT)
+                .style(|t| container::Style {
+                    background: t.colors.pills.simple.border.map(Background::Color),
+                    ..Default::default()
+                });
+            items = items.push(separator);
+        }
+        let first = index == 0;
+        let last = index + 1 == count;
+        let radius = Radius {
+            top_left: if first { INNER_RADIUS } else { 0.0 },
+            bottom_left: if first { INNER_RADIUS } else { 0.0 },
+            top_right: if last { INNER_RADIUS } else { 0.0 },
+            bottom_right: if last { INNER_RADIUS } else { 0.0 },
+        };
+        let Segment {
+            icon,
+            label,
+            tooltip,
+            tone,
+            on,
+            msg,
+        } = segment;
+        let icon = icon.size(15).line_height(COMPACT_LINE_HEIGHT);
+        let label = label.map(compact_label);
+        let content = Container::new(row![icon, label].spacing(8).align_y(Alignment::Center))
+            .padding([8, 18])
+            .height(SEGMENT_HEIGHT);
+        let button =
+            Button::new(content)
+                .padding(0)
+                .on_press_maybe(msg)
+                .style(move |theme, status| {
+                    theme::button::pill_segment(
+                        theme,
+                        status,
+                        on,
+                        tone == SegmentTone::Cold,
+                        radius,
+                    )
+                });
+        let item: Element<'a, T> = match tooltip {
+            Some(tip) => tooltip::Tooltip::new(
+                button,
+                Container::new(new::caption(tip))
+                    .padding(PILL_PADDING_COMPACT)
+                    .style(theme::card::simple),
+                tooltip::Position::Top,
+            )
+            .into(),
+            None => button.into(),
+        };
+        items = items.push(item);
+    }
+    Container::new(items).padding(2).style(theme::pill::simple)
+}
+
+pub fn xpub_not_set<'a, T: 'a>() -> Container<'a, T> {
+    compact_pill(t!("pill-xpub-not-set"), PillWidth::S, theme::pill::warning)
 }
 
 pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {

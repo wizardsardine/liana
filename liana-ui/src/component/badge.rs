@@ -3,7 +3,7 @@ use iced::{Background, Border};
 
 use crate::{
     component::text::{self, Text},
-    icon, image, theme,
+    icon, theme,
     widget::*,
 };
 
@@ -11,7 +11,6 @@ const BADGE_SIZE: u32 = 40;
 pub const AVATAR_SIZE: u32 = 30;
 const AVATAR_TEXT_SIZE: u32 = 12;
 const ICON_SIZE: u32 = BADGE_SIZE / 2;
-const LIANA_ICON_SIZE: u32 = 25;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Tile {
@@ -34,6 +33,10 @@ pub enum Tile {
     Paste,
     EnterToken,
     Mnemonic,
+    Bitcoin,
+    Network,
+    Block,
+    Backup,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -99,14 +102,6 @@ icon_badge!(receive, receive_icon, simple);
 icon_badge!(cycle, arrow_repeat, simple);
 icon_badge!(spend, send_icon, simple);
 icon_badge!(success, check_icon, success);
-icon_badge!(tooltip, tooltip_icon, simple);
-icon_badge!(network, network_icon, simple);
-icon_badge!(block, block_icon, simple);
-icon_badge!(bitcoin, bitcoin_icon, simple);
-icon_badge!(setting, wrench_icon, simple);
-icon_badge!(wallet, wallet_icon, simple);
-icon_badge!(backup, backup_icon, simple);
-icon_badge!(restore, restore_icon, simple);
 
 pub fn tile<'a, M>(tile: Tile) -> Container<'a, M> {
     let tone = tile_spec(tile).tone;
@@ -159,17 +154,6 @@ pub fn avatar<'a, M: 'a>(initials: String) -> Container<'a, M> {
     .style(theme::badge::avatar)
 }
 
-pub fn coin<T>() -> Container<'static, T> {
-    Container::new(
-        image::liana_grey_logo()
-            .height(LIANA_ICON_SIZE)
-            .width(LIANA_ICON_SIZE),
-    )
-    .style(theme::badge::simple)
-    .center_x(BADGE_SIZE)
-    .center_y(BADGE_SIZE)
-}
-
 macro_rules! tile_specs {
     ($(($variant:ident, $icon:ident, $tone:ident, $size:ident)),* $(,)?) => {
         fn tile_spec<'a>(name: Tile) -> TileSpec<'a> {
@@ -204,6 +188,10 @@ tile_specs! {
     (Paste, paste_icon, Neutral, DEFAULT),
     (EnterToken, enter_box_icon, Neutral, DEFAULT),
     (Mnemonic, edit_icon, Neutral, DEFAULT),
+    (Bitcoin, bitcoin_icon, Accent, DEFAULT),
+    (Network, network_icon, Neutral, DEFAULT),
+    (Block, block_icon, Neutral, DEFAULT),
+    (Backup, backup_icon, Neutral, DEFAULT),
 }
 
 fn tile_tone(theme: &theme::Theme, tone: TileStyle) -> theme::palette::Tile {

@@ -17,6 +17,16 @@ btn-add-safety-net => "Add Safety Net"
 
 btn-add-wallet => "Add wallet"
 
+btn-align-h-disabled-tooltip
+=> "Align horizontally: select a transaction of a chain, or group several transactions";;
+
+btn-align-h-tooltip => "Align {$count} transactions in a row, oldest on the left"
+
+btn-align-v-disabled-tooltip
+=> "Align vertically: select a transaction of a chain, or group several transactions";;
+
+btn-align-v-tooltip => "Stack {$count} transactions in a column, oldest on top"
+
 btn-apply => "Apply"
 
 btn-approve => "Approve"
@@ -61,8 +71,6 @@ btn-edit => "Edit"
 
 btn-edit-keys => "Edit keys"
 
-btn-edit-label => "Edit label"
-
 btn-email-wizardsardine => "Email WS"
 
 btn-export => "Export"
@@ -72,6 +80,8 @@ btn-fee-level-high => "High"
 btn-fee-level-low => "Low"
 
 btn-fee-level-medium => "Medium"
+
+btn-fit-tooltip => "Fit to screen"
 
 btn-generate => "Generate"
 
@@ -85,6 +95,9 @@ btn-go-to-replacement => "Go to replacement"
 
 btn-go-to-rescan => "Go to rescan"
 
+btn-highlight-unspent-tooltip
+=> "{ $count ->\n    [one] Highlight unspent coins (U): 1 coin, {$amount} BTC\n   *[other] Highlight unspent coins (U): {$count} coins, {$amount} BTC\n}";;
+
 btn-ignore => "Ignore"
 
 btn-import => "Import"
@@ -94,6 +107,8 @@ btn-keep-my-changes => "Keep my changes"
 btn-login => "Login"
 
 btn-manage-keys => "Manage Keys"
+
+btn-map => "Map"
 
 btn-mark-keys-ready => "Mark keys as ready"
 
@@ -107,6 +122,8 @@ btn-no => "No"
 
 btn-ok => "OK"
 
+btn-other-wallets-tooltip => "Other wallets"
+
 btn-overwrite => "Overwrite"
 
 btn-previous => "Previous"
@@ -114,6 +131,8 @@ btn-previous => "Previous"
 btn-previous-arrow => "< Previous"
 
 btn-processing => "Processing..."
+
+btn-redo-tooltip => "Redo ({$key}+Shift+Z or {$key}+Y)"
 
 btn-register-on-device => "Register on device"
 
@@ -123,15 +142,20 @@ btn-replace => "Replace"
 
 btn-resend-token => "Resend token"
 
+btn-reset-layout => "Reset layout"
+
 btn-reset-timelock => "Reset timelock"
 
 btn-retry => "Retry"
 
 btn-save => "Save"
 
-btn-see-transaction-details => "See transaction details"
+btn-see-more-details => "See more details"
 
 btn-select => "Select"
+
+btn-select-area-tooltip
+=> "Select an area: drag on the canvas to group several items (or hold {$key})";;
 
 btn-send-for-approval => "Send for approval"
 
@@ -145,6 +169,10 @@ btn-set-keys => "Set keys"
 
 btn-share-xpubs => "Share Xpubs"
 
+btn-shortcuts-tooltip => "Shortcuts (?)"
+
+btn-show-on-map => "Show on map"
+
 btn-show-qr => "Show QR Code"
 
 btn-sign => "Sign"
@@ -153,6 +181,9 @@ btn-skip => "Skip"
 
 btn-skip-registration => "Skip registration"
 
+btn-snap-tooltip
+=> "Snap to grid: dragged blocks and leaves align to the canvas grid";;
+
 btn-split-tab => "Split"
 
 btn-start-rescan => "Start rescan"
@@ -160,6 +191,8 @@ btn-start-rescan => "Start rescan"
 btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
+
+btn-undo-tooltip => "Undo ({$key}+Z)"
 
 btn-unlock-all => "Unlock all"
 
@@ -170,6 +203,10 @@ btn-updating => "Updating"
 btn-verify-on-device => "Verify on hardware device"
 
 btn-yes => "Yes"
+
+btn-zoom-in-tooltip => "Zoom in"
+
+btn-zoom-out-tooltip => "Zoom out"
 
 business-access-error => "Access Error"
 
@@ -540,8 +577,6 @@ coins-address-label => "Address label:"
 
 coins-block-height => "Block height:"
 
-coins-deposit-transaction-label => "Deposit transaction label:"
-
 coins-first-recovery-in-blocks
 => "First recovery path will be available in {$blocks} blocks";;
 
@@ -549,9 +584,7 @@ coins-not-in-block => "Not in a block"
 
 coins-outpoint => "Outpoint:"
 
-coins-recovery-available => "One or more recovery paths are available"
-
-coins-refresh-coin => "Refresh coin"
+coins-recovery-active => "Recovery path is active"
 
 coins-spend-block-height => "Spend block height:"
 
@@ -593,7 +626,9 @@ common-feerate-value => "({$rate} sats/vbyte)"
 
 common-fetching => "Fetching ..."
 
-common-from => "From"
+common-key-cmd => "Cmd"
+
+common-key-ctrl => "Ctrl"
 
 common-learn-more => "Learn more"
 
@@ -1295,6 +1330,18 @@ label-edit => "Edit label"
 
 label-external-output => "(External Output)"
 
+label-inherited-address
+=> "This label was inherited from the one assigned to its address. You can change it anytime";;
+
+label-inherited-funding
+=> "This label was inherited from the one assigned to the transactions funding it. You can change it anytime";;
+
+label-inherited-payment
+=> "This label was inherited from the one assigned to its payment. You can change it anytime";;
+
+label-inherited-transaction
+=> "This label was inherited from the one assigned to its transaction. You can change it anytime";;
+
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
 label-label => "Label"
@@ -1384,6 +1431,194 @@ loader-sync-progress-2
 loader-sync-progress-3
 => "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";;
 
+map-add-tag-tooltip => "Add a tag"
+
+map-block-fee => "Fee {$amount} BTC"
+
+map-block-fee-unknown => "Fee unknown"
+
+map-caption-moved => "Moved, {$date}"
+
+map-caption-received => "Received, {$date}"
+
+map-caption-sent => "Sent, {$date}"
+
+map-coins-selected
+=> "{ $count ->\n    [one] 1 coin selected\n   *[other] {$count} coins selected\n}";;
+
+map-empty-description
+=> "Each transaction of this wallet will appear here as a block once it is received or sent.";;
+
+map-empty-title => "No transactions to map yet"
+
+map-freeze => "Freeze"
+
+map-freeze-tooltip => "A frozen coin is never used to fund a transaction"
+
+map-key-alt => "Alt"
+
+map-key-click => "Click"
+
+map-key-click-leaf => "Click leaf"
+
+map-key-click-red-leaf => "Click red leaf"
+
+map-key-click-slot => "Click slot"
+
+map-key-double-click-red-leaf => "Double-click red leaf"
+
+map-key-double-click-slot => "Double-click slot"
+
+map-key-double-click-tx => "Double-click transaction"
+
+map-key-drag => "Drag"
+
+map-key-drag-canvas => "Drag empty canvas"
+
+map-key-drag-slot => "Drag slot"
+
+map-key-esc => "Esc"
+
+map-key-hold => "Hold {$key}"
+
+map-key-shift => "Shift"
+
+map-key-up-down => "Up or down"
+
+map-key-wheel => "Wheel"
+
+map-key-wheel-slot => "Wheel on slot"
+
+map-leaf-reuse-tooltip
+=> "Address reuse: this address appears in {$count} outputs. Click to highlight them, double-click to list them.";;
+
+map-legend-coin => "Our coin"
+
+map-legend-counterparty => "Counterparty link"
+
+map-legend-unspent => "Unspent coin"
+
+map-loading => "Building the map from your transactions"
+
+map-reuse-description
+=> "This address appears in {$count} outputs. Reusing an address links these payments together on chain. Pick one to go to its leaf on the map.";;
+
+map-reuse-title => "Address reuse"
+
+map-select-frozen-tooltip => "Unfreeze this coin to select it"
+
+map-select-tooltip => "Add this coin to the coin selection"
+
+map-shortcut-add-area => "Add an area"
+
+map-shortcut-area => "Area, left to right fully inside, right to left touched"
+
+map-shortcut-clear => "Clear the selection, close a dialog"
+
+map-shortcut-edit-leaf => "Edit a leaf label"
+
+map-shortcut-edit-slot => "Edit a slot label, coin actions"
+
+map-shortcut-edit-tx => "Edit a transaction label"
+
+map-shortcut-help => "This help"
+
+map-shortcut-move => "Move a block, a leaf or the selection"
+
+map-shortcut-pan => "Pan"
+
+map-shortcut-redo => "Redo"
+
+map-shortcut-reorder => "Reorder a slot"
+
+map-shortcut-reuse-highlight => "Highlight every output to a reused address"
+
+map-shortcut-reuse-list => "List them"
+
+map-shortcut-reuse-select
+=> "Select every output to a reused address, nothing selected";;
+
+map-shortcut-select-chain => "The whole chain"
+
+map-shortcut-select-one => "Select one item"
+
+map-shortcut-select-path
+=> "Everything chained between the last clicked item and this one";;
+
+map-shortcut-select-wallet => "Select every item of a wallet"
+
+map-shortcut-switch-tag => "Switch the highlighted tag"
+
+map-shortcut-tag-highlight => "Highlight the coins sharing a slot tag"
+
+map-shortcut-toggle-one => "Add or remove one item"
+
+map-shortcut-undo => "Undo"
+
+map-shortcut-unspent => "Highlight unspent coins"
+
+map-shortcut-zoom => "Zoom around the cursor"
+
+map-shortcuts-edit => "Edit"
+
+map-shortcuts-navigate => "Navigate"
+
+map-shortcuts-select => "Select"
+
+map-shortcuts-title => "Shortcuts"
+
+map-shortcuts-view => "View"
+
+map-slot-counterparty-output => "Output to a counterparty"
+
+map-slot-frozen => "Frozen"
+
+map-slot-hint
+=> "{$what}. Click to highlight its tag, double-click to edit, drag up or down to reorder.";;
+
+map-slot-our-coin-spent => "Our coin, spent"
+
+map-slot-our-coin-unspent => "Our coin, unspent"
+
+map-slot-payment => "Payment to a counterparty"
+
+map-slot-selected => "Selected for spending"
+
+map-slot-spends-counterparty-coin => "Spends a counterparty coin"
+
+map-slot-spends-our-coin => "Spends one of our coins"
+
+map-slot-tags => "Tags: {$tags}"
+
+map-tag-business => "Business"
+
+map-tag-create => "Create tag \"{$name}\""
+
+map-tag-filter-placeholder => "Filter or create a tag"
+
+map-tag-non-kyc => "Non-KYC"
+
+map-tag-savings => "Savings"
+
+map-tag-spending => "Spending"
+
+map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
+
+map-title => "Map"
+
+map-unknown-amount => "Unknown amount"
+
+map-wallets-description
+=> "Wallets are read from their last sync. Tick a wallet to add it to this map.";;
+
+map-wallets-empty => "No other wallet on this network."
+
+map-wallets-outdated => "Open this wallet once to update it"
+
+map-wallets-title => "Other wallets"
+
+map-wallets-unavailable => "This wallet cannot be read"
+
 menu-coins-utxos => "Coins/UTXOs"
 
 menu-dashboard => "Dashboard"
@@ -1405,14 +1640,6 @@ network-no-value => "NO VALUE"
 network-this-is-a => "THIS IS A{ \" \" }"
 
 network-wallet => "{$network} WALLET"
-
-payment-address-label => "address label: {$label}"
-
-payment-incoming => "Incoming payment"
-
-payment-outgoing => "Outgoing payment"
-
-payment-title => "Payment"
 
 pill-active => "Active"
 
@@ -1458,6 +1685,10 @@ pill-key-safety-net => "Safety Net"
 pill-key-safety-net-tooltip => "Professional third party recovery key"
 
 pill-not-in-policy => "Not in policy yet"
+
+pill-payjoin => "Payjoin"
+
+pill-payjoin-tooltip => "This transaction also spends coins that are not ours"
 
 pill-recovery-available-tooltip => "Recovery option(s) already available"
 
@@ -1537,7 +1768,7 @@ psbt-broadcast-transaction => "Broadcast the transaction"
 psbt-change => "Change"
 
 psbt-coins-spent
-=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}";;
+=> "{ $count ->\n    [one] 1 Coin spent\n   *[other] {$count} Coins spent\n}";;
 
 psbt-delete-success => "Successfully deleted this transaction."
 
@@ -1545,16 +1776,12 @@ psbt-delete-this => "Delete this PSBT"
 
 psbt-device-sign-failed => "Device failed to sign"
 
-psbt-finalizing-requires => "Finalizing this transaction requires:"
+psbt-fully-signed-by => "Signed by"
 
-psbt-missing-inputs => "Missing information about transaction inputs"
+psbt-payments => "{ $count ->\n    [one] 1 Payment\n   *[other] {$count} Payments\n}"
 
-psbt-more-signatures
-=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}";;
-
-psbt-not-ready => "Not ready"
-
-psbt-payments => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+psbt-requires-signatures
+=> "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}";;
 
 psbt-save-transaction => "Save this transaction"
 
@@ -1562,11 +1789,9 @@ psbt-select-signing-device => "Select signing device to sign with:"
 
 psbt-sign-save-before-export => "Sign or save the transaction first to enable export"
 
-psbt-signed-by => "signed by"
+psbt-signatures => "Signatures"
 
-psbt-status => "Status"
-
-psbt-title => "PSBT"
+psbt-signatures-count => "{$count} of {$threshold}"
 
 psbt-transaction-broadcast => "Transaction is broadcast"
 
@@ -1575,7 +1800,7 @@ psbt-transaction-saved => "Transaction is saved"
 psbts-hide-confirmed => "Hide confirmed transactions"
 
 psbts-signatures-collected
-=> "{ $count ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
+=> "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}";;
 
 receive-address-label-placeholder => "Enter an address label"
 
@@ -1597,7 +1822,7 @@ receive-specter-diy-tooltip => "For Specter DIY devices"
 receive-verify-address => "Verify address"
 
 recovery-coins-total
-=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}";;
+=> "{ $count ->\n    [one] Can recover 1 coin totalling\n   *[other] Can recover {$count} coins totalling\n}";;
 
 recovery-info
 => "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";;
@@ -1605,7 +1830,7 @@ recovery-info
 recovery-none-available => "No recovery path is currently available."
 
 recovery-paths-available
-=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}";;
+=> "{ $count ->\n    [one] 1 recovery path is available\n   *[other] {$count} recovery paths are available\n}";;
 
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}";;
@@ -1738,8 +1963,6 @@ spend-amount-btc => "Amount (BTC)"
 
 spend-amount-truncated => "Amount has been truncated to 8 decimal places"
 
-spend-batch-label => "Batch label"
-
 spend-btc-placeholder => "0.001 (in BTC)"
 
 spend-coins-selection => "Coins selection"
@@ -1804,6 +2027,11 @@ spend-select-one-coin => "Select at least one coin."
 
 spend-select-or-add-funds => "Select or add more funds."
 
+spend-self-transfer-info
+=> "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin.";;
+
+spend-tx-label => "Transaction label"
+
 spend-warning-recovery-own-address
 => "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead.";;
 
@@ -1837,11 +2065,9 @@ transactions-cancel-tooltip
 
 transactions-date => "Date:"
 
-transactions-incoming => "Incoming transaction"
+transactions-date-unconfirmed => "not included in a block yet"
 
-transactions-miner-fee => "Miner fee:{ \" \" }"
-
-transactions-outgoing => "Outgoing transaction"
+transactions-miner-fee => "Miner fee:"
 
 transactions-rbf-bump-help
 => "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction.";;
@@ -1871,6 +2097,6 @@ transactions-replacement => "Transaction replacement"
 
 transactions-transaction => "Transaction"
 
-transactions-txid => "Tx ID"
+transactions-txid => "Tx ID:"
 
 warning-hardware-wallet-error => "Hardware wallet error"

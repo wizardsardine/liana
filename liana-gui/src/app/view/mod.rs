@@ -7,12 +7,14 @@ pub mod export;
 pub mod fiat;
 pub mod home;
 pub mod hw;
+pub mod map;
 pub mod psbt;
 pub mod psbts;
 pub mod receive;
 pub mod recovery;
 pub mod settings;
 pub mod spend;
+pub mod transaction;
 pub mod transactions;
 
 pub use fiat::FiatAmountConverter;
@@ -135,6 +137,40 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     .style(theme::container::sidebar),
                 )
                 .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
+
+    stack![probe, view].into()
+}
+
+/// Dashboard whose content fills the pane edge to edge, without scrolling or padding.
+pub fn full_dashboard<'a, T: Into<Element<'a, Message>>>(
+    menu: &'a Menu,
+    cache: &'a Cache,
+    warning: Option<&'a Error>,
+    content: T,
+) -> Element<'a, Message> {
+    let pane_size_cell = &cache.pane_size;
+    let probe: Element<'a, Message> = responsive(move |size| {
+        pane_size_cell.set(size);
+        Space::new().height(Length::Fill).width(Length::Fill).into()
+    })
+    .into();
+
+    let sidebar_width = MenuWidth::from_pane_width(cache.pane_size.get().width);
+
+    let view: Element<'a, Message> = Row::new()
+        .push(
+            sidebar(menu, cache, sidebar_width)
+                .height(Length::Fill)
+                .width(f32::from(sidebar_width)),
+        )
+        .push(
+            column![warn(warning), content.into()]
+                .width(Length::Fill)
+                .height(Length::Fill),
         )
         .width(Length::Fill)
         .height(Length::Fill)

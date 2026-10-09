@@ -7,7 +7,7 @@ use iced::{
 
 use liana::{
     descriptors::LianaPolicy,
-    miniscript::bitcoin::{bip32::Fingerprint, Amount, Network},
+    miniscript::bitcoin::{bip32::Fingerprint, Amount},
 };
 
 use lianad::commands::CreateRecoveryWarning;
@@ -19,7 +19,9 @@ use liana_ui::{
         panels::spend::{self, DustWarning},
         text::new,
     },
-    icon, theme,
+    icon,
+    spacing::VSpacing,
+    theme,
     widget::*,
 };
 
@@ -29,7 +31,12 @@ use crate::{
         error::Error,
         menu::Menu,
         state::{FeeMode, Recipient},
-        view::{dashboard, message::*, psbt, FiatAmountConverter},
+        view::{
+            dashboard,
+            message::*,
+            transaction::{tx_view, TxDetail},
+            FiatAmountConverter,
+        },
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
     t,
@@ -44,9 +51,9 @@ pub fn spend_view<'a>(
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    network: Network,
     currently_signing: bool,
     warning: Option<&'a Error>,
+    fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
     let is_recovery = tx
         .psbt
@@ -54,13 +61,6 @@ pub fn spend_view<'a>(
         .input
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
-
-    let title = Container::new(new::d2(if is_recovery {
-        Menu::Recovery.title()
-    } else {
-        Menu::CreateSpendTx.title()
-    }))
-    .width(Length::Fill);
 
     let warnings = (!(spend_warnings.is_empty() || saved)).then_some({
         let rows = spend_warnings.iter().map(|warning| {
@@ -76,43 +76,16 @@ pub fn spend_view<'a>(
         Column::with_children(rows).padding(15).spacing(5)
     });
 
-    let spend_overview =
-        psbt::spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved);
-
-    let inputs = psbt::inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
-    let outputs = psbt::outputs_view(
-        &tx.psbt.unsigned_tx,
-        network,
-        &tx.change_indexes,
-        &tx.labels,
-        labels_editing,
-        tx.is_single_payment().is_some(),
-        false,
-    );
-    let inputs_outputs = column![inputs, outputs].spacing(20);
-
-    let bottom_row = if saved {
-        let delete = button::btn_delete(
-            (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
-        );
-        row![delete].width(Length::Fill)
-    } else {
-        let previous = button::btn_previous((!currently_signing).then_some(Message::Previous));
-        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
-        let save = button::btn_save(save_msg, false);
-        row![previous, Space::fill_width(), save].width(Length::Fill)
+    let detail = TxDetail::Psbt {
+        tx,
+        desc_info,
+        key_aliases,
+        saved,
+        currently_signing,
+        previous: true,
     };
-
-    let header = psbt::spend_header(tx, labels_editing);
-    let content = column![
-        title,
-        header,
-        warnings,
-        spend_overview,
-        inputs_outputs,
-        bottom_row,
-    ]
-    .spacing(20);
+    let detail = tx_view(cache, detail, labels_editing, fiat_converter);
+    let content = column![warnings, detail].spacing(80);
 
     dashboard(
         if is_recovery {
@@ -137,7 +110,7 @@ pub fn create_spend_tx<'a>(
     recovery_timelock: Option<u16>,
     coins: &[(Coin, bool)],
     coins_labels: &'a HashMap<String, String>,
-    batch_label: &form::Value<String>,
+    tx_label: Option<&form::Value<String>>,
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     fee_mode: FeeMode,
@@ -162,16 +135,19 @@ pub fn create_spend_tx<'a>(
             button::BtnWidth::Auto,
             Some(Message::CreateSpend(CreateSpendMessage::SelfTransfer)),
         ));
-    let title = row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
+    let title_row =
+        row![title_text, Space::fill_width(), self_transfer_btn].align_y(Alignment::Center);
+    let subtitle = is_self_send
+        .then_some(new::b2(t!("spend-self-transfer-info")).style(theme::text::secondary));
+    let title = column![title_row, subtitle].spacing(VSpacing::L);
 
-    let batch_label_input = (recipients.len() > 1).then_some(
-        form::Form::new(&t!("spend-batch-label"), batch_label, |s| {
-            Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
+    let tx_label_input = tx_label.map(|tx_label| {
+        form::Form::new(t!("spend-tx-label"), tx_label, |s| {
+            Message::CreateSpend(CreateSpendMessage::TxLabelEdited(s))
         })
+        .label(t!("spend-description"))
         .warning(t!("label-invalid-length"))
-        .size(30)
-        .padding(10),
-    );
+    });
 
     let recipient_views = recipients.iter().enumerate().map(|(i, recipient)| {
         recipient
@@ -236,7 +212,7 @@ pub fn create_spend_tx<'a>(
             )
         })
         .collect();
-    let coin_selection = spend::coin_selection(coin_rows);
+    let coin_selection = spend::coin_selection(coin_rows, is_self_send);
 
     let previous = (!is_first_step).then_some(button::btn_previous(Some(Message::Previous)));
     let clear = button::btn_clear(Some(Message::CreateSpend(CreateSpendMessage::Clear)));
@@ -245,7 +221,7 @@ pub fn create_spend_tx<'a>(
     // and `error` have their own UI feedback, so they only gate the button.
     let next_blocker = next_disabled_reason(
         recipients,
-        batch_label,
+        tx_label,
         feerate,
         amount_left,
         coins.iter().any(|(_, selected)| *selected),
@@ -262,37 +238,24 @@ pub fn create_spend_tx<'a>(
         .align_y(Alignment::Center);
 
     let next_reason = next_blocker.map(|blocker| {
-        let content: Element<Message> = match blocker {
-            NextBlocker::RecipientAddress => new::caption(t!("spend-recipient-address-invalid"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::PaymentDescription => {
-                new::caption(t!("spend-payment-description-invalid"))
-                    .style(theme::text::card_secondary)
-                    .into()
-            }
-            NextBlocker::Funds => new::caption(t!("spend-select-or-add-funds"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::RecipientAmount => new::caption(t!("spend-recipient-amount-invalid"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::Feerate => new::caption(t!("spend-feerate-missing-invalid"))
-                .style(theme::text::card_secondary)
-                .into(),
-            NextBlocker::Coin => new::caption(t!("spend-select-one-coin"))
-                .style(theme::text::card_secondary)
-                .into(),
+        let reason = |text: String| -> Element<Message> {
+            new::caption(text).style(theme::text::card_secondary).into()
+        };
+        let content = match blocker {
+            NextBlocker::RecipientAddress => reason(t!("spend-recipient-address-invalid")),
+            NextBlocker::PaymentDescription => reason(t!("spend-payment-description-invalid")),
+            NextBlocker::Funds => reason(t!("spend-select-or-add-funds")),
+            NextBlocker::RecipientAmount => reason(t!("spend-recipient-amount-invalid")),
+            NextBlocker::Feerate => reason(t!("spend-feerate-missing-invalid")),
+            NextBlocker::Coin => reason(t!("spend-select-one-coin")),
             NextBlocker::CoinsLeft => match amount_left {
                 Some(left) if left.to_sat() > 0 => row![
                     amount_with_font(left, new::CAPTION_SPEC),
-                    new::caption(t!("spend-left-to-select")).style(theme::text::card_secondary),
+                    reason(t!("spend-left-to-select")),
                 ]
                 .spacing(5)
                 .into(),
-                _ => new::caption(t!("spend-select-coins-to-cover-amount"))
-                    .style(theme::text::card_secondary)
-                    .into(),
+                _ => reason(t!("spend-select-coins-to-cover-amount")),
             },
         };
         Container::new(content)
@@ -302,14 +265,14 @@ pub fn create_spend_tx<'a>(
 
     let content = column![
         title,
-        batch_label_input,
+        tx_label_input,
         recipients_cards,
         add_payment_row,
         fee_rate_row,
         coin_selection,
         bottom_row,
         next_reason,
-        Space::with_height(Length::Fixed(20.0)),
+        Space::with_height(20),
     ]
     .spacing(20);
 
@@ -338,7 +301,7 @@ enum NextBlocker {
 #[allow(clippy::too_many_arguments)]
 fn next_disabled_reason(
     recipients: &[Recipient],
-    batch_label: &form::Value<String>,
+    tx_label: Option<&form::Value<String>>,
     feerate: &form::Value<String>,
     amount_left: Option<&Amount>,
     any_coin_selected: bool,
@@ -350,7 +313,7 @@ fn next_disabled_reason(
     if recipients.iter().any(|r| empty_or_invalid(&r.address)) {
         Some(NextBlocker::RecipientAddress)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.label))
-        || (recipients.len() >= 2 && !batch_label.valid)
+        || tx_label.is_some_and(|tx_label| !tx_label.valid)
     {
         Some(NextBlocker::PaymentDescription)
     } else if recipients.iter().any(|r| empty_or_invalid(&r.amount)) {
@@ -429,14 +392,6 @@ fn coin_list_view<'a>(
     selected: bool,
     available_width: f32,
 ) -> Element<'a, Message> {
-    let label = if let Some(label) = coins_labels.get(&coin.outpoint.to_string()) {
-        spend::CoinLabel::Outpoint(label.clone())
-    } else if let Some(label) = coins_labels.get(&coin.outpoint.txid.to_string()) {
-        spend::CoinLabel::Transaction(label.clone())
-    } else {
-        spend::CoinLabel::None
-    };
-
     let status = if coin.spend_info.is_some() {
         spend::CoinStatus::Spent
     } else if coin.block_height.is_none() {
@@ -445,8 +400,12 @@ fn coin_list_view<'a>(
         spend::CoinStatus::Sequence(remaining_sequence(coin, blockheight, timelock))
     };
 
+    let own_label = coins_labels
+        .get(&coin.outpoint.to_string())
+        .map(String::as_str);
+    let label = liana::label::resolve(own_label, &coin.default_label);
     spend::coin_row(
-        label,
+        &label,
         &coin.amount,
         status,
         selected,

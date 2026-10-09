@@ -22,12 +22,14 @@ text_roles! {
     h2_semi,                H2_SEMI_SPEC,               font::MANROPE_SEMIBOLD, 22;
     h3,                     H3_SPEC,                    font::MANROPE_MEDIUM,   20;
     h3_semi,                H3_SEMI_SPEC,               font::MANROPE_SEMIBOLD, 20;
+    b0,                     B0_SPEC,                    font::REGULAR,          32;
     b1,                     B1_SPEC,                    font::REGULAR,          24;
     b1_bold,                B1_BOLD_SPEC,               font::BOLD,             24;
     b2,                     B2_SPEC,                    font::REGULAR,          22;
     b2_medium,              B2_MEDIUM_SPEC,             font::MEDIUM,           22;
     b3,                     B3_SPEC,                    font::REGULAR,          20;
     b3_medium,              B3_MEDIUM_SPEC,             font::MEDIUM,           20;
+    b4,                     B4_SPEC,                    font::REGULAR,          18;
     b4_medium,              B4_MEDIUM_SPEC,             font::MEDIUM,           18;
     b4_bold,                B4_BOLD_SPEC,               font::BOLD,             18;
     b5_medium,              B5_MEDIUM_SPEC,             font::MEDIUM,           16;

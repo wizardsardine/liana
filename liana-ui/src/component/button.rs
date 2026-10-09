@@ -3,22 +3,25 @@ use std::fmt::Display;
 use super::{
     modal::BTN_W,
     text::{
-        new::{button_text, button_text_compact, caption, BUTTON_TEXT_COMPACT_SPEC},
-        panel_title, text,
+        new::{button_text, button_text_compact, caption, d2, BUTTON_TEXT_COMPACT_SPEC},
+        text,
     },
     tooltip,
 };
 use crate::{
+    component::{amount::DisplayAmount, text::command_key},
     font::{BOLD, MANROPE_SEMIBOLD, MEDIUM},
     icon::{self, ICON_SIZE_L},
+    image,
     theme::{self, button::round_icon_btn, Theme},
     widget::*,
 };
+use bitcoin::Amount;
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        container, row,
+        container, row, svg,
         tooltip::Position,
         Space,
     },
@@ -181,8 +184,8 @@ pub fn auxiliary<'a, T: 'a + Clone>(
         .padding(0)
 }
 
-pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Button<'a, T> {
-    Button::new(content(icon, panel_title(t), false))
+pub fn breadcrumb<'a, T: 'a>(t: impl Display) -> Button<'a, T> {
+    Button::new(d2(t))
         .style(theme::button::breadcrumb)
         .padding(0)
 }
@@ -302,16 +305,6 @@ pub fn list_entry_card<'a, M: 'a>(
     container(entry).width(width).into()
 }
 
-pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
-    content: T,
-    msg: Option<M>,
-) -> Button<'a, M> {
-    Button::new(content.into())
-        .style(theme::button::clickable_section)
-        .on_press_maybe(msg)
-        .width(Length::Fill)
-}
-
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> Container<'a, T> {
     content_with_tooltip(icon, text, None, compact)
 }
@@ -392,6 +385,7 @@ pub enum BtnWidth {
     S = 100,
     M = 140,
     L = 180,
+    Modal = 200,
     XL = 230,
     XXL = 330,
     /// Default to Length::Shrink
@@ -639,13 +633,14 @@ pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, t!("btn-no"), BtnWidth::S, msg)
 }
 
-pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(
-        Some(icon::reload_icon()),
-        t!("btn-reset-timelock"),
-        BtnWidth::Auto,
-        msg,
-    )
+pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
+    let icon = Some(icon::reload_icon());
+    let label = t!("btn-reset-timelock");
+    if primary {
+        btn_primary(icon, label, BtnWidth::Auto, msg)
+    } else {
+        btn_tertiary(icon, label, BtnWidth::Auto, msg)
+    }
 }
 
 pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -830,13 +825,8 @@ pub fn btn_register_on_device<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     )
 }
 
-pub fn btn_see_transaction_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    btn_tertiary(
-        None,
-        t!("btn-see-transaction-details"),
-        BtnWidth::XL,
-        Some(msg),
-    )
+pub fn btn_see_more_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-see-more-details"), BtnWidth::XL, Some(msg))
 }
 
 pub fn btn_export<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -858,6 +848,193 @@ pub fn btn_export_psbt<'a, T: Clone + 'a>(saved: bool, msg: Option<T>) -> Contai
             Position::Top,
         )
     }
+}
+
+pub fn btn_map<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(
+        Some(icon::geo_alt_fill_icon()),
+        t!("btn-map"),
+        BtnWidth::M,
+        msg,
+    )
+}
+
+pub fn btn_show_on_map<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(
+        Some(icon::geo_alt_fill_icon()),
+        t!("btn-show-on-map"),
+        BtnWidth::L,
+        msg,
+    )
+}
+
+/// Compact tertiary button of the map header.
+pub fn btn_reset_layout<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    button_with_theme(
+        Some(icon::arrow_counterclockwise_icon()),
+        t!("btn-reset-layout"),
+        theme::button::tertiary,
+        true,
+    )
+    .on_press_maybe(msg)
+}
+
+const TOOLBAR_ICON_SIZE: u32 = 20;
+const TOOLBAR_BUTTON_SIZE: u32 = 32;
+
+fn toolbar_button<'a, T: Clone + 'a>(
+    icon: impl Into<Element<'a, T>>,
+    tip: String,
+    on: bool,
+    msg: Option<T>,
+) -> Container<'a, T> {
+    let icon = Container::new(icon)
+        .center_x(TOOLBAR_BUTTON_SIZE)
+        .center_y(TOOLBAR_BUTTON_SIZE);
+    let button = Button::new(icon)
+        .padding(0)
+        .style(theme::button::toolbar_toggle(on))
+        .on_press_maybe(msg);
+    tooltip::tooltip_custom(caption(tip), button, Position::Bottom)
+}
+
+fn toolbar_svg(svg: Svg<'static>, on: bool, enabled: bool) -> Svg<'static> {
+    svg.width(TOOLBAR_ICON_SIZE)
+        .height(TOOLBAR_ICON_SIZE)
+        .style(move |theme, status| {
+            let color = if enabled && (on || status == svg::Status::Hovered) {
+                theme.colors.general.accent
+            } else {
+                theme.colors.buttons.transparent.active.text
+            };
+            let alpha = if enabled { color.a } else { color.a * 0.5 };
+            svg::Style {
+                color: Some(Color { a: alpha, ..color }),
+            }
+        })
+}
+
+pub fn btn_undo<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let tip = t!("btn-undo-tooltip", key = command_key());
+    toolbar_button(
+        icon::arrow_90deg_left_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_redo<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let tip = t!("btn-redo-tooltip", key = command_key());
+    toolbar_button(
+        icon::arrow_90deg_right_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_shortcuts<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::tooltip_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-shortcuts-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_other_wallets<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::wallet_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-other-wallets-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_zoom_in<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::zoom_in_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-zoom-in-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_zoom_out<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::zoom_out_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-zoom-out-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_fit<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::arrows_fullscreen_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-fit-tooltip"),
+        false,
+        msg,
+    )
+}
+
+pub fn btn_align_h<'a, T: Clone + 'a>(count: usize, msg: Option<T>) -> Container<'a, T> {
+    let tip = if msg.is_some() {
+        t!("btn-align-h-tooltip", count = count)
+    } else {
+        t!("btn-align-h-disabled-tooltip")
+    };
+    toolbar_button(
+        icon::align_middle_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_align_v<'a, T: Clone + 'a>(count: usize, msg: Option<T>) -> Container<'a, T> {
+    let tip = if msg.is_some() {
+        t!("btn-align-v-tooltip", count = count)
+    } else {
+        t!("btn-align-v-disabled-tooltip")
+    };
+    toolbar_button(
+        icon::align_center_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        false,
+        msg,
+    )
+}
+
+pub fn btn_select_area<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
+    let tip = t!("btn-select-area-tooltip", key = command_key());
+    toolbar_button(
+        icon::bounding_box_icon().size(TOOLBAR_ICON_SIZE),
+        tip,
+        on,
+        msg,
+    )
+}
+
+pub fn btn_highlight_unspent<'a, T: Clone + 'a>(
+    on: bool,
+    count: usize,
+    total: &Amount,
+    msg: Option<T>,
+) -> Container<'a, T> {
+    let tip = t!(
+        "btn-highlight-unspent-tooltip",
+        count = count,
+        amount = total.to_formatted_string()
+    );
+    let icon: Element<'a, T> = toolbar_svg(image::unspent_marker_icon(), on, msg.is_some()).into();
+    toolbar_button(icon, tip, on, msg)
+}
+
+pub fn btn_snap<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
+    let icon: Element<'a, T> = toolbar_svg(image::snap_grid_icon(), on, msg.is_some()).into();
+    toolbar_button(icon, t!("btn-snap-tooltip"), on, msg)
 }
 
 pub fn btn_import<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1026,15 +1203,6 @@ pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     )
 }
 
-pub fn btn_add_label<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(
-        Some(icon::edit_icon()),
-        t!("btn-edit-label"),
-        BtnWidth::L,
-        msg,
-    )
-}
-
 pub fn btn_delete_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     destructive(None, t!("btn-delete-wallet"))
         .width(Length::Fixed(200.0))
@@ -1070,7 +1238,7 @@ pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) ->
 }
 
 pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T> {
-    link(Some(icon::link_icon()), t!("btn-more-backend-node-info")).on_press(msg)
+    btn_help_link(t!("btn-more-backend-node-info"), Some(msg))
 }
 
 pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1083,4 +1251,58 @@ pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 
 pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: impl Display, msg: T) -> Button<'a, T> {
     button_compact(word, theme::button::tertiary, Some(msg)).width(BtnWidth::S)
+}
+
+pub fn btn_confirm<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-confirm"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_go_to_replacement<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, t!("btn-go-to-replacement"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-bump-fee"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let button = btn_destructive(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
+    tooltip::tooltip_custom(
+        caption(t!("transactions-cancel-tooltip")),
+        button,
+        Position::Top,
+    )
+}
+
+pub fn btn_see_more<'a, T: Clone + 'a>(processing: bool, msg: T) -> Button<'a, T> {
+    let label = if processing {
+        t!("common-fetching")
+    } else {
+        t!("common-see-more")
+    };
+    btn_secondary(None, label, BtnWidth::Fill, (!processing).then_some(msg))
+}
+
+pub fn btn_send_invitation<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-send-invitation"), BtnWidth::L, msg)
+}
+
+pub fn btn_start_rescan<'a, T: Clone + 'a>(processing: bool, msg: Option<T>) -> Button<'a, T> {
+    let label = if processing {
+        t!("btn-starting-rescan")
+    } else {
+        t!("btn-start-rescan")
+    };
+    if msg.is_some() {
+        btn_primary(None, label, BtnWidth::XL, msg)
+    } else {
+        btn_secondary(None, label, BtnWidth::XL, msg)
+    }
+}
+
+pub fn btn_help_link<T: Clone + 'static>(
+    label: impl Display,
+    msg: Option<T>,
+) -> Button<'static, T> {
+    link(Some(icon::link_icon()), label).on_press_maybe(msg)
 }

@@ -7,20 +7,24 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
-    database::{Coin, DatabaseConnection, DatabaseInterface},
+    database::{
+        Coin, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface, WalletTransaction,
+    },
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
     DaemonControl, VERSION,
 };
 
-pub use crate::database::{CoinStatus, LabelItem};
+pub use crate::database::{CoinStatus, GraphItem, GraphLayoutEntry, GraphWallet, LabelItem};
 
 use liana::{
     descriptors,
+    label::Label,
     spend::{
         self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
         SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
     },
+    transaction,
 };
 
 use utils::{
@@ -191,7 +195,7 @@ impl TxGetter for DbTxGetter<'_> {
                 .connection()
                 .list_wallet_transactions(&[*txid])
                 .pop()
-                .map(|(tx, _, _)| tx);
+                .map(|wtx| wtx.tx);
             entry.insert(tx);
         }
         self.cache.get(txid).cloned().flatten()
@@ -215,17 +219,76 @@ fn coin_to_candidate(
     }
 }
 
-impl DaemonControl {
-    // Get the derived descriptor for this coin
-    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
-        let desc = if coin.is_change {
-            self.config.main_descriptor.change_descriptor()
-        } else {
-            self.config.main_descriptor.receive_descriptor()
-        };
-        desc.derive(coin.derivation_index, &self.secp)
-    }
+/// The `listcoins` entries of a wallet, read from its database.
+pub fn list_coins_entries(
+    db_conn: &mut dyn DatabaseConnection,
+    main_descriptor: &descriptors::LianaDescriptor,
+    network: bitcoin::Network,
+    secp: &bitcoin::secp256k1::Secp256k1<bitcoin::secp256k1::VerifyOnly>,
+    statuses: &[CoinStatus],
+    outpoints: &[bitcoin::OutPoint],
+) -> Vec<ListCoinsEntry> {
+    db_conn
+        .coins_with_default_label(statuses, outpoints)
+        .into_values()
+        .map(
+            |CoinWithDefaultLabel {
+                 coin,
+                 default_label,
+             }| {
+                let Coin {
+                    amount,
+                    outpoint,
+                    block_info,
+                    spend_txid,
+                    spend_block,
+                    is_immature,
+                    is_change,
+                    is_from_self,
+                    derivation_index,
+                    ..
+                } = coin;
+                let spend_info = spend_txid.map(|txid| LCSpendInfo {
+                    txid,
+                    height: spend_block.map(|b| b.height),
+                });
+                let block_height = block_info.map(|b| b.height);
+                let desc = if is_change {
+                    main_descriptor.change_descriptor()
+                } else {
+                    main_descriptor.receive_descriptor()
+                };
+                let address = desc.derive(derivation_index, secp).address(network);
+                ListCoinsEntry {
+                    address,
+                    amount,
+                    derivation_index,
+                    outpoint,
+                    block_height,
+                    spend_info,
+                    is_immature,
+                    is_change,
+                    is_from_self,
+                    default_label,
+                }
+            },
+        )
+        .collect()
+}
 
+/// The `listtransactions` entries for the given txids, read from the wallet database.
+pub fn list_transactions_info(
+    db_conn: &mut dyn DatabaseConnection,
+    txids: &[bitcoin::Txid],
+) -> Vec<TransactionInfo> {
+    db_conn
+        .list_wallet_transactions(txids)
+        .into_iter()
+        .map(TransactionInfo::from)
+        .collect()
+}
+
+impl DaemonControl {
     // Check whether this address is valid for the network we are operating on.
     fn validate_address(
         &self,
@@ -574,44 +637,14 @@ impl DaemonControl {
         statuses: &[CoinStatus],
         outpoints: &[bitcoin::OutPoint],
     ) -> ListCoinsResult {
-        let mut db_conn = self.db.connection();
-        let coins: Vec<ListCoinsEntry> = db_conn
-            .coins(statuses, outpoints)
-            .into_values()
-            .map(|coin| {
-                let Coin {
-                    amount,
-                    outpoint,
-                    block_info,
-                    spend_txid,
-                    spend_block,
-                    is_immature,
-                    is_change,
-                    is_from_self,
-                    derivation_index,
-                    ..
-                } = coin;
-                let spend_info = spend_txid.map(|txid| LCSpendInfo {
-                    txid,
-                    height: spend_block.map(|b| b.height),
-                });
-                let block_height = block_info.map(|b| b.height);
-                let address = self
-                    .derived_desc(&coin)
-                    .address(self.config.bitcoin_config.network);
-                ListCoinsEntry {
-                    address,
-                    amount,
-                    derivation_index,
-                    outpoint,
-                    block_height,
-                    spend_info,
-                    is_immature,
-                    is_change,
-                    is_from_self,
-                }
-            })
-            .collect();
+        let coins = list_coins_entries(
+            self.db.connection().as_mut(),
+            &self.config.main_descriptor,
+            self.config.bitcoin_config.network,
+            &self.secp,
+            statuses,
+            outpoints,
+        );
         ListCoinsResult { coins }
     }
 
@@ -854,6 +887,30 @@ impl DaemonControl {
         GetLabelsBip329Result {
             labels: db_conn.get_labels_bip329(offset, limit),
         }
+    }
+
+    pub fn get_graph_layout(&self) -> GetGraphLayoutResult {
+        let mut db_conn = self.db.connection();
+        GetGraphLayoutResult {
+            entries: db_conn.graph_layout(),
+        }
+    }
+
+    pub fn update_graph_layout(&self, set: &[GraphLayoutEntry], remove: &[GraphItem]) {
+        let mut db_conn = self.db.connection();
+        db_conn.update_graph_layout(set, remove);
+    }
+
+    pub fn get_graph_wallets(&self) -> GetGraphWalletsResult {
+        let mut db_conn = self.db.connection();
+        GetGraphWalletsResult {
+            wallets: db_conn.graph_wallets(),
+        }
+    }
+
+    pub fn update_graph_wallets(&self, wallets: &[GraphWallet]) {
+        let mut db_conn = self.db.connection();
+        db_conn.update_graph_wallets(wallets);
     }
 
     pub fn list_spend(
@@ -1229,13 +1286,7 @@ impl DaemonControl {
 
     /// list_transactions retrieves the transactions with the given txids.
     pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
-        let transactions = self
-            .db
-            .connection()
-            .list_wallet_transactions(txids)
-            .into_iter()
-            .map(|(tx, height, time)| TransactionInfo { tx, height, time })
-            .collect();
+        let transactions = list_transactions_info(self.db.connection().as_mut(), txids);
         ListTransactionsResult { transactions }
     }
 
@@ -1401,6 +1452,16 @@ pub struct GetLabelsBip329Result {
     pub labels: crate::bip329::Labels,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetGraphLayoutResult {
+    pub entries: Vec<GraphLayoutEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetGraphWalletsResult {
+    pub wallets: Vec<GraphWallet>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AddressInfo {
     index: u32,
@@ -1484,6 +1545,18 @@ pub struct ListCoinsEntry {
     /// this same wallet. If the coin is unconfirmed, it also means that all its
     /// unconfirmed ancestors, if any, are also from self.
     pub is_from_self: bool,
+    /// Default label snapshotted when the coin was first seen.
+    #[serde(default)]
+    pub default_label: Label,
+}
+
+impl From<&ListCoinsEntry> for transaction::Coin {
+    fn from(coin: &ListCoinsEntry) -> Self {
+        Self {
+            outpoint: coin.outpoint,
+            amount: coin.amount,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1528,6 +1601,20 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
+    /// Default label snapshotted when the transaction was first seen.
+    #[serde(default)]
+    pub default_label: Label,
+}
+
+impl From<WalletTransaction> for TransactionInfo {
+    fn from(wtx: WalletTransaction) -> Self {
+        Self {
+            tx: wtx.tx,
+            height: wtx.block_height,
+            time: wtx.block_time,
+            default_label: wtx.default_label,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -3408,5 +3495,37 @@ mod tests {
         );
 
         ms.shutdown();
+    }
+
+    #[test]
+    fn default_label_json() {
+        let json = |label: Label| serde_json::to_string(&label).unwrap();
+        assert_eq!(json(Label::None), r#""none""#);
+        assert_eq!(json(Label::Own("x".to_string())), r#"{"own":"x"}"#);
+        assert_eq!(
+            json(Label::Transaction("x".to_string())),
+            r#"{"transaction":"x"}"#
+        );
+        assert_eq!(json(Label::Address("x".to_string())), r#"{"address":"x"}"#);
+        assert_eq!(json(Label::Funding("x".to_string())), r#"{"funding":"x"}"#);
+    }
+
+    #[test]
+    fn list_coins_entry_without_default_label() {
+        let entry: ListCoinsEntry = serde_json::from_str(
+            r#"{
+                "amount": 10000,
+                "outpoint": "0000000000000000000000000000000000000000000000000000000000000001:0",
+                "address": "bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv",
+                "block_height": null,
+                "derivation_index": 0,
+                "spend_info": null,
+                "is_immature": false,
+                "is_change": false,
+                "is_from_self": false
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(entry.default_label, Label::None);
     }
 }

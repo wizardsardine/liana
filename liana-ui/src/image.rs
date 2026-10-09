@@ -4,7 +4,6 @@ use iced::{widget::svg::Handle, window::icon};
 const LIANA_APP_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon.png");
 const LIANA_BUSINESS_APP_ICON: &[u8] =
     include_bytes!("../static/logos/liana-business-app-icon.png");
-const LIANA_LOGO_GREY: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Gray.svg");
 const LIANA_LOGO_GREEN: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Green.svg");
 const LIANA_LOGO_BLUE: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Blue.svg");
 const LIANA_BRAND_GREY: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Gray.svg");
@@ -18,11 +17,6 @@ pub fn liana_app_icon() -> icon::Icon {
 
 pub fn liana_business_app_icon() -> icon::Icon {
     icon::from_file_data(LIANA_BUSINESS_APP_ICON, None).unwrap()
-}
-
-pub fn liana_grey_logo() -> Svg<'static> {
-    let h = Handle::from_memory(LIANA_LOGO_GREY.to_vec());
-    Svg::new(h)
 }
 
 pub fn liana_green_logo() -> Svg<'static> {
@@ -87,5 +81,34 @@ const KEY_MARK_ICON: &[u8] = include_bytes!("../static/icons/key-mark.svg");
 
 pub fn key_mark_icon() -> Svg<'static> {
     let h = Handle::from_memory(KEY_MARK_ICON.to_vec());
+    Svg::new(h)
+}
+
+const UNSPENT_MARKER_ICON: &[u8] = include_bytes!("../static/icons/unspent-marker.svg");
+
+pub fn unspent_marker_icon() -> Svg<'static> {
+    let h = Handle::from_memory(UNSPENT_MARKER_ICON.to_vec());
+    Svg::new(h)
+}
+
+const SNAP_GRID_ICON: &[u8] = include_bytes!("../static/icons/snap-grid.svg");
+
+pub fn snap_grid_icon() -> Svg<'static> {
+    let h = Handle::from_memory(SNAP_GRID_ICON.to_vec());
+    Svg::new(h)
+}
+
+const LEGEND_COIN_EDGE: &[u8] = include_bytes!("../static/icons/legend-coin-edge.svg");
+
+pub fn legend_coin_edge() -> Svg<'static> {
+    let h = Handle::from_memory(LEGEND_COIN_EDGE.to_vec());
+    Svg::new(h)
+}
+
+const LEGEND_COUNTERPARTY_EDGE: &[u8] =
+    include_bytes!("../static/icons/legend-counterparty-edge.svg");
+
+pub fn legend_counterparty_edge() -> Svg<'static> {
+    let h = Handle::from_memory(LEGEND_COUNTERPARTY_EDGE.to_vec());
     Svg::new(h)
 }

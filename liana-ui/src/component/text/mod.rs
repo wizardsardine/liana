@@ -4,8 +4,12 @@ pub mod new;
 pub use legacy::*;
 
 use crate::{font, theme::Theme};
-use iced::advanced::text::Shaping;
-use iced::Font;
+use chrono::{DateTime, Local, Utc};
+use iced::{
+    advanced::text::{self as advanced_text, Paragraph as _, Shaping},
+    Font, Pixels, Renderer, Size,
+};
+use liana_i18n::t;
 use std::fmt::Display;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -27,6 +31,23 @@ pub fn apply<'a>(content: impl Display, spec: TextSpec) -> iced::widget::Text<'a
         t = t.size(s);
     }
     t
+}
+
+pub fn width(content: &str, font: Font, size: impl Into<Pixels>) -> f32 {
+    type Layout = <Renderer as advanced_text::Renderer>::Paragraph;
+    Layout::with_text(advanced_text::Text {
+        content,
+        bounds: Size::INFINITE,
+        size: size.into(),
+        line_height: advanced_text::LineHeight::default(),
+        font,
+        align_x: advanced_text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        shaping: Shaping::Advanced,
+        wrapping: advanced_text::Wrapping::None,
+    })
+    .min_bounds()
+    .width
 }
 
 /// Declare a batch of typography roles. For each `name, SPEC, font [, size]`
@@ -98,6 +119,27 @@ pub fn truncate(str: &str, len: usize) -> String {
     let mut truncated: String = str.graphemes(true).take(len - 3).collect();
     truncated.push_str("...");
     truncated
+}
+
+/// Format a date in local time as "Mar 12, 2026".
+pub fn format_date(time: DateTime<Utc>) -> String {
+    time.with_timezone(&Local).format("%b %-d, %Y").to_string()
+}
+
+/// Format a date in local time as "Mar 12, 2026 - 17:00:49".
+pub fn format_datetime(time: DateTime<Utc>) -> String {
+    time.with_timezone(&Local)
+        .format("%b %-d, %Y - %H:%M:%S")
+        .to_string()
+}
+
+/// Name of the command modifier key on this platform.
+pub fn command_key() -> String {
+    if cfg!(target_os = "macos") {
+        t!("common-key-cmd")
+    } else {
+        t!("common-key-ctrl")
+    }
 }
 
 const SHORT_MARKER: &str = "[...]";

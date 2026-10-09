@@ -22,7 +22,10 @@ use tracing::{error, info, warn};
 
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::{network_banner, panels::home::WalletOrigin},
+    component::{
+        network_banner,
+        panels::{home::WalletOrigin, map::header::HeaderAction},
+    },
     widget::{Column, Element},
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
@@ -31,7 +34,8 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    CoinsPanel, CreateSpendPanel, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    CoinsPanel, CreateSpendPanel, Home, MapPanel, PsbtsPanel, ReceivePanel, State,
+    TransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -59,6 +63,8 @@ struct Panels<S: SettingsTrait> {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: S::UI,
+    map: MapPanel,
+    map_return: Menu,
 }
 
 impl<S: SettingsTrait> Panels<S> {
@@ -91,6 +97,12 @@ impl<S: SettingsTrait> Panels<S> {
             config.clone(),
         );
 
+        let map = MapPanel::new(
+            data_dir.network_directory(cache.network),
+            cache.network,
+            wallet.id(),
+            wallet.remote_backend_auth.is_some(),
+        );
         let panels = Self {
             current: Menu::Home,
             home: Home::new(
@@ -118,6 +130,8 @@ impl<S: SettingsTrait> Panels<S> {
                 cache.network,
             ),
             settings: settings_ui,
+            map,
+            map_return: Menu::Home,
         };
 
         (panels, settings_task)
@@ -136,6 +150,7 @@ impl<S: SettingsTrait> Panels<S> {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
+            Menu::Map(_) => &self.map,
         }
     }
 
@@ -152,6 +167,7 @@ impl<S: SettingsTrait> Panels<S> {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
+            Menu::Map(_) => &mut self.map,
         }
     }
 }
@@ -244,9 +260,14 @@ impl<S: SettingsTrait> App<S> {
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
+        self.panels.map_return = self
+            .panels
+            .current
+            .map_return(&menu, &self.panels.map_return);
         self.panels.current_mut().interrupt();
 
         match &menu {
+            menu::Menu::Map(focus) => self.panels.map.set_focus(focus.clone()),
             menu::Menu::TransactionPreSelected(txid) => {
                 if let Ok(Some(tx)) = Handle::current().block_on(async {
                     self.daemon
@@ -564,6 +585,16 @@ impl<S: SettingsTrait> App<S> {
                 )
             }
             Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
+            Message::View(view::Message::Map(view::MapMessage::Header(HeaderAction::Back))) => {
+                self.panels.map.interrupt();
+                self.panels.current = self.panels.map_return.clone();
+                let changes = self.panels.map.take_label_changes();
+                if changes.is_empty() {
+                    Task::none()
+                } else {
+                    Task::done(Message::LabelsUpdated(Ok(changes)))
+                }
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);

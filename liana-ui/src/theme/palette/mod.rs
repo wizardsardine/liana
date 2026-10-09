@@ -29,6 +29,7 @@ pub struct Palette {
     pub menus: Menus,
     pub spinner: Spinner,
     pub timeline: Timeline,
+    pub graph: Graph,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -78,8 +79,6 @@ pub struct Buttons {
     pub list_entry: Button,
     pub list_entry_radius: Option<f32>,
     pub list_entry_hover_border_width: Option<f32>,
-    // previously theme::button::transparent_border wrapped into theme::card::simple
-    pub clickable_section: Button,
     pub primary: Button,
     pub secondary: Button,
     pub auxiliary: Button,
@@ -337,6 +336,24 @@ pub struct TimelineTone {
 pub struct Spinner {
     pub track: iced::Color,
     pub arc: iced::Color,
+}
+
+/// Colors of the graph view canvas layers.
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Graph {
+    pub grid_dot: iced::Color,
+    pub edge_coin: iced::Color,
+    pub edge_counterparty: iced::Color,
+    pub edge_counterparty_active: iced::Color,
+    pub frame: iced::Color,
+    pub marker: iced::Color,
+    pub marker_fill: iced::Color,
+    pub area_inside: iced::Color,
+    pub area_inside_fill: iced::Color,
+    pub area_crossing: iced::Color,
+    pub area_crossing_fill: iced::Color,
+    /// Hues of the other wallets shown on the map.
+    pub wallets: [iced::Color; 8],
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

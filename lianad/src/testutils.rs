@@ -2,12 +2,13 @@ use crate::{
     bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
     config::{BitcoinConfig, Config},
     database::{
-        BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
+        BlockInfo, Coin, CoinStatus, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface,
+        GraphItem, GraphLayoutEntry, GraphWallet, LabelItem, Wallet, WalletTransaction,
     },
     datadir::DataDirectory,
     DaemonControl, DaemonHandle,
 };
-use liana::descriptors;
+use liana::{descriptors, label::Label};
 
 use std::convert::TryInto;
 use std::{
@@ -155,8 +156,12 @@ struct DummyDbState {
     curr_tip: Option<BlockChainTip>,
     coins: HashMap<bitcoin::OutPoint, Coin>,
     txs: HashMap<bitcoin::Txid, bitcoin::Transaction>,
+    tx_default_labels: HashMap<bitcoin::Txid, Label>,
+    coin_default_labels: HashMap<bitcoin::OutPoint, Label>,
     spend_txs: HashMap<bitcoin::Txid, (Psbt, Option<u32>)>,
     labels: HashMap<LabelItem, String>,
+    graph_layout: Vec<GraphLayoutEntry>,
+    graph_wallets: Vec<GraphWallet>,
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
@@ -191,8 +196,12 @@ impl DummyDatabase {
                 curr_tip: None,
                 coins: HashMap::new(),
                 txs: HashMap::new(),
+                tx_default_labels: HashMap::new(),
+                coin_default_labels: HashMap::new(),
                 spend_txs: HashMap::new(),
                 labels: HashMap::new(),
+                graph_layout: Vec::new(),
+                graph_wallets: Vec::new(),
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
@@ -295,6 +304,28 @@ impl DatabaseConnection for DummyDatabase {
                 } else {
                     None
                 }
+            })
+            .collect()
+    }
+
+    fn coins_with_default_label(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, CoinWithDefaultLabel> {
+        let coins = self.coins(statuses, outpoints);
+        let db = self.db.read().unwrap();
+        coins
+            .into_iter()
+            .map(|(op, coin)| {
+                let default_label = db.coin_default_labels.get(&op).cloned().unwrap_or_default();
+                (
+                    op,
+                    CoinWithDefaultLabel {
+                        coin,
+                        default_label,
+                    },
+                )
             })
             .collect()
     }
@@ -542,10 +573,7 @@ impl DatabaseConnection for DummyDatabase {
         // noop
     }
 
-    fn list_wallet_transactions(
-        &mut self,
-        txids: &[bitcoin::Txid],
-    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+    fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction> {
         let txs: HashMap<_, _> = self
             .db
             .read()
@@ -556,6 +584,7 @@ impl DatabaseConnection for DummyDatabase {
             .filter(|(txid, _tx)| txids.contains(txid))
             .collect();
         let coins = self.coins(&[], &[]);
+        let default_labels = self.db.read().unwrap().tx_default_labels.clone();
         let mut wallet_txs = Vec::with_capacity(txs.len());
         for (txid, tx) in txs {
             let first_block_info = coins.values().find_map(|c| {
@@ -568,14 +597,89 @@ impl DatabaseConnection for DummyDatabase {
                 }
             });
             if let Some(block_info) = first_block_info {
-                wallet_txs.push((tx, block_info.map(|b| b.height), block_info.map(|b| b.time)));
+                let default_label = default_labels.get(&txid).cloned().unwrap_or_default();
+                wallet_txs.push(WalletTransaction {
+                    tx,
+                    block_height: block_info.map(|b| b.height),
+                    block_time: block_info.map(|b| b.time),
+                    default_label,
+                });
             }
         }
         wallet_txs
     }
 
+    fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
+        let db = self.db.read().unwrap();
+        db.txs
+            .iter()
+            .filter(|(txid, _)| !db.tx_default_labels.contains_key(*txid))
+            .map(|(_, tx)| tx.clone())
+            .collect()
+    }
+
+    fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint> {
+        let db = self.db.read().unwrap();
+        db.coins
+            .keys()
+            .filter(|outpoint| !db.coin_default_labels.contains_key(*outpoint))
+            .copied()
+            .collect()
+    }
+
+    fn store_default_labels(
+        &mut self,
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    ) {
+        let mut db = self.db.write().unwrap();
+        for (txid, label) in txs {
+            db.tx_default_labels
+                .entry(*txid)
+                .or_insert_with(|| label.clone());
+        }
+        for (outpoint, label) in coins {
+            db.coin_default_labels
+                .entry(*outpoint)
+                .or_insert_with(|| label.clone());
+        }
+    }
+
     fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {
         todo!()
+    }
+
+    fn graph_layout(&mut self) -> Vec<GraphLayoutEntry> {
+        self.db.read().unwrap().graph_layout.clone()
+    }
+
+    fn update_graph_layout(&mut self, set: &[GraphLayoutEntry], remove: &[GraphItem]) {
+        let mut db = self.db.write().unwrap();
+        for entry in set {
+            match db.graph_layout.iter_mut().find(|e| e.item == entry.item) {
+                Some(stored) => *stored = entry.clone(),
+                None => db.graph_layout.push(entry.clone()),
+            }
+        }
+        db.graph_layout.retain(|e| !remove.contains(&e.item));
+    }
+
+    fn graph_wallets(&mut self) -> Vec<GraphWallet> {
+        self.db.read().unwrap().graph_wallets.clone()
+    }
+
+    fn update_graph_wallets(&mut self, wallets: &[GraphWallet]) {
+        let mut db = self.db.write().unwrap();
+        for wallet in wallets {
+            match db
+                .graph_wallets
+                .iter_mut()
+                .find(|w| w.wallet == wallet.wallet)
+            {
+                Some(stored) => *stored = wallet.clone(),
+                None => db.graph_wallets.push(wallet.clone()),
+            }
+        }
     }
 }
 

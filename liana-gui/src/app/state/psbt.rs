@@ -20,7 +20,10 @@ use crate::{
         cache::Cache,
         error::Error,
         message::Message,
-        state::label::{label_item_from_str, LabelsEdited},
+        state::{
+            fiat_converter_for_wallet,
+            label::{label_item_from_str, LabelsEdited},
+        },
         view,
         wallet::{Wallet, WalletError},
     },
@@ -294,13 +297,13 @@ impl PsbtState {
             &self.desc_policy,
             &self.wallet.keys_aliases,
             self.labels_edited.cache(),
-            cache.network,
             if let Some(PsbtModal::Sign(m)) = &self.modal {
                 m.is_signing()
             } else {
                 false
             },
             self.warning.as_ref(),
+            fiat_converter_for_wallet(&self.wallet, cache),
         );
         if let Some(modal) = &self.modal {
             modal.as_ref().view(content)

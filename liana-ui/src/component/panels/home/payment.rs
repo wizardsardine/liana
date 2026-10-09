@@ -1,20 +1,21 @@
 use iced::{
-    widget::{column, row, tooltip::Position, Space},
+    widget::{column, row, Space},
     Alignment,
 };
+use liana::{label::Label, transaction::PaymentKind};
 use liana_i18n::t;
 
 use crate::{
     component::{
         self,
         amount::{amount_with_fiat_tooltip, AmountSize, FiatAmount},
+        label::{display_label, LABEL_DISPLAY_MAX_CHARS},
         pill,
         text::{
-            new::{caption, h2},
-            truncate,
+            format_date,
+            new::{self, caption},
         },
         tooltip::tooltip_with_style,
-        tooltip_custom,
     },
     icon,
     theme::{self, amount},
@@ -22,25 +23,12 @@ use crate::{
 };
 
 const ICON_SIZE: u32 = 16;
-const PAYMENT_HEIGHT: u32 = 90;
-const MAX_LABEL_LENGTH: usize = 30;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PaymentKind {
-    Outgoing,
-    Incoming,
-    /// A payment to self, which could be either from a self-transfer
-    /// or a change output from an outgoing transaction.
-    SendToSelf,
-}
-
-impl PaymentKind {
-    pub fn icon<'a, M: 'a>(&self) -> Element<'a, M> {
-        match self {
-            PaymentKind::Outgoing => minus(),
-            PaymentKind::Incoming => plus(),
-            PaymentKind::SendToSelf => refresh(),
-        }
+pub fn kind_icon<'a, M: 'a>(kind: PaymentKind) -> Element<'a, M> {
+    match kind {
+        PaymentKind::Outgoing => minus(),
+        PaymentKind::Incoming => plus(),
+        PaymentKind::SendToSelf => refresh(),
     }
 }
 
@@ -89,74 +77,48 @@ pub struct FiatPrice {
     pub source: FiatSource,
 }
 
-#[derive(Debug, Clone)]
-pub struct UIPayment {
-    pub label: Option<String>,
-    pub address_label: Option<String>,
-    pub kind: PaymentKind,
-    pub time: Option<chrono::DateTime<chrono::Utc>>,
-    pub amount: bitcoin::Amount,
-    pub fiat_price: Option<FiatPrice>,
-}
+/// Payment or transaction list entry.
+#[allow(clippy::too_many_arguments)]
+pub fn list_entry<'a, M: 'a + Clone>(
+    label: &Label,
+    time: Option<chrono::DateTime<chrono::Utc>>,
+    kind: PaymentKind,
+    is_batch: bool,
+    is_payjoin: bool,
+    amount: bitcoin::Amount,
+    fiat_price: Option<FiatPrice>,
+    msg: Option<M>,
+) -> Element<'a, M> {
+    let label = display_label(label, new::H2_SPEC, Some(LABEL_DISPLAY_MAX_CHARS));
 
-/// Format a date as "Mar 12, 2026".
-pub fn format_date(time: chrono::DateTime<chrono::Utc>) -> String {
-    time.format("%b %-d, %Y").to_string()
-}
+    let time = time.map(|time| caption(format_date(time)).style(theme::text::card_secondary));
+    let unconfirmed = time.is_none().then_some(pill::unconfirmed());
 
-pub fn payment_card<'a, M: 'a + Clone>(payment: UIPayment, msg: Option<M>) -> Element<'a, M> {
-    let UIPayment {
-        label,
-        address_label,
-        kind,
-        time,
-        amount,
-        fiat_price,
-    } = payment;
-    let label: Element<'a, M> = match (label, address_label) {
-        (None, None) => h2(t!("common-no-label-parenthesized"))
-            .style(theme::text::primary)
-            .into(),
-        (Some(label), _) => {
-            if label.chars().count() > MAX_LABEL_LENGTH {
-                let short = truncate(&label, MAX_LABEL_LENGTH);
-                let short = h2(short).style(theme::text::primary);
-                tooltip_custom(h2(label), short, Position::Top).into()
-            } else {
-                h2(label).style(theme::text::primary).into()
-            }
-        }
-        (None, Some(label)) => {
-            let inherited = t!("payment-address-label", label = label);
-            if inherited.chars().count() > MAX_LABEL_LENGTH {
-                let short = truncate(&inherited, MAX_LABEL_LENGTH);
-                let short = h2(short).style(theme::text::primary);
-                tooltip_custom(h2(label), short, Position::Top).into()
-            } else {
-                h2(inherited).style(theme::text::primary).into()
-            }
-        }
-    };
-
-    let time: Element<'a, M> = if let Some(time) = time {
-        caption(format_date(time))
-            .style(theme::text::card_secondary)
-            .into()
+    let amount: Element<'a, M> = if kind == PaymentKind::SendToSelf {
+        row![
+            Space::fill_width(),
+            new::h2(t!("common-self-transfer")).style(theme::text::primary),
+            Space::fill_width()
+        ]
+        .into()
     } else {
-        pill::unconfirmed_compact().into()
+        let to_fiat = fiat_price.map(|fp| move |_: bitcoin::Amount| fp.amount);
+        let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
+        let tooltip = fiat_price.map(|fp| fp.source.infotip());
+        amount_with_fiat_tooltip(&amount, to_fiat, AmountSize::M, approximate, tooltip)
     };
-
-    let icon = kind.icon();
-    let to_fiat = fiat_price.map(|fp| move |_: bitcoin::Amount| fp.amount);
-    let approximate = fiat_price.is_none_or(|fp| fp.source == FiatSource::Timestamp);
-    let tooltip = fiat_price.map(|fp| fp.source.infotip());
-    let amount_fiat =
-        amount_with_fiat_tooltip(&amount, to_fiat, AmountSize::M, approximate, tooltip);
+    let batch = is_batch.then_some(pill::batch());
+    let payjoin = is_payjoin.then_some(pill::payjoin());
 
     let left = column![label, time].spacing(2);
-    let right = row![icon, amount_fiat]
+    let amount = row![kind_icon(kind), amount]
+        .width(220)
         .spacing(5)
         .align_y(Alignment::Center);
-    let content = row![left, Space::fill_width(), right].height(PAYMENT_HEIGHT);
+    let right = row![unconfirmed, payjoin, batch, amount]
+        .spacing(5)
+        .align_y(Alignment::Center);
+    let content =
+        row![left, Space::fill_width(), right].height(component::panels::ListEntryHeight::Standard);
     component::card::list_entry_with_padding(content, msg, component::panels::LIST_ENTRY_PADDING)
 }

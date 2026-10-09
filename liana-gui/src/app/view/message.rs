@@ -1,8 +1,10 @@
-use liana_ui::component::panels::spend::FeeLevel;
+use liana_ui::{
+    component::panels::{map::header::HeaderAction, spend::FeeLevel},
+    widget::graph_view::{GraphEvent, ItemId},
+};
 
 use crate::{
-    app::menu::Menu,
-    app::view::FiatAmountConverter,
+    app::{menu::Menu, settings::WalletId, view::FiatAmountConverter},
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -44,12 +46,45 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    Map(MapMessage),
 }
 
 impl Close for Message {
     fn close() -> Self {
         Self::Close
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum MapMessage {
+    Header(HeaderAction),
+    Graph(GraphEvent),
+    CloseModal,
+    ToggleCoinSelected,
+    ToggleFrozen,
+    ToggleTagPopover,
+    TagFilterEdited(String),
+    /// Tag registry index.
+    TagToggled(usize),
+    TagCreate,
+    ClearCoinSelection,
+    Key(MapKey),
+    /// Leaf to jump to.
+    ReuseRowSelected(ItemId),
+    /// Adds or removes another wallet from the map.
+    WalletToggled(WalletId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapKey {
+    Undo,
+    Redo,
+    Shortcuts,
+    Unspent,
+    Escape,
+    /// Escape taken by a focused text input.
+    EscapeInInput,
+    Command(bool),
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +113,7 @@ pub enum NewAddressMessage {
 #[derive(Debug, Clone)]
 pub enum CreateSpendMessage {
     AddRecipient,
-    BatchLabelEdited(String),
+    TxLabelEdited(String),
     DeleteRecipient(usize),
     SelfTransfer,
     SelectCoin(usize),

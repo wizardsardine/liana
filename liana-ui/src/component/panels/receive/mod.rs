@@ -6,6 +6,7 @@ use iced::{
     widget::{column, row, Button, Space},
     Alignment,
 };
+use liana::label::Label;
 use liana_i18n::t;
 
 use crate::{
@@ -27,7 +28,11 @@ pub fn address_card<'a, M: Clone + 'static>(
     verify: M,
     show_qr: M,
 ) -> Element<'a, M> {
-    let label = label::editable_label(label, edit_label);
+    let label = label::editable_label(
+        &liana::label::resolve(Some(&label.to_string()), &Label::None),
+        new::H2_SPEC,
+        edit_label,
+    );
     let addr_row = copyable_address(address, clipboard);
     let top = column![label, addr_row];
 

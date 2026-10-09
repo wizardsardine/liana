@@ -11,8 +11,10 @@ use iced::{
 };
 
 use crate::{
-    component::button::{ListEntryAccent, LIST_ENTRY_ACCENT_WIDTH},
-    icon,
+    component::{
+        button::{ListEntryAccent, LIST_ENTRY_ACCENT_WIDTH},
+        list,
+    },
     theme::{card::CARD_SHADOW_HOVER, Theme},
 };
 
@@ -86,8 +88,8 @@ impl<'a, Message: 'a> FoldableCard<'a, Message> {
             visible,
             clickable: clickable.into(),
             foldable,
-            chevron_folded: icon::collapsed_icon().into(),
-            chevron_unfolded: icon::collapse_icon().into(),
+            chevron_folded: list::right_chevron(),
+            chevron_unfolded: list::down_chevron(),
             accent: None,
             expanded: None,
             on_toggle: None,

@@ -2,11 +2,10 @@ pub mod client;
 pub mod embedded;
 pub mod model;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io::ErrorKind;
-use std::iter::FromIterator;
 
 use async_trait::async_trait;
 
@@ -22,13 +21,17 @@ use liana::{
 use lianad::{
     bip329::Labels,
     commands::{
-        CoinStatus, CreateRecoveryWarning, LabelItem, TransactionInfo, UpdateDerivIndexesResult,
+        CoinStatus, CreateRecoveryWarning, GraphItem, GraphLayoutEntry, GraphWallet, LabelItem,
+        TransactionInfo, UpdateDerivIndexesResult,
     },
     config::Config,
     StartupError,
 };
 
 use crate::{hw::HardwareWalletConfig, node};
+
+/// Max txids per `get_history_txs` request when loading the whole wallet.
+const HISTORY_TXIDS_CHUNK: usize = 100;
 
 #[derive(Debug)]
 pub enum DaemonError {
@@ -198,6 +201,14 @@ pub trait Daemon: Debug {
         labels: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError>;
     async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError>;
+    async fn get_graph_layout(&self) -> Result<Vec<GraphLayoutEntry>, DaemonError>;
+    async fn update_graph_layout(
+        &self,
+        set: &[GraphLayoutEntry],
+        remove: &[GraphItem],
+    ) -> Result<(), DaemonError>;
+    async fn get_graph_wallets(&self) -> Result<Vec<GraphWallet>, DaemonError>;
+    async fn update_graph_wallets(&self, wallets: &[GraphWallet]) -> Result<(), DaemonError>;
     async fn send_wallet_invitation(&self, _email: &str) -> Result<(), DaemonError> {
         Ok(())
     }
@@ -311,33 +322,7 @@ pub trait Daemon: Debug {
             .cloned()
             .collect();
         let coins = self.list_coins(&[], &outpoints).await?.coins;
-        let mut txs = txs
-            .into_iter()
-            .map(|tx| {
-                let mut tx_coins = Vec::new();
-                let mut change_indexes = Vec::new();
-                for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.compute_txid() {
-                        change_indexes.push(coin.outpoint.vout as usize)
-                    } else if tx
-                        .tx
-                        .input
-                        .iter()
-                        .any(|input| input.previous_output == coin.outpoint)
-                    {
-                        tx_coins.push(coin.clone());
-                    }
-                }
-                model::HistoryTransaction::new(
-                    tx.tx,
-                    tx.height,
-                    tx.time,
-                    tx_coins,
-                    change_indexes,
-                    info.network,
-                )
-            })
-            .collect();
+        let mut txs = history_txs(txs, &coins, info.network);
         load_labels(self, &mut txs).await?;
         Ok(txs)
     }
@@ -361,6 +346,34 @@ pub trait Daemon: Debug {
     ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
         let txs = self.list_txs(txids).await?.transactions;
         self.txs_to_historytxs(txs).await
+    }
+
+    /// Every wallet coin, spent ones included.
+    async fn list_all_coins(&self) -> Result<Vec<model::Coin>, DaemonError> {
+        Ok(self
+            .list_coins(
+                &[
+                    CoinStatus::Unconfirmed,
+                    CoinStatus::Confirmed,
+                    CoinStatus::Spending,
+                    CoinStatus::Spent,
+                ],
+                &[],
+            )
+            .await?
+            .coins)
+    }
+
+    /// The wallet transactions funding or spending `coins`, with their coins and labels.
+    async fn get_all_history_txs(
+        &self,
+        coins: &[model::Coin],
+    ) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
+        let mut txs = Vec::new();
+        for chunk in wallet_txids(coins).chunks(HISTORY_TXIDS_CHUNK) {
+            txs.extend(self.get_history_txs(chunk).await?);
+        }
+        Ok(txs)
     }
 
     async fn list_pending_txs(&self) -> Result<Vec<model::HistoryTransaction>, DaemonError> {
@@ -389,33 +402,7 @@ pub trait Daemon: Debug {
         }
 
         let txs = self.list_txs(&txids).await?.transactions;
-        let mut txs = txs
-            .into_iter()
-            .map(|tx| {
-                let mut tx_coins = Vec::new();
-                let mut change_indexes = Vec::new();
-                for coin in &coins {
-                    if coin.outpoint.txid == tx.tx.compute_txid() {
-                        change_indexes.push(coin.outpoint.vout as usize)
-                    } else if tx
-                        .tx
-                        .input
-                        .iter()
-                        .any(|input| input.previous_output == coin.outpoint)
-                    {
-                        tx_coins.push(coin.clone());
-                    }
-                }
-                model::HistoryTransaction::new(
-                    tx.tx,
-                    tx.height,
-                    tx.time,
-                    tx_coins,
-                    change_indexes,
-                    info.network,
-                )
-            })
-            .collect();
+        let mut txs = history_txs(txs, &coins, info.network);
 
         load_labels(self, &mut txs).await?;
         Ok(txs)
@@ -462,35 +449,137 @@ pub trait Daemon: Debug {
     }
 }
 
+pub fn wallet_txids(coins: &[model::Coin]) -> Vec<Txid> {
+    coins
+        .iter()
+        .flat_map(|coin| {
+            std::iter::once(coin.outpoint.txid).chain(coin.spend_info.map(|spend| spend.txid))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// The history of `txs` from the wallet `coins` they spend or fund, without labels.
+pub fn history_txs(
+    txs: Vec<TransactionInfo>,
+    coins: &[model::Coin],
+    network: Network,
+) -> Vec<model::HistoryTransaction> {
+    txs.into_iter()
+        .map(|tx| history_tx(tx, coins, network))
+        .collect()
+}
+
+fn history_tx(
+    tx: TransactionInfo,
+    coins: &[model::Coin],
+    network: Network,
+) -> model::HistoryTransaction {
+    let txid = tx.tx.compute_txid();
+    let mut tx_coins = Vec::new();
+    let mut owned_outputs = BTreeMap::new();
+    for coin in coins {
+        if coin.outpoint.txid == txid {
+            owned_outputs.insert(coin.outpoint.vout as usize, coin.default_label.clone());
+        } else if tx
+            .tx
+            .input
+            .iter()
+            .any(|input| input.previous_output == coin.outpoint)
+        {
+            tx_coins.push(coin.clone());
+        }
+    }
+    model::HistoryTransaction::new(
+        tx.tx,
+        tx.height,
+        tx.time,
+        tx_coins,
+        owned_outputs,
+        network,
+        tx.default_label,
+    )
+}
+
 async fn load_labels<T: model::Labelled + model::LabelsLoader, D: Daemon + ?Sized>(
     daemon: &D,
-    targets: &mut Vec<T>,
+    targets: &mut [T],
 ) -> Result<(), DaemonError> {
     if targets.is_empty() {
         return Ok(());
     }
-    let mut items = HashSet::<LabelItem>::new();
-    for target in &*targets {
-        for item in target.labelled() {
-            items.insert(item);
-        }
-    }
-    let labels = HashMap::from_iter(
-        daemon
-            .get_labels(&items)
-            .await?
-            .into_iter()
-            .map(|(k, v)| (k, Some(v))),
-    );
+    let labels = daemon.get_labels(&label_items(targets)).await?;
+    set_labels(targets, labels);
+    Ok(())
+}
+
+/// The items whose labels `targets` show.
+pub fn label_items<T: model::Labelled>(targets: &[T]) -> HashSet<LabelItem> {
+    targets
+        .iter()
+        .flat_map(|target| target.labelled())
+        .collect()
+}
+
+pub fn set_labels<T: model::LabelsLoader>(targets: &mut [T], labels: HashMap<String, String>) {
+    let labels = labels
+        .into_iter()
+        .map(|(item, label)| (item, Some(label)))
+        .collect();
     for target in targets {
         target.load_labels(&labels);
     }
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::FeerateEstimate;
+    use std::str::FromStr;
+
+    use liana::{
+        label::Label,
+        miniscript::bitcoin::{bip32::ChildNumber, Address, Amount, OutPoint, Txid},
+    };
+    use lianad::commands::LCSpendInfo;
+
+    use super::{model::Coin, wallet_txids, FeerateEstimate};
+
+    fn txid(n: u8) -> Txid {
+        Txid::from_str(&format!("{n:02x}").repeat(32)).unwrap()
+    }
+
+    fn coin(funding: Txid, vout: u32, spent_by: Option<Txid>) -> Coin {
+        Coin {
+            outpoint: OutPoint {
+                txid: funding,
+                vout,
+            },
+            amount: Amount::from_sat(100_000),
+            address: Address::from_str("bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg")
+                .unwrap()
+                .assume_checked(),
+            derivation_index: ChildNumber::Normal { index: 0 },
+            block_height: Some(1),
+            is_immature: false,
+            is_change: false,
+            is_from_self: false,
+            default_label: Label::None,
+            spend_info: spent_by.map(|txid| LCSpendInfo { txid, height: None }),
+        }
+    }
+
+    #[test]
+    fn wallet_txids_unions_funding_and_spending() {
+        let (tx1, tx2, tx3) = (txid(1), txid(2), txid(3));
+        let coins = [
+            coin(tx3, 0, None),
+            coin(tx1, 0, Some(tx3)),
+            coin(tx1, 1, None),
+            coin(tx2, 0, Some(tx3)),
+        ];
+        assert_eq!(wallet_txids(&coins), vec![tx1, tx2, tx3]);
+        assert!(wallet_txids(&[]).is_empty());
+    }
 
     #[test]
     fn feerate_estimate_orders_presets() {

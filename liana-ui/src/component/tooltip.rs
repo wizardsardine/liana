@@ -35,6 +35,19 @@ pub fn tooltip_custom<'a, T: 'a>(
     )
 }
 
+/// `tooltip_custom` for content drawn under a `GraphView` camera: not clamped into the window.
+pub fn tooltip_unsnapped<'a, T: 'a>(
+    help: impl Into<Element<'a, T>>,
+    content: impl Into<Element<'a, T>>,
+    position: Position,
+) -> Container<'a, T> {
+    Container::new(
+        iced::widget::tooltip::Tooltip::new(content, help, position)
+            .style(theme::card::simple)
+            .snap_within_viewport(false),
+    )
+}
+
 // pub fn time(theme: &Theme) -> Style {
 //     Style {
 //         color: Some(theme.colors.text.time),

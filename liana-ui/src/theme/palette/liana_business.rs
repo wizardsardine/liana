@@ -275,27 +275,6 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
-                clickable_section: Button {
-                    active: ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: color::BUSINESS_BLACK,
-                        border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
-                    },
-                    hovered: ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
-                    },
-                    pressed: Some(ButtonPalette {
-                        background: BTN_TERTIARY_BG,
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
-                    }),
-                    disabled: btn_disabled(),
-                },
                 list_entry: Button {
                     active: ButtonPalette {
                         background: BTN_TERTIARY_BG,
@@ -858,6 +837,29 @@ impl Palette {
                     }),
                 },
                 badge_ink: color::WHITE,
+            },
+            graph: Graph {
+                grid_dot: color::LIGHT_BORDER,
+                edge_coin: color::BUSINESS_BLUE,
+                edge_counterparty: color::DARK_TEXT_TERTIARY,
+                edge_counterparty_active: color::BUSINESS_BLACK,
+                frame: color::BUSINESS_BLUE,
+                marker: color::BUSINESS_BLUE,
+                marker_fill: color::LIGHT_BG,
+                area_inside: color::BUSINESS_BLUE_DARK,
+                area_inside_fill: color::TRANSPARENT_BUSINESS_BLUE,
+                area_crossing: color::BUSINESS_BLUE,
+                area_crossing_fill: color::TRANSPARENT_GREEN,
+                wallets: [
+                    color::BLUE,
+                    color::ORANGE,
+                    color::WALLET_VIOLET,
+                    color::WALLET_YELLOW,
+                    color::WALLET_PINK,
+                    color::WALLET_TEAL,
+                    color::WALLET_CORAL,
+                    color::WALLET_INDIGO,
+                ],
             },
         }
     }

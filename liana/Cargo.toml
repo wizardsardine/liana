@@ -26,6 +26,9 @@ getrandom = { workspace = true }
 # Used for the hot signer
 bip39 = { workspace = true }
 
+# BIP329 label import
+bip329 = { workspace = true }
+
 # Additional entropy for generating mnemonics
 [target.'cfg(target_arch = "x86")'.dependencies]
 rdrand = { workspace = true }

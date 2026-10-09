@@ -13,19 +13,18 @@ pub const CAPTION_SIZE: u32 = 12;
 
 // Each entry expands to:
 //
-//     pub const PANEL_TITLE_SPEC: TextSpec = TextSpec {
-//         size: Some(H2_SIZE),
-//         font: font::MANROPE_BOLD,
+//     pub const H1_SPEC: TextSpec = TextSpec {
+//         size: Some(H1_SIZE),
+//         font: font::BOLD,
 //     };
 //
-//     pub fn panel_title<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-//         apply(content, PANEL_TITLE_SPEC)
+//     pub fn h1<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+//         apply(content, H1_SPEC)
 //     }
 //
 // `button_text` omits the trailing size, so its `*_SPEC` gets `size: None`.
 #[rustfmt::skip]
 text_roles! {
-    panel_title, PANEL_TITLE_SPEC, font::MANROPE_BOLD, H2_SIZE;
     h1,          H1_SPEC,          font::BOLD,         H1_SIZE;
     h2,          H2_SPEC,          font::BOLD,         H2_SIZE;
     h3,          H3_SPEC,          font::BOLD,         H3_SIZE;

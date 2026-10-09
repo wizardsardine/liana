@@ -108,7 +108,7 @@ impl WalletSettingsState {
 
 impl State for WalletSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::wallet_settings(
+        let content = view::settings::wallet::wallet_settings(
             cache,
             self.warning.as_ref(),
             &self.descriptor,
@@ -345,7 +345,7 @@ impl RegisterWalletModal {
 
 impl RegisterWalletModal {
     pub fn view(&self) -> Element<'_, view::Message> {
-        view::settings::register_wallet_modal(
+        view::settings::wallet::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,
             self.processing,

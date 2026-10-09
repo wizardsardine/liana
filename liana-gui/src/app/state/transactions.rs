@@ -21,19 +21,18 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{fiat_converter_for_wallet, label::LabelsEdited, State},
         view,
         wallet::Wallet,
     },
-    daemon::model::{self, LabelsLoader},
+    daemon::{
+        model::{self, CreateSpendResult, HistoryTransaction, LabelItem, Labelled, LabelsLoader},
+        Daemon,
+    },
     export::{ImportExportMessage, ImportExportType},
     utils::now,
-};
-
-use crate::daemon::{
-    model::{CreateSpendResult, HistoryTransaction, LabelItem, Labelled},
-    Daemon,
 };
 
 use super::export::ExportModal;
@@ -76,33 +75,48 @@ impl TransactionsPanel {
         self.warning = None;
         self.modal = TransactionsModal::None;
     }
+
+    fn tx_view<'a>(
+        &'a self,
+        cache: &'a Cache,
+        tx: &'a HistoryTransaction,
+    ) -> Element<'a, view::Message> {
+        let content = view::dashboard(
+            &Menu::Transactions,
+            cache,
+            self.warning.as_ref(),
+            view::transaction::tx_view(
+                cache,
+                view::transaction::TxDetail::Transaction(tx),
+                self.labels_edited.cache(),
+                fiat_converter_for_wallet(&self.wallet, cache),
+            ),
+        );
+        match &self.modal {
+            TransactionsModal::CreateRbf(rbf) => rbf.view(content),
+            _ => content,
+        }
+    }
+
+    fn list_view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let content = view::dashboard(
+            &Menu::Transactions,
+            cache,
+            self.warning.as_ref(),
+            view::transactions::transactions_view(&self.txs, self.is_last_page, self.processing),
+        );
+        match &self.modal {
+            TransactionsModal::Export(export) => export.view(content),
+            _ => content,
+        }
+    }
 }
 
 impl State for TransactionsPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some(tx) = self.selected_tx.as_ref() {
-            let content = view::transactions::tx_view(
-                cache,
-                tx,
-                self.labels_edited.cache(),
-                self.warning.as_ref(),
-            );
-            match &self.modal {
-                TransactionsModal::CreateRbf(rbf) => rbf.view(content),
-                _ => content,
-            }
-        } else {
-            let content = view::transactions::transactions_view(
-                cache,
-                &self.txs,
-                self.warning.as_ref(),
-                self.is_last_page,
-                self.processing,
-            );
-            match &self.modal {
-                TransactionsModal::Export(export) => export.view(content),
-                _ => content,
-            }
+        match &self.selected_tx {
+            Some(tx) => self.tx_view(cache, tx),
+            None => self.list_view(cache),
         }
     }
 
@@ -176,7 +190,7 @@ impl State for TransactionsPanel {
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
                 if let Some(tx) = &self.selected_tx {
-                    if tx.fee_amount.is_some() {
+                    if tx.wallet_tx.fee().is_some() {
                         let tx = tx.clone();
                         let outpoints: Vec<_> = (0..tx.tx.output.len())
                             .map(|vout| {
@@ -371,7 +385,8 @@ impl CreateRbfModal {
         descendant_txids: HashSet<Txid>,
     ) -> Self {
         let prev_feerate_vb = tx
-            .fee_amount
+            .wallet_tx
+            .fee()
             .expect("rbf should only be used on a transaction with fee amount set")
             .to_sat()
             .checked_div(tx.tx.vsize().try_into().expect("vsize must fit in u64"))
@@ -448,12 +463,13 @@ impl CreateRbfModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let modal = Modal::new(
             content,
-            view::transactions::create_rbf_modal(
+            view::transaction::create_rbf_modal(
                 self.is_cancel,
                 &self.descendant_txids,
                 &self.feerate_val,
                 self.replacement_txid,
                 self.warning.as_ref(),
+                self.processing,
             ),
         );
         if self.processing {

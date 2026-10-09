@@ -1,5 +1,7 @@
+use crate::database::GraphItem;
+
 use bip329::Label;
-use liana::descriptors::LianaDescriptor;
+use liana::{descriptors::LianaDescriptor, label};
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -59,6 +61,10 @@ CREATE TABLE wallets (
  * The `is_from_self` field indicates if the coin is the output of a transaction whose
  * inputs are all from the same wallet as the coin. For an unconfirmed coin, this also
  * means that all unconfirmed ancestors, if any, are from self.
+ *
+ * The `default_label_kind` and `default_label` fields are the default label snapshotted
+ * when the coin is first seen. The kind is none (0), from its transaction (1), from the
+ * receiving address (2) or from the funding transactions (3). Both are NULL until computed.
  */
 CREATE TABLE coins (
     id INTEGER PRIMARY KEY NOT NULL,
@@ -75,6 +81,8 @@ CREATE TABLE coins (
     spend_block_time INTEGER,
     is_immature BOOLEAN NOT NULL CHECK (is_immature IN (0,1)),
     is_from_self BOOLEAN NOT NULL DEFAULT 0 CHECK (is_from_self IN (0,1)),
+    default_label_kind INTEGER CHECK (default_label_kind IN (0,1,2,3)),
+    default_label TEXT,
     UNIQUE (txid, vout),
     FOREIGN KEY (wallet_id) REFERENCES wallets (id)
         ON UPDATE RESTRICT
@@ -96,14 +104,20 @@ CREATE TABLE addresses (
     derivation_index INTEGER NOT NULL UNIQUE
 );
 
-/* Transactions for all wallets. */
+/* Transactions for all wallets.
+ *
+ * The `default_label_kind` and `default_label` fields are the default label snapshotted
+ * when the transaction is first seen, encoded as in the coins table.
+ */
 CREATE TABLE transactions (
     id INTEGER PRIMARY KEY NOT NULL,
     txid BLOB UNIQUE NOT NULL,
     tx BLOB UNIQUE NOT NULL,
     num_inputs INTEGER CHECK (num_inputs IS NULL OR num_inputs > 0),
     num_outputs INTEGER CHECK (num_outputs IS NULL OR num_outputs > 0),
-    is_coinbase BOOLEAN NOT NULL DEFAULT 0 CHECK (is_coinbase IN (0,1))
+    is_coinbase BOOLEAN NOT NULL DEFAULT 0 CHECK (is_coinbase IN (0,1)),
+    default_label_kind INTEGER CHECK (default_label_kind IN (0,1,2,3)),
+    default_label TEXT
 );
 
 /* Transactions we created that spend some of our coins. */
@@ -121,6 +135,31 @@ CREATE TABLE labels (
     item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
     item TEXT UNIQUE NOT NULL,
     value TEXT NOT NULL
+);
+
+/* Transaction map layout: position of a map item (a transaction or a leaf) and
+ * display order of a transaction's input and output slots, as comma separated
+ * indices.
+ */
+CREATE TABLE graph_layout (
+    id INTEGER PRIMARY KEY NOT NULL,
+    item TEXT UNIQUE NOT NULL,
+    x REAL,
+    y REAL,
+    input_order TEXT,
+    output_order TEXT
+);
+
+/* Other wallets shown on this wallet's transaction map: whether each one is
+ * selected, and the offset of its map items. The row is kept when unselected
+ * so the offset is remembered.
+ */
+CREATE TABLE graph_wallets (
+    id INTEGER PRIMARY KEY NOT NULL,
+    wallet TEXT UNIQUE NOT NULL,
+    selected INTEGER NOT NULL CHECK (selected IN (0,1)),
+    x REAL,
+    y REAL
 );
 ";
 
@@ -203,7 +242,53 @@ pub struct DbBlockInfo {
     pub time: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i64)]
+pub enum DbDefaultLabelKind {
+    None = 0,
+    Transaction = 1,
+    Address = 2,
+    Funding = 3,
+}
+
+impl From<i64> for DbDefaultLabelKind {
+    fn from(value: i64) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Transaction,
+            2 => Self::Address,
+            3 => Self::Funding,
+            _ => panic!("Insane database: invalid default label kind {}", value),
+        }
+    }
+}
+
+/// The columns storing `default_label`, `None` if it is not a default label.
+pub fn default_label_columns(
+    default_label: &label::Label,
+) -> Option<(DbDefaultLabelKind, Option<&str>)> {
+    match default_label {
+        label::Label::None => Some((DbDefaultLabelKind::None, None)),
+        label::Label::Transaction(text) => Some((DbDefaultLabelKind::Transaction, Some(text))),
+        label::Label::Address(text) => Some((DbDefaultLabelKind::Address, Some(text))),
+        label::Label::Funding(text) => Some((DbDefaultLabelKind::Funding, Some(text))),
+        label::Label::Own(_) | label::Label::Payment(_) => None,
+    }
+}
+
+/// The default label stored in the `default_label_kind` and `default_label` columns, if computed.
+fn default_label_from_columns(kind: Option<i64>, text: Option<String>) -> Option<label::Label> {
+    let default_label = match (DbDefaultLabelKind::from(kind?), text) {
+        (DbDefaultLabelKind::None, None) => label::Label::None,
+        (DbDefaultLabelKind::Transaction, Some(text)) => label::Label::Transaction(text),
+        (DbDefaultLabelKind::Address, Some(text)) => label::Label::Address(text),
+        (DbDefaultLabelKind::Funding, Some(text)) => label::Label::Funding(text),
+        _ => panic!("Insane database: invalid default label"),
+    };
+    Some(default_label)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DbCoin {
     pub id: i64,
     pub wallet_id: i64,
@@ -222,6 +307,8 @@ pub struct DbCoin {
     /// be from self, as otherwise they will depend on an unconfirmed
     /// external transaction.
     pub is_from_self: bool,
+    /// `None` until computed.
+    pub default_label: Option<label::Label>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
@@ -262,6 +349,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
 
         let is_immature: bool = row.get(12)?;
         let is_from_self: bool = row.get(13)?;
+        let default_label = default_label_from_columns(row.get(14)?, row.get(15)?);
 
         Ok(DbCoin {
             id,
@@ -275,6 +363,7 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
             spend_txid,
             spend_block,
             is_from_self,
+            default_label,
         })
     }
 }
@@ -428,11 +517,100 @@ impl TryFrom<&rusqlite::Row<'_>> for DbLabel {
     }
 }
 
+/// A row in the "graph_layout" table
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbGraphLayoutEntry {
+    pub item: GraphItem,
+    pub position: Option<(f64, f64)>,
+    pub input_order: Option<Vec<u32>>,
+    pub output_order: Option<Vec<u32>>,
+}
+
+/// Encode a slot display order as comma separated indices.
+pub fn order_column(order: Option<&[u32]>) -> Option<String> {
+    order.map(|order| {
+        order
+            .iter()
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    })
+}
+
+fn order_from_column(text: Option<String>) -> Option<Vec<u32>> {
+    text.map(|text| {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        text.split(',')
+            .map(|index| index.parse().expect("Insane database: invalid slot order"))
+            .collect()
+    })
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbGraphLayoutEntry {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let item: String = row.get(1)?;
+        let x: Option<f64> = row.get(2)?;
+        let y: Option<f64> = row.get(3)?;
+        let input_order: Option<String> = row.get(4)?;
+        let output_order: Option<String> = row.get(5)?;
+
+        let position = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => panic!("Insane database: graph layout position with a single coordinate"),
+        };
+
+        Ok(DbGraphLayoutEntry {
+            item: GraphItem::from_str(&item).expect("Insane database: invalid graph item"),
+            position,
+            input_order: order_from_column(input_order),
+            output_order: order_from_column(output_order),
+        })
+    }
+}
+
+/// A row in the "graph_wallets" table
+#[derive(Debug, Clone, PartialEq)]
+pub struct DbGraphWallet {
+    pub wallet: String,
+    pub selected: bool,
+    pub offset: Option<(f64, f64)>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbGraphWallet {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let wallet: String = row.get(1)?;
+        let selected: bool = row.get(2)?;
+        let x: Option<f64> = row.get(3)?;
+        let y: Option<f64> = row.get(4)?;
+
+        let offset = match (x, y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            (None, None) => None,
+            _ => panic!("Insane database: graph wallet offset with a single coordinate"),
+        };
+
+        Ok(DbGraphWallet {
+            wallet,
+            selected,
+            offset,
+        })
+    }
+}
+
 /// A transaction together with its block info.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DbWalletTransaction {
     pub transaction: bitcoin::Transaction,
     pub block_info: Option<DbBlockInfo>,
+    /// `None` until computed.
+    pub default_label: Option<label::Label>,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
@@ -449,10 +627,12 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
             height,
             time: block_time.expect("Must be there if height is"),
         });
+        let default_label = default_label_from_columns(row.get(3)?, row.get(4)?);
 
         Ok(DbWalletTransaction {
             transaction,
             block_info,
+            default_label,
         })
     }
 }

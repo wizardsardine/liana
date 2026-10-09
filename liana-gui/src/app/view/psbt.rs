@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use iced::{
     widget::{column, row, Space},
@@ -7,6 +7,7 @@ use iced::{
 
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
+    label::Label,
     miniscript::bitcoin::{
         bip32::Fingerprint, blockdata::transaction::TxOut, Address, Network, OutPoint, Transaction,
         Txid,
@@ -15,13 +16,12 @@ use liana::{
 
 use liana_ui::{
     component::{
-        button::{self, btn_broadcast, btn_delete, btn_save, btn_sign},
+        button::{self, btn_broadcast},
         form,
         list::DeviceStatus,
         modal::{self, modal_view, ModalWidth},
         notification,
         panels::psbts,
-        pill,
         text::new,
     },
     icon,
@@ -34,16 +34,21 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, label, message::*, warning::warn},
+        view::{
+            dashboard,
+            label::{self, LabelSize},
+            message::*,
+            transaction::{tx_view, TxDetail},
+            warning::warn,
+            FiatAmountConverter,
+        },
     },
-    daemon::model::{Coin, SpendStatus, SpendTx},
+    daemon::model::{Coin, SpendTx},
     hw::HardwareWallet,
     t,
     view::hw::{device_list_entry, HwRowMode},
 };
 
-const LABEL_TITLE_SIZE: u32 = 24;
-const LABEL_BODY_SIZE: u32 = 16;
 /// Indent of the conflicting transactions listed under the broadcast warning.
 const CONFLICT_INDENT: [u16; 2] = [0 /* Top/Bottom */, 30 /* Left/Right */];
 
@@ -55,49 +60,19 @@ pub fn psbt_view<'a>(
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    network: Network,
     currently_signing: bool,
     warning: Option<&'a Error>,
+    fiat_converter: Option<FiatAmountConverter>,
 ) -> Element<'a, Message> {
-    let recovery = (!tx.sigs.recovery_paths().is_empty()).then_some(pill::recovery());
-    let status = psbts::status_pill(tx.status);
-    let header = row![
-        Container::new(new::h1(t!("psbt-title"))).width(Length::Fill),
-        recovery,
-        status
-    ]
-    .align_y(Alignment::Center)
-    .spacing(HSpacing::M);
-
-    let inputs = inputs_view(&tx.coins, &tx.psbt.unsigned_tx, &tx.labels, labels_editing);
-    let outputs = outputs_view(
-        &tx.psbt.unsigned_tx,
-        network,
-        &tx.change_indexes,
-        &tx.labels,
-        labels_editing,
-        tx.is_single_payment().is_some(),
-        false,
-    );
-
-    let action = if saved {
-        let delete_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete));
-        row![btn_delete(delete_msg)].width(Length::Fill)
-    } else {
-        let save_msg = (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save));
-        row![Space::fill_width(), btn_save(save_msg, false)].width(Length::Fill)
+    let detail = TxDetail::Psbt {
+        tx,
+        desc_info,
+        key_aliases,
+        saved,
+        currently_signing,
+        previous: false,
     };
-
-    let content = column![
-        header,
-        spend_header(tx, labels_editing),
-        spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved),
-        column![inputs, outputs].spacing(VSpacing::L),
-        action,
-        Space::with_height(VSpacing::S)
-    ]
-    .spacing(VSpacing::L);
-
+    let content = tx_view(cache, detail, labels_editing, fiat_converter);
     dashboard(&Menu::PSBTs, cache, warning, content)
 }
 
@@ -228,91 +203,6 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
     )
 }
 
-pub fn spend_header<'a>(
-    tx: &'a SpendTx,
-    labels_editing: &'a HashMap<String, form::Value<String>>,
-) -> Element<'a, Message> {
-    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-
-    let label = if let Some(outpoint) = tx.is_single_payment() {
-        let outpoint = outpoint.to_string();
-        let labelled = vec![outpoint.clone(), txid.clone()];
-        if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(labelled, label, LABEL_TITLE_SIZE)
-        } else {
-            label::label_editable(labelled, tx.labels.get(&outpoint), LABEL_TITLE_SIZE)
-        }
-    } else if let Some(label) = labels_editing.get(&txid) {
-        label::label_editing(vec![txid.clone()], label, LABEL_TITLE_SIZE)
-    } else {
-        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), LABEL_TITLE_SIZE)
-    };
-
-    psbts::spend_header(
-        label,
-        tx.is_send_to_self(),
-        tx.spend_amount,
-        tx.fee_amount,
-        tx.min_feerate_vb(),
-    )
-}
-
-pub fn spend_overview_view<'a>(
-    tx: &'a SpendTx,
-    desc_info: &'a LianaPolicy,
-    key_aliases: &'a HashMap<Fingerprint, String>,
-    currently_signing: bool,
-    saved: bool,
-) -> Element<'a, Message> {
-    let enabled = saved && !currently_signing;
-    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-
-    let action = match tx.status {
-        SpendStatus::Unsigned => Some(btn_sign(Some(Message::Spend(SpendTxMessage::Sign))).into()),
-        SpendStatus::Broadcastable => {
-            Some(btn_broadcast(Some(Message::Spend(SpendTxMessage::Broadcast))).into())
-        }
-        SpendStatus::Timelocked
-        | SpendStatus::Broadcast
-        | SpendStatus::Confirmed
-        | SpendStatus::Deprecated
-        | SpendStatus::Unknown => None,
-    };
-
-    let (status, details) = match tx.sigs.signed_path() {
-        Some(sigs) => (psbts::signatures_ready(sigs, key_aliases), None),
-        None => {
-            let requirement = if tx.sigs.recovery_paths().is_empty() {
-                Some(psbts::path_row(
-                    desc_info.primary_path(),
-                    tx.sigs.primary_path(),
-                    key_aliases,
-                ))
-            } else {
-                tx.sigs.recovery_paths().iter().last().map(|(seq, path)| {
-                    let keys = &desc_info.recovery_paths()[seq];
-                    psbts::path_row(keys, path, key_aliases)
-                })
-            };
-            (
-                psbts::signatures_missing(),
-                Some(psbts::signatures_requirement(requirement)),
-            )
-        }
-    };
-
-    psbts::spend_overview(
-        saved,
-        enabled.then_some(Message::ExportPsbt),
-        enabled.then_some(Message::ImportPsbt),
-        txid.clone(),
-        Message::Clipboard(txid),
-        status,
-        details,
-        action,
-    )
-}
-
 pub fn inputs_view<'a>(
     coins: &'a HashMap<OutPoint, Coin>,
     tx: &'a Transaction,
@@ -340,12 +230,26 @@ pub fn inputs_view<'a>(
 pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
-    change_indexes: &'a [usize],
+    change_indexes: &[usize],
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    is_single_payment: bool,
     is_external: bool,
+    owned_default_labels: Option<&BTreeMap<usize, Label>>,
 ) -> Element<'a, Message> {
+    let txid = tx.compute_txid();
+    let label_field = |i: usize| {
+        let outpoint = OutPoint::new(txid, i as u32).to_string();
+        let default_label = owned_default_labels
+            .and_then(|default_labels| default_labels.get(&i))
+            .unwrap_or(&Label::None);
+        let label = liana::label::resolve(labels.get(&outpoint).map(String::as_str), default_label);
+        label::label_field(
+            vec![outpoint.clone()],
+            labels_editing.get(&outpoint),
+            &label,
+            LabelSize::Body,
+        )
+    };
     let is_payment = |i: &usize| is_external || !change_indexes.contains(i);
     let count = tx
         .output
@@ -362,16 +266,13 @@ pub fn outputs_view<'a>(
             .enumerate()
             .filter(|(i, _)| is_payment(i))
             .map(|(i, output)| {
-                payment_view(
-                    i,
-                    tx.compute_txid(),
-                    output,
-                    network,
-                    labels,
-                    labels_editing,
-                    is_single_payment,
-                    !is_external || change_indexes.contains(&i),
-                )
+                let label = if !is_external || change_indexes.contains(&i) {
+                    label_field(i)
+                } else {
+                    let outpoint = OutPoint::new(txid, i as u32).to_string();
+                    label::label_non_editable(vec![outpoint], None, LabelSize::Body)
+                };
+                payment_view(label, output, network, labels)
             })
             .collect();
 
@@ -384,7 +285,10 @@ pub fn outputs_view<'a>(
             .iter()
             .enumerate()
             .filter(|(i, _)| change_indexes.contains(i))
-            .map(|(_, output)| change_view(output, network))
+            .map(|(i, output)| {
+                let label = owned_default_labels.is_some().then(|| label_field(i));
+                change_view(label, output, network)
+            })
             .collect();
 
         psbts::collapsible_section(t!("psbt-change"), rows)
@@ -401,15 +305,14 @@ fn input_view<'a>(
 ) -> Element<'a, Message> {
     let outpoint = outpoint.to_string();
 
-    let label_widget = if let Some(label) = labels_editing.get(&outpoint) {
-        label::label_editing(vec![outpoint.clone()], label, LABEL_BODY_SIZE)
-    } else {
-        label::label_editable(
-            vec![outpoint.clone()],
-            labels.get(&outpoint),
-            LABEL_BODY_SIZE,
-        )
-    };
+    let default_label = coin.map_or(&Label::None, |c| &c.default_label);
+    let label = liana::label::resolve(labels.get(&outpoint).map(String::as_str), default_label);
+    let label_widget = label::label_field(
+        vec![outpoint.clone()],
+        labels_editing.get(&outpoint),
+        &label,
+        LabelSize::Body,
+    );
 
     let address = coin.map(|c| c.address.to_string());
     let address_label = coin
@@ -427,42 +330,15 @@ fn input_view<'a>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn payment_view<'a>(
-    i: usize,
-    txid: Txid,
+    label: Element<'a, Message>,
     output: &'a TxOut,
     network: Network,
     labels: &'a HashMap<String, String>,
-    labels_editing: &'a HashMap<String, form::Value<String>>,
-    is_single: bool,
-    is_editable: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
         .map(|a| a.to_string());
-    let outpoint = OutPoint {
-        txid,
-        vout: i as u32,
-    }
-    .to_string();
-    // if the payment is single in the transaction, then the label of the txid
-    // is attached to the label of the payment.
-    let change_labels = if is_single {
-        vec![outpoint.clone(), txid.to_string()]
-    } else {
-        vec![outpoint.clone()]
-    };
-
-    let label_widget = if is_editable {
-        if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(change_labels, label, LABEL_BODY_SIZE)
-        } else {
-            label::label_editable(change_labels, labels.get(&outpoint), LABEL_BODY_SIZE)
-        }
-    } else {
-        label::label_non_editable(change_labels, None, LABEL_BODY_SIZE)
-    };
 
     let address_label = addr
         .as_ref()
@@ -470,7 +346,7 @@ fn payment_view<'a>(
         .map(String::as_str);
 
     psbts::payment_row(
-        label_widget,
+        label,
         output.value,
         addr.clone(),
         address_label,
@@ -478,12 +354,16 @@ fn payment_view<'a>(
     )
 }
 
-fn change_view(output: &TxOut, network: Network) -> Element<'_, Message> {
+fn change_view<'a>(
+    label: Option<Element<'a, Message>>,
+    output: &TxOut,
+    network: Network,
+) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
 
-    psbts::change_row(output.value, addr.clone(), Message::Clipboard(addr))
+    psbts::change_row(label, output.value, addr.clone(), Message::Clipboard(addr))
 }
 
 #[allow(clippy::too_many_arguments)]

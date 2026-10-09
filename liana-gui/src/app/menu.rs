@@ -58,12 +58,20 @@ pub enum Menu {
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
+    Map(Option<MapFocus>),
 }
 
 /// Pre-selectable settings options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsOption {
     Node,
+}
+
+/// What the map centers on when opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MapFocus {
+    Tx(Txid),
+    Coin(OutPoint),
 }
 
 fn menu_entry<'a>(
@@ -109,6 +117,7 @@ impl Menu {
             Menu::Coins => t!("menu-coins-utxos"),
             Menu::CreateSpendTx => t!("menu-send"),
             Menu::Recovery => t!("common-recovery"),
+            Menu::Map(_) => t!("map-title"),
             Menu::RefreshCoins(_)
             | Menu::PsbtPreSelected(_)
             | Menu::TransactionPreSelected(_)
@@ -126,6 +135,7 @@ impl Menu {
             Menu::Coins => icon::coins_icon(),
             Menu::CreateSpendTx => icon::send_icon(),
             Menu::Recovery => icon::recovery_icon(),
+            Menu::Map(_) => icon::diagram_3_icon(),
             Menu::RefreshCoins(_)
             | Menu::PsbtPreSelected(_)
             | Menu::TransactionPreSelected(_)
@@ -146,7 +156,17 @@ impl Menu {
             | Menu::TransactionPreSelected(_)
             | Menu::SettingsPreSelected(_)
             | Menu::RefreshCoins(_)
-            | Menu::PsbtPreSelected(_) => false,
+            | Menu::PsbtPreSelected(_)
+            | Menu::Map(_) => false,
+        }
+    }
+
+    /// Menu the map back button returns to when entering `target` from `self`.
+    pub fn map_return(&self, target: &Menu, previous: &Menu) -> Menu {
+        match (self, target) {
+            (Menu::Map(_), _) => previous.clone(),
+            (_, Menu::Map(_)) => self.clone(),
+            _ => previous.clone(),
         }
     }
 
@@ -163,5 +183,50 @@ impl Menu {
             self.reload(),
             menu_width,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use liana::miniscript::bitcoin::Txid;
+
+    use crate::app::menu::{MapFocus, Menu};
+
+    fn txid() -> Txid {
+        Txid::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap()
+    }
+
+    #[test]
+    fn map_return_from_panel() {
+        assert_eq!(
+            Menu::Transactions.map_return(&Menu::Map(None), &Menu::Home),
+            Menu::Transactions
+        );
+    }
+
+    #[test]
+    fn map_return_keeps_origin_inside_map() {
+        assert_eq!(
+            Menu::Map(None).map_return(&Menu::Map(Some(MapFocus::Tx(txid()))), &Menu::Coins),
+            Menu::Coins
+        );
+    }
+
+    #[test]
+    fn map_return_unchanged_for_other_targets() {
+        assert_eq!(
+            Menu::Home.map_return(&Menu::Coins, &Menu::Transactions),
+            Menu::Transactions
+        );
+    }
+
+    #[test]
+    fn map_return_keeps_preselected_tx() {
+        assert_eq!(
+            Menu::TransactionPreSelected(txid()).map_return(&Menu::Map(None), &Menu::Home),
+            Menu::TransactionPreSelected(txid())
+        );
     }
 }

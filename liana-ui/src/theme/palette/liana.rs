@@ -267,27 +267,6 @@ impl Palette {
                     }),
                     disabled: btn_disabled(),
                 },
-                clickable_section: Button {
-                    active: ButtonPalette {
-                        background: color::GREY_6,
-                        text: color::GREY_2,
-                        border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
-                    },
-                    hovered: ButtonPalette {
-                        background: color::GREY_6,
-                        text: color::GREY_2,
-                        border: color::GREEN.into(),
-                        shadow: Default::default(),
-                    },
-                    pressed: Some(ButtonPalette {
-                        background: color::GREY_6,
-                        text: color::GREY_2,
-                        border: color::GREEN.into(),
-                        shadow: Default::default(),
-                    }),
-                    disabled: btn_disabled(),
-                },
                 list_entry: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,
@@ -884,6 +863,29 @@ impl Palette {
                     }),
                 },
                 badge_ink: color::LIGHT_BLACK,
+            },
+            graph: Graph {
+                grid_dot: color::GREY_5,
+                edge_coin: color::GREEN,
+                edge_counterparty: color::GREY_3,
+                edge_counterparty_active: color::WHITE,
+                frame: color::GREEN,
+                marker: color::GREEN,
+                marker_fill: color::LIGHT_BLACK,
+                area_inside: color::GREEN,
+                area_inside_fill: color::TRANSPARENT_BUSINESS_BLUE,
+                area_crossing: color::GREEN,
+                area_crossing_fill: color::TRANSPARENT_GREEN,
+                wallets: [
+                    color::BLUE,
+                    color::ORANGE,
+                    color::WALLET_VIOLET,
+                    color::WALLET_YELLOW,
+                    color::WALLET_PINK,
+                    color::WALLET_TEAL,
+                    color::WALLET_CORAL,
+                    color::WALLET_INDIGO,
+                ],
             },
         }
     }

@@ -1,6 +1,9 @@
 use lianad::{
     bip329::Labels,
-    commands::{CoinStatus, CreateRecoveryWarning, LabelItem, UpdateDerivIndexesResult},
+    commands::{
+        CoinStatus, CreateRecoveryWarning, GraphItem, GraphLayoutEntry, GraphWallet, LabelItem,
+        UpdateDerivIndexesResult,
+    },
     config::Config,
     DaemonControl, DaemonHandle,
 };
@@ -267,5 +270,35 @@ impl Daemon for EmbeddedDaemon {
     async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
         self.command(|daemon| Ok(daemon.get_labels_bip329(offset, limit).labels))
             .await
+    }
+
+    async fn get_graph_layout(&self) -> Result<Vec<GraphLayoutEntry>, DaemonError> {
+        self.command(|daemon| Ok(daemon.get_graph_layout().entries))
+            .await
+    }
+
+    async fn update_graph_layout(
+        &self,
+        set: &[GraphLayoutEntry],
+        remove: &[GraphItem],
+    ) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon.update_graph_layout(set, remove);
+            Ok(())
+        })
+        .await
+    }
+
+    async fn get_graph_wallets(&self) -> Result<Vec<GraphWallet>, DaemonError> {
+        self.command(|daemon| Ok(daemon.get_graph_wallets().wallets))
+            .await
+    }
+
+    async fn update_graph_wallets(&self, wallets: &[GraphWallet]) -> Result<(), DaemonError> {
+        self.command(|daemon| {
+            daemon.update_graph_wallets(wallets);
+            Ok(())
+        })
+        .await
     }
 }

@@ -27,6 +27,10 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`updatelabels`](#updatelabels)                             | Update the labels                                             |
 | [`getlabels`](#getlabels)                                   | Get the labels for the given addresses, txids and outpoints   |
 | [`getlabelsbip329`](#getlabelsbip329)                       | Get the labels in BIP-0329 format                             |
+| [`getgraphlayout`](#getgraphlayout)                         | Get the transaction map layout                                |
+| [`updategraphlayout`](#updategraphlayout)                   | Update the transaction map layout                             |
+| [`getgraphwallets`](#getgraphwallets)                       | Get the other wallets shown on the transaction map            |
+| [`updategraphwallets`](#updategraphwallets)                 | Update the other wallets shown on the transaction map         |
 
 # Reference
 
@@ -205,6 +209,7 @@ A coin may have one of the following four statuses:
 | `is_immature`      | bool          | Whether this coin was created by a coinbase transaction that is still immature.                                    |
 | `is_change`        | bool          | Whether the coin deposit address was derived from the change descriptor.                                           |
 | `is_from_self`     | bool          | Whether the coin and all its unconfirmed ancestors, if any, are outputs of transactions from this wallet.          |
+| `default_label`    | str or object | Fallback label of the coin, set when first seen. See [Default label](#default-label).                              |
 
 
 ##### Spending transaction info
@@ -213,6 +218,17 @@ A coin may have one of the following four statuses:
 | ---------- | ----------- | -------------------------------------------------------------- |
 | `txid`     | str         | Spending transaction's id.                                     |
 | `height`   | int or null | Block height the spending tx was included at, if confirmed.    |
+
+##### Default label
+
+The label a coin or a transaction falls back to, computed once when it is first seen. Later label
+updates do not change it.
+
+| Value                 | Description                                                         |
+| --------------------- | ------------------------------------------------------------------- |
+| `"none"`              | No default label.                                                   |
+| `{"from": "..."}`     | Label passed on by the transactions funding it.                     |
+| `{"address": "..."}`  | Label of the address receiving it.                                  |
 
 
 ### `createspend`
@@ -416,11 +432,12 @@ Confirmation time is based on the timestamp of blocks.
 
 ##### Transaction Resource
 
-| Field    | Type          | Description                                                               |
-| -------- | ------------- | ------------------------------------------------------------------------- |
-| `height` | int or `null` | Block height of the transaction, `null` if the transaction is unconfirmed |
-| `time`   | int or `null` | Block time of the transaction, `null` if the transaction is unconfirmed   |
-| `tx`     | string        | hex encoded bitcoin transaction                                           |
+| Field           | Type          | Description                                                                                  |
+| --------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| `height`        | int or `null` | Block height of the transaction, `null` if the transaction is unconfirmed                    |
+| `time`          | int or `null` | Block time of the transaction, `null` if the transaction is unconfirmed                      |
+| `tx`            | string        | hex encoded bitcoin transaction                                                              |
+| `default_label` | str or object | Fallback label of the transaction, set when first seen. See [Default label](#default-label). |
 
 ### `listtransactions`
 
@@ -526,3 +543,94 @@ format, with pagination support.
 | -------- | ------ | ------------------------------------------------- |
 | `labels` | array  | A list of BIP-0329-formatted label objects        |
 
+### `getgraphlayout`
+
+Retrieve the stored transaction map layout: the position of each map item and the display order
+of the inputs and outputs of each transaction. Parameters are ignored.
+
+#### Request
+
+This command does not take any parameter.
+
+#### Response
+
+| Field     | Type  | Description                                      |
+| --------- | ----- | ------------------------------------------------ |
+| `entries` | array | Graph layout entries, in insertion order.        |
+
+##### Graph layout entry
+
+| Field          | Type                  | Description                                                                                                       |
+| -------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `item`         | string                | The map item: `tx:<txid>` for a transaction, `out:<txid>:<vout>` for an output leaf, `in:<txid>:<vout>` for an input leaf. |
+| `position`     | array or null         | `[x, y]` position of the item on the map, or `null` if not set.                                                   |
+| `input_order`  | integer array or null | Only on a `tx:` item. `input_order[row]` is the transaction input index shown at display row `row`. `null` means the transaction order. |
+| `output_order` | integer array or null | Same as `input_order`, for the outputs.                                                                           |
+
+### `updategraphlayout`
+
+Update the transaction map layout. Each entry of `set` fully replaces the stored entry of its item
+(it is created if missing), then the items of `remove` are deleted (unknown ones are ignored). Both
+steps are applied atomically. An item present in both ends up removed. Nothing is written if any
+parameter is invalid.
+
+#### Request
+
+| Field    | Type         | Description                                                                          |
+| -------- | ------------ | ------------------------------------------------------------------------------------ |
+| `set`    | array        | (Optional) Graph layout entries to store, see [Graph layout entry](#graph-layout-entry). Defaults to an empty array. |
+| `remove` | string array | (Optional) Items to delete, in the `tx:`, `out:` or `in:` string form. Defaults to an empty array. |
+
+An entry of `set` is rejected unless:
+- `item` is a valid item string;
+- `position`, when set, has finite coordinates;
+- `input_order` and `output_order` are only set on a `tx:` item;
+- an order, when set, is non-empty and is a permutation of `0..len`: every index is below the
+  length and none is repeated.
+
+#### Response
+
+This command returns an empty JSON object.
+
+### `getgraphwallets`
+
+Retrieve the other wallets shown on the transaction map of this wallet: whether each one is
+selected and the offset of its map items. Parameters are ignored.
+
+#### Request
+
+This command does not take any parameter.
+
+#### Response
+
+| Field     | Type  | Description                                      |
+| --------- | ----- | ------------------------------------------------ |
+| `wallets` | array | Graph wallet entries, in insertion order.        |
+
+##### Graph wallet entry
+
+| Field      | Type          | Description                                                                  |
+| ---------- | ------------- | ---------------------------------------------------------------------------- |
+| `wallet`   | string        | Identifier of the other wallet.                                              |
+| `selected` | boolean       | Whether the other wallet is shown on the map.                                |
+| `offset`   | array or null | `[x, y]` offset of the other wallet's items on the map, or `null` if not set. |
+
+### `updategraphwallets`
+
+Update the other wallets shown on the transaction map. Each entry fully replaces the stored entry
+of its wallet (it is created if missing). Entries are never deleted: an unselected wallet keeps
+its offset. All entries are applied atomically. Nothing is written if any entry is invalid.
+
+#### Request
+
+| Field     | Type  | Description                                                                   |
+| --------- | ----- | ----------------------------------------------------------------------------- |
+| `wallets` | array | Graph wallet entries to store, see [Graph wallet entry](#graph-wallet-entry). |
+
+An entry is rejected unless:
+- `wallet` is not empty;
+- `offset`, when set, has finite coordinates.
+
+#### Response
+
+This command returns an empty JSON object.

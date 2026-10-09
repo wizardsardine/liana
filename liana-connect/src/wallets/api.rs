@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 use liana::{
     descriptors::LianaDescriptor,
+    label::Label,
     miniscript::bitcoin::{self, bip32, consensus, hashes::hex::FromHex, Amount, OutPoint, Txid},
     spend::SpendStatus,
 };
@@ -313,6 +314,9 @@ pub struct Transaction {
     pub outputs: Vec<Output>,
     /// If the transaction has multiple incoming or outgoing payments.
     pub is_batch: bool,
+    /// Label the transaction falls back to, snapshotted by the server when first seen.
+    #[serde(default)]
+    pub default_label: Label,
 }
 
 #[derive(Deserialize)]
@@ -328,6 +332,8 @@ pub struct Output {
     pub amount: u64,
     pub kind: UTXOKind,
     pub coin: Option<Coin>,
+    #[serde(default)]
+    pub default_label: Label,
 }
 
 #[derive(Clone, Deserialize)]
