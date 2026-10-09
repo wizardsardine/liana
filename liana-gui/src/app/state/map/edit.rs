@@ -209,7 +209,7 @@ mod tests {
     fn undo_reset_restores_orders() {
         let graph = fixture::graph();
         let mut layout = place(&graph, &HashMap::new());
-        let txid = graph.txs()[0].history.txid;
+        let txid = graph.txs()[0].history().txid;
         let reordered = Some(vec![1, 0]);
         let mut orders = Orders::from([(txid, (None, reordered.clone()))]);
         let before = layout_state(&graph, &layout, &orders);

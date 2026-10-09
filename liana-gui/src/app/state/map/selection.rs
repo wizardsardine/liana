@@ -251,7 +251,7 @@ mod tests {
     fn setup() -> (TxGraph, SampleTxids, Address) {
         let f = fixture::sample_wallet();
         let landlord = f.landlord.clone();
-        (TxGraph::new(f.txs, &f.coins), f.ids, landlord)
+        (fixture::current_graph(f.txs, f.coins), f.ids, landlord)
     }
 
     fn tx(graph: &TxGraph, txid: &Txid) -> ItemId {
@@ -473,7 +473,7 @@ mod tests {
         b.label(fixture::address(40), "Same");
         b.label(fixture::address(41), "Same");
         let (txs, coins) = b.finish();
-        let graph = TxGraph::new(txs, &coins);
+        let graph = fixture::current_graph(txs, coins);
         let leaf = |n: u16| leaf_on(&graph, &fixture::address(n), 0);
 
         let mut selection = Selection::default();

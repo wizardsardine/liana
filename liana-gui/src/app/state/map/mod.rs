@@ -49,9 +49,10 @@ use crate::{
                 coin_ui::CoinUi,
                 display::{click_action, display_state, label_key, slot_ref, ClickAction},
                 focus::{resolve_focus, FocusLanding, ShowOnMap},
-                graph::{MapItem, SlotRef, TxGraph},
+                graph::{MapItem, SlotRef, TxGraph, WalletTxs},
                 history::{Change, History},
                 selection::{Selection, TagHighlight},
+                wallets::WalletKey,
             },
             State,
         },
@@ -69,6 +70,8 @@ pub type Orders = HashMap<Txid, (history::Order, history::Order)>;
 
 #[derive(Debug)]
 pub struct MapData {
+    /// Descriptor checksum of the current wallet.
+    pub checksum: String,
     pub txs: Vec<HistoryTransaction>,
     pub coins: Vec<Coin>,
     pub layout: Vec<GraphLayoutEntry>,
@@ -258,7 +261,7 @@ pub fn split_stored(graph: &TxGraph, entries: Vec<GraphLayoutEntry>) -> StoredLa
         if input_order.is_some() || output_order.is_some() {
             stored
                 .orders
-                .insert(tx.history.txid, (input_order, output_order));
+                .insert(tx.history().txid, (input_order, output_order));
         }
     }
     stored
@@ -446,7 +449,7 @@ impl MapPanel {
             LabelTarget::Slot(slot) => slot.tx,
             LabelTarget::Leaf(leaf) => graph.leaves().get(leaf)?.tx,
         };
-        graph.txs().get(tx)?.history.labels.get(key).cloned()
+        graph.txs().get(tx)?.history().labels.get(key).cloned()
     }
 
     fn forward_label(
@@ -613,7 +616,12 @@ impl State for MapPanel {
                 self.warning = Some(e);
             }
             Message::MapLoaded(Ok(data)) => {
-                let graph = TxGraph::new(data.txs, &data.coins);
+                let graph = TxGraph::new(vec![WalletTxs {
+                    key: WalletKey::Current,
+                    checksum: data.checksum,
+                    txs: data.txs,
+                    coins: data.coins,
+                }]);
                 let stored = split_stored(&graph, data.layout);
                 let placed = layout::place(&graph, &stored.positions);
                 let to_save: BTreeSet<ItemId> = placed
@@ -810,7 +818,7 @@ impl State for MapPanel {
                             return Task::none();
                         }
                         let tx = &graph.txs()[tx];
-                        let txid = tx.history.txid;
+                        let txid = tx.history().txid;
                         let stored = self.orders.get(&txid).cloned().unwrap_or_default();
                         let (len, before) = match side {
                             Side::Input => (tx.inputs.len(), stored.0),
@@ -924,7 +932,7 @@ impl State for MapPanel {
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        wallet: Arc<Wallet>,
     ) -> Task<Message> {
         self.loading = true;
         self.warning = None;
@@ -934,12 +942,18 @@ impl State for MapPanel {
         self.labels_edited = LabelsEdited::default();
         self.pending_label = None;
         self.label_changes.clear();
+        let checksum = wallet.descriptor_checksum.clone();
         Task::perform(
             async move {
                 let coins = daemon.list_all_coins().await?;
                 let txs = daemon.get_all_history_txs(&coins).await?;
                 let layout = daemon.get_graph_layout().await?;
-                Ok(MapData { txs, coins, layout })
+                Ok(MapData {
+                    checksum,
+                    txs,
+                    coins,
+                    layout,
+                })
             },
             Message::MapLoaded,
         )
@@ -962,8 +976,8 @@ mod tests {
 
     use crate::app::{
         state::map::{
-            display_row, escape_action, fixture, focus::ShowOnMap, graph::TxGraph, key_action,
-            split_stored, EscapeAction, MapPanel,
+            display_row, escape_action, fixture, focus::ShowOnMap, key_action, split_stored,
+            EscapeAction, MapPanel,
         },
         view::MapKey,
     };
@@ -1003,7 +1017,7 @@ mod tests {
     #[test]
     fn wrong_order_length_is_ignored() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let txid = f.ids.batch;
         let mut bad = entry(LayoutItem::Tx(txid));
         bad.output_order = Some(vec![0]);
@@ -1017,7 +1031,7 @@ mod tests {
     #[test]
     fn known_entries_are_kept() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let txid = f.ids.batch;
         let slots = graph.txs()[graph.tx_index(&txid).unwrap()].outputs.len() as u32;
         let order: Vec<u32> = (0..slots).rev().collect();

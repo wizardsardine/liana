@@ -377,7 +377,7 @@ mod tests {
         let mut b = Builder::new();
         b.tx(Some(1), &[foreign(1)], &[(ours(0), 1_000, true)]);
         let (txs, coins) = b.finish();
-        let alone = TxGraph::new(txs, &coins);
+        let alone = fixture::current_graph(txs, coins);
         assert_eq!(align_targets(&alone, &[0]), None);
     }
 

@@ -39,7 +39,7 @@ pub fn slot_ref(
     };
     let order =
         orders
-            .get(&graph.txs()[tx].history.txid)
+            .get(&graph.txs()[tx].history().txid)
             .and_then(|(inputs, outputs)| match side {
                 Side::Input => inputs.as_deref(),
                 Side::Output => outputs.as_deref(),
@@ -54,7 +54,7 @@ pub fn slot_ref(
 /// Key of the label edited from `target` (spec 12.1), in the `LabelItem` string format.
 pub fn label_key(graph: &TxGraph, target: &LabelTarget) -> Option<String> {
     match *target {
-        LabelTarget::Tx(tx) => Some(graph.txs().get(tx)?.history.txid.to_string()),
+        LabelTarget::Tx(tx) => Some(graph.txs().get(tx)?.history().txid.to_string()),
         LabelTarget::Slot(slot) => {
             let tx = graph.txs().get(slot.tx)?;
             let outpoint = match slot.side {
@@ -453,7 +453,7 @@ mod tests {
     #[test]
     fn click_reused_leaf_is_select() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let id = landlord_leaves(&graph, &f.landlord)[0];
         let action = click_action(&graph, &Orders::new(), &Target::Item(id), NONE);
         assert_eq!(action, ClickAction::Select(id));
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn slot_target_uses_display_row() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let tx = graph.tx_index(&f.ids.incoming_change).unwrap();
         let id = graph.tx_item(tx);
         let mut orders = Orders::new();
@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn edge_active_when_touching_sibling_leaf() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let leaves = landlord_leaves(&graph, &f.landlord);
         let mut selection = Selection::default();
         selection.click(leaves[0]);
@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn reused_leaf_selection_marks_address_siblings() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let leaves = landlord_leaves(&graph, &f.landlord);
         assert_eq!(leaves.len(), 4);
         let mut selection = Selection::default();
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn reuse_highlights_every_leaf_of_the_address() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let layout = layout::place(&graph, &HashMap::new());
         let s = display_state(
             &graph,
@@ -651,7 +651,7 @@ mod tests {
     #[test]
     fn show_on_map_marks_slots_highlighted() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let layout = layout::place(&graph, &HashMap::new());
         let tx = graph.tx_index(&f.ids.rent[0]).unwrap();
         let OutputSlot::Payment { leaf, .. } = graph.txs()[tx].outputs[0] else {
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn label_key_transaction() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let target = LabelTarget::Tx(graph.tx_index(&f.ids.salary).unwrap());
         assert_eq!(label_key(&graph, &target), Some(f.ids.salary.to_string()));
     }
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn label_key_own_output_slot_is_the_coin() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let target = slot(&graph, f.ids.salary, Side::Output, 0);
         let coin = OutPoint::new(f.ids.salary, 0);
         assert_eq!(label_key(&graph, &target), Some(coin.to_string()));
@@ -775,7 +775,7 @@ mod tests {
     #[test]
     fn label_key_own_input_slot_is_the_spent_coin() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let target = slot(&graph, f.ids.rent[0], Side::Input, 0);
         let coin = OutPoint::new(f.ids.salary, 0);
         assert_eq!(label_key(&graph, &target), Some(coin.to_string()));
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn label_key_counterparty_input_slot_is_its_leaf_key() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let target = slot(&graph, f.ids.salary, Side::Input, 0);
         let leaf = leaf_of(&graph, fixture::foreign(1));
         assert_eq!(
@@ -797,7 +797,7 @@ mod tests {
     #[test]
     fn label_key_payment_output_slot_is_the_outpoint() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let target = slot(&graph, f.ids.rent[0], Side::Output, 0);
         let outpoint = OutPoint::new(f.ids.rent[0], 0);
         assert!(matches!(
@@ -810,7 +810,7 @@ mod tests {
     #[test]
     fn label_key_address_leaf_is_the_address() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let target = leaf_of(&graph, OutPoint::new(f.ids.rent[0], 0));
         assert_eq!(label_key(&graph, &target), Some(f.landlord.to_string()));
     }
