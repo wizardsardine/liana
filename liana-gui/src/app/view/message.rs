@@ -106,6 +106,7 @@ pub enum MapKey {
     Left,
     Up,
     Down,
+    ExportTopology,
 }
 
 #[derive(Debug, Clone)]

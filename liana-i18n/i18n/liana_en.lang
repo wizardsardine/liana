@@ -1561,6 +1561,8 @@ map-shortcut-edit-slot => "Edit a slot label, coin actions"
 
 map-shortcut-edit-tx => "Edit a transaction label"
 
+map-shortcut-export-topology => "Export the map topology, anonymized"
+
 map-shortcut-help => "This help"
 
 map-shortcut-move => "Move a block, a leaf or the selection"

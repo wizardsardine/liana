@@ -26,7 +26,7 @@ use crate::{
         wallet::Wallet,
     },
     daemon::{model::*, FeerateEstimate},
-    export::ImportExportMessage,
+    export::{self, ImportExportMessage},
     hw::HardwareWalletMessage,
     services::fiat::{
         api::{ListCurrenciesResult, PriceApiError},
@@ -87,6 +87,7 @@ pub enum Message {
     MapWalletRescanned(String, Result<ExternalWallet, ImportFailure>),
     /// Id of the deleted external wallet.
     MapExternalRemoved(String, Result<(), Error>),
+    MapTopologyExported(Result<(), export::Error>),
 }
 
 impl From<ImportExportMessage> for Message {

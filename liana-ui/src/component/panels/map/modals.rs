@@ -581,14 +581,20 @@ pub fn shortcuts_modal_body<'a, M: 'a>() -> Element<'a, M> {
                 (t!("map-shortcut-undo"), vec![ctrl.clone(), "Z".to_string()]),
                 (
                     t!("map-shortcut-redo"),
-                    vec![ctrl, t!("map-key-shift"), "Z".to_string()],
+                    vec![ctrl.clone(), t!("map-key-shift"), "Z".to_string()],
                 ),
                 (t!("map-shortcut-help"), vec!["?".to_string()]),
             ],
         ),
         (
             t!("map-shortcuts-view"),
-            vec![(t!("map-shortcut-unspent"), vec!["U".to_string()])],
+            vec![
+                (t!("map-shortcut-unspent"), vec!["U".to_string()]),
+                (
+                    t!("map-shortcut-export-topology"),
+                    vec![ctrl, t!("map-key-shift"), "E".to_string()],
+                ),
+            ],
         ),
     ];
     let groups = Column::with_children(groups.into_iter().map(|(title, rows)| {

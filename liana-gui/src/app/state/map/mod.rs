@@ -12,6 +12,7 @@ pub mod lanes;
 pub mod layout;
 pub mod offsets;
 pub mod selection;
+pub mod topology;
 pub mod wallets;
 
 use std::{
@@ -86,8 +87,11 @@ use crate::{
         Daemon,
     },
     dir::{LianaDirectory, NetworkDirectory},
+    export,
     hw::{HardwareWallet, HardwareWallets},
 };
+
+const TOPOLOGY_FILE: &str = "map-topology.json";
 
 /// Display orders (inputs, outputs) per transaction, `None` = true order.
 pub type Orders = HashMap<Txid, (history::Order, history::Order)>;
@@ -207,6 +211,7 @@ pub fn key_action(
                 MapKey::Undo
             }),
             "y" | "Y" if command => Some(MapKey::Redo),
+            "e" | "E" if command && modifiers.shift() => Some(MapKey::ExportTopology),
             "?" if !command => Some(MapKey::Shortcuts),
             "u" | "U" if !command => Some(MapKey::Unspent),
             _ => None,
@@ -1121,6 +1126,31 @@ impl MapPanel {
         self.load_again(daemon)
     }
 
+    /// Saves the anonymized topology of the displayed graph to a file the user picks.
+    fn export_topology(&self) -> Task<Message> {
+        let Some(topology) = self
+            .graph
+            .as_ref()
+            .and_then(|graph| topology::topology(graph, &lanes::displayed(&self.lanes)))
+        else {
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                let Some(path) = export::get_path(TOPOLOGY_FILE.to_string(), true).await else {
+                    return Ok(());
+                };
+                tokio::task::spawn_blocking(move || -> Result<(), export::Error> {
+                    let file = std::fs::File::create(path)?;
+                    serde_json::to_writer_pretty(file, &topology)
+                        .map_err(|e| export::Error::Io(e.to_string()))
+                })
+                .await?
+            },
+            Message::MapTopologyExported,
+        )
+    }
+
     /// Deletes an external wallet and unselects it.
     fn remove_external(
         &mut self,
@@ -1646,6 +1676,7 @@ impl State for MapPanel {
                     self.warning = Some(e);
                 }
             },
+            Message::MapTopologyExported(Err(e)) => self.warning = Some(Error::ImportExport(e)),
             Message::HardwareWallets(message) => {
                 if let Some(MapModal::Import(form)) = &mut self.modal {
                     match form.hws.update(message) {
@@ -1776,6 +1807,7 @@ impl State for MapPanel {
                 MapMessage::Key(MapKey::Left) => return self.select_linked(Link::Parents),
                 MapMessage::Key(MapKey::Up) => return self.step_linked(-1),
                 MapMessage::Key(MapKey::Down) => return self.step_linked(1),
+                MapMessage::Key(MapKey::ExportTopology) => return self.export_topology(),
                 MapMessage::ReuseRowSelected(leaf) => {
                     self.modal = None;
                     self.selection.click(leaf);
@@ -2190,6 +2222,23 @@ mod tests {
         assert_eq!(redo, Some(MapKey::Redo));
         let redo = key_action(&character("y"), ctrl, Status::Ignored);
         assert_eq!(redo, Some(MapKey::Redo));
+    }
+
+    #[test]
+    fn key_action_export_topology() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        for c in ["e", "E"] {
+            let export = key_action(&character(c), ctrl_shift, Status::Ignored);
+            assert_eq!(export, Some(MapKey::ExportTopology));
+            assert_eq!(
+                key_action(&character(c), ctrl_shift, Status::Captured),
+                None
+            );
+            assert_eq!(
+                key_action(&character(c), Modifiers::CTRL, Status::Ignored),
+                None
+            );
+        }
     }
 
     #[test]
