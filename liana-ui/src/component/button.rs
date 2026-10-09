@@ -943,6 +943,15 @@ pub fn btn_shortcuts<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
     )
 }
 
+pub fn btn_other_wallets<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::wallet_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-other-wallets-tooltip"),
+        false,
+        msg,
+    )
+}
+
 pub fn btn_zoom_in<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
     toolbar_button(
         icon::zoom_in_icon().size(TOOLBAR_ICON_SIZE),

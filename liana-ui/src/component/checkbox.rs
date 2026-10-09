@@ -65,6 +65,16 @@ pub fn checkbox_button<'a, M: Clone + 'a>(
     checkbox(checked).size(CHECKBOX_SIZE).on_toggle(on_toggle)
 }
 
+/// Disabled when `on_toggle` is `None`.
+pub fn checkbox_button_maybe<'a, M: Clone + 'a>(
+    checked: bool,
+    on_toggle: Option<M>,
+) -> CheckBox<'a, M> {
+    checkbox(checked)
+        .size(CHECKBOX_SIZE)
+        .on_toggle_maybe(on_toggle.map(|msg| move |_| msg.clone()))
+}
+
 pub fn toggler_button<'a, M: Clone + 'a>(
     checked: bool,
     size: TogglerSize,
