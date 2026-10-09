@@ -147,7 +147,7 @@ pub fn map_view<'a>(
             Some(graph) => {
                 let display = display.expect("the display state is computed with the graph");
                 let order_of = |slot: SlotRef| {
-                    let txid = &graph.txs()[slot.tx].history.txid;
+                    let txid = &graph.txs()[slot.tx].history().txid;
                     orders
                         .get(txid)
                         .and_then(|(inputs, outputs)| match slot.side {
@@ -192,7 +192,7 @@ pub fn map_view<'a>(
                 for (index, tx) in graph.txs().iter().enumerate() {
                     let id = graph.tx_item(index);
                     let (input_order, output_order) = orders
-                        .get(&tx.history.txid)
+                        .get(&tx.history().txid)
                         .map(|(inputs, outputs)| (inputs.as_deref(), outputs.as_deref()))
                         .unwrap_or_default();
                     let true_indexes = |order: Option<&[u32]>, len: usize| -> Vec<usize> {
@@ -215,7 +215,9 @@ pub fn map_view<'a>(
                     let inputs: Vec<SlotView> = true_indexes(input_order, tx.inputs.len())
                         .into_iter()
                         .map(|i| match &tx.inputs[i] {
-                            InputSlot::OurCoin { outpoint, amount } => slot_view(
+                            InputSlot::OurCoin {
+                                outpoint, amount, ..
+                            } => slot_view(
                                 SlotKind::SpendsOurCoin,
                                 Some(*amount),
                                 Some(outpoint),
@@ -232,7 +234,9 @@ pub fn map_view<'a>(
                     let outputs: Vec<SlotView> = true_indexes(output_order, tx.outputs.len())
                         .into_iter()
                         .map(|i| match &tx.outputs[i] {
-                            OutputSlot::OurCoin { outpoint, amount } => {
+                            OutputSlot::OurCoin {
+                                outpoint, amount, ..
+                            } => {
                                 let kind = if graph.is_unspent(outpoint) {
                                     SlotKind::OurCoinUnspent
                                 } else {
@@ -300,7 +304,7 @@ pub fn map_view<'a>(
                     };
                     let display = BlockDisplay {
                         label: graph.tx_label(index),
-                        time: tx.history.datetime(),
+                        time: tx.history().datetime(),
                         net: tx.net,
                         fee: tx.fee,
                         inputs,
@@ -500,7 +504,7 @@ pub fn label_modal<'a>(
             let subject = LabelSubject::Transaction {
                 amount: tx.net.unsigned_abs(),
                 direction,
-                time: tx.history.datetime(),
+                time: tx.history().datetime(),
             };
             (graph.tx_label(index), subject, None)
         }
@@ -599,7 +603,7 @@ pub fn reuse_modal<'a>(graph: &TxGraph, address: &Address) -> Option<Element<'a,
             };
             Some((
                 graph.tx_label(leaf.tx),
-                tx.history.datetime(),
+                tx.history().datetime(),
                 amount,
                 Message::Map(MapMessage::ReuseRowSelected(graph.leaf_item(index))),
             ))

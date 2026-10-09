@@ -11,7 +11,23 @@ use liana::{
 use liana_ui::widget::graph_view::{ItemId, Side};
 use lianad::commands::GraphItem;
 
-use crate::daemon::model::{Coin, HistoryTransaction, LabelsLoader, Payment, TransactionKind};
+use crate::{
+    app::state::map::wallets::WalletKey,
+    daemon::model::{Coin, HistoryTransaction, LabelsLoader, Payment, TransactionKind},
+};
+
+/// The transactions and coins of a wallet drawn on the map.
+#[derive(Debug)]
+pub struct WalletTxs {
+    pub key: WalletKey,
+    /// Descriptor checksum: a transaction belongs to the wallet whose checksum sorts first.
+    pub checksum: String,
+    pub txs: Vec<HistoryTransaction>,
+    pub coins: Vec<Coin>,
+}
+
+/// The histories of a transaction, one per wallet having it, primary wallet first.
+type Histories = Vec<(WalletKey, HistoryTransaction)>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SlotRef {
@@ -24,6 +40,7 @@ pub struct SlotRef {
 #[derive(Debug, Clone)]
 pub enum InputSlot {
     OurCoin {
+        wallet: WalletKey,
         outpoint: OutPoint,
         amount: Amount,
     },
@@ -36,6 +53,7 @@ pub enum InputSlot {
 #[derive(Debug, Clone)]
 pub enum OutputSlot {
     OurCoin {
+        wallet: WalletKey,
         outpoint: OutPoint,
         amount: Amount,
     },
@@ -87,13 +105,32 @@ impl Leaf {
 
 #[derive(Debug, Clone)]
 pub struct MapTx {
-    pub history: HistoryTransaction,
+    pub histories: Histories,
     pub inputs: Vec<InputSlot>,
     pub outputs: Vec<OutputSlot>,
     pub net: SignedAmount,
     pub fee: Option<Amount>,
     pub kind: TransactionKind,
     pub leaves: Vec<usize>,
+}
+
+impl MapTx {
+    /// The wallet owning the transaction label, leaves and position.
+    pub fn primary(&self) -> &WalletKey {
+        &self.histories[0].0
+    }
+
+    /// The primary wallet's history.
+    pub fn history(&self) -> &HistoryTransaction {
+        &self.histories[0].1
+    }
+
+    pub fn wallet_history(&self, wallet: &WalletKey) -> Option<&HistoryTransaction> {
+        self.histories
+            .iter()
+            .find(|(key, _)| key == wallet)
+            .map(|(_, history)| history)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,16 +161,21 @@ pub struct TxGraph {
 }
 
 /// Confirmed first and oldest first, unconfirmed last, a parent always before its children.
-fn time_order(txs: Vec<HistoryTransaction>) -> Vec<HistoryTransaction> {
-    let index: HashMap<Txid, usize> = txs.iter().enumerate().map(|(i, h)| (h.txid, i)).collect();
+fn time_order(txs: Vec<Histories>) -> Vec<Histories> {
+    let primary = |i: usize| &txs[i][0].1;
+    let index: HashMap<Txid, usize> = (0..txs.len()).map(|i| (primary(i).txid, i)).collect();
     let mut pending = vec![0; txs.len()];
     let mut children = vec![Vec::new(); txs.len()];
-    for (i, history) in txs.iter().enumerate() {
-        let parents: HashSet<usize> = history
+    for (i, histories) in txs.iter().enumerate() {
+        let parents: HashSet<usize> = primary(i)
             .tx
             .input
             .iter()
-            .filter(|input| history.coins.contains_key(&input.previous_output))
+            .filter(|input| {
+                histories
+                    .iter()
+                    .any(|(_, history)| history.coins.contains_key(&input.previous_output))
+            })
             .filter_map(|input| index.get(&input.previous_output.txid).copied())
             .filter(|parent| *parent != i)
             .collect();
@@ -143,7 +185,7 @@ fn time_order(txs: Vec<HistoryTransaction>) -> Vec<HistoryTransaction> {
         }
     }
     let key = |i: usize| {
-        let h = &txs[i];
+        let h = primary(i);
         Reverse((h.time.is_none(), h.height, h.time, h.txid, i))
     };
     let mut ready: BinaryHeap<_> = (0..txs.len())
@@ -160,7 +202,7 @@ fn time_order(txs: Vec<HistoryTransaction>) -> Vec<HistoryTransaction> {
             }
         }
     }
-    let mut slots: Vec<Option<HistoryTransaction>> = txs.into_iter().map(Some).collect();
+    let mut slots: Vec<Option<Histories>> = txs.into_iter().map(Some).collect();
     order.into_iter().filter_map(|i| slots[i].take()).collect()
 }
 
@@ -170,20 +212,42 @@ fn push_leaf(leaves: &mut Vec<Leaf>, leaf: Leaf, owned: &mut Vec<usize>) -> usiz
     leaves.len() - 1
 }
 
+/// Coins received minus coins spent by `history`'s wallet.
+fn net(history: &HistoryTransaction) -> SignedAmount {
+    let spent: u64 = history
+        .tx
+        .input
+        .iter()
+        .filter_map(|input| history.coins.get(&input.previous_output))
+        .map(|coin| coin.amount.to_sat())
+        .sum();
+    let received: u64 = history
+        .owned_outputs
+        .keys()
+        .filter_map(|index| history.tx.output.get(*index))
+        .map(|txout| txout.value.to_sat())
+        .sum();
+    SignedAmount::from_sat(received as i64 - spent as i64)
+}
+
+/// Slots owned by any wallet are its coins; leaves come from the primary wallet's view.
 fn build_tx(
     tx: usize,
-    history: HistoryTransaction,
+    histories: Histories,
     leaves: &mut Vec<Leaf>,
     input_leaves: &mut HashSet<OutPoint>,
 ) -> MapTx {
+    let primary = &histories[0].1;
     let mut owned = Vec::new();
     let mut inputs = Vec::new();
-    let (mut spent, mut received) = (0, 0);
-    for (index, input) in history.tx.input.iter().enumerate() {
+    for (index, input) in primary.tx.input.iter().enumerate() {
         let outpoint = input.previous_output;
-        if let Some(coin) = history.coins.get(&outpoint) {
-            spent += coin.amount.to_sat();
+        let coin = histories
+            .iter()
+            .find_map(|(wallet, history)| history.coins.get(&outpoint).map(|coin| (wallet, coin)));
+        if let Some((wallet, coin)) = coin {
             inputs.push(InputSlot::OurCoin {
+                wallet: wallet.clone(),
                 outpoint,
                 amount: coin.amount,
             });
@@ -203,16 +267,22 @@ fn build_tx(
         inputs.push(InputSlot::CounterpartyCoin { outpoint, leaf });
     }
     let mut outputs = Vec::new();
-    for (index, txout) in history.tx.output.iter().enumerate() {
-        let outpoint = OutPoint::new(history.txid, index as u32);
+    for (index, txout) in primary.tx.output.iter().enumerate() {
+        let outpoint = OutPoint::new(primary.txid, index as u32);
         let amount = txout.value;
-        if history.owned_outputs.contains_key(&index) {
-            received += amount.to_sat();
-            outputs.push(OutputSlot::OurCoin { outpoint, amount });
+        let wallet = histories
+            .iter()
+            .find(|(_, history)| history.owned_outputs.contains_key(&index));
+        if let Some((wallet, _)) = wallet {
+            outputs.push(OutputSlot::OurCoin {
+                wallet: wallet.clone(),
+                outpoint,
+                amount,
+            });
             continue;
         }
-        let address = Address::from_script(&txout.script_pubkey, history.network).ok();
-        let is_payment = history.wallet_tx.payment_kind(&outpoint) == Some(PaymentKind::Outgoing);
+        let address = Address::from_script(&txout.script_pubkey, primary.network).ok();
+        let is_payment = primary.wallet_tx.payment_kind(&outpoint) == Some(PaymentKind::Outgoing);
         let kind = if is_payment {
             LeafKind::Payment
         } else {
@@ -244,10 +314,10 @@ fn build_tx(
         });
     }
     MapTx {
-        net: SignedAmount::from_sat(received as i64 - spent as i64),
-        fee: history.wallet_tx.fee(),
-        kind: history.wallet_tx.kind(),
-        history,
+        net: net(primary),
+        fee: primary.wallet_tx.fee(),
+        kind: primary.wallet_tx.kind(),
+        histories,
         inputs,
         outputs,
         leaves: owned,
@@ -263,22 +333,41 @@ fn find(union: &mut [usize], mut i: usize) -> usize {
 }
 
 impl TxGraph {
-    pub fn new(txs: Vec<HistoryTransaction>, coins: &[Coin]) -> TxGraph {
-        let coins: HashMap<OutPoint, Coin> = coins
-            .iter()
-            .map(|coin| (coin.outpoint, coin.clone()))
-            .collect();
+    /// A transaction several wallets have is drawn once, owned by its primary wallet.
+    pub fn new(mut wallets: Vec<WalletTxs>) -> TxGraph {
+        wallets.sort_by(|a, b| a.checksum.cmp(&b.checksum));
+        let mut coins: HashMap<OutPoint, Coin> = HashMap::new();
+        let mut merged: Vec<Histories> = Vec::new();
+        let mut merged_index: HashMap<Txid, usize> = HashMap::new();
+        for WalletTxs {
+            key,
+            txs,
+            coins: wallet_coins,
+            ..
+        } in wallets
+        {
+            for coin in wallet_coins {
+                coins.entry(coin.outpoint).or_insert(coin);
+            }
+            for history in txs {
+                let i = *merged_index.entry(history.txid).or_insert_with(|| {
+                    merged.push(Vec::new());
+                    merged.len() - 1
+                });
+                merged[i].push((key.clone(), history));
+            }
+        }
         let mut leaves = Vec::new();
         let mut input_leaves = HashSet::new();
-        let txs: Vec<MapTx> = time_order(txs)
+        let txs: Vec<MapTx> = time_order(merged)
             .into_iter()
             .enumerate()
-            .map(|(i, history)| build_tx(i, history, &mut leaves, &mut input_leaves))
+            .map(|(i, histories)| build_tx(i, histories, &mut leaves, &mut input_leaves))
             .collect();
         let tx_index: HashMap<Txid, usize> = txs
             .iter()
             .enumerate()
-            .map(|(i, tx)| (tx.history.txid, i))
+            .map(|(i, tx)| (tx.history().txid, i))
             .collect();
 
         let mut coin_edges = Vec::new();
@@ -295,7 +384,7 @@ impl TxGraph {
                     continue;
                 };
                 let Some(input) = txs[spender]
-                    .history
+                    .history()
                     .tx
                     .input
                     .iter()
@@ -353,7 +442,7 @@ impl TxGraph {
         let tx_items = txs
             .iter()
             .enumerate()
-            .map(|(i, tx)| (GraphItem::Tx(tx.history.txid), ItemId(i as u64)));
+            .map(|(i, tx)| (GraphItem::Tx(tx.history().txid), ItemId(i as u64)));
         let leaf_items = leaves
             .iter()
             .enumerate()
@@ -418,7 +507,7 @@ impl TxGraph {
 
     pub fn graph_item(&self, id: ItemId) -> Option<GraphItem> {
         match self.item(id)? {
-            MapItem::Tx(tx) => Some(GraphItem::Tx(self.txs[tx].history.txid)),
+            MapItem::Tx(tx) => Some(GraphItem::Tx(self.txs[tx].history().txid)),
             MapItem::Leaf(leaf) => Some(leaf_graph_item(&self.leaves[leaf])),
         }
     }
@@ -433,6 +522,18 @@ impl TxGraph {
             MapItem::Tx(tx) => Some(tx),
             MapItem::Leaf(leaf) => Some(self.leaves[leaf].tx),
         }
+    }
+
+    /// The primary wallet of the item's transaction.
+    pub fn item_wallet(&self, id: ItemId) -> Option<&WalletKey> {
+        Some(self.txs[self.tx_of(id)?].primary())
+    }
+
+    /// Transactions whose primary wallet is `wallet`, and their leaves.
+    pub fn wallet_items(&self, wallet: &WalletKey) -> Vec<ItemId> {
+        self.item_ids()
+            .filter(|id| self.item_wallet(*id) == Some(wallet))
+            .collect()
     }
 
     pub fn coin(&self, outpoint: &OutPoint) -> Option<&Coin> {
@@ -451,9 +552,9 @@ impl TxGraph {
             .iter()
             .flat_map(|tx| tx.outputs.iter())
             .filter_map(|slot| match slot {
-                OutputSlot::OurCoin { outpoint, amount } if self.is_unspent(outpoint) => {
-                    Some((*outpoint, *amount))
-                }
+                OutputSlot::OurCoin {
+                    outpoint, amount, ..
+                } if self.is_unspent(outpoint) => Some((*outpoint, *amount)),
                 _ => None,
             })
             .collect()
@@ -480,18 +581,39 @@ impl TxGraph {
             .map(|edge| edge.to)
     }
 
-    /// The coin of ours held by an output slot, or spent by an input slot.
-    pub fn slot_coin(&self, slot: SlotRef) -> Option<OutPoint> {
+    /// The coin of a loaded wallet held by an output slot, or spent by an input slot.
+    fn our_coin(&self, slot: SlotRef) -> Option<(&WalletKey, OutPoint)> {
         let tx = self.txs.get(slot.tx)?;
         match (
             slot.side,
             tx.outputs.get(slot.index),
             tx.inputs.get(slot.index),
         ) {
-            (Side::Output, Some(OutputSlot::OurCoin { outpoint, .. }), _)
-            | (Side::Input, _, Some(InputSlot::OurCoin { outpoint, .. })) => Some(*outpoint),
+            (
+                Side::Output,
+                Some(OutputSlot::OurCoin {
+                    wallet, outpoint, ..
+                }),
+                _,
+            )
+            | (
+                Side::Input,
+                _,
+                Some(InputSlot::OurCoin {
+                    wallet, outpoint, ..
+                }),
+            ) => Some((wallet, *outpoint)),
             _ => None,
         }
+    }
+
+    pub fn slot_coin(&self, slot: SlotRef) -> Option<OutPoint> {
+        self.our_coin(slot).map(|(_, outpoint)| outpoint)
+    }
+
+    /// The wallet of the coin held or spent by the slot.
+    pub fn slot_wallet(&self, slot: SlotRef) -> Option<&WalletKey> {
+        self.our_coin(slot).map(|(wallet, _)| wallet)
     }
 
     /// All transactions of the chain of `tx`, in time order.
@@ -554,7 +676,7 @@ impl TxGraph {
     pub fn tx_label(&self, tx: usize) -> Label {
         self.txs
             .get(tx)
-            .map(|tx| tx.history.label())
+            .map(|tx| tx.history().label())
             .unwrap_or_default()
     }
 
@@ -562,31 +684,36 @@ impl TxGraph {
         let Some(tx) = self.txs.get(slot.tx) else {
             return Label::None;
         };
-        let history = &tx.history;
-        let resolve = |outpoint: &OutPoint, inherited: Label| {
+        let resolve = |history: &HistoryTransaction, outpoint: &OutPoint, inherited: Label| {
             label::resolve(label::get(&history.labels, *outpoint), &inherited)
         };
         match slot.side {
             Side::Output => match tx.outputs.get(slot.index) {
-                Some(OutputSlot::OurCoin { outpoint, .. }) => {
+                Some(OutputSlot::OurCoin {
+                    wallet, outpoint, ..
+                }) => tx.wallet_history(wallet).map_or(Label::None, |history| {
                     let default = history.owned_outputs.get(&slot.index).cloned();
-                    resolve(outpoint, default.unwrap_or_default())
+                    resolve(history, outpoint, default.unwrap_or_default())
+                }),
+                Some(OutputSlot::Payment { .. }) => {
+                    Payment::from_tx_output(tx.history(), slot.index)
+                        .map(|payment| payment.label())
+                        .unwrap_or_default()
                 }
-                Some(OutputSlot::Payment { .. }) => Payment::from_tx_output(history, slot.index)
-                    .map(|payment| payment.label())
-                    .unwrap_or_default(),
                 Some(OutputSlot::CounterpartyOutput { outpoint, .. }) => {
-                    resolve(outpoint, Label::None)
+                    resolve(tx.history(), outpoint, Label::None)
                 }
                 None => Label::None,
             },
             Side::Input => match tx.inputs.get(slot.index) {
-                Some(InputSlot::OurCoin { outpoint, .. }) => {
+                Some(InputSlot::OurCoin {
+                    wallet, outpoint, ..
+                }) => tx.wallet_history(wallet).map_or(Label::None, |history| {
                     let default = history.coins.get(outpoint).map(|c| c.default_label.clone());
-                    resolve(outpoint, default.unwrap_or_default())
-                }
+                    resolve(history, outpoint, default.unwrap_or_default())
+                }),
                 Some(InputSlot::CounterpartyCoin { outpoint, .. }) => {
-                    resolve(outpoint, Label::None)
+                    resolve(tx.history(), outpoint, Label::None)
                 }
                 None => Label::None,
             },
@@ -600,7 +727,7 @@ impl TxGraph {
             .leaves
             .get(index)
             .filter(|leaf| leaf.kind == LeafKind::Payment)
-            .and_then(|leaf| label::get(&self.txs[leaf.tx].history.labels, leaf.outpoint));
+            .and_then(|leaf| label::get(&self.txs[leaf.tx].history().labels, leaf.outpoint));
         match own {
             Some(own) => label::resolve(Some(own), &Label::None),
             None => self.address_label(index),
@@ -612,7 +739,7 @@ impl TxGraph {
         let Some(leaf) = self.leaves.get(leaf) else {
             return Label::None;
         };
-        let labels = &self.txs[leaf.tx].history.labels;
+        let labels = &self.txs[leaf.tx].history().labels;
         let own = match (leaf.kind, &leaf.address) {
             (LeafKind::CounterpartyCoin, _) | (_, None) => label::get(labels, leaf.outpoint),
             (_, Some(address)) => label::get(labels, address.clone()),
@@ -620,17 +747,31 @@ impl TxGraph {
         label::resolve(own, &Label::None)
     }
 
-    /// The only mutable access: slots and leaves never change.
+    /// The primary wallet's history, the only mutable access: slots and leaves never change.
     pub fn history_mut(&mut self, tx: usize) -> &mut HistoryTransaction {
-        &mut self.txs[tx].history
+        &mut self.txs[tx].histories[0].1
+    }
+
+    /// Loads labels saved in `wallet` into its histories only.
+    pub fn load_wallet_labels(
+        &mut self,
+        wallet: &WalletKey,
+        new_labels: &HashMap<String, Option<String>>,
+    ) {
+        for (_, history) in self
+            .txs
+            .iter_mut()
+            .flat_map(|tx| tx.histories.iter_mut())
+            .filter(|(key, _)| key == wallet)
+        {
+            history.load_labels(new_labels);
+        }
     }
 }
 
 impl LabelsLoader for TxGraph {
     fn load_labels(&mut self, new_labels: &HashMap<String, Option<String>>) {
-        for tx in &mut self.txs {
-            tx.history.load_labels(new_labels);
-        }
+        self.load_wallet_labels(&WalletKey::Current, new_labels);
     }
 }
 
@@ -664,7 +805,7 @@ mod tests {
     #[test]
     fn time_order_unconfirmed_last() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         assert_eq!(graph.txs().len(), 12);
         assert_eq!(index(&graph, f.ids.salary), 0);
         assert_eq!(index(&graph, f.ids.unconfirmed), 11);
@@ -684,7 +825,7 @@ mod tests {
                     continue;
                 }
                 let (txs, coins) = b.finish();
-                let graph = TxGraph::new(txs.into_iter().rev().collect(), &coins);
+                let graph = fixture::current_graph(txs.into_iter().rev().collect(), coins);
                 assert_eq!(index(&graph, parent), 0);
                 assert_eq!(index(&graph, child), 1);
                 break;
@@ -695,7 +836,7 @@ mod tests {
     #[test]
     fn slots_follow_transaction_order() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let batch = &graph.txs()[index(&graph, f.ids.batch)];
         let mut expected = vec!["payment"; 13];
         expected.push("ours");
@@ -713,7 +854,7 @@ mod tests {
     #[test]
     fn leaves_per_spec() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         assert_eq!(graph.leaves().len(), 27);
         let owned = |txid| graph.txs()[index(&graph, txid)].leaves.clone();
         let kind = |leaf: usize| graph.leaves()[leaf].kind;
@@ -740,7 +881,7 @@ mod tests {
     #[test]
     fn payment_versus_counterparty_output() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let four = &graph.txs()[index(&graph, f.ids.incoming_four)];
         assert_eq!(
             kinds(&four.outputs),
@@ -755,7 +896,7 @@ mod tests {
     #[test]
     fn coin_edges_from_spend_info() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         assert_eq!(graph.coin_edges().len(), 12);
         let rent3 = index(&graph, f.ids.rent[3]);
         let payjoin = index(&graph, f.ids.payjoin);
@@ -786,7 +927,7 @@ mod tests {
     #[test]
     fn address_reuse_flags() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         assert_eq!(graph.leaves_on_address(&f.landlord).len(), 4);
         assert_eq!(graph.leaves_on_address(&f.reused_payee).len(), 2);
         for leaf in graph
@@ -805,7 +946,7 @@ mod tests {
     #[test]
     fn chains_union_find() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let roots: HashSet<usize> = (0..graph.txs().len()).map(|i| graph.chain(i)[0]).collect();
         assert_eq!(roots.len(), 3);
         let salary = index(&graph, f.ids.salary);
@@ -821,7 +962,7 @@ mod tests {
     #[test]
     fn shortest_path_bfs() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let salary = index(&graph, f.ids.salary);
         let unconfirmed = index(&graph, f.ids.unconfirmed);
         let expected: Vec<usize> = std::iter::once(f.ids.salary)
@@ -840,7 +981,7 @@ mod tests {
     #[test]
     fn net_and_fee() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let tx = |txid| &graph.txs()[index(&graph, txid)];
         let rent = tx(f.ids.rent[0]);
         assert_eq!(rent.net, SignedAmount::from_sat(-501_000));
@@ -858,7 +999,7 @@ mod tests {
     #[test]
     fn unspent_coins() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let expected = [
             (OutPoint::new(f.ids.self_transfer, 0), 799_000),
             (OutPoint::new(f.ids.batch, 13), 867_000),
@@ -876,7 +1017,7 @@ mod tests {
     #[test]
     fn item_id_round_trip() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         assert_eq!(graph.item_ids().count(), 12 + 27);
         for id in graph.item_ids() {
             assert_eq!(graph.item_id(&graph.graph_item(id).unwrap()), Some(id));
@@ -916,7 +1057,7 @@ mod tests {
         let shared = OutPoint::new(paid, 1);
         b.tx(Some(2), &[shared, foreign(2)], &[(ours(1), 8_000, true)]);
         let (txs, coins) = b.finish();
-        let graph = TxGraph::new(txs, &coins);
+        let graph = fixture::current_graph(txs, coins);
         let output = graph.item_id(&GraphItem::OutputLeaf(shared)).unwrap();
         let input = graph.item_id(&GraphItem::InputLeaf(shared)).unwrap();
         assert_ne!(output, input);
@@ -925,7 +1066,7 @@ mod tests {
     #[test]
     fn slot_coin_and_spending_input() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let change = OutPoint::new(f.ids.rent[3], 1);
         let slot = SlotRef {
             tx: index(&graph, f.ids.payjoin),
@@ -945,7 +1086,7 @@ mod tests {
     #[test]
     fn payment_leaf_prefers_its_own_label() {
         let f = fixture::sample_wallet();
-        let mut graph = TxGraph::new(f.txs, &f.coins);
+        let mut graph = fixture::current_graph(f.txs, f.coins);
         let landlord = graph.leaves_on_address(&f.landlord)[0];
         let leaf = graph.leaves()[landlord].clone();
         let landlord_label = Label::Own("Landlord".to_string());
@@ -965,7 +1106,7 @@ mod tests {
     #[test]
     fn effective_labels() {
         let f = fixture::sample_wallet();
-        let graph = TxGraph::new(f.txs, &f.coins);
+        let graph = fixture::current_graph(f.txs, f.coins);
         let salary = index(&graph, f.ids.salary);
         assert_eq!(graph.tx_label(salary), Label::Own("Salary".to_string()));
         let landlord = graph.leaves_on_address(&f.landlord)[0];
@@ -994,7 +1135,7 @@ mod tests {
 
     #[test]
     fn empty_graph() {
-        let graph = TxGraph::new(Vec::new(), &[]);
+        let graph = TxGraph::new(Vec::new());
         assert!(graph.is_empty());
         assert_eq!(graph.item_ids().count(), 0);
         assert_eq!(graph.path(0, 0), None);
@@ -1003,7 +1144,7 @@ mod tests {
     #[test]
     fn labels_loader_updates_graph() {
         let f = fixture::sample_wallet();
-        let mut graph = TxGraph::new(f.txs, &f.coins);
+        let mut graph = fixture::current_graph(f.txs, f.coins);
         let (txid, landlord) = (f.ids.salary, f.landlord);
         let salary = index(&graph, txid);
         let coin = SlotRef {
@@ -1042,7 +1183,7 @@ mod tests {
     #[test]
     fn labels_loader_keeps_default_labels() {
         let f = fixture::sample_wallet();
-        let mut graph = TxGraph::new(f.txs, &f.coins);
+        let mut graph = fixture::current_graph(f.txs, f.coins);
         let transfer = index(&graph, f.ids.self_transfer);
         let coin = SlotRef {
             tx: transfer,
@@ -1058,5 +1199,143 @@ mod tests {
 
         graph.load_labels(&HashMap::from([(key, None)]));
         assert_eq!(graph.slot_label(coin), default);
+    }
+
+    fn two_wallets_graph(a_checksum: &str, b_checksum: &str) -> (TxGraph, fixture::TwoWallets) {
+        let mut f = fixture::two_wallets(a_checksum, b_checksum);
+        let graph = TxGraph::new(std::mem::take(&mut f.wallets));
+        (graph, f)
+    }
+
+    fn owner(slot: &OutputSlot) -> Option<&WalletKey> {
+        match slot {
+            OutputSlot::OurCoin { wallet, .. } => Some(wallet),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn shared_tx_drawn_once_with_owned_slots() {
+        let (graph, f) = two_wallets_graph("aaaa", "bbbb");
+        assert_eq!(graph.txs().len(), 3);
+        let payment = &graph.txs()[index(&graph, f.payment)];
+        assert_eq!(payment.histories.len(), 2);
+        assert_eq!(payment.primary(), &WalletKey::Current);
+        assert_eq!(
+            payment.outputs.iter().map(owner).collect::<Vec<_>>(),
+            [Some(&f.b), Some(&WalletKey::Current)]
+        );
+        assert!(matches!(
+            &payment.inputs[0],
+            InputSlot::OurCoin {
+                wallet: WalletKey::Current,
+                ..
+            }
+        ));
+        assert!(payment.leaves.is_empty());
+        assert_eq!(payment.net, SignedAmount::from_sat(-61_000));
+        assert_eq!(payment.fee, Some(Amount::from_sat(1_000)));
+        assert_eq!(
+            graph.unspent_coins(),
+            [(OutPoint::new(f.payment, 1), Amount::from_sat(39_000))]
+        );
+    }
+
+    #[test]
+    fn primary_is_first_checksum() {
+        let (graph, f) = two_wallets_graph("cccc", "bbbb");
+        let payment = index(&graph, f.payment);
+        let tx = &graph.txs()[payment];
+        assert_eq!(tx.primary(), &f.b);
+        assert_eq!(tx.net, SignedAmount::from_sat(60_000));
+        assert_eq!(
+            tx.outputs.iter().map(owner).collect::<Vec<_>>(),
+            [Some(&f.b), Some(&WalletKey::Current)]
+        );
+        assert!(tx.leaves.is_empty());
+        assert_eq!(graph.tx_label(payment), Label::Own("From A".to_string()));
+    }
+
+    #[test]
+    fn coin_edge_crosses_wallets() {
+        let (graph, f) = two_wallets_graph("aaaa", "bbbb");
+        let (payment, spend) = (index(&graph, f.payment), index(&graph, f.spend));
+        let paid = OutPoint::new(f.payment, 0);
+        let edge = graph
+            .coin_edges()
+            .iter()
+            .find(|edge| edge.outpoint == paid)
+            .unwrap();
+        assert_eq!(
+            (edge.from, edge.to),
+            (
+                SlotRef {
+                    tx: payment,
+                    side: Side::Output,
+                    index: 0
+                },
+                SlotRef {
+                    tx: spend,
+                    side: Side::Input,
+                    index: 0
+                }
+            )
+        );
+        assert_eq!(graph.slot_wallet(edge.from), Some(&f.b));
+        assert_eq!(graph.slot_wallet(edge.to), Some(&f.b));
+        assert_eq!(
+            graph.item_wallet(graph.tx_item(payment)),
+            Some(&WalletKey::Current)
+        );
+        assert_eq!(graph.item_wallet(graph.tx_item(spend)), Some(&f.b));
+        assert_eq!(graph.coin_edges().len(), 2);
+        assert!(graph.same_chain(index(&graph, f.funding), spend));
+    }
+
+    #[test]
+    fn wallet_items_follow_primary() {
+        let (graph, f) = two_wallets_graph("aaaa", "bbbb");
+        let tx_item = |txid| graph.tx_item(index(&graph, txid));
+        let leaf_item = |txid| graph.leaf_item(graph.txs()[index(&graph, txid)].leaves[0]);
+        assert_eq!(
+            graph.wallet_items(&WalletKey::Current),
+            [tx_item(f.funding), tx_item(f.payment), leaf_item(f.funding)]
+        );
+        assert_eq!(
+            graph.wallet_items(&f.b),
+            [tx_item(f.spend), leaf_item(f.spend)]
+        );
+        assert_eq!(graph.item_wallet(leaf_item(f.spend)), Some(&f.b));
+        assert_eq!(graph.item_wallet(ItemId(1_000)), None);
+    }
+
+    #[test]
+    fn labels_from_owning_wallet() {
+        let (mut graph, f) = two_wallets_graph("aaaa", "bbbb");
+        let (payment, spend) = (index(&graph, f.payment), index(&graph, f.spend));
+        let paid = SlotRef {
+            tx: payment,
+            side: Side::Output,
+            index: 0,
+        };
+        assert_eq!(graph.tx_label(payment), Label::Own("Paid B".to_string()));
+        assert_eq!(
+            graph.slot_label(paid),
+            Label::Own("Seen from B".to_string())
+        );
+        let shop = graph.txs()[spend].leaves[0];
+        assert_eq!(graph.leaf_label(shop), Label::Own("Shop".to_string()));
+
+        let key = OutPoint::new(f.payment, 0).to_string();
+        let renamed = HashMap::from([(key.clone(), Some("Renamed".to_string()))]);
+        graph.load_wallet_labels(&f.b, &renamed);
+        assert_eq!(graph.slot_label(paid), Label::Own("Renamed".to_string()));
+        let seen_from_a = graph.txs()[payment]
+            .wallet_history(&WalletKey::Current)
+            .and_then(|history| history.labels.get(&key));
+        assert_eq!(seen_from_a.map(String::as_str), Some("Seen from A"));
+
+        graph.load_labels(&HashMap::from([(key, Some("Ignored".to_string()))]));
+        assert_eq!(graph.slot_label(paid), Label::Own("Renamed".to_string()));
     }
 }

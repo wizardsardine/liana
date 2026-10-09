@@ -13,7 +13,13 @@ use liana::{
 use lianad::commands::LCSpendInfo;
 
 use crate::{
-    app::state::map::graph::TxGraph,
+    app::{
+        settings::WalletId,
+        state::map::{
+            graph::{TxGraph, WalletTxs},
+            wallets::WalletKey,
+        },
+    },
     daemon::model::{Coin, HistoryTransaction, LabelItem},
 };
 
@@ -303,7 +309,82 @@ pub fn sample_wallet() -> Fixture {
     }
 }
 
+/// The graph of the current wallet alone.
+pub fn current_graph(txs: Vec<HistoryTransaction>, coins: Vec<Coin>) -> TxGraph {
+    TxGraph::new(vec![WalletTxs {
+        key: WalletKey::Current,
+        checksum: "current".to_string(),
+        txs,
+        coins,
+    }])
+}
+
 pub fn graph() -> TxGraph {
     let fixture = sample_wallet();
-    TxGraph::new(fixture.txs, &fixture.coins)
+    current_graph(fixture.txs, fixture.coins)
+}
+
+pub struct TwoWallets {
+    /// The current wallet, then B.
+    pub wallets: Vec<WalletTxs>,
+    pub b: WalletKey,
+    pub funding: Txid,
+    /// A pays B, change back to A.
+    pub payment: Txid,
+    /// B spends the coin A paid.
+    pub spend: Txid,
+}
+
+/// The current wallet A pays wallet B, which spends the coin later.
+pub fn two_wallets(a_checksum: &str, b_checksum: &str) -> TwoWallets {
+    let paid = address(200);
+    let mut a = Builder::new();
+    let mut b = Builder::new();
+    let funding = a.tx(Some(1), &[foreign(1)], &[(ours(0), 100_000, true)]);
+    let funded = OutPoint::new(funding, 0);
+    let payment = a.tx(
+        Some(2),
+        &[funded],
+        &[(paid.clone(), 60_000, false), (ours(1), 39_000, true)],
+    );
+    b.tx(
+        Some(2),
+        &[funded],
+        &[(paid, 60_000, true), (ours(1), 39_000, false)],
+    );
+    let spend = b.tx(
+        Some(3),
+        &[OutPoint::new(payment, 0)],
+        &[(address(201), 59_000, false)],
+    );
+
+    a.label(payment, "Paid B");
+    a.label(OutPoint::new(payment, 0), "Seen from A");
+    b.label(payment, "From A");
+    b.label(OutPoint::new(payment, 0), "Seen from B");
+    b.label(address(201), "Shop");
+
+    let b_key = WalletKey::Other(WalletId::new(b_checksum.to_string(), None));
+    let (a_txs, a_coins) = a.finish();
+    let (b_txs, b_coins) = b.finish();
+    TwoWallets {
+        wallets: vec![
+            WalletTxs {
+                key: WalletKey::Current,
+                checksum: a_checksum.to_string(),
+                txs: a_txs,
+                coins: a_coins,
+            },
+            WalletTxs {
+                key: b_key.clone(),
+                checksum: b_checksum.to_string(),
+                txs: b_txs,
+                coins: b_coins,
+            },
+        ],
+        b: b_key,
+        funding,
+        payment,
+        spend,
+    }
 }
