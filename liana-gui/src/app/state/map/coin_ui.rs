@@ -214,6 +214,7 @@ impl CoinUi {
                 }
             }
             Change::Move(_)
+            | Change::Offset { .. }
             | Change::Reorder { .. }
             | Change::Layout { .. }
             | Change::Label { .. } => return false,

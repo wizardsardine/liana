@@ -1,6 +1,6 @@
 use liana::miniscript::bitcoin::Network;
 use lianad::{
-    commands::GraphLayoutEntry,
+    commands::{GraphItem, GraphLayoutEntry},
     datadir::DataDirectory,
     offline::{OfflineError, WalletDb},
 };
@@ -107,6 +107,17 @@ pub fn load_wallet(wallet: &OtherWallet, network: Network) -> Result<WalletData,
         layout: db.graph_layout(),
         last_sync: db.last_poll_timestamp(),
     })
+}
+
+/// Writes layout entries of `wallet` to its database, blocking.
+pub fn save_wallet_layout(
+    wallet: &OtherWallet,
+    network: Network,
+    set: &[GraphLayoutEntry],
+    remove: &[GraphItem],
+) -> Result<(), OfflineError> {
+    WalletDb::open(&wallet.datadir, network)?.update_graph_layout(set, remove);
+    Ok(())
 }
 
 #[cfg(test)]

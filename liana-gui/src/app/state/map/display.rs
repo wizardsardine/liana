@@ -346,8 +346,6 @@ pub fn display_state(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use iced::{keyboard::Modifiers, Rectangle};
     use liana::miniscript::bitcoin::{Address, OutPoint, Txid};
     use liana_ui::{
@@ -366,6 +364,7 @@ mod tests {
         graph::{OutputSlot, SlotRef, TxGraph},
         layout,
         selection::{Selection, TagHighlight},
+        wallets::WalletKey,
         LabelTarget, Orders,
     };
 
@@ -379,7 +378,7 @@ mod tests {
         coin_ui: &CoinUi,
         unspent: bool,
     ) -> DisplayState {
-        let layout = layout::place(graph, &HashMap::new());
+        let layout = layout::reset(graph, &WalletKey::Current);
         display_state(
             graph,
             &layout,
@@ -627,7 +626,7 @@ mod tests {
     fn reuse_highlights_every_leaf_of_the_address() {
         let f = fixture::sample_wallet();
         let graph = fixture::current_graph(f.txs, f.coins);
-        let layout = layout::place(&graph, &HashMap::new());
+        let layout = layout::reset(&graph, &WalletKey::Current);
         let s = display_state(
             &graph,
             &layout,
@@ -652,7 +651,7 @@ mod tests {
     fn show_on_map_marks_slots_highlighted() {
         let f = fixture::sample_wallet();
         let graph = fixture::current_graph(f.txs, f.coins);
-        let layout = layout::place(&graph, &HashMap::new());
+        let layout = layout::reset(&graph, &WalletKey::Current);
         let tx = graph.tx_index(&f.ids.rent[0]).unwrap();
         let OutputSlot::Payment { leaf, .. } = graph.txs()[tx].outputs[0] else {
             panic!("rent output 0 is a payment");
@@ -728,7 +727,7 @@ mod tests {
 
         selection.command_click(&graph, graph.tx_item(1));
         let s = state(&graph, &selection, None, None, &CoinUi::default(), false);
-        let layout = layout::place(&graph, &HashMap::new());
+        let layout = layout::reset(&graph, &WalletKey::Current);
         let rect = |tx: usize| {
             let id = graph.tx_item(tx);
             Rectangle::new(layout[&id], layout::item_size(&graph, id))

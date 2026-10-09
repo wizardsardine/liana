@@ -97,8 +97,6 @@ pub fn resolve_focus(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use iced::Rectangle;
     use liana::miniscript::bitcoin::OutPoint;
     use liana_ui::widget::graph_view::{
@@ -112,7 +110,9 @@ mod tests {
             fixture,
             focus::{resolve_focus, FocusLanding},
             graph::{OutputSlot, SlotRef},
-            layout, Orders,
+            layout,
+            wallets::WalletKey,
+            Orders,
         },
     };
 
@@ -138,7 +138,7 @@ mod tests {
         orders: &Orders,
     ) -> Option<FocusLanding> {
         let graph = fixture::graph();
-        let positions = layout::place(&graph, &HashMap::new());
+        let positions = layout::reset(&graph, &WalletKey::Current);
         resolve_focus(
             &graph,
             &positions,
@@ -151,7 +151,7 @@ mod tests {
     fn focus_tx_selects_its_block() {
         let fixture = fixture::sample_wallet();
         let graph = fixture::graph();
-        let positions = layout::place(&graph, &HashMap::new());
+        let positions = layout::reset(&graph, &WalletKey::Current);
         let tx = graph.tx_index(&fixture.ids.salary).unwrap();
         let id = graph.tx_item(tx);
         let landing = resolve_focus(
@@ -216,7 +216,7 @@ mod tests {
         let ids = fixture::sample_wallet().ids;
         let graph = fixture::graph();
         let tx = graph.tx_index(&ids.incoming_four).unwrap();
-        let positions = layout::place(&graph, &HashMap::new());
+        let positions = layout::reset(&graph, &WalletKey::Current);
         let block = positions[&graph.tx_item(tx)];
         let orders = Orders::from([(ids.incoming_four, (None, Some(vec![2, 0, 1, 3, 4])))]);
         let landing = landing(ids.incoming_four, 2, &orders).unwrap();
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn focus_unknown_tx_is_none() {
         let graph = fixture::graph();
-        let positions = layout::place(&graph, &HashMap::new());
+        let positions = layout::reset(&graph, &WalletKey::Current);
         let foreign = fixture::foreign(99);
         assert_eq!(
             resolve_focus(

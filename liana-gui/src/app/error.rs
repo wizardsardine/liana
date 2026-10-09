@@ -2,7 +2,7 @@ use std::convert::From;
 use std::io::ErrorKind;
 
 use liana::{descriptors::LianaDescError, spend::SpendCreationError};
-use lianad::config::ConfigError;
+use lianad::{config::ConfigError, offline::OfflineError};
 
 use crate::{
     app::{settings::SettingsError, wallet::WalletError},
@@ -70,6 +70,12 @@ impl std::fmt::Display for Error {
             Self::FiatPrice(e) => write!(f, "Fiat price error: {e}"),
             Self::NoAvailableCurrencies => write!(f, "No available currencies in the list."),
         }
+    }
+}
+
+impl From<OfflineError> for Error {
+    fn from(error: OfflineError) -> Self {
+        Error::Unexpected(error.to_string())
     }
 }
 
