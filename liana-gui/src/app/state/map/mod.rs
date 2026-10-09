@@ -7,11 +7,12 @@ pub mod focus;
 pub mod graph;
 pub mod history;
 pub mod layout;
+pub mod offsets;
 pub mod selection;
 pub mod wallets;
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{HashMap, HashSet},
     mem,
     sync::Arc,
 };
@@ -20,9 +21,9 @@ use iced::{
     advanced::widget::Id,
     event,
     keyboard::{self, key::Named, Modifiers},
-    window, Event, Point, Rectangle, Size, Subscription, Task,
+    window, Event, Point, Rectangle, Size, Subscription, Task, Vector,
 };
-use liana::miniscript::bitcoin::{Address, OutPoint, Txid};
+use liana::miniscript::bitcoin::{Address, Network, OutPoint, Txid};
 use liana_ui::{
     component::panels::map::header::HeaderAction,
     widget::{
@@ -35,7 +36,7 @@ use liana_ui::{
         text_input, Element,
     },
 };
-use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
+use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry, GraphWallet};
 
 use crate::{
     app::{
@@ -43,6 +44,7 @@ use crate::{
         error::Error,
         menu::{MapFocus, Menu},
         message::Message,
+        settings::WalletId,
         state::{
             label::{label_item_from_str, LabelsEdited},
             map::{
@@ -51,30 +53,28 @@ use crate::{
                 focus::{resolve_focus, FocusLanding, ShowOnMap},
                 graph::{MapItem, SlotRef, TxGraph, WalletTxs},
                 history::{Change, History},
+                offsets::{Offsets, WalletLayout},
                 selection::{Selection, TagHighlight},
-                wallets::WalletKey,
+                wallets::{save_wallet_layout, OtherWallet, WalletKey},
             },
             State,
         },
         view::{self, LabelMessage, MapKey, MapMessage},
         wallet::Wallet,
     },
-    daemon::{
-        model::{Coin, HistoryTransaction, LabelsLoader},
-        Daemon,
-    },
+    daemon::{model::LabelsLoader, Daemon},
 };
 
 /// Display orders (inputs, outputs) per transaction, `None` = true order.
 pub type Orders = HashMap<Txid, (history::Order, history::Order)>;
 
+/// A wallet loaded for the map.
 #[derive(Debug)]
-pub struct MapData {
-    /// Descriptor checksum of the current wallet.
-    pub checksum: String,
-    pub txs: Vec<HistoryTransaction>,
-    pub coins: Vec<Coin>,
-    pub layout: Vec<GraphLayoutEntry>,
+pub struct MapWallet {
+    pub txs: WalletTxs,
+    pub layout: WalletLayout,
+    /// The database of another wallet, `None` for the current one.
+    pub other: Option<OtherWallet>,
 }
 
 /// The stored layout, checked against the current graph.
@@ -184,10 +184,15 @@ fn map_event(event: Event, status: event::Status, _: window::Id) -> Option<Messa
 }
 
 pub struct MapPanel {
+    network: Network,
     graph_id: Id,
     graph: Option<TxGraph>,
+    /// Map positions: each item's position in its owning wallet's layout plus that wallet's offset.
     layout: HashMap<ItemId, Point>,
     orders: Orders,
+    offsets: Offsets,
+    /// The other wallets on the map, written to their own database.
+    others: HashMap<WalletId, OtherWallet>,
     coin_ui: CoinUi,
     selection: Selection,
     hover: Option<Target>,
@@ -235,13 +240,22 @@ fn is_valid_order(order: &[u32], len: usize) -> bool {
         })
 }
 
-pub fn split_stored(graph: &TxGraph, entries: Vec<GraphLayoutEntry>) -> StoredLayout {
+/// The stored layout of `wallet`. Its entries of items another wallet owns on this map are
+/// left alone.
+pub fn split_stored(
+    graph: &TxGraph,
+    wallet: &WalletKey,
+    entries: Vec<GraphLayoutEntry>,
+) -> StoredLayout {
     let mut stored = StoredLayout::default();
     for entry in entries {
         let Some(id) = graph.item_id(&entry.item) else {
             stored.remove.push(entry.item);
             continue;
         };
+        if graph.item_wallet(id) != Some(wallet) {
+            continue;
+        }
         if let Some((x, y)) = entry.position {
             stored.positions.insert(id, Point::new(x as f32, y as f32));
         }
@@ -268,12 +282,15 @@ pub fn split_stored(graph: &TxGraph, entries: Vec<GraphLayoutEntry>) -> StoredLa
 }
 
 impl MapPanel {
-    pub fn new() -> Self {
+    pub fn new(network: Network) -> Self {
         Self {
+            network,
             graph_id: Id::unique(),
             graph: None,
             layout: HashMap::new(),
             orders: HashMap::new(),
+            offsets: Offsets::default(),
+            others: HashMap::new(),
             coin_ui: CoinUi::default(),
             selection: Selection::default(),
             hover: None,
@@ -355,7 +372,41 @@ impl MapPanel {
             return Task::none();
         }
         self.history.record(change);
-        self.save_layout(daemon, touched, vec![])
+        self.save_layout(daemon, touched, HashMap::new())
+    }
+
+    /// Records a drag of every item of another wallet as a move of its offset.
+    fn commit_offset(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: WalletId,
+        delta: Vector,
+    ) -> Task<Message> {
+        let Some(before) = self.offsets.get(&WalletKey::Other(wallet.clone())) else {
+            return Task::none();
+        };
+        let after = edit::moved_offset(before, delta, self.toggles.snap);
+        self.history.record(Change::Offset {
+            wallet: wallet.clone(),
+            before,
+            after,
+        });
+        self.set_offset(daemon, wallet, after)
+    }
+
+    fn set_offset(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: WalletId,
+        offset: Vector,
+    ) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        if !edit::apply_offset(graph, &mut self.layout, &mut self.offsets, &wallet, offset) {
+            return Task::none();
+        }
+        self.save_offsets(daemon, vec![wallet])
     }
 
     /// Applies the change returned by `History::undo` or `History::redo`.
@@ -378,11 +429,14 @@ impl MapPanel {
                 Message::LabelsUpdated,
             );
         }
+        if let Change::Offset { wallet, after, .. } = change {
+            return self.set_offset(daemon, wallet, after);
+        }
         if self.coin_ui.apply(&change) {
             return Task::none();
         }
         let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
-        self.save_layout(daemon, touched, vec![])
+        self.save_layout(daemon, touched, HashMap::new())
     }
 
     /// Applies the selection or highlights of a resolved focus and returns its target rect.
@@ -495,52 +549,92 @@ impl MapPanel {
         self.label_changes.extend(saved);
     }
 
+    /// Writes the items to their owning wallet's layout, with the stale entries of `remove`.
     fn save_layout(
         &self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         items: impl IntoIterator<Item = ItemId>,
-        remove: Vec<LayoutItem>,
+        mut remove: HashMap<WalletKey, Vec<LayoutItem>>,
     ) -> Task<Message> {
         let Some(graph) = &self.graph else {
             return Task::none();
         };
-        let set: Vec<GraphLayoutEntry> = items
-            .into_iter()
-            .filter_map(|id| {
-                let item = graph.graph_item(id)?;
-                let (input_order, output_order) = match &item {
-                    LayoutItem::Tx(txid) => self.orders.get(txid).cloned().unwrap_or_default(),
-                    _ => (None, None),
-                };
-                Some(GraphLayoutEntry {
-                    item,
-                    position: self
-                        .layout
-                        .get(&id)
-                        .map(|p| (f64::from(p.x), f64::from(p.y))),
-                    input_order,
-                    output_order,
-                })
-            })
-            .collect();
+        let mut sets =
+            offsets::local_entries(graph, &self.layout, &self.orders, &self.offsets, items);
+        let wallets: HashSet<WalletKey> = sets.keys().chain(remove.keys()).cloned().collect();
+        Task::batch(wallets.into_iter().map(|wallet| {
+            let set = sets.remove(&wallet).unwrap_or_default();
+            let remove = remove.remove(&wallet).unwrap_or_default();
+            self.write_layout(daemon.clone(), wallet, set, remove)
+        }))
+    }
+
+    fn write_layout(
+        &self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: WalletKey,
+        set: Vec<GraphLayoutEntry>,
+        remove: Vec<LayoutItem>,
+    ) -> Task<Message> {
         if set.is_empty() && remove.is_empty() {
             return Task::none();
         }
+        match wallet {
+            WalletKey::Current => Task::perform(
+                async move {
+                    daemon
+                        .update_graph_layout(&set, &remove)
+                        .await
+                        .map_err(Into::into)
+                },
+                Message::MapLayoutSaved,
+            ),
+            WalletKey::Other(id) => {
+                let Some(other) = self.others.get(&id).cloned() else {
+                    return Task::done(Message::MapLayoutSaved(Err(Error::Unexpected(format!(
+                        "wallet {id} is not on the map"
+                    )))));
+                };
+                let network = self.network;
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            save_wallet_layout(&other, network, &set, &remove)
+                        })
+                        .await
+                        .map_err(|e| Error::Unexpected(e.to_string()))?
+                        .map_err(Into::into)
+                    },
+                    Message::MapLayoutSaved,
+                )
+            }
+        }
+    }
+
+    /// Writes the offsets of other wallets to the current wallet.
+    fn save_offsets(
+        &self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallets: Vec<WalletId>,
+    ) -> Task<Message> {
+        let rows: Vec<GraphWallet> = wallets
+            .into_iter()
+            .filter_map(|id| {
+                let offset = self.offsets.get(&WalletKey::Other(id.clone()))?;
+                Some(GraphWallet {
+                    wallet: id.to_string(),
+                    selected: true,
+                    offset: Some((f64::from(offset.x), f64::from(offset.y))),
+                })
+            })
+            .collect();
+        if rows.is_empty() {
+            return Task::none();
+        }
         Task::perform(
-            async move {
-                daemon
-                    .update_graph_layout(&set, &remove)
-                    .await
-                    .map_err(Into::into)
-            },
+            async move { daemon.update_graph_wallets(&rows).await.map_err(Into::into) },
             Message::MapLayoutSaved,
         )
-    }
-}
-
-impl Default for MapPanel {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -628,23 +722,22 @@ impl State for MapPanel {
                 self.loading = false;
                 self.warning = Some(e);
             }
-            Message::MapLoaded(Ok(data)) => {
-                let graph = TxGraph::new(vec![WalletTxs {
-                    key: WalletKey::Current,
-                    checksum: data.checksum,
-                    txs: data.txs,
-                    coins: data.coins,
-                }]);
-                let stored = split_stored(&graph, data.layout);
-                let placed = layout::place(&graph, &stored.positions);
-                let to_save: BTreeSet<ItemId> = placed
-                    .keys()
-                    .copied()
-                    .chain(stored.resave.iter().copied())
-                    .collect();
-                self.layout = stored.positions;
-                self.layout.extend(placed);
-                self.orders = stored.orders;
+            Message::MapLoaded(Ok(wallets)) => {
+                let mut txs = Vec::with_capacity(wallets.len());
+                let mut layouts = Vec::with_capacity(wallets.len());
+                self.others.clear();
+                for wallet in wallets {
+                    if let Some(other) = wallet.other {
+                        self.others.insert(other.id.clone(), other);
+                    }
+                    layouts.push((wallet.txs.key.clone(), wallet.layout));
+                    txs.push(wallet.txs);
+                }
+                let graph = TxGraph::new(txs);
+                let placement = offsets::place_wallets(&graph, layouts);
+                self.layout = placement.layout;
+                self.orders = placement.orders;
+                self.offsets = placement.offsets;
                 self.hover = None;
                 self.tag_highlight = None;
                 self.show_on_map = None;
@@ -661,7 +754,10 @@ impl State for MapPanel {
                 };
                 self.graph = Some(graph);
                 self.loading = false;
-                let save = self.save_layout(daemon, to_save, stored.remove);
+                let save = Task::batch([
+                    self.save_layout(daemon.clone(), placement.save, placement.remove),
+                    self.save_offsets(daemon, placement.placed),
+                ]);
                 return match landing {
                     Some(landing) => {
                         let target = self.land(landing);
@@ -781,7 +877,11 @@ impl State for MapPanel {
                     };
                     let change = Change::Layout {
                         before: edit::layout_state(graph, &self.layout, &self.orders),
-                        after: edit::layout_state(graph, &layout::reset(graph), &Orders::new()),
+                        after: edit::layout_state(
+                            graph,
+                            &offsets::reset_layout(graph, &self.offsets),
+                            &Orders::new(),
+                        ),
                     };
                     let touched = edit::apply_layout_change(
                         graph,
@@ -790,11 +890,18 @@ impl State for MapPanel {
                         &change,
                     );
                     self.history.record(change);
-                    let save = self.save_layout(daemon, touched, vec![]);
+                    let save = self.save_layout(daemon, touched, HashMap::new());
                     return Task::batch([save, graph_view::fit(self.graph_id.clone())]);
                 }
                 MapMessage::Graph(event) => match event {
                     GraphEvent::Moved { items, delta } => {
+                        let wallet = self
+                            .graph
+                            .as_ref()
+                            .and_then(|graph| edit::dragged_wallet(graph, &items));
+                        if let Some(wallet) = wallet {
+                            return self.commit_offset(daemon, wallet, delta);
+                        }
                         let moves =
                             edit::moved_positions(&self.layout, &items, delta, self.toggles.snap);
                         return self.commit_move(daemon, moves);
@@ -851,7 +958,7 @@ impl State for MapPanel {
                             &change,
                         );
                         self.history.record(change);
-                        return self.save_layout(daemon, touched, vec![]);
+                        return self.save_layout(daemon, touched, HashMap::new());
                     }
                     GraphEvent::Zoom(zoom) => self.zoom = zoom,
                     GraphEvent::Click { target, modifiers } => self.on_click(&target, modifiers),
@@ -958,12 +1065,19 @@ impl State for MapPanel {
                 let coins = daemon.list_all_coins().await?;
                 let txs = daemon.get_all_history_txs(&coins).await?;
                 let layout = daemon.get_graph_layout().await?;
-                Ok(MapData {
-                    checksum,
-                    txs,
-                    coins,
-                    layout,
-                })
+                Ok(vec![MapWallet {
+                    txs: WalletTxs {
+                        key: WalletKey::Current,
+                        checksum,
+                        txs,
+                        coins,
+                    },
+                    layout: WalletLayout {
+                        entries: layout,
+                        offset: None,
+                    },
+                    other: None,
+                }])
             },
             Message::MapLoaded,
         )
@@ -974,7 +1088,7 @@ impl State for MapPanel {
 mod tests {
     use std::str::FromStr;
 
-    use liana::miniscript::bitcoin::{OutPoint, Txid};
+    use liana::miniscript::bitcoin::{Network, OutPoint, Txid};
     use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
 
     use iced::{
@@ -987,7 +1101,7 @@ mod tests {
     use crate::app::{
         state::map::{
             display_row, escape_action, fixture, focus::ShowOnMap, key_action, split_stored,
-            EscapeAction, MapPanel,
+            wallets::WalletKey, EscapeAction, MapPanel,
         },
         view::MapKey,
     };
@@ -1018,7 +1132,11 @@ mod tests {
         let graph = fixture::graph();
         let unknown_tx = LayoutItem::Tx(unknown_outpoint().txid);
         let orphan = LayoutItem::OutputLeaf(unknown_outpoint());
-        let stored = split_stored(&graph, vec![entry(unknown_tx), entry(orphan)]);
+        let stored = split_stored(
+            &graph,
+            &WalletKey::Current,
+            vec![entry(unknown_tx), entry(orphan)],
+        );
         assert_eq!(stored.remove, vec![unknown_tx, orphan]);
         assert!(stored.positions.is_empty());
     }
@@ -1030,7 +1148,7 @@ mod tests {
         let txid = f.ids.batch;
         let mut bad = entry(LayoutItem::Tx(txid));
         bad.output_order = Some(vec![0]);
-        let stored = split_stored(&graph, vec![bad]);
+        let stored = split_stored(&graph, &WalletKey::Current, vec![bad]);
         let id = graph.tx_item(graph.tx_index(&txid).unwrap());
         assert_eq!(stored.resave, vec![id]);
         assert!(stored.orders.is_empty());
@@ -1046,7 +1164,7 @@ mod tests {
         let order: Vec<u32> = (0..slots).rev().collect();
         let mut kept = entry(LayoutItem::Tx(txid));
         kept.output_order = Some(order.clone());
-        let stored = split_stored(&graph, vec![kept]);
+        let stored = split_stored(&graph, &WalletKey::Current, vec![kept]);
         assert!(stored.remove.is_empty());
         assert!(stored.resave.is_empty());
         assert_eq!(stored.orders[&txid], (None, Some(order)));
@@ -1055,7 +1173,7 @@ mod tests {
 
     #[test]
     fn click_clears_show_on_map() {
-        let mut panel = MapPanel::new();
+        let mut panel = MapPanel::new(Network::Bitcoin);
         let graph = fixture::graph();
         let id = graph.tx_item(0);
         panel.graph = Some(graph);

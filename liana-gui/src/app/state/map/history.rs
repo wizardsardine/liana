@@ -1,11 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 
-use iced::Point;
+use iced::{Point, Vector};
 use liana::miniscript::bitcoin::{OutPoint, Txid};
 use liana_ui::widget::graph_view::Side;
 use lianad::commands::GraphItem;
 
-use crate::{app::state::map::coin_ui::TagId, daemon::model::LabelItem};
+use crate::{
+    app::{settings::WalletId, state::map::coin_ui::TagId},
+    daemon::model::LabelItem,
+};
 
 pub const HISTORY_LIMIT: usize = 100;
 
@@ -24,6 +27,12 @@ pub struct LayoutState {
 pub enum Change {
     /// Item, position before, position after.
     Move(Vec<(GraphItem, Point, Point)>),
+    /// Another wallet moved as a whole.
+    Offset {
+        wallet: WalletId,
+        before: Vector,
+        after: Vector,
+    },
     Reorder {
         tx: Txid,
         side: Side,
@@ -71,6 +80,15 @@ impl Change {
                     .map(|(item, before, after)| (item, after, before))
                     .collect(),
             ),
+            Change::Offset {
+                wallet,
+                before,
+                after,
+            } => Change::Offset {
+                wallet,
+                before: after,
+                after: before,
+            },
             Change::Reorder {
                 tx,
                 side,
@@ -235,6 +253,11 @@ mod tests {
         let moved = Change::Move(vec![(item, Point::new(0.0, 0.0), Point::new(5.0, 6.0))]);
         let changes = [
             moved.clone(),
+            Change::Offset {
+                wallet: WalletId::new("b".to_string(), None),
+                before: Vector::new(0.0, 120.0),
+                after: Vector::new(24.0, 240.0),
+            },
             Change::Reorder {
                 tx: fixture::foreign(1).txid,
                 side: Side::Output,

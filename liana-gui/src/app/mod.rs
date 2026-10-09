@@ -124,7 +124,7 @@ impl<S: SettingsTrait> Panels<S> {
                 cache.network,
             ),
             settings: settings_ui,
-            map: MapPanel::new(),
+            map: MapPanel::new(cache.network),
             map_return: Menu::Home,
         };
 

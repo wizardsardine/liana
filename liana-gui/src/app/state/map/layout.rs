@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
-use iced::{Point, Rectangle, Size};
+use iced::{Point, Rectangle, Size, Vector};
 use liana_ui::{
     component::panels::map::{BLOCK_WIDTH, LEAF_WIDTH, SLOT_HEIGHT, U},
     widget::graph_view::{geometry::snap_to_grid, ItemId, Shape},
 };
 
-use crate::app::state::map::graph::{LeafKind, MapItem, TxGraph};
+use crate::app::state::map::{
+    graph::{LeafKind, MapItem, TxGraph},
+    wallets::WalletKey,
+};
 
 const COLUMN_PITCH: f32 = 86.0 * U;
 const LEAF_OFFSET: f32 = 6.0 * U;
@@ -62,17 +65,24 @@ fn settle(graph: &TxGraph, occupied: &[(ItemId, Rectangle)], id: ItemId, mut at:
     at
 }
 
-/// Default positions of every item missing from `stored`. Stored items are
-/// fixed obstacles and are not returned.
-pub fn place(graph: &TxGraph, stored: &HashMap<ItemId, Point>) -> HashMap<ItemId, Point> {
+/// Default positions of the items of `wallet` missing from `stored`, in the wallet's own
+/// coordinates. Stored items are fixed obstacles and are not returned.
+pub fn place(
+    graph: &TxGraph,
+    wallet: &WalletKey,
+    stored: &HashMap<ItemId, Point>,
+) -> HashMap<ItemId, Point> {
     let mut occupied: Vec<(ItemId, Rectangle)> = stored
         .iter()
         .map(|(id, p)| (*id, Rectangle::new(*p, item_size(graph, *id))))
         .collect();
     let mut placed = HashMap::new();
-    let mut tx_positions: Vec<Point> = Vec::with_capacity(graph.txs().len());
+    let mut tx_positions: Vec<Option<Point>> = vec![None; graph.txs().len()];
 
     for tx in 0..graph.txs().len() {
+        if graph.txs()[tx].primary() != wallet {
+            continue;
+        }
         let id = graph.tx_item(tx);
         let position = match stored.get(&id) {
             Some(position) => *position,
@@ -80,19 +90,10 @@ pub fn place(graph: &TxGraph, stored: &HashMap<ItemId, Point>) -> HashMap<ItemId
                 let parent = graph
                     .parents(tx)
                     .iter()
-                    .copied()
-                    .filter(|p| *p < tx_positions.len())
-                    .max_by(|a, b| {
-                        tx_positions[*a]
-                            .x
-                            .total_cmp(&tx_positions[*b].x)
-                            .then(a.cmp(b))
-                    });
+                    .filter_map(|p| Some((*p, tx_positions[*p]?)))
+                    .max_by(|(a, pa), (b, pb)| pa.x.total_cmp(&pb.x).then(a.cmp(b)));
                 let wanted = match parent {
-                    Some(parent) => Point::new(
-                        tx_positions[parent].x + COLUMN_PITCH,
-                        tx_positions[parent].y,
-                    ),
+                    Some((_, parent)) => Point::new(parent.x + COLUMN_PITCH, parent.y),
                     None if occupied.is_empty() => Point::ORIGIN,
                     None => {
                         let bottom = occupied
@@ -108,7 +109,7 @@ pub fn place(graph: &TxGraph, stored: &HashMap<ItemId, Point>) -> HashMap<ItemId
                 position
             }
         };
-        tx_positions.push(position);
+        tx_positions[tx] = Some(position);
 
         for leaf in &graph.txs()[tx].leaves {
             let leaf_id = graph.leaf_item(*leaf);
@@ -129,8 +130,26 @@ pub fn place(graph: &TxGraph, stored: &HashMap<ItemId, Point>) -> HashMap<ItemId
     placed
 }
 
-pub fn reset(graph: &TxGraph) -> HashMap<ItemId, Point> {
-    place(graph, &HashMap::new())
+pub fn reset(graph: &TxGraph, wallet: &WalletKey) -> HashMap<ItemId, Point> {
+    place(graph, wallet, &HashMap::new())
+}
+
+fn bounds(graph: &TxGraph, positions: &HashMap<ItemId, Point>) -> Option<Rectangle> {
+    positions
+        .iter()
+        .map(|(id, p)| Rectangle::new(*p, item_size(graph, *id)))
+        .reduce(|a, b| a.union(&b))
+}
+
+/// Offset of a wallet whose `local` items land below everything `placed`, at the left edge.
+pub fn new_offset(
+    graph: &TxGraph,
+    placed: &HashMap<ItemId, Point>,
+    local: &HashMap<ItemId, Point>,
+) -> Vector {
+    let top = bounds(graph, placed).map_or(0.0, |r| r.y + r.height + UNLINKED_GAP);
+    let corner = bounds(graph, local).map_or(Point::ORIGIN, |r| r.position());
+    Point::new(0.0, top) - corner
 }
 
 /// Transactions the align buttons act on, in time order.
@@ -209,16 +228,17 @@ pub fn align_vertical(
 mod tests {
     use std::collections::HashMap;
 
-    use iced::{Point, Rectangle};
+    use iced::{Point, Rectangle, Vector};
     use liana_ui::widget::graph_view::ItemId;
 
     use crate::app::state::map::{
         fixture::{self, foreign, ours, Builder},
         graph::{LeafKind, TxGraph},
         layout::{
-            align_horizontal, align_targets, align_vertical, clearance, item_size, overlaps, place,
-            reset,
+            align_horizontal, align_targets, align_vertical, clearance, item_size, new_offset,
+            overlaps, place, reset,
         },
+        wallets::WalletKey,
     };
 
     fn rect(graph: &TxGraph, layout: &HashMap<ItemId, Point>, id: ItemId) -> Rectangle {
@@ -232,7 +252,7 @@ mod tests {
     #[test]
     fn default_positions_on_grid() {
         let graph = fixture::graph();
-        let layout = reset(&graph);
+        let layout = reset(&graph, &WalletKey::Current);
         for id in graph.item_ids() {
             let p = layout[&id];
             assert_eq!((p.x / 12.0).fract(), 0.0);
@@ -244,7 +264,7 @@ mod tests {
     #[test]
     fn default_layout_has_no_overlap() {
         let graph = fixture::graph();
-        let layout = reset(&graph);
+        let layout = reset(&graph, &WalletKey::Current);
         let ids: Vec<ItemId> = graph.item_ids().collect();
         for (i, a) in ids.iter().enumerate() {
             for b in &ids[i + 1..] {
@@ -262,14 +282,17 @@ mod tests {
         let f = fixture::sample_wallet();
         let graph = fixture::graph();
         let salary = graph.tx_index(&f.ids.salary).unwrap();
-        assert_eq!(tx_pos(&graph, &reset(&graph), salary), Point::ORIGIN);
+        assert_eq!(
+            tx_pos(&graph, &reset(&graph, &WalletKey::Current), salary),
+            Point::ORIGIN
+        );
     }
 
     #[test]
     fn unlinked_lands_bottom_left() {
         let f = fixture::sample_wallet();
         let graph = fixture::graph();
-        let layout = reset(&graph);
+        let layout = reset(&graph, &WalletKey::Current);
         for txid in [&f.ids.incoming_change, &f.ids.incoming_four] {
             let tx = graph.tx_index(txid).unwrap();
             let before = (0..tx)
@@ -292,7 +315,7 @@ mod tests {
     fn linked_lands_right_of_parent() {
         let f = fixture::sample_wallet();
         let graph = fixture::graph();
-        let layout = reset(&graph);
+        let layout = reset(&graph, &WalletKey::Current);
         let at = |txid| tx_pos(&graph, &layout, graph.tx_index(txid).unwrap());
         let salary = at(&f.ids.salary);
         let rent0 = at(&f.ids.rent[0]);
@@ -309,7 +332,7 @@ mod tests {
     fn leaves_next_to_their_slot() {
         let f = fixture::sample_wallet();
         let graph = fixture::graph();
-        let layout = reset(&graph);
+        let layout = reset(&graph, &WalletKey::Current);
         let batch = graph.tx_index(&f.ids.batch).unwrap();
         let block = tx_pos(&graph, &layout, batch);
         for leaf in &graph.txs()[batch].leaves {
@@ -334,12 +357,12 @@ mod tests {
     fn stored_positions_are_obstacles() {
         let f = fixture::sample_wallet();
         let graph = fixture::graph();
-        let default = reset(&graph);
+        let default = reset(&graph, &WalletKey::Current);
         let salary = graph.tx_item(graph.tx_index(&f.ids.salary).unwrap());
         let change = graph.tx_item(graph.tx_index(&f.ids.incoming_change).unwrap());
         let rent0 = graph.tx_item(graph.tx_index(&f.ids.rent[0]).unwrap());
         let stored = HashMap::from([(salary, default[&salary]), (change, default[&rent0])]);
-        let placed = place(&graph, &stored);
+        let placed = place(&graph, &WalletKey::Current, &stored);
         assert!(!placed.contains_key(&salary));
         assert!(!placed.contains_key(&change));
         let moved = Rectangle::new(placed[&rent0], item_size(&graph, rent0));
@@ -355,7 +378,7 @@ mod tests {
         let leaves = &graph.txs()[batch].leaves;
         let kept = graph.leaf_item(leaves[0]);
         let stored = HashMap::from([(kept, Point::new(-5000.0, -5000.0))]);
-        let placed = place(&graph, &stored);
+        let placed = place(&graph, &WalletKey::Current, &stored);
         assert!(!placed.contains_key(&kept));
         for leaf in &leaves[1..] {
             assert!(placed.contains_key(&graph.leaf_item(*leaf)));
@@ -384,7 +407,7 @@ mod tests {
     fn rent_chain() -> (TxGraph, HashMap<ItemId, Point>, Vec<usize>) {
         let f = fixture::sample_wallet();
         let graph = fixture::graph();
-        let layout = reset(&graph);
+        let layout = reset(&graph, &WalletKey::Current);
         let salary = graph.tx_index(&f.ids.salary).unwrap();
         let targets = align_targets(&graph, &[salary]).unwrap();
         (graph, layout, targets)
@@ -446,9 +469,52 @@ mod tests {
     }
 
     #[test]
+    fn place_only_the_wallet_items() {
+        let two = fixture::two_wallets("a", "b");
+        let graph = TxGraph::new(two.wallets);
+        let spend = graph.tx_item(graph.tx_index(&two.spend).unwrap());
+        let placed = reset(&graph, &two.b);
+        let mut ids: Vec<ItemId> = placed.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, graph.wallet_items(&two.b));
+        // Its parent belongs to the current wallet: placed as unlinked, at the origin.
+        assert_eq!(placed[&spend], Point::ORIGIN);
+    }
+
+    #[test]
+    fn new_offset_lands_below_at_the_left() {
+        let graph = fixture::graph();
+        let placed = reset(&graph, &WalletKey::Current);
+        let bottom = placed
+            .iter()
+            .map(|(id, p)| p.y + item_size(&graph, *id).height)
+            .fold(f32::MIN, f32::max);
+        let local = HashMap::from([
+            (graph.tx_item(0), Point::new(240.0, 60.0)),
+            (graph.tx_item(1), Point::new(1272.0, -36.0)),
+        ]);
+        let offset = new_offset(&graph, &placed, &local);
+        assert_eq!(offset, Vector::new(-240.0, bottom + 120.0 + 36.0));
+        assert_eq!(
+            Point::new(240.0, -36.0) + offset,
+            Point::new(0.0, bottom + 120.0)
+        );
+
+        let first = new_offset(&graph, &HashMap::new(), &local);
+        assert_eq!(first, Vector::new(-240.0, 36.0));
+        assert_eq!(new_offset(&graph, &placed, &HashMap::new()).x, 0.0);
+    }
+
+    #[test]
     fn reset_ignores_stored() {
         let graph = fixture::graph();
-        assert_eq!(reset(&graph), place(&graph, &HashMap::new()));
-        assert_eq!(reset(&graph), reset(&graph));
+        assert_eq!(
+            reset(&graph, &WalletKey::Current),
+            place(&graph, &WalletKey::Current, &HashMap::new())
+        );
+        assert_eq!(
+            reset(&graph, &WalletKey::Current),
+            reset(&graph, &WalletKey::Current)
+        );
     }
 }
