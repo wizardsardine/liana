@@ -3223,6 +3223,7 @@ dependencies = [
  "miniscript",
  "rdrand",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
