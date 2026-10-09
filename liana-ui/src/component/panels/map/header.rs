@@ -28,6 +28,7 @@ pub enum HeaderAction {
     ToggleUnspent,
     ToggleSnap,
     ToggleLanes,
+    ToggleGroupClusters,
     AlignHorizontal,
     AlignVertical,
     ZoomOut,
@@ -37,7 +38,8 @@ pub enum HeaderAction {
 
 /// Map toolbar. `enabled` is false while the map is empty or loading, `align_count` is the
 /// number of transactions the align buttons would move, `other_wallets` enables the other
-/// wallets button, `totals` counts the transactions, coins and unspent coins shown.
+/// wallets button, `totals` counts the transactions, coins and unspent coins shown. The group
+/// by cluster toggle only shows with the lanes off.
 #[allow(clippy::too_many_arguments)]
 pub fn map_header<'a, M: Clone + 'a>(
     zoom: f32,
@@ -48,6 +50,7 @@ pub fn map_header<'a, M: Clone + 'a>(
     unspent_on: bool,
     snap_on: bool,
     lanes_on: bool,
+    clusters_on: bool,
     unspent_count: usize,
     unspent_total: &Amount,
     align_count: usize,
@@ -70,7 +73,7 @@ pub fn map_header<'a, M: Clone + 'a>(
     let redo = button::btn_redo(msg(HeaderAction::Redo, enabled && can_redo));
     let shortcuts = button::btn_shortcuts(msg(HeaderAction::Shortcuts, true));
     let reset = button::btn_reset_layout(msg(HeaderAction::ResetLayout, enabled));
-    let tidy_up = button::btn_tidy_up(msg(HeaderAction::TidyUp, enabled && lanes_on));
+    let tidy_up = button::btn_tidy_up(msg(HeaderAction::TidyUp, enabled));
     let other_wallets = button::btn_other_wallets(msg(HeaderAction::OtherWallets, other_wallets));
 
     let area = button::btn_select_area(area_on, msg(HeaderAction::ToggleArea, enabled));
@@ -82,6 +85,9 @@ pub fn map_header<'a, M: Clone + 'a>(
     );
     let snap = button::btn_snap(snap_on, msg(HeaderAction::ToggleSnap, enabled));
     let lanes = button::btn_lanes(lanes_on, msg(HeaderAction::ToggleLanes, enabled));
+    let group_clusters = (!lanes_on).then(|| {
+        button::btn_group_clusters(clusters_on, msg(HeaderAction::ToggleGroupClusters, enabled))
+    });
 
     let align_h = button::btn_align_h(align_count, msg(HeaderAction::AlignHorizontal, can_align));
     let align_v = button::btn_align_v(align_count, msg(HeaderAction::AlignVertical, can_align));
@@ -122,6 +128,7 @@ pub fn map_header<'a, M: Clone + 'a>(
         unspent,
         snap,
         lanes,
+        group_clusters,
         sep(),
         align_h,
         align_v,

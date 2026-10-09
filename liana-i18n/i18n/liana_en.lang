@@ -95,6 +95,8 @@ btn-go-to-replacement => "Go to replacement"
 
 btn-go-to-rescan => "Go to rescan"
 
+btn-group-clusters-tooltip => "Group by cluster: Reset and Tidy up lay each group of linked transactions out alone"
+
 btn-highlight-unspent-tooltip
 => "{ $count ->\n    [one] Highlight unspent coins (U): 1 coin, {$amount} BTC\n   *[other] Highlight unspent coins (U): {$count} coins, {$amount} BTC\n}";;
 
@@ -198,7 +200,7 @@ btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
 
-btn-tidy-up-tooltip => "Tidy up: untangle the coin links of the lanes"
+btn-tidy-up-tooltip => "Tidy up: untangle the coin links"
 
 btn-undo-tooltip => "Undo ({$key}+Z)"
 

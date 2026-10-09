@@ -203,11 +203,12 @@ mod tests {
                     moved_offset, moved_positions, reorder_column, space_moves,
                 },
                 fixture::{self, foreign},
+                global,
                 graph::TxGraph,
                 history::{Change, History, PlacementKind},
                 lanes,
                 layout::{place, reset},
-                offsets::{reset_layout, Offsets},
+                offsets::Offsets,
                 wallets::WalletKey,
                 Orders,
             },
@@ -274,7 +275,7 @@ mod tests {
     #[test]
     fn undo_move_restores_positions() {
         let graph = fixture::graph();
-        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
+        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new(), &Orders::new());
         let mut orders = Orders::new();
         let mut offsets = Offsets::default();
         let id = graph.tx_item(0);
@@ -397,7 +398,7 @@ mod tests {
     #[test]
     fn undo_reset_restores_orders() {
         let graph = fixture::graph();
-        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
+        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new(), &Orders::new());
         let txid = graph.txs()[0].history().txid;
         let reordered = Some(vec![1, 0]);
         let mut orders = Orders::from([(txid, (None, reordered.clone()))]);
@@ -405,7 +406,7 @@ mod tests {
         let before = layout_state(&graph, &layout, &orders, &offsets);
         let after = layout_state(
             &graph,
-            &place(&graph, &WalletKey::Current, &HashMap::new()),
+            &place(&graph, &WalletKey::Current, &HashMap::new(), &Orders::new()),
             &Orders::new(),
             &offsets,
         );
@@ -445,21 +446,28 @@ mod tests {
         );
         let mut orders = Orders::new();
         let initial = layout.clone();
-        let placement = reset_layout(&graph, &[WalletKey::Current, two.b.clone()]);
+        let placement = global::place(
+            &graph,
+            &[WalletKey::Current, two.b.clone()],
+            &HashMap::new(),
+            &Orders::new(),
+            true,
+            true,
+        );
         let reset = Change::Layout {
             placement: PlacementKind::Global,
             before: layout_state(&graph, &layout, &orders, &offsets),
             after: layout_state(
                 &graph,
-                &placement.layout,
-                &Orders::new(),
+                &placement.positions,
+                &placement.orders,
                 &placement.offsets,
             ),
         };
 
         apply_layout_change(&graph, &mut layout, &mut orders, &mut offsets, &reset);
         assert_eq!(offsets, placement.offsets);
-        assert_eq!(layout, placement.layout);
+        assert_eq!(layout, placement.positions);
 
         apply_layout_change(
             &graph,
@@ -515,7 +523,7 @@ mod tests {
     #[test]
     fn apply_skips_items_not_on_the_map() {
         let graph = fixture::graph();
-        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
+        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new(), &Orders::new());
         let expected = layout.clone();
         let mut orders = Orders::new();
         let mut offsets = Offsets::default();
@@ -532,7 +540,7 @@ mod tests {
     #[test]
     fn apply_ignores_coin_and_label_changes() {
         let graph = fixture::graph();
-        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
+        let mut layout = place(&graph, &WalletKey::Current, &HashMap::new(), &Orders::new());
         let expected = layout.clone();
         let mut orders = Orders::new();
         let mut offsets = Offsets::default();

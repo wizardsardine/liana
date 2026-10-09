@@ -159,6 +159,7 @@ pub fn map_view<'a>(
         toggles.unspent,
         toggles.snap,
         toggles.lanes,
+        toggles.clusters,
         unspent.len(),
         &unspent_total,
         align_count,

@@ -27,7 +27,7 @@ pub struct Node {
 }
 
 impl Node {
-    fn height(&self) -> f32 {
+    pub fn height(&self) -> f32 {
         Shape::Block {
             inputs: self.inputs,
             outputs: self.outputs,
@@ -36,7 +36,7 @@ impl Node {
         .height
     }
 
-    fn left(&self) -> f32 {
+    pub fn left(&self) -> f32 {
         if self.input_leaves {
             self.x - LEAF_OFFSET - LEAF_WIDTH
         } else {
@@ -44,7 +44,7 @@ impl Node {
         }
     }
 
-    fn right(&self) -> f32 {
+    pub fn right(&self) -> f32 {
         let leaves = if self.output_leaves {
             LEAF_OFFSET + LEAF_WIDTH
         } else {
@@ -109,6 +109,24 @@ impl Layered {
             output_peers,
             node_links,
         }
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    pub fn links(&self) -> &[Link] {
+        &self.links
+    }
+
+    /// Peer of each input slot of `node`.
+    pub fn input_peers(&self, node: usize) -> &[Option<Slot>] {
+        &self.input_peers[node]
+    }
+
+    /// Peer of each output slot of `node`.
+    pub fn output_peers(&self, node: usize) -> &[Option<Slot>] {
+        &self.output_peers[node]
     }
 
     /// Nodes linked to `node`, either way.
@@ -182,7 +200,7 @@ impl Arrangement {
 }
 
 /// Display row of each slot: the inverse of a display order.
-fn display_rows(order: &[usize]) -> Vec<usize> {
+pub fn display_rows(order: &[usize]) -> Vec<usize> {
     let mut rows = vec![0; order.len()];
     for (row, index) in order.iter().enumerate() {
         rows[*index] = row;
@@ -191,7 +209,7 @@ fn display_rows(order: &[usize]) -> Vec<usize> {
 }
 
 /// Offset of the middle of the slot shown at `row` below the top of its block.
-fn slot_offset(row: usize) -> f32 {
+pub fn slot_offset(row: usize) -> f32 {
     row as f32 * SLOT_HEIGHT + SLOT_HEIGHT / 2.0
 }
 
@@ -662,7 +680,7 @@ fn row_height(layered: &Layered, row: &[usize]) -> f32 {
 }
 
 /// Top of each row of a lane, the first one at 0.
-fn row_tops(layered: &Layered, rows: &[Vec<usize>]) -> Vec<f32> {
+pub fn row_tops(layered: &Layered, rows: &[Vec<usize>]) -> Vec<f32> {
     let mut top = 0.0;
     rows.iter()
         .map(|row| {
@@ -674,7 +692,7 @@ fn row_tops(layered: &Layered, rows: &[Vec<usize>]) -> Vec<f32> {
 }
 
 /// Display order of a column: the linked slots by the height of their peer, then the others.
-fn linked_first(peers: &[Option<Slot>], peer_y: impl Fn(Slot) -> f32) -> Vec<usize> {
+pub fn linked_first(peers: &[Option<Slot>], peer_y: impl Fn(Slot) -> f32) -> Vec<usize> {
     let mut linked: Vec<(usize, f32)> = peers
         .iter()
         .enumerate()
@@ -738,7 +756,7 @@ pub fn untangle(layered: &Layered, start: &Arrangement) -> Arrangement {
 
 /// Groups of nodes linked to each other within their lane, the largest first, then the one
 /// with the oldest node, each in time order.
-fn clusters(layered: &Layered) -> Vec<Vec<usize>> {
+pub fn clusters(layered: &Layered) -> Vec<Vec<usize>> {
     let mut seen = vec![false; layered.nodes.len()];
     let mut found = Vec::new();
     for first in 0..layered.nodes.len() {
@@ -816,15 +834,15 @@ impl ChainEnd {
 /// nodes left with a node linked to a placed one, on the nearest free row above or below that
 /// placed node, the sides taken in turn.
 #[derive(Debug, Clone, PartialEq)]
-struct Spine {
+pub struct Spine {
     /// Rows, top to bottom.
-    rows: Vec<Vec<usize>>,
+    pub rows: Vec<Vec<usize>>,
     /// Chains in the order they were placed, the longest first.
-    chains: Vec<Vec<usize>>,
+    pub chains: Vec<Vec<usize>>,
 }
 
 impl Spine {
-    fn new(layered: &Layered, cluster: &[usize]) -> Self {
+    pub fn new(layered: &Layered, cluster: &[usize]) -> Self {
         let order = parents_first(layered, cluster);
         let mut row_of: HashMap<usize, i64> = HashMap::new();
         let mut rows: BTreeMap<i64, Vec<usize>> = BTreeMap::new();
@@ -994,7 +1012,8 @@ mod tests {
     use liana_ui::component::panels::map::U;
 
     use crate::app::state::map::{
-        layout::{BLOCK_CLEARANCE, CROSS_STEP, LANE_PITCH},
+        global::{part, untangle_clusters, untangle_global},
+        layout::{BLOCK_CLEARANCE, COLUMN_PITCH, CROSS_STEP, LANE_PITCH, UNLINKED_GAP},
         topology::{TopoInput, TopoOutput, Topology},
         untangle::{
             clusters, crossings, spine_rows, untangle, Arrangement, Crossings, Layered, Link, Node,
@@ -1212,6 +1231,50 @@ mod tests {
         );
     }
 
+    #[test]
+    fn global_placement_puts_children_right_of_their_parents() {
+        for seed in 0..20 {
+            let (layered, _) = tangle(seed, 3, 40);
+            let (placed, arrangement) = untangle_global(&layered, &packed(&layered), true);
+            for link in &placed.links {
+                assert!(placed.nodes[link.to.node].x > placed.nodes[link.from.node].x);
+            }
+            assert_no_overlap(&placed, &arrangement);
+            let (again, again_arrangement) = untangle_global(&layered, &packed(&layered), true);
+            assert_eq!(placed.nodes, again.nodes, "seed {seed}");
+            assert_eq!(arrangement, again_arrangement, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn global_placement_cuts_the_crossings_of_the_legacy_one() {
+        for (seed, lanes) in (0..20).flat_map(|seed| [(seed, 1), (seed, 3)]) {
+            let (layered, _) = tangle(seed, lanes, 40);
+            let (placed, arrangement) = stacked(&layered, legacy);
+            let before = crossings(&placed, &arrangement).total();
+            let (placed, arrangement) = untangle_global(&layered, &packed(&layered), true);
+            let after = crossings(&placed, &arrangement).total();
+            assert!(
+                after * 2 <= before,
+                "seed {}: {} then {}",
+                seed,
+                before,
+                after
+            );
+        }
+    }
+
+    #[test]
+    fn tidying_the_global_placement_never_adds_crossings() {
+        for seed in 0..20 {
+            let (layered, _) = tangle(seed, 3, 40);
+            let (placed, arrangement) = untangle_global(&layered, &packed(&layered), true);
+            let before = crossings(&placed, &arrangement).total();
+            let (placed, tidy) = untangle_global(&layered, &arrangement, true);
+            assert!(crossings(&placed, &tidy).total() <= before, "seed {}", seed);
+        }
+    }
+
     /// A chain 0 to 3, the chain 4 and 5 spending the second output of 0 and 6 spending the
     /// second output of 1, in one lane.
     fn spined() -> (Layered, Arrangement) {
@@ -1316,8 +1379,113 @@ mod tests {
         laid_out(topology.wallets, nodes, links)
     }
 
-    /// Prints the crossings of the topology exported at `MAP_TOPOLOGY`, laid out by default
-    /// then untangled.
+    /// The nodes of `wallet` laid out alone and their tops, by `place`.
+    fn wallet_part(
+        layered: &Layered,
+        wallet: usize,
+        place: impl Fn(&Layered) -> (Layered, Arrangement),
+    ) -> (Vec<usize>, Layered, Arrangement) {
+        let ids: Vec<usize> = (0..layered.nodes.len())
+            .filter(|n| layered.nodes[*n].lane == wallet)
+            .collect();
+        let (part, _) = part(layered, &packed(layered), &ids);
+        let (placed, arrangement) = place(&part);
+        (ids, placed, arrangement)
+    }
+
+    /// The wallets of `layered` laid out alone by `place` and stacked in their order, each one
+    /// `UNLINKED_GAP` below the one before, its left edge at 0, with every link.
+    fn stacked(
+        layered: &Layered,
+        place: impl Fn(&Layered) -> (Layered, Arrangement),
+    ) -> (Layered, Arrangement) {
+        let mut nodes = layered.nodes.clone();
+        let mut tops = vec![0.0; nodes.len()];
+        let mut bottom: Option<f32> = None;
+        for wallet in 0..layered.lanes {
+            let (ids, placed, arrangement) = wallet_part(layered, wallet, &place);
+            let left = placed.nodes.iter().map(Node::left).fold(f32::MAX, f32::min);
+            let top = bottom.map_or(0.0, |bottom| bottom + UNLINKED_GAP);
+            for (k, id) in ids.iter().enumerate() {
+                nodes[*id] = Node {
+                    lane: 0,
+                    x: placed.nodes[k].x - left,
+                    ..placed.nodes[k].clone()
+                };
+                tops[*id] = top + arrangement.tops[k];
+                bottom = Some(bottom.unwrap_or(0.0).max(tops[*id] + nodes[*id].height()));
+            }
+        }
+        let arrangement = Arrangement {
+            tops,
+            inputs: nodes.iter().map(|n| (0..n.inputs).collect()).collect(),
+            outputs: nodes.iter().map(|n| (0..n.outputs).collect()).collect(),
+        };
+        (Layered::new(1, nodes, layered.links.clone()), arrangement)
+    }
+
+    /// The global placement before untangling, the leaves of a node taken as part of its
+    /// block: a linked node `COLUMN_PITCH` right of its right-most parent on its row, an
+    /// unlinked one at the left below everything, shifted down until it clashes with nothing.
+    fn legacy(layered: &Layered) -> (Layered, Arrangement) {
+        let mut nodes = layered.nodes.clone();
+        let mut tops: Vec<f32> = Vec::new();
+        for index in 0..nodes.len() {
+            let parent = layered
+                .links
+                .iter()
+                .filter(|l| l.to.node == index)
+                .map(|l| l.from.node)
+                .max_by(|a, b| nodes[*a].x.total_cmp(&nodes[*b].x).then(a.cmp(b)));
+            let (x, mut top) = match parent {
+                Some(parent) => (nodes[parent].x + COLUMN_PITCH, tops[parent]),
+                None if index == 0 => (0.0, 0.0),
+                None => {
+                    let bottom = (0..index)
+                        .map(|n| tops[n] + nodes[n].height())
+                        .fold(f32::MIN, f32::max);
+                    (0.0, bottom + UNLINKED_GAP)
+                }
+            };
+            nodes[index].x = x;
+            let clashes = |top: f32| {
+                (0..index).any(|n| {
+                    nodes[n].clashes(&nodes[index])
+                        && top < tops[n] + nodes[n].height() + BLOCK_CLEARANCE
+                        && tops[n] < top + nodes[index].height() + BLOCK_CLEARANCE
+                })
+            };
+            while clashes(top) {
+                top += U;
+            }
+            tops.push(top);
+        }
+        let arrangement = Arrangement {
+            tops,
+            inputs: nodes.iter().map(|n| (0..n.inputs).collect()).collect(),
+            outputs: nodes.iter().map(|n| (0..n.outputs).collect()).collect(),
+        };
+        (Layered::new(1, nodes, layered.links.clone()), arrangement)
+    }
+
+    /// Width and height of a placement in one lane, leaves included.
+    fn extent(layered: &Layered, arrangement: &Arrangement) -> (f32, f32) {
+        let fold = |f: &dyn Fn(usize) -> f32, min: bool| {
+            (0..layered.nodes.len()).map(f).fold(
+                if min { f32::MAX } else { f32::MIN },
+                if min { f32::min } else { f32::max },
+            )
+        };
+        let left = fold(&|n| layered.nodes[n].left(), true);
+        let right = fold(&|n| layered.nodes[n].right(), false);
+        let top = fold(&|n| arrangement.tops[n], true);
+        let bottom = fold(&|n| arrangement.tops[n] + layered.nodes[n].height(), false);
+        (right - left, bottom - top)
+    }
+
+    /// Prints the crossings of the topology exported at `MAP_TOPOLOGY`: the lanes laid out by
+    /// default then untangled, the global placement before untangling and untangled, mixed and
+    /// by cluster, and the clusters with the longest chain of the largest one.
     #[test]
     #[ignore]
     fn untangle_exported_topology() {
@@ -1325,24 +1493,71 @@ mod tests {
         let json = std::fs::read_to_string(path).expect("readable topology");
         let topology: Topology = serde_json::from_str(&json).expect("topology json");
         let (layered, start) = from_topology(&topology);
-        let before = crossings(&layered, &start);
+        println!("{} txs, {} links", layered.nodes.len(), layered.links.len());
+        let report = |name: &str, layered: &Layered, arrangement: &Arrangement, elapsed| {
+            let found = crossings(layered, arrangement);
+            let (width, height) = extent(layered, arrangement);
+            println!(
+                "{name}: {found:?} total {} width {width} height {height} in {elapsed:?}",
+                found.total()
+            );
+        };
         let started = Instant::now();
         let untangled = untangle(&layered, &start);
         let elapsed = started.elapsed();
-        let after = crossings(&layered, &untangled);
-        let height = |a: &Arrangement| a.lane_heights(&layered).iter().sum::<f32>();
-        println!(
-            "{} txs, {} links: default {:?} total {} height {}, untangled {:?} total {} height {} in {:?}",
-            layered.nodes.len(),
-            layered.links.len(),
-            before,
-            before.total(),
-            height(&start),
-            after,
-            after.total(),
-            height(&untangled),
-            elapsed
-        );
+        for (name, arrangement) in [("lanes default", &start), ("lanes untangled", &untangled)] {
+            let found = crossings(&layered, arrangement);
+            println!(
+                "{name}: {found:?} total {} width {} height {}",
+                found.total(),
+                extent(&layered, arrangement).0,
+                arrangement.lane_heights(&layered).iter().sum::<f32>()
+            );
+        }
+        println!("lanes untangled in {elapsed:?}");
         assert_no_overlap(&layered, &untangled);
+
+        let started = Instant::now();
+        let (placed, arrangement) = stacked(&layered, legacy);
+        report("global legacy", &placed, &arrangement, started.elapsed());
+
+        let started = Instant::now();
+        let (placed, arrangement) = untangle_global(&layered, &packed(&layered), true);
+        report("global mixed", &placed, &arrangement, started.elapsed());
+        assert_no_overlap(&placed, &arrangement);
+
+        let started = Instant::now();
+        let (placed, arrangement) = untangle_clusters(&layered, &packed(&layered), true);
+        report("global clusters", &placed, &arrangement, started.elapsed());
+        assert_no_overlap(&placed, &arrangement);
+        let found = clusters(&placed);
+        let lane_clusters = clusters(&layered);
+        println!(
+            "{} clusters, the largest {} txs on a chain of {}; {} lane clusters, the largest {} \
+             txs on a chain of {}",
+            found.len(),
+            found[0].len(),
+            Spine::new(&placed, &found[0]).chains[0].len(),
+            lane_clusters.len(),
+            lane_clusters[0].len(),
+            Spine::new(&layered, &lane_clusters[0]).chains[0].len(),
+        );
+    }
+
+    /// Every node at the top, the slots in their true order.
+    fn packed(layered: &Layered) -> Arrangement {
+        Arrangement {
+            tops: vec![0.0; layered.nodes.len()],
+            inputs: layered
+                .nodes
+                .iter()
+                .map(|n| (0..n.inputs).collect())
+                .collect(),
+            outputs: layered
+                .nodes
+                .iter()
+                .map(|n| (0..n.outputs).collect())
+                .collect(),
+        }
     }
 }

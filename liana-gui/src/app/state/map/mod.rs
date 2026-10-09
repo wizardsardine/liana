@@ -5,6 +5,7 @@ pub mod external;
 #[cfg(test)]
 pub mod fixture;
 pub mod focus;
+pub mod global;
 pub mod graph;
 pub mod history;
 pub mod import;
@@ -131,6 +132,8 @@ pub struct Toggles {
     pub unspent: bool,
     pub snap: bool,
     pub lanes: bool,
+    /// With the lanes off, Reset and Tidy up lay each cluster of linked transactions out alone.
+    pub clusters: bool,
 }
 
 impl Default for Toggles {
@@ -140,6 +143,7 @@ impl Default for Toggles {
             unspent: false,
             snap: false,
             lanes: true,
+            clusters: false,
         }
     }
 }
@@ -574,43 +578,52 @@ impl MapPanel {
         self.save_layout(daemon, touched, HashMap::new())
     }
 
-    /// Records a reset of the positions of `placement` and of the slot orders, applies it and
-    /// persists it.
-    fn commit_reset(
+    /// Records a reset of the lanes and of the slot orders, applies it and persists it.
+    fn commit_lanes_reset(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let reset = lanes::reset(graph, &lanes::displayed(&self.lanes));
+        self.lane_heights.extend(reset.heights);
+        self.resized_heights.clear();
+        let none = Offsets::default();
+        let change = Change::Layout {
+            placement: PlacementKind::Lanes,
+            before: edit::layout_state(graph, &self.lane_layout, &self.orders, &none),
+            after: edit::layout_state(graph, &reset.positions, &reset.orders, &none),
+        };
+        let rows = self.save_rows(daemon.clone());
+        Task::batch([self.commit_layout(daemon, change), rows])
+    }
+
+    /// Places the displayed wallets by structure, mixed or by cluster as toggled, as one change
+    /// of the positions, slot orders and offsets with the lanes off. The transactions start at
+    /// their height at `start`, the slots ordered again from `orders`.
+    fn commit_global(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        placement: PlacementKind,
+        start: &HashMap<ItemId, Point>,
+        orders: &Orders,
     ) -> Task<Message> {
         let Some(graph) = &self.graph else {
             return Task::none();
         };
         let displayed = lanes::displayed(&self.lanes);
-        let (before, after) = match placement {
-            PlacementKind::Global => {
-                let reset = offsets::reset_layout(graph, &displayed);
-                (
-                    edit::layout_state(graph, &self.layout, &self.orders, &self.offsets),
-                    edit::layout_state(graph, &reset.layout, &Orders::new(), &reset.offsets),
-                )
-            }
-            PlacementKind::Lanes => {
-                let reset = lanes::reset(graph, &displayed);
-                self.lane_heights.extend(reset.heights);
-                self.resized_heights.clear();
-                let none = Offsets::default();
-                (
-                    edit::layout_state(graph, &self.lane_layout, &self.orders, &none),
-                    edit::layout_state(graph, &reset.positions, &reset.orders, &none),
-                )
-            }
-        };
+        let placed = global::place(
+            graph,
+            &displayed,
+            start,
+            orders,
+            self.toggles.clusters,
+            true,
+        );
         let change = Change::Layout {
-            placement,
-            before,
-            after,
+            placement: PlacementKind::Global,
+            before: edit::layout_state(graph, &self.layout, &self.orders, &self.offsets),
+            after: edit::layout_state(graph, &placed.positions, &placed.orders, &placed.offsets),
         };
-        let rows = self.save_rows(daemon.clone());
-        Task::batch([self.commit_layout(daemon, change), rows])
+        let layout = self.commit_layout(daemon.clone(), change);
+        Task::batch([layout, self.save_rows(daemon)])
     }
 
     /// Untangles the lanes from their current positions and slot orders as one change.
@@ -1734,6 +1747,9 @@ impl State for MapPanel {
                 MapMessage::Header(HeaderAction::ToggleLanes) => {
                     self.toggles.lanes = !self.toggles.lanes;
                 }
+                MapMessage::Header(HeaderAction::ToggleGroupClusters) if !self.toggles.lanes => {
+                    self.toggles.clusters = !self.toggles.clusters;
+                }
                 MapMessage::Header(HeaderAction::Undo) | MapMessage::Key(MapKey::Undo)
                     if self.reorder.is_none() =>
                 {
@@ -1869,11 +1885,22 @@ impl State for MapPanel {
                         .collect();
                     return self.commit_move(daemon, placement, moves);
                 }
-                MapMessage::Header(HeaderAction::TidyUp) if self.toggles.lanes => {
-                    return self.commit_tidy_up(daemon);
+                MapMessage::Header(HeaderAction::TidyUp) => {
+                    return match self.placement() {
+                        PlacementKind::Lanes => self.commit_tidy_up(daemon),
+                        PlacementKind::Global => {
+                            let (start, orders) = (self.layout.clone(), self.orders.clone());
+                            self.commit_global(daemon, &start, &orders)
+                        }
+                    };
                 }
                 MapMessage::Header(HeaderAction::ResetLayout) => {
-                    let reset = self.commit_reset(daemon, self.placement());
+                    let reset = match self.placement() {
+                        PlacementKind::Lanes => self.commit_lanes_reset(daemon),
+                        PlacementKind::Global => {
+                            self.commit_global(daemon, &HashMap::new(), &Orders::new())
+                        }
+                    };
                     return Task::batch([reset, graph_view::fit(self.graph_id.clone())]);
                 }
                 MapMessage::Graph(event) => match event {
@@ -2130,12 +2157,12 @@ mod tests {
                     display_row, escape_action,
                     fixture::{self, TwoWallets},
                     focus::ShowOnMap,
-                    key_action, lanes,
+                    global, key_action, lanes,
                     lanes::Band,
                     offsets::{self, WalletLayout},
                     split_stored,
                     wallets::WalletKey,
-                    EscapeAction, LabelTarget, MapModal, MapPanel, MapWallet,
+                    EscapeAction, LabelTarget, MapModal, MapPanel, MapWallet, Orders,
                 },
                 State,
             },
@@ -2787,8 +2814,15 @@ mod tests {
         send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
         send(&mut panel, MapMessage::Header(HeaderAction::ResetLayout));
         let graph = panel.graph.as_ref().unwrap();
-        let global_reset = offsets::reset_layout(graph, &wallets);
-        assert_eq!(panel.layout, global_reset.layout);
+        let global_reset = global::place(
+            graph,
+            &wallets,
+            &HashMap::new(),
+            &Orders::new(),
+            false,
+            true,
+        );
+        assert_eq!(panel.layout, global_reset.positions);
         assert_eq!(panel.offsets, global_reset.offsets);
         assert_eq!(panel.lane_layout, lane_reset);
 
@@ -2817,13 +2851,85 @@ mod tests {
         assert_eq!(panel.lane_layout, dragged);
         send(&mut panel, MapMessage::Header(HeaderAction::Redo));
         assert_eq!(panel.lane_layout, tidy);
+    }
 
-        // With the lanes off it does nothing yet.
+    #[test]
+    fn tidy_up_with_the_lanes_off_is_one_global_change() {
+        let (two, mut panel) = two_wallet_panel();
+        let wallets = [WalletKey::Current, two.b.clone()];
+        let payment = item(&panel, &two.payment);
         send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
-        drag(&mut panel, vec![payment], Vector::new(0.0, 360.0));
-        let (global, lane) = (panel.layout.clone(), panel.lane_layout.clone());
+        drag(&mut panel, vec![payment], Vector::new(48.0, 360.0));
+        let (dragged, offsets, lane) = (
+            panel.layout.clone(),
+            panel.offsets.clone(),
+            panel.lane_layout.clone(),
+        );
+
         send(&mut panel, MapMessage::Header(HeaderAction::TidyUp));
-        assert_eq!(panel.layout, global);
+        let graph = panel.graph.as_ref().unwrap();
+        let tidy = global::place(graph, &wallets, &dragged, &Orders::new(), false, true);
+        assert_eq!(panel.layout, tidy.positions);
+        assert_eq!(panel.offsets, tidy.offsets);
+        // The payment lines its input up with the funding output again, one column right: no
+        // leaf between them, only the clearance.
+        assert_eq!(panel.layout[&payment], Point::new(720.0, 0.0));
         assert_eq!(panel.lane_layout, lane);
+
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.layout, dragged);
+        assert_eq!(panel.offsets, offsets);
+        send(&mut panel, MapMessage::Header(HeaderAction::Redo));
+        assert_eq!(panel.layout, tidy.positions);
+    }
+
+    #[test]
+    fn group_by_cluster_toggles_only_with_the_lanes_off() {
+        let (_, mut panel) = two_wallet_panel();
+        let toggle = MapMessage::Header(HeaderAction::ToggleGroupClusters);
+        send(&mut panel, toggle.clone());
+        assert!(!panel.toggles.clusters);
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        send(&mut panel, toggle.clone());
+        assert!(panel.toggles.clusters);
+        assert!(!panel.history.can_undo());
+        send(&mut panel, toggle);
+        assert!(!panel.toggles.clusters);
+    }
+
+    #[test]
+    fn reset_and_tidy_up_by_cluster_are_one_change_each() {
+        let (two, mut panel) = two_wallet_panel();
+        let wallets = [WalletKey::Current, two.b.clone()];
+        let payment = item(&panel, &two.payment);
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        send(
+            &mut panel,
+            MapMessage::Header(HeaderAction::ToggleGroupClusters),
+        );
+        drag(&mut panel, vec![payment], Vector::new(48.0, 360.0));
+        let (dragged, offsets) = (panel.layout.clone(), panel.offsets.clone());
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ResetLayout));
+        let graph = panel.graph.as_ref().unwrap();
+        let reset = global::place(graph, &wallets, &HashMap::new(), &Orders::new(), true, true);
+        assert_eq!(panel.layout, reset.positions);
+        assert_eq!(panel.offsets, reset.offsets);
+        assert_eq!(panel.offsets.get(&two.b), Some(Vector::ZERO));
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.layout, dragged);
+        assert_eq!(panel.offsets, offsets);
+
+        send(&mut panel, MapMessage::Header(HeaderAction::TidyUp));
+        let graph = panel.graph.as_ref().unwrap();
+        let tidy = global::place(graph, &wallets, &dragged, &Orders::new(), true, true);
+        assert_eq!(panel.layout, tidy.positions);
+        assert_eq!(panel.offsets, tidy.offsets);
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.layout, dragged);
+        assert_eq!(panel.offsets, offsets);
+        send(&mut panel, MapMessage::Header(HeaderAction::Redo));
+        assert_eq!(panel.layout, tidy.positions);
     }
 }

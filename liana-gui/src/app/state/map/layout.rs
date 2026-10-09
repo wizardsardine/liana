@@ -7,16 +7,18 @@ use liana_ui::{
 };
 
 use crate::app::state::map::{
+    display_row,
     graph::{LeafKind, MapItem, TxGraph},
     wallets::WalletKey,
+    Orders,
 };
 
 /// Horizontal distance from a parent to a linked transaction with the lanes off.
-const COLUMN_PITCH: f32 = 86.0 * U;
+pub const COLUMN_PITCH: f32 = 86.0 * U;
 pub const LEAF_OFFSET: f32 = 6.0 * U;
 pub const BLOCK_CLEARANCE: f32 = 2.0 * U;
 const LEAF_CLEARANCE: f32 = U;
-const UNLINKED_GAP: f32 = 10.0 * U;
+pub const UNLINKED_GAP: f32 = 10.0 * U;
 /// Least horizontal distance between two transactions of a wallet: a block, its output leaves
 /// and the counterparty coin leaves of the next block fit in between.
 pub const LANE_PITCH: f32 = 2.0 * BLOCK_WIDTH;
@@ -42,7 +44,7 @@ pub fn item_size(graph: &TxGraph, id: ItemId) -> Size {
 }
 
 /// Blocks keep a wider margin; a block next to a leaf uses it too.
-fn clearance(graph: &TxGraph, a: ItemId, b: ItemId) -> f32 {
+pub fn clearance(graph: &TxGraph, a: ItemId, b: ItemId) -> f32 {
     let is_block = |id| matches!(graph.item(id), Some(MapItem::Tx(_)));
     if is_block(a) || is_block(b) {
         BLOCK_CLEARANCE
@@ -74,7 +76,7 @@ fn tx_extent(graph: &TxGraph, tx: usize) -> f32 {
         .fold(item_size(graph, graph.tx_item(tx)).height, f32::max)
 }
 
-fn overlaps(a: Rectangle, b: Rectangle, clearance: f32) -> bool {
+pub fn overlaps(a: Rectangle, b: Rectangle, clearance: f32) -> bool {
     a.x < b.x + b.width + clearance
         && b.x < a.x + a.width + clearance
         && a.y < b.y + b.height + clearance
@@ -159,11 +161,13 @@ fn default_columns(graph: &TxGraph) -> Vec<f32> {
 
 /// Default positions of the items of `wallet` missing from `stored`, each transaction at
 /// `wanted(tx, occupied, placed transactions)` shifted down clear of everything occupied and
-/// its leaves next to its slots. Stored items are fixed obstacles and are not returned.
+/// its leaves next to their slots shown in `orders`. Stored items are fixed obstacles and are
+/// not returned.
 fn place_items(
     graph: &TxGraph,
     wallet: &WalletKey,
     stored: &HashMap<ItemId, Point>,
+    orders: &Orders,
     mut wanted: impl FnMut(usize, &[(ItemId, Rectangle)], &[Option<Point>]) -> Point,
 ) -> HashMap<ItemId, Point> {
     let mut occupied: Vec<(ItemId, Rectangle)> = stored
@@ -196,7 +200,16 @@ fn place_items(
                 continue;
             }
             let leaf = &graph.leaves()[*leaf];
-            let at = leaf_position(leaf.kind, position, leaf.index);
+            let (inputs, outputs) = orders
+                .get(&graph.txs()[tx].history().txid)
+                .cloned()
+                .unwrap_or_default();
+            let column = match leaf.kind {
+                LeafKind::CounterpartyCoin => inputs,
+                LeafKind::Payment | LeafKind::CounterpartyOutput => outputs,
+            };
+            let row = display_row(column.as_deref(), leaf.index);
+            let at = leaf_position(leaf.kind, position, row);
             let at = settle(graph, &occupied, leaf_id, at);
             occupied.push((leaf_id, Rectangle::new(at, item_size(graph, leaf_id))));
             placed.insert(leaf_id, at);
@@ -212,29 +225,36 @@ pub fn place(
     graph: &TxGraph,
     wallet: &WalletKey,
     stored: &HashMap<ItemId, Point>,
+    orders: &Orders,
 ) -> HashMap<ItemId, Point> {
-    place_items(graph, wallet, stored, |tx, occupied, tx_positions| {
-        let parent = graph
-            .parents(tx)
-            .iter()
-            .filter_map(|p| Some((*p, tx_positions[*p]?)))
-            .max_by(|(a, pa), (b, pb)| pa.x.total_cmp(&pb.x).then(a.cmp(b)));
-        match parent {
-            Some((_, parent)) => Point::new(parent.x + COLUMN_PITCH, parent.y),
-            None if occupied.is_empty() => Point::ORIGIN,
-            None => {
-                let bottom = occupied
-                    .iter()
-                    .map(|(_, r)| r.y + r.height)
-                    .fold(f32::MIN, f32::max);
-                Point::new(0.0, bottom + UNLINKED_GAP)
+    place_items(
+        graph,
+        wallet,
+        stored,
+        orders,
+        |tx, occupied, tx_positions| {
+            let parent = graph
+                .parents(tx)
+                .iter()
+                .filter_map(|p| Some((*p, tx_positions[*p]?)))
+                .max_by(|(a, pa), (b, pb)| pa.x.total_cmp(&pb.x).then(a.cmp(b)));
+            match parent {
+                Some((_, parent)) => Point::new(parent.x + COLUMN_PITCH, parent.y),
+                None if occupied.is_empty() => Point::ORIGIN,
+                None => {
+                    let bottom = occupied
+                        .iter()
+                        .map(|(_, r)| r.y + r.height)
+                        .fold(f32::MIN, f32::max);
+                    Point::new(0.0, bottom + UNLINKED_GAP)
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 pub fn reset(graph: &TxGraph, wallet: &WalletKey) -> HashMap<ItemId, Point> {
-    place(graph, wallet, &HashMap::new())
+    place(graph, wallet, &HashMap::new(), &Orders::new())
 }
 
 /// Rows of the lane of a wallet, its top at 0. A transaction without a funding parent in the
@@ -288,13 +308,14 @@ pub fn place_lane(
     wallet: &WalletKey,
     stored: &HashMap<ItemId, Point>,
     seen: &HashMap<ItemId, Point>,
+    orders: &Orders,
 ) -> HashMap<ItemId, Point> {
     let defaults = stored.is_empty().then(|| default_columns(graph));
     let rows = LaneRows::new(graph, wallet);
     let mut columns = Columns::default();
     columns.walked(graph, seen);
     columns.walked(graph, stored);
-    place_items(graph, wallet, stored, |tx, _, _| {
+    place_items(graph, wallet, stored, orders, |tx, _, _| {
         let x = match &defaults {
             Some(defaults) => defaults[tx],
             None => columns.next(graph, tx),
@@ -304,7 +325,13 @@ pub fn place_lane(
 }
 
 pub fn reset_lane(graph: &TxGraph, wallet: &WalletKey) -> HashMap<ItemId, Point> {
-    place_lane(graph, wallet, &HashMap::new(), &HashMap::new())
+    place_lane(
+        graph,
+        wallet,
+        &HashMap::new(),
+        &HashMap::new(),
+        &Orders::new(),
+    )
 }
 
 pub fn bounds<'a>(
@@ -425,6 +452,7 @@ mod tests {
                 new_offset, overlaps, place, place_lane, reset, reset_lane,
             },
             wallets::WalletKey,
+            Orders,
         },
     };
 
@@ -549,7 +577,7 @@ mod tests {
         let change = graph.tx_item(graph.tx_index(&f.ids.incoming_change).unwrap());
         let rent0 = graph.tx_item(graph.tx_index(&f.ids.rent[0]).unwrap());
         let stored = HashMap::from([(salary, default[&salary]), (change, default[&rent0])]);
-        let placed = place(&graph, &WalletKey::Current, &stored);
+        let placed = place(&graph, &WalletKey::Current, &stored, &Orders::new());
         assert!(!placed.contains_key(&salary));
         assert!(!placed.contains_key(&change));
         let moved = Rectangle::new(placed[&rent0], item_size(&graph, rent0));
@@ -565,7 +593,7 @@ mod tests {
         let leaves = &graph.txs()[batch].leaves;
         let kept = graph.leaf_item(leaves[0]);
         let stored = HashMap::from([(kept, Point::new(-5000.0, -5000.0))]);
-        let placed = place(&graph, &WalletKey::Current, &stored);
+        let placed = place(&graph, &WalletKey::Current, &stored, &Orders::new());
         assert!(!placed.contains_key(&kept));
         for leaf in &leaves[1..] {
             assert!(placed.contains_key(&graph.leaf_item(*leaf)));
@@ -650,7 +678,13 @@ mod tests {
             .into_iter()
             .filter(|(id, _)| ![Some(small), Some(merge)].contains(&graph.tx_of(*id)))
             .collect();
-        let placed = place_lane(&graph, &WalletKey::Current, &stored, &HashMap::new());
+        let placed = place_lane(
+            &graph,
+            &WalletKey::Current,
+            &stored,
+            &HashMap::new(),
+            &Orders::new(),
+        );
         assert_eq!(tx_pos(&graph, &placed, small), Point::new(4176.0, 0.0));
         assert_eq!(tx_pos(&graph, &placed, merge), Point::new(5568.0, 396.0));
         for txid in [root, child] {
@@ -750,9 +784,15 @@ mod tests {
         let (graph, b, [a1, b1, a2, _]) = interleaved();
         let stored = HashMap::from([(graph.tx_item(a1), Point::ORIGIN)]);
         let seen = HashMap::from([(graph.tx_item(b1), Point::new(3000.0, 400.0))]);
-        let placed = place_lane(&graph, &WalletKey::Current, &stored, &seen);
+        let placed = place_lane(&graph, &WalletKey::Current, &stored, &seen, &Orders::new());
         assert_eq!(tx_pos(&graph, &placed, a2), Point::new(3168.0, 0.0));
-        let alone = place_lane(&graph, &WalletKey::Current, &stored, &HashMap::new());
+        let alone = place_lane(
+            &graph,
+            &WalletKey::Current,
+            &stored,
+            &HashMap::new(),
+            &Orders::new(),
+        );
         assert_eq!(tx_pos(&graph, &alone, a2), Point::new(1392.0, 0.0));
         assert!(!placed.contains_key(&graph.tx_item(a1)));
         assert!(placed.keys().all(|id| graph.item_wallet(*id) != Some(&b)));
@@ -780,7 +820,13 @@ mod tests {
             unconfirmed,
         )
         .y;
-        let placed = place_lane(&graph, &WalletKey::Current, &stored, &HashMap::new());
+        let placed = place_lane(
+            &graph,
+            &WalletKey::Current,
+            &stored,
+            &HashMap::new(),
+            &Orders::new(),
+        );
         let block = tx_pos(&graph, &placed, unconfirmed);
         assert_eq!(block, Point::new(last + 1392.0, row));
         for leaf in &graph.txs()[unconfirmed].leaves {
@@ -973,7 +1019,7 @@ mod tests {
         let graph = fixture::graph();
         assert_eq!(
             reset(&graph, &WalletKey::Current),
-            place(&graph, &WalletKey::Current, &HashMap::new())
+            place(&graph, &WalletKey::Current, &HashMap::new(), &Orders::new())
         );
         assert_eq!(
             reset(&graph, &WalletKey::Current),

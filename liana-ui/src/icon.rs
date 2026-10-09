@@ -291,6 +291,10 @@ pub fn magic_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F675}')
 }
 
+pub fn layers_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F45B}')
+}
+
 pub fn bounding_box_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F1B6}')
 }

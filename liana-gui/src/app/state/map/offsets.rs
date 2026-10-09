@@ -6,7 +6,7 @@ use liana_ui::widget::graph_view::ItemId;
 use lianad::commands::{GraphItem, GraphLayoutEntry};
 
 use crate::app::state::map::{
-    graph::TxGraph, lanes, layout, split_stored, wallets::WalletKey, Orders,
+    global, graph::TxGraph, lanes, layout, split_stored, wallets::WalletKey, Orders,
 };
 
 /// Offsets of the wallets on the map: map position = own position + offset.
@@ -46,14 +46,16 @@ pub struct Placement {
     pub save: BTreeSet<ItemId>,
     /// Entries whose item is not on the map anymore, per wallet.
     pub remove: HashMap<WalletKey, Vec<GraphItem>>,
-    /// Wallets given an offset.
+    /// Wallets given a new offset.
     pub placed: Vec<WalletKey>,
 }
 
-/// Places each wallet in its own coordinates and shifts it by its offset. The current wallet
-/// without offset stays at its own coordinates, another wallet without offset lands below the
-/// wallets placed before it. The items missing from the lanes get their default lane position;
-/// a lane without stored positions is untangled with the others. `wallets` are in lane order.
+/// Places each wallet in its own coordinates and shifts it by its offset. Without any stored
+/// position, the wallets are placed by structure all together with a zero offset, the slots in
+/// the orders of the lanes. Otherwise the current wallet without offset stays at its own
+/// coordinates, another wallet without offset lands below the wallets placed before it. The
+/// items missing from the lanes get their default lane position; a lane without stored
+/// positions is untangled with the others. `wallets` are in lane order.
 pub fn place_wallets(graph: &TxGraph, wallets: Vec<(WalletKey, WalletLayout)>) -> Placement {
     let lane_order: Vec<WalletKey> = wallets.iter().map(|(key, _)| key.clone()).collect();
     let (known, new): (Vec<_>, Vec<_>) = wallets
@@ -67,6 +69,9 @@ pub fn place_wallets(graph: &TxGraph, wallets: Vec<(WalletKey, WalletLayout)>) -
             (key, wallet.offset, stored)
         })
         .collect();
+    let fresh_map = wallets
+        .iter()
+        .all(|(_, _, stored)| stored.positions.is_empty());
     let mut lane_seen: HashMap<ItemId, Point> = wallets
         .iter()
         .flat_map(|(_, _, stored)| stored.lane_positions.clone())
@@ -74,34 +79,38 @@ pub fn place_wallets(graph: &TxGraph, wallets: Vec<(WalletKey, WalletLayout)>) -
     let mut placement = Placement::default();
     let mut fresh = Vec::new();
     for (key, offset, stored) in wallets {
-        let mut local = stored.positions;
-        let placed = layout::place(graph, &key, &local);
-        placement
-            .save
-            .extend(placed.keys().copied().chain(stored.resave));
-        local.extend(placed);
+        placement.save.extend(stored.resave);
+        if !fresh_map {
+            let mut local = stored.positions;
+            let placed = layout::place(graph, &key, &local, &stored.orders);
+            placement.save.extend(placed.keys().copied());
+            local.extend(placed);
+            let offset = match (&key, offset) {
+                (_, Some(offset)) => offset,
+                (WalletKey::Current, None) => Vector::ZERO,
+                (added, None) => {
+                    placement.placed.push(added.clone());
+                    layout::new_offset(graph, &placement.layout, &local)
+                }
+            };
+            placement.offsets.set(key.clone(), offset);
+            placement
+                .layout
+                .extend(local.into_iter().map(|(id, p)| (id, p + offset)));
+        } else if offset.map_or(key != WalletKey::Current, |offset| offset != Vector::ZERO) {
+            // A fresh map places every wallet together, at a zero offset.
+            placement.placed.push(key.clone());
+        }
         let mut lane_local = stored.lane_positions;
         if lane_local.is_empty() {
             fresh.push(key.clone());
         }
-        let lane_placed = layout::place_lane(graph, &key, &lane_local, &lane_seen);
+        let lane_placed = layout::place_lane(graph, &key, &lane_local, &lane_seen, &stored.orders);
         lane_seen.extend(lane_placed.clone());
         placement.save.extend(lane_placed.keys().copied());
         lane_local.extend(lane_placed);
         placement.lane_layout.extend(lane_local);
         let height = layout::lane_height(graph, &key);
-        let offset = match (&key, offset) {
-            (_, Some(offset)) => offset,
-            (WalletKey::Current, None) => Vector::ZERO,
-            (added, None) => {
-                placement.placed.push(added.clone());
-                layout::new_offset(graph, &placement.layout, &local)
-            }
-        };
-        placement.offsets.set(key.clone(), offset);
-        placement
-            .layout
-            .extend(local.into_iter().map(|(id, p)| (id, p + offset)));
         placement.heights.insert(key.clone(), height);
         placement.orders.extend(stored.orders);
         if !stored.remove.is_empty() {
@@ -140,6 +149,19 @@ pub fn place_wallets(graph: &TxGraph, wallets: Vec<(WalletKey, WalletLayout)>) -
                 .into_iter()
                 .filter(|(wallet, _)| fresh.contains(wallet)),
         );
+    }
+    if fresh_map {
+        let global = global::place(
+            graph,
+            &lane_order,
+            &HashMap::new(),
+            &placement.orders,
+            false,
+            false,
+        );
+        placement.save.extend(global.positions.keys().copied());
+        placement.layout = global.positions;
+        placement.offsets = global.offsets;
     }
     placement
 }
@@ -187,18 +209,6 @@ pub fn local_entries(
     entries
 }
 
-/// Default layout with the lanes off of the displayed `wallets`, as on a fresh map: the other
-/// wallets land below the current one in lane order.
-pub fn reset_layout(graph: &TxGraph, wallets: &[WalletKey]) -> Placement {
-    place_wallets(
-        graph,
-        wallets
-            .iter()
-            .map(|wallet| (wallet.clone(), WalletLayout::default()))
-            .collect(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -211,10 +221,11 @@ mod tests {
         settings::WalletId,
         state::map::{
             fixture::{self, TwoWallets},
+            global,
             graph::TxGraph,
             lanes,
             layout::{item_size, new_offset, reset},
-            offsets::{local_entries, place_wallets, reset_layout, Offsets, WalletLayout},
+            offsets::{local_entries, place_wallets, Offsets, WalletLayout},
             wallets::WalletKey,
             Orders,
         },
@@ -359,10 +370,15 @@ mod tests {
             Some(Vector::ZERO),
         );
         let placement = place_wallets(&graph, wallets);
-        assert_eq!(
-            placement.layout[&payment],
-            reset(&graph, &WalletKey::Current)[&payment]
+        let mixed = global::place(
+            &graph,
+            &[WalletKey::Current, two.b.clone()],
+            &HashMap::new(),
+            &Orders::new(),
+            false,
+            false,
         );
+        assert_eq!(placement.layout[&payment], mixed.positions[&payment]);
         assert!(placement.remove.is_empty());
     }
 
@@ -415,7 +431,13 @@ mod tests {
     #[test]
     fn new_wallet_lands_below_everything() {
         let (two, graph) = two_wallets();
-        let placement = place_wallets(&graph, b_layout(Vec::new(), None));
+        let entries = reset(&graph, &WalletKey::Current)
+            .into_iter()
+            .map(|(id, p)| entry(graph.graph_item(id).unwrap(), p.x.into(), p.y.into()))
+            .collect();
+        let mut wallets = b_layout(Vec::new(), None);
+        wallets[0].1.entries = entries;
+        let placement = place_wallets(&graph, wallets);
         assert_eq!(placement.placed, vec![two.b.clone()]);
 
         let (offset, corner) = b_below(&two, &graph, &placement.layout);
@@ -479,25 +501,31 @@ mod tests {
     }
 
     #[test]
-    fn reset_places_the_wallets_as_new() {
+    fn a_fresh_map_is_placed_mixed() {
         let (two, graph) = two_wallets();
-        for order in [
-            [WalletKey::Current, two.b.clone()],
-            [two.b.clone(), WalletKey::Current],
-        ] {
-            let placement = reset_layout(&graph, &order);
-            let (offset, corner) = b_below(&two, &graph, &placement.layout);
-            assert_eq!(
-                placement.offsets.get(&WalletKey::Current),
-                Some(Vector::ZERO)
-            );
-            assert_eq!(placement.offsets.get(&two.b), Some(offset));
-            assert_eq!(corner, (0.0, current_bottom(&graph) + 120.0));
-            assert_eq!(
-                placement.layout,
-                stacked(&two, &graph, Vector::ZERO, offset)
-            );
-            assert!(placement.orders.is_empty());
+        let wallets = [WalletKey::Current, two.b.clone()];
+        let placement = place_wallets(&graph, b_layout(Vec::new(), None));
+        let mixed = global::place(
+            &graph,
+            &wallets,
+            &HashMap::new(),
+            &placement.orders,
+            false,
+            false,
+        );
+        assert_eq!(placement.layout, mixed.positions);
+        for wallet in &wallets {
+            assert_eq!(placement.offsets.get(wallet), Some(Vector::ZERO));
         }
+        assert_eq!(placement.placed, vec![two.b.clone()]);
+        assert_eq!(placement.save.len(), graph.item_ids().count());
+        let untangled = lanes::reset(&graph, &wallets);
+        assert_eq!(placement.lane_layout, untangled.positions);
+        assert_eq!(placement.orders, untangled.orders);
+
+        // A stored offset of a fresh map is set back to zero.
+        let moved = place_wallets(&graph, b_layout(Vec::new(), Some(Vector::new(0.0, 600.0))));
+        assert_eq!(moved.layout, mixed.positions);
+        assert_eq!(moved.placed, vec![two.b.clone()]);
     }
 }

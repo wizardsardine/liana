@@ -150,10 +150,10 @@ fn column_order(order: &[usize]) -> Order {
 }
 
 /// A transaction of a displayed wallet: its index, its lane and its position in the lane.
-type LaneTx = (usize, usize, Point);
+pub type LaneTx = (usize, usize, Point);
 
 /// The transactions at `txs` and their coin links between them.
-fn layered(graph: &TxGraph, lanes: usize, txs: &[LaneTx]) -> Layered {
+pub fn layered(graph: &TxGraph, lanes: usize, txs: &[LaneTx]) -> Layered {
     let node_of: HashMap<usize, usize> = txs
         .iter()
         .enumerate()
@@ -195,7 +195,7 @@ fn layered(graph: &TxGraph, lanes: usize, txs: &[LaneTx]) -> Layered {
 }
 
 /// The transactions at `txs` with their slot display `orders`.
-fn arrangement(graph: &TxGraph, txs: &[LaneTx], orders: &Orders) -> Arrangement {
+pub fn arrangement(graph: &TxGraph, txs: &[LaneTx], orders: &Orders) -> Arrangement {
     let display_order = |order: &Order, len: usize| match order {
         Some(order) => order.iter().map(|index| *index as usize).collect(),
         None => (0..len).collect(),
@@ -236,17 +236,41 @@ pub fn untangled(
         .collect();
     let layered = layered(graph, wallets.len(), &txs);
     let arrangement = untangle(&layered, &arrangement(graph, &txs, orders));
+    let blocks: Vec<Point> = txs
+        .iter()
+        .zip(&arrangement.tops)
+        .map(|((.., at), top)| Point::new(at.x, *top))
+        .collect();
+    let (positions, orders) = placed_txs(graph, &txs, &blocks, &arrangement);
+    let heights = wallets
+        .iter()
+        .cloned()
+        .zip(arrangement.lane_heights(&layered))
+        .collect();
+    Untangled {
+        positions,
+        orders,
+        heights,
+    }
+}
 
+/// Positions of the transactions at `txs`, their blocks at `blocks` and their leaves next to
+/// their slots, and the slot display orders of `arrangement`.
+pub fn placed_txs(
+    graph: &TxGraph,
+    txs: &[LaneTx],
+    blocks: &[Point],
+    arrangement: &Arrangement,
+) -> (HashMap<ItemId, Point>, Orders) {
     let mut positions = HashMap::new();
-    let mut untangled_orders = Orders::new();
-    for (node, (tx, _, at)) in txs.iter().enumerate() {
+    let mut orders = Orders::new();
+    for (node, ((tx, ..), block)) in txs.iter().zip(blocks).enumerate() {
         let map_tx = &graph.txs()[*tx];
         let order = (
             column_order(&arrangement.inputs[node]),
             column_order(&arrangement.outputs[node]),
         );
-        let block = Point::new(at.x, arrangement.tops[node]);
-        positions.insert(graph.tx_item(*tx), block);
+        positions.insert(graph.tx_item(*tx), *block);
         for leaf in &map_tx.leaves {
             let leaf_ref = &graph.leaves()[*leaf];
             let column = match leaf_ref.kind {
@@ -256,23 +280,14 @@ pub fn untangled(
             let row = display_row(column.as_deref(), leaf_ref.index);
             positions.insert(
                 graph.leaf_item(*leaf),
-                layout::leaf_position(leaf_ref.kind, block, row),
+                layout::leaf_position(leaf_ref.kind, *block, row),
             );
         }
         if order != (None, None) {
-            untangled_orders.insert(map_tx.history().txid, order);
+            orders.insert(map_tx.history().txid, order);
         }
     }
-    let heights = wallets
-        .iter()
-        .cloned()
-        .zip(arrangement.lane_heights(&layered))
-        .collect();
-    Untangled {
-        positions,
-        orders: untangled_orders,
-        heights,
-    }
+    (positions, orders)
 }
 
 /// Default positions in their lanes of the items of `wallets`, untangled.
