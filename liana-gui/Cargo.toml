@@ -66,6 +66,9 @@ open = { workspace = true }
 
 encrypted_backup = { workspace = true }
 
+# Used to scan wallets imported on the transaction map
+bwk = { git = "https://github.com/pythcoiner/bwk", branch = "master", default-features = false }
+
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
 

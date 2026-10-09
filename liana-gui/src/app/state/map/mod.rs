@@ -1,6 +1,7 @@
 pub mod coin_ui;
 pub mod display;
 pub mod edit;
+pub mod external;
 #[cfg(test)]
 pub mod fixture;
 pub mod focus;
