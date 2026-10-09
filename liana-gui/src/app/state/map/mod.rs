@@ -8,12 +8,14 @@ pub mod focus;
 pub mod graph;
 pub mod history;
 pub mod import;
+pub mod lanes;
 pub mod layout;
 pub mod offsets;
 pub mod selection;
 pub mod wallets;
 
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     mem,
     sync::Arc,
@@ -23,7 +25,7 @@ use iced::{
     advanced::widget::Id,
     event,
     keyboard::{self, key::Named, Modifiers},
-    window, Event, Point, Rectangle, Size, Subscription, Task, Vector,
+    window, Color, Event, Point, Rectangle, Size, Subscription, Task, Vector,
 };
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, Network, OutPoint, Txid};
 use liana_ui::{
@@ -33,7 +35,7 @@ use liana_ui::{
         graph_view::{
             self,
             geometry::{LEAF_HEIGHT, LEAF_WIDTH, ZOOM_STEP},
-            GraphEvent, ItemId, Side, Target,
+            GraphEvent, Handle, ItemId, Lane, Side, Target,
         },
         modal::Modal,
         text_input, Element,
@@ -61,16 +63,17 @@ use crate::{
                 },
                 focus::{resolve_focus, FocusLanding, ShowOnMap},
                 graph::{MapItem, SlotRef, TxGraph, WalletTxs},
-                history::{Change, History},
+                history::{Change, History, PlacementKind},
                 import::{
                     daemon_electrum, import, parse_account, rescan, ImportFailure, ImportForm,
                     ImportSource,
                 },
+                lanes::{Band, WalletLane},
                 offsets::{Offsets, WalletLayout},
                 selection::{Selection, TagHighlight},
                 wallets::{
                     load_selected, other_wallets, save_wallet_labels, save_wallet_layout,
-                    ListedWallets, OtherWallet, WalletKey, WalletStore,
+                    stored_offset, ListedWallets, OtherWallet, WalletKey, WalletStore,
                 },
             },
             State,
@@ -96,12 +99,19 @@ pub struct MapWallet {
     pub layout: WalletLayout,
     /// `None` for the current wallet.
     pub store: Option<WalletStore>,
+    /// Stored position of its lane.
+    pub lane: Option<u32>,
+    pub displayed: bool,
+    /// Height its lane was resized to, `None` for automatic.
+    pub lane_height: Option<f32>,
 }
 
 /// The stored layout, checked against the current graph.
 #[derive(Debug, Default)]
 pub struct StoredLayout {
     pub positions: HashMap<ItemId, Point>,
+    /// Positions in the lanes, relative to the lane top.
+    pub lane_positions: HashMap<ItemId, Point>,
     pub orders: Orders,
     /// Entries whose item is not on the map anymore.
     pub remove: Vec<LayoutItem>,
@@ -110,11 +120,23 @@ pub struct StoredLayout {
 }
 
 /// View toggles of the header, never recorded.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct Toggles {
     pub area: bool,
     pub unspent: bool,
     pub snap: bool,
+    pub lanes: bool,
+}
+
+impl Default for Toggles {
+    fn default() -> Self {
+        Self {
+            area: false,
+            unspent: false,
+            snap: false,
+            lanes: true,
+        }
+    }
 }
 
 /// Slot drag in progress, view only and never recorded.
@@ -215,12 +237,23 @@ pub struct MapPanel {
     remote: bool,
     graph_id: Id,
     graph: Option<TxGraph>,
-    /// Map positions: each item's position in its owning wallet's layout plus that wallet's offset.
+    /// Map positions with the lanes off: each item's position in its owning wallet's layout
+    /// plus that wallet's offset.
     layout: HashMap<ItemId, Point>,
+    /// Positions with the lanes on, relative to the top of the item's lane.
+    lane_layout: HashMap<ItemId, Point>,
     orders: Orders,
     offsets: Offsets,
     /// The wallets added to the map, edits written to their own store.
     others: HashMap<WalletKey, WalletStore>,
+    /// The loaded wallets, the current one included, in lane order.
+    lanes: Vec<WalletLane>,
+    /// Height of each drawn wallet's lane laid out by default.
+    lane_heights: HashMap<WalletKey, f32>,
+    /// Height of each lane resized by its bottom edge.
+    resized_heights: HashMap<WalletKey, f32>,
+    /// Alias or name of the current wallet.
+    current_name: String,
     /// The other wallets listed by the wallets modal.
     listed: Vec<OtherWallet>,
     /// The external wallets listed by the wallets modal.
@@ -295,6 +328,11 @@ pub fn split_stored(
         if let Some((x, y)) = entry.position {
             stored.positions.insert(id, Point::new(x as f32, y as f32));
         }
+        if let Some((x, y)) = entry.lane_position {
+            stored
+                .lane_positions
+                .insert(id, Point::new(x as f32, y as f32));
+        }
         let LayoutItem::Tx(txid) = &entry.item else {
             continue;
         };
@@ -328,6 +366,17 @@ async fn load_map(
     let txs = daemon.get_all_history_txs(&coins).await?;
     let layout = daemon.get_graph_layout().await?;
     let rows = daemon.get_graph_wallets().await?;
+    let current_row = rows
+        .iter()
+        .find(|row| row.wallet == WalletKey::Current.row());
+    let (lane, displayed, lane_height) = current_row.map_or((None, true, None), |row| {
+        (
+            row.lane,
+            row.displayed,
+            row.lane_height.map(|height| height as f32),
+        )
+    });
+    let offset = current_row.and_then(stored_offset);
     let checksum = current.descriptor_checksum.clone();
     let others =
         tokio::task::spawn_blocking(move || load_selected(&network_dir, network, &current, &rows))
@@ -342,9 +391,12 @@ async fn load_map(
         },
         layout: WalletLayout {
             entries: layout,
-            offset: None,
+            offset,
         },
         store: None,
+        lane,
+        displayed,
+        lane_height,
     };
     Ok(std::iter::once(wallet).chain(others).collect())
 }
@@ -374,9 +426,14 @@ impl MapPanel {
             graph_id: Id::unique(),
             graph: None,
             layout: HashMap::new(),
+            lane_layout: HashMap::new(),
             orders: HashMap::new(),
             offsets: Offsets::default(),
             others: HashMap::new(),
+            lanes: Vec::new(),
+            lane_heights: HashMap::new(),
+            resized_heights: HashMap::new(),
+            current_name: String::new(),
             listed: Vec::new(),
             listed_externals: Vec::new(),
             rescanning: HashSet::new(),
@@ -439,28 +496,64 @@ impl MapPanel {
         self.show_on_map = None;
     }
 
-    /// Records a move of items, applies it and persists the touched items.
+    /// The placement edited and shown: the lanes while they are on.
+    fn placement(&self) -> PlacementKind {
+        if self.toggles.lanes {
+            PlacementKind::Lanes
+        } else {
+            PlacementKind::Global
+        }
+    }
+
+    /// Positions of the items in `placement`.
+    fn positions(&self, placement: PlacementKind) -> &HashMap<ItemId, Point> {
+        match placement {
+            PlacementKind::Global => &self.layout,
+            PlacementKind::Lanes => &self.lane_layout,
+        }
+    }
+
+    /// Map positions of the items as drawn.
+    fn shown_layout(&self) -> Cow<'_, HashMap<ItemId, Point>> {
+        match (&self.graph, self.placement()) {
+            (Some(graph), PlacementKind::Lanes) => {
+                Cow::Owned(lanes::shown(graph, &self.lane_layout, &self.bands()))
+            }
+            _ => Cow::Borrowed(&self.layout),
+        }
+    }
+
+    /// Sets the `after` state of a layout change on the positions of its placement and returns
+    /// the items to persist.
+    fn apply_layout_change(&mut self, change: &Change) -> Vec<ItemId> {
+        let Some(graph) = &self.graph else {
+            return Vec::new();
+        };
+        let layout = match change.placement() {
+            Some(PlacementKind::Lanes) => &mut self.lane_layout,
+            _ => &mut self.layout,
+        };
+        edit::apply_layout_change(graph, layout, &mut self.orders, &mut self.offsets, change)
+    }
+
+    /// Records a move of items in `placement`, applies it and persists the touched items.
     fn commit_move(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
+        placement: PlacementKind,
         moves: Vec<(ItemId, Point, Point)>,
     ) -> Task<Message> {
         let Some(graph) = &self.graph else {
             return Task::none();
         };
-        let change = Change::Move(
-            moves
+        let change = Change::Move {
+            placement,
+            moves: moves
                 .iter()
                 .filter_map(|(id, before, after)| Some((graph.graph_item(*id)?, *before, *after)))
                 .collect(),
-        );
-        let touched = edit::apply_layout_change(
-            graph,
-            &mut self.layout,
-            &mut self.orders,
-            &mut self.offsets,
-            &change,
-        );
+        };
+        let touched = self.apply_layout_change(&change);
         if touched.is_empty() {
             return Task::none();
         }
@@ -468,7 +561,49 @@ impl MapPanel {
         self.save_layout(daemon, touched, HashMap::new())
     }
 
-    /// Records a drag of every item of an added wallet as a move of its offset.
+    /// Records a reset of the positions of `placement` and of the slot orders, applies it and
+    /// persists it.
+    fn commit_reset(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        placement: PlacementKind,
+    ) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let displayed = lanes::displayed(&self.lanes);
+        let (before, after) = match placement {
+            PlacementKind::Global => {
+                let reset = offsets::reset_layout(graph, &displayed);
+                (
+                    edit::layout_state(graph, &self.layout, &self.orders, &self.offsets),
+                    edit::layout_state(graph, &reset.layout, &Orders::new(), &reset.offsets),
+                )
+            }
+            PlacementKind::Lanes => {
+                let reset = lanes::reset(graph, &displayed);
+                let none = Offsets::default();
+                (
+                    edit::layout_state(graph, &self.lane_layout, &self.orders, &none),
+                    edit::layout_state(graph, &reset, &Orders::new(), &none),
+                )
+            }
+        };
+        let change = Change::Layout {
+            placement,
+            before,
+            after,
+        };
+        let touched = self.apply_layout_change(&change);
+        self.history.record(change);
+        if placement == PlacementKind::Lanes {
+            self.resized_heights.clear();
+        }
+        let rows = self.save_rows(daemon.clone());
+        Task::batch([self.save_layout(daemon, touched, HashMap::new()), rows])
+    }
+
+    /// Records a drag of every item of a wallet as a move of its offset.
     fn commit_offset(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -499,7 +634,7 @@ impl MapPanel {
         if !edit::apply_offset(graph, &mut self.layout, &mut self.offsets, &wallet, offset) {
             return Task::none();
         }
-        self.save_offsets(daemon, vec![wallet])
+        self.save_rows(daemon)
     }
 
     /// Applies the change returned by `History::undo` or `History::redo`.
@@ -508,7 +643,7 @@ impl MapPanel {
         daemon: Arc<dyn Daemon + Sync + Send>,
         change: Option<Change>,
     ) -> Task<Message> {
-        let (Some(change), Some(graph)) = (change, &self.graph) else {
+        let (Some(change), Some(_)) = (change, &self.graph) else {
             return Task::none();
         };
         if let Change::Label {
@@ -539,16 +674,13 @@ impl MapPanel {
         if self.coin_ui.apply(&change) {
             return Task::none();
         }
-        let touched = edit::apply_layout_change(
-            graph,
-            &mut self.layout,
-            &mut self.orders,
-            &mut self.offsets,
-            &change,
-        );
+        let touched = self.apply_layout_change(&change);
         let save = self.save_layout(daemon.clone(), touched, HashMap::new());
         match change {
-            Change::Layout { .. } => Task::batch([save, self.save_all_offsets(daemon)]),
+            Change::Layout {
+                placement: PlacementKind::Global,
+                ..
+            } => Task::batch([save, self.save_rows(daemon)]),
             _ => save,
         }
     }
@@ -750,20 +882,19 @@ impl MapPanel {
         );
         Task::perform(
             async move {
-                let offset = daemon
+                let stored = daemon
                     .get_graph_wallets()
                     .await?
                     .into_iter()
-                    .find(|row| row.wallet == wallet)
-                    .and_then(|row| row.offset);
+                    .find(|row| row.wallet == wallet);
                 daemon
                     .update_graph_wallets(&[GraphWallet {
                         wallet,
                         selected,
-                        offset,
-                        lane: None,
-                        displayed: true,
-                        lane_height: None,
+                        offset: stored.as_ref().and_then(|row| row.offset),
+                        lane: stored.as_ref().and_then(|row| row.lane),
+                        displayed: stored.as_ref().is_none_or(|row| row.displayed),
+                        lane_height: stored.and_then(|row| row.lane_height),
                     }])
                     .await?;
                 load_map(daemon, network_dir, network, current).await
@@ -996,8 +1127,14 @@ impl MapPanel {
         let Some(graph) = &self.graph else {
             return Task::none();
         };
-        let mut sets =
-            offsets::local_entries(graph, &self.layout, &self.orders, &self.offsets, items);
+        let mut sets = offsets::local_entries(
+            graph,
+            &self.layout,
+            &self.lane_layout,
+            &self.orders,
+            &self.offsets,
+            items,
+        );
         let wallets: HashSet<WalletKey> = sets.keys().chain(remove.keys()).cloned().collect();
         Task::batch(wallets.into_iter().map(|wallet| {
             let set = sets.remove(&wallet).unwrap_or_default();
@@ -1054,49 +1191,145 @@ impl MapPanel {
         }
     }
 
-    /// Writes the offset of every added wallet.
-    fn save_all_offsets(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
-        let wallets = self.offsets.iter().map(|(wallet, _)| wallet).collect();
-        self.save_offsets(daemon, wallets)
-    }
-
-    /// Writes the offsets of added wallets to the current wallet.
-    fn save_offsets(
-        &self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallets: Vec<WalletKey>,
-    ) -> Task<Message> {
-        let rows: Vec<GraphWallet> = wallets
-            .into_iter()
-            .filter(|wallet| *wallet != WalletKey::Current)
-            .filter_map(|wallet| {
-                let offset = self.offsets.get(&wallet)?;
-                Some(GraphWallet {
-                    wallet: wallet.row(),
-                    selected: true,
-                    offset: Some((f64::from(offset.x), f64::from(offset.y))),
-                    lane: None,
-                    displayed: true,
-                    lane_height: None,
-                })
-            })
-            .collect();
-        if rows.is_empty() {
-            return Task::none();
-        }
-        Task::perform(
-            async move { daemon.update_graph_wallets(&rows).await.map_err(Into::into) },
-            Message::MapLayoutSaved,
+    /// Lanes of the displayed wallets stacked in their order.
+    fn bands(&self) -> Vec<(WalletKey, Band)> {
+        let Some(graph) = &self.graph else {
+            return Vec::new();
+        };
+        lanes::stacked_bands(
+            graph,
+            &self.lane_layout,
+            &self.lane_heights,
+            &self.resized_heights,
+            &lanes::displayed(&self.lanes),
         )
     }
+
+    /// Writes the row of every loaded wallet: its lane, whether it is displayed and its offset.
+    fn save_rows(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        let rows = lanes::rows(&self.lanes, &self.offsets, &self.resized_heights);
+        Task::perform(write_rows(daemon, rows), Message::MapLayoutSaved)
+    }
+
+    /// Shows or hides the wallet of lane `index` and draws the map again without the hidden
+    /// wallets.
+    fn toggle_lane(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        index: usize,
+    ) -> Task<Message> {
+        if self.switching || index >= self.lanes.len() {
+            return Task::none();
+        }
+        let mut lanes = self.lanes.clone();
+        lanes[index].displayed = !lanes[index].displayed;
+        let rows = lanes::rows(&lanes, &self.offsets, &self.resized_heights);
+        self.switching = true;
+        let (network_dir, network, current) = (
+            self.network_dir.clone(),
+            self.network,
+            self.wallet_id.clone(),
+        );
+        Task::perform(
+            async move {
+                write_rows(daemon.clone(), rows).await?;
+                load_map(daemon, network_dir, network, current).await
+            },
+            Message::MapLoaded,
+        )
+    }
+
+    /// Moves the lane `index` just before the lane `before`, at the end for `None`.
+    fn move_lane(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        index: usize,
+        before: Option<usize>,
+    ) -> Task<Message> {
+        let Some(wallet) = self.lanes.get(index).map(|lane| lane.wallet.clone()) else {
+            return Task::none();
+        };
+        let before = match before.map(|before| self.lanes.get(before)) {
+            Some(Some(lane)) => Some(lane.wallet.clone()),
+            Some(None) => return Task::none(),
+            None => None,
+        };
+        self.lanes = lanes::moved(&self.lanes, &wallet, before.as_ref());
+        self.save_rows(daemon)
+    }
+
+    /// Lane `index` dragged by its items: it moves just before the lane `before` when that
+    /// changes the lanes drawn, and its items move `dx` across in the lanes.
+    fn drag_lane(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        index: usize,
+        before: Option<usize>,
+        dx: f32,
+    ) -> Task<Message> {
+        let Some(wallet) = self.lanes.get(index).map(|lane| lane.wallet.clone()) else {
+            return Task::none();
+        };
+        let target = before
+            .and_then(|before| self.lanes.get(before))
+            .map(|lane| lane.wallet.clone());
+        let reordered = lanes::moved(&self.lanes, &wallet, target.as_ref());
+        let rows = if lanes::displayed(&reordered) != lanes::displayed(&self.lanes) {
+            self.move_lane(daemon.clone(), index, before)
+        } else {
+            Task::none()
+        };
+        let moves = match &self.graph {
+            Some(graph) if dx != 0.0 => edit::moved_positions(
+                &self.lane_layout,
+                &graph.wallet_items(&wallet),
+                Vector::new(dx, 0.0),
+                false,
+            ),
+            _ => Vec::new(),
+        };
+        let shift = self.commit_move(daemon, PlacementKind::Lanes, moves);
+        Task::batch([rows, shift])
+    }
+
+    /// Sets the height of the lane `index`, kept until the lanes are reset.
+    fn resize_lane(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        index: usize,
+        height: f32,
+    ) -> Task<Message> {
+        let Some(lane) = self.lanes.get(index) else {
+            return Task::none();
+        };
+        self.resized_heights.insert(lane.wallet.clone(), height);
+        self.save_rows(daemon)
+    }
+}
+
+/// Writes `rows`, a row without offset keeping the stored one.
+async fn write_rows(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    mut rows: Vec<GraphWallet>,
+) -> Result<(), Error> {
+    let stored = daemon.get_graph_wallets().await?;
+    for row in rows.iter_mut().filter(|row| row.offset.is_none()) {
+        row.offset = stored
+            .iter()
+            .find(|stored| stored.wallet == row.wallet)
+            .and_then(|stored| stored.offset);
+    }
+    daemon.update_graph_wallets(&rows).await?;
+    Ok(())
 }
 
 impl State for MapPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let layout = self.shown_layout();
         let display = self.graph.as_ref().map(|graph| {
             display_state(
                 graph,
-                &self.layout,
+                &layout,
                 &self.orders,
                 &self.selection,
                 self.hover.as_ref(),
@@ -1116,10 +1349,55 @@ impl State for MapPanel {
             .and_then(|graph| layout::align_targets(graph, &self.selection.selected_txs(graph)))
             .map_or(0, |targets| targets.len());
         let theme = Theme::default();
-        let wallet_colors = self
+        let wallet_colors: HashMap<WalletKey, Color> = self
             .others
             .iter()
             .map(|(key, store)| (key.clone(), wallet_color(&theme, store.checksum())))
+            .collect();
+        let wallet_names: HashMap<WalletKey, String> = self
+            .others
+            .iter()
+            .map(|(key, store)| (key.clone(), store.name().to_string()))
+            .chain([(WalletKey::Current, self.current_name.clone())])
+            .collect();
+        let lane_color = |wallet: &WalletKey| {
+            wallet_colors
+                .get(wallet)
+                .copied()
+                .unwrap_or(theme.colors.general.accent)
+        };
+        let lane_ids: HashMap<&WalletKey, u64> = self
+            .lanes
+            .iter()
+            .enumerate()
+            .map(|(index, lane)| (&lane.wallet, index as u64))
+            .collect();
+        let lanes: Vec<Lane> = match &self.graph {
+            Some(graph) if self.toggles.lanes => self
+                .bands()
+                .into_iter()
+                .map(|(wallet, band)| Lane {
+                    id: lane_ids[&wallet],
+                    top: band.top,
+                    height: band.height,
+                    min_height: lanes::content_height(graph, &self.lane_layout, &wallet),
+                    items: graph.wallet_items(&wallet),
+                    color: lane_color(&wallet),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let handles = self
+            .lanes
+            .iter()
+            .enumerate()
+            .map(|(index, lane)| Handle {
+                id: index as u64,
+                name: wallet_names.get(&lane.wallet).cloned().unwrap_or_default(),
+                color: lane_color(&lane.wallet),
+                displayed: lane.displayed,
+                lane: (lane.displayed && self.toggles.lanes).then_some(index as u64),
+            })
             .collect();
         let dashboard = view::full_dashboard(
             &Menu::Map(None),
@@ -1127,7 +1405,7 @@ impl State for MapPanel {
             self.warning.as_ref(),
             view::map::map_view(
                 self.graph.as_ref(),
-                &self.layout,
+                &layout,
                 &self.orders,
                 &self.coin_ui,
                 display.as_ref(),
@@ -1144,6 +1422,9 @@ impl State for MapPanel {
                 &self.graph_id,
                 !self.remote,
                 &wallet_colors,
+                &wallet_names,
+                lanes,
+                handles,
             ),
         );
         let modal = match (&self.graph, &self.modal) {
@@ -1187,18 +1468,12 @@ impl State for MapPanel {
                 self.warning = Some(e);
             }
             Message::MapLoaded(Ok(wallets)) => {
-                let mut txs = Vec::with_capacity(wallets.len());
-                let mut layouts = Vec::with_capacity(wallets.len());
-                let before: HashSet<WalletKey> = self.others.drain().map(|(key, _)| key).collect();
-                for wallet in wallets {
-                    if let Some(store) = wallet.store {
-                        self.others.insert(wallet.txs.key.clone(), store);
-                    }
-                    layouts.push((wallet.txs.key.clone(), wallet.layout));
-                    txs.push(wallet.txs);
-                }
-                let graph = TxGraph::new(txs);
-                if self.others.keys().cloned().collect::<HashSet<_>>() != before {
+                let loaded = lanes::split_loaded(wallets);
+                let before: HashSet<WalletLane> = self.lanes.drain(..).collect();
+                self.others = loaded.stores;
+                self.lanes = loaded.lanes;
+                let graph = TxGraph::new(loaded.txs);
+                if self.lanes.iter().cloned().collect::<HashSet<_>>() != before {
                     // Item ids shift and a recorded change may belong to another owner now.
                     self.history.clear();
                     self.selection.clear();
@@ -1211,19 +1486,18 @@ impl State for MapPanel {
                 {
                     self.coin_ui.clear_selected();
                 }
-                let placement = offsets::place_wallets(&graph, layouts);
+                let placement = offsets::place_wallets(&graph, loaded.layouts);
                 self.layout = placement.layout;
+                self.lane_layout = placement.lane_layout;
                 self.orders = placement.orders;
                 self.offsets = placement.offsets;
+                self.lane_heights = placement.heights;
+                self.resized_heights = loaded.heights;
                 self.hover = None;
                 self.tag_highlight = None;
                 self.show_on_map = None;
                 self.reorder = None;
                 self.selection.retain(|id| graph.item(id).is_some());
-                let landing = self
-                    .pending_focus
-                    .take()
-                    .and_then(|focus| resolve_focus(&graph, &self.layout, &self.orders, &focus));
                 // Adding or removing a wallet keeps the camera.
                 let fit = if !self.loading || graph.is_empty() {
                     Task::none()
@@ -1233,9 +1507,18 @@ impl State for MapPanel {
                 self.graph = Some(graph);
                 self.loading = false;
                 self.switching = false;
+                let landing = self.pending_focus.take().and_then(|focus| {
+                    let graph = self.graph.as_ref()?;
+                    resolve_focus(graph, &self.shown_layout(), &self.orders, &focus)
+                });
+                let rows = if placement.placed.is_empty() {
+                    Task::none()
+                } else {
+                    self.save_rows(daemon.clone())
+                };
                 let save = Task::batch([
-                    self.save_layout(daemon.clone(), placement.save, placement.remove),
-                    self.save_offsets(daemon, placement.placed),
+                    self.save_layout(daemon, placement.save, placement.remove),
+                    rows,
                 ]);
                 return match landing {
                     Some(landing) => {
@@ -1348,6 +1631,9 @@ impl State for MapPanel {
                 MapMessage::Header(HeaderAction::ToggleSnap) => {
                     self.toggles.snap = !self.toggles.snap;
                 }
+                MapMessage::Header(HeaderAction::ToggleLanes) => {
+                    self.toggles.lanes = !self.toggles.lanes;
+                }
                 MapMessage::Header(HeaderAction::Undo) | MapMessage::Key(MapKey::Undo)
                     if self.reorder.is_none() =>
                 {
@@ -1448,10 +1734,10 @@ impl State for MapPanel {
                     self.selection.click(leaf);
                     self.tag_highlight = None;
                     self.show_on_map = None;
-                    let Some(at) = self.layout.get(&leaf) else {
+                    let Some(at) = self.shown_layout().get(&leaf).copied() else {
                         return Task::none();
                     };
-                    let target = Rectangle::new(*at, Size::new(LEAF_WIDTH, LEAF_HEIGHT));
+                    let target = Rectangle::new(at, Size::new(LEAF_WIDTH, LEAF_HEIGHT));
                     return graph_view::focus(self.graph_id.clone(), target);
                 }
                 MapMessage::Header(
@@ -1470,57 +1756,37 @@ impl State for MapPanel {
                     } else {
                         layout::align_vertical
                     };
-                    let moves = align(graph, &self.layout, &targets, self.toggles.snap)
+                    let placement = self.placement();
+                    let positions = self.positions(placement);
+                    let moves = align(graph, positions, &targets, self.toggles.snap)
                         .into_iter()
-                        .filter_map(|(id, after)| Some((id, *self.layout.get(&id)?, after)))
+                        .filter_map(|(id, after)| Some((id, *positions.get(&id)?, after)))
                         .collect();
-                    return self.commit_move(daemon, moves);
+                    return self.commit_move(daemon, placement, moves);
                 }
                 MapMessage::Header(HeaderAction::ResetLayout) => {
-                    let Some(graph) = &self.graph else {
-                        return Task::none();
-                    };
-                    let reset = offsets::reset_layout(graph, &self.offsets);
-                    let change = Change::Layout {
-                        before: edit::layout_state(
-                            graph,
-                            &self.layout,
-                            &self.orders,
-                            &self.offsets,
-                        ),
-                        after: edit::layout_state(
-                            graph,
-                            &reset.layout,
-                            &Orders::new(),
-                            &reset.offsets,
-                        ),
-                    };
-                    let touched = edit::apply_layout_change(
-                        graph,
-                        &mut self.layout,
-                        &mut self.orders,
-                        &mut self.offsets,
-                        &change,
-                    );
-                    self.history.record(change);
-                    let save = Task::batch([
-                        self.save_layout(daemon.clone(), touched, HashMap::new()),
-                        self.save_all_offsets(daemon),
-                    ]);
-                    return Task::batch([save, graph_view::fit(self.graph_id.clone())]);
+                    let reset = self.commit_reset(daemon, self.placement());
+                    return Task::batch([reset, graph_view::fit(self.graph_id.clone())]);
                 }
                 MapMessage::Graph(event) => match event {
                     GraphEvent::Moved { items, delta } => {
+                        let placement = self.placement();
+                        // In the lanes a whole wallet moves as its items, kept in its lane.
                         let wallet = self
                             .graph
                             .as_ref()
+                            .filter(|_| placement == PlacementKind::Global)
                             .and_then(|graph| edit::dragged_wallet(graph, &items));
                         if let Some(wallet) = wallet {
                             return self.commit_offset(daemon, wallet, delta);
                         }
-                        let moves =
-                            edit::moved_positions(&self.layout, &items, delta, self.toggles.snap);
-                        return self.commit_move(daemon, moves);
+                        let moves = edit::moved_positions(
+                            self.positions(placement),
+                            &items,
+                            delta,
+                            self.toggles.snap,
+                        );
+                        return self.commit_move(daemon, placement, moves);
                     }
                     GraphEvent::SlotDrag {
                         item,
@@ -1567,13 +1833,7 @@ impl State for MapPanel {
                             before,
                             after,
                         };
-                        let touched = edit::apply_layout_change(
-                            graph,
-                            &mut self.layout,
-                            &mut self.orders,
-                            &mut self.offsets,
-                            &change,
-                        );
+                        let touched = self.apply_layout_change(&change);
                         self.history.record(change);
                         return self.save_layout(daemon, touched, HashMap::new());
                     }
@@ -1622,11 +1882,26 @@ impl State for MapPanel {
                             tag.cycle(steps);
                         }
                     }
-                    GraphEvent::HandleToggled(_)
-                    | GraphEvent::HandleMoved { .. }
-                    | GraphEvent::LaneMoved { .. }
-                    | GraphEvent::LaneResized { .. }
-                    | GraphEvent::SpaceShifted { .. } => {}
+                    GraphEvent::HandleToggled(id) => return self.toggle_lane(daemon, id as usize),
+                    GraphEvent::HandleMoved { id, before } => {
+                        return self.move_lane(daemon, id as usize, before.map(|id| id as usize));
+                    }
+                    GraphEvent::LaneMoved { id, before, dx } => {
+                        return self.drag_lane(
+                            daemon,
+                            id as usize,
+                            before.map(|id| id as usize),
+                            dx,
+                        );
+                    }
+                    GraphEvent::LaneResized { id, height } => {
+                        return self.resize_lane(daemon, id as usize, height);
+                    }
+                    GraphEvent::SpaceShifted { from_x, dx } => {
+                        let placement = self.placement();
+                        let moves = edit::space_moves(self.positions(placement), from_x, dx);
+                        return self.commit_move(daemon, placement, moves);
+                    }
                 },
                 MapMessage::CloseModal => return self.close_modal(daemon),
                 MapMessage::ToggleCoinSelected => {
@@ -1692,8 +1967,13 @@ impl State for MapPanel {
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        wallet: Arc<Wallet>,
     ) -> Task<Message> {
+        self.current_name = wallet
+            .alias
+            .clone()
+            .filter(|alias| !alias.is_empty())
+            .unwrap_or_else(|| wallet.name.clone());
         self.loading = true;
         self.warning = None;
         self.modal = None;
@@ -1716,7 +1996,7 @@ impl State for MapPanel {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, str::FromStr};
+    use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::Arc};
 
     use liana::miniscript::bitcoin::{Network, OutPoint, Txid};
     use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
@@ -1724,20 +2004,38 @@ mod tests {
     use iced::{
         event::Status,
         keyboard::{key::Named, Key, Modifiers},
+        Point, Vector,
     };
 
-    use liana_ui::widget::graph_view::Target;
+    use liana_ui::{
+        component::panels::map::header::HeaderAction,
+        widget::graph_view::{GraphEvent, ItemId, Target},
+    };
 
     use crate::{
         app::{
+            cache::Cache,
+            message::Message,
             settings::WalletId,
-            state::map::{
-                display_row, escape_action, fixture, focus::ShowOnMap, key_action, split_stored,
-                wallets::WalletKey, EscapeAction, MapPanel,
+            state::{
+                map::{
+                    display_row, escape_action,
+                    fixture::{self, TwoWallets},
+                    focus::ShowOnMap,
+                    key_action, lanes,
+                    lanes::Band,
+                    offsets::{self, WalletLayout},
+                    split_stored,
+                    wallets::WalletKey,
+                    EscapeAction, LabelTarget, MapModal, MapPanel, MapWallet,
+                },
+                State,
             },
-            view::MapKey,
+            view::{self, MapKey, MapMessage},
         },
+        daemon::{client::Lianad, Daemon},
         dir::LianaDirectory,
+        utils::mock,
     };
 
     fn character(c: &str) -> Key {
@@ -1883,5 +2181,479 @@ mod tests {
             escape_action(false, false, false),
             EscapeAction::ClearSelection
         );
+    }
+
+    fn panel() -> MapPanel {
+        MapPanel::new(
+            LianaDirectory::new(PathBuf::new()),
+            Network::Bitcoin,
+            WalletId::new("current".to_string(), None),
+            false,
+        )
+    }
+
+    /// A daemon receiving no request: the tasks of the panel are never run.
+    fn daemon() -> Arc<dyn Daemon + Sync + Send> {
+        Arc::new(Lianad::new(mock::Daemon::new(Vec::new()).run()))
+    }
+
+    fn send(panel: &mut MapPanel, message: MapMessage) {
+        let _ = panel.update(
+            daemon(),
+            &Cache::default(),
+            Message::View(view::Message::Map(message)),
+        );
+    }
+
+    fn load(panel: &mut MapPanel, wallets: Vec<MapWallet>) {
+        let _ = panel.update(daemon(), &Cache::default(), Message::MapLoaded(Ok(wallets)));
+    }
+
+    fn drag(panel: &mut MapPanel, items: Vec<ItemId>, delta: Vector) {
+        send(panel, MapMessage::Graph(GraphEvent::Moved { items, delta }));
+    }
+
+    /// A panel showing the current wallet and b, laid out by default with the lanes on.
+    fn two_wallet_panel() -> (TwoWallets, MapPanel) {
+        let mut two = fixture::two_wallets("a", "b");
+        let wallets = std::mem::take(&mut two.wallets)
+            .into_iter()
+            .map(|txs| MapWallet {
+                txs,
+                layout: WalletLayout::default(),
+                store: None,
+                lane: None,
+                displayed: true,
+                lane_height: None,
+            })
+            .collect();
+        let mut panel = panel();
+        load(&mut panel, wallets);
+        assert!(panel.toggles.lanes);
+        (two, panel)
+    }
+
+    fn item(panel: &MapPanel, txid: &Txid) -> ItemId {
+        let graph = panel.graph.as_ref().unwrap();
+        graph.tx_item(graph.tx_index(txid).unwrap())
+    }
+
+    #[test]
+    fn placements_are_moved_and_undone_independently() {
+        let (two, mut panel) = two_wallet_panel();
+        let funding = item(&panel, &two.funding);
+        let (global, lane) = (panel.layout.clone(), panel.lane_layout.clone());
+        let delta = Vector::new(48.0, 24.0);
+
+        drag(&mut panel, vec![funding], delta);
+        assert_eq!(panel.lane_layout[&funding], lane[&funding] + delta);
+        assert_eq!(panel.layout, global);
+        let lane_moved = panel.lane_layout.clone();
+
+        // Switching the lanes off shows the global positions, untouched.
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.lane_layout, lane_moved);
+        assert_eq!(*panel.shown_layout(), global);
+
+        drag(&mut panel, vec![funding], delta * 2.0);
+        assert_eq!(panel.layout[&funding], global[&funding] + delta * 2.0);
+        assert_eq!(panel.lane_layout, lane_moved);
+        let global_moved = panel.layout.clone();
+
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.lane_layout, lane_moved);
+
+        // The history is kept: the lane move is undone with the lanes off too.
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.lane_layout, lane);
+        assert_eq!(panel.layout, global);
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        send(&mut panel, MapMessage::Header(HeaderAction::Redo));
+        assert_eq!(panel.lane_layout, lane_moved);
+        assert_eq!(panel.layout, global);
+        send(&mut panel, MapMessage::Header(HeaderAction::Redo));
+        assert_eq!(panel.layout, global_moved);
+        assert_eq!(panel.lane_layout, lane_moved);
+    }
+
+    #[test]
+    fn whole_wallet_drag_moves_the_offset_only_with_the_lanes_off() {
+        let (two, mut panel) = two_wallet_panel();
+        let graph = panel.graph.as_ref().unwrap();
+        let b_items = graph.wallet_items(&two.b);
+        let (global, lane, offsets) = (
+            panel.layout.clone(),
+            panel.lane_layout.clone(),
+            panel.offsets.clone(),
+        );
+        let delta = Vector::new(48.0, 24.0);
+
+        drag(&mut panel, b_items.clone(), delta);
+        assert_eq!(panel.offsets, offsets);
+        assert_eq!(panel.layout, global);
+        for id in &b_items {
+            assert_eq!(panel.lane_layout[id], lane[id] + delta);
+        }
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        let lane_moved = panel.lane_layout.clone();
+        drag(&mut panel, b_items.clone(), delta);
+        assert_eq!(
+            panel.offsets.get(&two.b),
+            Some(offsets.get(&two.b).unwrap() + delta)
+        );
+        for id in &b_items {
+            assert_eq!(panel.layout[id], global[id] + delta);
+        }
+        assert_eq!(panel.lane_layout, lane_moved);
+    }
+
+    #[test]
+    fn handle_moved_down_reorders_the_lanes() {
+        let (two, mut panel) = two_wallet_panel();
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::HandleMoved {
+                id: 0,
+                before: Some(1),
+            }),
+        );
+        assert_eq!(
+            lanes::displayed(&panel.lanes),
+            vec![WalletKey::Current, two.b.clone()]
+        );
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::HandleMoved {
+                id: 0,
+                before: None,
+            }),
+        );
+        assert_eq!(
+            lanes::displayed(&panel.lanes),
+            vec![two.b.clone(), WalletKey::Current]
+        );
+        let b_height = panel.lane_heights[&two.b];
+        assert_eq!(panel.bands()[1].1.top, b_height);
+    }
+
+    #[test]
+    fn lane_order_and_hiding_only_move_the_lane_tops() {
+        let (two, mut panel) = two_wallet_panel();
+        let (global, lane, offsets) = (
+            panel.layout.clone(),
+            panel.lane_layout.clone(),
+            panel.offsets.clone(),
+        );
+        let current_height = panel.lane_heights[&WalletKey::Current];
+        let b_height = panel.lane_heights[&two.b];
+        assert_eq!(
+            panel.bands(),
+            vec![
+                (
+                    WalletKey::Current,
+                    Band {
+                        top: 0.0,
+                        height: current_height
+                    }
+                ),
+                (
+                    two.b.clone(),
+                    Band {
+                        top: current_height,
+                        height: b_height
+                    }
+                ),
+            ]
+        );
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::HandleMoved {
+                id: 1,
+                before: Some(0),
+            }),
+        );
+        assert_eq!(
+            lanes::displayed(&panel.lanes),
+            vec![two.b.clone(), WalletKey::Current]
+        );
+        assert_eq!(
+            panel.bands(),
+            vec![
+                (
+                    two.b.clone(),
+                    Band {
+                        top: 0.0,
+                        height: b_height
+                    }
+                ),
+                (
+                    WalletKey::Current,
+                    Band {
+                        top: b_height,
+                        height: current_height
+                    }
+                ),
+            ]
+        );
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.lane_layout, lane);
+        assert_eq!(panel.offsets, offsets);
+        assert!(!panel.history.can_undo());
+
+        // b hidden: the map is loaded again from the stored layout without it.
+        let graph = panel.graph.as_ref().unwrap();
+        let current_items = graph.wallet_items(&WalletKey::Current);
+        let by_item = |positions: &HashMap<ItemId, Point>| -> Vec<(LayoutItem, Point)> {
+            current_items
+                .iter()
+                .map(|id| (graph.graph_item(*id).unwrap(), positions[id]))
+                .collect()
+        };
+        let (global, lane) = (by_item(&global), by_item(&lane));
+        let mut entries = offsets::local_entries(
+            graph,
+            &panel.layout,
+            &panel.lane_layout,
+            &panel.orders,
+            &panel.offsets,
+            current_items.clone(),
+        );
+        let wallets = std::mem::take(&mut fixture::two_wallets("a", "b").wallets)
+            .into_iter()
+            .map(|txs| {
+                let current = txs.key == WalletKey::Current;
+                MapWallet {
+                    layout: WalletLayout {
+                        entries: entries.remove(&txs.key).unwrap_or_default(),
+                        offset: panel.offsets.get(&txs.key),
+                    },
+                    lane: Some(if current { 1 } else { 0 }),
+                    displayed: current,
+                    lane_height: None,
+                    store: None,
+                    txs,
+                }
+            })
+            .collect();
+        load(&mut panel, wallets);
+        let bands = panel.bands();
+        assert_eq!(bands.len(), 1);
+        assert_eq!((&bands[0].0, bands[0].1.top), (&WalletKey::Current, 0.0));
+        let graph = panel.graph.as_ref().unwrap();
+        let at = |positions: &HashMap<ItemId, Point>, item: &LayoutItem| {
+            positions[&graph.item_id(item).unwrap()]
+        };
+        for (item, p) in &global {
+            assert_eq!(at(&panel.layout, item), *p);
+        }
+        for (item, p) in &lane {
+            assert_eq!(at(&panel.lane_layout, item), *p);
+        }
+        assert_eq!(
+            panel.offsets.get(&WalletKey::Current),
+            offsets.get(&WalletKey::Current)
+        );
+    }
+
+    #[test]
+    fn leaf_label_opens_on_double_click_only() {
+        let (_, mut panel) = two_wallet_panel();
+        let graph = panel.graph.as_ref().unwrap();
+        let index = graph.leaves().iter().position(|leaf| !leaf.reused).unwrap();
+        let leaf = graph.leaf_item(index);
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::Click {
+                target: Target::Item(leaf),
+                modifiers: Modifiers::empty(),
+            }),
+        );
+        assert!(panel.modal.is_none());
+        assert!(panel.selection.items().contains(&leaf));
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::DoubleClick {
+                target: Target::Item(leaf),
+            }),
+        );
+        assert!(matches!(
+            panel.modal,
+            Some(MapModal::Label(LabelTarget::Leaf(opened))) if opened == index
+        ));
+    }
+
+    #[test]
+    fn lane_drag_reorders_the_lanes_and_moves_across() {
+        let (two, mut panel) = two_wallet_panel();
+        let (global, lane, offsets) = (
+            panel.layout.clone(),
+            panel.lane_layout.clone(),
+            panel.offsets.clone(),
+        );
+        let b_items = panel.graph.as_ref().unwrap().wallet_items(&two.b);
+        let across = Vector::new(48.0, 0.0);
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::LaneMoved {
+                id: 1,
+                before: Some(0),
+                dx: across.x,
+            }),
+        );
+        assert_eq!(
+            lanes::displayed(&panel.lanes),
+            vec![two.b.clone(), WalletKey::Current]
+        );
+        for (id, p) in &lane {
+            let expected = if b_items.contains(id) {
+                *p + across
+            } else {
+                *p
+            };
+            assert_eq!(panel.lane_layout[id], expected);
+        }
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.offsets, offsets);
+
+        // Undo moves the lane back across, its slot is display state.
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.lane_layout, lane);
+        assert_eq!(
+            lanes::displayed(&panel.lanes),
+            vec![two.b.clone(), WalletKey::Current]
+        );
+
+        // Dropped in its own slot, the lane only moves across.
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::LaneMoved {
+                id: 0,
+                before: Some(1),
+                dx: -across.x,
+            }),
+        );
+        assert_eq!(
+            lanes::displayed(&panel.lanes),
+            vec![two.b.clone(), WalletKey::Current]
+        );
+        for id in &b_items {
+            assert_eq!(panel.lane_layout[id], lane[id] - across);
+        }
+        assert_eq!(panel.layout, global);
+    }
+
+    #[test]
+    fn lane_resize_moves_the_lanes_below_until_reset() {
+        let (two, mut panel) = two_wallet_panel();
+        let lane = panel.lane_layout.clone();
+        let current_height = panel.lane_heights[&WalletKey::Current];
+        let b_height = panel.lane_heights[&two.b];
+        let resized = current_height + 240.0;
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::LaneResized {
+                id: 0,
+                height: resized,
+            }),
+        );
+        assert_eq!(
+            panel.bands(),
+            vec![
+                (
+                    WalletKey::Current,
+                    Band {
+                        top: 0.0,
+                        height: resized
+                    }
+                ),
+                (
+                    two.b.clone(),
+                    Band {
+                        top: resized,
+                        height: b_height
+                    }
+                ),
+            ]
+        );
+        let rows = lanes::rows(&panel.lanes, &panel.offsets, &panel.resized_heights);
+        assert_eq!(rows[0].lane_height, Some(f64::from(resized)));
+        assert_eq!(rows[1].lane_height, None);
+        assert_eq!(panel.lane_layout, lane);
+        assert!(!panel.history.can_undo());
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ResetLayout));
+        assert!(panel.resized_heights.is_empty());
+        assert_eq!(panel.bands()[1].1.top, current_height);
+    }
+
+    #[test]
+    fn space_shift_moves_the_items_from_its_line() {
+        let (two, mut panel) = two_wallet_panel();
+        let (global, lane) = (panel.layout.clone(), panel.lane_layout.clone());
+        let from_x = lane[&item(&panel, &two.payment)].x;
+        let across = Vector::new(120.0, 0.0);
+
+        send(
+            &mut panel,
+            MapMessage::Graph(GraphEvent::SpaceShifted {
+                from_x,
+                dx: across.x,
+            }),
+        );
+        assert!(lane.values().any(|p| p.x < from_x));
+        for (id, p) in &lane {
+            let expected = if p.x >= from_x { *p + across } else { *p };
+            assert_eq!(panel.lane_layout[id], expected);
+        }
+        assert_eq!(panel.layout, global);
+
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.lane_layout, lane);
+    }
+
+    #[test]
+    fn reset_only_touches_the_shown_placement() {
+        let (two, mut panel) = two_wallet_panel();
+        let funding = item(&panel, &two.funding);
+        let wallets = [WalletKey::Current, two.b.clone()];
+        let delta = Vector::new(48.0, 24.0);
+        drag(&mut panel, vec![funding], delta);
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        drag(&mut panel, vec![funding], delta);
+        let b_items = panel.graph.as_ref().unwrap().wallet_items(&two.b);
+        drag(&mut panel, b_items, delta);
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        let (global, offsets) = (panel.layout.clone(), panel.offsets.clone());
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ResetLayout));
+        let graph = panel.graph.as_ref().unwrap();
+        let lane_reset = lanes::reset(graph, &wallets);
+        assert_eq!(panel.lane_layout, lane_reset);
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.offsets, offsets);
+
+        send(&mut panel, MapMessage::Header(HeaderAction::ToggleLanes));
+        send(&mut panel, MapMessage::Header(HeaderAction::ResetLayout));
+        let graph = panel.graph.as_ref().unwrap();
+        let global_reset = offsets::reset_layout(graph, &wallets);
+        assert_eq!(panel.layout, global_reset.layout);
+        assert_eq!(panel.offsets, global_reset.offsets);
+        assert_eq!(panel.lane_layout, lane_reset);
+
+        // Undoing the global reset leaves the lanes alone.
+        send(&mut panel, MapMessage::Header(HeaderAction::Undo));
+        assert_eq!(panel.layout, global);
+        assert_eq!(panel.offsets, offsets);
+        assert_eq!(panel.lane_layout, lane_reset);
     }
 }

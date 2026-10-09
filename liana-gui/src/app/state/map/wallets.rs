@@ -186,11 +186,12 @@ pub fn save_wallet_labels(
     Ok(())
 }
 
-fn stored_offset(row: &GraphWallet) -> Option<Vector> {
+pub fn stored_offset(row: &GraphWallet) -> Option<Vector> {
     row.offset.map(|(x, y)| Vector::new(x as f32, y as f32))
 }
 
-/// The wallets selected in `rows` that can be read, each with its stored offset, blocking.
+/// The wallets selected in `rows` that can be read, each with its stored offset and lane,
+/// blocking.
 pub fn load_selected(
     network_dir: &NetworkDirectory,
     network: Network,
@@ -225,6 +226,9 @@ pub fn load_selected(
                 offset: stored_offset(row),
             },
             store: Some(WalletStore::Other(other)),
+            lane: row.lane,
+            displayed: row.displayed,
+            lane_height: row.lane_height.map(|height| height as f32),
         });
     }
     for external in external_wallets(network_dir) {
@@ -245,6 +249,9 @@ pub fn load_selected(
                 offset: stored_offset(row),
             },
             store: Some(WalletStore::External(external)),
+            lane: row.lane,
+            displayed: row.displayed,
+            lane_height: row.lane_height.map(|height| height as f32),
         });
     }
     Ok(wallets)

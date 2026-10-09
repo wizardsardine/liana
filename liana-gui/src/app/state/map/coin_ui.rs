@@ -213,7 +213,7 @@ impl CoinUi {
                     self.set_tag(*coin, *tag, *created);
                 }
             }
-            Change::Move(_)
+            Change::Move { .. }
             | Change::Offset { .. }
             | Change::Reorder { .. }
             | Change::Layout { .. }
@@ -248,7 +248,7 @@ impl CoinUi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::map::fixture;
+    use crate::app::state::map::{fixture, history::PlacementKind};
 
     struct Coins {
         u1: OutPoint,
@@ -382,6 +382,9 @@ mod tests {
     #[test]
     fn apply_ignores_layout_changes() {
         let mut ui = CoinUi::default();
-        assert!(!ui.apply(&Change::Move(vec![])));
+        assert!(!ui.apply(&Change::Move {
+            placement: PlacementKind::Global,
+            moves: vec![],
+        }));
     }
 }

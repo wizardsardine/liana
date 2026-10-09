@@ -36,7 +36,8 @@ use liana_ui::{
     theme::Theme,
     widget::{
         graph_view::{
-            Anchor, AnchorSide, Edge, EdgeKind, GraphItem, GraphView, ItemId, Shape, Side,
+            Anchor, AnchorSide, Edge, EdgeKind, GraphItem, GraphView, Handle, ItemId, Lane, Shape,
+            Side,
         },
         text_input, Container, Element,
     },
@@ -79,6 +80,7 @@ struct BlockDisplay {
     group_member: bool,
     reorder: Option<SlotReorder>,
     tint: Option<Color>,
+    wallet: Option<String>,
 }
 
 impl Hash for BlockDisplay {
@@ -93,6 +95,7 @@ impl Hash for BlockDisplay {
         self.state.hash(state);
         self.group_member.hash(state);
         self.tint.map(Color::into_rgba8).hash(state);
+        self.wallet.hash(state);
         if let Some(reorder) = &self.reorder {
             reorder.side.hash(state);
             reorder.index.hash(state);
@@ -131,10 +134,22 @@ pub fn map_view<'a>(
     graph_id: &Id,
     other_wallets: bool,
     wallet_colors: &HashMap<WalletKey, Color>,
+    wallet_names: &HashMap<WalletKey, String>,
+    lanes: Vec<Lane>,
+    handles: Vec<Handle>,
 ) -> Element<'a, Message> {
     let unspent = graph.map(TxGraph::unspent_coins).unwrap_or_default();
     let unspent_total: Amount = unspent.iter().map(|(_, amount)| *amount).sum();
     let enabled = graph.is_some_and(|graph| !graph.is_empty());
+    let totals = graph.filter(|_| enabled).map(|graph| {
+        let coins = graph
+            .txs()
+            .iter()
+            .flat_map(|tx| &tx.outputs)
+            .filter(|slot| matches!(slot, OutputSlot::OurCoin { .. }))
+            .count();
+        (graph.txs().len(), coins, unspent.len())
+    });
     let header = map_header(
         zoom,
         enabled,
@@ -143,19 +158,20 @@ pub fn map_view<'a>(
         toggles.area || command_held,
         toggles.unspent,
         toggles.snap,
-        false,
+        toggles.lanes,
         unspent.len(),
         &unspent_total,
         align_count,
         other_wallets,
-        None,
+        totals,
         |action| Message::Map(MapMessage::Header(action)),
     );
 
     let canvas: Element<'a, Message> =
         match graph {
             _ if loading => Container::new(loading_state()).center(Length::Fill).into(),
-            Some(graph) if graph.is_empty() => {
+            // With a wallet hidden, the lane handles stay to show it again.
+            Some(graph) if graph.is_empty() && handles.iter().all(|handle| handle.displayed) => {
                 Container::new(empty_state()).center(Length::Fill).into()
             }
             None => Container::new(iced::widget::Space::new())
@@ -339,6 +355,7 @@ pub fn map_view<'a>(
                         group_member: display.blocks[index].1,
                         reorder: slot_reorder,
                         tint: color_of(tx.primary()),
+                        wallet: wallet_names.get(tx.primary()).cloned(),
                     };
                     let content = lazy(display, |d| {
                         block(
@@ -352,7 +369,7 @@ pub fn map_view<'a>(
                             d.state,
                             d.group_member,
                             d.tint,
-                            None,
+                            d.wallet.as_deref(),
                         )
                     });
                     items.push(GraphItem {
@@ -463,6 +480,9 @@ pub fn map_view<'a>(
                     .wheel_slot(wheel_slot)
                     .snap(toggles.snap)
                     .grid(toggles.snap)
+                    .lanes(lanes)
+                    .lanes_enabled(toggles.lanes)
+                    .handles(handles)
                     .on_event(|event| Message::Map(MapMessage::Graph(event)));
                 let selection_bar = (!coin_ui.selected().is_empty()).then(|| {
                     let total: Amount = coin_ui

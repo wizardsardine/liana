@@ -222,7 +222,7 @@ pub trait DatabaseConnection {
     /// Replace the `set` entries, then delete the `remove` items, atomically.
     fn update_graph_layout(&mut self, set: &[GraphLayoutEntry], remove: &[GraphItem]);
 
-    /// Other wallets shown on the transaction map, in insertion order.
+    /// Wallets shown on the transaction map, this one included, in insertion order.
     fn graph_wallets(&mut self) -> Vec<GraphWallet>;
 
     /// Replace the stored entries of these wallets, creating the missing ones, atomically.
@@ -741,13 +741,13 @@ pub struct GraphLayoutEntry {
     pub lane_position: Option<(f64, f64)>,
 }
 
-/// Another wallet shown on the transaction map.
+/// A wallet shown on the transaction map, this wallet included.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GraphWallet {
-    /// Identifier of the other wallet.
+    /// Identifier of the wallet.
     pub wallet: String,
     pub selected: bool,
-    /// Offset of the other wallet's items in graph coordinates.
+    /// Offset of the wallet's items in graph coordinates.
     pub offset: Option<(f64, f64)>,
     /// Position of the wallet's lane, `None` until the lanes are ordered.
     pub lane: Option<u32>,

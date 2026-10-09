@@ -29,8 +29,8 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`getlabelsbip329`](#getlabelsbip329)                       | Get the labels in BIP-0329 format                             |
 | [`getgraphlayout`](#getgraphlayout)                         | Get the transaction map layout                                |
 | [`updategraphlayout`](#updategraphlayout)                   | Update the transaction map layout                             |
-| [`getgraphwallets`](#getgraphwallets)                       | Get the other wallets shown on the transaction map            |
-| [`updategraphwallets`](#updategraphwallets)                 | Update the other wallets shown on the transaction map         |
+| [`getgraphwallets`](#getgraphwallets)                       | Get the wallets shown on the transaction map                  |
+| [`updategraphwallets`](#updategraphwallets)                 | Update the wallets shown on the transaction map               |
 
 # Reference
 
@@ -596,8 +596,8 @@ This command returns an empty JSON object.
 
 ### `getgraphwallets`
 
-Retrieve the other wallets shown on the transaction map of this wallet: whether each one is
-selected and the offset of its map items. Parameters are ignored.
+Retrieve the wallets shown on the transaction map of this wallet, this wallet included: whether
+each one is selected, the offset of its map items and its lane. Parameters are ignored.
 
 #### Request
 
@@ -613,16 +613,16 @@ This command does not take any parameter.
 
 | Field         | Type            | Description                                                                                                                      |
 | ------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `wallet`      | string          | Identifier of the other wallet.                                                                                                  |
-| `selected`    | boolean         | Whether the other wallet is shown on the map.                                                                                    |
-| `offset`      | array or null   | `[x, y]` offset of the other wallet's items on the map, or `null` if not set.                                                    |
+| `wallet`      | string          | Identifier of the wallet.                                                                                                        |
+| `selected`    | boolean         | Whether the wallet is shown on the map.                                                                                          |
+| `offset`      | array or null   | `[x, y]` offset of the wallet's items on the map, or `null` if not set.                                                          |
 | `lane`        | integer or null | Position of the wallet's lane on the map, or `null` if the lanes are not ordered yet. Optional in a request, defaults to `null`. |
 | `displayed`   | boolean         | Whether the wallet's lane is displayed. Optional in a request, defaults to `true`.                                               |
 | `lane_height` | number or null  | Height of the wallet's lane on the map, or `null` for an automatic height. Optional in a request, defaults to `null`.            |
 
 ### `updategraphwallets`
 
-Update the other wallets shown on the transaction map. Each entry fully replaces the stored entry
+Update the wallets shown on the transaction map. Each entry fully replaces the stored entry
 of its wallet (it is created if missing). Entries are never deleted: an unselected wallet keeps
 its offset. All entries are applied atomically. Nothing is written if any entry is invalid.
 

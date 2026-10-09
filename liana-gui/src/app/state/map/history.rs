@@ -15,7 +15,17 @@ pub const HISTORY_LIMIT: usize = 100;
 /// Display order of one column, `None` is the true order.
 pub type Order = Option<Vec<u32>>;
 
-/// Positions, slot display orders (inputs, outputs) and wallet offsets of the whole map.
+/// The item positions a change belongs to: map positions with the lanes off, positions in
+/// the lanes with the lanes on. Both are recorded independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlacementKind {
+    Global,
+    Lanes,
+}
+
+/// Positions of one placement, slot display orders (inputs, outputs) and wallet offsets of
+/// the whole map. The offsets only belong to the global placement and are left empty for the
+/// lanes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LayoutState {
     pub positions: HashMap<GraphItem, Point>,
@@ -27,8 +37,11 @@ pub struct LayoutState {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     /// Item, position before, position after.
-    Move(Vec<(GraphItem, Point, Point)>),
-    /// An added wallet moved as a whole.
+    Move {
+        placement: PlacementKind,
+        moves: Vec<(GraphItem, Point, Point)>,
+    },
+    /// A wallet moved as a whole, global placement only.
     Offset {
         wallet: WalletKey,
         before: Vector,
@@ -41,6 +54,7 @@ pub enum Change {
         after: Order,
     },
     Layout {
+        placement: PlacementKind,
         before: LayoutState,
         after: LayoutState,
     },
@@ -75,14 +89,24 @@ pub enum Change {
 }
 
 impl Change {
+    /// The placement whose positions the change sets, `None` for a change of no positions.
+    pub fn placement(&self) -> Option<PlacementKind> {
+        match self {
+            Change::Move { placement, .. } | Change::Layout { placement, .. } => Some(*placement),
+            Change::Offset { .. } => Some(PlacementKind::Global),
+            _ => None,
+        }
+    }
+
     pub fn inverse(&self) -> Change {
         match self.clone() {
-            Change::Move(moves) => Change::Move(
-                moves
+            Change::Move { placement, moves } => Change::Move {
+                placement,
+                moves: moves
                     .into_iter()
                     .map(|(item, before, after)| (item, after, before))
                     .collect(),
-            ),
+            },
             Change::Offset {
                 wallet,
                 before,
@@ -103,7 +127,12 @@ impl Change {
                 before: after,
                 after: before,
             },
-            Change::Layout { before, after } => Change::Layout {
+            Change::Layout {
+                placement,
+                before,
+                after,
+            } => Change::Layout {
+                placement,
                 before: after,
                 after: before,
             },
@@ -256,7 +285,10 @@ mod tests {
             orders: HashMap::new(),
             offsets: Offsets::default(),
         };
-        let moved = Change::Move(vec![(item, Point::new(0.0, 0.0), Point::new(5.0, 6.0))]);
+        let moved = Change::Move {
+            placement: PlacementKind::Lanes,
+            moves: vec![(item, Point::new(0.0, 0.0), Point::new(5.0, 6.0))],
+        };
         let changes = [
             moved.clone(),
             Change::Offset {
@@ -271,6 +303,7 @@ mod tests {
                 after: Some(vec![1, 0]),
             },
             Change::Layout {
+                placement: PlacementKind::Global,
                 before: layout,
                 after: LayoutState::default(),
             },
@@ -303,7 +336,10 @@ mod tests {
         }
         assert_eq!(
             moved.inverse(),
-            Change::Move(vec![(item, Point::new(5.0, 6.0), Point::new(0.0, 0.0))])
+            Change::Move {
+                placement: PlacementKind::Lanes,
+                moves: vec![(item, Point::new(5.0, 6.0), Point::new(0.0, 0.0))],
+            }
         );
     }
 }

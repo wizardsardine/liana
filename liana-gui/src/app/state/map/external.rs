@@ -762,6 +762,7 @@ mod tests {
             convert, device_descriptors, electrum_endpoint, external_wallets, load_layout,
             parse_descriptor, remember_electrum, remembered_electrum, remove, save_layout,
             standard_paths, ExternalError, ExternalWallet, ImportError, ScanError, SingleSig,
+            LAYOUT_FILE,
         },
         dir::NetworkDirectory,
     };
@@ -1026,7 +1027,7 @@ mod tests {
             position,
             input_order: None,
             output_order: Some(vec![1, 0]),
-            lane_position: None,
+            lane_position: position.map(|(x, _)| (x, 8.0)),
         };
         save_layout(
             dir.path(),
@@ -1043,6 +1044,22 @@ mod tests {
         assert_eq!(
             load_layout(dir.path()).unwrap(),
             vec![entry(tx, Some((3.0, 4.0)))]
+        );
+
+        // A file written before the lanes has no lane position.
+        let old = format!(
+            "[{{\"item\": \"{tx}\", \"position\": [5.0, 6.0], \"input_order\": null, \"output_order\": null}}]"
+        );
+        fs::write(dir.path().join(LAYOUT_FILE), old).unwrap();
+        assert_eq!(
+            load_layout(dir.path()).unwrap(),
+            vec![GraphLayoutEntry {
+                item: tx,
+                position: Some((5.0, 6.0)),
+                input_order: None,
+                output_order: None,
+                lane_position: None,
+            }]
         );
 
         fs::remove_dir_all(dir.path()).unwrap();
