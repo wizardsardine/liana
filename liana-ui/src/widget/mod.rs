@@ -1,6 +1,7 @@
 mod copy_button;
 mod cursor;
 mod editor;
+pub mod hover_tooltip;
 mod menu;
 pub mod menu_button;
 pub mod modal;

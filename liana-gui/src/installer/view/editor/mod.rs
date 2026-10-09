@@ -2,21 +2,31 @@
 
 pub mod template;
 
-use iced::widget::{container, slider, Space};
-use iced::{alignment, Alignment, Length};
+use iced::{
+    alignment,
+    widget::{column, row, slider, Space},
+    Alignment, Length,
+};
 
-use liana_ui::component::button::{btn_edit, btn_remove, btn_set};
-use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
+use liana_ui::component::{
+    button::{btn_chevron, btn_edit, btn_remove, btn_set},
+    text::{p1_bold, p2_regular, H3_SIZE},
+};
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::str::FromStr;
 
 use liana_ui::{
     component::{
-        button, card, form, pick_list, separation,
-        text::{p1_regular, text, Text},
+        button, card,
+        checkbox::labelled_radio,
+        form,
+        text::{new, p1_regular, text, Text},
+        tooltip,
     },
-    icon, theme,
+    icon,
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::*,
 };
 
@@ -29,57 +39,47 @@ use crate::t;
 
 use super::defined_threshold;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DescriptorKind {
-    P2WSH,
-    Taproot,
-}
-
-const DESCRIPTOR_KINDS: [DescriptorKind; 2] = [DescriptorKind::P2WSH, DescriptorKind::Taproot];
-
-impl std::fmt::Display for DescriptorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::P2WSH => write!(f, "P2WSH"),
-            Self::Taproot => write!(f, "Taproot"),
-        }
+fn descriptor_type_label(use_taproot: bool) -> String {
+    if use_taproot {
+        t!("installer-descriptor-type-taproot")
+    } else {
+        t!("installer-descriptor-type-segwit")
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a, Message> {
-    let col_wallet = Column::new()
-        .spacing(10)
-        .push(text(t!("installer-descriptor-type")).bold())
-        .push(container(
-            pick_list::pick_list(
-                &DESCRIPTOR_KINDS[..],
-                Some(if use_taproot {
-                    DescriptorKind::Taproot
-                } else {
-                    DescriptorKind::P2WSH
-                }),
-                |kind| Message::CreateTaprootDescriptor(kind == DescriptorKind::Taproot),
-            )
-            .padding(10),
-        ));
+/// The descriptor type as a status line: the current choice with a tooltip, and
+/// a chevron unfolding the two options.
+pub fn descriptor_type<'a>(use_taproot: bool, editing: bool) -> Element<'a, Message> {
+    let chevron = btn_chevron(editing, Message::ShowDescriptorTypeOptions(!editing));
+    let status = row![
+        new::caption(t!("installer-descriptor-type")).style(theme::text::secondary),
+        tooltip::tooltip_with_style(
+            t!("installer-descriptor-type-tooltip"),
+            theme::text::secondary,
+        ),
+        new::b5_bold(descriptor_type_label(use_taproot)),
+        Space::with_width(HSpacing::XS),
+        chevron
+    ]
+    .spacing(HSpacing::M)
+    .align_y(Alignment::Center);
 
-    container(
-        Column::new()
-            .spacing(20)
-            .push(Space::with_height(0))
-            .push(separation().width(500))
-            .push(Row::new().push(col_wallet))
-            .push_maybe(if use_taproot {
-                Some(
-                    p1_regular(t!("installer-taproot-supported-version"))
-                        .style(theme::text::secondary),
-                )
-            } else {
-                None
-            }),
-    )
-    .into()
+    let taproot = labelled_radio(
+        descriptor_type_label(true),
+        use_taproot,
+        Message::CreateTaprootDescriptor(true),
+    );
+    let segwit = labelled_radio(
+        descriptor_type_label(false),
+        !use_taproot,
+        Message::CreateTaprootDescriptor(false),
+    );
+    let options = editing.then(|| column![taproot, segwit].spacing(HSpacing::M));
+
+    column![status]
+        .push_maybe(options)
+        .spacing(VSpacing::SM)
+        .into()
 }
 
 pub fn path(
@@ -133,11 +133,21 @@ pub fn path(
     .into()
 }
 
+/// An info icon next to a key name, revealing on hover a note linking to the
+/// help page behind it.
+fn key_note<'a>(text: String, url: String) -> Element<'a, message::DefineKey> {
+    tooltip::tooltip_interactive(
+        button::subtle_link(text, Some(message::DefineKey::OpenUrl(url))),
+        icon::tooltip_icon().style(theme::text::secondary),
+    )
+}
+
 pub fn uneditable_defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
     title: impl Into<Cow<'a, str>> + std::fmt::Display,
     warning: Option<String>,
+    note: Option<(String /* text */, String /* url */)>,
 ) -> Element<'a, message::DefineKey> {
     let valid = warning.is_none();
     card::simple(
@@ -154,7 +164,8 @@ pub fn uneditable_defined_key<'a>(
                         Row::new()
                             .spacing(10)
                             .push(p1_regular(title).style(theme::text::secondary))
-                            .push(p1_bold(alias)),
+                            .push(p1_bold(alias))
+                            .push_maybe(note.map(|(text, url)| key_note(text, url))),
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
@@ -172,6 +183,7 @@ pub fn defined_key<'a>(
     color: iced::Color,
     title: impl Display,
     warning: Option<String>,
+    note: Option<(String /* text */, String /* url */)>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
     let valid = warning.is_none();
@@ -191,7 +203,8 @@ pub fn defined_key<'a>(
                         Row::new()
                             .spacing(10)
                             .push(p1_regular(format!("{title}")).style(theme::text::secondary))
-                            .push(p1_bold(alias)),
+                            .push(p1_bold(alias))
+                            .push_maybe(note.map(|(text, url)| key_note(text, url))),
                     )
                     .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )

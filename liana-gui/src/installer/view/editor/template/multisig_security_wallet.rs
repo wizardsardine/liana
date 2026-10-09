@@ -20,7 +20,7 @@ use crate::installer::{
     message::{self, Message},
     view::{
         editor::{
-            defined_key, path,
+            defined_key, descriptor_type, path,
             template::{
                 caption_block, key_legend, row_next, BOTTOM_PADDING, DESCRIPTION_BOTTOM_PADDING,
                 FOOTER_SPACING, KEY_LEGEND_SPACING,
@@ -79,16 +79,18 @@ pub fn multisig_security_template_description(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn multisig_security_template<'a>(
     progress: (usize, usize),
     network: Network,
     use_taproot: bool,
+    editing_descriptor_type: bool,
     primary_path: &'a Path,
     recovery_path: &'a Path,
     valid: bool,
     processing: bool,
 ) -> Element<'a, Message> {
-    let advanced_settings = super::advanced_settings_collapse(use_taproot);
+    let descriptor_type = descriptor_type(use_taproot, editing_descriptor_type);
 
     let primary = path(
         color::GREEN,
@@ -106,11 +108,8 @@ pub fn multisig_security_template<'a>(
                         &key.name,
                         color::GREEN,
                         t!("installer-primary-key-number", number = i + 1),
-                        if use_taproot && !key.source.is_compatible_taproot() {
-                            Some(t!("installer-device-no-taproot"))
-                        } else {
-                            None
-                        },
+                        use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                        use_taproot.then(|| key.source.taproot_note()).flatten(),
                         true,
                     )
                 } else {
@@ -154,22 +153,16 @@ pub fn multisig_security_template<'a>(
                             &key.name,
                             color::GREEN,
                             t!("installer-primary-key-number", number = j + 1),
-                            if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(t!("installer-device-no-taproot"))
-                            } else {
-                                None
-                            },
+                            use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                            use_taproot.then(|| key.source.taproot_note()).flatten(),
                         )
                     } else {
                         defined_key(
                             &key.name,
                             color::ORANGE,
                             t!("installer-recovery-key"),
-                            if use_taproot && !key.source.is_compatible_taproot() {
-                                Some(t!("installer-device-no-taproot"))
-                            } else {
-                                None
-                            },
+                            use_taproot.then(|| key.source.taproot_warning()).flatten(),
+                            use_taproot.then(|| key.source.taproot_note()).flatten(),
                             true,
                         )
                     }
@@ -208,7 +201,7 @@ pub fn multisig_security_template<'a>(
     let footer = super::template_footer(valid, processing, true);
 
     let content = column![
-        advanced_settings,
+        descriptor_type,
         primary,
         recovery,
         Space::with_height(FOOTER_SPACING),

@@ -34,7 +34,7 @@ use liana_ui::{
 use crate::{
     app::{settings::ProviderKey, state::export::ExportModal},
     export::{ImportExportMessage, ImportExportType},
-    hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets, UnsupportedReason},
+    hw::{HardwareWallet, HardwareWallets, UnsupportedReason},
     installer::{
         descriptor::{Key, KeySource},
         message::{self, Message},
@@ -168,8 +168,6 @@ impl SelectedKey {
 pub struct SelectKeySource {
     // state
     network: Network,
-    /// Whether keys must support tap-miniscript signing.
-    taproot: bool,
     /// List of keys already in use, including metadata about spending
     /// path they are used in.
     keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
@@ -178,6 +176,8 @@ pub struct SelectKeySource {
     /// Informations about the actual spending path.
     actual_path: PathData,
     hot_signer: Arc<Mutex<Signer>>,
+    /// Whether the descriptor being built is a taproot one.
+    use_taproot: bool,
     /// The currently selected key.
     selected_key: SelectedKey,
     step: Step,
@@ -199,22 +199,21 @@ pub struct SelectKeySource {
 }
 
 impl SelectKeySource {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         network: Network,
-        taproot: bool,
         actual_path: PathData,
         keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
         accounts: HashMap<Fingerprint, ChildNumber>,
         hot_signer: Arc<Mutex<Signer>>,
+        use_taproot: bool,
     ) -> Self {
         Self {
             network,
-            taproot,
             keys,
             accounts,
             actual_path,
             hot_signer,
+            use_taproot,
             selected_key: SelectedKey::None,
             step: Step::Select,
             focus: Focus::None,
@@ -260,12 +259,7 @@ impl SelectKeySource {
     fn detected_hws(
         &self,
         hws: &HardwareWallets,
-    ) -> Vec<(
-        String, /* alias */
-        Option<Fingerprint>,
-        HwState,
-        bool, /* support taproot */
-    )> {
+    ) -> Vec<(String /* alias */, Option<Fingerprint>, HwState)> {
         hws.list
             .iter()
             .filter_map(|hw| {
@@ -286,14 +280,8 @@ impl SelectKeySource {
                                 format!("{kind} {v}"),
                                 None,
                                 HwState::Unsupported(reason.clone()),
-                                is_compatible_with_tapminiscript(kind, Some(v)),
                             ),
-                            None => (
-                                kind.to_string(),
-                                None,
-                                HwState::Unsupported(reason.clone()),
-                                is_compatible_with_tapminiscript(kind, None),
-                            ),
+                            None => (kind.to_string(), None, HwState::Unsupported(reason.clone())),
                         },
                         HardwareWallet::Locked {
                             kind, pairing_code, ..
@@ -303,7 +291,6 @@ impl SelectKeySource {
                             HwState::Locked {
                                 pairing_code: pairing_code.clone(),
                             },
-                            is_compatible_with_tapminiscript(kind, None),
                         ),
                         HardwareWallet::Supported {
                             kind,
@@ -315,14 +302,8 @@ impl SelectKeySource {
                                 format!("{kind} {v}"),
                                 Some(*fingerprint),
                                 HwState::Supported,
-                                is_compatible_with_tapminiscript(kind, Some(v)),
                             ),
-                            None => (
-                                kind.to_string(),
-                                Some(*fingerprint),
-                                HwState::Supported,
-                                is_compatible_with_tapminiscript(kind, None),
-                            ),
+                            None => (kind.to_string(), Some(*fingerprint), HwState::Supported),
                         },
                     };
 
@@ -898,12 +879,7 @@ impl SelectKeySource {
     }
     fn main_view(
         &self,
-        hws: Vec<(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        )>,
+        hws: Vec<(String /* alias */, Option<Fingerprint>, HwState)>,
     ) -> Element<'_, Message> {
         let only_safety_net = self.actual_path.token_kind.contains(&KeyKind::SafetyNet)
             && self.actual_path.token_kind.len() == 1;
@@ -998,12 +974,7 @@ impl SelectKeySource {
     }
     fn view_signing_devices(
         &self,
-        hws: &Vec<(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        )>,
+        hws: &[(String /* alias */, Option<Fingerprint>, HwState)],
     ) -> Element<'_, Message> {
         let mut col = column![p1_bold(crate::t!("installer-detected-hardware"))]
             .spacing(5)
@@ -1033,6 +1004,9 @@ impl SelectKeySource {
     }
     fn view_other_options(&self) -> Element<'_, Message> {
         let import_xpub_error = self.import_xpub_error.clone();
+        let taproot_note = self
+            .use_taproot
+            .then(|| Message::OpenUrl(crate::help::TAPROOT_COMPATIBLE_DEVICES_URL.to_string()));
         let safety_net_token = self.safety_net_enabled().then(|| {
             modal::safety_net_token_entry(
                 self.focus == Focus::EnterSafetyNetToken,
@@ -1058,6 +1032,7 @@ impl SelectKeySource {
                 self.focus == Focus::EnterXpub,
                 self.network,
                 &self.form_xpub,
+                taproot_note.clone(),
                 Some(|xpub| Self::route(SelectKeySourceMessage::Xpub(xpub))),
                 Some(|| Self::route(SelectKeySourceMessage::PasteXpub)),
                 || Self::route(SelectKeySourceMessage::SelectEnterXpub),
@@ -1084,6 +1059,7 @@ impl SelectKeySource {
         let load_key = safety_net_token.is_none().then(|| {
             modal::import_xpub_entry(
                 import_xpub_error,
+                taproot_note,
                 Some(|| Self::route(SelectKeySourceMessage::SelectLoadXpub)),
             )
         });
@@ -1104,25 +1080,18 @@ impl SelectKeySource {
     }
     fn widget_signing_device(
         &self,
-        device: &(
-            String, /* alias */
-            Option<Fingerprint>,
-            HwState,
-            bool, /* support taproot */
-        ),
+        device: &(String /* alias */, Option<Fingerprint>, HwState),
     ) -> Element<'_, Message> {
         let alias = device.0.clone();
         let fg = device.1;
         let state = &device.2;
-        let support_taproot = device.3;
         let mut enabled = true;
-        let message = match (state, support_taproot, self.taproot) {
-            (HwState::Locked { pairing_code }, _, _) => Some(match pairing_code {
+        let message = match state {
+            HwState::Locked { pairing_code } => Some(match pairing_code {
                 Some(code) => crate::t!("decrypt-pairing-code", code = code),
                 None => crate::t!("device-unlock"),
             }),
-            (_, false, true) => Some(crate::t!("hw-no-taproot-miniscript")),
-            (HwState::Unsupported(ur), _, _) => {
+            HwState::Unsupported(ur) => {
                 enabled = false;
                 match ur {
                     UnsupportedReason::Version {
@@ -1144,7 +1113,7 @@ impl SelectKeySource {
                     UnsupportedReason::AppIsNotOpen => Some(crate::t!("device-open-app")),
                 }
             }
-            _ => None,
+            HwState::Supported => None,
         };
         enabled = enabled && fg.is_some();
 

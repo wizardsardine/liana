@@ -25,7 +25,7 @@ use crate::{
         form::{self, Value},
         list::{self, DeviceStatus},
         pick_list,
-        text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption},
+        text::new::{b1_bold, b4_medium, b5_bold, b5_medium, caption, small_caption},
         tooltip,
     },
     icon,
@@ -34,7 +34,7 @@ use crate::{
 
 use crate::{
     spacing::{HSpacing, VSpacing},
-    widget::{Button, CheckBox, Column, Element, PickList, SpaceExt},
+    widget::{Button, CheckBox, Column, ColumnExt, Element, PickList, SpaceExt},
 };
 
 pub const BTN_W: u32 = 500;
@@ -192,6 +192,19 @@ where
     }
 }
 
+/// The note under the label of a row importing an xpub: with taproot selected,
+/// the xpub has to come from a device able to sign taproot, listed behind the
+/// link.
+fn taproot_xpub_note<'a, Message: Clone + 'static>(link_message: Message) -> Element<'a, Message> {
+    row![
+        small_caption(t!("installer-xpub-taproot-note")).style(theme::text::secondary),
+        button::subtle_link_small(t!("installer-xpub-taproot-note-device"), Some(link_message)),
+    ]
+    .spacing(HSpacing::XS)
+    .align_y(Vertical::Center)
+    .into()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collapsible_input_button<'a, Message, Paste, Collapse, Input>(
     collapsed: bool,
@@ -199,6 +212,7 @@ fn collapsible_input_button<'a, Message, Paste, Collapse, Input>(
     label: String,
     input_placeholder: String,
     input_value: &Value<String>,
+    note: Option<Element<'a, Message>>,
     input_message: Option<Input>,
     paste_message: Option<Paste>,
     collapse_message: Collapse,
@@ -219,21 +233,22 @@ where
 
     if collapsed {
         let line = row![form, paste].spacing(H_SPACING);
-        let col = column![
-            row![
+        let col = Column::new()
+            .push(row![
                 caption(label).style(theme::text::primary),
                 Space::fill_width()
-            ],
-            line
-        ]
-        .width(Length::Fill);
+            ])
+            .push_maybe(note)
+            .push(line)
+            .width(Length::Fill);
         let content = row![badge::tile(tile), col]
             .align_y(Vertical::Center)
             .spacing(list::ENTRY_H_SPACING)
             .width(Length::Fill);
         button::list_entry_with_state(content, None, button::EntryWidth::Fill, true, false, None)
     } else {
-        let content = row![badge::tile(tile), caption(label)]
+        let designation = Column::new().push(caption(label)).push_maybe(note);
+        let content = row![badge::tile(tile), designation]
             .spacing(list::ENTRY_H_SPACING)
             .align_y(Vertical::Center)
             .width(Length::Fill);
@@ -512,11 +527,13 @@ where
     list::entry_register(entry_status, body, None, msg.is_some(), msg)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn button_entry<'a, Message, M>(
     tile: Tile,
     label: impl Into<String>,
     tooltip_str: Option<impl Into<String>>,
     error: Option<String>,
+    note: Option<Element<'a, Message>>,
     on_press: Option<M>,
 ) -> Element<'a, Message>
 where
@@ -527,14 +544,11 @@ where
 
     let tt = tooltip_str.map(|s| tooltip(s.into()));
 
-    let row = row![
-        badge::tile(tile),
-        caption(label.into()),
-        Space::fill_width(),
-        tt
-    ]
-    .spacing(list::ENTRY_H_SPACING)
-    .align_y(Vertical::Center);
+    let designation = Column::new().push(caption(label.into())).push_maybe(note);
+
+    let row = row![badge::tile(tile), designation, Space::fill_width(), tt]
+        .spacing(list::ENTRY_H_SPACING)
+        .align_y(Vertical::Center);
 
     let col = column![row, error].width(Length::Fill);
 
@@ -542,9 +556,12 @@ where
     button::list_entry(col, None, button::EntryWidth::Fill, msg)
 }
 
-/// Entry loading an extended public key from a file.
+/// Entry loading an extended public key from a file. `taproot_note` carries the
+/// message opening the list of taproot-compatible devices, and is set only when
+/// the descriptor being built is a taproot one.
 pub fn import_xpub_entry<'a, Message, M>(
     error: Option<String>,
+    taproot_note: Option<Message>,
     on_press: Option<M>,
 ) -> Element<'a, Message>
 where
@@ -556,6 +573,7 @@ where
         t!("business-import-xpub-file"),
         None::<String>,
         error,
+        taproot_note.map(taproot_xpub_note),
         on_press,
     )
 }
@@ -571,15 +589,20 @@ where
         t!("device-generate-hot-key"),
         Some(t!("device-hot-key-test-only")),
         None,
+        None,
         on_press,
     )
 }
 
-/// Collapsible entry pasting an extended public key.
+/// Collapsible entry pasting an extended public key. `taproot_note` carries the
+/// message opening the list of taproot-compatible devices, and is set only when
+/// the descriptor being built is a taproot one.
+#[allow(clippy::too_many_arguments)]
 pub fn paste_xpub_entry<'a, Message, Paste, Collapse, Input>(
     collapsed: bool,
     network: Network,
     input_value: &Value<String>,
+    taproot_note: Option<Message>,
     input_message: Option<Input>,
     paste_message: Option<Paste>,
     collapse_message: Collapse,
@@ -596,6 +619,7 @@ where
         t!("decrypt-paste-xpub"),
         example_xpub(network),
         input_value,
+        taproot_note.map(taproot_xpub_note),
         input_message,
         paste_message,
         collapse_message,
@@ -670,6 +694,7 @@ where
         label.into(),
         TOKEN_PLACEHOLDER.to_string(),
         input_value,
+        None,
         input_message,
         paste_message,
         collapse_message,

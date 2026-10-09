@@ -54,6 +54,7 @@ pub trait DescriptorEditModal {
 pub struct DefineDescriptor {
     network: Network,
     use_taproot: bool,
+    editing_descriptor_type: bool,
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
@@ -72,7 +73,8 @@ impl DefineDescriptor {
     pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
         Self {
             network,
-            use_taproot: false,
+            use_taproot: true,
+            editing_descriptor_type: false,
             modal: None,
 
             signer,
@@ -213,11 +215,11 @@ impl DefineDescriptor {
         let keys = self.keys();
         SelectKeySource::new(
             self.network,
-            self.use_taproot,
             actual_path,
             keys,
             self.accounts.clone(),
             self.signer.clone(),
+            self.use_taproot,
         )
     }
 }
@@ -242,6 +244,9 @@ impl Step for DefineDescriptor {
             Message::CreateTaprootDescriptor(use_taproot) => {
                 self.use_taproot = use_taproot;
                 self.check_setup();
+            }
+            Message::ShowDescriptorTypeOptions(show) => {
+                self.editing_descriptor_type = show;
             }
             Message::DefineDescriptor(message::DefineDescriptor::ChangeTemplate(template)) => {
                 self.descriptor_template = template;
@@ -387,6 +392,9 @@ impl Step for DefineDescriptor {
                         match msg {
                             message::DefineKey::Clipboard(key) => {
                                 return Task::perform(async move { key }, Message::Clipboard);
+                            }
+                            message::DefineKey::OpenUrl(url) => {
+                                return Task::done(Message::OpenUrl(url));
                             }
 
                             message::DefineKey::EditAlias => {
@@ -611,6 +619,7 @@ impl Step for DefineDescriptor {
                     progress,
                     network,
                     self.use_taproot,
+                    self.editing_descriptor_type,
                     &self.paths[0],
                     &self.paths[1],
                     self.valid(),
@@ -622,6 +631,7 @@ impl Step for DefineDescriptor {
                     progress,
                     network,
                     self.use_taproot,
+                    self.editing_descriptor_type,
                     &self.paths[0],
                     &self.paths[1],
                     self.valid(),
@@ -632,6 +642,7 @@ impl Step for DefineDescriptor {
                 progress,
                 network,
                 self.use_taproot,
+                self.editing_descriptor_type,
                 &self.paths[0],
                 &mut self.paths[1..]
                     .iter()

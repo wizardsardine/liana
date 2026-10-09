@@ -698,7 +698,20 @@ pub fn btn_paste_icon<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn subtle_link<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
-    let link = Button::new(caption(label).size(14))
+    subtle_link_with_size(label, 14.0, msg)
+}
+
+/// A [`subtle_link`] sized to sit inline in a small caption.
+pub fn subtle_link_small<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
+    subtle_link_with_size(label, 13.0, msg)
+}
+
+fn subtle_link_with_size<'a, T: Clone + 'a>(
+    label: impl Display,
+    size: f32,
+    msg: Option<T>,
+) -> Element<'a, T> {
+    let link = Button::new(caption(label).size(size))
         .padding(0)
         .style(theme::button::link_subtle)
         .on_press_maybe(msg);
@@ -1083,4 +1096,15 @@ pub fn btn_modal_previous<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
 
 pub fn btn_mnemonic_word<'a, T: Clone + 'a>(word: impl Display, msg: T) -> Button<'a, T> {
     button_compact(word, theme::button::tertiary, Some(msg)).width(BtnWidth::S)
+}
+
+pub fn btn_chevron<'a, T: Clone + 'a>(unfolded: bool, msg: T) -> Button<'a, T> {
+    Button::new(if unfolded {
+        icon::collapsed_icon()
+    } else {
+        icon::collapse_icon()
+    })
+    .padding(0)
+    .style(theme::button::transparent)
+    .on_press(msg)
 }

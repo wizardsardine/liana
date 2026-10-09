@@ -4,7 +4,11 @@ use liana::miniscript::{
     descriptor::DescriptorPublicKey,
 };
 
-use crate::{app::settings::ProviderKey, hw::is_compatible_with_tapminiscript, t};
+use crate::{
+    app::settings::ProviderKey,
+    hw::{is_compatible_with_tapminiscript, min_taproot_version},
+    t,
+};
 use liana_connect::keys::api::KeyKind;
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
@@ -46,6 +50,35 @@ impl KeySource {
         } else {
             true
         }
+    }
+
+    /// Why this key cannot sign a taproot descriptor: either its firmware is
+    /// too old, or its kind will never support tapminiscript.
+    pub fn taproot_warning(&self) -> Option<String> {
+        let KeySource::Device(device_kind, version) = self else {
+            return None;
+        };
+        if is_compatible_with_tapminiscript(device_kind, version.as_ref()) {
+            return None;
+        }
+        Some(match min_taproot_version(device_kind) {
+            Some(required) => t!(
+                "hw-taproot-firmware-outdated",
+                version = required.to_string()
+            ),
+            None => t!("hw-no-taproot-miniscript"),
+        })
+    }
+
+    /// For a key whose device we cannot inspect, the taproot support we have to
+    /// take on trust, as a note and the help page backing it.
+    pub fn taproot_note(&self) -> Option<(String, String)> {
+        matches!(self, KeySource::Manual).then(|| {
+            (
+                t!("installer-manual-xpub-taproot-note"),
+                crate::help::TAPROOT_COMPATIBLE_DEVICES_URL.to_string(),
+            )
+        })
     }
 
     pub fn is_manual(&self) -> bool {

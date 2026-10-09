@@ -14,8 +14,8 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     component::{
         button::{self, btn_clear_all, btn_customize, btn_next},
-        collapse, list,
-        text::{new, p1_bold, H3_SIZE},
+        list,
+        text::{new, H3_SIZE},
     },
     icon,
     spacing::HSpacing,
@@ -26,7 +26,7 @@ use liana_ui::{
 use crate::installer::{
     context,
     message::{self, Message},
-    view::{editor::define_descriptor_advanced_settings, layout},
+    view::layout,
 };
 use crate::t;
 
@@ -41,27 +41,6 @@ pub const FOOTER_SPACING: f32 = 10.0;
 
 /// Gap between the key legend items of the template introductions.
 pub const KEY_LEGEND_SPACING: f32 = 30.0;
-
-pub fn advanced_settings_collapse<'a>(use_taproot: bool) -> Element<'a, Message> {
-    fn collapse<'a>(collapsed: bool) -> Element<'a, Message> {
-        let icn = if collapsed {
-            icon::collapsed_icon()
-        } else {
-            icon::collapse_icon()
-        };
-        row![p1_bold(t!("installer-advanced-settings")), icn]
-            .align_y(Alignment::Center)
-            .spacing(10)
-            .into()
-    }
-    collapse::Collapse::new(
-        collapse(false),
-        collapse(true),
-        define_descriptor_advanced_settings(use_taproot),
-    )
-    .style(theme::button::transparent)
-    .into()
-}
 
 pub fn template_footer<'a>(valid: bool, processing: bool, customize: bool) -> Row<'a, Message> {
     let clear_all = btn_clear_all(Some(Message::DefineDescriptor(
