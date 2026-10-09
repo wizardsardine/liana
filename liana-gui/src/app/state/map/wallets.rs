@@ -12,7 +12,12 @@ use crate::{
     app::{
         error::Error,
         settings::{LianaSettings, SettingsError, WalletId},
-        state::map::{graph::WalletTxs, offsets::WalletLayout, MapWallet},
+        state::map::{
+            external::{external_wallets, load_external, load_layout, ExternalWallet},
+            graph::WalletTxs,
+            offsets::WalletLayout,
+            MapWallet,
+        },
     },
     daemon::{
         history_txs, label_items,
@@ -28,6 +33,19 @@ pub enum WalletKey {
     /// The wallet the map is opened from.
     Current,
     Other(WalletId),
+    /// An imported wallet, by its id.
+    External(String),
+}
+
+impl WalletKey {
+    /// The `graph_wallets` row of the wallet. `current` cannot be a Liana wallet id.
+    pub fn row(&self) -> String {
+        match self {
+            Self::Current => "current".to_string(),
+            Self::Other(id) => id.to_string(),
+            Self::External(id) => format!("external:{id}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +74,37 @@ pub struct OtherWallet {
     pub checksum: String,
     pub datadir: DataDirectory,
     pub status: WalletStatus,
+}
+
+/// Where the edits of a wallet added to the map are written.
+#[derive(Debug, Clone)]
+pub enum WalletStore {
+    Other(OtherWallet),
+    External(ExternalWallet),
+}
+
+impl WalletStore {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Other(other) => &other.name,
+            Self::External(external) => &external.name,
+        }
+    }
+
+    /// The checksum the wallet color is picked from.
+    pub fn checksum(&self) -> &str {
+        match self {
+            Self::Other(other) => &other.checksum,
+            Self::External(external) => external.checksum(),
+        }
+    }
+}
+
+/// The wallets the wallets modal lists.
+#[derive(Debug)]
+pub struct ListedWallets {
+    pub others: Vec<OtherWallet>,
+    pub externals: Vec<ExternalWallet>,
 }
 
 #[derive(Debug)]
@@ -137,6 +186,10 @@ pub fn save_wallet_labels(
     Ok(())
 }
 
+fn stored_offset(row: &GraphWallet) -> Option<Vector> {
+    row.offset.map(|(x, y)| Vector::new(x as f32, y as f32))
+}
+
 /// The wallets selected in `rows` that can be read, each with its stored offset, blocking.
 pub fn load_selected(
     network_dir: &NetworkDirectory,
@@ -148,11 +201,12 @@ pub fn load_selected(
     if !rows.iter().any(|row| row.selected) {
         return Ok(wallets);
     }
+    let selected = |key: &WalletKey| {
+        let wallet = key.row();
+        rows.iter().find(|row| row.selected && row.wallet == wallet)
+    };
     for other in other_wallets(network_dir, network, current)? {
-        let Some(row) = rows
-            .iter()
-            .find(|row| row.selected && row.wallet == other.id.to_string())
-        else {
+        let Some(row) = selected(&WalletKey::Other(other.id.clone())) else {
             continue;
         };
         if other.status != WalletStatus::Available {
@@ -168,9 +222,29 @@ pub fn load_selected(
             },
             layout: WalletLayout {
                 entries: data.layout,
-                offset: row.offset.map(|(x, y)| Vector::new(x as f32, y as f32)),
+                offset: stored_offset(row),
             },
-            other: Some(other),
+            store: Some(WalletStore::Other(other)),
+        });
+    }
+    for external in external_wallets(network_dir) {
+        let key = WalletKey::External(external.id.clone());
+        let Some(row) = selected(&key) else {
+            continue;
+        };
+        let history = load_external(&external, network_dir, network)?;
+        wallets.push(MapWallet {
+            txs: WalletTxs {
+                key,
+                checksum: external.checksum().to_string(),
+                txs: history.txs,
+                coins: history.coins,
+            },
+            layout: WalletLayout {
+                entries: load_layout(&external.dir(network_dir))?,
+                offset: stored_offset(row),
+            },
+            store: Some(WalletStore::External(external)),
         });
     }
     Ok(wallets)
@@ -186,7 +260,9 @@ mod tests {
     use crate::{
         app::{
             settings::{SettingsError, WalletId, SETTINGS_FILE_NAME},
-            state::map::wallets::{load_wallet, other_wallets, OtherWallet, WalletStatus},
+            state::map::wallets::{
+                load_wallet, other_wallets, OtherWallet, WalletKey, WalletStatus,
+            },
         },
         dir::NetworkDirectory,
     };
@@ -318,5 +394,14 @@ mod tests {
             Err(OfflineError::NotFound(path)) if path == wallets[0].datadir.sqlite_db_file_path()
         ));
         fs::remove_dir_all(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn wallet_rows() {
+        assert_eq!(WalletKey::Current.row(), "current");
+        let other = WalletKey::Other(WalletId::new("aliased".to_string(), Some(1700000001)));
+        assert_eq!(other.row(), "aliased-1700000001");
+        let external = WalletKey::External("q8n5v3ka-1700000002".to_string());
+        assert_eq!(external.row(), "external:q8n5v3ka-1700000002");
     }
 }

@@ -1,10 +1,13 @@
 use liana_ui::{
-    component::panels::{map::header::HeaderAction, spend::FeeLevel},
+    component::panels::{
+        map::{header::HeaderAction, modals::ImportMode},
+        spend::FeeLevel,
+    },
     widget::graph_view::{GraphEvent, ItemId},
 };
 
 use crate::{
-    app::{menu::Menu, settings::WalletId, view::FiatAmountConverter},
+    app::{menu::Menu, state::map::wallets::WalletKey, view::FiatAmountConverter},
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -71,10 +74,22 @@ pub enum MapMessage {
     Key(MapKey),
     /// Leaf to jump to.
     ReuseRowSelected(ItemId),
-    /// Adds or removes another wallet from the map.
-    WalletToggled(WalletId),
+    /// Adds or removes a wallet from the map.
+    WalletToggled(WalletKey),
     /// Opens the external wallet import form.
     ImportWallet,
+    ImportMode(ImportMode),
+    ImportName(String),
+    ImportDescriptor(String),
+    ImportAccount(String),
+    ImportElectrum(String),
+    ImportConfirm,
+    /// Imports the wallet of the device's standard paths.
+    ImportDevice(Fingerprint),
+    /// Id of the external wallet to scan again.
+    ExternalRescan(String),
+    /// Id of the external wallet to delete.
+    ExternalRemove(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -6,10 +6,7 @@ use liana_ui::widget::graph_view::Side;
 use lianad::commands::GraphItem;
 
 use crate::{
-    app::{
-        settings::WalletId,
-        state::map::{coin_ui::TagId, wallets::WalletKey},
-    },
+    app::state::map::{coin_ui::TagId, offsets::Offsets, wallets::WalletKey},
     daemon::model::LabelItem,
 };
 
@@ -18,11 +15,12 @@ pub const HISTORY_LIMIT: usize = 100;
 /// Display order of one column, `None` is the true order.
 pub type Order = Option<Vec<u32>>;
 
-/// Positions and slot display orders (inputs, outputs) of the whole map.
+/// Positions, slot display orders (inputs, outputs) and wallet offsets of the whole map.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LayoutState {
     pub positions: HashMap<GraphItem, Point>,
     pub orders: HashMap<Txid, (Order, Order)>,
+    pub offsets: Offsets,
 }
 
 /// A recorded action. Items are keyed by `GraphItem`, stable across map reloads.
@@ -30,9 +28,9 @@ pub struct LayoutState {
 pub enum Change {
     /// Item, position before, position after.
     Move(Vec<(GraphItem, Point, Point)>),
-    /// Another wallet moved as a whole.
+    /// An added wallet moved as a whole.
     Offset {
-        wallet: WalletId,
+        wallet: WalletKey,
         before: Vector,
         after: Vector,
     },
@@ -200,7 +198,7 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::map::fixture;
+    use crate::app::{settings::WalletId, state::map::fixture};
 
     fn select(n: u8, selected: bool) -> Change {
         Change::Select {
@@ -256,12 +254,13 @@ mod tests {
         let layout = LayoutState {
             positions: HashMap::from([(item, Point::new(1.0, 2.0))]),
             orders: HashMap::new(),
+            offsets: Offsets::default(),
         };
         let moved = Change::Move(vec![(item, Point::new(0.0, 0.0), Point::new(5.0, 6.0))]);
         let changes = [
             moved.clone(),
             Change::Offset {
-                wallet: WalletId::new("b".to_string(), None),
+                wallet: WalletKey::Other(WalletId::new("b".to_string(), None)),
                 before: Vector::new(0.0, 120.0),
                 after: Vector::new(24.0, 240.0),
             },

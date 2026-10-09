@@ -7,6 +7,7 @@ pub mod fixture;
 pub mod focus;
 pub mod graph;
 pub mod history;
+pub mod import;
 pub mod layout;
 pub mod offsets;
 pub mod selection;
@@ -24,9 +25,9 @@ use iced::{
     keyboard::{self, key::Named, Modifiers},
     window, Event, Point, Rectangle, Size, Subscription, Task, Vector,
 };
-use liana::miniscript::bitcoin::{Address, Network, OutPoint, Txid};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, Network, OutPoint, Txid};
 use liana_ui::{
-    component::panels::map::{header::HeaderAction, wallet_color},
+    component::panels::map::{header::HeaderAction, modals::ImportMode, wallet_color},
     theme::Theme,
     widget::{
         graph_view::{
@@ -54,14 +55,22 @@ use crate::{
                 display::{
                     click_action, display_state, label_key, label_wallet, slot_ref, ClickAction,
                 },
+                external::{
+                    external_wallets, parse_descriptor, remembered_electrum, remove,
+                    save_external_labels, save_layout, ExternalWallet,
+                },
                 focus::{resolve_focus, FocusLanding, ShowOnMap},
                 graph::{MapItem, SlotRef, TxGraph, WalletTxs},
                 history::{Change, History},
+                import::{
+                    daemon_electrum, import, parse_account, rescan, ImportFailure, ImportForm,
+                    ImportSource,
+                },
                 offsets::{Offsets, WalletLayout},
                 selection::{Selection, TagHighlight},
                 wallets::{
                     load_selected, other_wallets, save_wallet_labels, save_wallet_layout,
-                    OtherWallet, WalletKey,
+                    ListedWallets, OtherWallet, WalletKey, WalletStore,
                 },
             },
             State,
@@ -73,7 +82,8 @@ use crate::{
         model::{LabelItem, LabelsLoader},
         Daemon,
     },
-    dir::NetworkDirectory,
+    dir::{LianaDirectory, NetworkDirectory},
+    hw::{HardwareWallet, HardwareWallets},
 };
 
 /// Display orders (inputs, outputs) per transaction, `None` = true order.
@@ -84,8 +94,8 @@ pub type Orders = HashMap<Txid, (history::Order, history::Order)>;
 pub struct MapWallet {
     pub txs: WalletTxs,
     pub layout: WalletLayout,
-    /// The database of another wallet, `None` for the current one.
-    pub other: Option<OtherWallet>,
+    /// `None` for the current wallet.
+    pub store: Option<WalletStore>,
 }
 
 /// The stored layout, checked against the current graph.
@@ -125,11 +135,12 @@ pub enum LabelTarget {
     Leaf(usize),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum MapModal {
     Label(LabelTarget),
     Reuse(Address),
     Wallets,
+    Import(Box<ImportForm>),
 }
 
 /// What Esc does, first match wins (spec 14).
@@ -196,6 +207,7 @@ fn map_event(event: Event, status: event::Status, _: window::Id) -> Option<Messa
 }
 
 pub struct MapPanel {
+    data_dir: LianaDirectory,
     network_dir: NetworkDirectory,
     network: Network,
     wallet_id: WalletId,
@@ -207,10 +219,14 @@ pub struct MapPanel {
     layout: HashMap<ItemId, Point>,
     orders: Orders,
     offsets: Offsets,
-    /// The other wallets on the map, written to their own database.
-    others: HashMap<WalletId, OtherWallet>,
+    /// The wallets added to the map, edits written to their own store.
+    others: HashMap<WalletKey, WalletStore>,
     /// The other wallets listed by the wallets modal.
     listed: Vec<OtherWallet>,
+    /// The external wallets listed by the wallets modal.
+    listed_externals: Vec<ExternalWallet>,
+    /// The external wallets being scanned again, by id.
+    rescanning: HashSet<String>,
     /// A wallet is being added to or removed from the map.
     switching: bool,
     coin_ui: CoinUi,
@@ -328,20 +344,30 @@ async fn load_map(
             entries: layout,
             offset: None,
         },
-        other: None,
+        store: None,
     };
     Ok(std::iter::once(wallet).chain(others).collect())
 }
 
+/// The Electrum server of the current wallet, `None` when it uses bitcoind.
+fn current_electrum(daemon: &(dyn Daemon + Sync + Send)) -> Option<String> {
+    daemon_electrum(
+        daemon
+            .config()
+            .and_then(|config| config.bitcoin_backend.as_ref()),
+    )
+}
+
 impl MapPanel {
     pub fn new(
-        network_dir: NetworkDirectory,
+        data_dir: LianaDirectory,
         network: Network,
         wallet_id: WalletId,
         remote: bool,
     ) -> Self {
         Self {
-            network_dir,
+            network_dir: data_dir.network_directory(network),
+            data_dir,
             network,
             wallet_id,
             remote,
@@ -352,6 +378,8 @@ impl MapPanel {
             offsets: Offsets::default(),
             others: HashMap::new(),
             listed: Vec::new(),
+            listed_externals: Vec::new(),
+            rescanning: HashSet::new(),
             switching: false,
             coin_ui: CoinUi::default(),
             selection: Selection::default(),
@@ -426,7 +454,13 @@ impl MapPanel {
                 .filter_map(|(id, before, after)| Some((graph.graph_item(*id)?, *before, *after)))
                 .collect(),
         );
-        let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
+        let touched = edit::apply_layout_change(
+            graph,
+            &mut self.layout,
+            &mut self.orders,
+            &mut self.offsets,
+            &change,
+        );
         if touched.is_empty() {
             return Task::none();
         }
@@ -434,14 +468,14 @@ impl MapPanel {
         self.save_layout(daemon, touched, HashMap::new())
     }
 
-    /// Records a drag of every item of another wallet as a move of its offset.
+    /// Records a drag of every item of an added wallet as a move of its offset.
     fn commit_offset(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: WalletId,
+        wallet: WalletKey,
         delta: Vector,
     ) -> Task<Message> {
-        let Some(before) = self.offsets.get(&WalletKey::Other(wallet.clone())) else {
+        let Some(before) = self.offsets.get(&wallet) else {
             return Task::none();
         };
         let after = edit::moved_offset(before, delta, self.toggles.snap);
@@ -456,7 +490,7 @@ impl MapPanel {
     fn set_offset(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: WalletId,
+        wallet: WalletKey,
         offset: Vector,
     ) -> Task<Message> {
         let Some(graph) = &self.graph else {
@@ -496,7 +530,7 @@ impl MapPanel {
                     },
                     Message::LabelsUpdated,
                 ),
-                WalletKey::Other(id) => self.save_other_labels(id, labels),
+                wallet => self.save_other_labels(wallet, labels),
             };
         }
         if let Change::Offset { wallet, after, .. } = change {
@@ -505,8 +539,18 @@ impl MapPanel {
         if self.coin_ui.apply(&change) {
             return Task::none();
         }
-        let touched = edit::apply_layout_change(graph, &mut self.layout, &mut self.orders, &change);
-        self.save_layout(daemon, touched, HashMap::new())
+        let touched = edit::apply_layout_change(
+            graph,
+            &mut self.layout,
+            &mut self.orders,
+            &mut self.offsets,
+            &change,
+        );
+        let save = self.save_layout(daemon.clone(), touched, HashMap::new());
+        match change {
+            Change::Layout { .. } => Task::batch([save, self.save_all_offsets(daemon)]),
+            _ => save,
+        }
     }
 
     /// Applies the selection or highlights of a resolved focus and returns its target rect.
@@ -594,8 +638,8 @@ impl MapPanel {
         history.labels.get(key).cloned()
     }
 
-    /// Saves the edited labels of `keys` to another wallet.
-    fn confirm_other_labels(&mut self, wallet: WalletId, keys: &[String]) -> Task<Message> {
+    /// Saves the edited labels of `keys` to an added wallet.
+    fn confirm_other_labels(&mut self, wallet: WalletKey, keys: &[String]) -> Task<Message> {
         let labels = keys
             .iter()
             .filter_map(|key| {
@@ -609,27 +653,39 @@ impl MapPanel {
 
     fn save_other_labels(
         &self,
-        wallet: WalletId,
+        wallet: WalletKey,
         labels: HashMap<LabelItem, Option<String>>,
     ) -> Task<Message> {
-        let Some(other) = self.others.get(&wallet).cloned() else {
+        let Some(store) = self.others.get(&wallet).cloned() else {
             return Task::done(Message::MapWalletLabelsSaved(
                 wallet.clone(),
                 Err(Error::Unexpected(format!(
-                    "wallet {wallet} is not on the map"
+                    "wallet {wallet:?} is not on the map"
                 ))),
             ));
         };
-        let network = self.network;
+        let (network_dir, network) = (self.network_dir.clone(), self.network);
         Task::perform(
             async move {
                 let saved = labels
                     .iter()
                     .map(|(item, label)| (item.to_string(), label.clone()))
                     .collect();
-                tokio::task::spawn_blocking(move || save_wallet_labels(&other, network, &labels))
-                    .await
-                    .map_err(|e| Error::Unexpected(e.to_string()))??;
+                tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                    match store {
+                        WalletStore::Other(other) => {
+                            Ok(save_wallet_labels(&other, network, &labels)?)
+                        }
+                        WalletStore::External(external) => Ok(save_external_labels(
+                            &external,
+                            &network_dir,
+                            network,
+                            &labels,
+                        )?),
+                    }
+                })
+                .await
+                .map_err(|e| Error::Unexpected(e.to_string()))??;
                 Ok(saved)
             },
             move |res| Message::MapWalletLabelsSaved(wallet.clone(), res),
@@ -675,17 +731,18 @@ impl MapPanel {
         }
     }
 
-    /// Selects or unselects another wallet, keeping its offset, and loads the map again.
+    /// Selects or unselects an added wallet, keeping its offset, and loads the map again.
     fn toggle_wallet(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: WalletId,
+        wallet: WalletKey,
     ) -> Task<Message> {
-        if self.switching {
+        if self.switching || wallet == WalletKey::Current {
             return Task::none();
         }
-        self.switching = true;
         let selected = !self.others.contains_key(&wallet);
+        let wallet = wallet.row();
+        self.switching = true;
         let (network_dir, network, current) = (
             self.network_dir.clone(),
             self.network,
@@ -693,7 +750,6 @@ impl MapPanel {
         );
         Task::perform(
             async move {
-                let wallet = wallet.to_string();
                 let offset = daemon
                     .get_graph_wallets()
                     .await?
@@ -713,6 +769,215 @@ impl MapPanel {
                 load_map(daemon, network_dir, network, current).await
             },
             Message::MapLoaded,
+        )
+    }
+
+    /// Loads the map again after a change of the added wallets.
+    fn load_again(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        self.switching = true;
+        Task::perform(
+            load_map(
+                daemon,
+                self.network_dir.clone(),
+                self.network,
+                self.wallet_id.clone(),
+            ),
+            Message::MapLoaded,
+        )
+    }
+
+    fn open_import(&mut self, daemon: &(dyn Daemon + Sync + Send)) {
+        let (electrum, error) = match current_electrum(daemon) {
+            Some(_) => (None, None),
+            None => match remembered_electrum(&self.network_dir) {
+                Ok(addr) => (Some(addr.unwrap_or_default()), None),
+                Err(e) => (Some(String::new()), Some(e.to_string())),
+            },
+        };
+        let hws = HardwareWallets::new(self.data_dir.clone(), self.network);
+        let mut form = ImportForm::new(hws, electrum);
+        form.error = error;
+        self.modal = Some(MapModal::Import(Box::new(form)));
+    }
+
+    /// The open import form, `None` while it scans.
+    fn import_form(&mut self) -> Option<&mut ImportForm> {
+        match &mut self.modal {
+            Some(MapModal::Import(form)) if !form.scanning => Some(form),
+            _ => None,
+        }
+    }
+
+    fn import_descriptor(&mut self, daemon: &(dyn Daemon + Sync + Send)) -> Task<Message> {
+        let network = self.network;
+        let Some(form) = self.import_form().filter(|form| form.can_import()) else {
+            return Task::none();
+        };
+        match parse_descriptor(&form.descriptor.value, network) {
+            Ok(descriptor) => {
+                self.start_import(daemon, ImportSource::Descriptor(Box::new(descriptor)))
+            }
+            Err(e) => {
+                form.error = Some(e.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn import_device(
+        &mut self,
+        daemon: &(dyn Daemon + Sync + Send),
+        fingerprint: Fingerprint,
+    ) -> Task<Message> {
+        let Some(form) = self.import_form().filter(|form| form.ready()) else {
+            return Task::none();
+        };
+        let account = match parse_account(&form.account.value) {
+            Ok(account) => account,
+            Err(e) => {
+                form.error = Some(e.to_string());
+                return Task::none();
+            }
+        };
+        let device = form.hws.list.iter().find_map(|hw| match hw {
+            HardwareWallet::Supported {
+                device,
+                fingerprint: device_fingerprint,
+                ..
+            } if *device_fingerprint == fingerprint => Some(device.clone()),
+            _ => None,
+        });
+        let Some(device) = device else {
+            return Task::none();
+        };
+        form.device = Some(fingerprint);
+        self.start_import(
+            daemon,
+            ImportSource::Device {
+                device,
+                fingerprint,
+                account,
+            },
+        )
+    }
+
+    /// Scans and saves the wallet of the import form.
+    fn start_import(
+        &mut self,
+        daemon: &(dyn Daemon + Sync + Send),
+        source: ImportSource,
+    ) -> Task<Message> {
+        let Some(MapModal::Import(form)) = &mut self.modal else {
+            return Task::none();
+        };
+        let asked = form
+            .electrum
+            .as_ref()
+            .map(|electrum| electrum.value.trim().to_string());
+        let Some(electrum) = asked.clone().or_else(|| current_electrum(daemon)) else {
+            form.device = None;
+            form.error = Some(ImportFailure::NoElectrum.to_string());
+            return Task::none();
+        };
+        form.scanning = true;
+        form.error = None;
+        Task::perform(
+            import(
+                self.network_dir.clone(),
+                self.network,
+                form.name.value.trim().to_string(),
+                source,
+                electrum,
+                asked.is_some(),
+            ),
+            Message::MapWalletImported,
+        )
+    }
+
+    fn rescan_external(
+        &mut self,
+        daemon: &(dyn Daemon + Sync + Send),
+        id: String,
+    ) -> Task<Message> {
+        let Some(wallet) = self
+            .listed_externals
+            .iter()
+            .find(|wallet| wallet.id == id)
+            .cloned()
+        else {
+            return Task::none();
+        };
+        let Some(electrum) = wallet.electrum.clone().or_else(|| current_electrum(daemon)) else {
+            self.warning = Some(ImportFailure::NoElectrum.into());
+            return Task::none();
+        };
+        if !self.rescanning.insert(id.clone()) {
+            return Task::none();
+        }
+        let (network_dir, network) = (self.network_dir.clone(), self.network);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    rescan(wallet, &network_dir, network, &electrum)
+                })
+                .await?
+            },
+            move |res| Message::MapWalletRescanned(id.clone(), res),
+        )
+    }
+
+    /// Keeps the new scan of `wallet` and loads the map again when it is on it.
+    fn rescanned(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: ExternalWallet,
+    ) -> Task<Message> {
+        let key = WalletKey::External(wallet.id.clone());
+        if let Some(listed) = self
+            .listed_externals
+            .iter_mut()
+            .find(|listed| listed.id == wallet.id)
+        {
+            *listed = wallet.clone();
+        }
+        if !self.others.contains_key(&key) {
+            return Task::none();
+        }
+        self.others.insert(key, WalletStore::External(wallet));
+        self.load_again(daemon)
+    }
+
+    /// Deletes an external wallet and unselects it.
+    fn remove_external(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        id: String,
+    ) -> Task<Message> {
+        if self.switching || self.loading || self.rescanning.contains(&id) {
+            return Task::none();
+        }
+        let wallet = WalletKey::External(id.clone()).row();
+        self.switching = true;
+        let network_dir = self.network_dir.clone();
+        let removed = id.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || remove(&network_dir, &removed))
+                    .await
+                    .map_err(|e| Error::Unexpected(e.to_string()))??;
+                daemon
+                    .update_graph_wallets(&[GraphWallet {
+                        wallet,
+                        selected: false,
+                        offset: None,
+                        lane: None,
+                        displayed: true,
+                        lane_height: None,
+                    }])
+                    .await?;
+                Ok(())
+            },
+            move |res| Message::MapExternalRemoved(id.clone(), res),
         )
     }
 
@@ -761,21 +1026,27 @@ impl MapPanel {
                 },
                 Message::MapLayoutSaved,
             ),
-            WalletKey::Other(id) => {
-                let Some(other) = self.others.get(&id).cloned() else {
+            wallet => {
+                let Some(store) = self.others.get(&wallet).cloned() else {
                     return Task::done(Message::MapLayoutSaved(Err(Error::Unexpected(format!(
-                        "wallet {id} is not on the map"
+                        "wallet {wallet:?} is not on the map"
                     )))));
                 };
-                let network = self.network;
+                let (network_dir, network) = (self.network_dir.clone(), self.network);
                 Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(move || {
-                            save_wallet_layout(&other, network, &set, &remove)
+                        tokio::task::spawn_blocking(move || -> Result<(), Error> {
+                            match store {
+                                WalletStore::Other(other) => {
+                                    Ok(save_wallet_layout(&other, network, &set, &remove)?)
+                                }
+                                WalletStore::External(external) => {
+                                    Ok(save_layout(&external.dir(&network_dir), &set, &remove)?)
+                                }
+                            }
                         })
                         .await
                         .map_err(|e| Error::Unexpected(e.to_string()))?
-                        .map_err(Into::into)
                     },
                     Message::MapLayoutSaved,
                 )
@@ -783,18 +1054,25 @@ impl MapPanel {
         }
     }
 
-    /// Writes the offsets of other wallets to the current wallet.
+    /// Writes the offset of every added wallet.
+    fn save_all_offsets(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        let wallets = self.offsets.iter().map(|(wallet, _)| wallet).collect();
+        self.save_offsets(daemon, wallets)
+    }
+
+    /// Writes the offsets of added wallets to the current wallet.
     fn save_offsets(
         &self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        wallets: Vec<WalletId>,
+        wallets: Vec<WalletKey>,
     ) -> Task<Message> {
         let rows: Vec<GraphWallet> = wallets
             .into_iter()
-            .filter_map(|id| {
-                let offset = self.offsets.get(&WalletKey::Other(id.clone()))?;
+            .filter(|wallet| *wallet != WalletKey::Current)
+            .filter_map(|wallet| {
+                let offset = self.offsets.get(&wallet)?;
                 Some(GraphWallet {
-                    wallet: id.to_string(),
+                    wallet: wallet.row(),
                     selected: true,
                     offset: Some((f64::from(offset.x), f64::from(offset.y))),
                     lane: None,
@@ -840,11 +1118,8 @@ impl State for MapPanel {
         let theme = Theme::default();
         let wallet_colors = self
             .others
-            .values()
-            .map(|other| {
-                let key = WalletKey::Other(other.id.clone());
-                (key, wallet_color(&theme, &other.checksum))
-            })
+            .iter()
+            .map(|(key, store)| (key.clone(), wallet_color(&theme, store.checksum())))
             .collect();
         let dashboard = view::full_dashboard(
             &Menu::Map(None),
@@ -883,9 +1158,12 @@ impl State for MapPanel {
             (Some(graph), Some(MapModal::Reuse(address))) => view::map::reuse_modal(graph, address),
             (_, Some(MapModal::Wallets)) => Some(view::map::wallets_modal(
                 &self.listed,
+                &self.listed_externals,
                 &self.others,
+                &self.rescanning,
                 self.switching,
             )),
+            (_, Some(MapModal::Import(form))) => Some(view::map::import_modal(form)),
             _ => None,
         };
         let close = Some(view::Message::Map(MapMessage::CloseModal));
@@ -911,10 +1189,10 @@ impl State for MapPanel {
             Message::MapLoaded(Ok(wallets)) => {
                 let mut txs = Vec::with_capacity(wallets.len());
                 let mut layouts = Vec::with_capacity(wallets.len());
-                let before: HashSet<WalletId> = self.others.drain().map(|(id, _)| id).collect();
+                let before: HashSet<WalletKey> = self.others.drain().map(|(key, _)| key).collect();
                 for wallet in wallets {
-                    if let Some(other) = wallet.other {
-                        self.others.insert(other.id.clone(), other);
+                    if let Some(store) = wallet.store {
+                        self.others.insert(wallet.txs.key.clone(), store);
                     }
                     layouts.push((wallet.txs.key.clone(), wallet.layout));
                     txs.push(wallet.txs);
@@ -973,7 +1251,10 @@ impl State for MapPanel {
             Message::MapLayoutSaved(Err(e)) => self.warning = Some(e),
             Message::View(view::Message::Label(ref items, LabelMessage::Confirm)) => {
                 self.pending_label = items.first().map(|key| (key.clone(), self.own_label(key)));
-                if let Some(WalletKey::Other(wallet)) = self.label_owner() {
+                if let Some(wallet) = self
+                    .label_owner()
+                    .filter(|wallet| *wallet != WalletKey::Current)
+                {
                     return self.confirm_other_labels(wallet, items);
                 }
                 return self.forward_label(daemon, message);
@@ -992,7 +1273,6 @@ impl State for MapPanel {
                 self.pending_label = None;
             }
             Message::MapWalletLabelsSaved(wallet, Ok(saved)) => {
-                let wallet = WalletKey::Other(wallet);
                 if let Some(graph) = &mut self.graph {
                     graph.load_wallet_labels(&wallet, &saved);
                 }
@@ -1004,8 +1284,49 @@ impl State for MapPanel {
             }
             Message::MapWalletsListed(Err(e)) => self.warning = Some(e),
             Message::MapWalletsListed(Ok(wallets)) => {
-                self.listed = wallets;
+                self.listed = wallets.others;
+                self.listed_externals = wallets.externals;
                 self.modal = Some(MapModal::Wallets);
+            }
+            Message::MapWalletImported(Ok(wallet)) => {
+                self.modal = None;
+                return self.toggle_wallet(daemon, WalletKey::External(wallet.id));
+            }
+            Message::MapWalletImported(Err(e)) => match &mut self.modal {
+                Some(MapModal::Import(form)) => {
+                    form.scanning = false;
+                    form.device = None;
+                    form.error = Some(e.to_string());
+                }
+                _ => self.warning = Some(e.into()),
+            },
+            Message::MapWalletRescanned(id, res) => {
+                self.rescanning.remove(&id);
+                match res {
+                    Ok(wallet) => return self.rescanned(daemon, wallet),
+                    Err(e) => self.warning = Some(e.into()),
+                }
+            }
+            Message::MapExternalRemoved(id, res) => match res {
+                Ok(()) => {
+                    self.listed_externals.retain(|wallet| wallet.id != id);
+                    if self.others.contains_key(&WalletKey::External(id)) {
+                        return self.load_again(daemon);
+                    }
+                    self.switching = false;
+                }
+                Err(e) => {
+                    self.switching = false;
+                    self.warning = Some(e);
+                }
+            },
+            Message::HardwareWallets(message) => {
+                if let Some(MapModal::Import(form)) = &mut self.modal {
+                    match form.hws.update(message) {
+                        Ok(task) => return task.map(Message::HardwareWallets),
+                        Err(e) => form.error = Some(e.to_string()),
+                    }
+                }
             }
             Message::View(view::Message::Map(message)) => match message {
                 MapMessage::Header(HeaderAction::ZoomIn) => {
@@ -1048,16 +1369,57 @@ impl State for MapPanel {
                     return Task::perform(
                         async move {
                             tokio::task::spawn_blocking(move || {
-                                other_wallets(&network_dir, network, &current)
+                                Ok(ListedWallets {
+                                    others: other_wallets(&network_dir, network, &current)?,
+                                    externals: external_wallets(&network_dir),
+                                })
                             })
                             .await
                             .map_err(|e| Error::Unexpected(e.to_string()))?
-                            .map_err(Into::into)
                         },
                         Message::MapWalletsListed,
                     );
                 }
                 MapMessage::WalletToggled(wallet) => return self.toggle_wallet(daemon, wallet),
+                MapMessage::ImportWallet => self.open_import(daemon.as_ref()),
+                MapMessage::ImportMode(mode) => {
+                    if let Some(form) = self.import_form() {
+                        form.mode = mode;
+                        form.error = None;
+                    }
+                }
+                MapMessage::ImportName(name) => {
+                    if let Some(form) = self.import_form() {
+                        form.name.value = name;
+                    }
+                }
+                MapMessage::ImportDescriptor(descriptor) => {
+                    if let Some(form) = self.import_form() {
+                        form.descriptor.value = descriptor;
+                        form.error = None;
+                    }
+                }
+                MapMessage::ImportAccount(account) => {
+                    if let Some(form) = self.import_form() {
+                        form.account.value = account;
+                        form.error = None;
+                    }
+                }
+                MapMessage::ImportElectrum(electrum) => {
+                    if let Some(electrum_field) =
+                        self.import_form().and_then(|form| form.electrum.as_mut())
+                    {
+                        electrum_field.value = electrum;
+                    }
+                }
+                MapMessage::ImportConfirm => return self.import_descriptor(daemon.as_ref()),
+                MapMessage::ImportDevice(fingerprint) => {
+                    return self.import_device(daemon.as_ref(), fingerprint);
+                }
+                MapMessage::ExternalRescan(id) => {
+                    return self.rescan_external(daemon.as_ref(), id);
+                }
+                MapMessage::ExternalRemove(id) => return self.remove_external(daemon, id),
                 MapMessage::Header(HeaderAction::Shortcuts)
                 | MapMessage::Key(MapKey::Shortcuts) => {
                     self.shortcuts_open = !self.shortcuts_open;
@@ -1118,22 +1480,33 @@ impl State for MapPanel {
                     let Some(graph) = &self.graph else {
                         return Task::none();
                     };
+                    let reset = offsets::reset_layout(graph, &self.offsets);
                     let change = Change::Layout {
-                        before: edit::layout_state(graph, &self.layout, &self.orders),
+                        before: edit::layout_state(
+                            graph,
+                            &self.layout,
+                            &self.orders,
+                            &self.offsets,
+                        ),
                         after: edit::layout_state(
                             graph,
-                            &offsets::reset_layout(graph, &self.offsets),
+                            &reset.layout,
                             &Orders::new(),
+                            &reset.offsets,
                         ),
                     };
                     let touched = edit::apply_layout_change(
                         graph,
                         &mut self.layout,
                         &mut self.orders,
+                        &mut self.offsets,
                         &change,
                     );
                     self.history.record(change);
-                    let save = self.save_layout(daemon, touched, HashMap::new());
+                    let save = Task::batch([
+                        self.save_layout(daemon.clone(), touched, HashMap::new()),
+                        self.save_all_offsets(daemon),
+                    ]);
                     return Task::batch([save, graph_view::fit(self.graph_id.clone())]);
                 }
                 MapMessage::Graph(event) => match event {
@@ -1198,6 +1571,7 @@ impl State for MapPanel {
                             graph,
                             &mut self.layout,
                             &mut self.orders,
+                            &mut self.offsets,
                             &change,
                         );
                         self.history.record(change);
@@ -1301,7 +1675,13 @@ impl State for MapPanel {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(map_event)
+        let events = event::listen_with(map_event);
+        match &self.modal {
+            Some(MapModal::Import(form)) if form.mode == ImportMode::SigningDevice => {
+                Subscription::batch([events, form.hws.refresh().map(Message::HardwareWallets)])
+            }
+            _ => events,
+        }
     }
 
     fn reload(
@@ -1352,7 +1732,7 @@ mod tests {
             },
             view::MapKey,
         },
-        dir::NetworkDirectory,
+        dir::LianaDirectory,
     };
 
     fn character(c: &str) -> Key {
@@ -1424,7 +1804,7 @@ mod tests {
     #[test]
     fn click_clears_show_on_map() {
         let mut panel = MapPanel::new(
-            NetworkDirectory::new(PathBuf::new()),
+            LianaDirectory::new(PathBuf::new()),
             Network::Bitcoin,
             WalletId::new("current".to_string(), None),
             false,

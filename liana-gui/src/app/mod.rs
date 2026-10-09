@@ -98,7 +98,7 @@ impl<S: SettingsTrait> Panels<S> {
         );
 
         let map = MapPanel::new(
-            data_dir.network_directory(cache.network),
+            data_dir.clone(),
             cache.network,
             wallet.id(),
             wallet.remote_backend_auth.is_some(),

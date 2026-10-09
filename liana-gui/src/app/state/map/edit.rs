@@ -4,15 +4,12 @@ use iced::{Point, Vector};
 use liana_ui::widget::graph_view::{geometry::snap_to_grid, ItemId, Side};
 use lianad::commands::GraphItem;
 
-use crate::app::{
-    settings::WalletId,
-    state::map::{
-        graph::TxGraph,
-        history::{Change, LayoutState},
-        offsets::Offsets,
-        wallets::WalletKey,
-        Orders,
-    },
+use crate::app::state::map::{
+    graph::TxGraph,
+    history::{Change, LayoutState},
+    offsets::Offsets,
+    wallets::WalletKey,
+    Orders,
 };
 
 /// `(id, before, after)` for each moved item. With `snap`, each item lands on the grid on its own.
@@ -32,17 +29,14 @@ pub fn moved_positions(
         .collect()
 }
 
-/// The other wallet whose items are exactly `items`: dragging them moves its offset.
-pub fn dragged_wallet(graph: &TxGraph, items: &[ItemId]) -> Option<WalletId> {
-    let Some(WalletKey::Other(id)) = graph.item_wallet(*items.first()?) else {
-        return None;
-    };
+/// The added wallet whose items are exactly `items`: dragging them moves its offset.
+pub fn dragged_wallet(graph: &TxGraph, items: &[ItemId]) -> Option<WalletKey> {
+    let wallet = graph
+        .item_wallet(*items.first()?)
+        .filter(|wallet| **wallet != WalletKey::Current)?;
     let dragged: BTreeSet<ItemId> = items.iter().copied().collect();
-    let wallet: BTreeSet<ItemId> = graph
-        .wallet_items(&WalletKey::Other(id.clone()))
-        .into_iter()
-        .collect();
-    (dragged == wallet).then(|| id.clone())
+    let items: BTreeSet<ItemId> = graph.wallet_items(wallet).into_iter().collect();
+    (dragged == items).then(|| wallet.clone())
 }
 
 /// The offset after a drag by `delta`. With `snap`, it lands on the grid.
@@ -56,14 +50,13 @@ pub fn apply_offset(
     graph: &TxGraph,
     layout: &mut HashMap<ItemId, Point>,
     offsets: &mut Offsets,
-    wallet: &WalletId,
+    wallet: &WalletKey,
     offset: Vector,
 ) -> bool {
-    let key = WalletKey::Other(wallet.clone());
-    let Some(before) = offsets.get(&key) else {
+    let Some(before) = offsets.get(wallet) else {
         return false;
     };
-    for id in graph.wallet_items(&key) {
+    for id in graph.wallet_items(wallet) {
         if let Some(p) = layout.get_mut(&id) {
             *p += offset - before;
         }
@@ -99,6 +92,7 @@ pub fn layout_state(
     graph: &TxGraph,
     layout: &HashMap<ItemId, Point>,
     orders: &Orders,
+    offsets: &Offsets,
 ) -> LayoutState {
     LayoutState {
         positions: layout
@@ -106,6 +100,7 @@ pub fn layout_state(
             .filter_map(|(id, point)| Some((graph.graph_item(*id)?, *point)))
             .collect(),
         orders: orders.clone(),
+        offsets: offsets.clone(),
     }
 }
 
@@ -114,6 +109,7 @@ pub fn apply_layout_change(
     graph: &TxGraph,
     layout: &mut HashMap<ItemId, Point>,
     orders: &mut Orders,
+    offsets: &mut Offsets,
     change: &Change,
 ) -> Vec<ItemId> {
     let mut touched = BTreeSet::new();
@@ -159,6 +155,7 @@ pub fn apply_layout_change(
                 .filter(|(txid, _)| graph.item_id(&GraphItem::Tx(**txid)).is_some())
                 .map(|(txid, order)| (*txid, order.clone()))
                 .collect();
+            *offsets = after.offsets.clone();
             touched.extend(
                 orders
                     .keys()
@@ -190,7 +187,7 @@ mod tests {
                 graph::TxGraph,
                 history::{Change, History},
                 layout::{place, reset},
-                offsets::Offsets,
+                offsets::{reset_layout, Offsets},
                 wallets::WalletKey,
                 Orders,
             },
@@ -234,6 +231,7 @@ mod tests {
         let graph = fixture::graph();
         let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
         let mut orders = Orders::new();
+        let mut offsets = Offsets::default();
         let id = graph.tx_item(0);
         let start = layout[&id];
         let moved = moved_positions(&layout, &[id], Vector::new(48.0, 24.0), false);
@@ -248,12 +246,24 @@ mod tests {
         layout.insert(id, moved[0].2);
 
         let undo = history.undo();
-        let touched = apply_layout_change(&graph, &mut layout, &mut orders, &undo.unwrap());
+        let touched = apply_layout_change(
+            &graph,
+            &mut layout,
+            &mut orders,
+            &mut offsets,
+            &undo.unwrap(),
+        );
         assert_eq!(layout[&id], start);
         assert_eq!(touched, vec![id]);
 
         let redo = history.redo();
-        apply_layout_change(&graph, &mut layout, &mut orders, &redo.unwrap());
+        apply_layout_change(
+            &graph,
+            &mut layout,
+            &mut orders,
+            &mut offsets,
+            &redo.unwrap(),
+        );
         assert_eq!(layout[&id], start + Vector::new(48.0, 24.0));
     }
 
@@ -264,8 +274,7 @@ mod tests {
         let b_items = graph.wallet_items(&two.b);
         let mut reversed = b_items.clone();
         reversed.reverse();
-        let b = WalletId::new("b".to_string(), None);
-        assert_eq!(dragged_wallet(&graph, &reversed), Some(b));
+        assert_eq!(dragged_wallet(&graph, &reversed), Some(two.b.clone()));
         assert_eq!(dragged_wallet(&graph, &b_items[1..]), None);
         let mut with_current = b_items.clone();
         with_current.push(graph.tx_item(graph.tx_index(&two.funding).unwrap()));
@@ -287,7 +296,7 @@ mod tests {
     fn undo_offset_moves_the_wallet_back() {
         let two = fixture::two_wallets("a", "b");
         let graph = TxGraph::new(two.wallets);
-        let b = WalletId::new("b".to_string(), None);
+        let b = two.b.clone();
         let start = Vector::new(0.0, 600.0);
         let mut offsets = Offsets::default();
         offsets.set(b.clone(), start);
@@ -328,7 +337,7 @@ mod tests {
         assert_eq!(offsets.get(&two.b), Some(start));
         assert_eq!(layout, initial);
 
-        let unknown = WalletId::new("c".to_string(), None);
+        let unknown = WalletKey::Other(WalletId::new("c".to_string(), None));
         assert!(!apply_offset(
             &graph,
             &mut layout,
@@ -346,20 +355,69 @@ mod tests {
         let txid = graph.txs()[0].history().txid;
         let reordered = Some(vec![1, 0]);
         let mut orders = Orders::from([(txid, (None, reordered.clone()))]);
-        let before = layout_state(&graph, &layout, &orders);
+        let mut offsets = Offsets::default();
+        let before = layout_state(&graph, &layout, &orders, &offsets);
         let after = layout_state(
             &graph,
             &place(&graph, &WalletKey::Current, &HashMap::new()),
             &Orders::new(),
+            &offsets,
         );
         let reset = Change::Layout { before, after };
 
-        let touched = apply_layout_change(&graph, &mut layout, &mut orders, &reset);
+        let touched = apply_layout_change(&graph, &mut layout, &mut orders, &mut offsets, &reset);
         assert!(orders.is_empty());
         assert!(touched.contains(&graph.tx_item(0)));
 
-        apply_layout_change(&graph, &mut layout, &mut orders, &reset.inverse());
+        apply_layout_change(
+            &graph,
+            &mut layout,
+            &mut orders,
+            &mut offsets,
+            &reset.inverse(),
+        );
         assert_eq!(orders[&txid], (None, reordered));
+    }
+
+    #[test]
+    fn undo_reset_restores_the_moved_offset() {
+        let two = fixture::two_wallets("a", "b");
+        let graph = TxGraph::new(two.wallets);
+        let moved = Vector::new(480.0, -240.0);
+        let mut offsets = Offsets::default();
+        offsets.set(two.b.clone(), moved);
+        let mut layout = reset(&graph, &WalletKey::Current);
+        layout.extend(
+            reset(&graph, &two.b)
+                .into_iter()
+                .map(|(id, p)| (id, p + moved)),
+        );
+        let mut orders = Orders::new();
+        let initial = layout.clone();
+        let placement = reset_layout(&graph, &offsets);
+        let reset = Change::Layout {
+            before: layout_state(&graph, &layout, &orders, &offsets),
+            after: layout_state(
+                &graph,
+                &placement.layout,
+                &Orders::new(),
+                &placement.offsets,
+            ),
+        };
+
+        apply_layout_change(&graph, &mut layout, &mut orders, &mut offsets, &reset);
+        assert_eq!(offsets, placement.offsets);
+        assert_eq!(layout, placement.layout);
+
+        apply_layout_change(
+            &graph,
+            &mut layout,
+            &mut orders,
+            &mut offsets,
+            &reset.inverse(),
+        );
+        assert_eq!(offsets.get(&two.b), Some(moved));
+        assert_eq!(layout, initial);
     }
 
     #[test]
@@ -368,9 +426,10 @@ mod tests {
         let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
         let expected = layout.clone();
         let mut orders = Orders::new();
+        let mut offsets = Offsets::default();
         let unknown = GraphItem::Tx(foreign(200).txid);
         let change = Change::Move(vec![(unknown, Point::ORIGIN, Point::new(9.0, 9.0))]);
-        let touched = apply_layout_change(&graph, &mut layout, &mut orders, &change);
+        let touched = apply_layout_change(&graph, &mut layout, &mut orders, &mut offsets, &change);
         assert!(touched.is_empty());
         assert_eq!(layout, expected);
     }
@@ -381,6 +440,7 @@ mod tests {
         let mut layout = place(&graph, &WalletKey::Current, &HashMap::new());
         let expected = layout.clone();
         let mut orders = Orders::new();
+        let mut offsets = Offsets::default();
         let changes = [
             Change::Select {
                 coin: foreign(1),
@@ -394,7 +454,10 @@ mod tests {
             },
         ];
         for change in &changes {
-            assert!(apply_layout_change(&graph, &mut layout, &mut orders, change).is_empty());
+            assert!(
+                apply_layout_change(&graph, &mut layout, &mut orders, &mut offsets, change)
+                    .is_empty()
+            );
         }
         assert_eq!(layout, expected);
         assert!(orders.is_empty());

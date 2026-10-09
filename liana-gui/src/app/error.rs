@@ -5,7 +5,7 @@ use liana::{descriptors::LianaDescError, spend::SpendCreationError};
 use lianad::{config::ConfigError, offline::OfflineError};
 
 use crate::{
-    app::{settings::SettingsError, wallet::WalletError},
+    app::{settings::SettingsError, state::map::external::ExternalError, wallet::WalletError},
     daemon::DaemonError,
     export::{self, RestoreBackupError},
     services::fiat::api::PriceApiError,
@@ -75,6 +75,12 @@ impl std::fmt::Display for Error {
 
 impl From<OfflineError> for Error {
     fn from(error: OfflineError) -> Self {
+        Error::Unexpected(error.to_string())
+    }
+}
+
+impl From<ExternalError> for Error {
+    fn from(error: ExternalError) -> Self {
         Error::Unexpected(error.to_string())
     }
 }

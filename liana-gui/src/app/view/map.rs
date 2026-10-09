@@ -17,18 +17,21 @@ use liana::{
 use liana_ui::{
     component::{
         form,
-        modal::{modal_view, ModalWidth},
+        list::DeviceStatus,
+        modal::{self, modal_view, ModalWidth},
         panels::map::{
             block::{block, BlockState, SlotKind, SlotReorder, SlotState, SlotView},
             header::map_header,
             leaf::{self, LeafState},
             modals::{
-                coin_action_bar, label_modal_body, reuse_modal_body, shortcuts_modal_body,
-                tag_popover, wallets_modal_body, LabelSubject, TxDirection, WalletRow,
+                coin_action_bar, import_wallet_modal_body, label_modal_body, reuse_modal_body,
+                shortcuts_modal_body, tag_popover, wallets_modal_body, ExternalRow, LabelSubject,
+                TxDirection, WalletRow,
             },
             overlays::{coin_selection_bar, empty_state, loading_state, tag_status_bar},
             wallet_color,
         },
+        text::format_date,
     },
     theme::Theme,
     widget::{
@@ -41,15 +44,16 @@ use liana_ui::{
 
 use crate::{
     app::{
-        settings::WalletId,
         state::map::{
             coin_ui::CoinUi,
             display::{label_key, DisplayState},
             display_row,
             edit::live_column,
+            external::ExternalWallet,
             graph::{InputSlot, LeafKind, OutputSlot, SlotRef, TxGraph},
+            import::ImportForm,
             selection::TagHighlight,
-            wallets::{OtherWallet, WalletKey, WalletStatus},
+            wallets::{OtherWallet, WalletKey, WalletStatus, WalletStore},
             LabelTarget, LiveReorder, Orders, Toggles,
         },
         view::{
@@ -58,7 +62,9 @@ use crate::{
         },
     },
     daemon::model::TransactionKind,
+    hw::HardwareWallet,
     t,
+    view::hw::unusable_device_entry,
 };
 
 /// What a block shows, owned so `lazy` rebuilds it only when it changes.
@@ -636,11 +642,13 @@ pub fn reuse_modal<'a>(graph: &TxGraph, address: &Address) -> Option<Element<'a,
     Some(modal_view(None::<String>, None, None, ModalWidth::M, body))
 }
 
-/// Other wallets modal: a checkbox per wallet of `wallets`, ticked when it is in `loaded`.
-/// `switching`: a wallet is being added or removed, the checkboxes wait for it.
+/// Other wallets modal: a checkbox per wallet of `wallets` and `externals`, ticked when it is
+/// in `loaded`. `switching`: a wallet is being added or removed, the checkboxes wait for it.
 pub fn wallets_modal<'a>(
     wallets: &[OtherWallet],
-    loaded: &HashMap<WalletId, OtherWallet>,
+    externals: &[ExternalWallet],
+    loaded: &HashMap<WalletKey, WalletStore>,
+    rescanning: &HashSet<String>,
     switching: bool,
 ) -> Element<'a, Message> {
     let theme = Theme::default();
@@ -649,22 +657,96 @@ pub fn wallets_modal<'a>(
         .map(|wallet| WalletRow {
             name: wallet.name.clone(),
             color: wallet_color(&theme, &wallet.checksum),
-            checked: loaded.contains_key(&wallet.id),
+            checked: loaded.contains_key(&WalletKey::Other(wallet.id.clone())),
             enabled: wallet.status == WalletStatus::Available,
             note: match wallet.status {
                 WalletStatus::Available => None,
                 WalletStatus::Outdated => Some(t!("map-wallets-outdated")),
                 WalletStatus::Unavailable => Some(t!("map-wallets-unavailable")),
             },
-            on_toggle: (!switching)
-                .then(|| Message::Map(MapMessage::WalletToggled(wallet.id.clone()))),
+            on_toggle: (!switching).then(|| {
+                Message::Map(MapMessage::WalletToggled(WalletKey::Other(
+                    wallet.id.clone(),
+                )))
+            }),
+        })
+        .collect();
+    let externals = externals
+        .iter()
+        .map(|wallet| {
+            let key = WalletKey::External(wallet.id.clone());
+            let scanning = rescanning.contains(&wallet.id);
+            ExternalRow {
+                name: wallet.name.clone(),
+                color: wallet_color(&theme, wallet.checksum()),
+                checked: loaded.contains_key(&key),
+                last_scan: wallet
+                    .last_scan
+                    .and_then(|time| DateTime::from_timestamp(i64::from(time), 0))
+                    .map(|time| t!("map-external-last-scan", date = format_date(time))),
+                scanning,
+                on_toggle: (!switching).then(|| Message::Map(MapMessage::WalletToggled(key))),
+                on_rescan: (!scanning)
+                    .then(|| Message::Map(MapMessage::ExternalRescan(wallet.id.clone()))),
+                on_remove: (!switching && !scanning)
+                    .then(|| Message::Map(MapMessage::ExternalRemove(wallet.id.clone()))),
+            }
         })
         .collect();
     let body = wallets_modal_body(
         rows,
-        Vec::new(),
+        externals,
         Message::Map(MapMessage::ImportWallet),
         Message::Map(MapMessage::CloseModal),
+    );
+    modal_view(None::<String>, None, None, ModalWidth::M, body)
+}
+
+/// External wallet import modal: the devices of the signing device mode are clickable once the
+/// form is ready.
+pub fn import_modal(form: &ImportForm) -> Element<'_, Message> {
+    let on_device = form.ready() && !form.scanning;
+    let devices = form
+        .hws
+        .list
+        .iter()
+        .map(|hw| match hw {
+            HardwareWallet::Supported {
+                kind,
+                fingerprint,
+                alias,
+                ..
+            } => modal::device_entry(
+                Some(format!("#{fingerprint}")),
+                Some(kind),
+                alias.as_ref(),
+                if form.device == Some(*fingerprint) {
+                    DeviceStatus::Processing
+                } else {
+                    DeviceStatus::None
+                },
+                on_device.then(|| Message::Map(MapMessage::ImportDevice(*fingerprint))),
+            ),
+            _ => unusable_device_entry(hw),
+        })
+        .collect();
+    let body = import_wallet_modal_body(
+        form.mode,
+        |mode| Message::Map(MapMessage::ImportMode(mode)),
+        &form.name,
+        |name| Message::Map(MapMessage::ImportName(name)),
+        &form.descriptor,
+        |descriptor| Message::Map(MapMessage::ImportDescriptor(descriptor)),
+        &form.account,
+        |account| Message::Map(MapMessage::ImportAccount(account)),
+        devices,
+        form.electrum.as_ref(),
+        |electrum| Message::Map(MapMessage::ImportElectrum(electrum)),
+        form.error.clone(),
+        form.scanning,
+        form.can_import(),
+        Message::Map(MapMessage::CloseModal),
+        Message::Map(MapMessage::ImportConfirm),
     );
     modal_view(None::<String>, None, None, ModalWidth::M, body)
 }

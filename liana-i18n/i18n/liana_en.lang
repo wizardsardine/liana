@@ -1455,6 +1455,8 @@ map-empty-description
 
 map-empty-title => "No transactions to map yet"
 
+map-external-last-scan => "Scanned {$date}"
+
 map-external-wallets-empty => "No external wallet imported."
 
 map-external-wallets-title => "External wallets"
@@ -1475,9 +1477,15 @@ map-import-electrum => "Electrum server"
 
 map-import-electrum-placeholder => "ssl://electrum.example.com:50002"
 
+map-import-invalid-account => "The account number must be between 0 and 2147483647"
+
 map-import-name-placeholder => "Wallet name"
 
 map-import-no-device => "Connect and unlock a signing device"
+
+map-import-no-electrum => "No Electrum server to scan the wallet with"
+
+map-import-no-history => "No history found for this device and account"
 
 map-import-scanning => "Scanning the wallet history"
 

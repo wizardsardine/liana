@@ -14,8 +14,14 @@ use crate::{
     app::{
         cache::{DaemonCache, FiatPrice},
         error::Error,
-        settings::WalletId,
-        state::{map::wallets::OtherWallet, MapWallet},
+        state::{
+            map::{
+                external::ExternalWallet,
+                import::ImportFailure,
+                wallets::{ListedWallets, WalletKey},
+            },
+            MapWallet,
+        },
         view,
         wallet::Wallet,
     },
@@ -73,9 +79,14 @@ pub enum Message {
     Export(ImportExportMessage),
     MapLoaded(Result<Vec<MapWallet>, Error>),
     MapLayoutSaved(Result<(), Error>),
-    MapWalletsListed(Result<Vec<OtherWallet>, Error>),
-    /// Labels saved to another wallet of the map.
-    MapWalletLabelsSaved(WalletId, Result<HashMap<String, Option<String>>, Error>),
+    MapWalletsListed(Result<ListedWallets, Error>),
+    /// Labels saved to a wallet added to the map.
+    MapWalletLabelsSaved(WalletKey, Result<HashMap<String, Option<String>>, Error>),
+    MapWalletImported(Result<ExternalWallet, ImportFailure>),
+    /// Id of the external wallet scanned again.
+    MapWalletRescanned(String, Result<ExternalWallet, ImportFailure>),
+    /// Id of the deleted external wallet.
+    MapExternalRemoved(String, Result<(), Error>),
 }
 
 impl From<ImportExportMessage> for Message {

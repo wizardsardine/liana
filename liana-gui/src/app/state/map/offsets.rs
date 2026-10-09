@@ -4,25 +4,22 @@ use iced::{Point, Vector};
 use liana_ui::widget::graph_view::ItemId;
 use lianad::commands::{GraphItem, GraphLayoutEntry};
 
-use crate::app::{
-    settings::WalletId,
-    state::map::{graph::TxGraph, layout, split_stored, wallets::WalletKey, Orders},
-};
+use crate::app::state::map::{graph::TxGraph, layout, split_stored, wallets::WalletKey, Orders};
 
-/// Offsets of the other wallets from the current wallet's origin.
-#[derive(Debug, Clone, Default)]
-pub struct Offsets(HashMap<WalletId, Vector>);
+/// Offsets of the wallets added to the map from the current wallet's origin.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Offsets(HashMap<WalletKey, Vector>);
 
 impl Offsets {
-    /// `None` for another wallet not placed yet.
+    /// `None` for an added wallet not placed yet.
     pub fn get(&self, wallet: &WalletKey) -> Option<Vector> {
         match wallet {
             WalletKey::Current => Some(Vector::ZERO),
-            WalletKey::Other(id) => self.0.get(id).copied(),
+            wallet => self.0.get(wallet).copied(),
         }
     }
 
-    pub fn set(&mut self, wallet: WalletId, offset: Vector) {
+    pub fn set(&mut self, wallet: WalletKey, offset: Vector) {
         self.0.insert(wallet, offset);
     }
 
@@ -31,7 +28,7 @@ impl Offsets {
         std::iter::once((WalletKey::Current, Vector::ZERO)).chain(
             self.0
                 .iter()
-                .map(|(id, offset)| (WalletKey::Other(id.clone()), *offset)),
+                .map(|(wallet, offset)| (wallet.clone(), *offset)),
         )
     }
 }
@@ -55,7 +52,7 @@ pub struct Placement {
     /// Entries whose item is not on the map anymore, per wallet.
     pub remove: HashMap<WalletKey, Vec<GraphItem>>,
     /// Wallets given an offset.
-    pub placed: Vec<WalletId>,
+    pub placed: Vec<WalletKey>,
 }
 
 /// Places each wallet in its own coordinates and shifts it by its offset. A wallet without
@@ -75,15 +72,15 @@ pub fn place_wallets(graph: &TxGraph, wallets: Vec<(WalletKey, WalletLayout)>) -
         local.extend(placed);
         let offset = match &key {
             WalletKey::Current => Vector::ZERO,
-            WalletKey::Other(id) => {
+            added => {
                 let offset = match wallet.offset {
                     Some(offset) => offset,
                     None => {
-                        placement.placed.push(id.clone());
+                        placement.placed.push(added.clone());
                         layout::new_offset(graph, &placement.layout, &local)
                     }
                 };
-                placement.offsets.set(id.clone(), offset);
+                placement.offsets.set(added.clone(), offset);
                 offset
             }
         };
@@ -136,16 +133,18 @@ pub fn local_entries(
     entries
 }
 
-/// Default positions of every wallet's items, each wallet keeping its offset.
-pub fn reset_layout(graph: &TxGraph, offsets: &Offsets) -> HashMap<ItemId, Point> {
-    offsets
-        .iter()
-        .flat_map(|(wallet, offset)| {
-            layout::reset(graph, &wallet)
-                .into_iter()
-                .map(move |(id, p)| (id, p + offset))
-        })
-        .collect()
+/// Default layout of every placed wallet, as on a fresh map: the other wallets land below the
+/// current one in row order.
+pub fn reset_layout(graph: &TxGraph, offsets: &Offsets) -> Placement {
+    let mut wallets: Vec<WalletKey> = offsets.iter().map(|(wallet, _)| wallet).collect();
+    wallets.sort_by_key(WalletKey::row);
+    place_wallets(
+        graph,
+        wallets
+            .into_iter()
+            .map(|wallet| (wallet, WalletLayout::default()))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -237,7 +236,7 @@ mod tests {
     fn new_wallet_lands_below_everything() {
         let (two, graph) = two_wallets();
         let placement = place_wallets(&graph, b_layout(Vec::new(), None));
-        assert_eq!(placement.placed, vec![b_id()]);
+        assert_eq!(placement.placed, vec![two.b.clone()]);
 
         let current = reset(&graph, &WalletKey::Current);
         let bottom = current
@@ -269,7 +268,7 @@ mod tests {
         let spend = graph.tx_item(graph.tx_index(&two.spend).unwrap());
         let funding = graph.tx_item(graph.tx_index(&two.funding).unwrap());
         let mut offsets = Offsets::default();
-        offsets.set(b_id(), Vector::new(24.0, 600.0));
+        offsets.set(two.b.clone(), Vector::new(24.0, 600.0));
         let layout = HashMap::from([
             (spend, Point::new(48.0, 660.0)),
             (funding, Point::new(12.0, 36.0)),
@@ -295,17 +294,33 @@ mod tests {
     }
 
     #[test]
-    fn reset_keeps_the_offsets() {
+    fn reset_places_the_wallets_as_new() {
         let (two, graph) = two_wallets();
         let mut offsets = Offsets::default();
-        offsets.set(b_id(), Vector::new(24.0, 600.0));
-        let layout = reset_layout(&graph, &offsets);
-        let mut expected: HashMap<ItemId, Point> = reset(&graph, &WalletKey::Current);
-        expected.extend(
-            reset(&graph, &two.b)
-                .into_iter()
-                .map(|(id, p)| (id, p + Vector::new(24.0, 600.0))),
-        );
-        assert_eq!(layout, expected);
+        offsets.set(two.b.clone(), Vector::new(480.0, -240.0));
+        let placement = reset_layout(&graph, &offsets);
+
+        let current = reset(&graph, &WalletKey::Current);
+        let bottom = current
+            .iter()
+            .map(|(id, p)| p.y + item_size(&graph, *id).height)
+            .fold(f32::MIN, f32::max);
+        let local = reset(&graph, &two.b);
+        let offset = new_offset(&graph, &current, &local);
+        assert_eq!(placement.offsets.get(&two.b), Some(offset));
+        let b_items = graph.wallet_items(&two.b);
+        let left = b_items
+            .iter()
+            .map(|id| placement.layout[id].x)
+            .fold(f32::MAX, f32::min);
+        let top = b_items
+            .iter()
+            .map(|id| placement.layout[id].y)
+            .fold(f32::MAX, f32::min);
+        assert_eq!((left, top), (0.0, bottom + 120.0));
+        let mut expected: HashMap<ItemId, Point> = current;
+        expected.extend(local.into_iter().map(|(id, p)| (id, p + offset)));
+        assert_eq!(placement.layout, expected);
+        assert!(placement.orders.is_empty());
     }
 }

@@ -51,6 +51,8 @@ use crate::{
 const EXTERNAL_DIR: &str = "external";
 const WALLET_FILE: &str = "wallet.json";
 const LAYOUT_FILE: &str = "layout.json";
+/// The Electrum server last asked at import, in the external directory.
+const ELECTRUM_FILE: &str = "electrum.json";
 /// Directory of the bwk accounts inside the wallet directory, one account per descriptor.
 const ACCOUNTS_DIR: &str = "accounts";
 
@@ -88,6 +90,13 @@ impl ExternalWallet {
         })
     }
 
+    /// The checksum part of the id.
+    pub fn checksum(&self) -> &str {
+        self.id
+            .split_once('-')
+            .map_or(&self.id, |(checksum, _)| checksum)
+    }
+
     pub fn dir(&self, network_dir: &NetworkDirectory) -> PathBuf {
         external_dir(network_dir).join(&self.id)
     }
@@ -115,6 +124,7 @@ pub fn external_wallets(network_dir: &NetworkDirectory) -> Vec<ExternalWallet> {
     };
     let mut wallets: Vec<_> = entries
         .flatten()
+        .filter(|entry| entry.path().is_dir())
         .filter_map(|entry| match read_wallet(&entry.path()) {
             Ok(wallet) => Some(wallet),
             Err(e) => {
@@ -132,6 +142,37 @@ pub fn external_wallets(network_dir: &NetworkDirectory) -> Vec<ExternalWallet> {
 
 pub fn remove(network_dir: &NetworkDirectory, id: &str) -> Result<(), ExternalError> {
     Ok(fs::remove_dir_all(external_dir(network_dir).join(id))?)
+}
+
+#[derive(Serialize, Deserialize)]
+struct RememberedElectrum {
+    addr: String,
+}
+
+/// The Electrum server last asked at import, `None` when none was asked yet.
+pub fn remembered_electrum(
+    network_dir: &NetworkDirectory,
+) -> Result<Option<String>, ExternalError> {
+    match fs::read(external_dir(network_dir).join(ELECTRUM_FILE)) {
+        Ok(bytes) => Ok(Some(
+            serde_json::from_slice::<RememberedElectrum>(&bytes)?.addr,
+        )),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+pub fn remember_electrum(network_dir: &NetworkDirectory, addr: &str) -> Result<(), ExternalError> {
+    let dir = external_dir(network_dir);
+    fs::create_dir_all(&dir)?;
+    let remembered = RememberedElectrum {
+        addr: addr.to_string(),
+    };
+    fs::write(
+        dir.join(ELECTRUM_FILE),
+        serde_json::to_vec_pretty(&remembered)?,
+    )?;
+    Ok(())
 }
 
 pub fn checksum(descriptor: &Descriptor<DescriptorPublicKey>) -> String {
@@ -719,8 +760,8 @@ mod tests {
     use crate::{
         app::state::map::external::{
             convert, device_descriptors, electrum_endpoint, external_wallets, load_layout,
-            parse_descriptor, remove, save_layout, standard_paths, ExternalError, ExternalWallet,
-            ImportError, ScanError, SingleSig,
+            parse_descriptor, remember_electrum, remembered_electrum, remove, save_layout,
+            standard_paths, ExternalError, ExternalWallet, ImportError, ScanError, SingleSig,
         },
         dir::NetworkDirectory,
     };
@@ -924,6 +965,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(savings.id, "vkwlmr4k-1700000001");
+        assert_eq!(savings.checksum(), "vkwlmr4k");
         assert_eq!(legacy.id, "fldssyp5-1700000000");
         assert!(matches!(
             ExternalWallet::new("Empty".to_string(), Vec::new(), 1700000002, None),
@@ -941,6 +983,7 @@ mod tests {
             "{",
         )
         .unwrap();
+        remember_electrum(&dir, "ssl://electrum.example.com:50002").unwrap();
         assert_eq!(
             external_wallets(&dir),
             vec![legacy.clone(), savings.clone()]
@@ -954,6 +997,19 @@ mod tests {
             Err(ExternalError::Io(_))
         ));
 
+        fs::remove_dir_all(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn electrum_file() {
+        let dir = network_dir("electrum");
+        assert_eq!(remembered_electrum(&dir).unwrap(), None);
+        remember_electrum(&dir, "ssl://electrum.example.com:50002").unwrap();
+        remember_electrum(&dir, "tcp://127.0.0.1:60401").unwrap();
+        assert_eq!(
+            remembered_electrum(&dir).unwrap(),
+            Some("tcp://127.0.0.1:60401".to_string())
+        );
         fs::remove_dir_all(dir.path()).unwrap();
     }
 
