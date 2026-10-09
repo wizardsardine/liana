@@ -44,7 +44,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 10;
+pub const DB_VERSION: i64 = 10;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.

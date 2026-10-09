@@ -219,17 +219,76 @@ fn coin_to_candidate(
     }
 }
 
-impl DaemonControl {
-    // Get the derived descriptor for this coin
-    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
-        let desc = if coin.is_change {
-            self.config.main_descriptor.change_descriptor()
-        } else {
-            self.config.main_descriptor.receive_descriptor()
-        };
-        desc.derive(coin.derivation_index, &self.secp)
-    }
+/// The `listcoins` entries of a wallet, read from its database.
+pub fn list_coins_entries(
+    db_conn: &mut dyn DatabaseConnection,
+    main_descriptor: &descriptors::LianaDescriptor,
+    network: bitcoin::Network,
+    secp: &bitcoin::secp256k1::Secp256k1<bitcoin::secp256k1::VerifyOnly>,
+    statuses: &[CoinStatus],
+    outpoints: &[bitcoin::OutPoint],
+) -> Vec<ListCoinsEntry> {
+    db_conn
+        .coins_with_default_label(statuses, outpoints)
+        .into_values()
+        .map(
+            |CoinWithDefaultLabel {
+                 coin,
+                 default_label,
+             }| {
+                let Coin {
+                    amount,
+                    outpoint,
+                    block_info,
+                    spend_txid,
+                    spend_block,
+                    is_immature,
+                    is_change,
+                    is_from_self,
+                    derivation_index,
+                    ..
+                } = coin;
+                let spend_info = spend_txid.map(|txid| LCSpendInfo {
+                    txid,
+                    height: spend_block.map(|b| b.height),
+                });
+                let block_height = block_info.map(|b| b.height);
+                let desc = if is_change {
+                    main_descriptor.change_descriptor()
+                } else {
+                    main_descriptor.receive_descriptor()
+                };
+                let address = desc.derive(derivation_index, secp).address(network);
+                ListCoinsEntry {
+                    address,
+                    amount,
+                    derivation_index,
+                    outpoint,
+                    block_height,
+                    spend_info,
+                    is_immature,
+                    is_change,
+                    is_from_self,
+                    default_label,
+                }
+            },
+        )
+        .collect()
+}
 
+/// The `listtransactions` entries for the given txids, read from the wallet database.
+pub fn list_transactions_info(
+    db_conn: &mut dyn DatabaseConnection,
+    txids: &[bitcoin::Txid],
+) -> Vec<TransactionInfo> {
+    db_conn
+        .list_wallet_transactions(txids)
+        .into_iter()
+        .map(TransactionInfo::from)
+        .collect()
+}
+
+impl DaemonControl {
     // Check whether this address is valid for the network we are operating on.
     fn validate_address(
         &self,
@@ -578,50 +637,14 @@ impl DaemonControl {
         statuses: &[CoinStatus],
         outpoints: &[bitcoin::OutPoint],
     ) -> ListCoinsResult {
-        let mut db_conn = self.db.connection();
-        let coins: Vec<ListCoinsEntry> = db_conn
-            .coins_with_default_label(statuses, outpoints)
-            .into_values()
-            .map(
-                |CoinWithDefaultLabel {
-                     coin,
-                     default_label,
-                 }| {
-                    let Coin {
-                        amount,
-                        outpoint,
-                        block_info,
-                        spend_txid,
-                        spend_block,
-                        is_immature,
-                        is_change,
-                        is_from_self,
-                        derivation_index,
-                        ..
-                    } = coin;
-                    let spend_info = spend_txid.map(|txid| LCSpendInfo {
-                        txid,
-                        height: spend_block.map(|b| b.height),
-                    });
-                    let block_height = block_info.map(|b| b.height);
-                    let address = self
-                        .derived_desc(&coin)
-                        .address(self.config.bitcoin_config.network);
-                    ListCoinsEntry {
-                        address,
-                        amount,
-                        derivation_index,
-                        outpoint,
-                        block_height,
-                        spend_info,
-                        is_immature,
-                        is_change,
-                        is_from_self,
-                        default_label,
-                    }
-                },
-            )
-            .collect();
+        let coins = list_coins_entries(
+            self.db.connection().as_mut(),
+            &self.config.main_descriptor,
+            self.config.bitcoin_config.network,
+            &self.secp,
+            statuses,
+            outpoints,
+        );
         ListCoinsResult { coins }
     }
 
@@ -1263,13 +1286,7 @@ impl DaemonControl {
 
     /// list_transactions retrieves the transactions with the given txids.
     pub fn list_transactions(&self, txids: &[bitcoin::Txid]) -> ListTransactionsResult {
-        let transactions = self
-            .db
-            .connection()
-            .list_wallet_transactions(txids)
-            .into_iter()
-            .map(TransactionInfo::from)
-            .collect();
+        let transactions = list_transactions_info(self.db.connection().as_mut(), txids);
         ListTransactionsResult { transactions }
     }
 
