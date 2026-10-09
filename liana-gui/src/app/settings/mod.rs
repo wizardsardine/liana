@@ -397,7 +397,7 @@ impl WalletSettingsTrait for LianaWalletSettings {
 /// Backward compatibility type alias.
 pub type WalletSettings = LianaWalletSettings;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WalletId {
     pub timestamp: Option<i64>,
     pub descriptor_checksum: String,
