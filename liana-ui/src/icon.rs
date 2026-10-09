@@ -6,7 +6,9 @@ pub const ICON_SIZE_L: u16 = 32;
 pub const ICON_SIZE_M: u16 = 24;
 pub const ICON_SIZE_S: u16 = 16;
 
-const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
+pub const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
+/// Bootstrap `grip-vertical`, for glyphs drawn on a canvas.
+pub const GRIP_VERTICAL: char = '\u{F3FE}';
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 const LIANA_ICONS: Font = Font::with_name("liana-icons");
 
@@ -279,6 +281,10 @@ pub fn arrow_90deg_right_icon<'a>() -> Text<'a> {
 
 pub fn arrow_counterclockwise_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F117}')
+}
+
+pub fn view_stacked_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F606}')
 }
 
 pub fn bounding_box_icon<'a>() -> Text<'a> {

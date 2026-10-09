@@ -531,6 +531,10 @@ pub fn shortcuts_modal_body<'a, M: 'a>() -> Element<'a, M> {
             vec![
                 (t!("map-shortcut-move"), vec![t!("map-key-drag")]),
                 (
+                    t!("map-shortcut-space"),
+                    vec![t!("map-key-space"), t!("map-key-drag")],
+                ),
+                (
                     t!("map-shortcut-reorder"),
                     vec![t!("map-key-drag-slot"), t!("map-key-up-down")],
                 ),

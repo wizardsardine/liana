@@ -19,7 +19,7 @@ use crate::{
             OUTPUT_COLUMN_WIDTH, SLOT_HEIGHT,
         },
         pill,
-        text::{format_date, new},
+        text::{format_date, new, truncate},
         tooltip::tooltip_unsnapped,
     },
     icon, theme,
@@ -35,6 +35,9 @@ use crate::{
 
 /// Single line at 220 px in b4_medium leaves room for about 18 chars plus the info icon.
 const BLOCK_LABEL_MAX_CHARS: usize = 18;
+
+/// Single line at 220 px in small_caption.
+const BLOCK_WALLET_MAX_CHARS: usize = 30;
 
 const BLOCK_DIMMED_OPACITY: f32 = 0.45;
 
@@ -111,7 +114,8 @@ fn accent(theme: &Theme) -> Color {
     theme.colors.general.accent
 }
 
-/// `tint`: border of a transaction of another wallet.
+/// `tint`: border of a transaction of another wallet. `wallet`: name of the
+/// wallet the transaction belongs to.
 #[allow(clippy::too_many_arguments)]
 pub fn block<'a, M: 'a>(
     label: &Label,
@@ -124,6 +128,7 @@ pub fn block<'a, M: 'a>(
     state: BlockState,
     group_member: bool,
     tint: Option<Color>,
+    wallet: Option<&str>,
 ) -> Element<'a, M> {
     let height = Shape::Block {
         inputs: inputs.len(),
@@ -155,8 +160,11 @@ pub fn block<'a, M: 'a>(
         None => t!("map-block-fee-unknown"),
     };
     let fee = new::small_caption(fee).style(theme::text::tertiary);
+    let wallet = wallet.map(|name| {
+        new::small_caption(truncate(name, BLOCK_WALLET_MAX_CHARS)).style(theme::text::secondary)
+    });
     let selected = state == BlockState::Selected;
-    let middle = Container::new(column![label, date, net, fee].spacing(6))
+    let middle = Container::new(column![label, wallet, date, net, fee].spacing(6))
         .padding([14, 16])
         .width(MIDDLE_COLUMN_WIDTH - 1.0)
         .height(Length::Fill)

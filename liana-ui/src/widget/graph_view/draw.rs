@@ -1,27 +1,43 @@
 //! Layers of the graph view that are not child elements.
 use iced::{
-    advanced::{renderer, Renderer as _},
+    advanced::{
+        renderer,
+        text::{Alignment, Shaping},
+        Renderer as _,
+    },
+    alignment::Vertical,
     border,
     widget::canvas::{self, LineDash, Path, Stroke},
-    Border, Color, Point, Rectangle, Size,
+    Border, Color, Pixels, Point, Rectangle, Size,
 };
 
 use crate::{
-    theme::palette::Graph,
+    component::text::{new::SMALL_CAPTION_SPEC, truncate},
+    icon,
+    theme::{palette::Graph, Theme},
     widget::{
         graph_view::{
             geometry::{
                 frame_rect, grid_step, Camera, AREA_BORDER_WIDTH, AREA_OPACITY,
                 COIN_EDGE_ACTIVE_WIDTH, COIN_EDGE_OPACITY, COIN_EDGE_WIDTH, COUNTERPARTY_DASH,
                 COUNTERPARTY_EDGE_ACTIVE_WIDTH, COUNTERPARTY_EDGE_WIDTH, EDGE_DIMMED_OPACITY,
-                FRAME_RADIUS, FRAME_WIDTH, GRID_DOT_RADIUS, MARKER_RING, MARKER_RING_WIDTH,
-                MARKER_STUB, MARKER_STUB_HEIGHT,
+                FRAME_RADIUS, FRAME_WIDTH, GRID_DOT_RADIUS, HANDLE_CHECKBOX_AREA,
+                HANDLE_CHECKBOX_SIZE, HANDLE_DOT_RADIUS, HANDLE_DROP_LINE_WIDTH, HANDLE_GRIP_SIZE,
+                HANDLE_GRIP_WIDTH, HANDLE_INSET, HANDLE_NAME_MAX_CHARS, HANDLE_NAME_X,
+                HANDLE_RADIUS, HANDLE_WIDTH, LANE_BAND_OPACITY, LANE_SEPARATOR_WIDTH,
+                LANE_STRIP_WIDTH, MARKER_RING, MARKER_RING_WIDTH, MARKER_STUB, MARKER_STUB_HEIGHT,
+                SPACE_LINE_WIDTH,
             },
-            EdgeKind,
+            EdgeKind, Handle, Lane,
         },
         Renderer,
     },
 };
+
+const HIDDEN_HANDLE_OPACITY: f32 = 0.5;
+const CHECKBOX_RADIUS: f32 = 3.0;
+const CHECKBOX_STROKE_WIDTH: f32 = 1.5;
+const HANDLE_BORDER_WIDTH: f32 = 1.0;
 
 /// Dots at every `grid_step` graph px, drawn in screen space.
 pub fn grid(
@@ -194,5 +210,180 @@ pub fn area(renderer: &mut Renderer, palette: &Graph, rect: Rectangle, crossing:
             ..renderer::Quad::default()
         },
         fill.scale_alpha(AREA_OPACITY),
+    );
+}
+
+/// Space drag preview in screen space: an accent line along `x` (graph px).
+pub fn space(renderer: &mut Renderer, theme: &Theme, bounds: Rectangle, camera: Camera, x: f32) {
+    let line = bounds.x + camera.to_screen(Point::new(x, 0.0)).x;
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: Rectangle::new(
+                Point::new(line - SPACE_LINE_WIDTH / 2.0, bounds.y),
+                Size::new(SPACE_LINE_WIDTH, bounds.height),
+            ),
+            ..renderer::Quad::default()
+        },
+        theme.colors.general.accent,
+    );
+}
+
+/// Lane bands in screen space: every other band tinted, a separator under each
+/// band but the last and the lane color along the left edge.
+pub fn lanes(
+    renderer: &mut Renderer,
+    theme: &Theme,
+    bounds: Rectangle,
+    camera: Camera,
+    lanes: &[Lane],
+) {
+    for (index, lane) in lanes.iter().enumerate() {
+        let top = bounds.y + camera.to_screen(Point::new(0.0, lane.top)).y;
+        let height = lane.height * camera.zoom;
+        if index % 2 == 1 {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle::new(
+                        Point::new(bounds.x, top),
+                        Size::new(bounds.width, height),
+                    ),
+                    ..renderer::Quad::default()
+                },
+                theme
+                    .colors
+                    .cards
+                    .simple
+                    .background
+                    .scale_alpha(LANE_BAND_OPACITY),
+            );
+        }
+        renderer.fill_quad(
+            renderer::Quad {
+                bounds: Rectangle::new(
+                    Point::new(bounds.x, top),
+                    Size::new(LANE_STRIP_WIDTH, height),
+                ),
+                ..renderer::Quad::default()
+            },
+            lane.color,
+        );
+        if index + 1 < lanes.len() {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle::new(
+                        Point::new(bounds.x, top + height - LANE_SEPARATOR_WIDTH / 2.0),
+                        Size::new(bounds.width, LANE_SEPARATOR_WIDTH),
+                    ),
+                    ..renderer::Quad::default()
+                },
+                theme.colors.text.border,
+            );
+        }
+    }
+}
+
+/// Lane handle card at `rect` (widget px): grip, color dot, name and a
+/// checkbox checked while the lane is displayed.
+pub fn handle(frame: &mut canvas::Frame, theme: &Theme, rect: Rectangle, handle: &Handle) {
+    let colors = &theme.colors;
+    let middle = rect.y + rect.height / 2.0;
+    let card = Path::rounded_rectangle(rect.position(), rect.size(), HANDLE_RADIUS.into());
+    frame.fill(&card, colors.cards.simple.background);
+    frame.stroke(
+        &card,
+        Stroke::default()
+            .with_color(colors.text.border)
+            .with_width(HANDLE_BORDER_WIDTH),
+    );
+
+    frame.fill_text(canvas::Text {
+        content: icon::GRIP_VERTICAL.to_string(),
+        position: Point::new(rect.x + HANDLE_GRIP_WIDTH / 2.0, middle),
+        color: colors.text.secondary,
+        size: Pixels(HANDLE_GRIP_SIZE),
+        font: icon::BOOTSTRAP_ICONS,
+        align_x: Alignment::Center,
+        align_y: Vertical::Center,
+        ..canvas::Text::default()
+    });
+
+    let (dot, name_color) = if handle.displayed {
+        (handle.color, colors.text.primary)
+    } else {
+        (
+            handle.color.scale_alpha(HIDDEN_HANDLE_OPACITY),
+            colors.text.secondary,
+        )
+    };
+    frame.fill(
+        &Path::circle(
+            Point::new(rect.x + HANDLE_GRIP_WIDTH + 2.0 * HANDLE_DOT_RADIUS, middle),
+            HANDLE_DOT_RADIUS,
+        ),
+        dot,
+    );
+
+    let mut name = canvas::Text {
+        content: truncate(&handle.name, HANDLE_NAME_MAX_CHARS),
+        position: Point::new(rect.x + HANDLE_NAME_X, middle),
+        color: name_color,
+        font: SMALL_CAPTION_SPEC.font,
+        align_y: Vertical::Center,
+        shaping: Shaping::Advanced,
+        ..canvas::Text::default()
+    };
+    if let Some(size) = SMALL_CAPTION_SPEC.size {
+        name.size = Pixels(size as f32);
+    }
+    frame.fill_text(name);
+
+    let checkbox = Rectangle::new(
+        Point::new(
+            rect.x + rect.width - (HANDLE_CHECKBOX_AREA + HANDLE_CHECKBOX_SIZE) / 2.0,
+            middle - HANDLE_CHECKBOX_SIZE / 2.0,
+        ),
+        Size::new(HANDLE_CHECKBOX_SIZE, HANDLE_CHECKBOX_SIZE),
+    );
+    let square =
+        Path::rounded_rectangle(checkbox.position(), checkbox.size(), CHECKBOX_RADIUS.into());
+    if handle.displayed {
+        frame.fill(&square, colors.general.accent);
+        let point = |x: f32, y: f32| {
+            Point::new(
+                checkbox.x + x * checkbox.width,
+                checkbox.y + y * checkbox.height,
+            )
+        };
+        let tick = Path::new(|builder| {
+            builder.move_to(point(0.25, 0.5));
+            builder.line_to(point(0.43, 0.7));
+            builder.line_to(point(0.75, 0.3));
+        });
+        frame.stroke(
+            &tick,
+            Stroke::default()
+                .with_color(colors.general.background)
+                .with_width(CHECKBOX_STROKE_WIDTH),
+        );
+    } else {
+        frame.stroke(
+            &square,
+            Stroke::default()
+                .with_color(colors.text.secondary)
+                .with_width(CHECKBOX_STROKE_WIDTH),
+        );
+    }
+}
+
+/// Where a dragged handle would land, across the handle column at `y`.
+pub fn drop_line(frame: &mut canvas::Frame, theme: &Theme, y: f32) {
+    frame.stroke(
+        &Path::line(
+            Point::new(HANDLE_INSET, y),
+            Point::new(HANDLE_INSET + HANDLE_WIDTH, y),
+        ),
+        Stroke::default()
+            .with_color(theme.colors.general.accent)
+            .with_width(HANDLE_DROP_LINE_WIDTH),
     );
 }

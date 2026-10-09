@@ -1622,6 +1622,11 @@ impl State for MapPanel {
                             tag.cycle(steps);
                         }
                     }
+                    GraphEvent::HandleToggled(_)
+                    | GraphEvent::HandleMoved { .. }
+                    | GraphEvent::LaneMoved { .. }
+                    | GraphEvent::LaneResized { .. }
+                    | GraphEvent::SpaceShifted { .. } => {}
                 },
                 MapMessage::CloseModal => return self.close_modal(daemon),
                 MapMessage::ToggleCoinSelected => {

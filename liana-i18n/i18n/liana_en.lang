@@ -106,6 +106,8 @@ btn-import-wallet => "Import a wallet"
 
 btn-keep-my-changes => "Keep my changes"
 
+btn-lanes-tooltip => "Lanes: one band per wallet, drag a lane handle to reorder"
+
 btn-login => "Login"
 
 btn-manage-keys => "Manage Keys"
@@ -1521,6 +1523,8 @@ map-key-hold => "Hold {$key}"
 
 map-key-shift => "Shift"
 
+map-key-space => "Space"
+
 map-key-up-down => "Up or down"
 
 map-key-wheel => "Wheel"
@@ -1578,6 +1582,8 @@ map-shortcut-select-path
 => "Everything chained between the last clicked item and this one";;
 
 map-shortcut-select-wallet => "Select every item of a wallet"
+
+map-shortcut-space => "Insert or remove horizontal space"
 
 map-shortcut-switch-tag => "Switch the highlighted tag"
 
@@ -1637,6 +1643,8 @@ map-tag-spending => "Spending"
 map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
 
 map-title => "Map"
+
+map-totals => "{$transactions} transactions, {$coins} coins ({$unspent} unspent)"
 
 map-unknown-amount => "Unknown amount"
 

@@ -5,6 +5,7 @@ use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
+    ops::Range,
 };
 
 use iced::{
@@ -36,10 +37,13 @@ pub mod geometry;
 mod overlay;
 
 use geometry::{
-    accumulate_wheel, anchor_point, area_pick, distance_to_curve, drag_set, edge_curve, frame_rect,
-    hit_item, interpolate_camera, rect_from_points, reorder_target, reordered_row, snap_to_grid,
-    wheel_delta, wheel_zoom_factor, Camera, ClickTracker, ItemHit, CLICK_THRESHOLD,
-    EDGE_HIT_HALF_WIDTH, FOCUS_DURATION, FOCUS_ZOOM, SLOT_HEIGHT,
+    accumulate_wheel, anchor_point, area_pick, bottom_stack_top, clamp_to_lanes, distance_to_curve,
+    drag_set, edge_curve, frame_rect, handle_drop, handle_part, handle_rect, handle_stack,
+    hit_item, interpolate_camera, lane_drop, lane_edge, lane_handle_top, rect_from_points,
+    reorder_target, reordered_row, resized_height, resized_lanes, snap_to_grid, space_items,
+    space_room, space_shift, wheel_delta, wheel_zoom_factor, Camera, ClickTracker, HandleDrop,
+    HandlePart, ItemHit, LaneDrop, CLICK_THRESHOLD, EDGE_HIT_HALF_WIDTH, FOCUS_DURATION,
+    FOCUS_ZOOM, HANDLE_MARGIN, SLOT_HEIGHT, U,
 };
 
 type Curve = (EdgeKind, bool, Option<Color>, [Point; 4]);
@@ -101,6 +105,32 @@ pub struct Edge {
 pub enum Side {
     Input,
     Output,
+}
+
+/// Horizontal band of the map, e.g. one per wallet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lane {
+    /// Opaque id chosen by the app.
+    pub id: u64,
+    /// Graph px.
+    pub top: f32,
+    pub height: f32,
+    /// Least height a resize gives the lane.
+    pub min_height: f32,
+    /// Items kept inside the band while dragged.
+    pub items: Vec<ItemId>,
+    pub color: Color,
+}
+
+/// Row of the lane column pinned to the left edge of the view.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Handle {
+    pub id: u64,
+    pub name: String,
+    pub color: Color,
+    pub displayed: bool,
+    /// Lane the handle sits on; `None` stacks it at the bottom of the column.
+    pub lane: Option<u64>,
 }
 
 /// What the pointer is on. Slot rows are display rows.
@@ -165,6 +195,33 @@ pub enum GraphEvent {
         row: usize,
         steps: i32,
     },
+    /// Click on the checkbox of a handle, or double click on it.
+    HandleToggled(u64),
+    /// A handle dragged by its grip and dropped just before the handle
+    /// `before` of the full order, at its end for `None`.
+    HandleMoved {
+        id: u64,
+        before: Option<u64>,
+    },
+    /// Every item of the lane `id` dragged together: dropped just before the
+    /// lane `before`, at the end for `None`, and moved `dx` graph px across,
+    /// on the grid with snap on.
+    LaneMoved {
+        id: u64,
+        before: Option<u64>,
+        dx: f32,
+    },
+    /// The lane `id` resized by its bottom edge to `height` graph px.
+    LaneResized {
+        id: u64,
+        height: f32,
+    },
+    /// Space drag: the items whose left edge is at or right of `from_x` move
+    /// `dx` graph px across, on the grid with snap on.
+    SpaceShifted {
+        from_x: f32,
+        dx: f32,
+    },
 }
 
 /// Items must be passed in a stable order: child state is diffed by index.
@@ -181,7 +238,22 @@ pub struct GraphView<'a, M> {
     snap: bool,
     area_mode: bool,
     wheel_slot: Option<(ItemId, Side, usize)>,
+    lanes: Vec<Lane>,
+    lanes_enabled: bool,
+    handles: Vec<Handle>,
     on_event: Option<Box<dyn Fn(GraphEvent) -> M + 'a>>,
+}
+
+/// Where a handle is drawn, in widget px.
+#[derive(Debug, Clone)]
+pub struct HandleSlot {
+    /// Index into the handles.
+    pub index: usize,
+    pub id: u64,
+    pub rect: Rectangle,
+    /// Top to bottom of the lane it sits on, widget px; `None` in the stack of
+    /// the other handles.
+    pub lane: Option<Range<f32>>,
 }
 
 impl<'a, M> GraphView<'a, M> {
@@ -198,6 +270,9 @@ impl<'a, M> GraphView<'a, M> {
             snap: false,
             area_mode: false,
             wheel_slot: None,
+            lanes: Vec::new(),
+            lanes_enabled: false,
+            handles: Vec::new(),
             on_event: None,
         }
     }
@@ -249,6 +324,23 @@ impl<'a, M> GraphView<'a, M> {
         self
     }
 
+    pub fn lanes(mut self, lanes: Vec<Lane>) -> Self {
+        self.lanes = lanes;
+        self
+    }
+
+    /// Draws the lane bands and keeps dragged items inside their lane.
+    pub fn lanes_enabled(mut self, enabled: bool) -> Self {
+        self.lanes_enabled = enabled;
+        self
+    }
+
+    /// Rows of the lane column; the column shows when not empty.
+    pub fn handles(mut self, handles: Vec<Handle>) -> Self {
+        self.handles = handles;
+        self
+    }
+
     pub fn on_event(mut self, f: impl Fn(GraphEvent) -> M + 'a) -> Self {
         self.on_event = Some(Box::new(f));
         self
@@ -260,6 +352,7 @@ impl<'a, M> GraphView<'a, M> {
             Interaction::DraggingItems { items, delta, .. } => Some((items, *delta)),
             _ => None,
         };
+        let shifts = self.live_shifts(state);
         self.items
             .iter()
             .map(|item| {
@@ -272,9 +365,86 @@ impl<'a, M> GraphView<'a, M> {
                         }
                     }
                 }
+                if let Some(shift) = shifts.get(&item.id) {
+                    position += *shift;
+                }
                 (item.id, (position, item.shape))
             })
             .collect()
+    }
+
+    /// Items moved along by a live lane resize or space drag.
+    fn live_shifts(&self, state: &State) -> HashMap<ItemId, Vector> {
+        match state.interaction {
+            Interaction::ResizingLane { id, height, .. } => self
+                .lanes
+                .iter()
+                .zip(resized_lanes(&self.lanes, id, height))
+                .filter(|(lane, resized)| resized.top != lane.top)
+                .flat_map(|(lane, resized)| {
+                    let shift = Vector::new(0.0, resized.top - lane.top);
+                    lane.items.iter().map(move |id| (*id, shift))
+                })
+                .collect(),
+            Interaction::ShiftingSpace { from_x, dx, .. } => space_items(self.item_rects(), from_x)
+                .into_iter()
+                .map(|id| (id, Vector::new(dx, 0.0)))
+                .collect(),
+            _ => HashMap::new(),
+        }
+    }
+
+    fn item_rects(&self) -> impl Iterator<Item = (ItemId, Rectangle)> + '_ {
+        self.items
+            .iter()
+            .map(|item| (item.id, Rectangle::new(item.position, item.shape.size())))
+    }
+
+    /// The lanes as drawn, with a live resize.
+    fn shown_lanes(&self, state: &State) -> Vec<Lane> {
+        match state.interaction {
+            Interaction::ResizingLane { id, height, .. } => resized_lanes(&self.lanes, id, height),
+            _ => self.lanes.clone(),
+        }
+    }
+
+    /// The lane whose items are exactly `items`, dragging them moves the lane.
+    fn dragged_lane(&self, items: &[ItemId]) -> Option<u64> {
+        if !self.lanes_enabled {
+            return None;
+        }
+        let dragged: HashSet<&ItemId> = items.iter().collect();
+        self.lanes
+            .iter()
+            .find(|lane| {
+                !lane.items.is_empty() && lane.items.iter().collect::<HashSet<_>>() == dragged
+            })
+            .map(|lane| lane.id)
+    }
+
+    /// Drop of the lane `id` dragged by `delta` graph px from the absolute `origin`.
+    fn lane_drag_drop(
+        &self,
+        state: &State,
+        bounds: Rectangle,
+        id: u64,
+        origin: Point,
+        delta: Vector,
+    ) -> LaneDrop {
+        let pointer = state
+            .camera
+            .to_graph(Point::new(origin.x - bounds.x, origin.y - bounds.y))
+            + delta;
+        lane_drop(&self.lanes, id, pointer.y)
+    }
+
+    /// Lane whose bottom edge is under the absolute `cursor`.
+    fn lane_edge_at(&self, state: &State, bounds: Rectangle, cursor: Point) -> Option<&Lane> {
+        if !self.lanes_enabled || !bounds.contains(cursor) {
+            return None;
+        }
+        let id = lane_edge(&self.lanes, state.camera, cursor.y - bounds.y)?;
+        self.lanes.iter().find(|lane| lane.id == id)
     }
 
     /// Selection bounding box, moved with the raw delta when the whole
@@ -306,6 +476,9 @@ impl<'a, M> GraphView<'a, M> {
 
     /// `cursor` is absolute.
     fn hit_test(&self, state: &State, bounds: Rectangle, cursor: Point) -> Option<Target> {
+        if self.handle_at(state, bounds, cursor).is_some() {
+            return None;
+        }
         let local = Point::new(cursor.x - bounds.x, cursor.y - bounds.y);
         let graph = state.camera.to_graph(local);
         let placements = self.placements(state);
@@ -393,6 +566,123 @@ impl<'a, M> GraphView<'a, M> {
         ))
     }
 
+    /// Vertical delta of the dragged `items`, kept inside their lanes.
+    fn lane_clamp(&self, items: &[ItemId], dy: f32) -> f32 {
+        if !self.lanes_enabled {
+            return dy;
+        }
+        let lane_of: HashMap<ItemId, &Lane> = self
+            .lanes
+            .iter()
+            .flat_map(|lane| lane.items.iter().map(move |id| (*id, lane)))
+            .collect();
+        let spans = self.items.iter().filter_map(|item| {
+            let lane = lane_of.get(&item.id).filter(|_| items.contains(&item.id))?;
+            Some((Rectangle::new(item.position, item.shape.size()), *lane))
+        });
+        clamp_to_lanes(dy, spans)
+    }
+
+    /// Handles sitting on a visible lane, then the others stacked at the
+    /// bottom; all stacked from the top while the lanes are off.
+    fn handle_slots(&self, state: &State, height: f32) -> Vec<HandleSlot> {
+        let camera = state.camera;
+        let lanes = self.shown_lanes(state);
+        let mut slots = Vec::with_capacity(self.handles.len());
+        let mut stacked = Vec::new();
+        for (index, handle) in self.handles.iter().enumerate() {
+            let lane = handle
+                .lane
+                .filter(|_| self.lanes_enabled)
+                .and_then(|id| lanes.iter().find(|lane| lane.id == id));
+            match lane {
+                Some(lane) => {
+                    let top = camera.to_screen(Point::new(0.0, lane.top)).y;
+                    let bottom = top + lane.height * camera.zoom;
+                    slots.push(HandleSlot {
+                        index,
+                        id: handle.id,
+                        rect: handle_rect(lane_handle_top(top, bottom)),
+                        lane: Some(top..bottom),
+                    });
+                }
+                None => stacked.push((index, handle.id)),
+            }
+        }
+        let top = if self.lanes_enabled {
+            bottom_stack_top(height, stacked.len())
+        } else {
+            HANDLE_MARGIN
+        };
+        let tops = handle_stack(top, stacked.len());
+        slots.extend(
+            stacked
+                .into_iter()
+                .zip(tops)
+                .map(|((index, id), top)| HandleSlot {
+                    index,
+                    id,
+                    rect: handle_rect(top),
+                    lane: None,
+                }),
+        );
+        slots
+    }
+
+    /// Handle under the absolute `cursor`, and the part of it.
+    fn handle_at(
+        &self,
+        state: &State,
+        bounds: Rectangle,
+        cursor: Point,
+    ) -> Option<(HandleSlot, HandlePart)> {
+        if !bounds.contains(cursor) {
+            return None;
+        }
+        let local = Point::new(cursor.x - bounds.x, cursor.y - bounds.y);
+        self.handle_slots(state, bounds.height)
+            .into_iter()
+            .find(|slot| slot.rect.contains(local))
+            .map(|slot| {
+                let part = handle_part(local.x - slot.rect.x);
+                (slot, part)
+            })
+    }
+
+    /// The pointer as seen by the map content: unavailable over a handle.
+    fn content_cursor(
+        &self,
+        state: &State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Cursor {
+        match cursor.position() {
+            Some(position) if self.handle_at(state, bounds, position).is_some() => {
+                mouse::Cursor::Unavailable
+            }
+            _ => cursor,
+        }
+    }
+
+    /// Drop of the handle `id` dragged with its top at `top`, `grab` px above
+    /// the pointer.
+    fn handle_drop(
+        &self,
+        state: &State,
+        bounds: Rectangle,
+        id: u64,
+        top: f32,
+        grab: f32,
+    ) -> HandleDrop {
+        let slots = self.handle_slots(state, bounds.height);
+        handle_drop(&slots, id, top, top + grab)
+    }
+
+    /// A hidden handle always moves, a displayed one only along the lanes.
+    fn handle_draggable(&self, handle: &Handle) -> bool {
+        !handle.displayed || self.lanes_enabled
+    }
+
     fn publish(&self, shell: &mut Shell<'_, M>, event: GraphEvent) {
         if let Some(on_event) = &self.on_event {
             shell.publish(on_event(event));
@@ -413,8 +703,11 @@ struct State {
     camera: Camera,
     interaction: Interaction,
     modifiers: keyboard::Modifiers,
+    /// The space bar is held: a drag inserts or removes horizontal space.
+    space: bool,
     hover: Option<Target>,
     clicks: ClickTracker,
+    handle_clicks: ClickTracker<u64>,
     size: Size,
     /// Union of the item rects, in graph px.
     content: Option<Rectangle>,
@@ -452,12 +745,46 @@ enum Interaction {
         origin: Point,
         items: Vec<ItemId>,
         delta: Vector,
+        /// Lane whose items are all dragged: it moves between the lanes.
+        lane: Option<u64>,
+    },
+    /// `origin_y` is the absolute cursor y at press, heights are graph px.
+    ResizingLane {
+        origin_y: f32,
+        id: u64,
+        from: f32,
+        min: f32,
+        height: f32,
+    },
+    /// `origin` is the absolute cursor position at press, `from_x` and `dx`
+    /// are graph px.
+    ShiftingSpace {
+        origin: Point,
+        from_x: f32,
+        dx: f32,
     },
     /// `origin` and `current` are absolute screen px.
     Area {
         origin: Point,
         current: Point,
         additive: bool,
+    },
+    /// `origin` is the absolute cursor position at press.
+    HandlePressed {
+        origin: Point,
+        id: u64,
+        part: HandlePart,
+        /// Widget px from the pointer to the handle top.
+        grab: f32,
+        draggable: bool,
+    },
+    /// `top` is the dragged handle top, widget px.
+    DraggingHandle {
+        id: u64,
+        /// Drop target at the start of the drag.
+        from: Option<u64>,
+        grab: f32,
+        top: f32,
     },
     /// `offset_y` is the top of the dragged slot from its column top, graph px.
     ReorderingSlot {
@@ -594,7 +921,8 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         let state = tree.state.downcast_ref::<State>();
         let transformation = state.camera.transformation(bounds);
         let inverse = transformation.inverse();
-        let child_cursor = state.child_cursor(cursor, bounds, inverse);
+        let child_cursor =
+            state.child_cursor(self.content_cursor(state, bounds, cursor), bounds, inverse);
         let child_viewport = clip * inverse;
         let placements = self.placements(state);
         let palette = &theme.colors.graph;
@@ -628,6 +956,15 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             draw::edges(frame, palette, &curves, self.dim_edges)
         });
         renderer.with_layer(clip, |renderer| {
+            if self.lanes_enabled {
+                draw::lanes(
+                    renderer,
+                    theme,
+                    bounds,
+                    state.camera,
+                    &self.shown_lanes(state),
+                );
+            }
             if self.grid {
                 draw::grid(renderer, palette, bounds, clip, state.camera);
             }
@@ -643,23 +980,32 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 for ((item, child), child_layout) in
                     self.items.iter().zip(&tree.children).zip(layout.children())
                 {
+                    let offset = placements
+                        .get(&item.id)
+                        .map_or(Vector::ZERO, |(position, _)| *position - item.position);
                     if dragged.contains(&item.id)
-                        || child_layout
-                            .bounds()
+                        || (child_layout.bounds() + offset)
                             .intersection(&child_viewport)
                             .is_none()
                     {
                         continue;
                     }
-                    item.content.as_widget().draw(
-                        child,
-                        renderer,
-                        theme,
-                        style,
-                        child_layout,
-                        child_cursor,
-                        &child_viewport,
-                    );
+                    let draw = |renderer: &mut Renderer| {
+                        item.content.as_widget().draw(
+                            child,
+                            renderer,
+                            theme,
+                            style,
+                            child_layout,
+                            child_cursor,
+                            &child_viewport,
+                        )
+                    };
+                    if offset == Vector::ZERO {
+                        draw(renderer);
+                    } else {
+                        renderer.with_translation(offset, draw);
+                    }
                 }
             });
         });
@@ -712,6 +1058,9 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             renderer.with_transformation(markers, |renderer| {
                 draw::markers(renderer, palette, &marker_points);
             });
+            if let Interaction::ShiftingSpace { from_x, .. } = state.interaction {
+                draw::space(renderer, theme, bounds, state.camera, from_x);
+            }
             if let Interaction::Area {
                 origin, current, ..
             } = state.interaction
@@ -724,6 +1073,44 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 );
             }
         });
+        if !self.handles.is_empty() {
+            let mut frame = canvas::Frame::new(renderer, bounds.size());
+            let dragged = match state.interaction {
+                Interaction::DraggingHandle { id, top, grab, .. } => Some((id, top, grab)),
+                _ => None,
+            };
+            for slot in self.handle_slots(state, bounds.height) {
+                let handle = &self.handles[slot.index];
+                if dragged.is_none_or(|(id, _, _)| id != handle.id) {
+                    draw::handle(&mut frame, theme, slot.rect, handle);
+                }
+            }
+            if let Interaction::DraggingItems {
+                origin,
+                delta,
+                lane: Some(id),
+                ..
+            } = state.interaction
+            {
+                if let Some(line) = self.lane_drag_drop(state, bounds, id, origin, delta).line {
+                    let y = state.camera.to_screen(Point::new(0.0, line)).y;
+                    draw::drop_line(&mut frame, theme, y);
+                }
+            }
+            if let Some((id, top, grab)) = dragged {
+                if let Some(y) = self.handle_drop(state, bounds, id, top, grab).line {
+                    draw::drop_line(&mut frame, theme, y);
+                }
+                if let Some(handle) = self.handles.iter().find(|handle| handle.id == id) {
+                    draw::handle(&mut frame, theme, handle_rect(top), handle);
+                }
+            }
+            renderer.with_layer(clip, |renderer| {
+                renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+                    renderer.draw_geometry(frame.into_geometry());
+                });
+            });
+        }
     }
 
     fn update(
@@ -742,7 +1129,8 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         // Camera operations run outside `update`.
         self.publish_zoom(state, shell);
         let inverse = state.camera.transformation(bounds).inverse();
-        let child_cursor = state.child_cursor(cursor, bounds, inverse);
+        let child_cursor =
+            state.child_cursor(self.content_cursor(state, bounds, cursor), bounds, inverse);
         let child_viewport = bounds.intersection(viewport).unwrap_or(bounds) * inverse;
         for ((item, child), child_layout) in self
             .items
@@ -770,6 +1158,14 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                 state.modifiers = *modifiers;
                 shell.request_redraw();
             }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Space),
+                ..
+            }) => state.space = true,
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                key: keyboard::Key::Named(keyboard::key::Named::Space),
+                ..
+            }) => state.space = false,
             Event::Mouse(mouse::Event::CursorLeft) => {
                 if let Interaction::Idle = state.interaction {
                     self.refresh_hover(state, bounds, mouse::Cursor::Unavailable, shell);
@@ -777,7 +1173,33 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let (Interaction::Idle, Some(origin)) = (&state.interaction, cursor.position()) {
-                    if cursor.is_over(bounds) {
+                    if let Some((slot, part)) = self.handle_at(state, bounds, origin) {
+                        state.interaction = Interaction::HandlePressed {
+                            origin,
+                            id: slot.id,
+                            part,
+                            grab: origin.y - bounds.y - slot.rect.y,
+                            draggable: self.handle_draggable(&self.handles[slot.index]),
+                        };
+                        shell.capture_event();
+                    } else if state.space && cursor.is_over(bounds) {
+                        let local = Point::new(origin.x - bounds.x, origin.y - bounds.y);
+                        state.interaction = Interaction::ShiftingSpace {
+                            origin,
+                            from_x: state.camera.to_graph(local).x,
+                            dx: 0.0,
+                        };
+                        shell.capture_event();
+                    } else if let Some(lane) = self.lane_edge_at(state, bounds, origin) {
+                        state.interaction = Interaction::ResizingLane {
+                            origin_y: origin.y,
+                            id: lane.id,
+                            from: lane.height,
+                            min: lane.min_height,
+                            height: lane.height,
+                        };
+                        shell.capture_event();
+                    } else if cursor.is_over(bounds) {
                         state.interaction = Interaction::Pressed {
                             origin,
                             camera: state.camera,
@@ -807,9 +1229,11 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                         let area = state.area_active(self.area_mode);
                         match target {
                             Some(Target::Item(id)) => {
+                                let items = drag_set(id, &self.selected);
                                 state.interaction = Interaction::DraggingItems {
                                     origin,
-                                    items: drag_set(id, &self.selected),
+                                    lane: self.dragged_lane(&items),
+                                    items,
                                     delta: Vector::ZERO,
                                 };
                             }
@@ -819,6 +1243,7 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                                 items.sort();
                                 state.interaction = Interaction::DraggingItems {
                                     origin,
+                                    lane: self.dragged_lane(&items),
                                     items,
                                     delta: Vector::ZERO,
                                 };
@@ -854,12 +1279,60 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                         }
                     }
                 }
+                if let Interaction::HandlePressed {
+                    origin,
+                    id,
+                    part: HandlePart::Grip,
+                    grab,
+                    draggable: true,
+                } = state.interaction
+                {
+                    if origin.distance(position) > CLICK_THRESHOLD {
+                        let top = origin.y - bounds.y - grab;
+                        let from = self.handle_drop(state, bounds, id, top, grab).before;
+                        state.interaction = Interaction::DraggingHandle {
+                            id,
+                            from,
+                            grab,
+                            top,
+                        };
+                    }
+                }
                 match &mut state.interaction {
                     Interaction::Panning { origin, camera } => {
                         state.camera.offset = camera.offset + (position - *origin);
                     }
-                    Interaction::DraggingItems { origin, delta, .. } => {
-                        *delta = (position - *origin) * (1.0 / state.camera.zoom);
+                    Interaction::DraggingItems {
+                        origin,
+                        items,
+                        delta,
+                        lane,
+                    } => {
+                        let raw = (position - *origin) * (1.0 / state.camera.zoom);
+                        // A whole lane follows the pointer to its new slot.
+                        let dy = match lane {
+                            Some(_) => raw.y,
+                            None => self.lane_clamp(items, raw.y),
+                        };
+                        *delta = Vector::new(raw.x, dy);
+                    }
+                    Interaction::ResizingLane {
+                        origin_y,
+                        from,
+                        min,
+                        height,
+                        ..
+                    } => {
+                        let dy = (position.y - *origin_y) / state.camera.zoom;
+                        *height = resized_height(*from, dy, *min);
+                    }
+                    Interaction::ShiftingSpace { origin, from_x, dx } => {
+                        let raw = (position.x - origin.x) / state.camera.zoom;
+                        let room = space_room(self.item_rects().map(|(_, rect)| rect), *from_x);
+                        *dx = space_shift(raw, room, self.snap);
+                    }
+                    Interaction::DraggingHandle { grab, top, .. } => {
+                        *top = position.y - bounds.y - *grab;
                     }
                     Interaction::Area { current, .. } => *current = position,
                     Interaction::ReorderingSlot {
@@ -924,8 +1397,60 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
                             }
                         }
                     }
+                    Interaction::DraggingItems {
+                        origin,
+                        delta,
+                        lane: Some(id),
+                        ..
+                    } => {
+                        let drop = self.lane_drag_drop(state, bounds, id, origin, delta);
+                        let dx = if self.snap {
+                            (delta.x / U).round() * U
+                        } else {
+                            delta.x
+                        };
+                        if drop.line.is_some() || dx != 0.0 {
+                            let before = drop.before;
+                            self.publish(shell, GraphEvent::LaneMoved { id, before, dx });
+                        }
+                    }
                     Interaction::DraggingItems { items, delta, .. } if delta != Vector::ZERO => {
                         self.publish(shell, GraphEvent::Moved { items, delta });
+                    }
+                    Interaction::ResizingLane {
+                        id, from, height, ..
+                    } if height != from => {
+                        self.publish(shell, GraphEvent::LaneResized { id, height });
+                    }
+                    Interaction::ShiftingSpace { from_x, dx, .. } if dx != 0.0 => {
+                        self.publish(shell, GraphEvent::SpaceShifted { from_x, dx });
+                    }
+                    Interaction::HandlePressed {
+                        origin, id, part, ..
+                    } if cursor
+                        .position()
+                        .is_some_and(|p| origin.distance(p) <= CLICK_THRESHOLD) =>
+                    {
+                        let toggled = match part {
+                            HandlePart::Checkbox => true,
+                            HandlePart::Grip | HandlePart::Body => {
+                                state.handle_clicks.register(id, Instant::now())
+                            }
+                        };
+                        if toggled {
+                            self.publish(shell, GraphEvent::HandleToggled(id));
+                        }
+                    }
+                    Interaction::DraggingHandle {
+                        id,
+                        from,
+                        grab,
+                        top,
+                    } => {
+                        let before = self.handle_drop(state, bounds, id, top, grab).before;
+                        if before != from {
+                            self.publish(shell, GraphEvent::HandleMoved { id, before });
+                        }
                     }
                     Interaction::ReorderingSlot {
                         item,
@@ -1048,11 +1573,36 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
         match state.interaction {
             Interaction::Panning { .. }
             | Interaction::DraggingItems { .. }
+            | Interaction::DraggingHandle { .. }
             | Interaction::ReorderingSlot { .. } => {
                 return mouse::Interaction::Grabbing;
             }
             Interaction::Area { .. } => return mouse::Interaction::Crosshair,
-            Interaction::Idle | Interaction::Pressed { .. } => {}
+            Interaction::ResizingLane { .. } => return mouse::Interaction::ResizingVertically,
+            Interaction::ShiftingSpace { .. } => return mouse::Interaction::ResizingHorizontally,
+            Interaction::Idle | Interaction::Pressed { .. } | Interaction::HandlePressed { .. } => {
+            }
+        }
+        if let Some((slot, part)) = cursor
+            .position()
+            .and_then(|position| self.handle_at(state, bounds, position))
+        {
+            return match part {
+                HandlePart::Grip if self.handle_draggable(&self.handles[slot.index]) => {
+                    mouse::Interaction::Grab
+                }
+                HandlePart::Grip => mouse::Interaction::None,
+                HandlePart::Body | HandlePart::Checkbox => mouse::Interaction::Pointer,
+            };
+        }
+        if state.space && cursor.is_over(bounds) {
+            return mouse::Interaction::ResizingHorizontally;
+        }
+        if cursor
+            .position()
+            .is_some_and(|position| self.lane_edge_at(state, bounds, position).is_some())
+        {
+            return mouse::Interaction::ResizingVertically;
         }
         let inverse = state.camera.transformation(bounds).inverse();
         let child_cursor = state.child_cursor(cursor, bounds, inverse);

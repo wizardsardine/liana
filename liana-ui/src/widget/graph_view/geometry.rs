@@ -1,11 +1,11 @@
 //! Single source of the map item geometry and camera math. The map panel
 //! module (`component/panels/map`) must re-export or reuse these, never
 //! redefine them.
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, ops::Range, time::Duration};
 
 use iced::{mouse, time::Instant, Point, Rectangle, Size, Transformation, Vector};
 
-use crate::widget::graph_view::{AnchorSide, ItemId, Shape, Side, Target};
+use crate::widget::graph_view::{AnchorSide, HandleSlot, ItemId, Lane, Shape, Side, Target};
 
 /// Grid unit.
 pub const U: f32 = 12.0;
@@ -18,7 +18,7 @@ pub const BLOCK_MIN_HEIGHT: f32 = 156.0;
 pub const LEAF_WIDTH: f32 = 216.0;
 pub const LEAF_HEIGHT: f32 = 36.0;
 
-pub const MIN_ZOOM: f32 = 0.1;
+pub const MIN_ZOOM: f32 = 0.02;
 pub const MAX_ZOOM: f32 = 2.5;
 pub const FIT_PADDING: f32 = 72.0;
 pub const FIT_MAX_ZOOM: f32 = 1.1;
@@ -56,6 +56,33 @@ pub const AREA_BORDER_WIDTH: f32 = 1.0;
 /// Accumulated wheel delta that cycles the tag highlight by one step.
 pub const TAG_WHEEL_STEP: f32 = 40.0;
 pub const FOCUS_DURATION: Duration = Duration::from_millis(520);
+
+pub const LANE_BAND_OPACITY: f32 = 0.5;
+pub const LANE_SEPARATOR_WIDTH: f32 = 1.0;
+/// Lane color strip along the left edge of its band, in screen px.
+pub const LANE_STRIP_WIDTH: f32 = 3.0;
+/// Screen px each side of a lane bottom edge that grab it for a resize.
+pub const LANE_EDGE_GRAB: f32 = 3.0;
+pub const SPACE_LINE_WIDTH: f32 = 2.0;
+pub const HANDLE_COLUMN_WIDTH: f32 = 180.0;
+/// Horizontal space between the handles and the column edges.
+pub const HANDLE_INSET: f32 = 8.0;
+pub const HANDLE_WIDTH: f32 = HANDLE_COLUMN_WIDTH - 2.0 * HANDLE_INSET;
+pub const HANDLE_HEIGHT: f32 = 28.0;
+pub const HANDLE_GAP: f32 = 4.0;
+/// Space between a handle stack and the top or bottom of the view.
+pub const HANDLE_MARGIN: f32 = 8.0;
+pub const HANDLE_RADIUS: f32 = 6.0;
+pub const HANDLE_GRIP_WIDTH: f32 = 22.0;
+pub const HANDLE_GRIP_SIZE: f32 = 14.0;
+pub const HANDLE_DOT_RADIUS: f32 = 4.0;
+pub const HANDLE_NAME_X: f32 = 38.0;
+/// About the width left between the color dot and the checkbox at the small caption size.
+pub const HANDLE_NAME_MAX_CHARS: usize = 14;
+/// Right part of a handle that toggles it on click.
+pub const HANDLE_CHECKBOX_AREA: f32 = 30.0;
+pub const HANDLE_CHECKBOX_SIZE: f32 = 14.0;
+pub const HANDLE_DROP_LINE_WIDTH: f32 = 2.0;
 
 impl Shape {
     pub fn size(self) -> Size {
@@ -328,15 +355,259 @@ pub fn drag_set(id: ItemId, selected: &HashSet<ItemId>) -> Vec<ItemId> {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct ClickTracker {
-    last: Option<(Target, Instant)>,
+/// Vertical move allowed to items dragged by `dy`: each item in `spans` stays
+/// inside its lane band. An item already outside its band may stay where it is
+/// or move toward the band, never further away.
+pub fn clamp_to_lanes<'a>(dy: f32, spans: impl IntoIterator<Item = (Rectangle, &'a Lane)>) -> f32 {
+    let (mut lowest, mut highest) = (f32::NEG_INFINITY, f32::INFINITY);
+    for (item, lane) in spans {
+        lowest = lowest.max((lane.top - item.y).min(0.0));
+        highest = highest.min((lane.top + lane.height - item.y - item.height).max(0.0));
+    }
+    dy.clamp(lowest, highest)
 }
 
-impl ClickTracker {
+/// Where a dragged lane lands, graph px.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaneDrop {
+    /// Lane it goes before, `None` for after all of them.
+    pub before: Option<u64>,
+    /// Drop indicator, `None` when the lane stays in its slot.
+    pub line: Option<f32>,
+}
+
+/// Drop of the lane `id` of `lanes` (stacked in order) with the pointer at `y`.
+pub fn lane_drop(lanes: &[Lane], id: u64, y: f32) -> LaneDrop {
+    let spans: Vec<(u64, Range<f32>)> = lanes
+        .iter()
+        .map(|lane| (lane.id, lane.top..lane.top + lane.height))
+        .collect();
+    span_drop(&spans, id, y)
+}
+
+/// Drop of `id` among `spans` (stacked in order) with the pointer at `y`: it takes the slot
+/// of the span under the pointer, the first one above them all, the last one below. One not
+/// among them goes before the span under the pointer, after them all below.
+fn span_drop(spans: &[(u64, Range<f32>)], id: u64, y: f32) -> LaneDrop {
+    let from = spans.iter().position(|(other, _)| *other == id);
+    let above = spans.iter().filter(|(_, span)| span.end <= y).count();
+    let under = above.min(spans.len().saturating_sub(1));
+    let after = |index: usize| spans.get(index + 1).map(|(next, _)| *next);
+    match from {
+        Some(from) if under > from => LaneDrop {
+            before: after(under),
+            line: Some(spans[under].1.end),
+        },
+        Some(from) if under < from => LaneDrop {
+            before: Some(spans[under].0),
+            line: Some(spans[under].1.start),
+        },
+        Some(from) => LaneDrop {
+            before: after(from),
+            line: None,
+        },
+        None => match spans.get(above) {
+            Some((next, span)) => LaneDrop {
+                before: Some(*next),
+                line: Some(span.start),
+            },
+            None => LaneDrop {
+                before: None,
+                line: spans.last().map(|(_, span)| span.end),
+            },
+        },
+    }
+}
+
+/// Lane whose bottom edge is within `LANE_EDGE_GRAB` of `y` (widget px).
+pub fn lane_edge(lanes: &[Lane], camera: Camera, y: f32) -> Option<u64> {
+    lanes
+        .iter()
+        .find(|lane| {
+            let bottom = camera.to_screen(Point::new(0.0, lane.top + lane.height)).y;
+            (y - bottom).abs() <= LANE_EDGE_GRAB
+        })
+        .map(|lane| lane.id)
+}
+
+/// Height of a lane `height` tall resized by `dy`, never below `min`.
+pub fn resized_height(height: f32, dy: f32, min: f32) -> f32 {
+    (height + dy).max(min)
+}
+
+/// `lanes` with the lane `id` `height` tall, the lanes below it moved along.
+pub fn resized_lanes(lanes: &[Lane], id: u64, height: f32) -> Vec<Lane> {
+    let mut shift = 0.0;
+    lanes
+        .iter()
+        .map(|lane| {
+            let mut lane = lane.clone();
+            lane.top += shift;
+            if lane.id == id {
+                shift = height - lane.height;
+                lane.height = height;
+            }
+            lane
+        })
+        .collect()
+}
+
+/// Room a space removal at `x` has: the gap between `x` and the right edge of the items
+/// starting left of it, `None` without such items.
+pub fn space_room(rects: impl IntoIterator<Item = Rectangle>, x: f32) -> Option<f32> {
+    rects
+        .into_iter()
+        .filter(|rect| rect.x < x)
+        .map(|rect| (x - rect.x - rect.width).max(0.0))
+        .reduce(f32::min)
+}
+
+/// Shift of a space drag by `dx`: a removal takes at most `room`. With `snap`, on the grid
+/// without going past `room`.
+pub fn space_shift(dx: f32, room: Option<f32>, snap: bool) -> f32 {
+    let dx = room.map_or(dx, |room| dx.max(-room));
+    if !snap {
+        return dx;
+    }
+    let snapped = (dx / U).round() * U;
+    if room.is_some_and(|room| snapped < -room) {
+        snapped + U
+    } else {
+        snapped
+    }
+}
+
+/// Items a space shift at `x` moves: the ones whose left edge is at or right of it.
+pub fn space_items(rects: impl IntoIterator<Item = (ItemId, Rectangle)>, x: f32) -> Vec<ItemId> {
+    rects
+        .into_iter()
+        .filter(|(_, rect)| rect.x >= x)
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Top of the handle of a band spanning `top` to `bottom` (screen px): the band
+/// top, held at the view top while the band is scrolled past it.
+pub fn lane_handle_top(top: f32, bottom: f32) -> f32 {
+    top.max(0.0).min(bottom - HANDLE_HEIGHT).max(top)
+}
+
+/// Rect of a handle whose top is at `top`, in widget px.
+pub fn handle_rect(top: f32) -> Rectangle {
+    Rectangle::new(
+        Point::new(HANDLE_INSET, top),
+        Size::new(HANDLE_WIDTH, HANDLE_HEIGHT),
+    )
+}
+
+/// Tops of `count` handles stacked down from `top`.
+pub fn handle_stack(top: f32, count: usize) -> Vec<f32> {
+    (0..count)
+        .map(|index| top + index as f32 * (HANDLE_HEIGHT + HANDLE_GAP))
+        .collect()
+}
+
+/// Top of a stack of `count` handles resting on the bottom of a view `height` px tall.
+pub fn bottom_stack_top(height: f32, count: usize) -> f32 {
+    height - HANDLE_MARGIN - count as f32 * (HANDLE_HEIGHT + HANDLE_GAP) + HANDLE_GAP
+}
+
+/// Index a handle dropped with its center at `y` takes among the handles of
+/// its group: the number of the other ones whose center is above it.
+pub fn handle_drop_index(y: f32, others: impl IntoIterator<Item = f32>) -> usize {
+    others.into_iter().filter(|center| *center < y).count()
+}
+
+/// Where a dragged handle lands, in widget px.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandleDrop {
+    /// Handle it goes before, `None` for after all of them.
+    pub before: Option<u64>,
+    /// Drop indicator, `None` when the handle stays on its lane or the group
+    /// has no other handle.
+    pub line: Option<f32>,
+}
+
+/// Drop of the handle `id`, its top at `top` and the pointer at `pointer`. The
+/// group under the pointer is the bottom stack from its top edge down, the
+/// lanes above it. Over the lanes the handle takes the slot of the lane under
+/// the pointer, in the stack it goes among the other handles.
+pub fn handle_drop(slots: &[HandleSlot], id: u64, top: f32, pointer: f32) -> HandleDrop {
+    let stack_top = slots
+        .iter()
+        .filter(|slot| slot.lane.is_none())
+        .map(|slot| slot.rect.y)
+        .reduce(f32::min);
+    let on_stack = match stack_top {
+        Some(stack_top) => {
+            slots.iter().all(|slot| slot.lane.is_none()) || pointer >= stack_top - HANDLE_GAP / 2.0
+        }
+        None => false,
+    };
+    if !on_stack {
+        let mut spans: Vec<(u64, Range<f32>)> = slots
+            .iter()
+            .filter_map(|slot| Some((slot.id, slot.lane.clone()?)))
+            .collect();
+        spans.sort_by(|a, b| a.1.start.total_cmp(&b.1.start));
+        let drop = span_drop(&spans, id, pointer);
+        return HandleDrop {
+            before: drop.before,
+            line: drop.line,
+        };
+    }
+    let mut others: Vec<&HandleSlot> = slots
+        .iter()
+        .filter(|slot| slot.lane.is_none() && slot.id != id)
+        .collect();
+    others.sort_by(|a, b| a.rect.y.total_cmp(&b.rect.y));
+    let center = |top: f32| top + HANDLE_HEIGHT / 2.0;
+    let index = handle_drop_index(center(top), others.iter().map(|slot| center(slot.rect.y)));
+    let line = match others.get(index) {
+        Some(next) => Some(next.rect.y - HANDLE_GAP / 2.0),
+        None => others
+            .last()
+            .map(|last| last.rect.y + HANDLE_HEIGHT + HANDLE_GAP / 2.0),
+    };
+    HandleDrop {
+        before: others.get(index).map(|slot| slot.id),
+        line,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlePart {
+    Grip,
+    Body,
+    Checkbox,
+}
+
+/// Part of a handle at `x` px from its left edge.
+pub fn handle_part(x: f32) -> HandlePart {
+    if x < HANDLE_GRIP_WIDTH {
+        HandlePart::Grip
+    } else if x >= HANDLE_WIDTH - HANDLE_CHECKBOX_AREA {
+        HandlePart::Checkbox
+    } else {
+        HandlePart::Body
+    }
+}
+
+#[derive(Debug)]
+pub struct ClickTracker<T = Target> {
+    last: Option<(T, Instant)>,
+}
+
+impl<T> Default for ClickTracker<T> {
+    fn default() -> Self {
+        Self { last: None }
+    }
+}
+
+impl<T: Copy + PartialEq> ClickTracker<T> {
     /// True when the previous click was on the same target within
     /// `DOUBLE_CLICK`. A detected double click starts over.
-    pub fn register(&mut self, target: Target, at: Instant) -> bool {
+    pub fn register(&mut self, target: T, at: Instant) -> bool {
         let double = self
             .last
             .is_some_and(|(last, time)| last == target && at.duration_since(time) <= DOUBLE_CLICK);
@@ -501,6 +772,8 @@ mod tests {
         assert_eq!(grid_step(1.0), 12.0);
         assert_eq!(grid_step(0.5), 24.0);
         assert!(grid_step(0.1) * 0.1 >= GRID_MIN_SCREEN_STEP);
+        assert_eq!(grid_step(MIN_ZOOM), 768.0);
+        assert!(grid_step(MIN_ZOOM) * MIN_ZOOM < 2.0 * GRID_MIN_SCREEN_STEP);
     }
 
     #[test]
@@ -683,5 +956,372 @@ mod tests {
         let mut clicks = ClickTracker::default();
         clicks.register(a, t0);
         assert!(!clicks.register(b, t0 + ms(100)));
+    }
+
+    fn lane(top: f32, height: f32) -> Lane {
+        Lane {
+            id: 0,
+            top,
+            height,
+            min_height: 0.0,
+            items: Vec::new(),
+            color: iced::Color::BLACK,
+        }
+    }
+
+    /// Lanes 0, 1 and 2, 400, 300 and 200 px tall stacked from 0.
+    fn three_lanes() -> Vec<Lane> {
+        vec![
+            lane(0.0, 400.0),
+            Lane {
+                id: 1,
+                ..lane(400.0, 300.0)
+            },
+            Lane {
+                id: 2,
+                ..lane(700.0, 200.0)
+            },
+        ]
+    }
+
+    #[test]
+    fn lane_drops_in_the_slot_under_the_pointer() {
+        let lanes = three_lanes();
+        let drop = |id, y| lane_drop(&lanes, id, y);
+        assert_eq!(
+            drop(0, 500.0),
+            LaneDrop {
+                before: Some(2),
+                line: Some(700.0),
+            }
+        );
+        assert_eq!(
+            drop(0, 800.0),
+            LaneDrop {
+                before: None,
+                line: Some(900.0),
+            }
+        );
+        assert_eq!(
+            drop(2, 100.0),
+            LaneDrop {
+                before: Some(0),
+                line: Some(0.0),
+            }
+        );
+        assert_eq!(
+            drop(2, 450.0),
+            LaneDrop {
+                before: Some(1),
+                line: Some(400.0),
+            }
+        );
+        // Above or below every lane, the first or the last slot.
+        assert_eq!(drop(1, -300.0).before, Some(0));
+        assert_eq!(drop(1, 5000.0).before, None);
+        assert_eq!(drop(0, 5000.0).line, Some(900.0));
+        // In its own slot, the lane stays.
+        assert_eq!(
+            drop(1, 650.0),
+            LaneDrop {
+                before: Some(2),
+                line: None,
+            }
+        );
+        assert_eq!(
+            drop(2, 899.0),
+            LaneDrop {
+                before: None,
+                line: None,
+            }
+        );
+        // A lane not among them goes before the one under the pointer.
+        assert_eq!(
+            drop(7, 100.0),
+            LaneDrop {
+                before: Some(0),
+                line: Some(0.0),
+            }
+        );
+        assert_eq!(
+            drop(7, 5000.0),
+            LaneDrop {
+                before: None,
+                line: Some(900.0),
+            }
+        );
+    }
+
+    #[test]
+    fn lane_edges_grab_near_the_bottom() {
+        let lanes = three_lanes();
+        let camera = Camera {
+            offset: Vector::new(0.0, 10.0),
+            zoom: 0.5,
+        };
+        assert_eq!(lane_edge(&lanes, camera, 210.0), Some(0));
+        assert_eq!(lane_edge(&lanes, camera, 207.0), Some(0));
+        assert_eq!(lane_edge(&lanes, camera, 213.0), Some(0));
+        assert_eq!(lane_edge(&lanes, camera, 214.0), None);
+        assert_eq!(lane_edge(&lanes, camera, 361.0), Some(1));
+        assert_eq!(lane_edge(&lanes, camera, 460.0), Some(2));
+        assert_eq!(lane_edge(&lanes, camera, 300.0), None);
+    }
+
+    #[test]
+    fn space_removal_stops_at_the_items_left() {
+        let rect = |x: f32, width: f32| Rectangle::new(Point::new(x, 0.0), Size::new(width, 36.0));
+        let rects = [rect(0.0, 696.0), rect(1000.0, 216.0), rect(2000.0, 696.0)];
+        assert_eq!(space_room(rects, 1500.0), Some(284.0));
+        assert_eq!(space_room(rects, 900.0), Some(204.0));
+        // An item across the line leaves no room.
+        assert_eq!(space_room(rects, 1100.0), Some(0.0));
+        assert_eq!(space_room(rects, 0.0), None);
+
+        assert_eq!(space_shift(-100.0, Some(284.0), false), -100.0);
+        assert_eq!(space_shift(-400.0, Some(284.0), false), -284.0);
+        assert_eq!(space_shift(-400.0, None, false), -400.0);
+        assert_eq!(space_shift(500.0, Some(0.0), false), 500.0);
+        assert_eq!(space_shift(-400.0, Some(284.0), true), -276.0);
+        assert_eq!(space_shift(-100.0, Some(284.0), true), -96.0);
+        assert_eq!(space_shift(-5.0, Some(0.0), true), 0.0);
+        assert_eq!(space_shift(130.0, None, true), 132.0);
+    }
+
+    #[test]
+    fn space_moves_the_items_from_its_line() {
+        let rect = |x: f32| Rectangle::new(Point::new(x, 0.0), Size::new(216.0, 36.0));
+        let items = [
+            (ItemId(0), rect(0.0)),
+            (ItemId(1), rect(1400.0)),
+            (ItemId(2), rect(1500.0)),
+            (ItemId(3), rect(3000.0)),
+        ];
+        assert_eq!(space_items(items, 1500.0), vec![ItemId(2), ItemId(3)]);
+        assert_eq!(
+            space_items(items, 1300.0),
+            vec![ItemId(1), ItemId(2), ItemId(3)]
+        );
+        assert_eq!(space_items(items, 5000.0), Vec::<ItemId>::new());
+    }
+
+    #[test]
+    fn lane_resize_keeps_its_content() {
+        assert_eq!(resized_height(300.0, 120.0, 200.0), 420.0);
+        assert_eq!(resized_height(300.0, -60.0, 200.0), 240.0);
+        assert_eq!(resized_height(300.0, -250.0, 200.0), 200.0);
+        assert_eq!(resized_height(300.0, 10_000.0, 200.0), 10_300.0);
+    }
+
+    #[test]
+    fn resized_lane_moves_the_lanes_below() {
+        let resized = resized_lanes(&three_lanes(), 1, 450.0);
+        let spans: Vec<(f32, f32)> = resized.iter().map(|lane| (lane.top, lane.height)).collect();
+        assert_eq!(spans, vec![(0.0, 400.0), (400.0, 450.0), (850.0, 200.0)]);
+        assert_eq!(resized_lanes(&three_lanes(), 9, 450.0), three_lanes());
+    }
+
+    #[test]
+    fn drag_clamped_to_lanes() {
+        let top = lane(0.0, 400.0);
+        let bottom = lane(400.0, 300.0);
+        let block = |y| Rectangle::new(Point::new(0.0, y), Size::new(696.0, 156.0));
+
+        assert_eq!(clamp_to_lanes(50.0, [(block(100.0), &top)]), 50.0);
+        assert_eq!(clamp_to_lanes(500.0, [(block(100.0), &top)]), 144.0);
+        assert_eq!(clamp_to_lanes(-500.0, [(block(100.0), &top)]), -100.0);
+        assert_eq!(
+            clamp_to_lanes(100.0, [(block(100.0), &top), (block(500.0), &bottom)]),
+            44.0
+        );
+        assert_eq!(
+            clamp_to_lanes(-200.0, [(block(100.0), &top), (block(500.0), &bottom)]),
+            -100.0
+        );
+        assert_eq!(clamp_to_lanes(37.0, []), 37.0);
+    }
+
+    #[test]
+    fn drag_outside_lane_moves_back_only() {
+        let band = lane(400.0, 300.0);
+        let above = Rectangle::new(Point::new(0.0, 100.0), Size::new(216.0, 36.0));
+        assert_eq!(clamp_to_lanes(-50.0, [(above, &band)]), 0.0);
+        assert_eq!(clamp_to_lanes(350.0, [(above, &band)]), 350.0);
+        assert_eq!(clamp_to_lanes(1000.0, [(above, &band)]), 564.0);
+        let taller = lane(0.0, 100.0);
+        let block = Rectangle::new(Point::ORIGIN, Size::new(696.0, 156.0));
+        assert_eq!(clamp_to_lanes(30.0, [(block, &taller)]), 0.0);
+        assert_eq!(clamp_to_lanes(-30.0, [(block, &taller)]), 0.0);
+    }
+
+    #[test]
+    fn lane_handle_sticks_to_view_top() {
+        assert_eq!(lane_handle_top(120.0, 400.0), 120.0);
+        assert_eq!(lane_handle_top(-50.0, 400.0), 0.0);
+        assert_eq!(lane_handle_top(-300.0, 10.0), -18.0);
+        assert_eq!(lane_handle_top(100.0, 110.0), 100.0);
+    }
+
+    #[test]
+    fn handle_stacks() {
+        assert_eq!(handle_stack(8.0, 3), vec![8.0, 40.0, 72.0]);
+        assert!(handle_stack(8.0, 0).is_empty());
+        let top = bottom_stack_top(600.0, 2);
+        assert_eq!(top, 532.0);
+        assert_eq!(handle_stack(top, 2), vec![532.0, 564.0]);
+        assert_eq!(564.0 + HANDLE_HEIGHT, 600.0 - HANDLE_MARGIN);
+    }
+
+    #[test]
+    fn handle_drop_indices() {
+        let others = [14.0, 214.0, 414.0];
+        assert_eq!(handle_drop_index(0.0, others), 0);
+        assert_eq!(handle_drop_index(100.0, others), 1);
+        assert_eq!(handle_drop_index(300.0, others), 2);
+        assert_eq!(handle_drop_index(900.0, others), 3);
+        assert_eq!(handle_drop_index(50.0, []), 0);
+    }
+
+    fn slot(id: u64, top: f32) -> HandleSlot {
+        HandleSlot {
+            index: id as usize,
+            id,
+            rect: handle_rect(top),
+            lane: None,
+        }
+    }
+
+    /// Handle `id` on a lane spanning `top` to `bottom`.
+    fn lane_slot(id: u64, top: f32, bottom: f32) -> HandleSlot {
+        HandleSlot {
+            lane: Some(top..bottom),
+            ..slot(id, top)
+        }
+    }
+
+    #[test]
+    fn handle_drops_in_the_lane_under_the_pointer() {
+        let slots = [
+            lane_slot(0, 10.0, 170.0),
+            lane_slot(1, 170.0, 330.0),
+            lane_slot(2, 330.0, 490.0),
+            slot(3, 532.0),
+            slot(4, 564.0),
+        ];
+        let drop = |id, top: f32| handle_drop(&slots, id, top, top + 10.0);
+        // Up by one, into the body of the lane above.
+        assert_eq!(
+            drop(2, 200.0),
+            HandleDrop {
+                before: Some(1),
+                line: Some(170.0),
+            }
+        );
+        // Down by one, into the body of the lane below.
+        assert_eq!(
+            drop(0, 200.0),
+            HandleDrop {
+                before: Some(2),
+                line: Some(330.0),
+            }
+        );
+        // To the top and to the bottom.
+        assert_eq!(
+            drop(2, 50.0),
+            HandleDrop {
+                before: Some(0),
+                line: Some(10.0),
+            }
+        );
+        assert_eq!(
+            drop(0, 400.0),
+            HandleDrop {
+                before: None,
+                line: Some(490.0),
+            }
+        );
+        assert_eq!(drop(1, -100.0).before, Some(0));
+        // On its own lane, the drop is its start target.
+        assert_eq!(
+            drop(1, 250.0),
+            HandleDrop {
+                before: Some(2),
+                line: None,
+            }
+        );
+        assert_eq!(
+            drop(2, 400.0),
+            HandleDrop {
+                before: None,
+                line: None,
+            }
+        );
+        // A hidden handle dropped over the lanes goes before the lane under the pointer.
+        assert_eq!(
+            drop(3, 200.0),
+            HandleDrop {
+                before: Some(1),
+                line: Some(170.0),
+            }
+        );
+        assert_eq!(
+            drop(3, 490.0),
+            HandleDrop {
+                before: None,
+                line: Some(490.0),
+            }
+        );
+    }
+
+    #[test]
+    fn handle_drops_in_the_bottom_stack() {
+        let slots = [
+            lane_slot(0, 10.0, 400.0),
+            slot(1, 500.0),
+            slot(2, 532.0),
+            slot(3, 564.0),
+        ];
+        let drop = |id, top: f32| handle_drop(&slots, id, top, top + 10.0);
+        assert_eq!(
+            drop(3, 495.0),
+            HandleDrop {
+                before: Some(1),
+                line: Some(498.0),
+            }
+        );
+        assert_eq!(
+            drop(1, 560.0),
+            HandleDrop {
+                before: Some(3),
+                line: Some(562.0),
+            }
+        );
+        assert_eq!(drop(1, 600.0).before, None);
+        // A lane handle dropped on the stack goes among the hidden ones.
+        assert_eq!(drop(0, 520.0).before, Some(2));
+        // Above the stack top edge, the pointer is over the lanes group.
+        assert_eq!(
+            drop(2, 470.0),
+            HandleDrop {
+                before: None,
+                line: Some(400.0),
+            }
+        );
+    }
+
+    #[test]
+    fn handle_drops_without_lanes() {
+        let slots = [slot(0, 8.0), slot(1, 40.0), slot(2, 72.0)];
+        assert_eq!(handle_drop(&slots, 2, 0.0, 10.0).before, Some(0));
+        assert_eq!(handle_drop(&slots, 0, 100.0, 110.0).before, None);
+        assert_eq!(handle_drop(&[slot(0, 8.0)], 0, 50.0, 60.0).line, None);
+    }
+
+    #[test]
+    fn handle_parts() {
+        assert_eq!(handle_part(4.0), HandlePart::Grip);
+        assert_eq!(handle_part(60.0), HandlePart::Body);
+        assert_eq!(handle_part(140.0), HandlePart::Checkbox);
+        assert_eq!(handle_part(163.0), HandlePart::Checkbox);
     }
 }

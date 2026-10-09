@@ -26,6 +26,7 @@ pub enum HeaderAction {
     ToggleArea,
     ToggleUnspent,
     ToggleSnap,
+    ToggleLanes,
     AlignHorizontal,
     AlignVertical,
     ZoomOut,
@@ -35,7 +36,7 @@ pub enum HeaderAction {
 
 /// Map toolbar. `enabled` is false while the map is empty or loading, `align_count` is the
 /// number of transactions the align buttons would move, `other_wallets` enables the other
-/// wallets button.
+/// wallets button, `totals` counts the transactions, coins and unspent coins shown.
 #[allow(clippy::too_many_arguments)]
 pub fn map_header<'a, M: Clone + 'a>(
     zoom: f32,
@@ -45,10 +46,12 @@ pub fn map_header<'a, M: Clone + 'a>(
     area_on: bool,
     unspent_on: bool,
     snap_on: bool,
+    lanes_on: bool,
     unspent_count: usize,
     unspent_total: &Amount,
     align_count: usize,
     other_wallets: bool,
+    totals: Option<(usize, usize, usize)>,
     on_action: impl Fn(HeaderAction) -> M,
 ) -> Element<'a, M> {
     let msg = |action, active: bool| active.then(|| on_action(action));
@@ -76,10 +79,20 @@ pub fn map_header<'a, M: Clone + 'a>(
         msg(HeaderAction::ToggleUnspent, enabled),
     );
     let snap = button::btn_snap(snap_on, msg(HeaderAction::ToggleSnap, enabled));
+    let lanes = button::btn_lanes(lanes_on, msg(HeaderAction::ToggleLanes, enabled));
 
     let align_h = button::btn_align_h(align_count, msg(HeaderAction::AlignHorizontal, can_align));
     let align_v = button::btn_align_v(align_count, msg(HeaderAction::AlignVertical, can_align));
 
+    let totals = totals.map(|(transactions, coins, unspent)| {
+        new::small_caption(t!(
+            "map-totals",
+            transactions = transactions,
+            coins = coins,
+            unspent = unspent
+        ))
+        .style(theme::text::secondary)
+    });
     let zoom_out = button::btn_zoom_out(msg(HeaderAction::ZoomOut, enabled));
     let zoom_label = new::b5_medium(format!("{}%", (zoom * 100.0).round() as u32))
         .style(theme::text::secondary)
@@ -105,10 +118,12 @@ pub fn map_header<'a, M: Clone + 'a>(
         area,
         unspent,
         snap,
+        lanes,
         sep(),
         align_h,
         align_v,
         sep(),
+        totals,
         zoom_out,
         zoom_label,
         zoom_in,

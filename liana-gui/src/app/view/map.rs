@@ -143,10 +143,12 @@ pub fn map_view<'a>(
         toggles.area || command_held,
         toggles.unspent,
         toggles.snap,
+        false,
         unspent.len(),
         &unspent_total,
         align_count,
         other_wallets,
+        None,
         |action| Message::Map(MapMessage::Header(action)),
     );
 
@@ -350,6 +352,7 @@ pub fn map_view<'a>(
                             d.state,
                             d.group_member,
                             d.tint,
+                            None,
                         )
                     });
                     items.push(GraphItem {

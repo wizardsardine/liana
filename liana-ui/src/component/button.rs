@@ -1032,6 +1032,15 @@ pub fn btn_highlight_unspent<'a, T: Clone + 'a>(
     toolbar_button(icon, tip, on, msg)
 }
 
+pub fn btn_lanes<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
+    toolbar_button(
+        icon::view_stacked_icon().size(TOOLBAR_ICON_SIZE),
+        t!("btn-lanes-tooltip"),
+        on,
+        msg,
+    )
+}
+
 pub fn btn_snap<'a, T: Clone + 'a>(on: bool, msg: Option<T>) -> Container<'a, T> {
     let icon: Element<'a, T> = toolbar_svg(image::snap_grid_icon(), on, msg.is_some()).into();
     toolbar_button(icon, t!("btn-snap-tooltip"), on, msg)
