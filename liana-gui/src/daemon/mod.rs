@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::io::ErrorKind;
-use std::iter::FromIterator;
 
 use async_trait::async_trait;
 
@@ -323,10 +322,7 @@ pub trait Daemon: Debug {
             .cloned()
             .collect();
         let coins = self.list_coins(&[], &outpoints).await?.coins;
-        let mut txs = txs
-            .into_iter()
-            .map(|tx| history_tx(tx, &coins, info.network))
-            .collect();
+        let mut txs = history_txs(txs, &coins, info.network);
         load_labels(self, &mut txs).await?;
         Ok(txs)
     }
@@ -406,10 +402,7 @@ pub trait Daemon: Debug {
         }
 
         let txs = self.list_txs(&txids).await?.transactions;
-        let mut txs = txs
-            .into_iter()
-            .map(|tx| history_tx(tx, &coins, info.network))
-            .collect();
+        let mut txs = history_txs(txs, &coins, info.network);
 
         load_labels(self, &mut txs).await?;
         Ok(txs)
@@ -456,7 +449,7 @@ pub trait Daemon: Debug {
     }
 }
 
-fn wallet_txids(coins: &[model::Coin]) -> Vec<Txid> {
+pub fn wallet_txids(coins: &[model::Coin]) -> Vec<Txid> {
     coins
         .iter()
         .flat_map(|coin| {
@@ -464,6 +457,17 @@ fn wallet_txids(coins: &[model::Coin]) -> Vec<Txid> {
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
+        .collect()
+}
+
+/// The history of `txs` from the wallet `coins` they spend or fund, without labels.
+pub fn history_txs(
+    txs: Vec<TransactionInfo>,
+    coins: &[model::Coin],
+    network: Network,
+) -> Vec<model::HistoryTransaction> {
+    txs.into_iter()
+        .map(|tx| history_tx(tx, coins, network))
         .collect()
 }
 
@@ -500,28 +504,32 @@ fn history_tx(
 
 async fn load_labels<T: model::Labelled + model::LabelsLoader, D: Daemon + ?Sized>(
     daemon: &D,
-    targets: &mut Vec<T>,
+    targets: &mut [T],
 ) -> Result<(), DaemonError> {
     if targets.is_empty() {
         return Ok(());
     }
-    let mut items = HashSet::<LabelItem>::new();
-    for target in &*targets {
-        for item in target.labelled() {
-            items.insert(item);
-        }
-    }
-    let labels = HashMap::from_iter(
-        daemon
-            .get_labels(&items)
-            .await?
-            .into_iter()
-            .map(|(k, v)| (k, Some(v))),
-    );
+    let labels = daemon.get_labels(&label_items(targets)).await?;
+    set_labels(targets, labels);
+    Ok(())
+}
+
+/// The items whose labels `targets` show.
+pub fn label_items<T: model::Labelled>(targets: &[T]) -> HashSet<LabelItem> {
+    targets
+        .iter()
+        .flat_map(|target| target.labelled())
+        .collect()
+}
+
+pub fn set_labels<T: model::LabelsLoader>(targets: &mut [T], labels: HashMap<String, String>) {
+    let labels = labels
+        .into_iter()
+        .map(|(item, label)| (item, Some(label)))
+        .collect();
     for target in targets {
         target.load_labels(&labels);
     }
-    Ok(())
 }
 
 #[cfg(test)]

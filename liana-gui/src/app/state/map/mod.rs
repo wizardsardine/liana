@@ -8,6 +8,7 @@ pub mod graph;
 pub mod history;
 pub mod layout;
 pub mod selection;
+pub mod wallets;
 
 use std::{
     collections::{BTreeSet, HashMap},
