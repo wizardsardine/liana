@@ -219,6 +219,7 @@ impl DefineDescriptor {
             keys,
             self.accounts.clone(),
             self.signer.clone(),
+            self.use_taproot,
         )
     }
 }

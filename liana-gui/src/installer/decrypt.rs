@@ -643,6 +643,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
 
     let import = modal::import_xpub_entry(
         state.import_xpub_error.clone(),
+        None,
         Some(|| Decrypt::SelectImportXpub.into()),
     );
 
@@ -650,6 +651,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
         state.focus == Focus::Xpub,
         state.network,
         &state.xpub,
+        None,
         Some(|s| Decrypt::Xpub(s).into()),
         Some(|| Decrypt::PasteXpub.into()),
         || Decrypt::SelectXpub.into(),

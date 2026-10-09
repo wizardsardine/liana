@@ -1292,6 +1292,10 @@ installer-xpub-invalid => "Invalid Xpub"
 
 installer-xpub-origin-missing => "Origin missing"
 
+installer-xpub-taproot-note => "Taproot selected. Use an xpub from a compatible"
+
+installer-xpub-taproot-note-device => "device"
+
 installer-xpub-wrong-derivation-path => "Wrong derivation path"
 
 installer-xpub-wrong-network => "Wrong network"

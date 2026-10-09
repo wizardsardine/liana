@@ -698,7 +698,20 @@ pub fn btn_paste_icon<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn subtle_link<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
-    let link = Button::new(caption(label).size(14))
+    subtle_link_with_size(label, 14.0, msg)
+}
+
+/// A [`subtle_link`] sized to sit inline in a small caption.
+pub fn subtle_link_small<'a, T: Clone + 'a>(label: impl Display, msg: Option<T>) -> Element<'a, T> {
+    subtle_link_with_size(label, 13.0, msg)
+}
+
+fn subtle_link_with_size<'a, T: Clone + 'a>(
+    label: impl Display,
+    size: f32,
+    msg: Option<T>,
+) -> Element<'a, T> {
+    let link = Button::new(caption(label).size(size))
         .padding(0)
         .style(theme::button::link_subtle)
         .on_press_maybe(msg);
