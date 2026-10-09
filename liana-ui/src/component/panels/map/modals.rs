@@ -11,11 +11,13 @@ use crate::{
         amount::{amount_with_fiat, amount_with_font, Amount, AmountSize, FiatAmount},
         button::{self, EntryWidth},
         checkbox::checkbox_button_maybe,
+        form::{Form, Value},
         label::{display_label, LABEL_DISPLAY_MAX_CHARS},
         panels::map::separator,
         pick_list::PICK_LIST_PADDING,
         pill::{self, Segment, SegmentTone},
-        scrollable,
+        scrollable, spinner,
+        tab::tab_header,
         text::{command_key, format_date, new, short_string},
     },
     icon, theme,
@@ -280,9 +282,27 @@ pub struct WalletRow<M> {
     pub on_toggle: Option<M>,
 }
 
-/// Other wallets modal body with its own title row: a checkbox per wallet adds it to the map.
+/// One imported wallet of the other wallets modal.
+#[derive(Debug, Clone)]
+pub struct ExternalRow<M> {
+    pub name: String,
+    pub color: Color,
+    pub checked: bool,
+    /// Formatted date of the last scan, e.g. "Scanned Jun 5, 2026".
+    pub last_scan: Option<String>,
+    /// Shows a spinner in place of the rescan button.
+    pub scanning: bool,
+    pub on_toggle: Option<M>,
+    pub on_rescan: Option<M>,
+    pub on_remove: Option<M>,
+}
+
+/// Other wallets modal body with its own title row: a checkbox per wallet adds it to the map,
+/// then the imported wallets and the import button.
 pub fn wallets_modal_body<'a, M: Clone + 'a>(
     rows: Vec<WalletRow<M>>,
+    externals: Vec<ExternalRow<M>>,
+    on_import: M,
     on_close: M,
 ) -> Element<'a, M> {
     let title = row![
@@ -313,7 +333,155 @@ pub fn wallets_modal_body<'a, M: Clone + 'a>(
         .spacing(12)
         .into()
     };
-    column![title, description, list].spacing(15).into()
+    let external_title =
+        new::caption(t!("map-external-wallets-title")).style(theme::text::tertiary);
+    let external_list: Element<'a, M> = if externals.is_empty() {
+        new::b5_medium(t!("map-external-wallets-empty"))
+            .style(theme::text::tertiary)
+            .into()
+    } else {
+        Column::with_children(externals.into_iter().map(|wallet| {
+            let check = checkbox_button_maybe(wallet.checked, wallet.on_toggle);
+            let last_scan = wallet
+                .last_scan
+                .map(|scan| new::caption(scan).style(theme::text::tertiary));
+            let name = column![new::b5_medium(wallet.name), last_scan].spacing(2);
+            let rescan: Element<'a, M> = if wallet.scanning {
+                spinner::spinner()
+            } else {
+                button::btn_rescan(wallet.on_rescan).into()
+            };
+            row![
+                check,
+                pill::tag_dot(wallet.color, 10),
+                name,
+                Space::fill_width(),
+                rescan,
+                button::btn_remove(wallet.on_remove),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+        }))
+        .spacing(12)
+        .into()
+    };
+    let import = button::btn_import_wallet(Some(on_import));
+    column![
+        title,
+        description,
+        list,
+        separator(Length::Fill, 1),
+        external_title,
+        external_list,
+        import,
+    ]
+    .spacing(15)
+    .into()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportMode {
+    Descriptor,
+    SigningDevice,
+}
+
+/// Import form of an external wallet. `electrum`: asked only when the current wallet
+/// has no Electrum server. `devices`: the device entries built by the caller.
+#[allow(clippy::too_many_arguments)]
+pub fn import_wallet_modal_body<'a, M: Clone + 'static>(
+    mode: ImportMode,
+    on_mode: impl Fn(ImportMode) -> M,
+    name: &Value<String>,
+    on_name: impl Fn(String) -> M + 'static,
+    descriptor: &Value<String>,
+    on_descriptor: impl Fn(String) -> M + 'static,
+    account: &Value<String>,
+    on_account: impl Fn(String) -> M + 'static,
+    devices: Vec<Element<'a, M>>,
+    electrum: Option<&Value<String>>,
+    on_electrum: impl Fn(String) -> M + 'static,
+    error: Option<String>,
+    scanning: bool,
+    can_import: bool,
+    on_cancel: M,
+    on_import: M,
+) -> Element<'a, M> {
+    let title = new::b1_bold(t!("map-import-title"));
+    let tabs = tab_header(
+        &[
+            (ImportMode::Descriptor, t!("map-import-descriptor"), None),
+            (
+                ImportMode::SigningDevice,
+                t!("map-import-signing-device"),
+                None,
+            ),
+        ],
+        &mode,
+        |mode| on_mode(*mode),
+    );
+    let name_placeholder = t!("map-import-name-placeholder");
+    let name = if scanning {
+        Form::new_disabled(name_placeholder, name)
+    } else {
+        Form::new(name_placeholder, name, on_name)
+    };
+    let source: Element<'a, M> = match mode {
+        ImportMode::Descriptor => {
+            let placeholder = t!("map-import-descriptor-placeholder");
+            if scanning {
+                Form::new_disabled(placeholder, descriptor).into()
+            } else {
+                Form::new(placeholder, descriptor, on_descriptor).into()
+            }
+        }
+        ImportMode::SigningDevice => {
+            let placeholder = t!("map-import-account-placeholder");
+            let account = if scanning {
+                Form::new_disabled(placeholder, account)
+            } else {
+                Form::new(placeholder, account, on_account)
+            }
+            .label(t!("map-import-account"));
+            let devices: Element<'a, M> = if devices.is_empty() {
+                new::caption(t!("map-import-no-device"))
+                    .style(theme::text::tertiary)
+                    .into()
+            } else {
+                Column::with_children(devices).spacing(8).into()
+            };
+            column![account, devices].spacing(15).into()
+        }
+    };
+    let electrum = electrum.map(|electrum| {
+        let placeholder = t!("map-import-electrum-placeholder");
+        if scanning {
+            Form::new_disabled(placeholder, electrum)
+        } else {
+            Form::new(placeholder, electrum, on_electrum)
+        }
+        .label(t!("map-import-electrum"))
+    });
+    let error = error.map(|error| new::caption(error).style(theme::text::error));
+    let progress = scanning.then(|| {
+        column![
+            spinner::spinner(),
+            new::caption(t!("map-import-scanning")).style(theme::text::secondary),
+        ]
+        .spacing(10)
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+    });
+    let footer = row![
+        Space::fill_width(),
+        button::btn_cancel(Some(on_cancel)),
+        button::btn_import((can_import && !scanning).then_some(on_import)),
+    ]
+    .spacing(10);
+    column![title, tabs, name, source, electrum, error, progress, footer]
+        .spacing(15)
+        .width(Length::Fill)
+        .into()
 }
 
 /// Shortcuts help modal body: four groups of rows with key chips.

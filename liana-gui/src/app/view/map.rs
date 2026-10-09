@@ -660,7 +660,12 @@ pub fn wallets_modal<'a>(
                 .then(|| Message::Map(MapMessage::WalletToggled(wallet.id.clone()))),
         })
         .collect();
-    let body = wallets_modal_body(rows, Message::Map(MapMessage::CloseModal));
+    let body = wallets_modal_body(
+        rows,
+        Vec::new(),
+        Message::Map(MapMessage::ImportWallet),
+        Message::Map(MapMessage::CloseModal),
+    );
     modal_view(None::<String>, None, None, ModalWidth::M, body)
 }
 

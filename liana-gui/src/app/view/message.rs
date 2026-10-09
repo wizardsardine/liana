@@ -73,6 +73,8 @@ pub enum MapMessage {
     ReuseRowSelected(ItemId),
     /// Adds or removes another wallet from the map.
     WalletToggled(WalletId),
+    /// Opens the external wallet import form.
+    ImportWallet,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

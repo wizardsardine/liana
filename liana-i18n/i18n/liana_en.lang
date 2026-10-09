@@ -102,6 +102,8 @@ btn-ignore => "Ignore"
 
 btn-import => "Import"
 
+btn-import-wallet => "Import a wallet"
+
 btn-keep-my-changes => "Keep my changes"
 
 btn-login => "Login"
@@ -139,6 +141,8 @@ btn-register-on-device => "Register on device"
 btn-reload => "Reload"
 
 btn-replace => "Replace"
+
+btn-rescan => "Rescan"
 
 btn-resend-token => "Resend token"
 
@@ -1451,9 +1455,35 @@ map-empty-description
 
 map-empty-title => "No transactions to map yet"
 
+map-external-wallets-empty => "No external wallet imported."
+
+map-external-wallets-title => "External wallets"
+
 map-freeze => "Freeze"
 
 map-freeze-tooltip => "A frozen coin is never used to fund a transaction"
+
+map-import-account => "Account number"
+
+map-import-account-placeholder => "0"
+
+map-import-descriptor => "Descriptor"
+
+map-import-descriptor-placeholder => "wpkh([...]xpub/<0;1>/*)"
+
+map-import-electrum => "Electrum server"
+
+map-import-electrum-placeholder => "ssl://electrum.example.com:50002"
+
+map-import-name-placeholder => "Wallet name"
+
+map-import-no-device => "Connect and unlock a signing device"
+
+map-import-scanning => "Scanning the wallet history"
+
+map-import-signing-device => "Signing device"
+
+map-import-title => "Import a wallet"
 
 map-key-alt => "Alt"
 

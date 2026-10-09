@@ -1046,6 +1046,19 @@ pub fn btn_import<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     )
 }
 
+pub fn btn_import_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(
+        Some(icon::restore_icon()),
+        t!("btn-import-wallet"),
+        BtnWidth::Auto,
+        msg,
+    )
+}
+
+pub fn btn_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-rescan"), BtnWidth::S, msg)
+}
+
 pub fn btn_sign<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, t!("btn-sign"), BtnWidth::M, msg)
 }
