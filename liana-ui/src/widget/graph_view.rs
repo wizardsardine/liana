@@ -802,6 +802,7 @@ enum CameraRequest {
     Fit,
     ZoomBy(f32),
     Focus(Rectangle),
+    PanTo(Rectangle),
 }
 
 impl State {
@@ -810,7 +811,7 @@ impl State {
     }
 
     fn apply(&mut self, request: CameraRequest) {
-        self.animation = None;
+        let animation = self.animation.take();
         match request {
             CameraRequest::Fit => {
                 self.camera = self
@@ -825,18 +826,30 @@ impl State {
                 );
             }
             CameraRequest::Focus(target) => {
-                let mut progress = Animation::new(false)
-                    .easing(Easing::EaseInOutCubic)
-                    .duration(FOCUS_DURATION);
-                progress.go_mut(true, Instant::now());
-                self.animation = Some(CameraAnimation {
-                    from: self.camera,
-                    to: Camera::centered_on(target.center(), FOCUS_ZOOM, self.size),
-                    progress,
-                });
+                self.animate_to(Camera::centered_on(target.center(), FOCUS_ZOOM, self.size));
+            }
+            // A pan in flight goes on when it already brings `target` into view.
+            CameraRequest::PanTo(target) => {
+                let landing = animation.as_ref().map_or(self.camera, |a| a.to);
+                match landing.pan_to(target, self.size) {
+                    Some(to) => self.animate_to(to),
+                    None => self.animation = animation,
+                }
             }
         }
         self.interaction = Interaction::Idle;
+    }
+
+    fn animate_to(&mut self, to: Camera) {
+        let mut progress = Animation::new(false)
+            .easing(Easing::EaseInOutCubic)
+            .duration(FOCUS_DURATION);
+        progress.go_mut(true, Instant::now());
+        self.animation = Some(CameraAnimation {
+            from: self.camera,
+            to,
+            progress,
+        });
     }
 
     fn child_cursor(
@@ -1744,4 +1757,9 @@ pub fn zoom_by<T: 'static>(id: impl Into<Id>, factor: f32) -> Task<T> {
 /// Centers `target` (graph px) at the focus zoom.
 pub fn focus<T: 'static>(id: impl Into<Id>, target: Rectangle) -> Task<T> {
     camera_task(id, CameraRequest::Focus(target))
+}
+
+/// Centers `target` (graph px) at the current zoom when it is not fully in view.
+pub fn pan_to<T: 'static>(id: impl Into<Id>, target: Rectangle) -> Task<T> {
+    camera_task(id, CameraRequest::PanTo(target))
 }

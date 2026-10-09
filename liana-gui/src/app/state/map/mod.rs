@@ -70,7 +70,7 @@ use crate::{
                 },
                 lanes::{Band, WalletLane},
                 offsets::{Offsets, WalletLayout},
-                selection::{Selection, TagHighlight},
+                selection::{linked_txs, Link, Selection, TagHighlight},
                 wallets::{
                     load_selected, other_wallets, save_wallet_labels, save_wallet_layout,
                     stored_offset, ListedWallets, OtherWallet, WalletKey, WalletStore,
@@ -209,6 +209,13 @@ pub fn key_action(
             "y" | "Y" if command => Some(MapKey::Redo),
             "?" if !command => Some(MapKey::Shortcuts),
             "u" | "U" if !command => Some(MapKey::Unspent),
+            _ => None,
+        },
+        keyboard::Key::Named(named) if ignored && !command => match named {
+            Named::ArrowRight => Some(MapKey::Right),
+            Named::ArrowLeft => Some(MapKey::Left),
+            Named::ArrowUp => Some(MapKey::Up),
+            Named::ArrowDown => Some(MapKey::Down),
             _ => None,
         },
         _ => None,
@@ -699,6 +706,42 @@ impl MapPanel {
         self.selection.clear();
         self.tag_highlight = None;
         self.show_on_map = None;
+    }
+
+    /// Selects the topmost child or parent of the single selected transaction.
+    fn select_linked(&mut self, link: Link) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let Some(tx) = self.selection.single_tx(graph) else {
+            return Task::none();
+        };
+        let txs = linked_txs(graph, &self.shown_layout(), tx, link);
+        let selected = self.selection.select_linked(graph, txs);
+        self.pan_to_selected(selected)
+    }
+
+    /// Selects another child or parent `steps` below the selected one.
+    fn step_linked(&mut self, steps: isize) -> Task<Message> {
+        let Some(graph) = &self.graph else {
+            return Task::none();
+        };
+        let selected = self.selection.step_linked(graph, steps);
+        self.pan_to_selected(selected)
+    }
+
+    /// Brings a block selected with the arrow keys into view.
+    fn pan_to_selected(&mut self, selected: Option<ItemId>) -> Task<Message> {
+        let (Some(graph), Some(id)) = (&self.graph, selected) else {
+            return Task::none();
+        };
+        self.tag_highlight = None;
+        self.show_on_map = None;
+        let Some(at) = self.shown_layout().get(&id).copied() else {
+            return Task::none();
+        };
+        let target = Rectangle::new(at, layout::item_size(graph, id));
+        graph_view::pan_to(self.graph_id.clone(), target)
     }
 
     /// Cancels the unsaved edit of the open label modal.
@@ -1729,6 +1772,10 @@ impl State for MapPanel {
                         return self.cancel_label_edit(daemon);
                     }
                 }
+                MapMessage::Key(MapKey::Right) => return self.select_linked(Link::Children),
+                MapMessage::Key(MapKey::Left) => return self.select_linked(Link::Parents),
+                MapMessage::Key(MapKey::Up) => return self.step_linked(-1),
+                MapMessage::Key(MapKey::Down) => return self.step_linked(1),
                 MapMessage::ReuseRowSelected(leaf) => {
                     self.modal = None;
                     self.selection.click(leaf);
@@ -2153,6 +2200,23 @@ mod tests {
         let unspent = key_action(&character("u"), none, Status::Ignored);
         assert_eq!(unspent, Some(MapKey::Unspent));
         assert_eq!(key_action(&character("z"), none, Status::Ignored), None);
+    }
+
+    #[test]
+    fn key_action_plain_arrows() {
+        let none = Modifiers::empty();
+        let arrows = [
+            (Named::ArrowRight, MapKey::Right),
+            (Named::ArrowLeft, MapKey::Left),
+            (Named::ArrowUp, MapKey::Up),
+            (Named::ArrowDown, MapKey::Down),
+        ];
+        for (named, key) in arrows {
+            let arrow = Key::Named(named);
+            assert_eq!(key_action(&arrow, none, Status::Ignored), Some(key));
+            assert_eq!(key_action(&arrow, Modifiers::CTRL, Status::Ignored), None);
+            assert_eq!(key_action(&arrow, none, Status::Captured), None);
+        }
     }
 
     #[test]

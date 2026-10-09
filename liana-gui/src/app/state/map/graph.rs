@@ -638,6 +638,19 @@ impl TxGraph {
         self.parents.get(tx).map_or(&[], Vec::as_slice)
     }
 
+    /// Transactions spending a coin of `tx`.
+    pub fn children(&self, tx: usize) -> Vec<usize> {
+        let mut children: Vec<usize> = self
+            .coin_edges
+            .iter()
+            .filter(|edge| edge.from.tx == tx)
+            .map(|edge| edge.to.tx)
+            .collect();
+        children.sort_unstable();
+        children.dedup();
+        children
+    }
+
     /// Shortest path over undirected coin edges, both ends included.
     pub fn path(&self, from: usize, to: usize) -> Option<Vec<usize>> {
         if !self.same_chain(from, to) {

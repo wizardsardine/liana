@@ -165,6 +165,12 @@ impl Camera {
             zoom,
         }
     }
+
+    /// Same zoom centered on `target`, `None` when `target` is already fully in view.
+    pub fn pan_to(self, target: Rectangle, size: Size) -> Option<Camera> {
+        let visible = Rectangle::new(self.to_graph(Point::ORIGIN), size * (1.0 / self.zoom));
+        (!target.is_within(&visible)).then(|| Camera::centered_on(target.center(), self.zoom, size))
+    }
 }
 
 /// Display row a slot dragged to `offset_y` (top, from the column top) lands on.
@@ -708,6 +714,22 @@ mod tests {
         assert_eq!(camera.zoom, 1.0);
         assert!(close_point(
             camera.to_screen(center),
+            Point::new(450.0, 250.0)
+        ));
+    }
+
+    #[test]
+    fn pan_to_keeps_the_zoom() {
+        let size = Size::new(900.0, 500.0);
+        let camera = Camera::centered_on(Point::ORIGIN, 0.5, size);
+        let inside = Rectangle::new(Point::new(-100.0, -100.0), Size::new(200.0, 100.0));
+        assert_eq!(camera.pan_to(inside, size), None);
+
+        let across = Rectangle::new(Point::new(800.0, 0.0), Size::new(200.0, 100.0));
+        let panned = camera.pan_to(across, size).unwrap();
+        assert_eq!(panned.zoom, 0.5);
+        assert!(close_point(
+            panned.to_screen(across.center()),
             Point::new(450.0, 250.0)
         ));
     }

@@ -1497,6 +1497,10 @@ map-import-title => "Import a wallet"
 
 map-key-alt => "Alt"
 
+map-key-arrows-right-left => "Right / Left"
+
+map-key-arrows-up-down => "Up / Down"
+
 map-key-click => "Click"
 
 map-key-click-red-leaf => "Click red leaf"
@@ -1560,6 +1564,10 @@ map-shortcut-edit-tx => "Edit a transaction label"
 map-shortcut-help => "This help"
 
 map-shortcut-move => "Move a block, a leaf or the selection"
+
+map-shortcut-next-tx => "Next / previous transaction"
+
+map-shortcut-other-tx => "Other next or previous transaction"
 
 map-shortcut-pan => "Pan"
 

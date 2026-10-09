@@ -493,6 +493,14 @@ pub fn shortcuts_modal_body<'a, M: 'a>() -> Element<'a, M> {
             vec![
                 (t!("map-shortcut-pan"), vec![t!("map-key-drag-canvas")]),
                 (t!("map-shortcut-zoom"), vec![t!("map-key-wheel")]),
+                (
+                    t!("map-shortcut-next-tx"),
+                    vec![t!("map-key-arrows-right-left")],
+                ),
+                (
+                    t!("map-shortcut-other-tx"),
+                    vec![t!("map-key-arrows-up-down")],
+                ),
             ],
         ),
         (

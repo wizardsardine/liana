@@ -102,6 +102,10 @@ pub enum MapKey {
     /// Escape taken by a focused text input.
     EscapeInInput,
     Command(bool),
+    Right,
+    Left,
+    Up,
+    Down,
 }
 
 #[derive(Debug, Clone)]
