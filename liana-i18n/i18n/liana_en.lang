@@ -122,6 +122,8 @@ btn-no => "No"
 
 btn-ok => "OK"
 
+btn-other-wallets-tooltip => "Other wallets"
+
 btn-overwrite => "Overwrite"
 
 btn-previous => "Previous"
@@ -1453,6 +1455,8 @@ map-freeze => "Freeze"
 
 map-freeze-tooltip => "A frozen coin is never used to fund a transaction"
 
+map-key-alt => "Alt"
+
 map-key-click => "Click"
 
 map-key-click-leaf => "Click leaf"
@@ -1541,6 +1545,8 @@ map-shortcut-select-one => "Select one item"
 map-shortcut-select-path
 => "Everything chained between the last clicked item and this one";;
 
+map-shortcut-select-wallet => "Select every item of a wallet"
+
 map-shortcut-switch-tag => "Switch the highlighted tag"
 
 map-shortcut-tag-highlight => "Highlight the coins sharing a slot tag"
@@ -1601,6 +1607,13 @@ map-tag-status => "{$position} / {$count}, scroll on the slot to switch tag"
 map-title => "Map"
 
 map-unknown-amount => "Unknown amount"
+
+map-wallets-description
+=> "Wallets are read from their last sync. Tick a wallet to add it to this map.";;
+
+map-wallets-empty => "No other wallet on this network."
+
+map-wallets-title => "Other wallets"
 
 menu-coins-utxos => "Coins/UTXOs"
 

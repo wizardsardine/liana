@@ -10,6 +10,7 @@ use crate::{
     component::{
         amount::{amount_with_fiat, amount_with_font, Amount, AmountSize, FiatAmount},
         button::{self, EntryWidth},
+        checkbox::checkbox_button_maybe,
         label::{display_label, LABEL_DISPLAY_MAX_CHARS},
         panels::map::separator,
         pick_list::PICK_LIST_PADDING,
@@ -267,6 +268,54 @@ pub fn reuse_modal_body<'a, M: Clone + 'a>(
         .into()
 }
 
+/// One wallet of the other wallets modal.
+#[derive(Debug, Clone)]
+pub struct WalletRow<M> {
+    pub name: String,
+    pub color: Color,
+    pub checked: bool,
+    pub enabled: bool,
+    /// Why the wallet is disabled, e.g. its database is outdated.
+    pub note: Option<String>,
+    pub on_toggle: Option<M>,
+}
+
+/// Other wallets modal body with its own title row: a checkbox per wallet adds it to the map.
+pub fn wallets_modal_body<'a, M: Clone + 'a>(
+    rows: Vec<WalletRow<M>>,
+    on_close: M,
+) -> Element<'a, M> {
+    let title = row![
+        new::b1_bold(t!("map-wallets-title")),
+        Space::fill_width(),
+        button::btn_modal_close(Some(on_close)),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    let description = new::caption(t!("map-wallets-description")).style(theme::text::secondary);
+    let list: Element<'a, M> = if rows.is_empty() {
+        new::b5_medium(t!("map-wallets-empty"))
+            .style(theme::text::tertiary)
+            .into()
+    } else {
+        Column::with_children(rows.into_iter().map(|wallet| {
+            let check =
+                checkbox_button_maybe(wallet.checked, wallet.on_toggle.filter(|_| wallet.enabled));
+            let note = wallet
+                .note
+                .map(|note| new::caption(note).style(theme::text::tertiary));
+            let name = column![new::b5_medium(wallet.name), note].spacing(2);
+            row![check, pill::tag_dot(wallet.color, 10), name]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into()
+        }))
+        .spacing(12)
+        .into()
+    };
+    column![title, description, list].spacing(15).into()
+}
+
 /// Shortcuts help modal body: four groups of rows with key chips.
 pub fn shortcuts_modal_body<'a, M: 'a>() -> Element<'a, M> {
     let ctrl = command_key();
@@ -293,6 +342,10 @@ pub fn shortcuts_modal_body<'a, M: 'a>() -> Element<'a, M> {
                 (
                     t!("map-shortcut-select-chain"),
                     vec![ctrl.clone(), t!("map-key-shift"), t!("map-key-click")],
+                ),
+                (
+                    t!("map-shortcut-select-wallet"),
+                    vec![ctrl.clone(), t!("map-key-alt"), t!("map-key-click")],
                 ),
                 (
                     t!("map-shortcut-area"),

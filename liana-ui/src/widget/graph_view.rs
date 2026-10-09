@@ -19,7 +19,7 @@ use iced::{
     border, keyboard, mouse,
     time::Instant,
     widget::canvas,
-    window, Animation, Event, Length, Point, Rectangle, Size, Transformation, Vector,
+    window, Animation, Color, Event, Length, Point, Rectangle, Size, Transformation, Vector,
 };
 use iced_runtime::{task, Action, Task};
 
@@ -42,7 +42,7 @@ use geometry::{
     EDGE_HIT_HALF_WIDTH, FOCUS_DURATION, FOCUS_ZOOM, SLOT_HEIGHT,
 };
 
-type Curve = (EdgeKind, bool, [Point; 4]);
+type Curve = (EdgeKind, bool, Option<Color>, [Point; 4]);
 
 /// Opaque id chosen by the app, unique per item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -93,6 +93,8 @@ pub struct Edge {
     pub to: Anchor,
     pub kind: EdgeKind,
     pub active: bool,
+    /// Overrides the palette color, e.g. a coin of another wallet.
+    pub color: Option<Color>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -299,7 +301,7 @@ impl<'a, M> GraphView<'a, M> {
         let from = Self::anchor_point(state, placements, edge.from)?;
         let to = Self::anchor_point(state, placements, edge.to)?;
         let curve = edge_curve(from, to).map(|p| state.camera.to_screen(p));
-        Some((edge.kind, edge.active, curve))
+        Some((edge.kind, edge.active, edge.color, curve))
     }
 
     /// `cursor` is absolute.
@@ -326,7 +328,7 @@ impl<'a, M> GraphView<'a, M> {
             }
         }
         let edge = self.edges.iter().enumerate().find_map(|(index, edge)| {
-            let (_, _, curve) = self.screen_curve(state, &placements, edge)?;
+            let (_, _, _, curve) = self.screen_curve(state, &placements, edge)?;
             (distance_to_curve(local, &curve) < EDGE_HIT_HALF_WIDTH).then_some(Target::Edge(index))
         });
         edge.or_else(|| {
@@ -606,8 +608,8 @@ impl<'a, M: 'a> Widget<M, Theme, Renderer> for GraphView<'a, M> {
             .filter_map(|edge| self.screen_curve(state, &placements, edge))
             .collect();
         let mut hasher = DefaultHasher::new();
-        for (kind, active, curve) in &curves {
-            (*kind as u8, *active).hash(&mut hasher);
+        for (kind, active, color, curve) in &curves {
+            (*kind as u8, *active, color.map(Color::into_rgba8)).hash(&mut hasher);
             for p in curve {
                 (p.x.to_bits(), p.y.to_bits()).hash(&mut hasher);
             }

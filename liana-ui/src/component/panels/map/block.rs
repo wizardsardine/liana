@@ -1,3 +1,5 @@
+use std::hash::{Hash, Hasher};
+
 use chrono::{DateTime, Utc};
 use iced::{
     border::{Dash, Radius},
@@ -62,7 +64,7 @@ pub enum SlotState {
     Dimmed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SlotView {
     pub kind: SlotKind,
     /// `None` for a counterparty coin: "Unknown amount".
@@ -72,6 +74,20 @@ pub struct SlotView {
     pub frozen: bool,
     pub selected_for_spending: bool,
     pub state: SlotState,
+    /// Side bar of a coin owned by another wallet.
+    pub wallet_color: Option<Color>,
+}
+
+impl Hash for SlotView {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+        self.amount.hash(state);
+        self.tags.hash(state);
+        self.frozen.hash(state);
+        self.selected_for_spending.hash(state);
+        self.state.hash(state);
+        self.wallet_color.map(Color::into_rgba8).hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -95,6 +111,7 @@ fn accent(theme: &Theme) -> Color {
     theme.colors.general.accent
 }
 
+/// `tint`: border of a transaction of another wallet.
 #[allow(clippy::too_many_arguments)]
 pub fn block<'a, M: 'a>(
     label: &Label,
@@ -106,6 +123,7 @@ pub fn block<'a, M: 'a>(
     reorder: Option<SlotReorder>,
     state: BlockState,
     group_member: bool,
+    tint: Option<Color>,
 ) -> Element<'a, M> {
     let height = Shape::Block {
         inputs: inputs.len(),
@@ -180,19 +198,28 @@ pub fn block<'a, M: 'a>(
         .width(BLOCK_WIDTH)
         .height(height);
 
-    let border_color: Option<fn(&Theme) -> Color> = match state {
-        BlockState::Default => unconfirmed.then_some(|_| color::GREY_4),
-        BlockState::Dimmed => unconfirmed.then_some(|_| Color {
-            a: BLOCK_DIMMED_OPACITY,
-            ..color::GREY_4
-        }),
-        BlockState::Hover | BlockState::Dragging | BlockState::Selected => Some(accent),
-    };
+    let accented = matches!(
+        state,
+        BlockState::Hover | BlockState::Dragging | BlockState::Selected
+    );
+    let plain_border = tint
+        .or(unconfirmed.then_some(color::GREY_4))
+        .map(|color| match state {
+            BlockState::Dimmed => Color {
+                a: BLOCK_DIMMED_OPACITY,
+                ..color
+            },
+            _ => color,
+        });
     let mut outlined = Outline::new(stack);
-    if let Some(border_color) = border_color {
+    if accented || plain_border.is_some() {
         outlined = outlined.outline(0.0, move |theme| {
+            let color = match plain_border {
+                Some(color) if !accented => color,
+                _ => accent(theme),
+            };
             let border = Border {
-                color: border_color(theme),
+                color,
                 width: 1.0,
                 radius: CARD_RADIUS.into(),
                 ..Default::default()
@@ -351,14 +378,23 @@ fn slot<'a, M: 'a>(slot: SlotView, side: Side, radius: Radius) -> Element<'a, M>
             radius,
         )
     });
-    let bar = slot.selected_for_spending.then(|| {
-        Container::new(Space::new())
+    let selected_for_spending = slot.selected_for_spending;
+    let wallet_color = slot.wallet_color;
+    let bar = (selected_for_spending || wallet_color.is_some()).then(|| {
+        let bar = Container::new(Space::new())
             .width(3)
             .height(Length::Fill)
-            .style(|theme: &Theme| container::Style {
-                background: Some(Background::Color(accent(theme))),
+            .style(move |theme: &Theme| container::Style {
+                background: Some(Background::Color(match wallet_color {
+                    Some(color) if !selected_for_spending => color,
+                    _ => accent(theme),
+                })),
                 ..Default::default()
-            })
+            });
+        match side {
+            Side::Input => row![Space::fill_width(), bar],
+            Side::Output => row![bar],
+        }
     });
     let layers = [
         Some(body.into()),

@@ -94,27 +94,35 @@ pub fn frame(
 pub fn edges(
     frame: &mut canvas::Frame,
     palette: &Graph,
-    curves: &[(EdgeKind, bool, [Point; 4])],
+    curves: &[(EdgeKind, bool, Option<Color>, [Point; 4])],
     dim: bool,
 ) {
     for active in [false, true] {
-        for (kind, _, c) in curves.iter().filter(|(_, a, _)| *a == active) {
+        for (kind, _, color, c) in curves.iter().filter(|(_, a, _, _)| *a == active) {
             let path = Path::new(|b| {
                 b.move_to(c[0]);
                 b.bezier_curve_to(c[1], c[2], c[3]);
             });
             let (color, width, dashed) = match (kind, active) {
                 (EdgeKind::Coin, false) => (
-                    palette.edge_coin.scale_alpha(COIN_EDGE_OPACITY),
+                    color
+                        .unwrap_or(palette.edge_coin)
+                        .scale_alpha(COIN_EDGE_OPACITY),
                     COIN_EDGE_WIDTH,
                     false,
                 ),
-                (EdgeKind::Coin, true) => (palette.edge_coin, COIN_EDGE_ACTIVE_WIDTH, false),
-                (EdgeKind::Counterparty, false) => {
-                    (palette.edge_counterparty, COUNTERPARTY_EDGE_WIDTH, true)
-                }
+                (EdgeKind::Coin, true) => (
+                    color.unwrap_or(palette.edge_coin),
+                    COIN_EDGE_ACTIVE_WIDTH,
+                    false,
+                ),
+                (EdgeKind::Counterparty, false) => (
+                    color.unwrap_or(palette.edge_counterparty),
+                    COUNTERPARTY_EDGE_WIDTH,
+                    true,
+                ),
                 (EdgeKind::Counterparty, true) => (
-                    palette.edge_counterparty_active,
+                    color.unwrap_or(palette.edge_counterparty_active),
                     COUNTERPARTY_EDGE_ACTIVE_WIDTH,
                     true,
                 ),

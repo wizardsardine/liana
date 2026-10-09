@@ -183,6 +183,7 @@ pub fn map_view<'a>(
                         frozen: coin.is_some_and(|coin| coin_ui.is_frozen(coin)),
                         selected_for_spending: coin.is_some_and(|coin| coin_ui.is_selected(coin)),
                         state,
+                        wallet_color: None,
                     }
                 };
 
@@ -319,6 +320,7 @@ pub fn map_view<'a>(
                             d.reorder,
                             d.state,
                             d.group_member,
+                            None,
                         )
                     });
                     items.push(GraphItem {
@@ -379,6 +381,7 @@ pub fn map_view<'a>(
                         to: anchor(edge.to),
                         kind: EdgeKind::Coin,
                         active: display.coin_edges[index],
+                        color: None,
                     });
                 let leaf_edges = graph.leaves().iter().enumerate().map(|(index, leaf)| {
                     let slot = anchor(leaf.slot());
@@ -406,6 +409,7 @@ pub fn map_view<'a>(
                         to,
                         kind: EdgeKind::Counterparty,
                         active: display.leaf_edges[index],
+                        color: None,
                     }
                 });
                 let edges: Vec<Edge> = coin_edges.chain(leaf_edges).collect();
@@ -428,7 +432,7 @@ pub fn map_view<'a>(
                     .snap(toggles.snap)
                     .grid(toggles.snap)
                     .on_event(|event| Message::Map(MapMessage::Graph(event)));
-                let legend = Container::new(legend()).padding(16);
+                let legend = Container::new(legend(Vec::new())).padding(16);
                 let selection_bar = (!coin_ui.selected().is_empty()).then(|| {
                     let total: Amount = coin_ui
                         .selected()

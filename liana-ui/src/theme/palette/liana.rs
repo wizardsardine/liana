@@ -876,6 +876,16 @@ impl Palette {
                 area_inside_fill: color::TRANSPARENT_BUSINESS_BLUE,
                 area_crossing: color::GREEN,
                 area_crossing_fill: color::TRANSPARENT_GREEN,
+                wallets: [
+                    color::BLUE,
+                    color::ORANGE,
+                    color::WALLET_VIOLET,
+                    color::WALLET_YELLOW,
+                    color::WALLET_PINK,
+                    color::WALLET_TEAL,
+                    color::WALLET_CORAL,
+                    color::WALLET_INDIGO,
+                ],
             },
         }
     }

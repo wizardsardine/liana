@@ -28,7 +28,8 @@ fn accent_card(theme: &Theme) -> container::Style {
     }
 }
 
-pub fn legend<'a, M: 'a>() -> Element<'a, M> {
+/// `wallets`: name and hue of each other wallet on the map.
+pub fn legend<'a, M: 'a>(wallets: Vec<(String, Color)>) -> Element<'a, M> {
     let coin_edge = image::legend_coin_edge()
         .width(40)
         .height(12)
@@ -74,11 +75,26 @@ pub fn legend<'a, M: 'a>() -> Element<'a, M> {
     let unspent = row![unspent_marker, label(t!("map-legend-unspent"))]
         .spacing(10)
         .align_y(Alignment::Center);
+    let wallets = wallets.into_iter().map(|(name, color)| {
+        let edge = image::legend_coin_edge()
+            .width(40)
+            .height(12)
+            .opacity(0.5)
+            .style(move |_, _| svg::Style { color: Some(color) });
+        row![edge, label(name)]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
+    });
 
-    Container::new(column![coin, counterparty, unspent].spacing(6))
-        .padding([12, 16])
-        .style(theme::card::simple)
-        .into()
+    Container::new(
+        column![coin, counterparty, unspent]
+            .extend(wallets)
+            .spacing(6),
+    )
+    .padding([12, 16])
+    .style(theme::card::simple)
+    .into()
 }
 
 pub fn tag_status_bar<'a, M: 'a>(

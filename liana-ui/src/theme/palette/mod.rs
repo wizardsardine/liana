@@ -352,6 +352,8 @@ pub struct Graph {
     pub area_inside_fill: iced::Color,
     pub area_crossing: iced::Color,
     pub area_crossing_fill: iced::Color,
+    /// Hues of the other wallets shown on the map.
+    pub wallets: [iced::Color; 8],
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
