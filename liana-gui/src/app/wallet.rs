@@ -7,10 +7,15 @@ use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
 
-use liana::{miniscript::bitcoin, signer::HotSigner};
-
-use liana::descriptors::LianaDescriptor;
-use liana::miniscript::bitcoin::bip32::Fingerprint;
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::bitcoin::{
+        self,
+        bip32::{ChildNumber, Fingerprint},
+        secp256k1, Address,
+    },
+    signer::HotSigner,
+};
 
 use super::settings::{fiat, WalletId, WalletSettings};
 
@@ -136,6 +141,24 @@ impl Wallet {
             }
         }
         descriptor_keys
+    }
+
+    /// Whether `address` is the receive address of the descriptor at `index`.
+    pub fn is_receive_address(
+        &self,
+        address: &Address,
+        index: ChildNumber,
+        network: bitcoin::Network,
+    ) -> bool {
+        if index.is_hardened() {
+            return false;
+        }
+        let secp = secp256k1::Secp256k1::verification_only();
+        self.main_descriptor
+            .receive_descriptor()
+            .derive(index, &secp)
+            .address(network)
+            == *address
     }
 
     pub fn load_from_settings(self, wallet_settings: WalletSettings) -> Result<Self, WalletError> {
