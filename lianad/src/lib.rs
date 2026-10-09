@@ -4,6 +4,7 @@ pub mod config;
 mod database;
 pub mod datadir;
 mod jsonrpc;
+pub mod offline;
 #[cfg(test)]
 mod testutils;
 
