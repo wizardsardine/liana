@@ -4,8 +4,7 @@ use liana_ui::{
 };
 
 use crate::{
-    app::menu::Menu,
-    app::view::FiatAmountConverter,
+    app::{menu::Menu, settings::WalletId, view::FiatAmountConverter},
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -72,6 +71,8 @@ pub enum MapMessage {
     Key(MapKey),
     /// Leaf to jump to.
     ReuseRowSelected(ItemId),
+    /// Adds or removes another wallet from the map.
+    WalletToggled(WalletId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

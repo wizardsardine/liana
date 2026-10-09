@@ -97,6 +97,12 @@ impl<S: SettingsTrait> Panels<S> {
             config.clone(),
         );
 
+        let map = MapPanel::new(
+            data_dir.network_directory(cache.network),
+            cache.network,
+            wallet.id(),
+            wallet.remote_backend_auth.is_some(),
+        );
         let panels = Self {
             current: Menu::Home,
             home: Home::new(
@@ -124,7 +130,7 @@ impl<S: SettingsTrait> Panels<S> {
                 cache.network,
             ),
             settings: settings_ui,
-            map: MapPanel::new(cache.network),
+            map,
             map_return: Menu::Home,
         };
 

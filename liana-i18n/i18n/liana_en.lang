@@ -1613,7 +1613,11 @@ map-wallets-description
 
 map-wallets-empty => "No other wallet on this network."
 
+map-wallets-outdated => "Open this wallet once to update it"
+
 map-wallets-title => "Other wallets"
+
+map-wallets-unavailable => "This wallet cannot be read"
 
 menu-coins-utxos => "Coins/UTXOs"
 

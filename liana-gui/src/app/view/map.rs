@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use iced::{
     advanced::widget::Id,
     widget::{column, lazy, stack},
-    Length, Point,
+    Color, Length, Point,
 };
 use liana::{
     label::Label,
@@ -24,11 +24,13 @@ use liana_ui::{
             leaf::{self, LeafState},
             modals::{
                 coin_action_bar, label_modal_body, reuse_modal_body, shortcuts_modal_body,
-                tag_popover, LabelSubject, TxDirection,
+                tag_popover, wallets_modal_body, LabelSubject, TxDirection, WalletRow,
             },
             overlays::{coin_selection_bar, empty_state, legend, loading_state, tag_status_bar},
+            wallet_color,
         },
     },
+    theme::Theme,
     widget::{
         graph_view::{
             Anchor, AnchorSide, Edge, EdgeKind, GraphItem, GraphView, ItemId, Shape, Side,
@@ -39,6 +41,7 @@ use liana_ui::{
 
 use crate::{
     app::{
+        settings::WalletId,
         state::map::{
             coin_ui::CoinUi,
             display::{label_key, DisplayState},
@@ -46,6 +49,7 @@ use crate::{
             edit::live_column,
             graph::{InputSlot, LeafKind, OutputSlot, SlotRef, TxGraph},
             selection::TagHighlight,
+            wallets::{OtherWallet, WalletKey, WalletStatus},
             LabelTarget, LiveReorder, Orders, Toggles,
         },
         view::{
@@ -68,6 +72,7 @@ struct BlockDisplay {
     state: BlockState,
     group_member: bool,
     reorder: Option<SlotReorder>,
+    tint: Option<Color>,
 }
 
 impl Hash for BlockDisplay {
@@ -81,6 +86,7 @@ impl Hash for BlockDisplay {
         self.outputs.hash(state);
         self.state.hash(state);
         self.group_member.hash(state);
+        self.tint.map(Color::into_rgba8).hash(state);
         if let Some(reorder) = &self.reorder {
             reorder.side.hash(state);
             reorder.index.hash(state);
@@ -117,6 +123,9 @@ pub fn map_view<'a>(
     zoom: f32,
     loading: bool,
     graph_id: &Id,
+    other_wallets: bool,
+    wallet_colors: &HashMap<WalletKey, Color>,
+    legend_rows: Vec<(String, Color)>,
 ) -> Element<'a, Message> {
     let unspent = graph.map(TxGraph::unspent_coins).unwrap_or_default();
     let unspent_total: Amount = unspent.iter().map(|(_, amount)| *amount).sum();
@@ -132,6 +141,7 @@ pub fn map_view<'a>(
         unspent.len(),
         &unspent_total,
         align_count,
+        other_wallets,
         |action| Message::Map(MapMessage::Header(action)),
     );
 
@@ -164,10 +174,15 @@ pub fn map_view<'a>(
                     row: display_row(order_of(slot), slot.index),
                 };
                 let position = |id: ItemId| layout.get(&id).copied().unwrap_or_default();
+                let color_of = |wallet: &WalletKey| wallet_colors.get(wallet).copied();
                 let slot_view = |kind: SlotKind,
                                  amount: Option<Amount>,
-                                 coin: Option<&OutPoint>,
+                                 coin: Option<(&WalletKey, &OutPoint)>,
                                  state: SlotState| {
+                    let (wallet_color, coin) = match coin {
+                        Some((wallet, coin)) => (color_of(wallet), Some(coin)),
+                        None => (None, None),
+                    };
                     let tags = coin.map(|coin| {
                         coin_ui
                             .coin_tags(coin)
@@ -183,7 +198,7 @@ pub fn map_view<'a>(
                         frozen: coin.is_some_and(|coin| coin_ui.is_frozen(coin)),
                         selected_for_spending: coin.is_some_and(|coin| coin_ui.is_selected(coin)),
                         state,
-                        wallet_color: None,
+                        wallet_color,
                     }
                 };
 
@@ -216,11 +231,13 @@ pub fn map_view<'a>(
                         .into_iter()
                         .map(|i| match &tx.inputs[i] {
                             InputSlot::OurCoin {
-                                outpoint, amount, ..
+                                wallet,
+                                outpoint,
+                                amount,
                             } => slot_view(
                                 SlotKind::SpendsOurCoin,
                                 Some(*amount),
-                                Some(outpoint),
+                                Some((wallet, outpoint)),
                                 slot_state(Side::Input, i),
                             ),
                             InputSlot::CounterpartyCoin { .. } => slot_view(
@@ -235,7 +252,9 @@ pub fn map_view<'a>(
                         .into_iter()
                         .map(|i| match &tx.outputs[i] {
                             OutputSlot::OurCoin {
-                                outpoint, amount, ..
+                                wallet,
+                                outpoint,
+                                amount,
                             } => {
                                 let kind = if graph.is_unspent(outpoint) {
                                     SlotKind::OurCoinUnspent
@@ -245,7 +264,7 @@ pub fn map_view<'a>(
                                 slot_view(
                                     kind,
                                     Some(*amount),
-                                    Some(outpoint),
+                                    Some((wallet, outpoint)),
                                     slot_state(Side::Output, i),
                                 )
                             }
@@ -312,6 +331,7 @@ pub fn map_view<'a>(
                         state: display.blocks[index].0,
                         group_member: display.blocks[index].1,
                         reorder: slot_reorder,
+                        tint: color_of(tx.primary()),
                     };
                     let content = lazy(display, |d| {
                         block(
@@ -324,7 +344,7 @@ pub fn map_view<'a>(
                             d.reorder,
                             d.state,
                             d.group_member,
-                            None,
+                            d.tint,
                         )
                     });
                     items.push(GraphItem {
@@ -385,7 +405,7 @@ pub fn map_view<'a>(
                         to: anchor(edge.to),
                         kind: EdgeKind::Coin,
                         active: display.coin_edges[index],
-                        color: None,
+                        color: graph.slot_wallet(edge.from).and_then(color_of),
                     });
                 let leaf_edges = graph.leaves().iter().enumerate().map(|(index, leaf)| {
                     let slot = anchor(leaf.slot());
@@ -436,7 +456,7 @@ pub fn map_view<'a>(
                     .snap(toggles.snap)
                     .grid(toggles.snap)
                     .on_event(|event| Message::Map(MapMessage::Graph(event)));
-                let legend = Container::new(legend(Vec::new())).padding(16);
+                let legend = Container::new(legend(legend_rows)).padding(16);
                 let selection_bar = (!coin_ui.selected().is_empty()).then(|| {
                     let total: Amount = coin_ui
                         .selected()
@@ -616,6 +636,34 @@ pub fn reuse_modal<'a>(graph: &TxGraph, address: &Address) -> Option<Element<'a,
         Message::Map(MapMessage::CloseModal),
     );
     Some(modal_view(None::<String>, None, None, ModalWidth::M, body))
+}
+
+/// Other wallets modal: a checkbox per wallet of `wallets`, ticked when it is in `loaded`.
+/// `switching`: a wallet is being added or removed, the checkboxes wait for it.
+pub fn wallets_modal<'a>(
+    wallets: &[OtherWallet],
+    loaded: &HashMap<WalletId, OtherWallet>,
+    switching: bool,
+) -> Element<'a, Message> {
+    let theme = Theme::default();
+    let rows = wallets
+        .iter()
+        .map(|wallet| WalletRow {
+            name: wallet.name.clone(),
+            color: wallet_color(&theme, &wallet.checksum),
+            checked: loaded.contains_key(&wallet.id),
+            enabled: wallet.status == WalletStatus::Available,
+            note: match wallet.status {
+                WalletStatus::Available => None,
+                WalletStatus::Outdated => Some(t!("map-wallets-outdated")),
+                WalletStatus::Unavailable => Some(t!("map-wallets-unavailable")),
+            },
+            on_toggle: (!switching)
+                .then(|| Message::Map(MapMessage::WalletToggled(wallet.id.clone()))),
+        })
+        .collect();
+    let body = wallets_modal_body(rows, Message::Map(MapMessage::CloseModal));
+    modal_view(None::<String>, None, None, ModalWidth::M, body)
 }
 
 /// Shortcuts help modal (spec 12.5).

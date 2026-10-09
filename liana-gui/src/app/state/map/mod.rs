@@ -25,7 +25,8 @@ use iced::{
 };
 use liana::miniscript::bitcoin::{Address, Network, OutPoint, Txid};
 use liana_ui::{
-    component::panels::map::header::HeaderAction,
+    component::panels::map::{header::HeaderAction, wallet_color},
+    theme::Theme,
     widget::{
         graph_view::{
             self,
@@ -49,20 +50,29 @@ use crate::{
             label::{label_item_from_str, LabelsEdited},
             map::{
                 coin_ui::CoinUi,
-                display::{click_action, display_state, label_key, slot_ref, ClickAction},
+                display::{
+                    click_action, display_state, label_key, label_wallet, slot_ref, ClickAction,
+                },
                 focus::{resolve_focus, FocusLanding, ShowOnMap},
                 graph::{MapItem, SlotRef, TxGraph, WalletTxs},
                 history::{Change, History},
                 offsets::{Offsets, WalletLayout},
                 selection::{Selection, TagHighlight},
-                wallets::{save_wallet_layout, OtherWallet, WalletKey},
+                wallets::{
+                    load_selected, other_wallets, save_wallet_labels, save_wallet_layout,
+                    OtherWallet, WalletKey,
+                },
             },
             State,
         },
         view::{self, LabelMessage, MapKey, MapMessage},
         wallet::Wallet,
     },
-    daemon::{model::LabelsLoader, Daemon},
+    daemon::{
+        model::{LabelItem, LabelsLoader},
+        Daemon,
+    },
+    dir::NetworkDirectory,
 };
 
 /// Display orders (inputs, outputs) per transaction, `None` = true order.
@@ -118,6 +128,7 @@ pub enum LabelTarget {
 pub enum MapModal {
     Label(LabelTarget),
     Reuse(Address),
+    Wallets,
 }
 
 /// What Esc does, first match wins (spec 14).
@@ -184,7 +195,11 @@ fn map_event(event: Event, status: event::Status, _: window::Id) -> Option<Messa
 }
 
 pub struct MapPanel {
+    network_dir: NetworkDirectory,
     network: Network,
+    wallet_id: WalletId,
+    /// A Liana Connect wallet: no other wallet can be added to its map.
+    remote: bool,
     graph_id: Id,
     graph: Option<TxGraph>,
     /// Map positions: each item's position in its owning wallet's layout plus that wallet's offset.
@@ -193,6 +208,10 @@ pub struct MapPanel {
     offsets: Offsets,
     /// The other wallets on the map, written to their own database.
     others: HashMap<WalletId, OtherWallet>,
+    /// The other wallets listed by the wallets modal.
+    listed: Vec<OtherWallet>,
+    /// A wallet is being added to or removed from the map.
+    switching: bool,
     coin_ui: CoinUi,
     selection: Selection,
     hover: Option<Target>,
@@ -281,16 +300,58 @@ pub fn split_stored(
     stored
 }
 
+/// Loads the current wallet `current` and the other wallets selected on its map.
+async fn load_map(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    network_dir: NetworkDirectory,
+    network: Network,
+    current: WalletId,
+) -> Result<Vec<MapWallet>, Error> {
+    let coins = daemon.list_all_coins().await?;
+    let txs = daemon.get_all_history_txs(&coins).await?;
+    let layout = daemon.get_graph_layout().await?;
+    let rows = daemon.get_graph_wallets().await?;
+    let checksum = current.descriptor_checksum.clone();
+    let others =
+        tokio::task::spawn_blocking(move || load_selected(&network_dir, network, &current, &rows))
+            .await
+            .map_err(|e| Error::Unexpected(e.to_string()))??;
+    let wallet = MapWallet {
+        txs: WalletTxs {
+            key: WalletKey::Current,
+            checksum,
+            txs,
+            coins,
+        },
+        layout: WalletLayout {
+            entries: layout,
+            offset: None,
+        },
+        other: None,
+    };
+    Ok(std::iter::once(wallet).chain(others).collect())
+}
+
 impl MapPanel {
-    pub fn new(network: Network) -> Self {
+    pub fn new(
+        network_dir: NetworkDirectory,
+        network: Network,
+        wallet_id: WalletId,
+        remote: bool,
+    ) -> Self {
         Self {
+            network_dir,
             network,
+            wallet_id,
+            remote,
             graph_id: Id::unique(),
             graph: None,
             layout: HashMap::new(),
             orders: HashMap::new(),
             offsets: Offsets::default(),
             others: HashMap::new(),
+            listed: Vec::new(),
+            switching: false,
             coin_ui: CoinUi::default(),
             selection: Selection::default(),
             hover: None,
@@ -340,6 +401,11 @@ impl MapPanel {
             ClickAction::Toggle(id) => self.selection.command_click(graph, id),
             ClickAction::Range(id) => self.selection.shift_click(graph, id),
             ClickAction::Chain(id) => self.selection.command_shift_click(graph, id),
+            ClickAction::SelectWallet(id) => {
+                if let Some(wallet) = graph.item_wallet(id) {
+                    self.selection.area(graph.wallet_items(wallet), false);
+                }
+            }
             ClickAction::TagHighlight(slot) => {
                 self.tag_highlight = graph.slot_coin(slot).and_then(|coin| {
                     TagHighlight::new(slot, self.coin_ui.coin_tags(&coin).to_vec())
@@ -418,16 +484,27 @@ impl MapPanel {
         let (Some(change), Some(graph)) = (change, &self.graph) else {
             return Task::none();
         };
-        if let Change::Label { item, after, .. } = change {
-            return Task::perform(
-                async move {
-                    daemon
-                        .update_labels(&HashMap::from([(item.clone(), after.clone())]))
-                        .await?;
-                    Ok(HashMap::from([(item.to_string(), after)]))
-                },
-                Message::LabelsUpdated,
-            );
+        if let Change::Label {
+            wallet,
+            item,
+            after,
+            ..
+        } = change
+        {
+            let labels = HashMap::from([(item, after)]);
+            return match wallet {
+                WalletKey::Current => Task::perform(
+                    async move {
+                        daemon.update_labels(&labels).await?;
+                        Ok(labels
+                            .into_iter()
+                            .map(|(item, label)| (item.to_string(), label))
+                            .collect())
+                    },
+                    Message::LabelsUpdated,
+                ),
+                WalletKey::Other(id) => self.save_other_labels(id, labels),
+            };
         }
         if let Change::Offset { wallet, after, .. } = change {
             return self.set_offset(daemon, wallet, after);
@@ -501,7 +578,15 @@ impl MapPanel {
         }
     }
 
-    /// Own label of the item `key` in the transaction owning the open label modal.
+    /// The wallet the label of the open label modal is saved to.
+    fn label_owner(&self) -> Option<WalletKey> {
+        let (Some(graph), Some(MapModal::Label(target))) = (&self.graph, &self.modal) else {
+            return None;
+        };
+        label_wallet(graph, target).cloned()
+    }
+
+    /// Own label of the item `key` in the owner's history of the open label modal.
     fn own_label(&self, key: &str) -> Option<String> {
         let (Some(graph), Some(MapModal::Label(target))) = (&self.graph, &self.modal) else {
             return None;
@@ -511,7 +596,51 @@ impl MapPanel {
             LabelTarget::Slot(slot) => slot.tx,
             LabelTarget::Leaf(leaf) => graph.leaves().get(leaf)?.tx,
         };
-        graph.txs().get(tx)?.history().labels.get(key).cloned()
+        let wallet = label_wallet(graph, target)?;
+        let history = graph.txs().get(tx)?.wallet_history(wallet)?;
+        history.labels.get(key).cloned()
+    }
+
+    /// Saves the edited labels of `keys` to another wallet.
+    fn confirm_other_labels(&mut self, wallet: WalletId, keys: &[String]) -> Task<Message> {
+        let labels = keys
+            .iter()
+            .filter_map(|key| {
+                let label = self.labels_edited.cache().get(key)?;
+                let value = (!label.value.is_empty()).then(|| label.value.clone());
+                Some((label_item_from_str(key), value))
+            })
+            .collect();
+        self.save_other_labels(wallet, labels)
+    }
+
+    fn save_other_labels(
+        &self,
+        wallet: WalletId,
+        labels: HashMap<LabelItem, Option<String>>,
+    ) -> Task<Message> {
+        let Some(other) = self.others.get(&wallet).cloned() else {
+            return Task::done(Message::MapWalletLabelsSaved(
+                wallet.clone(),
+                Err(Error::Unexpected(format!(
+                    "wallet {wallet} is not on the map"
+                ))),
+            ));
+        };
+        let network = self.network;
+        Task::perform(
+            async move {
+                let saved = labels
+                    .iter()
+                    .map(|(item, label)| (item.to_string(), label.clone()))
+                    .collect();
+                tokio::task::spawn_blocking(move || save_wallet_labels(&other, network, &labels))
+                    .await
+                    .map_err(|e| Error::Unexpected(e.to_string()))??;
+                Ok(saved)
+            },
+            move |res| Message::MapWalletLabelsSaved(wallet.clone(), res),
+        )
     }
 
     fn forward_label(
@@ -533,20 +662,67 @@ impl MapPanel {
         }
     }
 
-    /// Records the user save matching `saved` and keeps the labels for the origin panel.
-    fn labels_saved(&mut self, saved: HashMap<String, Option<String>>) {
+    /// Records the user save matching `saved` and keeps the labels of the current wallet for
+    /// the origin panel.
+    fn labels_saved(&mut self, wallet: WalletKey, saved: HashMap<String, Option<String>>) {
         let pending = self
             .pending_label
             .take_if(|(key, _)| saved.contains_key(key));
         if let Some((key, before)) = pending {
             let after = saved.get(&key).cloned().flatten();
             self.history.record(Change::Label {
+                wallet: wallet.clone(),
                 item: label_item_from_str(&key),
                 before,
                 after,
             });
         }
-        self.label_changes.extend(saved);
+        if wallet == WalletKey::Current {
+            self.label_changes.extend(saved);
+        }
+    }
+
+    /// Selects or unselects another wallet, keeping its offset, and loads the map again.
+    fn toggle_wallet(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: WalletId,
+    ) -> Task<Message> {
+        if self.switching {
+            return Task::none();
+        }
+        self.switching = true;
+        let selected = !self.others.contains_key(&wallet);
+        let (network_dir, network, current) = (
+            self.network_dir.clone(),
+            self.network,
+            self.wallet_id.clone(),
+        );
+        Task::perform(
+            async move {
+                let wallet = wallet.to_string();
+                let offset = daemon
+                    .get_graph_wallets()
+                    .await?
+                    .into_iter()
+                    .find(|row| row.wallet == wallet)
+                    .and_then(|row| row.offset);
+                daemon
+                    .update_graph_wallets(&[GraphWallet {
+                        wallet,
+                        selected,
+                        offset,
+                    }])
+                    .await?;
+                load_map(daemon, network_dir, network, current).await
+            },
+            Message::MapLoaded,
+        )
+    }
+
+    fn coin_wallet(&self, coin: &OutPoint) -> Option<&WalletKey> {
+        let graph = self.graph.as_ref()?;
+        graph.slot_wallet(graph.output_slot(coin)?)
     }
 
     /// Writes the items to their owning wallet's layout, with the stale entries of `remove`.
@@ -662,6 +838,20 @@ impl State for MapPanel {
             .as_ref()
             .and_then(|graph| layout::align_targets(graph, &self.selection.selected_txs(graph)))
             .map_or(0, |targets| targets.len());
+        let theme = Theme::default();
+        let mut others: Vec<&OtherWallet> = self.others.values().collect();
+        others.sort_by(|a, b| a.name.cmp(&b.name));
+        let wallet_colors = others
+            .iter()
+            .map(|other| {
+                let key = WalletKey::Other(other.id.clone());
+                (key, wallet_color(&theme, &other.checksum))
+            })
+            .collect();
+        let legend_rows = others
+            .iter()
+            .map(|other| (other.name.clone(), wallet_color(&theme, &other.checksum)))
+            .collect();
         let dashboard = view::full_dashboard(
             &Menu::Map(None),
             cache,
@@ -683,6 +873,9 @@ impl State for MapPanel {
                 self.zoom,
                 self.loading,
                 &self.graph_id,
+                !self.remote,
+                &wallet_colors,
+                legend_rows,
             ),
         );
         let modal = match (&self.graph, &self.modal) {
@@ -695,6 +888,11 @@ impl State for MapPanel {
                 &self.tag_input_id,
             ),
             (Some(graph), Some(MapModal::Reuse(address))) => view::map::reuse_modal(graph, address),
+            (_, Some(MapModal::Wallets)) => Some(view::map::wallets_modal(
+                &self.listed,
+                &self.others,
+                self.switching,
+            )),
             _ => None,
         };
         let close = Some(view::Message::Map(MapMessage::CloseModal));
@@ -720,12 +918,13 @@ impl State for MapPanel {
         match message {
             Message::MapLoaded(Err(e)) => {
                 self.loading = false;
+                self.switching = false;
                 self.warning = Some(e);
             }
             Message::MapLoaded(Ok(wallets)) => {
                 let mut txs = Vec::with_capacity(wallets.len());
                 let mut layouts = Vec::with_capacity(wallets.len());
-                self.others.clear();
+                let before: HashSet<WalletId> = self.others.drain().map(|(id, _)| id).collect();
                 for wallet in wallets {
                     if let Some(other) = wallet.other {
                         self.others.insert(other.id.clone(), other);
@@ -734,6 +933,19 @@ impl State for MapPanel {
                     txs.push(wallet.txs);
                 }
                 let graph = TxGraph::new(txs);
+                if self.others.keys().cloned().collect::<HashSet<_>>() != before {
+                    // Item ids shift and a recorded change may belong to another owner now.
+                    self.history.clear();
+                    self.selection.clear();
+                }
+                if self
+                    .coin_ui
+                    .selected()
+                    .iter()
+                    .any(|coin| graph.coin(coin).is_none())
+                {
+                    self.coin_ui.clear_selected();
+                }
                 let placement = offsets::place_wallets(&graph, layouts);
                 self.layout = placement.layout;
                 self.orders = placement.orders;
@@ -747,13 +959,15 @@ impl State for MapPanel {
                     .pending_focus
                     .take()
                     .and_then(|focus| resolve_focus(&graph, &self.layout, &self.orders, &focus));
-                let fit = if graph.is_empty() {
+                // Adding or removing a wallet keeps the camera.
+                let fit = if !self.loading || graph.is_empty() {
                     Task::none()
                 } else {
                     graph_view::fit(self.graph_id.clone())
                 };
                 self.graph = Some(graph);
                 self.loading = false;
+                self.switching = false;
                 let save = Task::batch([
                     self.save_layout(daemon.clone(), placement.save, placement.remove),
                     self.save_offsets(daemon, placement.placed),
@@ -772,6 +986,9 @@ impl State for MapPanel {
             Message::MapLayoutSaved(Err(e)) => self.warning = Some(e),
             Message::View(view::Message::Label(ref items, LabelMessage::Confirm)) => {
                 self.pending_label = items.first().map(|key| (key.clone(), self.own_label(key)));
+                if let Some(WalletKey::Other(wallet)) = self.label_owner() {
+                    return self.confirm_other_labels(wallet, items);
+                }
                 return self.forward_label(daemon, message);
             }
             Message::View(view::Message::Label(..)) => return self.forward_label(daemon, message),
@@ -779,9 +996,29 @@ impl State for MapPanel {
                 let saved = res.as_ref().ok().cloned();
                 let task = self.forward_label(daemon, Message::LabelsUpdated(res));
                 if let Some(saved) = saved {
-                    self.labels_saved(saved);
+                    self.labels_saved(WalletKey::Current, saved);
                 }
                 return task;
+            }
+            Message::MapWalletLabelsSaved(_, Err(e)) => {
+                self.warning = Some(e);
+                self.pending_label = None;
+            }
+            Message::MapWalletLabelsSaved(wallet, Ok(saved)) => {
+                let wallet = WalletKey::Other(wallet);
+                if let Some(graph) = &mut self.graph {
+                    graph.load_wallet_labels(&wallet, &saved);
+                }
+                let saved_keys = saved.keys().cloned().collect();
+                let clear = view::Message::Label(saved_keys, LabelMessage::Cancel);
+                let task = self.forward_label(daemon, Message::View(clear));
+                self.labels_saved(wallet, saved);
+                return task;
+            }
+            Message::MapWalletsListed(Err(e)) => self.warning = Some(e),
+            Message::MapWalletsListed(Ok(wallets)) => {
+                self.listed = wallets;
+                self.modal = Some(MapModal::Wallets);
             }
             Message::View(view::Message::Map(message)) => match message {
                 MapMessage::Header(HeaderAction::ZoomIn) => {
@@ -815,6 +1052,25 @@ impl State for MapPanel {
                     let change = self.history.redo();
                     return self.apply_history(daemon, change);
                 }
+                MapMessage::Header(HeaderAction::OtherWallets) if !self.remote => {
+                    let (network_dir, network, current) = (
+                        self.network_dir.clone(),
+                        self.network,
+                        self.wallet_id.clone(),
+                    );
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                other_wallets(&network_dir, network, &current)
+                            })
+                            .await
+                            .map_err(|e| Error::Unexpected(e.to_string()))?
+                            .map_err(Into::into)
+                        },
+                        Message::MapWalletsListed,
+                    );
+                }
+                MapMessage::WalletToggled(wallet) => return self.toggle_wallet(daemon, wallet),
                 MapMessage::Header(HeaderAction::Shortcuts)
                 | MapMessage::Key(MapKey::Shortcuts) => {
                     self.shortcuts_open = !self.shortcuts_open;
@@ -1004,7 +1260,19 @@ impl State for MapPanel {
                     }
                 },
                 MapMessage::CloseModal => return self.close_modal(daemon),
-                MapMessage::ToggleCoinSelected => self.coin_action(CoinUi::toggle_selected),
+                MapMessage::ToggleCoinSelected => {
+                    // The selection holds the coins of a single wallet.
+                    let other_wallet = self.modal_coin().is_some_and(|coin| {
+                        self.coin_ui
+                            .selected()
+                            .iter()
+                            .any(|selected| self.coin_wallet(selected) != self.coin_wallet(&coin))
+                    });
+                    if other_wallet {
+                        self.coin_ui.clear_selected();
+                    }
+                    self.coin_action(CoinUi::toggle_selected);
+                }
                 MapMessage::ToggleFrozen => {
                     self.coin_action(|coin_ui, coin| Some(coin_ui.toggle_frozen(coin)));
                 }
@@ -1049,7 +1317,7 @@ impl State for MapPanel {
     fn reload(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         self.loading = true;
         self.warning = None;
@@ -1059,26 +1327,13 @@ impl State for MapPanel {
         self.labels_edited = LabelsEdited::default();
         self.pending_label = None;
         self.label_changes.clear();
-        let checksum = wallet.descriptor_checksum.clone();
         Task::perform(
-            async move {
-                let coins = daemon.list_all_coins().await?;
-                let txs = daemon.get_all_history_txs(&coins).await?;
-                let layout = daemon.get_graph_layout().await?;
-                Ok(vec![MapWallet {
-                    txs: WalletTxs {
-                        key: WalletKey::Current,
-                        checksum,
-                        txs,
-                        coins,
-                    },
-                    layout: WalletLayout {
-                        entries: layout,
-                        offset: None,
-                    },
-                    other: None,
-                }])
-            },
+            load_map(
+                daemon,
+                self.network_dir.clone(),
+                self.network,
+                self.wallet_id.clone(),
+            ),
             Message::MapLoaded,
         )
     }
@@ -1086,7 +1341,7 @@ impl State for MapPanel {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{path::PathBuf, str::FromStr};
 
     use liana::miniscript::bitcoin::{Network, OutPoint, Txid};
     use lianad::commands::{GraphItem as LayoutItem, GraphLayoutEntry};
@@ -1098,12 +1353,16 @@ mod tests {
 
     use liana_ui::widget::graph_view::Target;
 
-    use crate::app::{
-        state::map::{
-            display_row, escape_action, fixture, focus::ShowOnMap, key_action, split_stored,
-            wallets::WalletKey, EscapeAction, MapPanel,
+    use crate::{
+        app::{
+            settings::WalletId,
+            state::map::{
+                display_row, escape_action, fixture, focus::ShowOnMap, key_action, split_stored,
+                wallets::WalletKey, EscapeAction, MapPanel,
+            },
+            view::MapKey,
         },
-        view::MapKey,
+        dir::NetworkDirectory,
     };
 
     fn character(c: &str) -> Key {
@@ -1173,7 +1432,12 @@ mod tests {
 
     #[test]
     fn click_clears_show_on_map() {
-        let mut panel = MapPanel::new(Network::Bitcoin);
+        let mut panel = MapPanel::new(
+            NetworkDirectory::new(PathBuf::new()),
+            Network::Bitcoin,
+            WalletId::new("current".to_string(), None),
+            false,
+        );
         let graph = fixture::graph();
         let id = graph.tx_item(0);
         panel.graph = Some(graph);
