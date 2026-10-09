@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fmt::Display,
     fs::{self, File},
     io::{Read, Write},
@@ -17,7 +17,11 @@ use chrono::{DateTime, Duration, Utc};
 use liana::{
     descriptors::{bip341_nums, LianaDescriptor},
     miniscript::{
-        bitcoin::{Amount, Network, Psbt, Txid},
+        bitcoin::{
+            bip32::{ChildNumber, Xpub},
+            Amount, Network, Psbt, Txid,
+        },
+        descriptor::DescriptorXKey,
         DescriptorPublicKey,
     },
 };
@@ -183,6 +187,8 @@ pub enum ImportExportType {
     ExportLabels,
     ImportPsbt(Option<Txid>),
     ImportXpub(Network),
+    /// Every xpub found in the file, used to decrypt a backup.
+    ImportXpubs(Network),
     ImportDescriptor(Network),
 }
 
@@ -199,6 +205,7 @@ impl ImportExportType {
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
+            | ImportExportType::ImportXpubs(_)
             | ImportExportType::FromBackup(_)
             | ImportExportType::ImportDescriptor(_) => crate::t!("import-success"),
         }
@@ -253,6 +260,7 @@ pub enum Progress {
     Psbt(Psbt),
     Descriptor(LianaDescriptor),
     Xpub(String),
+    Xpubs(Vec<Xpub>),
     LabelsConflict(Sender<bool>),
     KeyAliasesConflict(Sender<bool>),
     UpdateAliases(HashMap<Fingerprint, settings::KeySetting>),
@@ -308,6 +316,7 @@ impl Export {
             ImportExportType::ExportLabels => export_labels(&sender, daemon, path).await,
             ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
+            ImportExportType::ImportXpubs(network) => import_xpubs(&sender, path, network).await,
             ImportExportType::ImportDescriptor(network) => {
                 import_descriptor(&sender, path, network).await
             }
@@ -742,6 +751,40 @@ pub async fn import_xpub(
     Ok(())
 }
 
+pub async fn import_xpubs(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    network: Network,
+) -> Result<(), Error> {
+    let mut file = File::open(path)?;
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    let content = content.trim();
+
+    let xpubs = match parse_raw_xpub(content) {
+        Some(DescriptorPublicKey::XPub(key)) => BTreeSet::from([key.xkey]),
+        _ => parse_json_xpubs(content)
+            .into_iter()
+            .map(|key| key.xkey)
+            .collect(),
+    };
+    if xpubs.is_empty() {
+        return Err(Error::ParseXpub);
+    }
+    let xpubs: Vec<_> = xpubs
+        .into_iter()
+        .filter(|xpub| xpub.network == network.into())
+        .collect();
+    if xpubs.is_empty() {
+        return Err(Error::XpubNetwork);
+    }
+
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Xpubs(xpubs));
+    Ok(())
+}
+
 pub fn parse_raw_xpub(raw_xpub: &str) -> Option<DescriptorPublicKey> {
     DescriptorPublicKey::from_str(raw_xpub).ok()
 }
@@ -749,20 +792,23 @@ pub fn parse_raw_xpub(raw_xpub: &str) -> Option<DescriptorPublicKey> {
 // NOTE: this function is intended to import xpub that have been exported from a coldcard device
 // via this menu: Advanced/Tools => Export Wallet => Generic JSON (Any Edge firmware)
 pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
-    if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
-        let fg = map.get("xfp")?.to_string().to_lowercase();
-        let fg = fg.replace("\"", "");
-        if let serde_json::Value::Object(bip48) = map.get("bip48_2")? {
-            let deriv = bip48.get("deriv")?.to_string();
-            let deriv = deriv.replace("\"", "");
-            let deriv = deriv.replace("m", "");
-            let xpub = bip48.get("xpub")?.to_string();
-            let xpub = xpub.replace("\"", "");
-            let raw_xpub = format!("[{fg}{deriv}]{xpub}");
-            return parse_raw_xpub(&raw_xpub);
-        }
-    }
-    None
+    parse_json_xpubs(coldcard_xpub)
+        .into_iter()
+        .find(|key| {
+            // BIP48 p2wsh: m/48'/coin'/account'/2'
+            key.origin.as_ref().is_some_and(|(_, path)| {
+                matches!(
+                    path.as_ref(),
+                    [
+                        ChildNumber::Hardened { index: 48 },
+                        _,
+                        _,
+                        ChildNumber::Hardened { index: 2 }
+                    ]
+                )
+            })
+        })
+        .map(DescriptorPublicKey::XPub)
 }
 
 // NOTE: this function is intended to import xpub that have been exported from a coldcard device
@@ -777,6 +823,27 @@ pub fn parse_coldcard_xpub_ccxp(coldcard_xpub: &str) -> Option<DescriptorPublicK
         return parse_raw_xpub(&xpub);
     }
     None
+}
+
+// NOTE: this function collects every xpub of a JSON export, like the Coldcard generic JSON
+// (Advanced/Tools => Export Wallet => Generic JSON) or the Coldcard XPUB export (ccxp).
+pub fn parse_json_xpubs(json: &str) -> BTreeSet<DescriptorXKey<Xpub>> {
+    fn collect(value: &serde_json::Value, xpubs: &mut BTreeSet<DescriptorXKey<Xpub>>) {
+        match value {
+            serde_json::Value::String(s) => {
+                if let Some(DescriptorPublicKey::XPub(key)) = parse_raw_xpub(s) {
+                    xpubs.insert(key);
+                }
+            }
+            serde_json::Value::Object(map) => map.values().for_each(|v| collect(v, xpubs)),
+            _ => {}
+        }
+    }
+    let mut xpubs = BTreeSet::new();
+    if let Ok(value) = serde_json::from_str(json) {
+        collect(&value, &mut xpubs);
+    }
+    xpubs
 }
 
 /// Import a backup in an already existing wallet:
@@ -1451,6 +1518,78 @@ mod tests {
             expected,
             parse_coldcard_xpub_json(&raw).unwrap().to_string()
         );
+    }
+
+    const COLDCARD_BIP48_XPUBS: &[&str] = &[
+        "tpubDFL5wzgPBYK5n8PcF6eeP6QiRU36Sv5F7cEUkQjYtYKp5GneaL7LApc4RgtwKzq3HRoqG2nBto8KTkqWXA4a5NjuJjfXKF4WEafVFDoCv6D",
+        "tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p",
+        "tpubDFL5wzgPBYK5s16QPwj7FdPisAs327NZLzhsdzmMhY9fTSUnKJmDTti4r9Tt6v53MC9gLFNd5VCyaH6osGVa16xx5aPhXrvYKmuDiA9ZHEY",
+        "tpubD9igfknqdxws6NcGskHWQKpn9WAUne9cjCqKSqUiooFE7q3NeF6r6txuanvztmQVytnz1nZWs9GD4oqRdCTn3fA5n1rFTAEEhT3wdGVinE4",
+    ];
+
+    const COLDCARD_JSON_ONLY_XPUBS: &[&str] = &[
+        "tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ",
+        "tpubDCrmGPwVjNJsLneNJ8B4khqynGfxRGJ8em58RXnaRCTJfW4BboGjfsiNTJ5whZVz2dfHX1iHjRgKgNwna9XcwM3wKrEHHcUP1QupMiwyS2F",
+        "tpubDDMPh7VRRQ7wTqXUX3gaoaJjnDQk7S4XNkK1WWsJPAVcfHMWRLtuazb5FXq86koy1C1EJuL9LDormd9etx8A7i2NX2qKQfPXhKS3Ks6mpNY",
+        "tpubDDKQtgKtTeTVWPwRDTTvCf3XhMXo1oD721JrR6jyk9HpBQd38BpA9hWyV7zAF5xbPXhzu5eMrfKGzR2Y5EKagatyGgPLh1uPzJDhYaBqHTH",
+        "tpubDDNzAa2tRWaaZ3FEMssb8c3B5rKJ1mNoYoVMqDJDDG15GTY19qUPerQ8pC9M4fJxtv6GGQ7ygkaLCZsiWk727u6YqGVJmiBdLBzrciq4kag",
+    ];
+
+    fn xpubs(list: &[&str]) -> BTreeSet<Xpub> {
+        list.iter().map(|s| Xpub::from_str(s).unwrap()).collect()
+    }
+
+    fn coldcard_xpubs() -> BTreeSet<Xpub> {
+        xpubs(&[COLDCARD_BIP48_XPUBS, COLDCARD_JSON_ONLY_XPUBS].concat())
+    }
+
+    fn json_xpubs(test_asset: &str) -> BTreeSet<Xpub> {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join(test_asset);
+        parse_json_xpubs(&fs::read_to_string(path).unwrap())
+            .into_iter()
+            .map(|key| key.xkey)
+            .collect()
+    }
+
+    #[test]
+    fn test_parse_json_xpubs() {
+        assert_eq!(json_xpubs("coldcard-export.json"), coldcard_xpubs());
+        assert_eq!(
+            json_xpubs("ccxp-C658B283.json"),
+            xpubs(COLDCARD_BIP48_XPUBS)
+        );
+        assert!(parse_json_xpubs("not a json").is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_import_xpubs() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("coldcard-export.json");
+
+        let (sender, mut receiver) = unbounded_channel();
+        import_xpubs(&sender, path.clone(), Network::Signet)
+            .await
+            .unwrap();
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            Progress::Progress(p) if p == 100.0
+        ));
+        let expected: Vec<_> = coldcard_xpubs().into_iter().collect();
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            Progress::Xpubs(x) if x == expected
+        ));
+
+        let (sender, _receiver) = unbounded_channel();
+        assert!(matches!(
+            import_xpubs(&sender, path, Network::Bitcoin).await,
+            Err(Error::XpubNetwork)
+        ));
     }
 
     #[test]

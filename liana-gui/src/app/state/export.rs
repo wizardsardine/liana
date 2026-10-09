@@ -75,7 +75,9 @@ impl ExportModal {
             ImportExportType::Transactions => crate::t!("export-title-transactions"),
             ImportExportType::ExportPsbt(_) => crate::t!("export-title-export-psbt"),
             ImportExportType::ExportXpub(_) => crate::t!("export-title-export-xpub"),
-            ImportExportType::ImportXpub(_) => crate::t!("export-title-import-xpub"),
+            ImportExportType::ImportXpub(_) | ImportExportType::ImportXpubs(_) => {
+                crate::t!("export-title-import-xpub")
+            }
             ImportExportType::ExportProcessBackup(..) => crate::t!("export-title-export-backup"),
             ImportExportType::ExportEncryptedDescriptor(_) => {
                 crate::t!("export-title-export-encrypted-descriptor")
@@ -96,7 +98,9 @@ impl ExportModal {
                 format!("liana-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
-            ImportExportType::ExportXpub(_) | ImportExportType::ImportXpub(_) => "liana.pub".into(),
+            ImportExportType::ExportXpub(_)
+            | ImportExportType::ImportXpub(_)
+            | ImportExportType::ImportXpubs(_) => "liana.pub".into(),
             ImportExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()
@@ -196,7 +200,10 @@ impl ExportModal {
                         ImportExportMessage::UpdateAliases(map.clone()).into()
                     });
                 }
-                Progress::WalletFromBackup(_) | Progress::EncryptedFile(_) | Progress::Psbt(_) => {}
+                Progress::WalletFromBackup(_)
+                | Progress::EncryptedFile(_)
+                | Progress::Psbt(_)
+                | Progress::Xpubs(_) => {}
             },
             ImportExportMessage::TimedOut => {
                 self.stop(ImportExportState::TimedOut);
