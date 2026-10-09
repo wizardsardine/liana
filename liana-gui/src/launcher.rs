@@ -346,7 +346,6 @@ fn entry_wallet(network: Network, settings: &WalletSettings, i: usize) -> Elemen
                 Network::Testnet => "Testnet",
                 Network::Testnet4 => "Testnet4",
                 Network::Regtest => "Regtest",
-                _ => "",
             }
         )
     });

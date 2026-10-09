@@ -47,7 +47,6 @@ pub(crate) fn network_name(network: Network) -> &'static str {
         Network::Testnet4 => "TESTNET4",
         Network::Regtest => "REGTEST",
         Network::Bitcoin => unreachable!(),
-        _ => "NON-MAINNET",
     }
 }
 
