@@ -556,12 +556,9 @@ impl DaemonHandle {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::{
-        config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth},
-        testutils::*,
-    };
+    use crate::config::{BitcoinConfig, BitcoindConfig, BitcoindRpcAuth};
 
-    use liana::descriptors::LianaDescriptor;
+    use liana::{descriptors::LianaDescriptor, temp_dir::TempDir};
 
     use miniscript::bitcoin;
     use std::{
@@ -756,9 +753,8 @@ mod tests {
     // framework.
     #[test]
     fn daemon_startup() {
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-        let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]
+        let tmp_dir = TempDir::new();
+        let data_dir: path::PathBuf = [tmp_dir.path(), path::Path::new("datadir")]
             .iter()
             .collect();
         fs::create_dir_all(&data_dir).unwrap();
@@ -774,7 +770,7 @@ mod tests {
         // Configure a dummy bitcoind
         let network = bitcoin::Network::Bitcoin;
         let cookie: path::PathBuf = [
-            tmp_dir.as_path(),
+            tmp_dir.path(),
             path::Path::new(&format!(
                 "dummy_bitcoind_{:?}.cookie",
                 thread::current().id()
@@ -856,7 +852,5 @@ mod tests {
         complete_desc_check(&server, &receive_desc.to_string(), &change_desc.to_string());
         complete_sync_checks(&server, &stopped);
         t.join().unwrap();
-
-        fs::remove_dir_all(&tmp_dir).unwrap();
     }
 }

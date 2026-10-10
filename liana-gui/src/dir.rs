@@ -114,7 +114,7 @@ impl BitcoindDirectory {
     }
 }
 
-fn create_directory(datadir_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn create_directory(datadir_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     return {
         use std::fs::DirBuilder;

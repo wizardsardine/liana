@@ -82,4 +82,5 @@ skip-windows-icon = []
 winresource = { workspace = true }
 
 [dev-dependencies]
+liana = { path = "../liana", features = ["test-utils"] }
 tokio = {workspace = true, features = ["rt", "macros"]}
