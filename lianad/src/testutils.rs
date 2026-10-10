@@ -110,7 +110,7 @@ impl BitcoinInterface for DummyBitcoind {
     }
 
     fn common_ancestor(&self, _: &BlockChainTip) -> Option<BlockChainTip> {
-        todo!()
+        None
     }
 
     fn broadcast_tx(&self, _: &bitcoin::Transaction) -> Result<(), String> {
