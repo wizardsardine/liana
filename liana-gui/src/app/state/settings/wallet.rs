@@ -133,17 +133,7 @@ impl State for WalletSettingsState {
         match &self.modal {
             Modal::None => Subscription::none(),
             Modal::RegisterWallet(modal) => modal.subscription(),
-            Modal::ImportExport(modal) => {
-                if let Some(sub) = modal.subscription() {
-                    sub.map(|m| {
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
-                        ))
-                    })
-                } else {
-                    Subscription::none()
-                }
-            }
+            Modal::ImportExport(modal) => super::export_progress(modal),
         }
     }
 
