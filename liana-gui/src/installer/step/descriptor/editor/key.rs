@@ -930,7 +930,7 @@ impl SelectKeySource {
             Some(Message::Close),
         );
 
-        let accounts: Vec<_> = (0..10)
+        let accounts: Vec<_> = (0..modal::LIANA_ACCOUNTS)
             .map(|i| {
                 modal::Account::new(
                     ChildNumber::from_hardened_idx(i).expect("hardcoded"),
