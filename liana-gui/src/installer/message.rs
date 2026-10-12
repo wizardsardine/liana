@@ -67,7 +67,7 @@ pub enum Message {
     AllKeysRedeemed,
     BackupDescriptor,
     ShowBackupDescriptorHelp(bool),
-    ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, encrypted_backup::Error>),
+    ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, bip138::Error>),
     ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,

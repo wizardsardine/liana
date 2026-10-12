@@ -165,7 +165,9 @@ impl Step for ImportDescriptor {
                 }
                 None
             }
-            Message::Decrypt(Decrypt::Backup(mut backup)) => {
+            Message::Decrypt(Decrypt::Backup(mut backup))
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
+            {
                 let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {
@@ -464,9 +466,9 @@ impl Step for BackupDescriptor {
                     let descriptor = ctx.descriptor.clone();
                     return Task::perform(
                         async move {
-                            let descriptor = descriptor.ok_or(encrypted_backup::Error::String(
-                                Box::new(crate::t!("installer-descriptor-missing")),
-                            ))?;
+                            let descriptor = descriptor.ok_or(bip138::Error::String(Box::new(
+                                crate::t!("installer-descriptor-missing"),
+                            )))?;
                             Ok(Box::new(descriptor))
                         },
                         Message::ExportEncryptedDescriptor,

@@ -1,12 +1,7 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    fmt::Debug,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, fmt::Debug, str::FromStr, sync::Arc};
 
 use async_hwi::{bitbox::api::btc::Fingerprint, DeviceKind, Version, HWI};
-use encrypted_backup::{Decrypted, EncryptedBackup};
+use bip138::{Decrypted, EncryptedBackup, EncryptedMetadata};
 use iced::{
     alignment::{self, Horizontal},
     clipboard,
@@ -18,7 +13,7 @@ use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
         bitcoin::{
-            bip32::{self, DerivationPath},
+            bip32::{self, ChildNumber, DerivationPath},
             key::Secp256k1,
             secp256k1, Network,
         },
@@ -29,7 +24,7 @@ use liana_ui::{
     component::{
         card,
         form::Value,
-        modal::{self, widget_style, BTN_W},
+        modal::{self, widget_style, BTN_W, LIANA_ACCOUNTS},
         scrollable,
         text::{self, capitalize_first, p1_regular},
     },
@@ -42,7 +37,7 @@ use crate::{
     backup::Backup,
     export::ImportExportType,
     hw::{HardwareWallet, HardwareWallets},
-    installer,
+    installer::{self, step::descriptor::editor::key::derivation_path},
     utils::default_derivation_path,
 };
 
@@ -66,7 +61,8 @@ pub struct DecryptModal {
     network: Network,
     error: Option<Error>,
     bytes: Vec<u8>,
-    derivation_paths: HashSet<DerivationPath>,
+    /// Paths stored in the backup, or the default one when it stores none.
+    derivation_paths: Vec<DerivationPath>,
     cant_fetch: BTreeMap<
         String, /* id */
         (
@@ -147,67 +143,114 @@ impl From<Decrypt> for installer::Message {
     }
 }
 
+/// A backup can hold several items: a liana backup found among them wins over the others.
 pub fn decrypt_descriptor_with_pk(bytes: &[u8], pk: secp256k1::PublicKey) -> Option<Decrypt> {
-    match EncryptedBackup::new()
+    let items = EncryptedBackup::new()
         .set_encrypted_payload(bytes)
         .expect("sanitized")
         .set_keys(vec![pk])
         .decrypt()
-    {
-        Ok(dec) => match dec {
-            Decrypted::Descriptor(d) => {
-                let descr = match LianaDescriptor::from_str(&d.to_string()) {
-                    Ok(descr) => descr,
-                    Err(_) => return Some(Decrypt::UnexpectedPayload(Decrypted::Descriptor(d))),
-                };
-                let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
-                    Network::Bitcoin
-                } else {
-                    Network::Signet
-                };
-                Some(Decrypt::Backup(Backup::from_descriptor(descr, network)))
+        .ok()?;
+    let (backups, unexpected): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .filter_map(decrypted_to_decrypt)
+        .partition(|d| matches!(d, Decrypt::Backup(_)));
+    backups.into_iter().chain(unexpected).next()
+}
+
+fn decrypted_to_decrypt(decrypted: Decrypted) -> Option<Decrypt> {
+    match decrypted {
+        Decrypted::Descriptor(d) => {
+            let descriptor = d.to_string();
+            Some(descriptor_to_decrypt(&descriptor, Decrypted::Descriptor(d)))
+        }
+        Decrypted::DescriptorBackup(b) if b.descriptor_sets.len() == 1 => {
+            let descriptor = b.descriptor_sets[0].descriptor.to_string();
+            Some(descriptor_to_decrypt(
+                &descriptor,
+                Decrypted::DescriptorBackup(b),
+            ))
+        }
+        Decrypted::PolicyBackup(b) if b.policy_sets.len() == 1 => {
+            let descriptor = b.policy_sets[0].to_descriptor().ok()?.to_string();
+            Some(descriptor_to_decrypt(
+                &descriptor,
+                Decrypted::PolicyBackup(b),
+            ))
+        }
+        Decrypted::WalletBackup(backup_bytes) => {
+            let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
+            let backup: Backup = serde_json::from_str(&backup_str).ok()?;
+            if backup.accounts.len() != 1 {
+                return None;
             }
-            Decrypted::WalletBackup(backup_bytes) => {
-                let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
-                let backup: Backup = serde_json::from_str(&backup_str).ok()?;
-                if backup.accounts.len() != 1 {
-                    return None;
+            let descriptor_str = &backup.accounts.first().expect("checked").descriptor;
+            let _ = match LianaDescriptor::from_str(descriptor_str) {
+                Ok(descr) => descr,
+                Err(_) => {
+                    return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
+                        backup_bytes,
+                    )))
                 }
-                let descriptor_str = &backup.accounts.first().expect("checked").descriptor;
-                let _ = match LianaDescriptor::from_str(descriptor_str) {
-                    Ok(descr) => descr,
-                    Err(_) => {
-                        return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
-                            backup_bytes,
-                        )))
-                    }
-                };
-                Some(Decrypt::Backup(backup))
-            }
-            decrypted => Some(Decrypt::UnexpectedPayload(decrypted)),
-        },
-        Err(_) => None,
+            };
+            Some(Decrypt::Backup(backup))
+        }
+        decrypted => Some(Decrypt::UnexpectedPayload(decrypted)),
     }
+}
+
+fn descriptor_to_decrypt(descriptor: &str, decrypted: Decrypted) -> Decrypt {
+    let descr = match LianaDescriptor::from_str(descriptor) {
+        Ok(descr) => descr,
+        Err(_) => return Decrypt::UnexpectedPayload(decrypted),
+    };
+    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
+        Network::Bitcoin
+    } else {
+        Network::Signet
+    };
+    Decrypt::Backup(Backup::from_descriptor(descr, network))
+}
+
+fn decrypt_with_seed(
+    bytes: &[u8],
+    seed: &[u8; 64],
+    network: Network,
+    deriv_paths: Vec<DerivationPath>,
+) -> Decrypt {
+    let xpriv = bip32::Xpriv::new_master(network, seed).expect("seed is 64 bytes");
+    let secp = Secp256k1::new();
+    let fingerprint = xpriv.fingerprint(&secp);
+
+    for path in deriv_paths {
+        let pk = xpriv
+            .derive_priv(&secp, &path)
+            .expect("cannot fail")
+            .private_key
+            .public_key(&secp);
+        if let Some(backup @ Decrypt::Backup(_)) = decrypt_descriptor_with_pk(bytes, pk) {
+            return backup;
+        }
+    }
+    Decrypt::MnemonicStatus(
+        Some(DecryptWarning::MnemonicCannotDecrypt),
+        Some(fingerprint),
+    )
 }
 
 impl DecryptModal {
     pub fn new(bytes: Vec<u8>, network: Network) -> Self {
         let mut error = None;
-        let derivation_paths = if let Some(backup) =
-            match EncryptedBackup::new().set_encrypted_payload(&bytes) {
-                Ok(b) => Some(b),
-                Err(_) => {
-                    error = Some(Error::InvalidEncoding);
-                    None
-                }
-            } {
-            backup.get_derivation_paths().into_iter().collect()
-        } else {
-            let mut h = HashSet::new();
-            h.insert(default_derivation_path(Network::Bitcoin));
-            h.insert(default_derivation_path(Network::Signet));
-            h
+        let mut derivation_paths = match EncryptedMetadata::from_encrypted_payload(&bytes) {
+            Ok(metadata) => metadata.derivation_paths,
+            Err(_) => {
+                error = Some(Error::InvalidEncoding);
+                Vec::new()
+            }
         };
+        if derivation_paths.is_empty() {
+            derivation_paths.push(default_derivation_path(network));
+        }
         Self {
             network,
             error,
@@ -226,6 +269,16 @@ impl DecryptModal {
             focus: Focus::None,
             modal: None,
         }
+    }
+    fn liana_common_paths(&self) -> Vec<DerivationPath> {
+        let mut paths = self.derivation_paths.clone();
+        for account in 0..LIANA_ACCOUNTS {
+            let path = derivation_path(self.network, ChildNumber::Hardened { index: account });
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        paths
     }
     pub fn update(&mut self, msg: Decrypt) -> Task<installer::Message> {
         match msg {
@@ -256,7 +309,7 @@ impl DecryptModal {
                 Task::none()
             }
             Decrypt::UnexpectedPayload(p) => match p {
-                Decrypted::Descriptor(_) => {
+                Decrypted::Descriptor(_) | Decrypted::DescriptorBackup(_) => {
                     tracing::error!("Descriptor decrypted but not a valid liana descriptor");
                     Task::done(Decrypt::InvalidDescriptor.into())
                 }
@@ -336,8 +389,8 @@ impl DecryptModal {
         device: Arc<dyn HWI + Send + Sync>,
         fingerprint: Fingerprint,
         name: String,
+        derivation_paths: Vec<DerivationPath>,
     ) -> Task<installer::Message> {
-        let derivation_paths = self.derivation_paths.clone();
         let bytes = self.bytes.clone();
         Task::perform(
             async move {
@@ -417,7 +470,12 @@ impl DecryptModal {
             {
                 let name = name(*kind, version.clone());
                 self.fetching.insert(*fingerprint, name.clone());
-                batch.push(self.fetch(device.clone(), *fingerprint, name));
+                batch.push(self.fetch(
+                    device.clone(),
+                    *fingerprint,
+                    name,
+                    self.liana_common_paths(),
+                ));
             }
         }
         (!batch.is_empty()).then_some(Task::batch(batch))
@@ -439,9 +497,11 @@ impl DecryptModal {
             let bytes = self.bytes.clone();
             Task::perform(
                 async move {
-                    let pk = encrypted_backup::descriptor::dpk_to_pk(&dpk);
-                    decrypt_descriptor_with_pk(&bytes, pk)
-                        .unwrap_or(Decrypt::XpubError(DecryptWarning::XpubCannotDecrypt))
+                    match bip138::descriptor::dpk_to_root_pk(&dpk) {
+                        Ok(pk) => decrypt_descriptor_with_pk(&bytes, pk)
+                            .unwrap_or(Decrypt::XpubError(DecryptWarning::XpubCannotDecrypt)),
+                        Err(_) => Decrypt::XpubError(DecryptWarning::InvalidXpub),
+                    }
                 },
                 |m| m.into(),
             )
@@ -466,9 +526,6 @@ impl DecryptModal {
             self.mnemonic.warning = None;
             return Task::none();
         }
-        let bytes = self.bytes.clone();
-        let deriv_paths = self.derivation_paths.clone();
-        let network = self.network;
         let seed = match Mnemonic::from_str(&mnemonic) {
             Ok(m) => m,
             Err(_) => {
@@ -480,29 +537,12 @@ impl DecryptModal {
         .to_seed("");
         self.mnemonic.valid = true;
         self.mnemonic.warning = None;
+        let deriv_paths = self.liana_common_paths();
+        let bytes = self.bytes.clone();
+        let network = self.network;
         self.mnemonic_busy = true;
         Task::perform(
-            async move {
-                let xpriv = bip32::Xpriv::new_master(network, &seed).expect("seed is 64 bytes");
-                let secp = Secp256k1::new();
-                let fingerprint = xpriv.fingerprint(&secp);
-
-                let mut backup = None;
-                for path in deriv_paths {
-                    let pk = xpriv
-                        .derive_priv(&secp, &path)
-                        .expect("cannot fail")
-                        .private_key
-                        .public_key(&secp);
-                    if let Some(Decrypt::Backup(b)) = decrypt_descriptor_with_pk(&bytes, pk) {
-                        backup = Some(Decrypt::Backup(b));
-                    }
-                }
-                backup.unwrap_or(Decrypt::MnemonicStatus(
-                    Some(DecryptWarning::MnemonicCannotDecrypt),
-                    Some(fingerprint),
-                ))
-            },
+            async move { decrypt_with_seed(&bytes, &seed, network, deriv_paths) },
             |m| m.into(),
         )
     }
@@ -713,4 +753,232 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
     card::simple(column)
         .width(modal::MODAL_WIDTH as u32)
         .height(Length::Fixed(450.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use bip138::{
+        descriptor::dpk_to_root_pk, Decrypted, DescriptorBackup, DescriptorSet, EncryptedBackup,
+        ToPayload,
+    };
+    use liana::{
+        descriptors::LianaDescriptor,
+        miniscript::{
+            bitcoin::{
+                bip32::DerivationPath,
+                key::Secp256k1,
+                secp256k1::{self, SecretKey},
+                Network,
+            },
+            Descriptor, DescriptorPublicKey,
+        },
+    };
+
+    use crate::{
+        export::tests::{test_asset, ENCRYPTED_ASSETS_DESCRIPTOR},
+        installer::decrypt::{decrypt_descriptor_with_pk, Decrypt, DecryptModal, Error},
+        utils::default_derivation_path,
+    };
+
+    fn descriptor() -> LianaDescriptor {
+        LianaDescriptor::from_str(ENCRYPTED_ASSETS_DESCRIPTOR).unwrap()
+    }
+
+    fn spendable_pks() -> Vec<secp256k1::PublicKey> {
+        descriptor()
+            .spendable_keys()
+            .iter()
+            .map(|k| dpk_to_root_pk(k).unwrap())
+            .collect()
+    }
+
+    fn unrelated_pk() -> secp256k1::PublicKey {
+        SecretKey::from_slice(&[7; 32])
+            .unwrap()
+            .public_key(&Secp256k1::new())
+    }
+
+    fn encrypt(payloads: &[&dyn ToPayload]) -> Vec<u8> {
+        EncryptedBackup::new()
+            .set_payloads(payloads)
+            .unwrap()
+            .encrypt()
+            .unwrap()
+            .bytes
+    }
+
+    fn assert_backup_of_descriptor(decrypt: Option<Decrypt>) {
+        match decrypt {
+            Some(Decrypt::Backup(backup)) => {
+                assert_eq!(backup.accounts.len(), 1);
+                assert_eq!(backup.accounts[0].descriptor, ENCRYPTED_ASSETS_DESCRIPTOR);
+            }
+            other => panic!("not a backup: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decrypt_assets() {
+        // `policy-descriptor.bip138` holds another descriptor after the policy
+        for name in [
+            "v0.bed",
+            "v1.bip138",
+            "string-descriptor.bip138",
+            "policy.bip138",
+            "policy-descriptor.bip138",
+        ] {
+            let bytes = test_asset(name);
+            for pk in spendable_pks() {
+                assert_backup_of_descriptor(decrypt_descriptor_with_pk(&bytes, pk));
+            }
+            assert!(decrypt_descriptor_with_pk(&bytes, unrelated_pk()).is_none());
+        }
+    }
+
+    #[test]
+    fn decrypt_descriptor_after_a_note() {
+        let note = "backup 2026".to_string();
+        let bytes = encrypt(&[&note, descriptor().descriptor()]);
+        for pk in spendable_pks() {
+            assert_backup_of_descriptor(decrypt_descriptor_with_pk(&bytes, pk));
+        }
+    }
+
+    #[test]
+    fn decrypt_descriptor_backup_document() {
+        let set = |descriptor| DescriptorSet {
+            descriptor,
+            change_descriptor: None,
+            archived: false,
+            range: None,
+            birth_time: None,
+        };
+        let one_set = DescriptorBackup {
+            version: 1,
+            descriptor_sets: vec![set(descriptor().descriptor().clone())],
+        };
+        let bytes = encrypt(&[&one_set]);
+        for pk in spendable_pks() {
+            assert_backup_of_descriptor(decrypt_descriptor_with_pk(&bytes, pk));
+        }
+
+        // with several sets there is no single wallet to import
+        let two_sets = DescriptorBackup {
+            version: 1,
+            descriptor_sets: vec![
+                set(descriptor().descriptor().clone()),
+                set(descriptor().descriptor().clone()),
+            ],
+        };
+        let bytes = encrypt(&[&two_sets]);
+        assert!(matches!(
+            decrypt_descriptor_with_pk(&bytes, spendable_pks()[0]),
+            Some(Decrypt::UnexpectedPayload(Decrypted::DescriptorBackup(_)))
+        ));
+    }
+
+    #[test]
+    fn decrypt_non_liana_descriptor() {
+        let key = DescriptorPublicKey::from_str("[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*").unwrap();
+        let wpkh = Descriptor::new_wpkh(key.clone()).unwrap();
+        let bytes = encrypt(&[&wpkh]);
+        assert!(matches!(
+            decrypt_descriptor_with_pk(&bytes, dpk_to_root_pk(&key).unwrap()),
+            Some(Decrypt::UnexpectedPayload(Decrypted::Descriptor(_)))
+        ));
+    }
+
+    #[test]
+    fn decrypt_unsupported_content() {
+        let note = "backup 2026".to_string();
+        let bytes = EncryptedBackup::new()
+            .set_payload(&note)
+            .unwrap()
+            .set_keys(spendable_pks())
+            .encrypt()
+            .unwrap()
+            .bytes;
+        assert!(matches!(
+            decrypt_descriptor_with_pk(&bytes, spendable_pks()[0]),
+            Some(Decrypt::UnexpectedPayload(Decrypted::String(n))) if n == note
+        ));
+    }
+
+    #[test]
+    fn modal_derivation_paths() {
+        let signet_default = vec![default_derivation_path(Network::Signet)];
+
+        // the old format stores every path, common ones included
+        let modal = DecryptModal::new(test_asset("v0.bed"), Network::Signet);
+        assert!(modal.error.is_none());
+        assert_eq!(
+            modal.derivation_paths,
+            vec![DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()]
+        );
+
+        // the encoder leaves out the common paths
+        let modal = DecryptModal::new(test_asset("v1.bip138"), Network::Signet);
+        assert!(modal.error.is_none());
+        assert_eq!(modal.derivation_paths, signet_default);
+        let bytes = encrypt(&[descriptor().descriptor()]);
+        let modal = DecryptModal::new(bytes, Network::Signet);
+        assert!(modal.error.is_none());
+        assert_eq!(modal.derivation_paths, signet_default);
+
+        let modal = DecryptModal::new(b"not a backup".to_vec(), Network::Signet);
+        assert!(matches!(modal.error, Some(Error::InvalidEncoding)));
+        assert_eq!(modal.derivation_paths, signet_default);
+    }
+
+    fn paths(paths: &[&str]) -> Vec<DerivationPath> {
+        paths
+            .iter()
+            .map(|p| DerivationPath::from_str(p).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn modal_paths() {
+        let custom = DerivationPath::from_str("m/48'/0'/100'/2'").unwrap();
+        let bytes = EncryptedBackup::new()
+            .set_payload(descriptor().descriptor())
+            .unwrap()
+            .set_derivation_paths(vec![custom.clone()])
+            .encrypt()
+            .unwrap()
+            .bytes;
+        let modal = DecryptModal::new(bytes, Network::Bitcoin);
+        assert_eq!(modal.derivation_paths, vec![custom.clone()]);
+
+        // the stored paths first, then the 10 Liana accounts
+        let liana_common_paths = modal.liana_common_paths();
+        let mut expected = vec![custom];
+        expected.extend(paths(&[
+            "m/48'/0'/0'/2'",
+            "m/48'/0'/1'/2'",
+            "m/48'/0'/2'/2'",
+            "m/48'/0'/3'/2'",
+            "m/48'/0'/4'/2'",
+            "m/48'/0'/5'/2'",
+            "m/48'/0'/6'/2'",
+            "m/48'/0'/7'/2'",
+            "m/48'/0'/8'/2'",
+            "m/48'/0'/9'/2'",
+        ]));
+        assert_eq!(liana_common_paths, expected);
+    }
+
+    #[test]
+    fn modal_paths_stored_liana_path() {
+        // a stored Liana path is not tried twice
+        let modal = DecryptModal::new(test_asset("v0.bed"), Network::Signet);
+        let liana_common_paths = modal.liana_common_paths();
+        assert_eq!(liana_common_paths.len(), 10);
+        assert_eq!(
+            liana_common_paths[0],
+            DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()
+        );
+    }
 }

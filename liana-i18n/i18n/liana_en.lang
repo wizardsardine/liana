@@ -1618,7 +1618,7 @@ settings-alias => "Alias"
 settings-alias-too-long => "Please enter alias that is not too long"
 
 settings-backup-encrypted-descriptor-tooltip
-=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
+=> "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
 
 settings-block-height => "Block Height:"
 
@@ -1654,7 +1654,7 @@ settings-export-descriptor-description
 settings-export-encrypted-descriptor => "Encrypted descriptor"
 
 settings-export-encrypted-descriptor-description
-=> ".bed file, can be decrypted with one of your signing devices or xpubs.";;
+=> ".bip138 file, can be decrypted with one of your signing devices or xpubs.";;
 
 settings-export-labels => "BIP 329 labels"
 

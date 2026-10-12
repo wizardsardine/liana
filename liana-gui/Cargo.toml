@@ -64,7 +64,7 @@ fs2 = { workspace = true }
 # Used for opening URLs in browser
 open = { workspace = true }
 
-encrypted_backup = { workspace = true }
+bip138 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
