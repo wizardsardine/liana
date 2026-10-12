@@ -106,7 +106,7 @@ impl ExportModal {
                     .to_string();
                 format!("liana-{checksum}.txt")
             }
-            ImportExportType::ExportEncryptedDescriptor(_) => "liana.bed".into(),
+            ImportExportType::ExportEncryptedDescriptor(_) => "liana.bip138".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor(_) => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),

@@ -1019,7 +1019,7 @@ pub enum Error {
     CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
-    Backup(encrypted_backup::Error),
+    Backup(bip138::Error),
 }
 
 impl From<jsonrpc::simple_http::Error> for Error {
