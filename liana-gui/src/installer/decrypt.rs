@@ -1,7 +1,15 @@
-use std::{collections::BTreeMap, fmt::Debug, str::FromStr, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    fmt::Debug,
+    str::FromStr,
+    sync::Arc,
+};
 
 use async_hwi::{bitbox::api::btc::Fingerprint, DeviceKind, Version, HWI};
-use bip138::{Decrypted, EncryptedBackup, EncryptedMetadata};
+use bip138::{
+    backend::{Active as Miniscript, Backend},
+    Decrypted, EncryptedBackup, EncryptedMetadata,
+};
 use iced::{
     alignment::{self, Horizontal},
     clipboard,
@@ -22,13 +30,15 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        card,
+        button, card,
         form::Value,
-        modal::{self, widget_style, BTN_W, LIANA_ACCOUNTS},
+        modal::{self, widget_style, ModalWidth, BTN_W, LIANA_ACCOUNTS},
         scrollable,
         text::{self, capitalize_first, p1_regular},
     },
-    icon, theme,
+    icon,
+    spacing::{HSpacing, VSpacing},
+    theme,
     widget::{modal::Modal, Button, Container, Element, Row, SpaceExt},
 };
 
@@ -37,8 +47,8 @@ use crate::{
     backup::Backup,
     export::ImportExportType,
     hw::{HardwareWallet, HardwareWallets},
-    installer::{self, step::descriptor::editor::key::derivation_path},
-    utils::default_derivation_path,
+    installer,
+    utils::{coin_type, default_derivation_path, derivation_path},
 };
 
 #[allow(unused, clippy::enum_variant_names)]
@@ -72,6 +82,11 @@ pub struct DecryptModal {
     >,
     fetching: BTreeMap<Fingerprint, String /* name */>,
     fetched: BTreeMap<Fingerprint, String /* name */>,
+    devices: BTreeMap<Fingerprint, Arc<dyn HWI + Send + Sync>>,
+    /// Devices that failed with the Liana paths, each waiting for the user to accept or decline
+    /// the other paths; the first one is asked.
+    other_paths_offers: VecDeque<Fingerprint>,
+    other_paths_asked: BTreeSet<Fingerprint>,
     show_options: bool,
     import_xpub_error: Option<String>,
     xpub: Value<String>,
@@ -113,6 +128,8 @@ pub enum Decrypt {
     InvalidDescriptor,
     ContentNotSupported,
     ShowOptions(bool),
+    TryOtherPaths(Fingerprint),
+    SkipOtherPaths(Fingerprint),
     Close,
     CloseModal,
     None,
@@ -212,6 +229,17 @@ fn descriptor_to_decrypt(descriptor: &str, decrypted: Decrypted) -> Decrypt {
     Decrypt::Backup(Backup::from_descriptor(descr, network))
 }
 
+/// As in the bip138 binary: a Ledger refuses a path it does not consider standard unless it shows
+/// the xpub, so it displays it for a path outside the common ones and for purpose 87.
+fn display_xpub(kind: DeviceKind, network: Network, path: &DerivationPath) -> bool {
+    let common = bip138::ll::common_derivation_paths(coin_type(network))
+        .iter()
+        .map(Miniscript::from_ll_path)
+        .any(|common| &common == path);
+    let purpose_87 = path.into_iter().next() == Some(&ChildNumber::Hardened { index: 87 });
+    matches!(kind, DeviceKind::Ledger | DeviceKind::LedgerSimulator) && (!common || purpose_87)
+}
+
 fn decrypt_with_seed(
     bytes: &[u8],
     seed: &[u8; 64],
@@ -259,6 +287,9 @@ impl DecryptModal {
             cant_fetch: BTreeMap::new(),
             fetching: BTreeMap::new(),
             fetched: BTreeMap::new(),
+            devices: BTreeMap::new(),
+            other_paths_offers: VecDeque::new(),
+            other_paths_asked: BTreeSet::new(),
             show_options: false,
             import_xpub_error: None,
             xpub: Value::default(),
@@ -280,11 +311,60 @@ impl DecryptModal {
         }
         paths
     }
+    fn other_paths(&self) -> Vec<DerivationPath> {
+        let liana_common_paths = self.liana_common_paths();
+        bip138::ll::common_derivation_paths(coin_type(self.network))
+            .iter()
+            .map(Miniscript::from_ll_path)
+            .filter(|path| !liana_common_paths.contains(path))
+            .collect()
+    }
+    /// Every path: deriving keys locally is almost instant, so a mnemonic is never asked.
+    fn mnemonic_paths(&self) -> Vec<DerivationPath> {
+        let mut paths = self.liana_common_paths();
+        paths.extend(self.other_paths());
+        paths
+    }
+    fn offer_other_paths(&mut self, fingerprint: Fingerprint) {
+        if self.devices.contains_key(&fingerprint)
+            && !self.other_paths_asked.contains(&fingerprint)
+            && !self.other_paths_offers.contains(&fingerprint)
+        {
+            self.other_paths_offers.push_back(fingerprint);
+        }
+    }
+    fn try_other_paths(&mut self, fingerprint: Fingerprint) -> Task<installer::Message> {
+        if self.other_paths_offers.front() != Some(&fingerprint) {
+            return Task::none();
+        }
+        self.other_paths_offers.pop_front();
+        self.other_paths_asked.insert(fingerprint);
+        let (Some(device), Some(name)) = (
+            self.devices.get(&fingerprint).cloned(),
+            self.fetched.remove(&fingerprint),
+        ) else {
+            return Task::none();
+        };
+        self.fetching.insert(fingerprint, name.clone());
+        self.fetch(device, fingerprint, name, self.other_paths())
+    }
+    fn skip_other_paths(&mut self, fingerprint: Fingerprint) {
+        if self.other_paths_offers.front() == Some(&fingerprint) {
+            self.other_paths_offers.pop_front();
+            self.other_paths_asked.insert(fingerprint);
+        }
+    }
     pub fn update(&mut self, msg: Decrypt) -> Task<installer::Message> {
         match msg {
             Decrypt::Fetched(fg, name) => {
                 self.fetching.remove(&fg);
                 self.fetched.insert(fg, name);
+                self.offer_other_paths(fg);
+                Task::none()
+            }
+            Decrypt::TryOtherPaths(fg) => self.try_other_paths(fg),
+            Decrypt::SkipOtherPaths(fg) => {
+                self.skip_other_paths(fg);
                 Task::none()
             }
             Decrypt::Backup(_) => {
@@ -379,8 +459,31 @@ impl DecryptModal {
         if let Some(mo) = &self.modal {
             mo.view(content)
         } else {
-            let modal = Modal::new(content, decrypt_view(self));
-            modal.on_blur(Some(Decrypt::Close.into())).into()
+            // the offer sits over the decrypt card itself, so both modals show
+            let offer = self
+                .other_paths_offers
+                .front()
+                .and_then(|fg| self.fetched.get(fg).map(|name| (name, *fg)));
+            let view = decrypt_view(self);
+            let decrypt: Element<'a, installer::Message> = match offer {
+                Some((name, fingerprint)) => {
+                    // a BitBox02 confirms every unusual path, a Ledger the ones it displays
+                    let confirm_on_device = self.devices.get(&fingerprint).is_some_and(|d| {
+                        matches!(
+                            d.device_kind(),
+                            DeviceKind::BitBox02 | DeviceKind::Ledger | DeviceKind::LedgerSimulator
+                        )
+                    });
+                    let offer = other_paths_modal(name, fingerprint, confirm_on_device);
+                    Modal::new(view, offer)
+                        .on_blur(Some(Decrypt::SkipOtherPaths(fingerprint).into()))
+                        .into()
+                }
+                None => view.into(),
+            };
+            Modal::new(content, decrypt)
+                .on_blur(Some(Decrypt::Close.into()))
+                .into()
         }
     }
     #[allow(clippy::collapsible_match)]
@@ -392,9 +495,11 @@ impl DecryptModal {
         derivation_paths: Vec<DerivationPath>,
     ) -> Task<installer::Message> {
         let bytes = self.bytes.clone();
+        let network = self.network;
         Task::perform(
             async move {
                 for path in derivation_paths {
+                    device.display(display_xpub(device.device_kind(), network, &path));
                     if let Ok(xpub) = device.get_extended_pubkey(&path).await {
                         let pk = xpub.public_key;
                         if let Some(d) = decrypt_descriptor_with_pk(&bytes, pk) {
@@ -446,7 +551,13 @@ impl DecryptModal {
                     new_cant_fetch.insert(id.clone(), (name(*kind, None), pairing_code.clone()));
                 }
                 d => {
-                    if let HardwareWallet::Supported { fingerprint, .. } = d {
+                    if let HardwareWallet::Supported {
+                        fingerprint,
+                        device,
+                        ..
+                    } = d
+                    {
+                        self.devices.insert(*fingerprint, device.clone());
                         if !self.fetched.contains_key(fingerprint)
                             && !self.fetching.contains_key(fingerprint)
                         {
@@ -457,6 +568,16 @@ impl DecryptModal {
             };
         }
         self.cant_fetch = new_cant_fetch;
+        let plugged: BTreeSet<Fingerprint> = devices
+            .list
+            .iter()
+            .filter_map(|d| match d {
+                HardwareWallet::Supported { fingerprint, .. } => Some(*fingerprint),
+                _ => None,
+            })
+            .collect();
+        self.devices.retain(|fg, _| plugged.contains(fg));
+        self.other_paths_offers.retain(|fg| plugged.contains(fg));
 
         let mut batch = vec![];
         for i in to_fetch {
@@ -537,7 +658,7 @@ impl DecryptModal {
         .to_seed("");
         self.mnemonic.valid = true;
         self.mnemonic.warning = None;
-        let deriv_paths = self.liana_common_paths();
+        let deriv_paths = self.mnemonic_paths();
         let bytes = self.bytes.clone();
         let network = self.network;
         self.mnemonic_busy = true;
@@ -721,6 +842,29 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
     Container::new(col)
 }
 
+fn other_paths_modal<'a>(
+    name: &str,
+    fingerprint: Fingerprint,
+    confirm_on_device: bool,
+) -> Element<'a, installer::Message> {
+    let device = format!("{name} #{fingerprint}");
+    let hint = text::new::caption(crate::t!("decrypt-other-paths-hint", device = device));
+    let confirm = confirm_on_device
+        .then(|| text::new::caption(crate::t!("decrypt-other-paths-confirm-on-device")));
+    let skip = button::btn_skip(Some(Decrypt::SkipOtherPaths(fingerprint).into()));
+    let try_other_paths =
+        button::btn_try_other_paths(Some(Decrypt::TryOtherPaths(fingerprint).into()));
+    let buttons = row![Space::fill_width(), skip, try_other_paths].spacing(HSpacing::M);
+    let content = column![hint, confirm, buttons].spacing(VSpacing::S);
+    modal::modal_view(
+        Some(crate::t!("decrypt-other-paths-title")),
+        None,
+        Some(Decrypt::SkipOtherPaths(fingerprint).into()),
+        ModalWidth::M,
+        content,
+    )
+}
+
 /// Return the modal view for an export task
 pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Message> {
     let header = modal::header(
@@ -757,28 +901,38 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{env, str::FromStr, sync::Arc};
 
+    use async_hwi::{
+        bitbox::api::btc::Fingerprint, AddressScript, DeviceKind, Error as HWIError, Version, HWI,
+    };
+    use async_trait::async_trait;
     use bip138::{
         descriptor::dpk_to_root_pk, Decrypted, DescriptorBackup, DescriptorSet, EncryptedBackup,
         ToPayload,
     };
     use liana::{
+        bip39::Mnemonic,
         descriptors::LianaDescriptor,
         miniscript::{
             bitcoin::{
-                bip32::DerivationPath,
+                bip32::{self, DerivationPath, Xpub},
                 key::Secp256k1,
                 secp256k1::{self, SecretKey},
-                Network,
+                Network, Psbt,
             },
             Descriptor, DescriptorPublicKey,
         },
     };
 
     use crate::{
+        dir::LianaDirectory,
         export::tests::{test_asset, ENCRYPTED_ASSETS_DESCRIPTOR},
-        installer::decrypt::{decrypt_descriptor_with_pk, Decrypt, DecryptModal, Error},
+        hw::{HardwareWallet, HardwareWallets},
+        installer::decrypt::{
+            decrypt_descriptor_with_pk, decrypt_with_seed, display_xpub, Decrypt, DecryptModal,
+            DecryptWarning, Error,
+        },
         utils::default_derivation_path,
     };
 
@@ -968,6 +1122,20 @@ mod tests {
             "m/48'/0'/9'/2'",
         ]));
         assert_eq!(liana_common_paths, expected);
+
+        // then, on request, the common paths not tried yet
+        let other_paths = modal.other_paths();
+        assert_eq!(other_paths.len(), 60);
+        assert!(other_paths.iter().all(|p| !liana_common_paths.contains(p)));
+        for path in paths(&[
+            "m/48'/0'/0'/1'",
+            "m/48'/0'/9'/1'",
+            "m/44'/0'/0'",
+            "m/87'/0'/9'",
+        ]) {
+            assert!(other_paths.contains(&path));
+        }
+        assert!(!other_paths.contains(&DerivationPath::from_str("m/48'/1'/0'/1'").unwrap()));
     }
 
     #[test]
@@ -980,5 +1148,201 @@ mod tests {
             liana_common_paths[0],
             DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()
         );
+        assert_eq!(modal.other_paths().len(), 60);
+    }
+
+    const UNRELATED_MNEMONIC: &str =
+        "video cupboard ketchup sock armed color mobile rhythm marble credit until mosquito";
+
+    #[derive(Debug)]
+    struct FakeDevice;
+
+    #[async_trait]
+    impl HWI for FakeDevice {
+        fn device_kind(&self) -> DeviceKind {
+            DeviceKind::Ledger
+        }
+        async fn get_version(&self) -> Result<Version, HWIError> {
+            unimplemented!()
+        }
+        async fn get_master_fingerprint(&self) -> Result<Fingerprint, HWIError> {
+            unimplemented!()
+        }
+        async fn get_extended_pubkey(&self, _path: &DerivationPath) -> Result<Xpub, HWIError> {
+            unimplemented!()
+        }
+        async fn register_wallet(
+            &self,
+            _name: &str,
+            _policy: &str,
+        ) -> Result<Option<[u8; 32]>, HWIError> {
+            unimplemented!()
+        }
+        async fn is_wallet_registered(&self, _name: &str, _policy: &str) -> Result<bool, HWIError> {
+            unimplemented!()
+        }
+        async fn display_address(&self, _script: &AddressScript) -> Result<(), HWIError> {
+            unimplemented!()
+        }
+        async fn sign_tx(&self, _tx: &mut Psbt) -> Result<(), HWIError> {
+            unimplemented!()
+        }
+    }
+
+    #[test]
+    fn display_xpub_on_ledger_for_uncommon_paths() {
+        let display = |kind, path: &str| {
+            display_xpub(
+                kind,
+                Network::Signet,
+                &DerivationPath::from_str(path).unwrap(),
+            )
+        };
+        assert!(!display(DeviceKind::Ledger, "m/48'/1'/0'/2'"));
+        assert!(!display(DeviceKind::Ledger, "m/84'/1'/9'"));
+        assert!(display(DeviceKind::Ledger, "m/87'/1'/0'"));
+        assert!(display(DeviceKind::Ledger, "m/48'/1'/10'/2'"));
+        assert!(display(DeviceKind::LedgerSimulator, "m/48'/0'/0'/2'"));
+        assert!(!display(DeviceKind::BitBox02, "m/87'/1'/0'"));
+        assert!(!display(DeviceKind::BitBox02, "m/48'/1'/10'/2'"));
+    }
+
+    fn modal_with_device(fingerprint: Fingerprint) -> DecryptModal {
+        let mut modal = DecryptModal::new(test_asset("v1.bip138"), Network::Signet);
+        modal.devices.insert(fingerprint, Arc::new(FakeDevice));
+        modal
+    }
+
+    #[test]
+    fn modal_other_paths_offer() {
+        let fingerprint = Fingerprint::from([1, 2, 3, 4]);
+        let mut modal = modal_with_device(fingerprint);
+
+        // a device that failed with the Liana paths is offered once, with its name
+        let _ = modal.update(Decrypt::Fetched(fingerprint, "Ledger".into()));
+        let _ = modal.update(Decrypt::Fetched(fingerprint, "Ledger".into()));
+        assert_eq!(modal.other_paths_offers, [fingerprint]);
+        assert_eq!(modal.fetched.get(&fingerprint).unwrap(), "Ledger");
+
+        // accepted: the device is fetched again, and never offered again
+        let _ = modal.update(Decrypt::TryOtherPaths(fingerprint));
+        assert!(modal.other_paths_offers.is_empty());
+        assert!(modal.other_paths_asked.contains(&fingerprint));
+        assert!(!modal.fetched.contains_key(&fingerprint));
+        assert!(modal.fetching.contains_key(&fingerprint));
+        let _ = modal.update(Decrypt::Fetched(fingerprint, "Ledger".into()));
+        assert!(modal.other_paths_offers.is_empty());
+    }
+
+    #[test]
+    fn modal_other_paths_skip() {
+        let fingerprint = Fingerprint::from([1, 2, 3, 4]);
+        let mut modal = modal_with_device(fingerprint);
+
+        let _ = modal.update(Decrypt::Fetched(fingerprint, "Ledger".into()));
+        let _ = modal.update(Decrypt::SkipOtherPaths(fingerprint));
+        assert!(modal.other_paths_offers.is_empty());
+        assert!(modal.other_paths_asked.contains(&fingerprint));
+        assert!(modal.fetched.contains_key(&fingerprint));
+        assert!(!modal.fetching.contains_key(&fingerprint));
+        let _ = modal.update(Decrypt::Fetched(fingerprint, "Ledger".into()));
+        assert!(modal.other_paths_offers.is_empty());
+
+        // nothing to retry without the device
+        let other = Fingerprint::from([5, 6, 7, 8]);
+        let _ = modal.update(Decrypt::Fetched(other, "Ledger".into()));
+        assert!(modal.other_paths_offers.is_empty());
+    }
+
+    #[test]
+    fn modal_other_paths_answer_its_offer_only() {
+        let first = Fingerprint::from([1, 2, 3, 4]);
+        let second = Fingerprint::from([5, 6, 7, 8]);
+        let mut modal = modal_with_device(first);
+        modal.devices.insert(second, Arc::new(FakeDevice));
+        let _ = modal.update(Decrypt::Fetched(first, "Ledger".into()));
+        let _ = modal.update(Decrypt::Fetched(second, "Jade".into()));
+
+        // a repeated answer to the first offer does not answer the next one
+        let _ = modal.update(Decrypt::SkipOtherPaths(first));
+        let _ = modal.update(Decrypt::SkipOtherPaths(first));
+        let _ = modal.update(Decrypt::TryOtherPaths(first));
+        assert_eq!(modal.other_paths_offers, [second]);
+        assert!(!modal.other_paths_asked.contains(&second));
+    }
+
+    #[test]
+    fn modal_follows_plugged_devices() {
+        let fingerprint = Fingerprint::from([1, 2, 3, 4]);
+        let plugged = |device: Arc<dyn HWI + Send + Sync>| HardwareWallet::Supported {
+            id: "fake".into(),
+            device,
+            kind: DeviceKind::Ledger,
+            fingerprint,
+            version: None,
+            registered: None,
+            alias: None,
+        };
+        let mut modal = DecryptModal::new(test_asset("v1.bip138"), Network::Signet);
+        let mut hws = HardwareWallets::new(LianaDirectory::new(env::temp_dir()), Network::Signet);
+        hws.list.push(plugged(Arc::new(FakeDevice)));
+        let _ = modal.update_devices(&mut hws);
+        let _ = modal.update(Decrypt::Fetched(fingerprint, "Ledger".into()));
+        assert_eq!(modal.other_paths_offers, [fingerprint]);
+
+        // replugged: the offer stays, with the new handle
+        let replugged: Arc<dyn HWI + Send + Sync> = Arc::new(FakeDevice);
+        hws.list = vec![plugged(replugged.clone())];
+        let _ = modal.update_devices(&mut hws);
+        assert!(Arc::ptr_eq(&modal.devices[&fingerprint], &replugged));
+        assert_eq!(modal.other_paths_offers, [fingerprint]);
+
+        // unplugged: nothing is left to offer
+        hws.list.clear();
+        let _ = modal.update_devices(&mut hws);
+        assert!(modal.devices.is_empty());
+        assert!(modal.other_paths_offers.is_empty());
+    }
+
+    #[test]
+    fn mnemonic_not_offered() {
+        let fingerprint = Fingerprint::from([1, 2, 3, 4]);
+        let mut modal = DecryptModal::new(test_asset("v1.bip138"), Network::Signet);
+        modal.mnemonic.value = UNRELATED_MNEMONIC.into();
+        let _ = modal.update(Decrypt::MnemonicStatus(
+            Some(DecryptWarning::MnemonicCannotDecrypt),
+            Some(fingerprint),
+        ));
+        assert!(modal.fetched.contains_key(&fingerprint));
+        assert!(modal.other_paths_offers.is_empty());
+    }
+
+    #[test]
+    fn mnemonic_tries_every_path() {
+        // the primary key of this wallet derives from the mnemonic at m/84'/1'/0', not a Liana path
+        let seed = Mnemonic::from_str(UNRELATED_MNEMONIC).unwrap().to_seed("");
+        let secp = Secp256k1::new();
+        let master = bip32::Xpriv::new_master(Network::Signet, &seed).unwrap();
+        let path = DerivationPath::from_str("m/84'/1'/0'").unwrap();
+        let xpub = Xpub::from_priv(&secp, &master.derive_priv(&secp, &path).unwrap());
+        let descriptor = LianaDescriptor::from_str(&format!(
+            "wsh(or_d(pk([{}/84'/1'/0']{}/<0;1>/*),and_v(v:pkh([6abb52a9/48'/1'/0'/2']tpubDFZTCVU1Sa9nJXCxx97UFvGausHQPFjJyaiDbdr8GNqjCLKwYc8ihegK7yJdcizs9HMbiGA7ke1HiCENVHaERvNANHW7U2Wo2qnRsuqB52r/<2;3>/*),older(65535))))",
+            master.fingerprint(&secp),
+            xpub
+        ))
+        .unwrap();
+        let bytes = encrypt(&[descriptor.descriptor()]);
+        let modal = DecryptModal::new(bytes.clone(), Network::Signet);
+
+        assert!(matches!(
+            decrypt_with_seed(&bytes, &seed, Network::Signet, modal.liana_common_paths()),
+            Decrypt::MnemonicStatus(Some(DecryptWarning::MnemonicCannotDecrypt), Some(_))
+        ));
+        match decrypt_with_seed(&bytes, &seed, Network::Signet, modal.mnemonic_paths()) {
+            Decrypt::Backup(backup) => {
+                assert_eq!(backup.accounts[0].descriptor, descriptor.to_string())
+            }
+            other => panic!("not a backup: {:?}", other),
+        }
     }
 }

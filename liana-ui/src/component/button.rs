@@ -620,6 +620,10 @@ pub fn btn_retry<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, t!("btn-retry"), BtnWidth::M, msg)
 }
 
+pub fn btn_try_other_paths<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, t!("btn-try-other-paths"), BtnWidth::Auto, msg)
+}
+
 /// Yes button: primary. Width S.
 pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, t!("btn-yes"), BtnWidth::S, msg)

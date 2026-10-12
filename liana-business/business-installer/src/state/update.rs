@@ -1887,7 +1887,7 @@ impl State {
                 ]);
 
                 // Non-blocking! Result comes via SigningDeviceMsg::XPub
-                supported.get_extended_pubkey(request_id, &derivation_path);
+                supported.get_extended_pubkey(request_id, &derivation_path, false);
             }
             Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {

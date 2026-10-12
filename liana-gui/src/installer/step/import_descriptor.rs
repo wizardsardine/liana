@@ -93,7 +93,9 @@ impl ImportDescriptorModal {
                         | Decrypt::None
                         | Decrypt::CloseModal
                         | Decrypt::MnemonicAck(_)
-                        | Decrypt::ShowOptions(_) => return modal.update(msg),
+                        | Decrypt::ShowOptions(_)
+                        | Decrypt::TryOtherPaths(_)
+                        | Decrypt::SkipOtherPaths(_) => return modal.update(msg),
                         Decrypt::Backup(_) | Decrypt::Close => {}
                     }
                 }
