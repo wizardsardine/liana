@@ -31,3 +31,6 @@ bip39 = { workspace = true }
 rdrand = { workspace = true }
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 rdrand = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
