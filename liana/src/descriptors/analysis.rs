@@ -643,15 +643,18 @@ impl LianaPolicy {
                 // 1-of-N multisig. In this case the policy is normalized from `thresh(1, thresh(1,
                 // pk(A), pk(B)), thresh(2, older(42), pk(C)))` to `thresh(1, pk(A), pk(B),
                 // thresh(2, older(42), pk(C)))`.
-                if let Some(prim_path) = primary_path {
-                    if let SemanticPolicy::Key(key) = sub {
-                        primary_path = Some(prim_path.with_added_key(key.clone()));
-                    } else {
-                        return Err(LianaPolicyError::IncompatibleDesc);
+                primary_path = Some(match (primary_path, sub) {
+                    (None, SemanticPolicy::Key(key)) => PathInfo::Single(key),
+                    (None, multisig) => PathInfo::from_primary_path(multisig)?,
+                    (Some(single @ PathInfo::Single(_)), SemanticPolicy::Key(key)) => {
+                        single.with_added_key(key)
                     }
-                } else {
-                    primary_path = Some(PathInfo::from_primary_path(sub)?);
-                }
+                    (Some(one_of_n @ PathInfo::Multi(1, _)), SemanticPolicy::Key(key)) => {
+                        one_of_n.with_added_key(key)
+                    }
+                    // A key next to a k-of-N with k > 1 is a separate path spendable alone.
+                    _ => return Err(LianaPolicyError::IncompatibleDesc),
+                });
             } else {
                 // If it's not a simple (multi)key check, it must be (one of) the timelocked
                 // recovery path(s).
@@ -855,6 +858,46 @@ mod tests {
         let mut checker = DescKeyChecker::new();
         assert!(checker.check(&key).is_ok());
     }
+
+    #[test]
+    fn primary_path_key_merging() {
+        let key_a = "[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*";
+        let key_b = "[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/<0;1>/*";
+        let key_c = "[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/<0;1>/*";
+        let key_d = "[aabb0014/48'/0'/0'/2']xpub69cP4Y7S9TWcbSNxmk6CEDBsoaqr3ZEdjHuZcHxEFFKGh569RsJNr2V27XGhsbH9FXgWUEmKXRN7c5wQfq2VPjt31xP9VsYnVUyU8HcVevm/<0;1>/*";
+        let policy = |desc_str: String| {
+            let desc =
+                descriptor::Descriptor::<descriptor::DescriptorPublicKey>::from_str(&desc_str)
+                    .unwrap();
+            desc.sanity_check().unwrap();
+            LianaPolicy::from_multipath_descriptor(&desc)
+        };
+
+        // A, B or C alone: the keys are merged into a 1-of-3 primary path.
+        let one_of_three = policy(format!(
+            "wsh(or_i(pk({key_a}),or_i(pk({key_b}),or_i(pk({key_c}),and_v(v:pk({key_d}),older(42))))))"
+        ))
+        .unwrap();
+        assert_eq!(
+            *one_of_three.primary_path(),
+            PathInfo::Multi(
+                1,
+                [key_a, key_b, key_c]
+                    .iter()
+                    .map(|k| descriptor::DescriptorPublicKey::from_str(k).unwrap())
+                    .collect()
+            )
+        );
+
+        // A and B, or C alone: C can't be merged into a 2-of-3 primary path.
+        assert!(matches!(
+            policy(format!(
+                "wsh(or_i(and_v(v:pk({key_a}),pk({key_b})),or_i(pk({key_c}),and_v(v:pk({key_d}),older(42)))))"
+            )),
+            Err(LianaPolicyError::IncompatibleDesc)
+        ));
+    }
+
     #[test]
     fn invalid_key() {
         // Multipath of size 3
