@@ -170,7 +170,10 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportXpub(String),
-    ExportEncryptedDescriptor(Box<LianaDescriptor>),
+    ExportEncryptedDescriptor {
+        descriptor: Box<LianaDescriptor>,
+        store_common_paths: bool,
+    },
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup {
         network_dir: NetworkDirectory,
@@ -194,7 +197,7 @@ impl ImportExportType {
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
-            | ImportExportType::ExportEncryptedDescriptor(_)
+            | ImportExportType::ExportEncryptedDescriptor { .. }
             | ImportExportType::ExportLabels => crate::t!("export-success"),
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
@@ -311,9 +314,10 @@ impl Export {
             ImportExportType::ImportDescriptor(network) => {
                 import_descriptor(&sender, path, network).await
             }
-            ImportExportType::ExportEncryptedDescriptor(descr) => {
-                export_encrypted_descriptor(&sender, path, *descr).await
-            }
+            ImportExportType::ExportEncryptedDescriptor {
+                descriptor,
+                store_common_paths,
+            } => export_encrypted_descriptor(&sender, path, *descriptor, store_common_paths).await,
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
@@ -578,10 +582,12 @@ pub async fn export_encrypted_descriptor(
     sender: &UnboundedSender<Progress>,
     path: PathBuf,
     descr: LianaDescriptor,
+    store_common_paths: bool,
 ) -> Result<(), Error> {
     let descriptor = descr.descriptor();
     let bytes = EncryptedBackup::new()
         .set_payload(descriptor)?
+        .set_store_common_paths(store_common_paths)
         .encrypt()?
         .bytes;
 
@@ -1613,23 +1619,37 @@ pub mod tests {
         let dir = env::temp_dir().join(format!("liana-export-encrypted-{}", std::process::id()));
         for (i, descr_str) in descriptors.iter().enumerate() {
             let descriptor = LianaDescriptor::from_str(descr_str).unwrap();
-            let path = dir.join(format!("{i}.bip138"));
-            let (sender, mut receiver) = unbounded_channel();
-            export_encrypted_descriptor(&sender, path.clone(), descriptor.clone())
+            for store_common_paths in [true, false] {
+                let path = dir.join(format!("{i}-{store_common_paths}.bip138"));
+                let (sender, mut receiver) = unbounded_channel();
+                export_encrypted_descriptor(
+                    &sender,
+                    path.clone(),
+                    descriptor.clone(),
+                    store_common_paths,
+                )
                 .await
                 .unwrap();
-            assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(p)) if p == 30.0));
-            assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(p)) if p == 100.0));
-            assert!(matches!(receiver.try_recv(), Ok(Progress::Ended)));
+                assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(p)) if p == 30.0));
+                assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(p)) if p == 100.0));
+                assert!(matches!(receiver.try_recv(), Ok(Progress::Ended)));
 
-            let bytes = fs::read(&path).unwrap();
-            assert!(bytes.starts_with(b"BIP138"));
-            let metadata = EncryptedMetadata::from_encrypted_payload(&bytes).unwrap();
-            assert_eq!(metadata.version, Version::V1);
-            // m/48'/1'/0'/2' is a common path of the BIP, the encoder leaves it out
-            assert!(metadata.derivation_paths.is_empty());
+                let bytes = fs::read(&path).unwrap();
+                assert!(bytes.starts_with(b"BIP138"));
+                let metadata = EncryptedMetadata::from_encrypted_payload(&bytes).unwrap();
+                assert_eq!(metadata.version, Version::V1);
+                // m/48'/1'/0'/2' is a common path of the BIP, stored only on request
+                if store_common_paths {
+                    assert_eq!(
+                        metadata.derivation_paths,
+                        vec![DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()]
+                    );
+                } else {
+                    assert!(metadata.derivation_paths.is_empty());
+                }
 
-            assert_only_spendable_keys_decrypt(&bytes, &descriptor);
+                assert_only_spendable_keys_decrypt(&bytes, &descriptor);
+            }
         }
         fs::remove_dir_all(dir).unwrap();
     }

@@ -118,6 +118,7 @@ pub enum SettingsMessage {
     EditWalletSettings,
     ImportExportSection,
     ExportEncryptedDescriptor,
+    EncryptedBackupPrivacyMode(bool),
     ExportPlaintextDescriptor,
     ExportTransactions,
     ExportLabels,

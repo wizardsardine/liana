@@ -86,6 +86,7 @@ pub struct Context {
     pub backup: Option<Backup>,
     pub wallet_alias: String,
     pub pending_compile: Option<CompileInputs>,
+    pub encrypted_backup_privacy_mode: bool,
 }
 
 impl Context {
@@ -115,6 +116,7 @@ impl Context {
             wallet_alias: String::new(),
             backup: None,
             pending_compile: None,
+            encrypted_backup_privacy_mode: false,
         }
     }
 }

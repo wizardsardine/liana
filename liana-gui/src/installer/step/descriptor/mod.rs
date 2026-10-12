@@ -436,6 +436,7 @@ pub struct BackupDescriptor {
     error: Option<Error>,
     context: Option<Context>,
     help_open: bool,
+    privacy_mode: bool,
 }
 
 impl Step for BackupDescriptor {
@@ -485,8 +486,13 @@ impl Step for BackupDescriptor {
                             return Task::none();
                         }
                     };
-                    let modal =
-                        ExportModal::new(None, ImportExportType::ExportEncryptedDescriptor(bytes));
+                    let modal = ExportModal::new(
+                        None,
+                        ImportExportType::ExportEncryptedDescriptor {
+                            descriptor: bytes,
+                            store_common_paths: !self.privacy_mode,
+                        },
+                    );
                     let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;
@@ -498,9 +504,16 @@ impl Step for BackupDescriptor {
             Message::ShowBackupDescriptorHelp(open) => {
                 self.help_open = open;
             }
+            Message::BackupPrivacyMode(privacy_mode) => {
+                self.privacy_mode = privacy_mode;
+            }
             _ => {}
         }
         Task::none()
+    }
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.encrypted_backup_privacy_mode = self.privacy_mode;
+        true
     }
     fn load_context(&mut self, ctx: &Context) {
         self.context = Some(ctx.clone());
@@ -530,6 +543,7 @@ impl Step for BackupDescriptor {
             self.error.as_ref(),
             self.done,
             self.help_open,
+            self.privacy_mode,
         );
         if let Some(modal) = &self.modal {
             modal.view(content)
