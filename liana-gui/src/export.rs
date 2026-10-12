@@ -1131,16 +1131,18 @@ pub async fn from_backup(
             let descr = LianaDescriptor::from_str(&backup_str);
             match descr {
                 Ok(descr) => {
-                    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
-                        Network::Bitcoin
-                    } else {
-                        Network::Signet
-                    };
-                    if network != required_network {
+                    let mainnet = descr.all_xpubs_net_is(Network::Bitcoin);
+                    let required_mainnet = required_network == Network::Bitcoin;
+                    if mainnet != required_mainnet {
                         return Err(Error::BackupImport(
                             "Descriptor is for wrong network".to_string(),
                         ));
                     }
+                    let network = if mainnet {
+                        Network::Bitcoin
+                    } else {
+                        Network::Signet
+                    };
                     Backup::from_descriptor(descr, network)
                 }
                 Err(e2) => {
@@ -1155,9 +1157,7 @@ pub async fn from_backup(
     let network = if backup.network == Network::Bitcoin {
         Some(backup.network)
     } else {
-        return Err(Error::BackupImport(
-            "A backup must have a network!".to_string(),
-        ));
+        None
     };
 
     let account = match backup.accounts.len() {
@@ -1435,6 +1435,50 @@ mod tests {
         let descr = LianaDescriptor::from_str(raw_descriptor).unwrap();
         let _msg = receiver.try_recv().unwrap();
         assert!(matches!(Progress::Descriptor(descr), _msg));
+    }
+
+    const BACKUP_DESCRIPTOR: &str = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+
+    /// Imports a test asset in an installer on `network`, returns the imported descriptor and
+    /// backup network.
+    async fn from_backup_asset(
+        asset: &str,
+        network: Network,
+    ) -> Result<(String, Option<Network>), Error> {
+        let (sender, mut receiver) = unbounded_channel();
+        let path = env::current_dir().unwrap().join("test_assets").join(asset);
+        from_backup(&sender, path, network).await?;
+        match receiver.try_recv().unwrap() {
+            Progress::WalletFromBackup((descriptor, network, _, _)) => {
+                Ok((descriptor.to_string(), network))
+            }
+            msg => panic!("unexpected message: {:?}", msg),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_from_backup_json_on_test_networks() {
+        for network in [Network::Signet, Network::Testnet, Network::Regtest] {
+            let imported = from_backup_asset("liana-backup-2025-06-23T13-23-54.json", network)
+                .await
+                .unwrap();
+            assert_eq!(imported, (BACKUP_DESCRIPTOR.to_string(), None));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_from_backup_descriptor() {
+        for network in [Network::Signet, Network::Testnet, Network::Regtest] {
+            let imported = from_backup_asset("liana-jz5sm0xn.txt", network)
+                .await
+                .unwrap();
+            assert_eq!(imported, (BACKUP_DESCRIPTOR.to_string(), None));
+        }
+        let mainnet = from_backup_asset("liana-jz5sm0xn.txt", Network::Bitcoin).await;
+        assert!(matches!(
+            mainnet,
+            Err(Error::BackupImport(msg)) if msg == "Descriptor is for wrong network"
+        ));
     }
 
     #[test]
