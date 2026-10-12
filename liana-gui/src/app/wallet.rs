@@ -43,6 +43,7 @@ pub struct Wallet {
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
     pub fiat_price_setting: Option<fiat::PriceSetting>,
+    pub encrypted_backup_privacy_mode: bool,
     pub remote_backend_auth: Option<settings::AuthConfig>,
 }
 
@@ -64,6 +65,7 @@ impl Wallet {
             hardware_wallets: Vec::new(),
             signer: None,
             fiat_price_setting: None,
+            encrypted_backup_privacy_mode: false,
             remote_backend_auth: None,
         }
     }
@@ -111,6 +113,11 @@ impl Wallet {
         self
     }
 
+    pub fn with_privacy_mode(mut self, privacy_mode: bool) -> Self {
+        self.encrypted_backup_privacy_mode = privacy_mode;
+        self
+    }
+
     pub fn with_fiat_price_setting(
         mut self,
         fiat_price_setting: Option<fiat::PriceSetting>,
@@ -149,7 +156,8 @@ impl Wallet {
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
                 .with_hardware_wallets(wallet_settings.hardware_wallets)
-                .with_fiat_price_setting(wallet_settings.fiat_price))
+                .with_fiat_price_setting(wallet_settings.fiat_price)
+                .with_privacy_mode(wallet_settings.encrypted_backup_privacy_mode))
         }
     }
 

@@ -77,7 +77,7 @@ impl ExportModal {
             ImportExportType::ExportXpub(_) => crate::t!("export-title-export-xpub"),
             ImportExportType::ImportXpub(_) => crate::t!("export-title-import-xpub"),
             ImportExportType::ExportProcessBackup(..) => crate::t!("export-title-export-backup"),
-            ImportExportType::ExportEncryptedDescriptor(_) => {
+            ImportExportType::ExportEncryptedDescriptor { .. } => {
                 crate::t!("export-title-export-encrypted-descriptor")
             }
             ImportExportType::Descriptor(_) => crate::t!("export-title-export-descriptor"),
@@ -106,7 +106,7 @@ impl ExportModal {
                     .to_string();
                 format!("liana-{checksum}.txt")
             }
-            ImportExportType::ExportEncryptedDescriptor(_) => "liana.bip138".into(),
+            ImportExportType::ExportEncryptedDescriptor { .. } => "liana.bip138".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor(_) => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),

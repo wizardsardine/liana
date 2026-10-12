@@ -288,6 +288,9 @@ pub struct LianaWalletSettings {
     // setting will be set to None during deserialization and the user will need to reconfigure it.
     #[serde(default, deserialize_with = "ok_or_none")]
     pub fiat_price: Option<fiat::PriceSetting>,
+    /// Leave the common derivation paths of BIP138 out of the encrypted descriptor backup.
+    #[serde(default)]
+    pub encrypted_backup_privacy_mode: bool,
 }
 
 impl LianaWalletSettings {
@@ -755,6 +758,7 @@ pub mod global {
 #[cfg(test)]
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
+    use crate::app::settings::LianaWalletSettings;
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -923,5 +927,26 @@ mod test {
             true,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_encrypted_backup_privacy_mode_default() {
+        let raw = r#"{
+            "name": "w1",
+            "alias": null,
+            "descriptor_checksum": "kvsc70ze",
+            "pinned_at": null,
+            "remote_backend_auth": null,
+            "start_internal_bitcoind": null
+        }"#;
+        // a settings file written before the option existed is not in privacy mode
+        let settings: LianaWalletSettings = serde_json::from_str(raw).unwrap();
+        assert!(!settings.encrypted_backup_privacy_mode);
+
+        let mut settings = settings;
+        settings.encrypted_backup_privacy_mode = true;
+        let raw = serde_json::to_string(&settings).unwrap();
+        let settings: LianaWalletSettings = serde_json::from_str(&raw).unwrap();
+        assert!(settings.encrypted_backup_privacy_mode);
     }
 }

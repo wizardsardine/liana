@@ -313,10 +313,21 @@ pub fn entry_section<'a, M: Clone + 'a>(
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    entry_section_with_footer(tile, title, subtitle, None, width, msg)
+}
+
+pub fn entry_section_with_footer<'a, M: Clone + 'a>(
+    tile: Tile,
+    title: impl Display,
+    subtitle: Option<impl Display>,
+    footer: Option<Element<'a, M>>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
     list_entry_chevron(
         Some(badge::tile(tile).into()),
         section_body(title, subtitle),
-        None,
+        footer,
         None,
         width,
         msg,
@@ -423,16 +434,13 @@ pub fn entry_wallet<'a, M: Clone + 'a>(
 pub fn list_entry_chevron<'a, M: Clone + 'a>(
     tile: Option<Element<'a, M>>,
     body: impl Into<Element<'a, M>>,
-    trailing: Option<Element<'a, M>>,
+    footer: Option<Element<'a, M>>,
     accent: Option<ListEntryAccent>,
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    let trailing = row![trailing, right_chevron()]
-        .spacing(HSpacing::ML)
-        .align_y(Alignment::Center);
-    let body = Container::new(body).width(Length::Fill);
-    let content = row![tile, body, trailing]
+    let body = column![body.into(), footer].width(Length::Fill);
+    let content = row![tile, body, right_chevron()]
         .spacing(ENTRY_H_SPACING)
         .align_y(Alignment::Center)
         .width(Length::Fill);
