@@ -159,6 +159,8 @@ btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
 
+btn-try-other-paths => "Try other derivation paths"
+
 btn-unlock-all => "Unlock all"
 
 btn-update => "Update"
@@ -660,6 +662,14 @@ decrypt-invalid-xpub => "Invalid xpub"
 decrypt-mnemonic-cannot-decrypt => "Mnemonic is valid but cannot decrypt the file"
 
 decrypt-mnemonic-source => "Mnemonic"
+
+decrypt-other-paths-confirm-on-device
+=> "You will have to accept some of these derivation paths on the device.";;
+
+decrypt-other-paths-hint
+=> "{$device} could not decrypt the backup with the derivation paths Liana uses. Other common derivation paths can be tried with it, but it is very unlikely to work as Liana does not use them.";;
+
+decrypt-other-paths-title => "Try other derivation paths?"
 
 decrypt-pairing-code => "Pairing code: {$code}"
 
