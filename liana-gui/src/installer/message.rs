@@ -66,6 +66,7 @@ pub enum Message {
     KeyRedeemed(ProviderKey, Result<(), liana_connect::keys::Error>),
     AllKeysRedeemed,
     BackupDescriptor,
+    BackupPrivacyMode(bool),
     ShowBackupDescriptorHelp(bool),
     ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, bip138::Error>),
     ExportXpub(String),

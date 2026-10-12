@@ -760,6 +760,11 @@ export-aliases-conflict => "Aliases conflict, what do you want to do?"
 
 export-canceled => "Export canceled"
 
+export-encrypted-descriptor-include-paths => "Include derivation paths"
+
+export-encrypted-descriptor-include-paths-tooltip
+=> "Including them makes recovery faster. Leaving them out is more private, but recovering from this file can take several minutes on some signing devices.";;
+
 export-labels-conflict => "Labels conflict, what do you want to do?"
 
 export-progress => "Progress: {$progress}%"

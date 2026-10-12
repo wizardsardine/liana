@@ -10,7 +10,7 @@ use iced::{Subscription, Task};
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
-use wallet::{update_aliases, WalletSettingsState};
+use wallet::{save_privacy_mode, update_aliases, WalletSettingsState};
 
 use crate::{
     app::{
@@ -271,7 +271,11 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::import_export::import_export(cache, self.warning.as_ref());
+        let content = view::settings::import_export::import_export(
+            cache,
+            self.warning.as_ref(),
+            self.wallet.encrypted_backup_privacy_mode,
+        );
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -299,6 +303,23 @@ impl State for ImportExportSettingsState {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::WalletUpdated(res) => match res {
+                Ok(wallet) => self.wallet = wallet,
+                Err(e) => self.warning = Some(e),
+            },
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::EncryptedBackupPrivacyMode(privacy_mode),
+            )) => {
+                return Task::perform(
+                    save_privacy_mode(
+                        cache.datadir_path.clone(),
+                        cache.network,
+                        self.wallet.clone(),
+                        privacy_mode,
+                    ),
+                    Message::WalletUpdated,
+                );
+            }
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 self.modal = None;
             }
@@ -328,11 +349,14 @@ impl State for ImportExportSettingsState {
                 view::SettingsMessage::ExportEncryptedDescriptor,
             )) => {
                 if self.modal.is_none() {
+                    let descriptor = Box::new(self.wallet.main_descriptor.clone());
+                    let store_common_paths = !self.wallet.encrypted_backup_privacy_mode;
                     let modal = ExportModal::new(
                         Some(daemon),
-                        ImportExportType::ExportEncryptedDescriptor(Box::new(
-                            self.wallet.main_descriptor.clone(),
-                        )),
+                        ImportExportType::ExportEncryptedDescriptor {
+                            descriptor,
+                            store_common_paths,
+                        },
                     );
                     launch!(self, modal, true);
                 }

@@ -355,6 +355,7 @@ mod tests {
             }),
             start_internal_bitcoind,
             fiat_price: None,
+            encrypted_backup_privacy_mode: false,
         }
     }
 
