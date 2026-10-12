@@ -269,6 +269,20 @@ macro_rules! launch {
     };
 }
 
+/// The progress of an export modal opened from the settings.
+pub fn export_progress(modal: &ExportModal) -> iced::Subscription<Message> {
+    modal
+        .subscription()
+        .map(|sub| {
+            sub.map(|m| {
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
+                ))
+            })
+        })
+        .unwrap_or_else(iced::Subscription::none)
+}
+
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = view::settings::import_export::import_export(
@@ -284,16 +298,10 @@ impl State for ImportExportSettingsState {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        if let Some(modal) = &self.modal {
-            if let Some(sub) = modal.subscription() {
-                return sub.map(|m| {
-                    Message::View(view::Message::Settings(
-                        view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
-                    ))
-                });
-            }
-        }
-        iced::Subscription::none()
+        self.modal
+            .as_ref()
+            .map(export_progress)
+            .unwrap_or_else(iced::Subscription::none)
     }
 
     fn update(
