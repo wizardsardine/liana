@@ -121,9 +121,13 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                         Container::new(
                             scrollable::vertical(row!(
                                 Space::with_width(Length::FillPortion(1)),
-                                column!(Space::with_height(Length::Fixed(100.0)), content.into())
-                                    .width(Length::FillPortion(8))
-                                    .max_width(1500),
+                                column!(
+                                    Space::with_height(Length::Fixed(100.0)),
+                                    content.into(),
+                                    Space::with_height(Length::Fixed(100.0)),
+                                )
+                                .width(Length::FillPortion(8))
+                                .max_width(1500),
                                 Space::with_width(Length::FillPortion(1)),
                             ))
                             .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
