@@ -151,7 +151,7 @@ impl<'a, M: 'static> From<DeviceStatus> for Option<Element<'a, M>> {
             DeviceStatus::Selected => Some(device_success_mark(None)),
             DeviceStatus::Warning(w) => Some(
                 tooltip::tooltip_custom(
-                    iced::widget::text(w),
+                    tooltip::help_text(w),
                     icon::warning_icon(),
                     iced::widget::tooltip::Position::Bottom,
                 )

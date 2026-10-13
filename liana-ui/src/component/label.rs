@@ -10,7 +10,7 @@ use liana_i18n::t;
 use crate::{
     component::{
         text::{apply, truncate, TextSpec},
-        tooltip::tooltip_custom,
+        tooltip::{help_text, tooltip_custom},
     },
     icon, theme,
     widget::{Element, SpaceExt},
@@ -51,11 +51,7 @@ pub fn display_label<'a, M: 'a>(
     };
     let info = inherited_from.map(|help| {
         let icon = icon::tooltip_icon().style(theme::text::secondary);
-        tooltip_custom(
-            iced::widget::text(help),
-            icon,
-            iced::widget::tooltip::Position::Top,
-        )
+        tooltip_custom(help_text(help), icon, iced::widget::tooltip::Position::Top)
     });
     row![text, info]
         .spacing(10)

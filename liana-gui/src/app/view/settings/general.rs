@@ -12,6 +12,7 @@ use liana_ui::{
         panels::setting::{setting_row, SectionKind},
         pick_list,
         text::new,
+        tooltip::help_text,
         tooltip_custom,
     },
     icon,
@@ -54,7 +55,7 @@ pub fn fiat_price<'a>(
     currencies_list: &'a [Currency],
 ) -> Element<'a, Message> {
     let fiat_tooltip = tooltip_custom(
-        new::caption(t!("settings-fiat-price-tooltip")),
+        help_text(t!("settings-fiat-price-tooltip")),
         icon::warning_icon().style(theme::text::warning),
         tooltip::Position::Bottom,
     );
