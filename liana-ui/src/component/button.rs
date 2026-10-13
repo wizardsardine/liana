@@ -1106,7 +1106,7 @@ pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
     let button = btn_destructive(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
     tooltip::tooltip_custom(
-        caption(t!("transactions-cancel-tooltip")),
+        tooltip::help_text(t!("transactions-cancel-tooltip")),
         button,
         Position::Top,
     )
