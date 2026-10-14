@@ -75,13 +75,18 @@
             builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;
         };
 
+        libdmg-hfsplus = pkgs.callPackage ./nix/libdmg-hfsplus.nix { };
+
         releaseShell = pkgs.mkShell {
           buildInputs = [
-            pkgs.zip
             pkgs.unzip
             pkgs.gnutar
             pkgs.dpkg
             pkgs.rcodesign
+            # macOS .dmg creation (contrib/release/macos/create-dmg.sh)
+            pkgs.xorriso
+            libdmg-hfsplus
+            (pkgs.python3.withPackages (ps: [ ps.ds-store ]))
           ] ++ [ toolchain ];
         };
 

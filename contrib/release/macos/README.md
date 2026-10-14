@@ -1,6 +1,24 @@
 # MacOS packaging and distribution
 
-We distribute the application as a zipped [MacOS app bundle](https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html#//apple_ref/doc/uid/10000123i-CH101-SW5).
+We distribute the application as a [MacOS app bundle](https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html#//apple_ref/doc/uid/10000123i-CH101-SW5)
+inside a `.dmg` disk image.
+
+## Notes on creating the disk image
+
+Apple's `hdiutil` only runs on MacOS, so we build the image the way Bitcoin Core does:
+`xorrisofs` produces an ISO 9660 / HFS+ hybrid image, and the `dmg` tool from
+[libdmg-hfsplus](https://github.com/fanquake/libdmg-hfsplus) wraps it into a zlib-compressed UDIF
+`.dmg`. Both tools are provided by the `release` dev shell (`nix develop .#release`), the latter
+through `nix/libdmg-hfsplus.nix` since it is not packaged in nixpkgs.
+
+`contrib/release/macos/create-dmg.sh` drives that pipeline: it stages the app bundle next to an
+`/Applications` symlink, writes a `.DS_Store` describing the Finder window layout
+(`dmg-ds-store.py`, using the `ds_store` Python package), then builds the image. It honours
+`SOURCE_DATE_EPOCH`, so the output is reproducible.
+
+For the codesigned release we sign and notarize the app bundle first, and then sign and notarize the
+disk image containing it. Note `hdiutil imageinfo` reports an "internal error" on images produced by
+`libdmg-hfsplus` even though `hdiutil verify` passes; this is a known cosmetic quirk of the tool.
 
 ## Notes on codesigning and notarization
 

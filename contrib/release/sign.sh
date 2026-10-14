@@ -58,6 +58,7 @@ LIANA_PREFIX="$TARGET-$VERSION"
 # Define the release directory
 RELEASE_DIR="$PWD/release_assets"
 RELEASE_BUILD_DIR="$PWD/release_build"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Function to perform GPG signing
 sign_with_gpg() {
@@ -80,16 +81,6 @@ absolute_path() {
 # Determine the reference time used for determinism (overridable by environment)
 export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
 export TZ=UTC
-
-zip_archive () {
-    local archive="$1"
-    shift
-    touch -d "@$SOURCE_DATE_EPOCH" "$@"
-    find "$@" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
-    zip -r -oX - "$@" > "$archive"
-}
-
-
 
 # Function to perform rcodesign signing
 sign_with_rcodesign() {
@@ -141,9 +132,21 @@ sign_with_rcodesign() {
         --api-key-path "$NOTARY_API_CREDS_FILE" \
         --staple "$APP_BUNDLE"
 
-    zip_archive "$LIANA_PREFIX-macos.zip" "$APP_BUNDLE"
-    mv "$LIANA_PREFIX-macos.zip" "$RELEASE_DIR/"
-    sha256sum "$RELEASE_DIR/$LIANA_PREFIX-macos.zip" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
+    # Disk image: built from the signed+stapled bundle, then signed and
+    # notarized itself so Gatekeeper accepts both the .dmg and the app.
+    DMG="$LIANA_PREFIX-macos.dmg"
+    "$SCRIPT_DIR/macos/create-dmg.sh" "$APP_BUNDLE" "$DMG" "${APP_BUNDLE%.app} $VERSION"
+    rcodesign sign \
+        --digest sha256 \
+        --pem-source "$CODESIGN_KEY" \
+        --der-source "$CODESIGN_CERT" \
+        "$DMG"
+    rcodesign notary-submit \
+        --max-wait-seconds 600 \
+        --api-key-path "$NOTARY_API_CREDS_FILE" \
+        --staple "$DMG"
+    mv "$DMG" "$RELEASE_DIR/"
+    sha256sum "$RELEASE_DIR/$DMG" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 }
 
 COMMAND="$1"

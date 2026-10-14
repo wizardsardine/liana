@@ -69,14 +69,6 @@ export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
 export TZ=UTC
 export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --sort=name"
 
-zip_archive () {
-    local archive="$1"
-    shift
-    touch -d "@$SOURCE_DATE_EPOCH" "$@"
-    find "$@" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
-    find "$@" -type f | sort | zip -oX "$archive" -@
-}
-
 # We'll use a folder for the builds output and another one for the final assets.
 RELEASE_DIR="$PWD/release_assets"
 BUILD_DIR="$PWD/release_build"
@@ -113,7 +105,7 @@ if [ "$TARGET" = "liana" ]; then
         cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
     )
 
-    # Create the MacOS archive and a zipped application bundle of liana-gui.
+    # Create the MacOS archive and a disk image of the liana-gui application bundle.
     (
         cd "$BUILD_DIR"
         create_dir "$LIANA_PREFIX-x86_64-apple-darwin"
@@ -129,8 +121,8 @@ if [ "$TARGET" = "liana" ]; then
         unzip ../contrib/release/macos/Liana.app.zip
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
         cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
-        zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Liana.app
-        mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
+        ../contrib/release/macos/create-dmg.sh Liana.app "$LIANA_PREFIX-macos-noncodesigned.dmg" "Liana $VERSION"
+        mv "$LIANA_PREFIX-macos-noncodesigned.dmg" "$RELEASE_DIR/"
     )
 else
     # Build liana-business using Guix for Linux and Nix for other platforms
@@ -190,8 +182,8 @@ else
         sed -i "s/liana/liana-business/g" ./Liana.app/Contents/Info.plist
         cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-business" ./Liana.app/Contents/MacOS/LianaBusiness
         mv Liana.app LianaBusiness.app
-        zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" LianaBusiness.app
-        mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
+        ../contrib/release/macos/create-dmg.sh LianaBusiness.app "$LIANA_PREFIX-macos-noncodesigned.dmg" "LianaBusiness $VERSION"
+        mv "$LIANA_PREFIX-macos-noncodesigned.dmg" "$RELEASE_DIR/"
     )
 fi
 
