@@ -357,11 +357,16 @@ def test_coin_selection(lianad, bitcoind):
     # txid_1's feerate is approx 2 sat/vb as required.
     txid_1_feerate = anc_fees / anc_vsize
     assert 2 <= txid_1_feerate < 2.01
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
+    # The coins from self are updated after the new coins are stored.
+    wait_for(
+        lambda: len(lianad.rpc.listcoins()["coins"]) == 2
+        and all(
+            c["is_from_self"] for c in lianad.rpc.listcoins(["unconfirmed"])["coins"]
+        )
+    )
     # Check that change output is unconfirmed.
     assert len(lianad.rpc.listcoins(["unconfirmed"])["coins"]) == 1
     assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_change"] is True
-    assert lianad.rpc.listcoins(["unconfirmed"])["coins"][0]["is_from_self"] is True
     assert len(lianad.rpc.listcoins(["spending"])["coins"]) == 1
     # We can use unconfirmed change as candidate as it is from self.
     # Depending on the feerate, we'll get a warning about paying extra for the ancestor.

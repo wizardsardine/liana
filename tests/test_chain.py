@@ -97,8 +97,10 @@ def test_reorg_exclusion(lianad, bitcoind):
     assert coin_d["is_from_self"] is False
 
     bitcoind.generate_block(1)
-    # Wait for confirmation to be detected.
-    wait_for(lambda: get_coin(lianad, txid_d)["block_height"] is not None)
+    # Wait for the block to be processed, which also updates the coins from self.
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
     coin_c = get_coin(lianad, txid_c)
     coin_d = get_coin(lianad, txid_d)
     assert coin_c["is_from_self"] is False
@@ -398,6 +400,10 @@ def test_rescan_and_recovery(lianad, bitcoind):
     lianad.rpc.startrescan(initial_tip["time"])
     wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
     wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    # The recovery path timelock is checked against our tip.
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
 
     # Create a recovery tx that sweeps the first coin.
     res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
