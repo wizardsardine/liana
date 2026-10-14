@@ -190,7 +190,7 @@ pub fn bitcoind<'a>(
     .spacing(HSpacing::L)
     .align_y(Alignment::Center)
     .width(Length::Fill);
-    let edit = btn_icon_edit(can_edit.then_some(SettingsEditMessage::Select));
+    let edit = can_edit.then_some(btn_icon_edit(Some(SettingsEditMessage::Select)));
     let header = row![title, edit].align_y(Alignment::Center);
 
     let content = column![header, separation().width(Length::Fill), fields].spacing(VSpacing::L);
