@@ -26,7 +26,13 @@ from test_framework.serializations import (
 
 class Lianad(TailableProc):
     def __init__(
-        self, datadir, signer, multi_desc, bitcoin_backend, legacy_datadir=False
+        self,
+        datadir,
+        signer,
+        multi_desc,
+        bitcoin_backend,
+        legacy_datadir=False,
+        poll_interval_secs=0.1,
     ):
         TailableProc.__init__(self, datadir, verbose=VERBOSE)
 
@@ -34,7 +40,6 @@ class Lianad(TailableProc):
         self.prefix = os.path.split(datadir)[-1]
 
         self.signer = signer
-        self._poll_interval_secs = 1
         self.multi_desc = multi_desc
         self.receive_desc, self.change_desc = multi_desc.singlepath_descriptors()
 
@@ -57,13 +62,8 @@ class Lianad(TailableProc):
 
             f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
-            f.write(f"poll_interval_secs = {self._poll_interval_secs}\n")
+            f.write(f"poll_interval_secs = {poll_interval_secs}\n")
         bitcoin_backend.append_to_lianad_conf(self.conf_file)
-
-    @property
-    def poll_interval_secs(self):
-        """Return the poll interval in seconds as defined in the config file."""
-        return self._poll_interval_secs
 
     def finalize_psbt(self, psbt):
         """Create a valid witness for all inputs in the PSBT.
