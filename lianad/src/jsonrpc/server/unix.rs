@@ -404,7 +404,7 @@ mod tests {
     fn server_sanity_check() {
         let ms = DummyLiana::new_server(DummyBitcoind::new(), DEFAULT_TIMELOCK);
         let socket_path: path::PathBuf = [
-            ms.tmp_dir.as_path(),
+            ms.tmp_dir.path(),
             path::Path::new("d"),
             path::Path::new("bitcoin"),
             path::Path::new("lianad_rpc"),

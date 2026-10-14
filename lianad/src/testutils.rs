@@ -7,14 +7,14 @@ use crate::{
     datadir::DataDirectory,
     DaemonControl, DaemonHandle,
 };
-use liana::descriptors;
+use liana::{descriptors, temp_dir::TempDir};
 
 use std::convert::TryInto;
 use std::{
     collections::{HashMap, HashSet},
-    env, fs, path, process,
+    fs, path,
     str::FromStr,
-    sync, thread, time,
+    sync, time,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -580,27 +580,9 @@ impl DatabaseConnection for DummyDatabase {
 }
 
 pub struct DummyLiana {
-    pub tmp_dir: path::PathBuf,
     pub handle: DaemonHandle,
-}
-
-static mut COUNTER: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
-fn uid() -> usize {
-    #[allow(static_mut_refs)]
-    unsafe {
-        let uid = COUNTER.load(sync::atomic::Ordering::Relaxed);
-        COUNTER.fetch_add(1, sync::atomic::Ordering::Relaxed);
-        uid
-    }
-}
-
-pub fn tmp_dir() -> path::PathBuf {
-    env::temp_dir().join(format!(
-        "lianad-{}-{:?}-{}",
-        process::id(),
-        thread::current().id(),
-        uid(),
-    ))
+    // Declared after the handle so that the directory is removed after the daemon is dropped.
+    pub tmp_dir: TempDir,
 }
 
 pub fn dummy_descriptor(timelock: u16) -> descriptors::LianaDescriptor {
@@ -625,11 +607,9 @@ impl DummyLiana {
         database: DummyDatabase,
         rpc_server: bool,
     ) -> DummyLiana {
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
+        let tmp_dir = TempDir::new();
         // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
-        let root_directory: path::PathBuf =
-            [tmp_dir.as_path(), path::Path::new("d")].iter().collect();
+        let root_directory: path::PathBuf = [tmp_dir.path(), path::Path::new("d")].iter().collect();
         fs::create_dir_all(&root_directory).unwrap();
         let mut data_directory = root_directory.clone();
         data_directory.push("bitcoin");
@@ -692,6 +672,5 @@ impl DummyLiana {
 
     pub fn shutdown(self) {
         self.handle.stop().unwrap();
-        fs::remove_dir_all(self.tmp_dir).unwrap();
     }
 }

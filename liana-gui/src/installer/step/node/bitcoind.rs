@@ -200,7 +200,7 @@ fn verify_hash(bytes: &[u8]) -> bool {
 }
 
 /// Install bitcoind by verifying the download hash and unpacking in the specified directory.
-fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+pub fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     if !verify_hash(bytes) {
         return Err(InstallBitcoindError::HashMismatch);
     };

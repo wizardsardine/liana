@@ -969,7 +969,7 @@ impl SqliteConn {
 mod tests {
     use super::*;
     use crate::database::{BlockInfo, DbBlockInfo};
-    use crate::testutils::*;
+    use liana::temp_dir::TempDir;
     use std::{
         collections::{HashMap, HashSet},
         fs, path,
@@ -1232,16 +1232,15 @@ CREATE TABLE labels (
     }
 
     fn dummy_db() -> (
-        path::PathBuf,
+        TempDir,
         FreshDbOptions,
         secp256k1::Secp256k1<secp256k1::VerifyOnly>,
         SqliteDb,
     ) {
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
+        let tmp_dir = TempDir::new();
         let secp = secp256k1::Secp256k1::verification_only();
 
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.path(), path::Path::new("lianad.sqlite3")]
             .iter()
             .collect();
         let options = dummy_options();
@@ -1311,11 +1310,10 @@ CREATE TABLE labels (
 
     #[test]
     fn db_startup_sanity_checks() {
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
+        let tmp_dir = TempDir::new();
         let secp = secp256k1::Secp256k1::verification_only();
 
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.path(), path::Path::new("lianad.sqlite3")]
             .iter()
             .collect();
         assert!(SqliteDb::new(db_path.clone(), None, &secp)
@@ -1351,13 +1349,11 @@ CREATE TABLE labels (
         db.maybe_apply_migrations(&[]).unwrap();
         db.sanity_check(bitcoin::Network::Bitcoin, &options.main_descriptor)
             .unwrap();
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn db_tip_update() {
-        let (tmp_dir, options, _, db) = dummy_db();
+        let (_tmp_dir, options, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -1379,13 +1375,11 @@ CREATE TABLE labels (
             assert_eq!(db_tip.block_height.unwrap(), new_tip.height);
             assert_eq!(db_tip.block_hash.unwrap(), new_tip.hash);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn db_labels_update() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let txid_str = "0c62a990d20d54429e70859292e82374ba6b1b951a3ab60f26bb65fee5724ff7";
@@ -1417,13 +1411,11 @@ CREATE TABLE labels (
             let db_labels = conn.db_labels(&items);
             assert!(db_labels.is_empty());
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn db_coins() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -1727,13 +1719,11 @@ CREATE TABLE labels (
             .map(|c| c.len())
             .all(|length| length == 1));
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn db_coins_update() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -1951,13 +1941,11 @@ CREATE TABLE labels (
             let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
             assert!(!coin.is_immature);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_addresses_cache() {
-        let (tmp_dir, options, secp, db) = dummy_db();
+        let (_tmp_dir, options, secp, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2059,13 +2047,11 @@ CREATE TABLE labels (
             conn.set_derivation_index(7.into(), true, &secp);
             conn.set_derivation_index(8.into(), true, &secp);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_tip_rollback() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2244,13 +2230,11 @@ CREATE TABLE labels (
             coin.spend_block = None;
             assert_eq!(db_coins[&coins[4].outpoint], coin);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn db_rescan() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2282,13 +2266,11 @@ CREATE TABLE labels (
             assert!(db_wallet.rescan_timestamp.is_none());
             assert_eq!(db_wallet.timestamp, dummy_timestamp);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_list_txids() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2406,13 +2388,11 @@ CREATE TABLE labels (
             let expected_txids = [6, 5].map(|i| txs.get(i).unwrap().compute_txid());
             assert_eq!(&db_txids[..], &expected_txids,);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_list_all_txids() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2523,13 +2503,11 @@ CREATE TABLE labels (
             let db_txids = conn.db_list_all_txids();
             assert_eq!(db_txids.len(), txs.len());
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_list_saved_txids() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2550,13 +2528,11 @@ CREATE TABLE labels (
             expected_txids.sort();
             assert_eq!(&db_txids[..], &expected_txids,);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_list_wallet_transactions() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         {
             let mut conn = db.connection().unwrap();
@@ -2743,13 +2719,11 @@ CREATE TABLE labels (
                 assert_eq!(&db_txs[..], &expected_txs[..],);
             }
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
     fn sqlite_update_coins_from_self() {
-        let (tmp_dir, _, _, db) = dummy_db();
+        let (_tmp_dir, _, _, db) = dummy_db();
 
         // Helper to create a dummy transaction.
         // Varying `lock_time_height` allows to obtain a unique txid for the given `num_inputs`.
@@ -3074,8 +3048,6 @@ CREATE TABLE labels (
                 .iter()
                 .all(|c| !c.is_from_self));
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -3083,9 +3055,8 @@ CREATE TABLE labels (
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 0, using the old schema.
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v0.sqlite3")]
+        let tmp_dir = TempDir::new();
+        let db_path: path::PathBuf = [tmp_dir.path(), path::Path::new("lianad_v0.sqlite3")]
             .iter()
             .collect();
         let mut options = dummy_options();
@@ -3255,8 +3226,6 @@ CREATE TABLE labels (
             conn.set_wallet_last_poll_timestamp(1234567).unwrap();
             assert_eq!(conn.db_wallet().last_poll_timestamp, Some(1234567));
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -3264,9 +3233,8 @@ CREATE TABLE labels (
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v3.sqlite3")]
+        let tmp_dir = TempDir::new();
+        let db_path: path::PathBuf = [tmp_dir.path(), path::Path::new("lianad_v3.sqlite3")]
             .iter()
             .collect();
         let mut options = dummy_options();
@@ -3441,8 +3409,6 @@ CREATE TABLE labels (
                 );
             }
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     #[test]
@@ -3450,9 +3416,8 @@ CREATE TABLE labels (
         let secp = secp256k1::Secp256k1::verification_only();
 
         // Create a database with version 3, using the old schema.
-        let tmp_dir = tmp_dir();
-        fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v4.sqlite3")]
+        let tmp_dir = TempDir::new();
+        let db_path: path::PathBuf = [tmp_dir.path(), path::Path::new("lianad_v4.sqlite3")]
             .iter()
             .collect();
         let mut options = dummy_options();
@@ -3567,7 +3532,5 @@ CREATE TABLE labels (
             assert_eq!(bitcoin_txs.len(), bitcoin_txs_in_db.len());
             assert_eq!(bitcoin_txs, bitcoin_txs_in_db);
         }
-
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 }

@@ -28,22 +28,24 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// Current and previous managed bitcoind versions, in order of descending version.
-pub const VERSIONS: [&str; 7] = ["29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0"];
+pub const VERSIONS: [&str; 8] = [
+    "31.1", "29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0",
+];
 
 /// Current managed bitcoind version for new installations.
 pub const VERSION: &str = VERSIONS[0];
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "5bb824fc86a15318d6a83a1b821ff4cd4b3d3d0e1ec3d162b805ccf7cae6fca8";
+pub const SHA256SUM: &str = "bc506958d0f387c1ea770bdc7c7192a505fa645ff62cabcc7761fa7eb89e867e";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub const SHA256SUM: &str = "34431c582a0399dd42e1276d87d25306cbdde0217f6744bd55a2945986645dda";
+pub const SHA256SUM: &str = "16a097c09fbd7eb78b240ce1dae123663ea2e5e377cfd6a951e71e227e23cf2f";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "a681e4f6ce524c338a105f214613605bac6c33d58c31dc5135bbc02bc458bb6c";
+pub const SHA256SUM: &str = "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e";
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "4c1780532031129fcacfc0e393c8430b3cea414c9f8c5e0c0c87ebe59a5ada1b";
+pub const SHA256SUM: &str = "c99ef173471c58e6766d9eebd12e6c35349082eeed3939bc99eed58ef57db587";
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub fn download_filename() -> String {
@@ -84,19 +86,43 @@ pub fn internal_bitcoind_datadir(liana_datadir: &LianaDirectory) -> PathBuf {
     datadir
 }
 
-/// Internal bitcoind executable path.
-pub fn internal_bitcoind_exe_path(
-    liana_datadir: &LianaDirectory,
-    bitcoind_version: &str,
-) -> PathBuf {
-    internal_bitcoind_directory(liana_datadir)
-        .join(format!("bitcoin-{bitcoind_version}"))
+/// Directory of the given bitcoind version installed in `directory`.
+pub fn bitcoind_version_directory(directory: &Path, bitcoind_version: &str) -> PathBuf {
+    directory.join(format!("bitcoin-{bitcoind_version}"))
+}
+
+/// Executable of the given bitcoind version installed in `directory`.
+pub fn bitcoind_exe_path(directory: &Path, bitcoind_version: &str) -> PathBuf {
+    bitcoind_version_directory(directory, bitcoind_version)
         .join("bin")
         .join(if cfg!(target_os = "windows") {
             "bitcoind.exe"
         } else {
             "bitcoind"
         })
+}
+
+/// Internal bitcoind executable path.
+pub fn internal_bitcoind_exe_path(
+    liana_datadir: &LianaDirectory,
+    bitcoind_version: &str,
+) -> PathBuf {
+    bitcoind_exe_path(
+        &internal_bitcoind_directory(liana_datadir),
+        bitcoind_version,
+    )
+}
+
+/// Executable of the most recent installed version among `versions`, which must be in
+/// descending order.
+fn installed_bitcoind_exe_path(
+    liana_datadir: &LianaDirectory,
+    versions: &[&str],
+) -> Option<PathBuf> {
+    versions
+        .iter()
+        .map(|version| internal_bitcoind_exe_path(liana_datadir, version))
+        .find(|path| path.exists())
 }
 
 /// Path of the `bitcoin.conf` file used by internal bitcoind.
@@ -425,18 +451,7 @@ impl Bitcoind {
             });
         }
         let bitcoind_datadir = internal_bitcoind_datadir(liana_datadir);
-        // Find most recent bitcoind version available.
-        let bitcoind_exe_path = VERSIONS
-            .iter()
-            .filter_map(|v| {
-                let path = internal_bitcoind_exe_path(liana_datadir, v);
-                if path.exists() {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .next()
+        let bitcoind_exe_path = installed_bitcoind_exe_path(liana_datadir, &VERSIONS)
             .ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
         info!(
             "Found bitcoind executable at '{}'.",
@@ -695,10 +710,70 @@ impl fmt::Display for ConfigField {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+    use crate::dir::create_directory;
     use ini::Ini;
-    use liana::miniscript::bitcoin::Network;
+    use liana::{miniscript::bitcoin::Network, temp_dir::TempDir};
+
+    /// A Liana directory in a temporary directory, removed on drop.
+    pub struct TestDirectory {
+        directory: LianaDirectory,
+        _tmp_dir: TempDir,
+    }
+
+    impl std::ops::Deref for TestDirectory {
+        type Target = LianaDirectory;
+
+        fn deref(&self) -> &LianaDirectory {
+            &self.directory
+        }
+    }
+
+    /// A new Liana directory with a dummy managed bitcoind binary for each installed version.
+    pub fn test_directory(installed: &[&str]) -> TestDirectory {
+        let tmp_dir = TempDir::new();
+        let directory = LianaDirectory::new(tmp_dir.path().to_path_buf());
+        for version in installed {
+            install(&directory, version);
+        }
+        TestDirectory {
+            directory,
+            _tmp_dir: tmp_dir,
+        }
+    }
+
+    /// Simulates a managed bitcoind installation with a dummy binary.
+    pub fn install(directory: &LianaDirectory, version: &str) {
+        let executable = internal_bitcoind_exe_path(directory, version);
+        create_directory(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"installed").unwrap();
+    }
+
+    #[test]
+    fn older_liana_does_not_run_newer_bitcoind() {
+        let older_liana = ["31.1", "29.0"];
+        let newer_liana = ["32.0", "31.1", "29.0"];
+
+        // Only the newer Liana's Bitcoin Core is installed.
+        let directory = test_directory(&["32.0"]);
+        assert_eq!(installed_bitcoind_exe_path(&directory, &older_liana), None);
+        assert_eq!(
+            installed_bitcoind_exe_path(&directory, &newer_liana),
+            Some(internal_bitcoind_exe_path(&directory, "32.0"))
+        );
+
+        // Both are installed: each Liana runs its own Bitcoin Core.
+        let directory = test_directory(&["31.1", "32.0"]);
+        assert_eq!(
+            installed_bitcoind_exe_path(&directory, &older_liana),
+            Some(internal_bitcoind_exe_path(&directory, "31.1"))
+        );
+        assert_eq!(
+            installed_bitcoind_exe_path(&directory, &newer_liana),
+            Some(internal_bitcoind_exe_path(&directory, "32.0"))
+        );
+    }
 
     // Test the format of the internal bitcoind configuration file.
     #[test]
