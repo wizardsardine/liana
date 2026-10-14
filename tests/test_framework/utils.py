@@ -214,22 +214,22 @@ class UnixDomainSocketRpc(object):
         self.socket_path = socket_path
         self.logger = logger
         self.next_id = 0
+        # One connection per thread, kept open across calls.
+        self.local = threading.local()
 
     def _readobj(self, sock):
         """Read a JSON object"""
         buff = b""
         while True:
-            n_to_read = max(2048, len(buff))
-            chunk = sock.recv(n_to_read)
+            chunk = sock.recv(max(2048, len(buff)))
+            if len(chunk) == 0:
+                raise ConnectionError("Connection closed by lianad")
             buff += chunk
-            if len(chunk) != n_to_read:
-                try:
-                    return json.loads(buff)
-                except json.JSONDecodeError:
-                    # There is more to read, continue
-                    # FIXME: this is a workaround for large reads taken from lianad.
-                    # We should use the '\n' marker instead since lianad uses that.
-                    continue
+            try:
+                return json.loads(buff)
+            except json.JSONDecodeError:
+                # There is more to read, continue
+                continue
 
     def __getattr__(self, name):
         """Intercept any call that is not explicitly defined and call @call.
@@ -247,11 +247,23 @@ class UnixDomainSocketRpc(object):
 
         return wrapper
 
+    def _request(self, msg):
+        """Send a request on this thread's connection and read the response."""
+        sock = getattr(self.local, "sock", None)
+        if sock is not None:
+            try:
+                sock.sendall(msg)
+                return self._readobj(sock)
+            except (ConnectionError, BrokenPipeError):
+                # lianad was restarted since the last call on this connection.
+                sock.close()
+        self.local.sock = UnixSocket(self.socket_path)
+        self.local.sock.sendall(msg)
+        return self._readobj(self.local.sock)
+
     def call(self, method, params={}):
         self.logger.debug(f"Calling {method} with params {params}")
 
-        # FIXME: we open a new socket for every readobj call...
-        sock = UnixSocket(self.socket_path)
         msg = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -260,16 +272,14 @@ class UnixDomainSocketRpc(object):
                 "params": params,
             }
         )
-        sock.sendall(msg.encode() + b"\n")
         this_id = self.next_id
-        resp = self._readobj(sock)
+        resp = self._request(msg.encode() + b"\n")
 
         self.logger.debug(f"Received response for {method} call: {resp}")
         if "id" in resp and resp["id"] != this_id:
             raise ValueError(
                 "Malformed response, id is not {}: {}.".format(this_id, resp)
             )
-        sock.close()
 
         if not isinstance(resp, dict):
             raise ValueError(
