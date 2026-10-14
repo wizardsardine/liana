@@ -44,13 +44,13 @@ class Electrs(BitcoinBackend):
             "network": "regtest",
             "electrum_rpc_addr": f"127.0.0.1:{self.rpcport}",
             "monitoring_addr": f"127.0.0.1:{monitoring_port}",
+            # We wait for debug logs. Set here to override any system-wide electrs config.
+            "log_filters": "DEBUG",
         }
         self.conf_file = os.path.join(regtestdir, "electrs.toml")
         with open(self.conf_file, "w") as f:
             for k, v in electrs_conf.items():
                 f.write(f'{k} = "{v}"\n')
-
-        self.env = {"RUST_LOG": "DEBUG"}
 
     def start(self):
         TailableProc.start(self)
