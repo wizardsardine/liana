@@ -64,7 +64,7 @@ def wait_for_while_condition_holds(success, condition, timeout=TIMEOUT, debug_fn
     when tests fail.
     """
     start_time = time.time()
-    interval = 0.25
+    interval = 0.01
     while True:
         if time.time() >= start_time + timeout:
             raise ValueError("Error waiting for {}", success)
@@ -77,9 +77,7 @@ def wait_for_while_condition_holds(success, condition, timeout=TIMEOUT, debug_fn
         if debug_fn is not None:
             logging.info(debug_fn())
         time.sleep(interval)
-        interval *= 2
-        if interval > 5:
-            interval = 5
+        interval = min(interval * 2, 0.1)
 
 
 def get_txid(hex_tx):
