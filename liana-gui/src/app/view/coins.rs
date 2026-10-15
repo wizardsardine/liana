@@ -75,7 +75,7 @@ fn coin_list_view<'a>(
         labels.get(&outpoint).map(String::as_str),
         &coin.default_label,
     );
-    let editing = labels_editing.get(&outpoint).filter(|_| expanded);
+    let editing = labels_editing.get(&outpoint);
     let label = if expanded {
         label::label_field(
             vec![outpoint.clone()],

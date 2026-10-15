@@ -119,6 +119,7 @@ impl State for CoinsPanel {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
                     self.selected = Vec::new();
+                    self.labels_edited = LabelsEdited::default();
                     self.warning = None;
                     self.update_coins(&coins);
                 }
@@ -144,6 +145,9 @@ impl State for CoinsPanel {
             Message::View(view::Message::Select(i)) => {
                 if let Some(position) = self.selected.iter().position(|j| *j == i) {
                     self.selected.remove(position);
+                    if let Some(coin) = self.coins.list.get(i) {
+                        self.labels_edited.cancel(&coin.outpoint.to_string());
+                    }
                 } else {
                     self.selected.push(i);
                 }

@@ -38,6 +38,10 @@ impl LabelsEdited {
             },
         );
     }
+    /// Drop the pending edit of `key`.
+    pub fn cancel(&mut self, key: &str) {
+        self.0.remove(key);
+    }
     pub fn update<'a, T: IntoIterator<Item = &'a mut dyn LabelsLoader>>(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -68,7 +72,7 @@ impl LabelsEdited {
             }
             Message::View(view::Message::Label(items, view::LabelMessage::Cancel)) => {
                 for item in items {
-                    self.0.remove(&item);
+                    self.cancel(&item);
                 }
             }
             Message::View(view::Message::Label(items, view::LabelMessage::Confirm)) => {
