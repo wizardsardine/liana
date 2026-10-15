@@ -8,7 +8,10 @@ pub mod spend;
 pub mod transactions;
 
 use bitcoin::Amount;
-use iced::{widget::row, Alignment, Length};
+use iced::{
+    widget::{row, text::Wrapping},
+    Alignment, Length,
+};
 use liana_i18n::t;
 
 use crate::{
@@ -20,7 +23,7 @@ use crate::{
     },
     spacing::HSpacing,
     theme,
-    widget::Element,
+    widget::{Element, Fit},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -62,7 +65,11 @@ pub fn fees_row<'a, M: 'a, F: Fn(Amount) -> FiatAmount>(
 pub fn txid_row<'a, M: Clone + 'a>(txid: String, copy_txid: M) -> Element<'a, M> {
     row![
         new::b2_medium(t!("transactions-txid")).style(theme::text::primary),
-        new::b2(txid).style(theme::text::secondary),
+        Fit::new(
+            new::caption(txid)
+                .style(theme::text::secondary)
+                .wrapping(Wrapping::Glyph)
+        ),
         button::btn_copy(Some(copy_txid))
     ]
     .spacing(HSpacing::S)
