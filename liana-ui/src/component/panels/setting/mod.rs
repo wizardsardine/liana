@@ -1,25 +1,28 @@
 use std::fmt::Display;
 
 use iced::{
-    widget::{column, row},
+    widget::{column, opaque, responsive, row, Space},
     Alignment, Length,
 };
 use liana_i18n::t;
 
 use crate::{
     component::{
-        badge, button,
-        text::{caption, text, Text},
+        badge::{self, Tile},
+        button::{self, EntryWidth},
+        card,
+        checkbox::derivation_paths_checkbox,
+        list, scrollable, separation,
+        text::new,
     },
     icon,
-    widget::{Button, Column, Container, Element, Row},
+    spacing::{HSpacing, VSpacing},
+    theme,
+    widget::{Button, Column, Container, Element, Row, SpaceExt},
 };
 
-const PADDING: u16 = 10;
-const SPACING: u32 = 20;
-
 fn breadcrumb_btn<M: Clone + 'static>(label: impl Display, msg: Option<M>) -> Button<'static, M> {
-    button::breadcrumb(None, label).on_press_maybe(msg)
+    button::breadcrumb(label).on_press_maybe(msg)
 }
 
 pub fn header<M: Clone + 'static>(
@@ -35,6 +38,7 @@ pub fn header<M: Clone + 'static>(
     } else {
         row![setting_btn]
     }
+    .spacing(HSpacing::M)
     .align_y(Alignment::Center)
     .into()
 }
@@ -60,12 +64,12 @@ impl SectionKind {
         }
     }
 
-    pub fn icon<M>(&self) -> Container<'static, M> {
+    pub fn tile(&self) -> Tile {
         match self {
-            SectionKind::General => badge::setting(),
-            SectionKind::Node | SectionKind::Backend => badge::bitcoin(),
-            SectionKind::Wallet | SectionKind::ImportExport => badge::wallet(),
-            SectionKind::About => badge::tooltip(),
+            SectionKind::General => Tile::Setting,
+            SectionKind::Node | SectionKind::Backend => Tile::Bitcoin,
+            SectionKind::Wallet | SectionKind::ImportExport => Tile::Wallet,
+            SectionKind::About => Tile::About,
         }
     }
 }
@@ -110,32 +114,51 @@ impl ImportExportKind {
         }
     }
 
-    pub fn badge<M>(&self) -> Container<'static, M> {
+    pub fn tile(&self) -> Tile {
         match self {
-            ImportExportKind::ImportWallet => badge::restore(),
-            _ => badge::backup(),
+            ImportExportKind::ImportWallet => Tile::Import,
+            _ => Tile::Backup,
         }
     }
 }
 
-pub fn content_box<'a, M>(content: Row<'a, M>) -> Row<'a, M> {
-    content
-        .padding(PADDING)
-        .spacing(SPACING)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-}
-
 pub fn settings_section<M: Clone + 'static>(kind: SectionKind, msg: M) -> Element<'static, M> {
-    let content = content_box(row![kind.icon(), text(kind.title()).bold()]);
-    button::clickable_section(content, Some(msg)).into()
+    list::entry_section(
+        kind.tile(),
+        kind.title(),
+        None::<String>,
+        EntryWidth::Fill,
+        Some(msg),
+    )
 }
 
 pub fn export_section<M: Clone + 'static>(kind: ImportExportKind, msg: M) -> Element<'static, M> {
     let (title, description) = kind.title_descr();
-    let texts = column![text(title).bold(), caption(description)];
-    let content = content_box(row![kind.badge(), texts,]);
-    button::clickable_section(content, Some(msg)).into()
+    list::entry_section(
+        kind.tile(),
+        title,
+        Some(description),
+        EntryWidth::Fill,
+        Some(msg),
+    )
+}
+
+/// An export section with an element aligned right, such as a toggler. A click on that
+/// element does not trigger the section.
+pub fn export_section_with_footer<M: Clone + 'static>(
+    kind: ImportExportKind,
+    msg: M,
+    footer: impl Into<Element<'static, M>>,
+) -> Element<'static, M> {
+    let (title, description) = kind.title_descr();
+    list::entry_section_with_footer(
+        kind.tile(),
+        title,
+        Some(description),
+        Some(opaque(footer)),
+        EntryWidth::Fill,
+        Some(msg),
+    )
 }
 
 pub fn section_list<M: 'static + Clone>(children: Vec<Element<'static, M>>) -> Element<'static, M> {
@@ -144,7 +167,101 @@ pub fn section_list<M: 'static + Clone>(children: Vec<Element<'static, M>>) -> E
     header.extend(children);
 
     Column::from_vec(header)
-        .spacing(20)
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
+}
+
+pub fn setting_row<'a, M: 'a>(
+    label: impl Display,
+    info: Option<Element<'a, M>>,
+    control: impl Into<Element<'a, M>>,
+) -> Row<'a, M> {
+    row![
+        new::b4_medium(label),
+        info,
+        Space::fill_width(),
+        control.into()
+    ]
+    .spacing(HSpacing::M)
+    .align_y(Alignment::Center)
+}
+
+/// Narrowest buttons row of the descriptor card that holds both buttons on one line, with and
+/// without the derivation paths checkbox.
+const DESCRIPTOR_BUTTONS_ONE_LINE: f32 = 820.0;
+const DESCRIPTOR_BUTTONS_ONE_LINE_NO_PATHS: f32 = 600.0;
+
+type OnToggle<M> = fn(bool) -> M;
+
+pub fn descriptor_card<'a, M: Clone + 'a>(
+    descriptor: String,
+    copy: Option<M>,
+    privacy_mode: Option<(bool, OnToggle<M>)>,
+    backup: M,
+    register: M,
+) -> Container<'a, M> {
+    let title = new::h3_semi(t!("settings-wallet-descriptor"));
+    let descriptor_s = scrollable::horizontal_thin(new::caption(descriptor)).width(Length::Fill);
+    let btn_copy = copy.map(|msg| button::btn_copy(Some(msg)));
+    let descriptor_row = row![descriptor_s, btn_copy]
+        .spacing(HSpacing::M)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    // too narrow for one line: the register button goes under the backup one
+    let btn_row = responsive(move |size| {
+        let one_line = if privacy_mode.is_some() {
+            DESCRIPTOR_BUTTONS_ONE_LINE
+        } else {
+            DESCRIPTOR_BUTTONS_ONE_LINE_NO_PATHS
+        };
+        let paths = privacy_mode.map(|(privacy_mode, on_toggle)| {
+            Element::from(derivation_paths_checkbox(privacy_mode, on_toggle))
+        });
+        let backup = row![paths, button::btn_backup_encrypt_descriptor(backup.clone())]
+            .spacing(HSpacing::XL)
+            .align_y(Alignment::Center);
+        let register = button::btn_register_on_device(register.clone());
+        if size.width >= one_line {
+            row![Space::fill_width(), backup, register]
+                .spacing(HSpacing::M)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            column![
+                row![Space::fill_width(), backup],
+                row![Space::fill_width(), register]
+            ]
+            .spacing(VSpacing::S)
+            .into()
+        }
+    })
+    .height(Length::Shrink);
+    card::simple(
+        column![title, descriptor_row, btn_row]
+            .spacing(VSpacing::S)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+}
+
+pub fn version_card<'a, M: 'a>(versions: Vec<String>) -> Container<'a, M> {
+    let title = row![
+        badge::tile(Tile::About),
+        new::h3_semi(t!("settings-version"))
+    ]
+    .spacing(HSpacing::L)
+    .align_y(Alignment::Center)
+    .width(Length::Fill);
+    let versions = Column::with_children(
+        versions
+            .into_iter()
+            .map(|version| new::caption(version).style(theme::text::secondary).into()),
+    );
+    card::simple(column![
+        title,
+        separation().width(Length::Fill),
+        Space::with_height(VSpacing::S),
+        row![Space::fill_width(), versions]
+    ])
 }

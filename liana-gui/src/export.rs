@@ -9,7 +9,7 @@ use std::{
     time,
 };
 
-use encrypted_backup::{descriptor::dpk_to_pk, Decrypted, EncryptedBackup};
+use bip138::{descriptor::dpk_to_root_pk, Decrypted, EncryptedBackup};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -123,7 +123,7 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
-    EncryptedBackup(encrypted_backup::Error),
+    EncryptedBackup(bip138::Error),
     EncryptionFailed,
     ParseXpub,
     XpubNetwork,
@@ -170,7 +170,10 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportXpub(String),
-    ExportEncryptedDescriptor(Box<LianaDescriptor>),
+    ExportEncryptedDescriptor {
+        descriptor: Box<LianaDescriptor>,
+        store_common_paths: bool,
+    },
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup {
         network_dir: NetworkDirectory,
@@ -194,7 +197,7 @@ impl ImportExportType {
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
-            | ImportExportType::ExportEncryptedDescriptor(_)
+            | ImportExportType::ExportEncryptedDescriptor { .. }
             | ImportExportType::ExportLabels => crate::t!("export-success"),
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
@@ -229,8 +232,8 @@ impl From<ExportError> for Error {
     }
 }
 
-impl From<encrypted_backup::Error> for Error {
-    fn from(value: encrypted_backup::Error) -> Self {
+impl From<bip138::Error> for Error {
+    fn from(value: bip138::Error) -> Self {
         Error::EncryptedBackup(value)
     }
 }
@@ -311,9 +314,10 @@ impl Export {
             ImportExportType::ImportDescriptor(network) => {
                 import_descriptor(&sender, path, network).await
             }
-            ImportExportType::ExportEncryptedDescriptor(descr) => {
-                export_encrypted_descriptor(&sender, path, *descr).await
-            }
+            ImportExportType::ExportEncryptedDescriptor {
+                descriptor,
+                store_common_paths,
+            } => export_encrypted_descriptor(&sender, path, *descriptor, store_common_paths).await,
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
@@ -518,12 +522,18 @@ pub async fn export_transactions(
             label = format!("\"{label}\"");
         }
         let txid = tx.txid.to_string();
-        let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
+        let fee = tx.wallet_tx.fee().unwrap_or(Amount::ZERO).to_sat() as i128;
         let mut inputs_amount = 0;
         tx.coins.iter().for_each(|(_, coin)| {
             inputs_amount += coin.amount.to_sat() as i128;
         });
-        let value = tx.incoming_amount.to_sat() as i128 - inputs_amount;
+        let incoming_amount: Amount = tx
+            .wallet_tx
+            .owned_outputs
+            .iter()
+            .map(|coin| coin.amount)
+            .sum();
+        let value = incoming_amount.to_sat() as i128 - inputs_amount;
         let value = value as f64 / 100_000_000.0;
         let fee = fee as f64 / 100_000_000.0;
         let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());
@@ -572,9 +582,14 @@ pub async fn export_encrypted_descriptor(
     sender: &UnboundedSender<Progress>,
     path: PathBuf,
     descr: LianaDescriptor,
+    store_common_paths: bool,
 ) -> Result<(), Error> {
     let descriptor = descr.descriptor();
-    let bytes = EncryptedBackup::new().set_payload(descriptor)?.encrypt()?;
+    let bytes = EncryptedBackup::new()
+        .set_payload(descriptor)?
+        .set_store_common_paths(store_common_paths)
+        .encrypt()?
+        .bytes;
 
     send_progress!(sender, Progress(30.0));
     // verify we can decrypt with any keys from the descriptor
@@ -582,21 +597,21 @@ pub async fn export_encrypted_descriptor(
         let decrypted = EncryptedBackup::new()
             .set_encrypted_payload(&bytes)
             .map_err(|_| Error::EncryptionFailed)?
-            .set_keys(vec![dpk_to_pk(&key)])
+            .set_keys(vec![
+                // NOTE: spendable keys are always xpubs with an origin, this cannot fail
+                dpk_to_root_pk(&key).map_err(|_| Error::EncryptionFailed)?,
+            ])
             .decrypt()
             .map_err(|_| Error::EncryptionFailed)?;
-        if let Decrypted::Descriptor(d) = decrypted {
-            if descr.to_string() != d.to_string() {
-                return Err(Error::EncryptionFailed);
-            }
-        } else {
-            return Err(Error::EncryptionFailed);
+        match decrypted.as_slice() {
+            [Decrypted::Descriptor(d)] if descr.to_string() == d.to_string() => {}
+            _ => return Err(Error::EncryptionFailed),
         }
     }
 
     // verify we can NOT decrypt w/ unspendable key or BIP341 NUMS
     if let Some(unspendable) = descr.process_unspendable_key() {
-        let unspendable = dpk_to_pk(&unspendable);
+        let unspendable = dpk_to_root_pk(&unspendable).map_err(|_| Error::EncryptionFailed)?;
         let encrypted = EncryptedBackup::new()
             .set_encrypted_payload(&bytes)
             .map_err(|_| Error::EncryptionFailed)?
@@ -1392,12 +1407,24 @@ pub async fn app_backup_export(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::env;
 
-    use encrypted_backup::Version;
+    use bip138::{EncryptedMetadata, Version};
+    use liana::miniscript::bitcoin::bip32::DerivationPath;
 
     use super::*;
+
+    /// Descriptor encrypted in the backups of `test_assets/`.
+    pub const ENCRYPTED_ASSETS_DESCRIPTOR: &str = "tr(tpubD6NzVbkrYhZ4XYBa9huubPUVRzmGGJoEjFF4i93okdJUBSiDenCbHMAZkjWYWiWoruNEgXouXEdKBL9gDWuxem4gwJMBEs3TVhhNw7AybcA/<0;1>/*,{and_v(v:multi_a(1,[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<2;3>/*,[08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<2;3>/*),older(52596)),and_v(v:pk([bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*),pk([08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<0;1>/*))})#dn0kkwfc";
+
+    pub fn test_asset_path(name: &str) -> PathBuf {
+        env::current_dir().unwrap().join("test_assets").join(name)
+    }
+
+    pub fn test_asset(name: &str) -> Vec<u8> {
+        fs::read(test_asset_path(name)).unwrap()
+    }
 
     #[tokio::test]
     async fn test_import_descriptor_from_file() {
@@ -1513,39 +1540,143 @@ mod tests {
         );
     }
 
+    fn assert_only_spendable_keys_decrypt(bytes: &[u8], descriptor: &LianaDescriptor) {
+        let backup = EncryptedBackup::new().set_encrypted_payload(bytes).unwrap();
+        for key in descriptor.spendable_keys() {
+            let decrypted = backup
+                .clone()
+                .set_keys(vec![dpk_to_root_pk(&key).unwrap()])
+                .decrypt()
+                .unwrap();
+            match decrypted.as_slice() {
+                [Decrypted::Descriptor(d)] => assert_eq!(d.to_string(), descriptor.to_string()),
+                other => panic!("not a single descriptor: {:?}", other),
+            }
+        }
+        let mut other_keys = vec![bip341_nums()];
+        if let Some(unspendable) = descriptor.process_unspendable_key() {
+            other_keys.push(dpk_to_root_pk(&unspendable).unwrap());
+        }
+        for key in other_keys {
+            assert_eq!(
+                backup.clone().set_keys(vec![key]).decrypt(),
+                Err(bip138::Error::WrongKey)
+            );
+        }
+    }
+
+    fn assert_decrypts_assets_descriptor(bytes: &[u8]) {
+        let descriptor = LianaDescriptor::from_str(ENCRYPTED_ASSETS_DESCRIPTOR).unwrap();
+        assert_eq!(descriptor.spendable_keys().len(), 2);
+        assert!(descriptor.process_unspendable_key().is_some());
+        assert_only_spendable_keys_decrypt(bytes, &descriptor);
+    }
+
     #[test]
     fn test_import_encrypted_descriptor_v0() {
-        let descr_str = "tr(tpubD6NzVbkrYhZ4XYBa9huubPUVRzmGGJoEjFF4i93okdJUBSiDenCbHMAZkjWYWiWoruNEgXouXEdKBL9gDWuxem4gwJMBEs3TVhhNw7AybcA/<0;1>/*,{and_v(v:multi_a(1,[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<2;3>/*,[08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<2;3>/*),older(52596)),and_v(v:pk([bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*),pk([08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<0;1>/*))})#dn0kkwfc";
+        let bytes = test_asset("v0.bed");
+        assert!(bytes.starts_with(b"BEB"));
 
-        let descriptor = LianaDescriptor::from_str(descr_str).unwrap();
-        let keys = descriptor
-            .spendable_keys()
-            .into_iter()
-            .map(|k| dpk_to_pk(&k))
-            .collect::<Vec<_>>();
+        let metadata = EncryptedMetadata::from_encrypted_payload(&bytes).unwrap();
+        assert_eq!(metadata.version, Version::V0);
+        assert_eq!(
+            metadata.derivation_paths,
+            vec![DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()]
+        );
 
-        let path = env::current_dir()
-            .unwrap()
-            .join("test_assets")
-            .join("v0.bed");
+        assert_decrypts_assets_descriptor(&bytes);
+    }
 
-        let mut file = File::open(path).unwrap();
-        let mut bytes: Vec<u8> = vec![];
-        file.read_to_end(&mut bytes).unwrap();
+    #[test]
+    fn test_import_encrypted_descriptor_v1() {
+        let bytes = test_asset("v1.bip138");
+        assert!(bytes.starts_with(b"BIP138"));
 
-        let backp = EncryptedBackup::new()
-            .set_encrypted_payload(&bytes)
-            .unwrap();
+        let metadata = EncryptedMetadata::from_encrypted_payload(&bytes).unwrap();
+        assert_eq!(metadata.version, Version::V1);
+        assert!(metadata.derivation_paths.is_empty());
 
-        assert_eq!(backp.get_version(), Version::V0);
+        assert_decrypts_assets_descriptor(&bytes);
+    }
 
-        for k in keys {
-            let descr = backp.clone().set_keys(vec![k]).decrypt().unwrap();
-            if let Decrypted::Descriptor(d) = descr {
-                assert_eq!(d.to_string(), descriptor.to_string());
-            } else {
-                panic!("not a descriptor")
+    #[test]
+    fn test_import_encrypted_descriptor_v1_base64() {
+        let text = test_asset("v1.txt");
+        assert!(text.starts_with(b"QklQMTM4"));
+        assert_decrypts_assets_descriptor(&text);
+    }
+
+    #[tokio::test]
+    async fn test_export_encrypted_descriptor() {
+        let descriptors = [
+            // single key with a timelocked recovery key
+            "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn",
+            // multisig with two recovery paths
+            "wsh(or_i(and_v(v:thresh(3,pkh([636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<4;5>/*),a:pkh([172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<4;5>/*),a:pkh([903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<4;5>/*)),older(6)),or_d(multi(3,[636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<0;1>/*,[172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<0;1>/*,[903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<0;1>/*),and_v(v:thresh(2,pkh([636adf3f/48'/1'/0'/2']tpubDEE9FvWbG4kg4gxDNrALgrWLiHwNMXNs8hk6nXNPw4VHKot16xd2251vwi2M6nsyQTkak5FJNHVHkCcuzmvpSbWHdumX3DxpDm89iTfSBaL/<2;3>/*),a:pkh([172ba1bc/48'/1'/0'/2']tpubDEgTZEAraUrKmnbyKJuXYGFPzNCm82bjMqd2GRy2HKviJ1moLtEZrHoUeG2o6uyWLEGx4yBWpctAmxcBx1b5nrrrBo5LjskRxRMDmwkuKxq/<2;3>/*),a:pkh([903115ef/48'/1'/0'/2']tpubDF2Hqd3HXUn5bDMVa2gssqmdTjQsLm9Vc8CSSJFk4YwQg8PChCZiWopAeQ6ZCEWt21n1W8ApEGxEvtB8uPnWW6EG3fwPAFnFM8US4QmgKvp/<2;3>/*)),older(3)))))#jxya9h7u",
+            // taproot with an unspendable internal key
+            ENCRYPTED_ASSETS_DESCRIPTOR,
+        ];
+        let dir = env::temp_dir().join(format!("liana-export-encrypted-{}", std::process::id()));
+        for (i, descr_str) in descriptors.iter().enumerate() {
+            let descriptor = LianaDescriptor::from_str(descr_str).unwrap();
+            for store_common_paths in [true, false] {
+                let path = dir.join(format!("{i}-{store_common_paths}.bip138"));
+                let (sender, mut receiver) = unbounded_channel();
+                export_encrypted_descriptor(
+                    &sender,
+                    path.clone(),
+                    descriptor.clone(),
+                    store_common_paths,
+                )
+                .await
+                .unwrap();
+                assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(p)) if p == 30.0));
+                assert!(matches!(receiver.try_recv(), Ok(Progress::Progress(p)) if p == 100.0));
+                assert!(matches!(receiver.try_recv(), Ok(Progress::Ended)));
+
+                let bytes = fs::read(&path).unwrap();
+                assert!(bytes.starts_with(b"BIP138"));
+                let metadata = EncryptedMetadata::from_encrypted_payload(&bytes).unwrap();
+                assert_eq!(metadata.version, Version::V1);
+                // m/48'/1'/0'/2' is a common path of the BIP, stored only on request
+                if store_common_paths {
+                    assert_eq!(
+                        metadata.derivation_paths,
+                        vec![DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()]
+                    );
+                } else {
+                    assert!(metadata.derivation_paths.is_empty());
+                }
+
+                assert_only_spendable_keys_decrypt(&bytes, &descriptor);
             }
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_from_backup_detects_encrypted_file() {
+        for name in ["v0.bed", "v1.bip138", "v1.txt"] {
+            let (sender, mut receiver) = unbounded_channel();
+            from_backup(&sender, test_asset_path(name), Network::Signet)
+                .await
+                .unwrap();
+            match receiver.try_recv() {
+                Ok(Progress::EncryptedFile(bytes)) => assert_eq!(bytes, test_asset(name)),
+                other => panic!("{} not detected as encrypted: {:?}", name, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_plaintext_backup_not_detected_as_encrypted() {
+        for name in [
+            "liana-jz5sm0xn.txt",
+            "liana-backup-2025-06-23T13-23-54.json",
+        ] {
+            assert!(EncryptedBackup::new()
+                .set_encrypted_payload(&test_asset(name))
+                .is_err());
         }
     }
 }

@@ -1,8 +1,9 @@
 use iced::{
     alignment::Horizontal,
-    widget::{column, row, text::Style, Space},
+    widget::{column, row, Space},
     Alignment, Length,
 };
+use liana::label::Label;
 use liana_i18n::t;
 use std::fmt::{self, Display};
 
@@ -14,25 +15,19 @@ use crate::{
         amount::{self, amount_with_fiat, AmountSize, Currency, DisplayAmount, FiatAmount},
         button, card,
         checkbox::{labelled_checkbox, labelled_radio},
-        form, pill, scrollable, section,
+        form,
+        label::display_label,
+        pill, scrollable, section,
         text::{caption, new, P1_SIZE},
         tooltip,
     },
-    icon,
-    theme::{self, Theme},
+    icon, theme,
     widget::{Column, Container, Element, SpaceExt, Stack},
 };
 
 const COIN_LIST_MAX_HEIGHT: f32 = 300.0;
+const COIN_LIST_MAX_HEIGHT_TALL: f32 = 450.0;
 const FEERATE_INPUT_WIDTH: f32 = 150.0;
-
-pub enum CoinLabel {
-    /// Label set on this coin.
-    Outpoint(String),
-    /// Label inherited from the parent transaction.
-    Transaction(String),
-    None,
-}
 
 pub enum CoinStatus {
     Spent,
@@ -374,8 +369,14 @@ pub fn fee_rate_row<'a, M: Clone + 'static, F: Fn(Amount) -> FiatAmount>(
     card::flat(content, [12, 42]).width(Length::Fill).into()
 }
 
-pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>) -> Element<'a, M> {
+pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>, tall: bool) -> Element<'a, M> {
     let header = section(t!("spend-coins-selection"));
+
+    let max_height = if tall {
+        COIN_LIST_MAX_HEIGHT_TALL
+    } else {
+        COIN_LIST_MAX_HEIGHT
+    };
 
     let coin_cards: Vec<Element<'a, M>> = rows
         .into_iter()
@@ -384,7 +385,7 @@ pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>) -> Element<'a, M> {
     let list = Container::new(
         scrollable::vertical(Column::with_children(coin_cards).spacing(10)).spacing(5),
     )
-    .max_height(COIN_LIST_MAX_HEIGHT)
+    .max_height(max_height)
     .width(Length::Fill);
 
     column![header, list].spacing(10).into()
@@ -405,37 +406,14 @@ fn label_len(available_width: f32) -> usize {
 }
 
 pub fn coin_row<'a, M: Clone + 'static>(
-    label: CoinLabel,
+    label: &Label,
     amount: &Amount,
     status: CoinStatus,
     selected: bool,
     toggle: M,
     available_width: f32,
 ) -> Element<'a, M> {
-    fn font<'a>(txt: impl Display) -> iced::widget::Text<'a, Theme> {
-        new::b3_medium(txt)
-    }
-    fn label_style(theme: &Theme) -> Style {
-        theme::amount::sats(theme, false)
-    }
-    let max_len = label_len(available_width);
-    let short = |s: String| -> String {
-        if s.chars().count() > max_len {
-            format!("{}…", s.chars().take(max_len).collect::<String>())
-        } else {
-            s
-        }
-    };
-    let coin_label: Element<M> = match label {
-        CoinLabel::Outpoint(label) => font(short(label)).style(label_style).into(),
-        CoinLabel::Transaction(label) => {
-            let from = font(t!("common-from")).style(|t| theme::amount::zeroes(t, false));
-            row![from, font(short(label)).style(label_style)]
-                .spacing(5)
-                .into()
-        }
-        CoinLabel::None => font("").style(label_style).into(),
-    };
+    let coin_label = display_label(label, new::B3_MEDIUM_SPEC, Some(label_len(available_width)));
 
     let timelock_pill: Container<M> = match status {
         CoinStatus::Spent => pill::spent(),

@@ -1,21 +1,20 @@
 //! View functions for business settings UI.
 
-use iced::{
-    widget::{Column, Row, Space, Toggler},
-    Alignment, Length,
-};
-use liana_i18n::t;
+use iced::{widget::column, Length};
+use liana_i18n::{self as i18n, t, SupportedLocale};
 use liana_ui::{
     component::{
-        self, badge,
-        button::btn_register_on_device,
-        card,
-        panels::setting::{header, settings_section, SectionKind},
-        pick_list, scrollable, separation,
-        text::*,
+        self, card,
+        checkbox::{toggler_button, TogglerSize},
+        panels::setting::{
+            descriptor_card, header, setting_row, settings_section, version_card, SectionKind,
+        },
+        pick_list,
+        text::new,
     },
+    spacing::VSpacing,
     theme,
-    widget::{ColumnExt, Element, SpaceExt},
+    widget::Element,
 };
 
 use crate::{
@@ -41,27 +40,16 @@ pub fn list_view() -> Element<'static, Msg> {
 pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
     let header = header(Some(SETTING_MSG), Some(SectionKind::Wallet.title()), None);
 
-    let descriptor = state.wallet.main_descriptor.to_string();
-    let descriptor_card = card::simple(
-        Column::new()
-            .push(text(t!("settings-wallet-descriptor")).bold())
-            .push(scrollable::horizontal_thin(
-                Column::new().push(text(&descriptor).small()),
-            ))
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Space::with_width(Length::Fill))
-                    .push(btn_register_on_device(Msg::RegisterWallet)),
-            )
-            .spacing(10),
-    )
-    .width(Length::Fill);
+    let descriptor_card = descriptor_card(
+        state.wallet.main_descriptor.to_string(),
+        None,
+        None,
+        Msg::ExportEncryptedDescriptor,
+        Msg::RegisterWallet,
+    );
 
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(descriptor_card)
+    column![header, descriptor_card]
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
 }
@@ -73,45 +61,34 @@ pub fn general_view(
 ) -> Element<'static, Msg> {
     let header = header(Some(SETTING_MSG), Some(SectionKind::General.title()), None);
 
-    let fiat_card = card::simple(
-        Column::new()
-            .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(text(t!("settings-fiat-price")).bold())
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        Toggler::new(fiat_enabled)
-                            .on_toggle(Msg::FiatEnable)
-                            .style(theme::toggler::primary),
-                    ),
-            )
-            .push_maybe(
-                fiat_enabled.then_some(
-                    Row::new()
-                        .spacing(20)
-                        .align_y(Alignment::Center)
-                        .push(text(t!("settings-currency")).bold())
-                        .push(Space::with_width(Length::Fill))
-                        .push(
-                            pick_list::pick_list(
-                                crate::settings::ALL_BACKEND_CURRENCIES,
-                                Some(currency),
-                                Msg::FiatCurrencyEdited,
-                            )
-                            .padding(10),
-                        ),
-                ),
-            ),
+    let language_picker = pick_list::pick_list(
+        &SupportedLocale::ALL[..],
+        Some(i18n::current_locale()),
+        Msg::LanguageEdited,
     )
-    .width(Length::Fill);
+    .padding(pick_list::PICK_LIST_PADDING);
+    let language = setting_row(t!("settings-language"), None, language_picker);
+    let language_description =
+        new::caption(t!("settings-language-description")).style(theme::text::secondary);
+    let language_card = card::simple(column![language, language_description].spacing(VSpacing::S))
+        .width(Length::Fill);
 
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(fiat_card)
+    let toggler = toggler_button(fiat_enabled, TogglerSize::Normal, Msg::FiatEnable);
+    let fiat = setting_row(t!("settings-fiat-price"), None, toggler);
+
+    let currency_picker = pick_list::pick_list(
+        crate::settings::ALL_BACKEND_CURRENCIES,
+        Some(currency),
+        Msg::FiatCurrencyEdited,
+    )
+    .padding(pick_list::PICK_LIST_PADDING);
+    let currency =
+        fiat_enabled.then(|| setting_row(t!("settings-currency"), None, currency_picker));
+
+    let fiat_card = card::simple(column![fiat, currency].spacing(VSpacing::L)).width(Length::Fill);
+
+    column![header, language_card, fiat_card]
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
 }
@@ -120,30 +97,10 @@ pub fn general_view(
 pub fn about_view() -> Element<'static, Msg> {
     let header = header(Some(SETTING_MSG), Some(SectionKind::About.title()), None);
 
-    let version_card = card::simple(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::tooltip())
-                    .push(text(t!("settings-version")).bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(text(format!("liana-business v{VERSION}"))),
-            ),
-    );
+    let version_card = version_card(vec![format!("liana-business v{VERSION}")]);
 
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(version_card)
+    column![header, version_card]
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
 }

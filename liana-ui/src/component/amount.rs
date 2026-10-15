@@ -113,7 +113,7 @@ fn split_at_first_non_zero(s: String) -> Option<(String, String)> {
 // The text should be bolded beginning where the BTC amount is non-zero.
 fn render_amount<'a, T: 'a>(amount: String, font: TextSpec, blink: bool) -> Row<'a, T> {
     let size = font.size.unwrap_or(P1_SIZE);
-    let spacing = if size > P1_SIZE { 10 } else { 5 };
+    let spacing = btc_spacing(size);
 
     let (zeroes, after) = match split_at_first_non_zero(amount) {
         Some((b, a)) => (b, a),
@@ -124,6 +124,14 @@ fn render_amount<'a, T: 'a>(amount: String, font: TextSpec, blink: bool) -> Row<
     let zeroes = apply(zeroes, font).style(move |theme| amount::zeroes(theme, blink));
     let btc = apply("BTC", font).style(move |theme| amount::zeroes(theme, blink));
     row![zeroes, sats, Space::with_width(spacing), btc].align_y(iced::Alignment::Center)
+}
+
+fn btc_spacing(size: u32) -> u32 {
+    if size > P1_SIZE {
+        10
+    } else {
+        5
+    }
 }
 
 macro_rules! currency_enum {
@@ -325,6 +333,17 @@ impl AmountSize {
             AmountSize::L => new::H1_SPEC,
         }
     }
+}
+
+/// Width of an amount column at `size`, fitting BTC amounts up to 99 999 BTC so the amounts of a
+/// list line up.
+pub fn amount_column_width(size: AmountSize) -> f32 {
+    let spec = size.amount_spec();
+    let font_size = spec.size.unwrap_or(P1_SIZE);
+    let widest = Amount::from_sat(9_999_999_999_999).to_formatted_string();
+    crate::component::text::width(&widest, spec.font, font_size)
+        + btc_spacing(font_size) as f32
+        + crate::component::text::width("BTC", spec.font, font_size)
 }
 
 /// A BTC amount with an optional fiat value beside it and an optional trailing

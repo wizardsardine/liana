@@ -1,4 +1,5 @@
 use crate::{
+    component::text::new,
     icon,
     theme::{self, Theme},
     widget::*,
@@ -6,12 +7,20 @@ use crate::{
 
 use iced::widget::{text::Style, tooltip::Position};
 
+const HELP_WIDTH: u32 = 300;
+
+pub fn help_text<'a, T: 'a>(help: impl std::fmt::Display) -> Container<'a, T> {
+    Container::new(new::caption(help))
+        .padding(10)
+        .max_width(HELP_WIDTH)
+}
+
 pub fn tooltip_with_style<'a, T: 'a>(
     help: impl Into<String>,
     icon_style: fn(&Theme) -> Style,
 ) -> Container<'a, T> {
     tooltip_custom(
-        iced::widget::text(help.into()),
+        help_text(help.into()),
         icon::tooltip_icon().style(icon_style),
         Position::Top,
     )
@@ -19,7 +28,7 @@ pub fn tooltip_with_style<'a, T: 'a>(
 
 pub fn tooltip<'a, T: 'a>(help: impl Into<String>) -> Container<'a, T> {
     tooltip_custom(
-        iced::widget::text(help.into()),
+        help_text(help.into()),
         icon::tooltip_icon(),
         Position::Right,
     )

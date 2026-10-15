@@ -8,15 +8,21 @@ use liana_gui::{
         cache::Cache,
         menu::Menu,
         message::Message,
-        settings::{fiat::PriceSetting, SettingsError, SettingsUI},
-        state::{settings::wallet::RegisterWalletModal, State},
+        settings::{fiat::PriceSetting, global::GlobalSettings, SettingsError, SettingsUI},
+        state::{
+            export::ExportModal,
+            settings::{export_progress, wallet::RegisterWalletModal},
+            State,
+        },
         view,
         wallet::Wallet,
         Config,
     },
     daemon::{Daemon, DaemonBackend},
     dir::LianaDirectory,
+    export::{ImportExportMessage, ImportExportType},
 };
+use liana_i18n as i18n;
 use liana_ui::widget::{modal, Element};
 
 use super::message::{Msg, Section};
@@ -31,6 +37,7 @@ pub struct BusinessSettingsUI {
     #[allow(dead_code)]
     processing: bool,
     register_modal: Option<RegisterWalletModal>,
+    export_modal: Option<ExportModal>,
 }
 
 fn wallet_fiat_setting_or_default(wallet: &Wallet) -> PriceSetting {
@@ -58,6 +65,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
             fiat_setting,
             processing: false,
             register_modal: None,
+            export_modal: None,
         };
         (ui, Task::none())
     }
@@ -74,7 +82,11 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
                 Task::none()
             }
             Msg::SelectSection(section) => self.on_select_section(section),
-            Msg::RegisterWallet | Msg::FiatEnable(_) | Msg::FiatCurrencyEdited(_) => Task::none(), // Handled in State::update()
+            Msg::RegisterWallet
+            | Msg::ExportEncryptedDescriptor
+            | Msg::FiatEnable(_)
+            | Msg::FiatCurrencyEdited(_)
+            | Msg::LanguageEdited(_) => Task::none(), // Handled in State::update()
         }
     }
 
@@ -98,6 +110,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
     fn stop(&mut self) {
         self.current_section = None;
         self.register_modal = None;
+        self.export_modal = None;
     }
 
     fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>, wallet: Arc<Wallet>) -> Task<Msg> {
@@ -168,12 +181,18 @@ impl State for BusinessSettingsUI {
                 view::Message::Settings(view::SettingsMessage::AboutSection)
             }
             Msg::RegisterWallet => view::Message::Settings(view::SettingsMessage::RegisterWallet),
+            Msg::ExportEncryptedDescriptor => {
+                view::Message::Settings(view::SettingsMessage::ExportEncryptedDescriptor)
+            }
             Msg::FiatEnable(b) => {
                 view::Message::Settings(view::SettingsMessage::Fiat(view::FiatMessage::Enable(b)))
             }
             Msg::FiatCurrencyEdited(c) => view::Message::Settings(view::SettingsMessage::Fiat(
                 view::FiatMessage::CurrencyEdited(c.into()),
             )),
+            Msg::LanguageEdited(locale) => {
+                view::Message::Settings(view::SettingsMessage::LanguageEdited(locale))
+            }
         });
         let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
 
@@ -181,6 +200,8 @@ impl State for BusinessSettingsUI {
             modal::Modal::new(dashboard, m.view())
                 .on_blur(Some(view::Message::Close))
                 .into()
+        } else if let Some(m) = &self.export_modal {
+            m.view(dashboard)
         } else {
             dashboard
         }
@@ -204,6 +225,36 @@ impl State for BusinessSettingsUI {
             Message::View(view::Message::Close) => {
                 self.register_modal = None;
                 Task::none()
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ExportEncryptedDescriptor,
+            )) => {
+                if self.register_modal.is_some() || self.export_modal.is_some() {
+                    return Task::none();
+                }
+                let modal = ExportModal::new(
+                    Some(daemon),
+                    ImportExportType::ExportEncryptedDescriptor {
+                        descriptor: Box::new(self.wallet.main_descriptor.clone()),
+                        // no privacy mode in liana-business, the common paths are always stored
+                        store_common_paths: true,
+                    },
+                );
+                let launch = modal.launch(true);
+                self.export_modal = Some(modal);
+                launch
+            }
+            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
+                self.export_modal = None;
+                Task::none()
+            }
+            Message::View(view::Message::ImportExport(m))
+            | Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
+                if let Some(modal) = &mut self.export_modal {
+                    modal.update(m)
+                } else {
+                    Task::none()
+                }
             }
             Message::WalletUpdated(ref res) => {
                 if let Ok(wallet) = res {
@@ -238,6 +289,16 @@ impl State for BusinessSettingsUI {
                     _ => Task::none(),
                 }
             }
+            Message::View(view::Message::Settings(view::SettingsMessage::LanguageEdited(
+                locale,
+            ))) => {
+                i18n::set_locale(locale);
+                let path = GlobalSettings::path(&self.data_dir);
+                if let Err(e) = GlobalSettings::update_locale(&path, locale) {
+                    tracing::error!("Failed to save language: {e}");
+                }
+                Task::none()
+            }
             Message::View(view::Message::Settings(ref settings_msg)) => {
                 let msg = match settings_msg {
                     view::SettingsMessage::EditWalletSettings => {
@@ -261,6 +322,8 @@ impl State for BusinessSettingsUI {
     fn subscription(&self) -> Subscription<Message> {
         if let Some(modal) = &self.register_modal {
             modal.subscription()
+        } else if let Some(modal) = &self.export_modal {
+            export_progress(modal)
         } else {
             Subscription::none()
         }
@@ -272,6 +335,7 @@ impl State for BusinessSettingsUI {
         wallet: Arc<Wallet>,
     ) -> Task<Message> {
         self.register_modal = None;
+        self.export_modal = None;
         let _ = SettingsUI::reload(self, daemon, wallet);
         Task::none()
     }

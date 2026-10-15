@@ -379,6 +379,9 @@ pub fn key_entry<'a, M: 'a + Clone>(
     )
 }
 
+/// Liana derives its keys at `48'/coin'/account'/2'`, from account 0 up to this one excluded.
+pub const LIANA_ACCOUNTS: u32 = 10;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Account {
     pub index: ChildNumber,
@@ -457,13 +460,13 @@ where
     button::list_entry(row, None, button::EntryWidth::Fill, on_press)
 }
 
-/// Derivation-account picker: a dropdown over accounts 0..10 for the given device.
+/// Derivation-account picker: a dropdown over the Liana accounts for the given device.
 pub fn account_pick_list<'a, Message: Clone + 'a>(
     fingerprint: Fingerprint,
     selected: Option<ChildNumber>,
     on_select: impl Fn(Account) -> Message + 'a,
 ) -> PickList<'a, Account, Vec<Account>, Account, Message> {
-    let accounts: Vec<Account> = (0..10)
+    let accounts: Vec<Account> = (0..LIANA_ACCOUNTS)
         .map(|i| {
             Account::new(
                 ChildNumber::from_hardened_idx(i).expect("hardcoded"),
