@@ -1,6 +1,6 @@
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use iced::{
-    widget::{column, row, Space},
+    widget::{column, row, text::Wrapping, Space},
     Alignment,
 };
 use liana_i18n::t;
@@ -14,7 +14,7 @@ use crate::{
     },
     spacing::{HSpacing, VSpacing},
     theme,
-    widget::{Container, Element, Row, SpaceExt},
+    widget::{Container, Element, Fit, Row, SpaceExt},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -94,7 +94,11 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let outpoint_row = info_row(
         t!("coins-outpoint"),
         row![
-            new::caption(outpoint).style(theme::text::secondary),
+            Fit::new(
+                new::caption(outpoint)
+                    .style(theme::text::secondary)
+                    .wrapping(Wrapping::Glyph)
+            ),
             copy_outpoint
         ]
         .align_y(Alignment::Center),
