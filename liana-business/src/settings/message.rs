@@ -1,6 +1,7 @@
 //! Message types for business settings UI.
 
 use super::BackendCurrency;
+use liana_i18n::SupportedLocale;
 
 /// Settings section for navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -23,9 +24,14 @@ pub enum Msg {
     /// Register wallet on selected device.
     RegisterWallet,
 
+    ExportEncryptedDescriptor,
+
     /// Toggle fiat price display.
     FiatEnable(bool),
 
     /// Change fiat currency.
     FiatCurrencyEdited(BackendCurrency),
+
+    /// Change application language.
+    LanguageEdited(SupportedLocale),
 }

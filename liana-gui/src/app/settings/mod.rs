@@ -288,6 +288,9 @@ pub struct LianaWalletSettings {
     // setting will be set to None during deserialization and the user will need to reconfigure it.
     #[serde(default, deserialize_with = "ok_or_none")]
     pub fiat_price: Option<fiat::PriceSetting>,
+    /// Leave the common derivation paths of BIP138 out of the encrypted descriptor backup.
+    #[serde(default)]
+    pub encrypted_backup_privacy_mode: bool,
 }
 
 impl LianaWalletSettings {
@@ -571,6 +574,7 @@ pub mod global {
     use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use fs2::FileExt;
+    use liana_i18n::SupportedLocale;
     use serde::{Deserialize, Serialize};
     use std::fs::OpenOptions;
     use std::io::{Read, Seek, SeekFrom, Write};
@@ -588,6 +592,8 @@ pub mod global {
     pub struct GlobalSettings {
         pub bitbox: Option<BitboxSettings>,
         pub window_config: Option<WindowConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub locale: Option<String>,
     }
 
     impl GlobalSettings {
@@ -612,6 +618,20 @@ pub mod global {
                 |s| s.window_config = Some(window_config.clone()),
                 true,
             )
+        }
+
+        pub fn load_locale(path: &PathBuf) -> SupportedLocale {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.locale.clone(), false) {
+                tracing::error!("Failed to load locale: {e}");
+            }
+            ret.as_deref()
+                .and_then(|locale| locale.parse().ok())
+                .unwrap_or_else(SupportedLocale::from_system)
+        }
+
+        pub fn update_locale(path: &PathBuf, locale: SupportedLocale) -> Result<(), String> {
+            Self::update(path, |s| s.locale = Some(locale.code().to_string()), true)
         }
 
         pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
@@ -666,6 +686,7 @@ pub mod global {
             if !exists
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
+                && global_settings.locale.is_none()
             {
                 write = false;
             }
@@ -755,6 +776,7 @@ pub mod global {
 #[cfg(test)]
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
+    use crate::app::settings::LianaWalletSettings;
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -923,5 +945,26 @@ mod test {
             true,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_encrypted_backup_privacy_mode_default() {
+        let raw = r#"{
+            "name": "w1",
+            "alias": null,
+            "descriptor_checksum": "kvsc70ze",
+            "pinned_at": null,
+            "remote_backend_auth": null,
+            "start_internal_bitcoind": null
+        }"#;
+        // a settings file written before the option existed is not in privacy mode
+        let settings: LianaWalletSettings = serde_json::from_str(raw).unwrap();
+        assert!(!settings.encrypted_backup_privacy_mode);
+
+        let mut settings = settings;
+        settings.encrypted_backup_privacy_mode = true;
+        let raw = serde_json::to_string(&settings).unwrap();
+        let settings: LianaWalletSettings = serde_json::from_str(&raw).unwrap();
+        assert!(settings.encrypted_backup_privacy_mode);
     }
 }

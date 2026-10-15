@@ -723,6 +723,7 @@ pub fn create_app_with_remote_backend(
                         .expect("This is a liana-connect wallet"),
                 )
                 .with_fiat_price_setting(wallet_settings.fiat_price)
+                .with_privacy_mode(wallet_settings.encrypted_backup_privacy_mode)
                 .load_hotsigners(&liana_dir, network)
                 .expect("Datadir should be conform"),
         ),

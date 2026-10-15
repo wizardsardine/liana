@@ -30,7 +30,9 @@ use liana_ui::{
             btn_check_connection, btn_connect_another_email, btn_mnemonic_word, btn_next,
             btn_resend_token, btn_select, btn_send_token, btn_skip, EntryWidth,
         },
-        card, form, installer as installer_layout,
+        card,
+        checkbox::derivation_paths_checkbox,
+        form, installer as installer_layout,
         list::{self, DeviceStatus, EntryAccent},
         modal, scrollable, separation,
         text::{self, new, text, Text as _},
@@ -677,6 +679,7 @@ pub fn backup_descriptor<'a>(
     error: Option<&Error>,
     done: bool,
     help_open: bool,
+    privacy_mode: bool,
 ) -> Element<'a, Message> {
     let help_button = modal::optional_section(
         help_open,
@@ -703,7 +706,10 @@ pub fn backup_descriptor<'a>(
     ];
     let descriptor_scroll =
         scrollable::horizontal_thin(text::new::caption(descriptor_str)).width(Length::Fill);
-    let descriptor_actions = row![Space::fill_width(), backup_button];
+    let paths = derivation_paths_checkbox(privacy_mode, Message::BackupPrivacyMode);
+    let descriptor_actions = row![Space::fill_width(), paths, backup_button]
+        .spacing(20)
+        .align_y(Alignment::Center);
     let descriptor_header = row![descriptor_scroll, copy_button]
         .align_y(Alignment::Center)
         .spacing(10);
@@ -1782,6 +1788,7 @@ pub fn connection_step_select_account<'a>(
                 title: t!("common-login"),
                 previous_message: (!processing).then_some(Message::Previous),
             },
+            on_language_selected: Some(Message::LanguageEdited),
             content_width: button::STANDARD_ENTRY_WIDTH,
         },
         Some(header_content),
@@ -2008,6 +2015,7 @@ fn layout<'a>(
                 title: title.to_string(),
                 previous_message,
             },
+            on_language_selected: Some(Message::LanguageEdited),
             content_width: 800.0,
         },
         content,

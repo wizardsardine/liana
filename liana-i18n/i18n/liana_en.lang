@@ -169,6 +169,8 @@ btn-starting-rescan => "Starting rescan..."
 
 btn-template-help => "Something’s wrong with this template?"
 
+btn-try-other-paths => "Try other derivation paths"
+
 btn-unlock-all => "Unlock all"
 
 btn-update => "Update"
@@ -671,6 +673,14 @@ decrypt-mnemonic-cannot-decrypt => "Mnemonic is valid but cannot decrypt the fil
 
 decrypt-mnemonic-source => "Mnemonic"
 
+decrypt-other-paths-confirm-on-device
+=> "You will have to accept some of these derivation paths on the device.";;
+
+decrypt-other-paths-hint
+=> "{$device} could not decrypt the backup with the derivation paths Liana uses. Other common derivation paths can be tried with it, but it is very unlikely to work as Liana does not use them.";;
+
+decrypt-other-paths-title => "Try other derivation paths?"
+
 decrypt-pairing-code => "Pairing code: {$code}"
 
 decrypt-paste-xpub => "Paste an extended public key"
@@ -749,6 +759,11 @@ error-unknown => "Unknown error occurred"
 export-aliases-conflict => "Aliases conflict, what do you want to do?"
 
 export-canceled => "Export canceled"
+
+export-encrypted-descriptor-include-paths => "Include derivation paths"
+
+export-encrypted-descriptor-include-paths-tooltip
+=> "Including them makes recovery faster. Leaving them out is more private, but recovering from this file can take several minutes on some signing devices.";;
 
 export-labels-conflict => "Labels conflict, what do you want to do?"
 
@@ -1630,7 +1645,7 @@ settings-alias => "Alias"
 settings-alias-too-long => "Please enter alias that is not too long"
 
 settings-backup-encrypted-descriptor-tooltip
-=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
+=> "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
 
 settings-block-height => "Block Height:"
 
@@ -1666,7 +1681,7 @@ settings-export-descriptor-description
 settings-export-encrypted-descriptor => "Encrypted descriptor"
 
 settings-export-encrypted-descriptor-description
-=> ".bed file, can be decrypted with one of your signing devices or xpubs.";;
+=> ".bip138 file, can be decrypted with one of your signing devices or xpubs.";;
 
 settings-export-labels => "BIP 329 labels"
 
@@ -1700,6 +1715,10 @@ settings-import-wallet => "Import wallet"
 settings-import-wallet-description => "Upload a backup file to update wallet info."
 
 settings-invitation-sent => "Invitation was sent"
+
+settings-language => "Language"
+
+settings-language-description => "Choose the language used by the application."
 
 settings-month => "Month:"
 

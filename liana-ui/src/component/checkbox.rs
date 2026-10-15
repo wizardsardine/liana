@@ -4,9 +4,10 @@ use iced::{
     widget::{checkbox, radio, row},
     Alignment, Pixels,
 };
+use liana_i18n::t;
 
 use crate::{
-    component::text::new,
+    component::{text::new, tooltip::tooltip},
     theme,
     widget::{CheckBox, Element, Radio, Row, Toggler},
 };
@@ -74,4 +75,17 @@ pub fn toggler_button<'a, M: Clone + 'a>(
         .on_toggle(on_toggle)
         .size(size)
         .style(theme::toggler::primary)
+}
+
+/// Checked when the backup stores the common derivation paths, that is when privacy mode is off.
+pub fn derivation_paths_checkbox<'a, M: Clone + 'a>(
+    privacy_mode: bool,
+    on_toggle: impl Fn(bool) -> M + 'a,
+) -> Row<'a, M> {
+    let label = new::caption(t!("export-encrypted-descriptor-include-paths"));
+    let control = labelled_checkbox(label, !privacy_mode, move |include| on_toggle(!include));
+    let help = tooltip(t!("export-encrypted-descriptor-include-paths-tooltip"));
+    row![control, help]
+        .spacing(LABEL_SPACING)
+        .align_y(Alignment::Center)
 }

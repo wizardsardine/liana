@@ -583,9 +583,7 @@ See `liana-gui` documentation for App flow details.
 
 # Settings Flow (BusinessSettings)
 
-**Status: TBD**
-
-BusinessSettings will provide configuration for liana-business. Key differences
+BusinessSettings provides the configuration of liana-business. Key differences
 from LianaSettings (liana-gui):
 
 - **No bitcoind settings** - liana-business uses Liana Connect exclusively
@@ -593,5 +591,10 @@ from LianaSettings (liana-gui):
 - Wallet list management
 - User preferences
 
-The settings UI is implemented in `business-settings/src/ui.rs` but is currently
-a placeholder pending full implementation.
+The settings UI is implemented in `src/settings/ui.rs`, with three sections:
+
+- **General** - fiat price display and currency, saved on the backend
+- **Wallet** - the descriptor, register it on a signing device, export the
+  encrypted descriptor backup (BIP138 `.bip138` file). There is no privacy mode
+  in liana-business: the backup always stores the common derivation paths.
+- **About** - version

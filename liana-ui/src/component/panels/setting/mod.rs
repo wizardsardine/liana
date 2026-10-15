@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use iced::{
-    widget::{column, row, Space},
+    widget::{column, opaque, responsive, row, Space},
     Alignment, Length,
 };
 use liana_i18n::t;
@@ -10,7 +10,9 @@ use crate::{
     component::{
         badge::{self, Tile},
         button::{self, EntryWidth},
-        card, list, separation,
+        card,
+        checkbox::derivation_paths_checkbox,
+        list, scrollable, separation,
         text::new,
     },
     icon,
@@ -141,6 +143,24 @@ pub fn export_section<M: Clone + 'static>(kind: ImportExportKind, msg: M) -> Ele
     )
 }
 
+/// An export section with an element aligned right, such as a toggler. A click on that
+/// element does not trigger the section.
+pub fn export_section_with_footer<M: Clone + 'static>(
+    kind: ImportExportKind,
+    msg: M,
+    footer: impl Into<Element<'static, M>>,
+) -> Element<'static, M> {
+    let (title, description) = kind.title_descr();
+    list::entry_section_with_footer(
+        kind.tile(),
+        title,
+        Some(description),
+        Some(opaque(footer)),
+        EntryWidth::Fill,
+        Some(msg),
+    )
+}
+
 pub fn section_list<M: 'static + Clone>(children: Vec<Element<'static, M>>) -> Element<'static, M> {
     let header = header(None, None::<String>, None);
     let mut header = vec![header];
@@ -165,6 +185,64 @@ pub fn setting_row<'a, M: 'a>(
     ]
     .spacing(HSpacing::M)
     .align_y(Alignment::Center)
+}
+
+/// Narrowest buttons row of the descriptor card that holds both buttons on one line, with and
+/// without the derivation paths checkbox.
+const DESCRIPTOR_BUTTONS_ONE_LINE: f32 = 820.0;
+const DESCRIPTOR_BUTTONS_ONE_LINE_NO_PATHS: f32 = 600.0;
+
+type OnToggle<M> = fn(bool) -> M;
+
+pub fn descriptor_card<'a, M: Clone + 'a>(
+    descriptor: String,
+    copy: Option<M>,
+    privacy_mode: Option<(bool, OnToggle<M>)>,
+    backup: M,
+    register: M,
+) -> Container<'a, M> {
+    let title = new::h3_semi(t!("settings-wallet-descriptor"));
+    let descriptor_s = scrollable::horizontal_thin(new::caption(descriptor)).width(Length::Fill);
+    let btn_copy = copy.map(|msg| button::btn_copy(Some(msg)));
+    let descriptor_row = row![descriptor_s, btn_copy]
+        .spacing(HSpacing::M)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    // too narrow for one line: the register button goes under the backup one
+    let btn_row = responsive(move |size| {
+        let one_line = if privacy_mode.is_some() {
+            DESCRIPTOR_BUTTONS_ONE_LINE
+        } else {
+            DESCRIPTOR_BUTTONS_ONE_LINE_NO_PATHS
+        };
+        let paths = privacy_mode.map(|(privacy_mode, on_toggle)| {
+            Element::from(derivation_paths_checkbox(privacy_mode, on_toggle))
+        });
+        let backup = row![paths, button::btn_backup_encrypt_descriptor(backup.clone())]
+            .spacing(HSpacing::XL)
+            .align_y(Alignment::Center);
+        let register = button::btn_register_on_device(register.clone());
+        if size.width >= one_line {
+            row![Space::fill_width(), backup, register]
+                .spacing(HSpacing::M)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            column![
+                row![Space::fill_width(), backup],
+                row![Space::fill_width(), register]
+            ]
+            .spacing(VSpacing::S)
+            .into()
+        }
+    })
+    .height(Length::Shrink);
+    card::simple(
+        column![title, descriptor_row, btn_row]
+            .spacing(VSpacing::S)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
 }
 
 pub fn version_card<'a, M: 'a>(versions: Vec<String>) -> Container<'a, M> {
