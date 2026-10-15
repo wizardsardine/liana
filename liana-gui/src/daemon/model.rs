@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use liana::{
-    descriptors::LianaDescriptor,
+    descriptors::{ChangeOutput, LianaDescriptor},
     label::{self, Label},
     transaction::{PaymentKind, WalletTransaction},
 };
@@ -45,7 +45,7 @@ pub struct SpendTx {
     pub coins: HashMap<OutPoint, Coin>,
     pub labels: HashMap<String, String>,
     pub psbt: Psbt,
-    pub change_indexes: Vec<usize>,
+    pub change_outputs: Vec<ChangeOutput>,
     pub wallet_tx: WalletTransaction,
     /// Maximum possible size of the unsigned transaction after satisfaction
     /// (assuming all inputs are for the same descriptor).
@@ -145,11 +145,7 @@ impl SpendTx {
             .map(|txin| txin.sequence)
             .any(|seq| seq.is_relative_lock_time());
         let max_vbytes = desc.unsigned_tx_max_vbytes(&psbt.unsigned_tx, use_primary_path);
-        let change_indexes: Vec<usize> = desc
-            .change_indexes(&psbt, secp)
-            .into_iter()
-            .map(|c| c.index())
-            .collect();
+        let change_outputs = desc.change_indexes(&psbt, secp);
 
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
@@ -174,9 +170,9 @@ impl SpendTx {
             })
             .collect();
         let txid = psbt.unsigned_tx.compute_txid();
-        let owned_outputs: Vec<OutPoint> = change_indexes
+        let owned_outputs: Vec<OutPoint> = change_outputs
             .iter()
-            .map(|index| OutPoint::new(txid, *index as u32))
+            .map(|output| OutPoint::new(txid, output.index() as u32))
             .collect();
         let wallet_tx = WalletTransaction::new(&psbt.unsigned_tx, &owned_inputs, &owned_outputs);
 
@@ -190,7 +186,7 @@ impl SpendTx {
             updated_at,
             coins: coins_map,
             psbt,
-            change_indexes,
+            change_outputs,
             wallet_tx,
             max_vbytes,
             status,
@@ -236,6 +232,25 @@ impl SpendTx {
 
     pub fn is_send_to_self(&self) -> bool {
         self.wallet_tx.kind().is_send_to_self()
+    }
+
+    /// Outputs to the wallet, to a change or a receive address.
+    pub fn change_indexes(&self) -> Vec<usize> {
+        self.change_outputs
+            .iter()
+            .map(ChangeOutput::index)
+            .collect()
+    }
+
+    /// Outputs to the change keychain, not to a receive address.
+    pub fn change_address_indexes(&self) -> Vec<usize> {
+        self.change_outputs
+            .iter()
+            .filter_map(|output| match output {
+                ChangeOutput::ChangeAddress { index } => Some(*index),
+                ChangeOutput::DepositAddress { .. } => None,
+            })
+            .collect()
     }
 
     /// Amount the transaction moves: what it sends out, or the total of its outputs for a

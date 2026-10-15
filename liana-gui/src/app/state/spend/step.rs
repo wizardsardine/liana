@@ -1181,10 +1181,15 @@ impl Step for SaveSpend {
         tx.labels.clone_from(&draft.labels);
 
         if let Some(label) = &draft.tx_label {
-            tx.labels.insert(
-                tx.psbt.unsigned_tx.compute_txid().to_string(),
-                label.clone(),
-            );
+            let txid = tx.psbt.unsigned_tx.compute_txid();
+            tx.labels.insert(txid.to_string(), label.clone());
+            // A single input change inherits the label of its coin.
+            if tx.is_send_to_self() && tx.psbt.unsigned_tx.input.len() > 1 {
+                for index in tx.change_address_indexes() {
+                    tx.labels
+                        .insert(OutPoint::new(txid, index as u32).to_string(), label.clone());
+                }
+            }
         }
 
         self.spend = Some((
