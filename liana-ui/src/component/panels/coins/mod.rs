@@ -93,7 +93,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let copy_address = button::btn_copy(Some(copy_address));
     let address = info_row(
         t!("common-address-label"),
-        row![address_view(address), copy_address].align_y(Alignment::Center),
+        row![Fit::new(address_view(address)), copy_address].align_y(Alignment::Center),
     );
     let copy_outpoint = button::btn_copy(Some(copy_outpoint));
     let outpoint_row = info_row(
