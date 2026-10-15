@@ -115,6 +115,7 @@ impl State for WalletSettingsState {
             &self.wallet_alias,
             &self.keys_aliases,
             &self.wallet.provider_keys,
+            self.wallet.encrypted_backup_privacy_mode,
             self.processing,
             self.updated,
         );
@@ -132,17 +133,7 @@ impl State for WalletSettingsState {
         match &self.modal {
             Modal::None => Subscription::none(),
             Modal::RegisterWallet(modal) => modal.subscription(),
-            Modal::ImportExport(modal) => {
-                if let Some(sub) = modal.subscription() {
-                    sub.map(|m| {
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
-                        ))
-                    })
-                } else {
-                    Subscription::none()
-                }
-            }
+            Modal::ImportExport(modal) => super::export_progress(modal),
         }
     }
 
@@ -273,13 +264,27 @@ impl State for WalletSettingsState {
                 }
             }
             Message::View(view::Message::Settings(
+                view::SettingsMessage::EncryptedBackupPrivacyMode(privacy_mode),
+            )) => Task::perform(
+                save_privacy_mode(
+                    self.data_dir.clone(),
+                    cache.network,
+                    self.wallet.clone(),
+                    privacy_mode,
+                ),
+                Message::WalletUpdated,
+            ),
+            Message::View(view::Message::Settings(
                 view::SettingsMessage::ExportEncryptedDescriptor,
             )) => {
                 if self.modal.is_none() {
                     let descriptor = self.wallet.main_descriptor.clone();
                     let modal = ExportModal::new(
                         Some(daemon),
-                        ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
+                        ImportExportType::ExportEncryptedDescriptor {
+                            descriptor: Box::new(descriptor),
+                            store_common_paths: !self.wallet.encrypted_backup_privacy_mode,
+                        },
                     );
                     let launch = modal.launch(true);
                     self.modal = Modal::ImportExport(modal);
@@ -488,6 +493,31 @@ pub async fn register_wallet(
     }
 
     Ok(wallet)
+}
+
+pub async fn save_privacy_mode(
+    data_dir: LianaDirectory,
+    network: Network,
+    wallet: Arc<Wallet>,
+    privacy_mode: bool,
+) -> Result<Arc<Wallet>, Error> {
+    let wallet = wallet.as_ref().clone().with_privacy_mode(privacy_mode);
+    let wallet_id = wallet.id();
+    update_settings_file(
+        &data_dir.network_directory(network),
+        |mut settings: LianaSettings| {
+            if let Some(wallet_setting) = settings
+                .wallets
+                .iter_mut()
+                .find(|w| w.wallet_id() == wallet_id)
+            {
+                wallet_setting.encrypted_backup_privacy_mode = privacy_mode;
+            }
+            settings
+        },
+    )
+    .await?;
+    Ok(Arc::new(wallet))
 }
 
 pub async fn update_aliases(

@@ -23,6 +23,8 @@ pub enum Msg {
     /// Register wallet on selected device.
     RegisterWallet,
 
+    ExportEncryptedDescriptor,
+
     /// Toggle fiat price display.
     FiatEnable(bool),
 

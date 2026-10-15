@@ -8,7 +8,12 @@ use iced::{
 };
 use liana_i18n::t;
 
-use crate::{color::TRANSPARENT, component::tooltip_custom, font, theme, widget::*};
+use crate::{
+    color::TRANSPARENT,
+    component::tooltip::{help_text, tooltip_custom},
+    font, theme,
+    widget::*,
+};
 
 const STRIP_SPACING: u32 = 4;
 const TAB_PADDING: [u16; 2] = [10, 18];
@@ -117,7 +122,7 @@ fn dot_view<'a, M: 'a>(dot: Dot) -> Element<'a, M> {
             }
         });
 
-    tooltip_custom(iced::widget::text(help), dot, Position::Top).into()
+    tooltip_custom(help_text(help), dot, Position::Top).into()
 }
 
 fn strip_line<'a, M: 'a>() -> Container<'a, M> {

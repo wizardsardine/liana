@@ -6,7 +6,10 @@ use iced::{
 
 use liana_ui::{
     component::{
-        panels::setting::{export_section, header, ImportExportKind, SectionKind},
+        checkbox::derivation_paths_checkbox,
+        panels::setting::{
+            export_section, export_section_with_footer, header, ImportExportKind, SectionKind,
+        },
         text::new,
     },
     spacing::{HSpacing, VSpacing},
@@ -28,7 +31,11 @@ use crate::{
     t,
 };
 
-pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Element<'a, Message> {
+pub fn import_export<'a>(
+    cache: &'a Cache,
+    warning: Option<&'a Error>,
+    encrypted_backup_privacy_mode: bool,
+) -> Element<'a, Message> {
     let header = header(
         Some(SETTING_MSG),
         Some(SectionKind::ImportExport.title()),
@@ -38,9 +45,13 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&'a Error>) -> Elemen
     let description =
         new::b2(t!("settings-import-export-description")).style(theme::text::secondary);
 
-    let export_encrypted_descriptor = export_section(
+    let paths = derivation_paths_checkbox(encrypted_backup_privacy_mode, |privacy_mode| {
+        SettingsMessage::EncryptedBackupPrivacyMode(privacy_mode).into()
+    });
+    let export_encrypted_descriptor = export_section_with_footer(
         ImportExportKind::ExportEncryptedDescriptor,
         Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
+        paths,
     );
 
     let export_descriptor = export_section(

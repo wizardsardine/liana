@@ -620,6 +620,10 @@ pub fn btn_retry<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, t!("btn-retry"), BtnWidth::M, msg)
 }
 
+pub fn btn_try_other_paths<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, t!("btn-try-other-paths"), BtnWidth::Auto, msg)
+}
+
 /// Yes button: primary. Width S.
 pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, t!("btn-yes"), BtnWidth::S, msg)
@@ -1102,7 +1106,7 @@ pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
     let button = btn_destructive(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
     tooltip::tooltip_custom(
-        caption(t!("transactions-cancel-tooltip")),
+        tooltip::help_text(t!("transactions-cancel-tooltip")),
         button,
         Position::Top,
     )

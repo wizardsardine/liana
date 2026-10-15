@@ -25,7 +25,7 @@ service via WebSocket. It allows users to:
               |                                 |
               v                                 v
 +---------------------------+     +---------------------------+
-|    business-installer     |     |    business-settings      |
+|    business-installer     |     |    src/settings           |
 |    (Installer trait)      |     |    (SettingsTrait)        |
 +---------------------------+     +---------------------------+
               |                                 |
@@ -48,7 +48,12 @@ service via WebSocket. It allows users to:
 liana-business/
 ├── src/
 │   ├── main.rs              # Entry point, LianaBusiness type alias
-│   └── lib.rs               # Re-exports
+│   ├── lib.rs               # Re-exports
+│   └── settings/            # Settings implementation
+│       ├── mod.rs           # BusinessSettings, BusinessWalletSettings
+│       ├── ui.rs            # BusinessSettingsUI
+│       ├── message.rs       # Msg, Section
+│       └── views/           # Settings sections rendering
 ├── business-installer/      # Policy builder implementation
 │   └── src/
 │       ├── lib.rs           # Re-exports BusinessInstaller, Message
@@ -77,11 +82,6 @@ liana-business/
 │           ├── keys/
 │           ├── xpub/
 │           └── modals/
-└── business-settings/       # Settings implementation
-    └── src/
-        ├── lib.rs           # BusinessSettings, BusinessWalletSettings
-        ├── ui.rs            # BusinessSettingsUI
-        └── message.rs       # BusinessSettingsMessage
 ```
 
 ## How We Reuse liana-gui
@@ -144,7 +144,7 @@ Implements `liana_gui::installer::Installer` trait:
 +------------------+----------------------------------------------+
 ```
 
-### BusinessSettings (business-settings)
+### BusinessSettings (src/settings/)
 
 Implements `liana_gui::app::settings::SettingsTrait`:
 
@@ -154,8 +154,8 @@ Implements `liana_gui::app::settings::SettingsTrait`:
 +--------------------------+-------------------------------------------+
 | BusinessSettings         | Root settings (list of wallets)           |
 | BusinessWalletSettings   | Per-wallet settings (NO bitcoind field)   |
-| BusinessSettingsUI       | Settings panel (placeholder for now)      |
-| BusinessSettingsMessage  | Settings UI messages                      |
+| BusinessSettingsUI       | Settings panel: general, wallet, about    |
+| Msg                      | Settings UI messages                      |
 +--------------------------+-------------------------------------------+
 ```
 

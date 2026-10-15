@@ -11,9 +11,9 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        button::{self, btn_backup_encrypt_descriptor, btn_register_on_device, btn_update},
+        button::btn_update,
         card, form,
-        panels::setting::{header, SectionKind},
+        panels::setting::{descriptor_card, header, SectionKind},
         scrollable,
         text::new,
         tooltip_custom,
@@ -50,6 +50,7 @@ pub fn wallet_settings<'a>(
     wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
     provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
+    encrypted_backup_privacy_mode: bool,
     processing: bool,
     updated: bool,
 ) -> Element<'a, Message> {
@@ -60,30 +61,15 @@ pub fn wallet_settings<'a>(
     );
 
     // ------------------------- Descriptor card -------------------------
-    let title = new::h3_semi(t!("settings-wallet-descriptor"));
-    let descriptor_s =
-        scrollable::horizontal_thin(new::caption(descriptor.to_string())).width(Length::Fill);
-
-    let backup_msg = Message::Settings(SettingsMessage::ExportEncryptedDescriptor);
-    let btn_backup = btn_backup_encrypt_descriptor(backup_msg);
-
-    let btn_copy = button::btn_copy(Some(Message::Clipboard(descriptor.to_string())));
-    let btn_register = btn_register_on_device(Message::Settings(SettingsMessage::RegisterWallet));
-
-    let descriptor_row = row![descriptor_s, btn_copy]
-        .spacing(HSpacing::M)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
-    let btn_row = row![Space::fill_width(), btn_backup, btn_register]
-        .spacing(HSpacing::M)
-        .width(Length::Fill)
-        .wrap();
-    let descriptor_card = card::simple(
-        column![title, descriptor_row, btn_row]
-            .spacing(VSpacing::S)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill);
+    let descriptor_card = descriptor_card(
+        descriptor.to_string(),
+        Some(Message::Clipboard(descriptor.to_string())),
+        Some((encrypted_backup_privacy_mode, |privacy_mode| {
+            SettingsMessage::EncryptedBackupPrivacyMode(privacy_mode).into()
+        })),
+        Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
+        Message::Settings(SettingsMessage::RegisterWallet),
+    );
 
     // --------------------------- Policy card ---------------------------
     let policy_card = card::simple(display_policy(

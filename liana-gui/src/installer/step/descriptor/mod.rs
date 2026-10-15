@@ -165,7 +165,9 @@ impl Step for ImportDescriptor {
                 }
                 None
             }
-            Message::Decrypt(Decrypt::Backup(mut backup)) => {
+            Message::Decrypt(Decrypt::Backup(mut backup))
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
+            {
                 let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {
@@ -434,6 +436,7 @@ pub struct BackupDescriptor {
     error: Option<Error>,
     context: Option<Context>,
     help_open: bool,
+    privacy_mode: bool,
 }
 
 impl Step for BackupDescriptor {
@@ -464,9 +467,9 @@ impl Step for BackupDescriptor {
                     let descriptor = ctx.descriptor.clone();
                     return Task::perform(
                         async move {
-                            let descriptor = descriptor.ok_or(encrypted_backup::Error::String(
-                                Box::new(crate::t!("installer-descriptor-missing")),
-                            ))?;
+                            let descriptor = descriptor.ok_or(bip138::Error::String(Box::new(
+                                crate::t!("installer-descriptor-missing"),
+                            )))?;
                             Ok(Box::new(descriptor))
                         },
                         Message::ExportEncryptedDescriptor,
@@ -483,8 +486,13 @@ impl Step for BackupDescriptor {
                             return Task::none();
                         }
                     };
-                    let modal =
-                        ExportModal::new(None, ImportExportType::ExportEncryptedDescriptor(bytes));
+                    let modal = ExportModal::new(
+                        None,
+                        ImportExportType::ExportEncryptedDescriptor {
+                            descriptor: bytes,
+                            store_common_paths: !self.privacy_mode,
+                        },
+                    );
                     let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;
@@ -496,9 +504,16 @@ impl Step for BackupDescriptor {
             Message::ShowBackupDescriptorHelp(open) => {
                 self.help_open = open;
             }
+            Message::BackupPrivacyMode(privacy_mode) => {
+                self.privacy_mode = privacy_mode;
+            }
             _ => {}
         }
         Task::none()
+    }
+    fn apply(&mut self, ctx: &mut Context) -> bool {
+        ctx.encrypted_backup_privacy_mode = self.privacy_mode;
+        true
     }
     fn load_context(&mut self, ctx: &Context) {
         self.context = Some(ctx.clone());
@@ -528,6 +543,7 @@ impl Step for BackupDescriptor {
             self.error.as_ref(),
             self.done,
             self.help_open,
+            self.privacy_mode,
         );
         if let Some(modal) = &self.modal {
             modal.view(content)

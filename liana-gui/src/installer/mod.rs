@@ -600,6 +600,7 @@ pub async fn install_local_wallet(
         remote_backend_auth: None,
         start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
         fiat_price: None,
+        encrypted_backup_privacy_mode: ctx.encrypted_backup_privacy_mode,
     };
 
     let cfg: lianad::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
@@ -824,6 +825,7 @@ pub async fn create_remote_wallet(
         )),
         start_internal_bitcoind: None,
         fiat_price: None,
+        encrypted_backup_privacy_mode: ctx.encrypted_backup_privacy_mode,
     };
     update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
@@ -906,6 +908,7 @@ pub async fn import_remote_wallet(
         )),
         start_internal_bitcoind: None,
         fiat_price: None,
+        encrypted_backup_privacy_mode: ctx.encrypted_backup_privacy_mode,
     };
     update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
@@ -1019,7 +1022,7 @@ pub enum Error {
     CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
-    Backup(encrypted_backup::Error),
+    Backup(bip138::Error),
 }
 
 impl From<jsonrpc::simple_http::Error> for Error {
