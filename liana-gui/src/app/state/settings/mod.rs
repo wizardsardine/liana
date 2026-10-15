@@ -10,7 +10,7 @@ use iced::{Subscription, Task};
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
-use wallet::{update_aliases, WalletSettingsState};
+use wallet::{save_privacy_mode, update_aliases, WalletSettingsState};
 
 use crate::{
     app::{
@@ -269,9 +269,27 @@ macro_rules! launch {
     };
 }
 
+/// The progress of an export modal opened from the settings.
+pub fn export_progress(modal: &ExportModal) -> iced::Subscription<Message> {
+    modal
+        .subscription()
+        .map(|sub| {
+            sub.map(|m| {
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
+                ))
+            })
+        })
+        .unwrap_or_else(iced::Subscription::none)
+}
+
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::import_export(cache, self.warning.as_ref());
+        let content = view::settings::import_export::import_export(
+            cache,
+            self.warning.as_ref(),
+            self.wallet.encrypted_backup_privacy_mode,
+        );
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -280,16 +298,10 @@ impl State for ImportExportSettingsState {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        if let Some(modal) = &self.modal {
-            if let Some(sub) = modal.subscription() {
-                return sub.map(|m| {
-                    Message::View(view::Message::Settings(
-                        view::SettingsMessage::ImportExport(ImportExportMessage::Progress(m)),
-                    ))
-                });
-            }
-        }
-        iced::Subscription::none()
+        self.modal
+            .as_ref()
+            .map(export_progress)
+            .unwrap_or_else(iced::Subscription::none)
     }
 
     fn update(
@@ -299,6 +311,23 @@ impl State for ImportExportSettingsState {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::WalletUpdated(res) => match res {
+                Ok(wallet) => self.wallet = wallet,
+                Err(e) => self.warning = Some(e),
+            },
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::EncryptedBackupPrivacyMode(privacy_mode),
+            )) => {
+                return Task::perform(
+                    save_privacy_mode(
+                        cache.datadir_path.clone(),
+                        cache.network,
+                        self.wallet.clone(),
+                        privacy_mode,
+                    ),
+                    Message::WalletUpdated,
+                );
+            }
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 self.modal = None;
             }
@@ -328,11 +357,14 @@ impl State for ImportExportSettingsState {
                 view::SettingsMessage::ExportEncryptedDescriptor,
             )) => {
                 if self.modal.is_none() {
+                    let descriptor = Box::new(self.wallet.main_descriptor.clone());
+                    let store_common_paths = !self.wallet.encrypted_backup_privacy_mode;
                     let modal = ExportModal::new(
                         Some(daemon),
-                        ImportExportType::ExportEncryptedDescriptor(Box::new(
-                            self.wallet.main_descriptor.clone(),
-                        )),
+                        ImportExportType::ExportEncryptedDescriptor {
+                            descriptor,
+                            store_common_paths,
+                        },
                     );
                     launch!(self, modal, true);
                 }
@@ -409,7 +441,11 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::about_section(cache, self.warning.as_ref(), self.daemon_version.as_ref())
+        view::settings::about::about_section(
+            cache,
+            self.warning.as_ref(),
+            self.daemon_version.as_ref(),
+        )
     }
 
     fn update(
@@ -473,7 +509,7 @@ impl BackendSettingsState {
 
 impl State for BackendSettingsState {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::remote_backend_section(
+        view::settings::backend::remote_backend_section(
             cache,
             &self.email_form,
             self.processing,

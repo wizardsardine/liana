@@ -73,12 +73,12 @@ rustls = { version = "0.23.35", default-features = false, features = ["ring", "s
 # Other dependencies
 bdk_coin_select = "0.4"
 getrandom = "0.3.1"
-bip39 = "2.0"
+bip39 = "2.1"
 rdrand = "0.8"
 fern = "0.6"
 bip329 = { git = "https://github.com/wizardsardine/bip329", rev = "77c9d91" }
 async-trait = "0.1"
-async-hwi = "0.0.32"
+async-hwi = { git = "https://github.com/wizardsardine/async-hwi", rev = "15e2ff4da88c75412840210a2182a58e1585027e" }
 hex = "0.4.3"
 email_address = "0.2.7"
 tokio = "1.21.0"
@@ -93,7 +93,7 @@ rust-ini = "0.19.0"
 rfd = "0.15.1"
 fs2 = "0.4.3"
 open = "5.3"
-encrypted_backup = { version = "=0.0.2", package = "bitcoin-encrypted-backup", default-features = false, features = ["miniscript_12_0", "rand"] }
+bip138 = { version = "=0.2.0", default-features = false, features = ["miniscript_12", "rand", "base64", "v0", "descriptor_backup"] }
 zip = { version = "0.6", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }

@@ -288,8 +288,7 @@ dependencies = [
 [[package]]
 name = "async-hwi"
 version = "0.0.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f30263bda4fbe2613e08989a2526d44ee0c13f19a3badd0d8d872cc233d6611"
+source = "git+https://github.com/wizardsardine/async-hwi?rev=15e2ff4da88c75412840210a2182a58e1585027e#15e2ff4da88c75412840210a2182a58e1585027e"
 dependencies = [
  "async-trait",
  "bitbox-api",
@@ -552,6 +551,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d965446196e3b7decd44aa7ee49e31d630118f90ef12f97900f262eb915c951d"
 
 [[package]]
+name = "bip138"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ace5a3287c98bcddc0aa56b118bd5d463549779604f00fc820031c2d10ebdc8"
+dependencies = [
+ "base64 0.22.1",
+ "bip138-ll",
+ "bitcoin-encrypted-backup",
+ "miniscript",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bip138-ll"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f690fd9223a393eb4c27da635cb16c5ff537246755bbc2c315b11cc23ff74698"
+dependencies = [
+ "bitcoin_hashes 0.14.0",
+ "chacha20-poly1305",
+ "rand 0.9.2",
+]
+
+[[package]]
 name = "bip329"
 version = "0.6.0"
 source = "git+https://github.com/wizardsardine/bip329?rev=77c9d91#77c9d9156e1c5029d5df251b04a8f458a66475db"
@@ -649,7 +673,6 @@ dependencies = [
  "aes-gcm",
  "miniscript",
  "num_enum",
- "rand 0.9.2",
 ]
 
 [[package]]
@@ -962,6 +985,12 @@ dependencies = [
  "cipher",
  "cpufeatures",
 ]
+
+[[package]]
+name = "chacha20-poly1305"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b4b0fc281743d80256607bd65e8beedc42cb0787ea119c85b81b4c0eab85e5f"
 
 [[package]]
 name = "chacha20poly1305"
@@ -3217,6 +3246,7 @@ name = "liana"
 version = "15.0.0"
 dependencies = [
  "bdk_coin_select",
+ "bip329",
  "bip39",
  "getrandom 0.3.1",
  "log",
@@ -3285,7 +3315,7 @@ dependencies = [
  "async-trait",
  "backtrace",
  "base64 0.21.7",
- "bitcoin-encrypted-backup",
+ "bip138",
  "bitcoin_hashes 0.12.0",
  "chrono",
  "dirs",
@@ -5396,14 +5426,15 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.138"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d434192e7da787e94a6ea7e9670b26a036d0ca41e0b7efb2676dd32bae872949"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
  "itoa",
  "memchr",
- "ryu",
  "serde",
+ "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -7767,6 +7798,12 @@ dependencies = [
  "crossbeam-utils",
  "flate2",
 ]
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zune-core"

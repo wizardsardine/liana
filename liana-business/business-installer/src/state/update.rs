@@ -176,6 +176,9 @@ impl State {
             // Logout
             Msg::Disconnect => return self.on_logout(),
 
+            // Handled by BusinessInstaller before routing into State.
+            Msg::LanguageEdited(_) => {}
+
             // No-op: just triggers a view refresh
             Msg::Update => {}
         }
@@ -1887,7 +1890,7 @@ impl State {
                 ]);
 
                 // Non-blocking! Result comes via SigningDeviceMsg::XPub
-                supported.get_extended_pubkey(request_id, &derivation_path);
+                supported.get_extended_pubkey(request_id, &derivation_path, false);
             }
             Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {

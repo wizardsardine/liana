@@ -8,6 +8,7 @@ use liana::{
         DescriptorPublicKey,
     },
 };
+use liana_i18n::SupportedLocale;
 use std::collections::HashMap;
 
 use super::{
@@ -66,13 +67,15 @@ pub enum Message {
     KeyRedeemed(ProviderKey, Result<(), liana_connect::keys::Error>),
     AllKeysRedeemed,
     BackupDescriptor,
+    BackupPrivacyMode(bool),
     ShowBackupDescriptorHelp(bool),
-    ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, encrypted_backup::Error>),
+    ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, bip138::Error>),
     ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
     WalletAliasEdited(String),
+    LanguageEdited(SupportedLocale),
     SelectAccount(Fingerprint, ChildNumber),
     OpenUrl(String),
     SelectKeySource(SelectKeySourceMessage),

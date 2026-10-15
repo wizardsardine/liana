@@ -683,7 +683,9 @@ impl Step for ImportRemoteWallet {
                     self.modal = ImportDescriptorModal::None;
                 }
             }
-            Message::Decrypt(Decrypt::Backup(mut backup)) => {
+            Message::Decrypt(Decrypt::Backup(mut backup))
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
+            {
                 let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {

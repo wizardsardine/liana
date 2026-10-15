@@ -2,17 +2,32 @@ use std::fmt::Display;
 
 use iced::{
     widget::{checkbox, radio, row},
-    Alignment,
+    Alignment, Pixels,
 };
+use liana_i18n::t;
 
 use crate::{
-    component::text::new,
-    widget::{Element, Radio, Row},
+    component::{text::new, tooltip::tooltip},
+    theme,
+    widget::{CheckBox, Element, Radio, Row, Toggler},
 };
 
 const LABEL_SPACING: u32 = 10;
 
 const CHECKBOX_SIZE: f32 = 18.0;
+
+#[derive(Debug, Clone, Copy)]
+#[repr(u32)]
+pub enum TogglerSize {
+    Normal = 16,
+    Large = 28,
+}
+
+impl From<TogglerSize> for Pixels {
+    fn from(value: TogglerSize) -> Self {
+        (value as u32).into()
+    }
+}
 
 pub fn radio_button<'a, M: Clone + 'a>(selected: bool, on_select: M) -> Radio<'a, M> {
     // Standalone on/off radio: a dummy `true` group value, filled when `selected`.
@@ -37,12 +52,40 @@ pub fn labelled_checkbox<'a, M: Clone + 'a>(
     checked: bool,
     on_toggle: impl Fn(bool) -> M + 'a,
 ) -> Row<'a, M> {
-    let control: Element<'a, M> = checkbox(checked)
-        .size(CHECKBOX_SIZE)
-        .on_toggle(on_toggle)
-        .into();
+    let control: Element<'a, M> = checkbox_button(checked, on_toggle).into();
     let label: Element<'a, M> = label.into();
     row![control, label]
+        .spacing(LABEL_SPACING)
+        .align_y(Alignment::Center)
+}
+
+pub fn checkbox_button<'a, M: Clone + 'a>(
+    checked: bool,
+    on_toggle: impl Fn(bool) -> M + 'a,
+) -> CheckBox<'a, M> {
+    checkbox(checked).size(CHECKBOX_SIZE).on_toggle(on_toggle)
+}
+
+pub fn toggler_button<'a, M: Clone + 'a>(
+    checked: bool,
+    size: TogglerSize,
+    on_toggle: impl Fn(bool) -> M + 'a,
+) -> Toggler<'a, M> {
+    Toggler::new(checked)
+        .on_toggle(on_toggle)
+        .size(size)
+        .style(theme::toggler::primary)
+}
+
+/// Checked when the backup stores the common derivation paths, that is when privacy mode is off.
+pub fn derivation_paths_checkbox<'a, M: Clone + 'a>(
+    privacy_mode: bool,
+    on_toggle: impl Fn(bool) -> M + 'a,
+) -> Row<'a, M> {
+    let label = new::caption(t!("export-encrypted-descriptor-include-paths"));
+    let control = labelled_checkbox(label, !privacy_mode, move |include| on_toggle(!include));
+    let help = tooltip(t!("export-encrypted-descriptor-include-paths-tooltip"));
+    row![control, help]
         .spacing(LABEL_SPACING)
         .align_y(Alignment::Center)
 }

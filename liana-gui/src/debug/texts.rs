@@ -17,13 +17,13 @@ use liana_ui::{
     component::text::{
         self,
         new::{
-            B1_SPEC, B2_MEDIUM_SPEC, B2_SPEC, B3_SPEC, B4_BOLD_SPEC, B4_MEDIUM_SPEC,
+            B1_SPEC, B2_MEDIUM_SPEC, B2_SPEC, B3_SPEC, B4_BOLD_SPEC, B4_MEDIUM_SPEC, B4_SPEC,
             B5_MEDIUM_SPEC, D2_SPEC, D3_SPEC, D4_SPEC, H2_SEMI_SPEC, H3_SEMI_SPEC,
             SMALL_CAPTION_SPEC,
         },
         TextSpec, BUTTON_TEXT_SPEC, CAPTION_SPEC, H1_SPEC, H2_SPEC, H3_SPEC, H4_BOLD_SPEC,
         H4_REGULAR_SPEC, H5_MEDIUM_SPEC, H5_REGULAR_SPEC, P1_BOLD_SPEC, P1_MEDIUM_SPEC,
-        P1_REGULAR_SPEC, P2_MEDIUM_SPEC, P2_REGULAR_SPEC, PANEL_TITLE_SPEC,
+        P1_REGULAR_SPEC, P2_MEDIUM_SPEC, P2_REGULAR_SPEC,
     },
     theme,
     widget::*,
@@ -118,7 +118,6 @@ fn legacy_view() -> Element<'static, DebugMessage> {
     let entries: Vec<(&'static str, TextSpec)> = vec![
         ("liana_ui::component::text::h1",                         H1_SPEC),
         ("liana_ui::component::text::h2",                         H2_SPEC),
-        ("liana_ui::component::text::panel_title",                PANEL_TITLE_SPEC),
         ("liana_ui::component::text::h3",                         H3_SPEC),
         ("liana_ui::component::text::h4_bold",                    H4_BOLD_SPEC),
         ("liana_ui::component::text::h4_regular",                 H4_REGULAR_SPEC),
@@ -154,6 +153,7 @@ fn new_view() -> Element<'static, DebugMessage> {
         ("text::new::b2",            B2_SPEC),
         ("text::new::b2_medium",     B2_MEDIUM_SPEC),
         ("text::new::b3",            B3_SPEC),
+        ("text::new::b4",            B4_SPEC),
         ("text::new::b4_medium",     B4_MEDIUM_SPEC),
         ("text::new::b4_bold",       B4_BOLD_SPEC),
         ("text::new::b5_medium",     B5_MEDIUM_SPEC),
