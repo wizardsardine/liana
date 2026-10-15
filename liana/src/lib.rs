@@ -1,9 +1,11 @@
 pub mod descriptors;
+pub mod label;
 pub mod random;
 pub mod signer;
 pub mod spend;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod temp_dir;
+pub mod transaction;
 
 pub use bip39;
 pub use getrandom;

@@ -3,8 +3,8 @@ use std::fmt::Display;
 use super::{
     modal::BTN_W,
     text::{
-        new::{button_text, button_text_compact, caption, BUTTON_TEXT_COMPACT_SPEC},
-        panel_title, text,
+        new::{button_text, button_text_compact, caption, d2, BUTTON_TEXT_COMPACT_SPEC},
+        text,
     },
     tooltip,
 };
@@ -181,8 +181,8 @@ pub fn auxiliary<'a, T: 'a + Clone>(
         .padding(0)
 }
 
-pub fn breadcrumb<'a, T: 'a>(icon: Option<Text<'a>>, t: impl Display) -> Button<'a, T> {
-    Button::new(content(icon, panel_title(t), false))
+pub fn breadcrumb<'a, T: 'a>(t: impl Display) -> Button<'a, T> {
+    Button::new(d2(t))
         .style(theme::button::breadcrumb)
         .padding(0)
 }
@@ -302,16 +302,6 @@ pub fn list_entry_card<'a, M: 'a>(
     container(entry).width(width).into()
 }
 
-pub fn clickable_section<'a, M: 'a + Clone, T: Into<Element<'a, M>>>(
-    content: T,
-    msg: Option<M>,
-) -> Button<'a, M> {
-    Button::new(content.into())
-        .style(theme::button::clickable_section)
-        .on_press_maybe(msg)
-        .width(Length::Fill)
-}
-
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>, compact: bool) -> Container<'a, T> {
     content_with_tooltip(icon, text, None, compact)
 }
@@ -392,6 +382,7 @@ pub enum BtnWidth {
     S = 100,
     M = 140,
     L = 180,
+    Modal = 200,
     XL = 230,
     XXL = 330,
     /// Default to Length::Shrink
@@ -639,13 +630,14 @@ pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_secondary(None, t!("btn-no"), BtnWidth::S, msg)
 }
 
-pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(
-        Some(icon::reload_icon()),
-        t!("btn-reset-timelock"),
-        BtnWidth::Auto,
-        msg,
-    )
+pub fn btn_reset_timelock<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
+    let icon = Some(icon::reload_icon());
+    let label = t!("btn-reset-timelock");
+    if primary {
+        btn_primary(icon, label, BtnWidth::Auto, msg)
+    } else {
+        btn_tertiary(icon, label, BtnWidth::Auto, msg)
+    }
 }
 
 pub fn btn_go_to_rescan<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -843,13 +835,8 @@ pub fn btn_register_on_device<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     )
 }
 
-pub fn btn_see_transaction_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
-    btn_tertiary(
-        None,
-        t!("btn-see-transaction-details"),
-        BtnWidth::XL,
-        Some(msg),
-    )
+pub fn btn_see_more_details<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-see-more-details"), BtnWidth::XL, Some(msg))
 }
 
 pub fn btn_export<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1039,15 +1026,6 @@ pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     )
 }
 
-pub fn btn_add_label<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(
-        Some(icon::edit_icon()),
-        t!("btn-edit-label"),
-        BtnWidth::L,
-        msg,
-    )
-}
-
 pub fn btn_delete_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     destructive(None, t!("btn-delete-wallet"))
         .width(Length::Fixed(200.0))
@@ -1083,7 +1061,7 @@ pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) ->
 }
 
 pub fn btn_backend_options_help<T: Clone + 'static>(msg: T) -> Button<'static, T> {
-    link(Some(icon::link_icon()), t!("btn-more-backend-node-info")).on_press(msg)
+    btn_help_link(t!("btn-more-backend-node-info"), Some(msg))
 }
 
 pub fn btn_accept<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1107,4 +1085,58 @@ pub fn btn_chevron<'a, T: Clone + 'a>(unfolded: bool, msg: T) -> Button<'a, T> {
     .padding(0)
     .style(theme::button::transparent)
     .on_press(msg)
+}
+
+pub fn btn_confirm<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-confirm"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_go_to_replacement<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, t!("btn-go-to-replacement"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_bump_fee<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-bump-fee"), BtnWidth::Modal, msg)
+}
+
+pub fn btn_cancel_transaction<'a, T: Clone + 'a>(msg: Option<T>) -> Container<'a, T> {
+    let button = btn_destructive(None, t!("btn-cancel-transaction"), BtnWidth::Modal, msg);
+    tooltip::tooltip_custom(
+        caption(t!("transactions-cancel-tooltip")),
+        button,
+        Position::Top,
+    )
+}
+
+pub fn btn_see_more<'a, T: Clone + 'a>(processing: bool, msg: T) -> Button<'a, T> {
+    let label = if processing {
+        t!("common-fetching")
+    } else {
+        t!("common-see-more")
+    };
+    btn_secondary(None, label, BtnWidth::Fill, (!processing).then_some(msg))
+}
+
+pub fn btn_send_invitation<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_tertiary(None, t!("btn-send-invitation"), BtnWidth::L, msg)
+}
+
+pub fn btn_start_rescan<'a, T: Clone + 'a>(processing: bool, msg: Option<T>) -> Button<'a, T> {
+    let label = if processing {
+        t!("btn-starting-rescan")
+    } else {
+        t!("btn-start-rescan")
+    };
+    if msg.is_some() {
+        btn_primary(None, label, BtnWidth::XL, msg)
+    } else {
+        btn_secondary(None, label, BtnWidth::XL, msg)
+    }
+}
+
+pub fn btn_help_link<T: Clone + 'static>(
+    label: impl Display,
+    msg: Option<T>,
+) -> Button<'static, T> {
+    link(Some(icon::link_icon()), label).on_press_maybe(msg)
 }

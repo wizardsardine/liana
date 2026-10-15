@@ -16,7 +16,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::{clipboard, Subscription, Task};
+use iced::{clipboard, widget::operation, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -563,7 +563,11 @@ impl<S: SettingsTrait> App<S> {
                     Message::WalletUpdated(Ok(wallet)),
                 )
             }
-            Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
+            Message::View(view::Message::Menu(menu)) => Task::batch([
+                self.set_current_panel(menu),
+                // Every panel shares the dashboard scrollable, which keeps its offset.
+                operation::snap_to(view::DASHBOARD_SCROLLABLE, operation::RelativeOffset::START),
+            ]),
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);

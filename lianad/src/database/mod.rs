@@ -7,21 +7,21 @@ pub mod sqlite;
 use crate::{
     bitcoin::BlockChainTip,
     database::sqlite::{
-        schema::{DbBlockInfo, DbCoin, DbTip},
+        schema::{DbBlockInfo, DbCoin, DbTip, DbWalletTransaction},
         SqliteConn, SqliteDb,
     },
 };
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
     iter::FromIterator,
-    str::FromStr,
     sync,
 };
 
 use bip329::Labels;
-use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid};
+use liana::label::Label;
+pub use liana::label::LabelItem;
+use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1};
 
 /// Information about the wallet.
 ///
@@ -123,6 +123,13 @@ pub trait DatabaseConnection {
         outpoints: &[bitcoin::OutPoint],
     ) -> HashMap<bitcoin::OutPoint, Coin>;
 
+    /// Get our coins as [`DatabaseConnection::coins`] does, along with their default label.
+    fn coins_with_default_label(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, CoinWithDefaultLabel>;
+
     /// List coins that are being spent and whose spending transaction is still unconfirmed.
     fn list_spending_coins(&mut self) -> HashMap<bitcoin::OutPoint, Coin>;
 
@@ -186,11 +193,20 @@ pub trait DatabaseConnection {
     /// update whether the coin is from self or not.
     fn update_coins_from_self(&mut self, prev_tip_height: i32);
 
-    /// Retrieve a list of transactions and their corresponding block heights and times.
-    fn list_wallet_transactions(
+    /// Retrieve a list of transactions and their corresponding block heights, times and default
+    /// labels.
+    fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction>;
+
+    fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction>;
+
+    fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint>;
+
+    /// Store the default label of transactions and coins, keeping the ones already stored.
+    fn store_default_labels(
         &mut self,
-        txids: &[bitcoin::Txid],
-    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)>;
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    );
 
     /// Dump all labels
     fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
@@ -284,6 +300,20 @@ impl DatabaseConnection for SqliteConn {
         self.coins(statuses, outpoints)
             .into_iter()
             .map(|db_coin| (db_coin.outpoint, db_coin.into()))
+            .collect()
+    }
+
+    fn coins_with_default_label(
+        &mut self,
+        statuses: &[CoinStatus],
+        outpoints: &[bitcoin::OutPoint],
+    ) -> HashMap<bitcoin::OutPoint, CoinWithDefaultLabel> {
+        self.coins(statuses, outpoints)
+            .into_iter()
+            .map(|db_coin| {
+                let coin = CoinWithDefaultLabel::from(db_coin);
+                (coin.coin.outpoint, coin)
+            })
             .collect()
     }
 
@@ -401,20 +431,27 @@ impl DatabaseConnection for SqliteConn {
             .expect("must not fail")
     }
 
-    fn list_wallet_transactions(
-        &mut self,
-        txids: &[bitcoin::Txid],
-    ) -> Vec<(bitcoin::Transaction, Option<i32>, Option<u32>)> {
+    fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction> {
         self.list_wallet_transactions(txids)
             .into_iter()
-            .map(|wtx| {
-                (
-                    wtx.transaction,
-                    wtx.block_info.map(|b| b.height),
-                    wtx.block_info.map(|b| b.time),
-                )
-            })
+            .map(WalletTransaction::from)
             .collect()
+    }
+
+    fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
+        self.list_txs_without_default_label()
+    }
+
+    fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint> {
+        self.list_coins_without_default_label()
+    }
+
+    fn store_default_labels(
+        &mut self,
+        txs: &HashMap<bitcoin::Txid, Label>,
+        coins: &HashMap<bitcoin::OutPoint, Label>,
+    ) {
+        self.store_default_labels(txs, coins)
     }
 }
 
@@ -484,6 +521,41 @@ impl Coin {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoinWithDefaultLabel {
+    pub coin: Coin,
+    pub default_label: Label,
+}
+
+impl From<DbCoin> for CoinWithDefaultLabel {
+    fn from(db_coin: DbCoin) -> Self {
+        let default_label = db_coin.default_label.clone().unwrap_or_default();
+        Self {
+            coin: db_coin.into(),
+            default_label,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletTransaction {
+    pub tx: bitcoin::Transaction,
+    pub block_height: Option<i32>,
+    pub block_time: Option<u32>,
+    pub default_label: Label,
+}
+
+impl From<DbWalletTransaction> for WalletTransaction {
+    fn from(wtx: DbWalletTransaction) -> Self {
+        Self {
+            tx: wtx.transaction,
+            block_height: wtx.block_info.map(|b| b.height),
+            block_time: wtx.block_info.map(|b| b.time),
+            default_label: wtx.default_label.unwrap_or_default(),
+        }
+    }
+}
+
 /// Possible (mutually exclusive) status of a coin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CoinStatus {
@@ -516,100 +588,6 @@ impl CoinStatus {
             CoinStatus::Confirmed => "confirmed",
             CoinStatus::Spending => "spending",
             CoinStatus::Spent => "spent",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum LabelItem {
-    Address(bitcoin::Address),
-    Txid(bitcoin::Txid),
-    OutPoint(bitcoin::OutPoint),
-}
-
-impl From<bitcoin::Address> for LabelItem {
-    fn from(value: bitcoin::Address) -> Self {
-        Self::Address(value)
-    }
-}
-
-impl From<bitcoin::Txid> for LabelItem {
-    fn from(value: bitcoin::Txid) -> Self {
-        Self::Txid(value)
-    }
-}
-
-impl From<bitcoin::OutPoint> for LabelItem {
-    fn from(value: bitcoin::OutPoint) -> Self {
-        Self::OutPoint(value)
-    }
-}
-
-impl Display for LabelItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            LabelItem::Address(a) => write!(f, "{a}"),
-            LabelItem::Txid(a) => write!(f, "{a}"),
-            LabelItem::OutPoint(a) => write!(f, "{a}"),
-        }
-    }
-}
-
-impl LabelItem {
-    pub fn from_str(s: &str, network: bitcoin::Network) -> Option<LabelItem> {
-        if let Ok(addr) = bitcoin::Address::from_str(s) {
-            if !addr.is_valid_for_network(network) {
-                None
-            } else {
-                Some(LabelItem::Address(addr.assume_checked()))
-            }
-        } else if let Ok(txid) = bitcoin::Txid::from_str(s) {
-            Some(LabelItem::Txid(txid))
-        } else if let Ok(outpoint) = bitcoin::OutPoint::from_str(s) {
-            Some(LabelItem::OutPoint(outpoint))
-        } else {
-            None
-        }
-    }
-
-    pub fn from_bip329(label: &bip329::Label, network: Network) -> Option<(Self, String)> {
-        match label {
-            bip329::Label::Transaction(tx_record) => {
-                if let (Some(txid), Some(label)) = (
-                    Txid::from_str(&tx_record.ref_.to_string()).ok(),
-                    tx_record.label.clone(),
-                ) {
-                    Some((Self::Txid(txid), label))
-                } else {
-                    None
-                }
-            }
-            bip329::Label::Address(address_record) => {
-                if let (Some(addr), Some(label)) = (
-                    Address::from_str(&address_record.ref_.clone().assume_checked().to_string())
-                        .ok(),
-                    address_record.label.clone(),
-                ) {
-                    if addr.is_valid_for_network(network) {
-                        Some((Self::Address(addr.assume_checked()), label))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            bip329::Label::Output(output_record) => {
-                if let (Some(outpoint), Some(label)) = (
-                    OutPoint::from_str(&output_record.ref_.to_string()).ok(),
-                    output_record.label.clone(),
-                ) {
-                    Some((Self::OutPoint(outpoint), label))
-                } else {
-                    None
-                }
-            }
-            _ => None,
         }
     }
 }

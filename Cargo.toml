@@ -73,7 +73,7 @@ rustls = { version = "0.23.35", default-features = false, features = ["ring", "s
 # Other dependencies
 bdk_coin_select = "0.4"
 getrandom = "0.3.1"
-bip39 = "2.0"
+bip39 = "2.1"
 rdrand = "0.8"
 fern = "0.6"
 bip329 = { git = "https://github.com/wizardsardine/bip329", rev = "77c9d91" }

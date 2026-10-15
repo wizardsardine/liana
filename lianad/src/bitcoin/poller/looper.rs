@@ -1,11 +1,15 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
-    database::{Coin, DatabaseConnection, DatabaseInterface},
+    database::{Coin, DatabaseConnection, DatabaseInterface, LabelItem},
 };
 
-use std::{collections::HashSet, convert::TryInto, sync, thread, time};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryInto,
+    iter, sync, thread, time,
+};
 
-use liana::descriptors;
+use liana::{descriptors, label};
 use miniscript::bitcoin::{self, secp256k1};
 
 #[derive(Debug, Clone)]
@@ -191,6 +195,93 @@ fn add_txs_to_db(
     }
 }
 
+/// The items whose label the default labels of `tx` and of its coins may depend on.
+fn label_items(
+    tx: &bitcoin::Transaction,
+    network: bitcoin::Network,
+) -> impl Iterator<Item = LabelItem> + '_ {
+    let txid = tx.compute_txid();
+    let inputs = tx
+        .input
+        .iter()
+        .map(|input| LabelItem::from(input.previous_output));
+    let outputs = tx
+        .output
+        .iter()
+        .enumerate()
+        .flat_map(move |(index, output)| {
+            let address = bitcoin::Address::from_script(&output.script_pubkey, network)
+                .ok()
+                .map(LabelItem::from);
+            iter::once(LabelItem::from(bitcoin::OutPoint::new(txid, index as u32))).chain(address)
+        });
+    iter::once(LabelItem::from(txid))
+        .chain(inputs)
+        .chain(outputs)
+}
+
+/// Snapshot the default label of the transactions and coins that do not have one yet.
+pub fn update_default_labels(db_conn: &mut Box<dyn DatabaseConnection>) {
+    let mut txs: HashMap<_, _> = db_conn
+        .list_txs_without_default_label()
+        .into_iter()
+        .map(|tx| (tx.compute_txid(), tx))
+        .collect();
+    // Transactions whose snapshot is stored but not the one of some of their coins.
+    let labelled_txids: HashSet<_> = db_conn
+        .list_coins_without_default_label()
+        .into_iter()
+        .map(|outpoint| outpoint.txid)
+        .filter(|txid| !txs.contains_key(txid))
+        .collect();
+    if txs.is_empty() && labelled_txids.is_empty() {
+        return;
+    }
+    txs.extend(
+        db_conn
+            .list_wallet_transactions(&labelled_txids.iter().copied().collect::<Vec<_>>())
+            .into_iter()
+            .map(|wtx| (wtx.tx.compute_txid(), wtx.tx)),
+    );
+    // Only the coins these transactions spend or create, not the whole wallet.
+    let outpoints: Vec<_> = txs
+        .values()
+        .flat_map(|tx| {
+            let txid = tx.compute_txid();
+            let outputs =
+                (0..tx.output.len()).map(move |vout| bitcoin::OutPoint::new(txid, vout as u32));
+            tx.input
+                .iter()
+                .map(|input| input.previous_output)
+                .chain(outputs)
+        })
+        .collect();
+    let coins = db_conn.coins_with_default_label(&[], &outpoints);
+    let owned_coins: HashMap<_, _> = coins
+        .iter()
+        .map(|(outpoint, coin)| (*outpoint, coin.coin.amount))
+        .collect();
+    let coin_defaults: HashMap<_, _> = coins
+        .into_iter()
+        .map(|(outpoint, coin)| (outpoint, coin.default_label))
+        .collect();
+    let network = db_conn.network();
+    let items: HashSet<_> = txs
+        .values()
+        .flat_map(|tx| label_items(tx, network))
+        .collect();
+    let labels = db_conn.labels(&items);
+    let default_labels = label::default_labels(
+        &txs,
+        &labelled_txids,
+        &owned_coins,
+        &coin_defaults,
+        &labels,
+        network,
+    );
+    db_conn.store_default_labels(&default_labels.txs, &default_labels.coins);
+}
+
 #[derive(Debug, Clone, Copy)]
 enum TipUpdate {
     // The best block is still the same as in the previous poll.
@@ -318,6 +409,7 @@ fn updates(
     // Update info about which coins are from self only after
     // coins have been inserted & updated above.
     db_conn.update_coins_from_self(current_tip.height);
+    update_default_labels(db_conn);
     if latest_tip != current_tip {
         db_conn.update_tip(&latest_tip);
         log::debug!("New tip: '{}'", latest_tip);
@@ -411,4 +503,388 @@ pub fn poll(
         .try_into()
         .expect("system clock year is earlier than 2106");
     db_conn.set_last_poll(now);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        bitcoin::poller::looper::update_default_labels,
+        database::{Coin, DatabaseConnection, DatabaseInterface, LabelItem},
+        testutils::{dummy_descriptor, DummyDatabase, DEFAULT_TIMELOCK},
+    };
+
+    use std::{collections::HashMap, str::FromStr};
+
+    use liana::label::Label;
+    use miniscript::bitcoin::{
+        absolute, bip32, transaction::Version, Address, Amount, Network, OutPoint, ScriptBuf,
+        Sequence, Transaction, TxIn, TxOut, Txid, Witness,
+    };
+
+    const SALARY: &str = "salary";
+    const RENT: &str = "rent";
+    const GIFT: &str = "gift";
+
+    fn address(index: u8) -> Address {
+        Address::p2wsh(&ScriptBuf::from_bytes(vec![index]), Network::Bitcoin)
+    }
+
+    fn foreign_outpoint(index: u8) -> OutPoint {
+        OutPoint::new(Txid::from_str(&format!("{index:0>64x}")).unwrap(), 0)
+    }
+
+    /// Spending `inputs` to one output per address index.
+    fn tx(inputs: &[OutPoint], outputs: &[u8]) -> Transaction {
+        Transaction {
+            version: Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: inputs
+                .iter()
+                .map(|input| TxIn {
+                    previous_output: *input,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: Witness::new(),
+                })
+                .collect(),
+            output: outputs
+                .iter()
+                .map(|index| TxOut {
+                    value: Amount::from_sat(10_000),
+                    script_pubkey: address(*index).script_pubkey(),
+                })
+                .collect(),
+        }
+    }
+
+    fn coin(outpoint: OutPoint, spend_txid: Option<Txid>) -> Coin {
+        Coin {
+            outpoint,
+            is_immature: false,
+            block_info: None,
+            amount: Amount::from_sat(10_000),
+            derivation_index: bip32::ChildNumber::from_normal_idx(0).unwrap(),
+            is_change: false,
+            spend_txid,
+            spend_block: None,
+            is_from_self: false,
+        }
+    }
+
+    /// Stores `txs` with their first output as our coin, spent by the one of `txs` spending it.
+    fn add_txs(db_conn: &mut Box<dyn DatabaseConnection>, txs: &[&Transaction]) {
+        db_conn.new_txs(&txs.iter().map(|tx| (*tx).clone()).collect::<Vec<_>>());
+        let coins: Vec<_> = txs
+            .iter()
+            .map(|tx| {
+                let outpoint = OutPoint::new(tx.compute_txid(), 0);
+                let spend_txid = txs
+                    .iter()
+                    .find(|spend| spend.input.iter().any(|i| i.previous_output == outpoint))
+                    .map(|spend| spend.compute_txid());
+                coin(outpoint, spend_txid)
+            })
+            .collect();
+        db_conn.new_unspent_coins(&coins);
+    }
+
+    fn set_label(
+        db_conn: &mut Box<dyn DatabaseConnection>,
+        item: impl Into<LabelItem>,
+        label: &str,
+    ) {
+        db_conn.update_labels(&HashMap::from([(item.into(), Some(label.to_string()))]));
+    }
+
+    fn tx_default_label(db_conn: &mut Box<dyn DatabaseConnection>, txid: Txid) -> Label {
+        db_conn
+            .list_wallet_transactions(&[txid])
+            .pop()
+            .unwrap()
+            .default_label
+    }
+
+    fn coin_default_label(db_conn: &mut Box<dyn DatabaseConnection>, outpoint: OutPoint) -> Label {
+        db_conn
+            .coins_with_default_label(&[], &[outpoint])
+            .remove(&outpoint)
+            .unwrap()
+            .default_label
+    }
+
+    /// The default labels of `tx` and of its first output.
+    fn default_labels(
+        db_conn: &mut Box<dyn DatabaseConnection>,
+        tx: &Transaction,
+    ) -> (Label, Label) {
+        let txid = tx.compute_txid();
+        (
+            tx_default_label(db_conn, txid),
+            coin_default_label(db_conn, OutPoint::new(txid, 0)),
+        )
+    }
+
+    fn funding(label: &str) -> Label {
+        Label::Funding(label.to_string())
+    }
+
+    #[test]
+    fn default_labels_snapshot() {
+        let db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
+        let mut db_conn = db.connection();
+
+        // Paying us on address 1 and a stranger on address 9, then moving it to address 2.
+        let incoming = tx(&[foreign_outpoint(1)], &[1, 9]);
+        let received = OutPoint::new(incoming.compute_txid(), 0);
+        let to_self = tx(&[received], &[2]);
+        let moved = OutPoint::new(to_self.compute_txid(), 0);
+        db_conn.new_txs(&[incoming.clone(), to_self.clone()]);
+        db_conn.new_unspent_coins(&[
+            coin(received, Some(to_self.compute_txid())),
+            coin(moved, None),
+        ]);
+        set_label(&mut db_conn, address(1), SALARY);
+        update_default_labels(&mut db_conn);
+
+        let salary_address = Label::Address(SALARY.to_string());
+        let salary_funding = funding(SALARY);
+        assert_eq!(
+            tx_default_label(&mut db_conn, incoming.compute_txid()),
+            salary_address
+        );
+        assert_eq!(coin_default_label(&mut db_conn, received), salary_address);
+        assert_eq!(
+            tx_default_label(&mut db_conn, to_self.compute_txid()),
+            Label::None
+        );
+        assert_eq!(coin_default_label(&mut db_conn, moved), salary_funding);
+
+        // A later label edit leaves the snapshots, which a new child inherits.
+        set_label(&mut db_conn, address(1), RENT);
+        let child = tx(&[moved], &[3]);
+        let child_coin = OutPoint::new(child.compute_txid(), 0);
+        db_conn.new_txs(&[child.clone()]);
+        db_conn.new_unspent_coins(&[coin(child_coin, None)]);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            tx_default_label(&mut db_conn, incoming.compute_txid()),
+            salary_address
+        );
+        assert_eq!(coin_default_label(&mut db_conn, received), salary_address);
+        assert_eq!(
+            tx_default_label(&mut db_conn, child.compute_txid()),
+            Label::None
+        );
+        assert_eq!(coin_default_label(&mut db_conn, child_coin), salary_funding);
+
+        // Moving it to address 4, whose coin is only found in a later poll.
+        let consolidation = tx(&[child_coin], &[4]);
+        let consolidated = OutPoint::new(consolidation.compute_txid(), 0);
+        db_conn.new_txs(&[consolidation.clone()]);
+        db_conn.spend_coins(&[(child_coin, consolidation.compute_txid())]);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            tx_default_label(&mut db_conn, consolidation.compute_txid()),
+            Label::None
+        );
+
+        // The first snapshot of the consolidation is kept once its coin is found, which inherits
+        // the label of the coin it spends.
+        db_conn.new_unspent_coins(&[coin(consolidated, None)]);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            tx_default_label(&mut db_conn, consolidation.compute_txid()),
+            Label::None
+        );
+        assert_eq!(
+            coin_default_label(&mut db_conn, consolidated),
+            salary_funding
+        );
+
+        // A label edit alone recomputes nothing.
+        set_label(&mut db_conn, address(1), GIFT);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            tx_default_label(&mut db_conn, incoming.compute_txid()),
+            salary_address
+        );
+        assert_eq!(coin_default_label(&mut db_conn, received), salary_address);
+        assert_eq!(
+            tx_default_label(&mut db_conn, consolidation.compute_txid()),
+            Label::None
+        );
+        assert_eq!(
+            coin_default_label(&mut db_conn, consolidated),
+            salary_funding
+        );
+    }
+
+    #[test]
+    fn default_label_from_an_own_coin_label() {
+        let db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
+        let mut db_conn = db.connection();
+
+        let incoming = tx(&[foreign_outpoint(1)], &[1]);
+        let received = OutPoint::new(incoming.compute_txid(), 0);
+        let to_self = tx(&[received], &[2]);
+        add_txs(&mut db_conn, &[&incoming, &to_self]);
+        set_label(&mut db_conn, incoming.compute_txid(), GIFT);
+        set_label(&mut db_conn, address(1), SALARY);
+        set_label(&mut db_conn, received, RENT);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            default_labels(&mut db_conn, &incoming),
+            (
+                Label::Address(SALARY.to_string()),
+                Label::Address(SALARY.to_string())
+            )
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &to_self),
+            (Label::None, funding(RENT))
+        );
+    }
+
+    #[test]
+    fn default_label_chain_follows_an_own_coin_label() {
+        let db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
+        let mut db_conn = db.connection();
+
+        let incoming = tx(&[foreign_outpoint(1)], &[1]);
+        let first = tx(&[OutPoint::new(incoming.compute_txid(), 0)], &[2]);
+        let second = tx(&[OutPoint::new(first.compute_txid(), 0)], &[2]);
+        let third = tx(&[OutPoint::new(second.compute_txid(), 0)], &[2]);
+        add_txs(&mut db_conn, &[&incoming, &first, &second, &third]);
+        set_label(&mut db_conn, address(1), SALARY);
+        set_label(&mut db_conn, OutPoint::new(first.compute_txid(), 0), RENT);
+        // Labelling a send-to-self transaction changes nothing.
+        set_label(&mut db_conn, second.compute_txid(), GIFT);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            default_labels(&mut db_conn, &first),
+            (Label::None, funding(SALARY))
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &second),
+            (Label::None, funding(RENT))
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &third),
+            (Label::None, funding(RENT))
+        );
+    }
+
+    #[test]
+    fn default_label_chain_breaks_on_a_disagreeing_consolidation() {
+        let db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
+        let mut db_conn = db.connection();
+
+        let salary = tx(&[foreign_outpoint(1)], &[1]);
+        let to_self = tx(&[OutPoint::new(salary.compute_txid(), 0)], &[2]);
+        let rent = tx(&[foreign_outpoint(2)], &[5]);
+        add_txs(&mut db_conn, &[&salary, &to_self, &rent]);
+        set_label(&mut db_conn, address(1), SALARY);
+        set_label(&mut db_conn, address(5), RENT);
+        update_default_labels(&mut db_conn);
+
+        let merged = tx(
+            &[
+                OutPoint::new(to_self.compute_txid(), 0),
+                OutPoint::new(rent.compute_txid(), 0),
+            ],
+            &[3],
+        );
+        let child = tx(&[OutPoint::new(merged.compute_txid(), 0)], &[4]);
+        db_conn.new_txs(&[merged.clone(), child.clone()]);
+        db_conn.spend_coins(&[
+            (
+                OutPoint::new(to_self.compute_txid(), 0),
+                merged.compute_txid(),
+            ),
+            (OutPoint::new(rent.compute_txid(), 0), merged.compute_txid()),
+        ]);
+        db_conn.new_unspent_coins(&[
+            coin(
+                OutPoint::new(merged.compute_txid(), 0),
+                Some(child.compute_txid()),
+            ),
+            coin(OutPoint::new(child.compute_txid(), 0), None),
+        ]);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            default_labels(&mut db_conn, &to_self),
+            (Label::None, funding(SALARY))
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &merged),
+            (Label::None, Label::None)
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &child),
+            (Label::None, Label::None)
+        );
+    }
+
+    #[test]
+    fn default_label_chain_keeps_the_snapshot_after_a_label_edit() {
+        let db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
+        let mut db_conn = db.connection();
+
+        let incoming = tx(&[foreign_outpoint(1)], &[1]);
+        let first = tx(&[OutPoint::new(incoming.compute_txid(), 0)], &[2]);
+        let second = tx(&[OutPoint::new(first.compute_txid(), 0)], &[2]);
+        add_txs(&mut db_conn, &[&incoming, &first, &second]);
+        set_label(&mut db_conn, address(1), SALARY);
+        update_default_labels(&mut db_conn);
+
+        // The root address label changes, then a new child is found.
+        set_label(&mut db_conn, address(1), RENT);
+        let third = tx(&[OutPoint::new(second.compute_txid(), 0)], &[2]);
+        db_conn.new_txs(&[third.clone()]);
+        db_conn.spend_coins(&[(
+            OutPoint::new(second.compute_txid(), 0),
+            third.compute_txid(),
+        )]);
+        db_conn.new_unspent_coins(&[coin(OutPoint::new(third.compute_txid(), 0), None)]);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            default_labels(&mut db_conn, &incoming),
+            (
+                Label::Address(SALARY.to_string()),
+                Label::Address(SALARY.to_string())
+            )
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &third),
+            (Label::None, funding(SALARY))
+        );
+
+        // Only an own label of the last coin passes the new text on.
+        set_label(&mut db_conn, OutPoint::new(third.compute_txid(), 0), GIFT);
+        let fourth = tx(&[OutPoint::new(third.compute_txid(), 0)], &[2]);
+        db_conn.new_txs(&[fourth.clone()]);
+        db_conn.spend_coins(&[(
+            OutPoint::new(third.compute_txid(), 0),
+            fourth.compute_txid(),
+        )]);
+        db_conn.new_unspent_coins(&[coin(OutPoint::new(fourth.compute_txid(), 0), None)]);
+        update_default_labels(&mut db_conn);
+
+        assert_eq!(
+            default_labels(&mut db_conn, &third),
+            (Label::None, funding(SALARY))
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &fourth),
+            (Label::None, funding(GIFT))
+        );
+    }
 }

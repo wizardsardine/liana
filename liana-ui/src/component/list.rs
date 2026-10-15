@@ -179,9 +179,18 @@ pub fn list_entry_row<'a, M: Clone + 'a>(
     button::list_entry(content, accent, width, msg)
 }
 
+const CHEVRON_SIZE: u32 = 18;
+
 pub fn right_chevron<'a, M: 'a>() -> Element<'a, M> {
     icon::chevron_right()
-        .size(18)
+        .size(CHEVRON_SIZE)
+        .style(theme::text::secondary)
+        .into()
+}
+
+pub fn down_chevron<'a, M: 'a>() -> Element<'a, M> {
+    icon::collapsed_icon()
+        .size(CHEVRON_SIZE)
         .style(theme::text::secondary)
         .into()
 }
@@ -294,12 +303,22 @@ pub fn entry_organization<'a, M: Clone + 'a>(
     subtitle: Option<impl Display>,
     msg: Option<M>,
 ) -> Element<'a, M> {
+    entry_section(Tile::Org, title, subtitle, EntryWidth::Standard, msg)
+}
+
+pub fn entry_section<'a, M: Clone + 'a>(
+    tile: Tile,
+    title: impl Display,
+    subtitle: Option<impl Display>,
+    width: EntryWidth,
+    msg: Option<M>,
+) -> Element<'a, M> {
     list_entry_chevron(
-        Some(badge::tile(Tile::Org).into()),
+        Some(badge::tile(tile).into()),
         section_body(title, subtitle),
         None,
         None,
-        EntryWidth::Standard,
+        width,
         msg,
     )
 }
@@ -618,31 +637,6 @@ pub fn entry_no_devices<'a, M: Clone + 'a>(
     )
 }
 
-/// "See more" button paginating an history. Shows "Fetching ..." and
-/// is disabled while `processing`.
-pub fn see_more<'a, M: Clone + 'a>(processing: bool, next: M) -> Element<'a, M> {
-    let label = if processing {
-        t!("common-fetching")
-    } else {
-        t!("common-see-more")
-    };
-
-    let button = Button::new(
-        text::text(label)
-            .width(Length::Fill)
-            .align_x(Horizontal::Center),
-    )
-    .width(Length::Fill)
-    .padding(15)
-    .style(theme::button::transparent_border)
-    .on_press_maybe((!processing).then_some(next));
-
-    Container::new(button)
-        .width(Length::Fill)
-        .style(theme::card::simple)
-        .into()
-}
-
 fn leaf_entry<'a, M: Clone + 'a>(
     tile: Tile,
     title: impl Display,
@@ -757,7 +751,7 @@ fn body<'a, M: 'a>(
     Container::new(content).width(Length::Fill).into()
 }
 
-fn entry_accent(status: EntryAccent) -> ListEntryAccent {
+pub fn entry_accent(status: EntryAccent) -> ListEntryAccent {
     match status {
         EntryAccent::Simple => |theme| {
             theme

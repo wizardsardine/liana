@@ -1,21 +1,22 @@
 //! View functions for business settings UI.
 
 use iced::{
-    widget::{Column, Row, Space, Toggler},
-    Alignment, Length,
+    widget::{column, row, Space},
+    Length,
 };
 use liana_i18n::t;
 use liana_ui::{
     component::{
-        self, badge,
+        self,
         button::btn_register_on_device,
         card,
-        panels::setting::{header, settings_section, SectionKind},
-        pick_list, scrollable, separation,
-        text::*,
+        checkbox::{toggler_button, TogglerSize},
+        panels::setting::{header, setting_row, settings_section, version_card, SectionKind},
+        pick_list, scrollable,
+        text::new,
     },
-    theme,
-    widget::{ColumnExt, Element, SpaceExt},
+    spacing::VSpacing,
+    widget::{Element, SpaceExt},
 };
 
 use crate::{
@@ -42,26 +43,17 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
     let header = header(Some(SETTING_MSG), Some(SectionKind::Wallet.title()), None);
 
     let descriptor = state.wallet.main_descriptor.to_string();
-    let descriptor_card = card::simple(
-        Column::new()
-            .push(text(t!("settings-wallet-descriptor")).bold())
-            .push(scrollable::horizontal_thin(
-                Column::new().push(text(&descriptor).small()),
-            ))
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(Space::with_width(Length::Fill))
-                    .push(btn_register_on_device(Msg::RegisterWallet)),
-            )
-            .spacing(10),
-    )
-    .width(Length::Fill);
+    let title = new::h3_semi(t!("settings-wallet-descriptor"));
+    let descriptor_s = scrollable::horizontal_thin(new::caption(&descriptor));
+    let btn_row = row![
+        Space::fill_width(),
+        btn_register_on_device(Msg::RegisterWallet)
+    ];
+    let descriptor_card = card::simple(column![title, descriptor_s, btn_row].spacing(VSpacing::S))
+        .width(Length::Fill);
 
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(descriptor_card)
+    column![header, descriptor_card]
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
 }
@@ -73,45 +65,22 @@ pub fn general_view(
 ) -> Element<'static, Msg> {
     let header = header(Some(SETTING_MSG), Some(SectionKind::General.title()), None);
 
-    let fiat_card = card::simple(
-        Column::new()
-            .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(text(t!("settings-fiat-price")).bold())
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        Toggler::new(fiat_enabled)
-                            .on_toggle(Msg::FiatEnable)
-                            .style(theme::toggler::primary),
-                    ),
-            )
-            .push_maybe(
-                fiat_enabled.then_some(
-                    Row::new()
-                        .spacing(20)
-                        .align_y(Alignment::Center)
-                        .push(text(t!("settings-currency")).bold())
-                        .push(Space::with_width(Length::Fill))
-                        .push(
-                            pick_list::pick_list(
-                                crate::settings::ALL_BACKEND_CURRENCIES,
-                                Some(currency),
-                                Msg::FiatCurrencyEdited,
-                            )
-                            .padding(10),
-                        ),
-                ),
-            ),
-    )
-    .width(Length::Fill);
+    let toggler = toggler_button(fiat_enabled, TogglerSize::Normal, Msg::FiatEnable);
+    let fiat = setting_row(t!("settings-fiat-price"), None, toggler);
 
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(fiat_card)
+    let currency_picker = pick_list::pick_list(
+        crate::settings::ALL_BACKEND_CURRENCIES,
+        Some(currency),
+        Msg::FiatCurrencyEdited,
+    )
+    .padding(pick_list::PICK_LIST_PADDING);
+    let currency =
+        fiat_enabled.then(|| setting_row(t!("settings-currency"), None, currency_picker));
+
+    let fiat_card = card::simple(column![fiat, currency].spacing(VSpacing::L)).width(Length::Fill);
+
+    column![header, fiat_card]
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
 }
@@ -120,30 +89,10 @@ pub fn general_view(
 pub fn about_view() -> Element<'static, Msg> {
     let header = header(Some(SETTING_MSG), Some(SectionKind::About.title()), None);
 
-    let version_card = card::simple(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(badge::tooltip())
-                    .push(text(t!("settings-version")).bold())
-                    .padding(10)
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill),
-            )
-            .push(separation().width(Length::Fill))
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(text(format!("liana-business v{VERSION}"))),
-            ),
-    );
+    let version_card = version_card(vec![format!("liana-business v{VERSION}")]);
 
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(version_card)
+    column![header, version_card]
+        .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
 }

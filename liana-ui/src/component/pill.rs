@@ -233,6 +233,7 @@ macro_rules! pills {
 pills! {
     recovery,       "common-recovery",     "pill-recovery-tooltip",     M, simple;
     batch,          "pill-batch",        "pill-batch-tooltip",        M, simple;
+    payjoin,        "pill-payjoin",      "pill-payjoin-tooltip",      M, simple;
     deprecated,     "pill-deprecated",   "pill-deprecated-tooltip",   M, simple;
     spent,          "pill-spent",        "pill-spent-tooltip",        M, simple;
     unsigned,       "pill-unsigned",     "pill-unsigned-tooltip",     M, soft_warning;
@@ -407,16 +408,6 @@ pub fn xpub_set<'a, T: 'a>() -> Container<'a, T> {
 
 pub fn xpub_not_set<'a, T: 'a>() -> Container<'a, T> {
     compact_pill(t!("pill-xpub-not-set"), PillWidth::S, theme::pill::warning)
-}
-
-pub fn unconfirmed_compact<'a, T: 'a>() -> Container<'a, T> {
-    compact_pill_body_with_text_size_and_font(
-        t!("pill-unconfirmed"),
-        PillWidth::M,
-        theme::pill::simple_fill,
-        PILL_FONT,
-        PILL_FONT_SIZE_COMPACT,
-    )
 }
 
 pub fn rescan<'a, T: 'a>(progress: f64, compact: bool) -> Container<'a, T> {
