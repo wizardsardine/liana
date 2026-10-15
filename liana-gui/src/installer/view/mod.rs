@@ -272,12 +272,14 @@ pub fn import_descriptor<'a>(
         Network::Bitcoin => EntryAccent::Bitcoin,
         _ => EntryAccent::Testnet,
     });
+    let trailing: Option<Element<'_, Message>> =
+        imported_backup.then_some(icon::check_icon().style(theme::text::success).into());
     let import_backup = list::entry_action_accent(
         accent,
         Tile::Import,
         t!("installer-import-backup"),
         None::<String>,
-        None,
+        trailing,
         button::EntryWidth::Standard,
         Some(Message::ImportBackup),
     );
