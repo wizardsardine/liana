@@ -30,7 +30,7 @@ use crate::{
     },
     spacing::{HSpacing, VSpacing},
     theme::{self, Theme},
-    widget::{Column, Container, Element, Row, SpaceExt},
+    widget::{Column, Container, Element, Fit, Row, SpaceExt},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -246,7 +246,7 @@ pub fn signatures_card<'a, M: Clone + 'static>(
 fn address_row<'a, M: Clone + 'static>(address: String, copy: M) -> Row<'a, M> {
     let title = new::b5_bold(t!("common-address-label")).style(theme::text::secondary);
     let copy = button::btn_copy(Some(copy));
-    row![title, address_view(address), copy]
+    row![title, Fit::new(address_view(address)), copy]
         .align_y(Alignment::Center)
         .width(Length::Fill)
         .spacing(HSpacing::S)

@@ -75,10 +75,11 @@ fn coin_list_view<'a>(
         labels.get(&outpoint).map(String::as_str),
         &coin.default_label,
     );
+    let editing = labels_editing.get(&outpoint);
     let label = if expanded {
         label::label_field(
             vec![outpoint.clone()],
-            labels_editing.get(&outpoint),
+            editing,
             &coin_label,
             LabelSize::Entry,
         )
@@ -102,6 +103,7 @@ fn coin_list_view<'a>(
         }),
         seq,
         label,
+        editing.is_some(),
         Message::Clipboard(address),
         Message::Clipboard(outpoint),
         Message::Menu(Menu::RefreshCoins(vec![coin.outpoint])),

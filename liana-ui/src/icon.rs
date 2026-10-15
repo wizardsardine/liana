@@ -21,6 +21,7 @@ fn font_icon<'a>(font: Font, unicode: char) -> Text<'a> {
 fn font_icon_no_padding<'a>(font: Font, unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
         .font(font)
+        .align_x(alignment::Horizontal::Center)
         .size(P1_SIZE)
         .line_height(LineHeight::Relative(1.0))
 }

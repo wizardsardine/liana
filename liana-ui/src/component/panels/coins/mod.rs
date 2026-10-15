@@ -1,6 +1,6 @@
 use bitcoin::{Address, Amount, OutPoint, Txid};
 use iced::{
-    widget::{column, row, Space},
+    widget::{column, row, text::Wrapping, Space},
     Alignment,
 };
 use liana_i18n::t;
@@ -14,7 +14,7 @@ use crate::{
     },
     spacing::{HSpacing, VSpacing},
     theme,
-    widget::{Container, Element, Row, SpaceExt},
+    widget::{Container, Element, Fit, Row, SpaceExt},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +33,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     spend: Option<CoinSpend>,
     seq: u32,
     label: Element<'a, M>,
+    editing: bool,
     copy_address: M,
     copy_outpoint: M,
     reset_timelock: M,
@@ -60,10 +61,14 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let right = row![status, amount]
         .spacing(HSpacing::L)
         .align_y(Alignment::Center);
-    let header = row![label, Space::fill_width(), right]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::L)
-        .height(panels::ListEntryHeight::Standard);
+    let header = if editing {
+        row![label]
+    } else {
+        row![label, Space::fill_width(), right]
+    }
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::L)
+    .height(panels::ListEntryHeight::Standard);
 
     let recovery = match (spend, block_height) {
         (None, Some(_)) if seq == 0 => {
@@ -88,13 +93,17 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let copy_address = button::btn_copy(Some(copy_address));
     let address = info_row(
         t!("common-address-label"),
-        row![address_view(address), copy_address].align_y(Alignment::Center),
+        row![Fit::new(address_view(address)), copy_address].align_y(Alignment::Center),
     );
     let copy_outpoint = button::btn_copy(Some(copy_outpoint));
     let outpoint_row = info_row(
         t!("coins-outpoint"),
         row![
-            new::b2(outpoint).style(theme::text::secondary),
+            Fit::new(
+                new::caption(outpoint)
+                    .style(theme::text::secondary)
+                    .wrapping(Wrapping::Glyph)
+            ),
             copy_outpoint
         ]
         .align_y(Alignment::Center),
@@ -102,7 +111,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let block_height = block_height.map(|b| {
         info_row(
             t!("coins-block-height"),
-            new::b2(b.to_string()).style(theme::text::secondary),
+            new::caption(b.to_string()).style(theme::text::secondary),
         )
     });
     let coin_info =
@@ -112,12 +121,12 @@ pub fn coin_entry<'a, M: Clone + 'static>(
         Some(CoinSpend { txid, height }) => {
             let spend_txid = info_row(
                 t!("coins-spend-txid"),
-                new::b2(txid.to_string()).style(theme::text::secondary),
+                new::caption(txid.to_string()).style(theme::text::secondary),
             );
             let spend_height = match height {
                 Some(height) => info_row(
                     t!("coins-spend-block-height"),
-                    new::b2(height.to_string()).style(theme::text::secondary),
+                    new::caption(height.to_string()).style(theme::text::secondary),
                 ),
                 None => {
                     row![new::b2_medium(t!("coins-not-in-block"))]

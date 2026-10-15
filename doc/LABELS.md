@@ -28,8 +28,9 @@ transaction that creates it. It is never computed again
 | consolidated from coins all showing the **same** label | that label                   | two "salary" coins: "salary"          |
 | consolidated from coins whose labels **differ**        | nothing                      | "salary" + "rent": nothing            |
 
-When you move coins to yourself, the label of the moving transaction is not used.
-Only the labels of the coins being spent matter.
+When you consolidate coins and give the transaction a label, the new coin gets a copy
+of it as its own label, not a default. Without a transaction label, only the labels of
+the coins being spent matter.
 
 ## Transactions
 

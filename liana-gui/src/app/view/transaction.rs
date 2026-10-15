@@ -243,7 +243,7 @@ pub fn tx_view<'a>(
         ),
         TxDetail::Psbt { tx, .. } => (
             false,
-            tx.change_indexes.clone(),
+            tx.change_indexes(),
             tx.owned_outputs_default_labels(),
         ),
     };

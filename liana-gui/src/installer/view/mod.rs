@@ -204,14 +204,13 @@ pub fn import_wallet_or_descriptor<'a>(
     ]
     .align_y(Alignment::Start)
     .spacing(10);
-    let descriptor_content = column![Space::with_height(0), descriptor_form,].spacing(10);
     let paste_descriptor = list::entry_collapsible(list::CollapsibleEntry {
         accent: wallet_accent,
         tile: Tile::Paste,
         title: t!("installer-paste-descriptor"),
         collapsed_subtitle: Some(t!("installer-paste-descriptor-description")),
         expanded_subtitle: Some(t!("installer-paste-descriptor-description")),
-        content: descriptor_content.into(),
+        content: descriptor_form.into(),
         expanded: active_option == Some(message::ImportWalletOption::PasteDescriptor),
         on_toggle: Message::ImportRemoteWallet(message::ImportRemoteWallet::ToggleOption(
             message::ImportWalletOption::PasteDescriptor,
@@ -273,12 +272,14 @@ pub fn import_descriptor<'a>(
         Network::Bitcoin => EntryAccent::Bitcoin,
         _ => EntryAccent::Testnet,
     });
+    let trailing: Option<Element<'_, Message>> =
+        imported_backup.then_some(icon::check_icon().style(theme::text::success).into());
     let import_backup = list::entry_action_accent(
         accent,
         Tile::Import,
         t!("installer-import-backup"),
         None::<String>,
-        None,
+        trailing,
         button::EntryWidth::Standard,
         Some(Message::ImportBackup),
     );
