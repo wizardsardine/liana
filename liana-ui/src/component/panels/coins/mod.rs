@@ -33,6 +33,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     spend: Option<CoinSpend>,
     seq: u32,
     label: Element<'a, M>,
+    editing: bool,
     copy_address: M,
     copy_outpoint: M,
     reset_timelock: M,
@@ -60,10 +61,14 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let right = row![status, amount]
         .spacing(HSpacing::L)
         .align_y(Alignment::Center);
-    let header = row![label, Space::fill_width(), right]
-        .align_y(Alignment::Center)
-        .spacing(HSpacing::L)
-        .height(panels::ListEntryHeight::Standard);
+    let header = if editing {
+        row![label]
+    } else {
+        row![label, Space::fill_width(), right]
+    }
+    .align_y(Alignment::Center)
+    .spacing(HSpacing::L)
+    .height(panels::ListEntryHeight::Standard);
 
     let recovery = match (spend, block_height) {
         (None, Some(_)) if seq == 0 => {
