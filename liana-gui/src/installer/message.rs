@@ -8,6 +8,7 @@ use liana::{
         DescriptorPublicKey,
     },
 };
+use liana_i18n::SupportedLocale;
 use std::collections::HashMap;
 
 use super::{
@@ -73,6 +74,7 @@ pub enum Message {
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
     WalletAliasEdited(String),
+    LanguageEdited(SupportedLocale),
     SelectAccount(Fingerprint, ChildNumber),
     OpenUrl(String),
     SelectKeySource(SelectKeySourceMessage),

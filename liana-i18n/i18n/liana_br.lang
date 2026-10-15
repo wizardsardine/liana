@@ -1,0 +1,2522 @@
+# Translator-friendly catalog
+# Language: Brezhoneg
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+
+btn-accept => "Accept" => "Asantiñ"
+
+btn-add-key => "Add a key" => "Ouzhpennañ un alc'hwez"
+
+btn-add-payment => "Add payment" => "Ouzhpennañ ur paeamant"
+
+btn-add-recovery-option => "Add recovery option" => "Ouzhpennañ un dibarzh adtapout"
+
+btn-add-recovery-path => "Add a recovery path" => "Ouzhpennañ un hent adtapout"
+
+btn-add-safety-net => "Add Safety Net" => "Ouzhpennañ Safety Net"
+
+btn-add-wallet => "Add wallet" => "Ouzhpennañ ur yalc'h"
+
+btn-apply => "Apply" => "Arloañ"
+
+btn-approve => "Approve" => "Aprouiñ"
+
+btn-back => "Back" => "Distreiñ"
+
+btn-back-up-descriptor => "Back Up Descriptor" => "Gwarediñ an descriptor"
+
+btn-backup-encrypted-descriptor
+=> "Back up encrypted descriptor"
+=> "Gwarediñ an descriptor enrineget";;
+
+btn-broadcast => "Broadcast" => "Skignañ"
+
+btn-bump-fee => "Bump fee" => "Kreskiñ ar fresoù"
+
+btn-cancel => "Cancel" => "Nullañ"
+
+btn-cancel-transaction => "Cancel transaction" => "Nullañ an treuzgread"
+
+btn-change-email => "Change Email" => "Cheñch ar postel"
+
+btn-check-connection => "Check connection" => "Gwiriañ ar c'hennask"
+
+btn-clear => "Clear" => "Skarzhañ"
+
+btn-clear-all => "Clear All" => "Skarzhañ pep tra"
+
+btn-close-tab => "Close" => "Serriñ"
+
+btn-confirm => "Confirm" => "Kadarnaat"
+
+btn-connect-another-email
+=> "Connect with another email"
+=> "Kevreañ gant ur postel all";;
+
+btn-customize => "Customize" => "Personelaat"
+
+btn-delete => "Delete" => "Dilemel"
+
+btn-delete-wallet => "Delete wallet" => "Dilemel ar yalc'h"
+
+btn-dismiss => "Dismiss" => "Leuskel a-gostez"
+
+btn-edit => "Edit" => "Kemmañ"
+
+btn-edit-keys => "Edit keys" => "Kemmañ an alc'hwezioù"
+
+btn-edit-label => "Edit label" => "Kemmañ an dikedenn"
+
+btn-email-wizardsardine => "Email WS" => "Kas ur postel da WS"
+
+btn-export => "Export" => "Ezporzhiañ"
+
+btn-fee-level-high => "High" => "Uhel"
+
+btn-fee-level-low => "Low" => "Izel"
+
+btn-fee-level-medium => "Medium" => "Krenn"
+
+btn-generate => "Generate" => "Genel"
+
+btn-generate-address => "Generate address" => "Genel ur chomlec'h"
+
+btn-go-back => "Go back" => "Distreiñ"
+
+btn-go-back-to-psbts => "Go back to PSBTs" => "Distreiñ d'ar PSBToù"
+
+btn-go-to-replacement => "Go to replacement" => "Mont d'an erlec'hiadur"
+
+btn-go-to-rescan => "Go to rescan" => "Mont d'an adc'hwiliadur"
+
+btn-ignore => "Ignore" => "Leuskel a-gostez"
+
+btn-import => "Import" => "Enporzhiañ"
+
+btn-keep-my-changes => "Keep my changes" => "Mirout ma c'hemmoù"
+
+btn-login => "Login" => "Kevreañ"
+
+btn-manage-keys => "Manage Keys" => "Merañ an alc'hwezioù"
+
+btn-mark-keys-ready => "Mark keys as ready" => "Merkañ an alc'hwezioù evel prest"
+
+btn-more-backend-node-info
+=> "More information about backend and node options"
+=> "Muioc'h a ditouroù diwar-benn ar backend hag an dibarzhioù skoulm";;
+
+btn-new => "New" => "Nevez"
+
+btn-next => "Next" => "War-lerc'h"
+
+btn-no => "No" => "Nann"
+
+btn-ok => "OK" => "OK"
+
+btn-overwrite => "Overwrite" => "Skrivañ war-c'horre"
+
+btn-previous => "Previous" => "A-raok"
+
+btn-previous-arrow => "< Previous" => "< A-raok"
+
+btn-processing => "Processing..." => "O tretiñ..."
+
+btn-register-on-device => "Register on device" => "Enskrivañ war an trevnad"
+
+btn-reload => "Reload" => "Adkargañ"
+
+btn-replace => "Replace" => "Erlec'hiañ"
+
+btn-resend-token => "Resend token" => "Adkas an token"
+
+btn-reset-timelock => "Reset timelock" => "Adderaouekaat ar prenn-amzer"
+
+btn-retry => "Retry" => "Klask en-dro"
+
+btn-save => "Save" => "Enrollañ"
+
+btn-see-transaction-details
+=> "See transaction details"
+=> "Gwelet munudoù an treuzgread";;
+
+btn-select => "Select" => "Diuzañ"
+
+btn-send-for-approval => "Send for approval" => "Kas evit aprouadur"
+
+btn-send-invitation => "Send invitation" => "Kas ar bedadenn"
+
+btn-send-token => "Send token" => "Kas an token"
+
+btn-set => "Set" => "Termeniñ"
+
+btn-set-keys => "Set keys" => "Termeniñ an alc'hwezioù"
+
+btn-share-xpubs => "Share Xpubs" => "Rannañ an xpubs"
+
+btn-show-qr => "Show QR Code" => "Diskouez ar c'hod QR"
+
+btn-sign => "Sign" => "Sinañ"
+
+btn-skip => "Skip" => "Tremen"
+
+btn-skip-registration => "Skip registration" => "Tremen an enskrivadur"
+
+btn-split-tab => "Split" => "Rannañ"
+
+btn-start-rescan => "Start rescan" => "Kregiñ gant an adc'hwiliadur"
+
+btn-starting-rescan => "Starting rescan..." => "O kregiñ gant an adc'hwiliadur..."
+
+btn-template-help
+=> "Something’s wrong with this template?"
+=> "Un dra bennak a-dreuz gant ar patrom-mañ ?";;
+
+btn-unlock-all => "Unlock all" => "Dibrennañ pep tra"
+
+btn-update => "Update" => "Hizivaat"
+
+btn-updating => "Updating" => "O hizivaat"
+
+btn-verify-on-device => "Verify on hardware device" => "Gwiriañ war an trevnad"
+
+btn-yes => "Yes" => "Ya"
+
+business-access-error => "Access Error" => "Fazi moned"
+
+business-account-connection-failed
+=> "Failed to connect with account {$email}. The session may have expired."
+=> "C'hwitet eo ar c'hennask gant ar gont {$email}. Marteze eo echu an estez.";;
+
+business-account-number => "Account #{$index}" => "Kont niv. {$index}"
+
+business-add-key-label => "Add a key" => "Ouzhpennañ un alc'hwez"
+
+business-add-two-keys-to-continue
+=> "Add at least 2 keys to continue"
+=> "Ouzhpennit 2 alc'hwez da nebeutañ evit kenderc'hel";;
+
+business-admin-name => "Admin{$name}" => "Admin{$name}"
+
+business-after-days
+=> "{ $count ->\n    [one] After 1 day\n   *[other] After {$count} days\n}"
+=> "{ $count ->\n    [one] Goude 1 devezh\n   *[other] Goude {$count} devezh\n}";;
+
+business-after-hours
+=> "{ $count ->\n    [one] After 1 hour\n   *[other] After {$count} hours\n}"
+=> "{ $count ->\n    [one] Goude 1 eurvezh\n   *[other] Goude {$count} eurvezh\n}";;
+
+business-after-months
+=> "{ $count ->\n    [one] After 1 month\n   *[other] After {$count} months\n}"
+=> "{ $count ->\n    [one] Goude 1 miz\n   *[other] Goude {$count} miz\n}";;
+
+business-all-files => "All files" => "An holl restroù"
+
+business-all-keys-set-waiting
+=> "All keys are set. Once the other participants finish this step, the wallet will be ready."
+=> "Termenet eo an holl alc'hwezioù. Kerkent ha ma vo echu gant ar berzhidi all ar bazenn-mañ, e vo prest ar yalc'h.";;
+
+business-assigned-keys-set-waiting
+=> "Your assigned keys are set. Waiting for the other participants to finish this step."
+=> "Termenet eo an alc'hwezioù bet roet deoc'h. O c'hortoz ma vo echu gant ar berzhidi all ar bazenn-mañ.";;
+
+business-auth-code-request-failed
+=> "Failed to request authentication code from server."
+=> "C'hwitet eo goulenn ar c'hod dilesa digant ar servijer.";;
+
+business-authenticated => "Authenticated" => "Dileset"
+
+business-backend-error => "Backend error" => "Fazi backend"
+
+business-cannot-approve-template
+=> "Can't approve this template?"
+=> "N'hallit ket aprouiñ ar patrom-mañ ?";;
+
+business-clipboard-empty => "Clipboard is empty" => "Goullo eo ar golver"
+
+business-code-six-digits
+=> "Code must contain only 6 digits."
+=> "Ar c'hod a rank bezañ ennañ 6 sifr hepken.";;
+
+business-common-you => "You" => "C'hwi"
+
+business-confirm-coldcard-success
+=> "Please confirm on your Coldcard that the wallet registration completed successfully."
+=> "Kadarnait war ho Coldcard eo bet kaset da benn gant berzh an enskrivadur yalc'h.";;
+
+business-confirm-device
+=> "Please confirm on your device..."
+=> "Kadarnait war ho trevnad...";;
+
+business-confirm-registration => "Confirm Registration" => "Kadarnaat an enskrivadur"
+
+business-connect-device-register
+=> "Connect the associated device to register"
+=> "Kevreit an trevnad liammet evit e enskrivañ";;
+
+business-connection-error => "Connection Error" => "Fazi kennaskañ"
+
+business-contact-create-account
+=> "Contact Wizardsardine to create an account."
+=> "Kit e darempred gant Wizardsardine evit krouiñ ur gont.";;
+
+business-create-new-path => "Create New Path" => "Krouiñ un hent nevez"
+
+business-current-xpub => "Current xpub" => "Xpub a-vremañ"
+
+business-detected-devices => "Detected devices" => "Trevnadoù dinoet"
+
+business-device-disconnected => "Device disconnected" => "Trevnad digevreet"
+
+business-device-locked-unlock
+=> "Device is locked. Please unlock it first."
+=> "Prennet eo an trevnad. Dibrennit anezhañ da gentañ.";;
+
+business-device-not-supported
+=> "Device is not supported"
+=> "N'eo ket skoret an trevnad";;
+
+business-device-unsupported-locked
+=> "Device locked or unsupported"
+=> "Trevnad prennet pe n'eo ket skoret";;
+
+business-did-registration-succeed
+=> "Did the registration succeed on your Coldcard?"
+=> "Berzh en deus graet an enskrivadur war ho Coldcard ?";;
+
+business-duplicate-timelock => "Duplicate timelock" => "Prenn-amzer doubl"
+
+business-edit-key => "Edit Key" => "Kemmañ an alc'hwez"
+
+business-edit-primary-path => "Edit Primary Path" => "Kemmañ an hent pennañ"
+
+business-edit-recovery-path => "Edit Recovery Path" => "Kemmañ an hent adtapout"
+
+business-edited => "Edited" => "Kemmet"
+
+business-edited-by-on
+=> "Edited by {$editor} on {$date}"
+=> "Kemmet gant {$editor} d'an {$date}";;
+
+business-edited-by-user => "Edited by {$editor}" => "Kemmet gant {$editor}"
+
+business-edited-on => "Edited on {$date}" => "Kemmet d'an {$date}"
+
+business-edited-relative => "Edited{$editor} {$time}" => "Kemmet{$editor} {$time}"
+
+business-email-app-open-failed
+=> "Couldn't open your email app"
+=> "N'eus ket bet gallet digeriñ hoc'h arload postel";;
+
+business-email-app-open-failed-message
+=> "Open your email client and contact Wizardsardine to request template edits."
+=> "Digorit ho kliant postel ha kit e darempred gant Wizardsardine evit goulenn kemmoù er patrom.";;
+
+business-external-keys => "External keys" => "Alc'hwezioù diavaez"
+
+business-external-signer-help
+=> "The third party who will set up and sign with this key. They'll be invited by email."
+=> "An trede den a arventenno hag a sino gant an alc'hwez-mañ. Pedet e vo dre bostel.";;
+
+business-fetched-from-device
+=> "Fetched from {$kind} #{$fingerprint}"
+=> "Tapet diwar {$kind} #{$fingerprint}";;
+
+business-fetching-device
+=> "Fetching from device..."
+=> "O tapout diwar an trevnad...";;
+
+business-file-dialog-result-failed
+=> "Failed to receive result from file dialog thread"
+=> "C'hwitet eo degemer an disoc'h diwar prenestr ar restroù";;
+
+business-file-read-failed
+=> "Failed to read file: {$error}"
+=> "C'hwitet eo lenn ar restr : {$error}";;
+
+business-filter-organizations
+=> "Filter organizations..."
+=> "Silañ an aozadurioù...";;
+
+business-filter-wallets => "Filter wallets..." => "Silañ ar yalc'hoù..."
+
+business-from-your-organization => "From your organization" => "Eus hoc'h aozadur"
+
+business-hardware-wallet-not-found
+=> "Hardware wallet not found"
+=> "N'eo ket bet kavet ar yalc'h periant";;
+
+business-import-xpub-file
+=> "Import extended public key file"
+=> "Enporzhiañ ar restr alc'hwez foran astennet";;
+
+business-internal-signer-help
+=> "The organization member who will set up and sign with this key. They'll be invited by email."
+=> "An ezel eus an aozadur a arventenno hag a sino gant an alc'hwez-mañ. Pedet e vo dre bostel.";;
+
+business-invalid-threshold => "Invalid threshold value" => "Talvoud treuzoù direizh"
+
+business-key-alias => "Key Alias" => "Lesanv an alc'hwez"
+
+business-key-alias-placeholder
+=> "e.g. Alice, Treasury, Lawyer..."
+=> "sk. Alice, Teñzorerezh, Alvokad...";;
+
+business-key-count
+=> "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}"
+=> "{ $count ->\n    [one] (1 alc'hwez)\n   *[other] ({$count} alc'hwez)\n}";;
+
+business-key-definition-help
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key."
+=> "Termenit anv an alc'hwez ha piv en deus anezhañ. E arventenniñ a reot diwezhatoc'h, en ur gevreañ un trevnad pe en ur ouzhpennañ e alc'hwez foran.";;
+
+business-key-deleted => "Key Deleted" => "Alc'hwez dilamet"
+
+business-key-deleted-message
+=> "The key you were editing was deleted by another user."
+=> "An alc'hwez emaoc'h o kemmañ a zo bet dilamet gant un implijer all.";;
+
+business-key-modified => "Key Modified" => "Alc'hwez kemmet"
+
+business-key-modified-message
+=> "This key was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Kemmet eo bet an alc'hwez-mañ gant un implijer all. Ha fellout a ra deoc'h adkargañ stumm ar servijer pe mirout ho kemmoù ?";;
+
+business-key-number => "Key {$id}" => "Alc'hwez {$id}"
+
+business-key-path-account-help
+=> "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
+=> "Niverenn ar gont en hent deveradur an alc'hwez-mañ. Dibabit ur gont all evit deveriñ un alc'hwez dizalc'h diwar an hevelep trevnad.";;
+
+business-key-removed => "Key Removed" => "Alc'hwez lamet"
+
+business-key-removed-from-path
+=> "\"{$alias}\" was deleted by another user and has been removed from your path selection."
+=> "\"{$alias}\" a zo bet dilamet gant un implijer all ha lamet eus ho tiuzadur hent.";;
+
+business-key-type => "Key Type" => "Seurt alc'hwez"
+
+business-key-type-help
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service."
+=> "Internal : dalc'het gant un ezel eus hoc'h aozadur.\nExternal : dalc'het gant un trede den fizius.\nCosigner : servij kensinañ a-vicher.\nSafetyNet : servij adtapout a-vicher.";;
+
+business-keys-awaiting-manager
+=> "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
+=> "O c'hortoz merour ar yalc'h. N'en deus ket merket c'hoazh an alc'hwezioù hag ar sinerien evel prest.";;
+
+business-keys-in-path => "Keys in Path:" => "Alc'hwezioù en hent :"
+
+business-keys-manager-instruction
+=> "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
+=> "Rollit an alc'hwezioù a vo e-barzh ar yalc'h-mañ ha roit ur siner da bep hini. Diwar an alc'hwezioù-se e vo savet ar reolenn dispign.";;
+
+business-keys-ready-by-manager
+=> "Marked as ready by the Wallet Manager. They've finished adding keys & signers."
+=> "Merket evel prest gant merour ar yalc'h. Echu eo gantañ ouzhpennañ an alc'hwezioù hag ar sinerien.";;
+
+business-keys-ready-policy-editable
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys. You can still edit keys if anything needs to change."
+=> "Alc'hwezioù ha sinerien merket evel prest. Diwar an alc'hwezioù-se e vo savet ar reolenn dispign. Gallout a rit kemmañ an alc'hwezioù c'hoazh ma rank un dra bennak cheñch.";;
+
+business-keys-ready-policy-pending
+=> "Keys & signers marked as ready. The spending policy will be crafted from these keys."
+=> "Alc'hwezioù ha sinerien merket evel prest. Diwar an alc'hwezioù-se e vo savet ar reolenn dispign.";;
+
+business-keys-required-to-spend
+=> "{ $count ->\n    [one] {$threshold} of 1 key required to spend\n   *[other] {$threshold} of {$count} keys required to spend\n}"
+=> "{ $count ->\n    [one] {$threshold} alc'hwez war 1 ret evit dispign\n   *[other] {$threshold} alc'hwez war {$count} ret evit dispign\n}";;
+
+business-keys-shared-policy-tab
+=> "These keys are shared with the Spending policy tab"
+=> "An alc'hwezioù-mañ a zo rannet gant an ivinell Reolenn dispign";;
+
+business-keys-shared-with-policy
+=> "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
+=> "An alc'hwezioù-mañ a zo rannet gant an ivinell Reolenn dispign, ma renkit anezho e hentoù dispign.";;
+
+business-keys-signers => "Keys & Signers" => "Alc'hwezioù ha sinerien"
+
+business-loading-wallet => "Loading wallet..." => "O kargañ ar yalc'h..."
+
+business-login-email-help
+=> "Enter the email associated with your account"
+=> "Roit ar postel liammet gant ho kont";;
+
+business-login-failed => "Login failed." => "C'hwitet eo ar c'hennaskañ."
+
+business-lost-connection-restart
+=> "Lost connection to the server. Please restart the application."
+=> "Kollet eo ar c'hennask gant ar servijer. Adloc'hit an arload.";;
+
+business-manager-set-keys-help
+=> "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf."
+=> "Diuzit un alc'hwez evit echuiñ e arventennañ. An alc'hwezioù a c'hall bezañ arventennet gant pep merour alc'hwez e-unan, pe gant merour ar yalc'h en o anv.";;
+
+business-max-unit => "Max {$max} {$unit}" => "Max {$max} {$unit}"
+
+business-max-unit-label => "Max: {$max} {$unit}" => "Max : {$max} {$unit}"
+
+business-new-email-address => "New email address" => "Chomlec'h postel nevez"
+
+business-no-descriptor-available
+=> "No descriptor available"
+=> "Descriptor ebet da gaout";;
+
+business-no-devices-to-register
+=> "You have no devices to register."
+=> "N'hoc'h eus trevnad ebet da enskrivañ.";;
+
+business-no-hardware-wallets
+=> "No hardware device detected. Connect a device and unlock it."
+=> "Trevnad periant ebet dinoet. Kevreit un trevnad ha dibrennit anezhañ.";;
+
+business-no-keys-assigned
+=> "No keys assigned to you."
+=> "Alc'hwez ebet roet deoc'h.";;
+
+business-no-keys-available
+=> "No keys available. Add keys first."
+=> "Alc'hwez ebet da gaout. Ouzhpennit alc'hwezioù da gentañ.";;
+
+business-no-members-match => "No members match" => "Ezel ebet o klotañ"
+
+business-no-orgs-search
+=> "No organizations found matching your search."
+=> "Aozadur ebet o klotañ gant ho klask.";;
+
+business-no-timelock => "No timelock" => "Prenn-amzer ebet"
+
+business-no-user-id-available
+=> "No user ID available"
+=> "ID implijer ebet da gaout";;
+
+business-no-wallet-selected => "No wallet selected" => "Yalc'h ebet diuzet"
+
+business-no-wallets-search
+=> "No wallets found matching your search."
+=> "Yalc'h ebet o klotañ gant ho klask.";;
+
+business-not-part-wallet
+=> "Not part of this wallet (#{$fingerprint})"
+=> "N'emañ ket er yalc'h-mañ (#{$fingerprint})";;
+
+business-organization => "Organization" => "Aozadur"
+
+business-organizations => "Organizations" => "Aozadurioù"
+
+business-other-participants-keys
+=> "Other participants' keys"
+=> "Alc'hwezioù ar berzhidi all";;
+
+business-participant-set-keys-help
+=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually."
+=> "Diuzit un alc'hwez roet deoc'h evit echuiñ e arventennañ. Gallout a rit kevreañ un trevnad periant pe ouzhpennañ un alc'hwez foran astennet gant an dorn.";;
+
+business-path-deleted => "Path Deleted" => "Hent dilamet"
+
+business-path-deleted-message
+=> "The path you were editing was deleted by another user."
+=> "An hent emaoc'h o kemmañ a zo bet dilamet gant un implijer all.";;
+
+business-path-modified => "Path Modified" => "Hent kemmet"
+
+business-primary-path => "Primary path" => "Hent pennañ"
+
+business-primary-path-modified-message
+=> "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Kemmet eo bet an hent pennañ gant un implijer all. Ha fellout a ra deoc'h adkargañ stumm ar servijer pe mirout ho kemmoù ?";;
+
+business-professional-service => "Professional service" => "Servij a-vicher"
+
+business-provider-name => "Provider · {$provider}" => "Pourchaser · {$provider}"
+
+business-recovery-path => "Recovery path" => "Hent adtapout"
+
+business-recovery-path-modified-message
+=> "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
+=> "Kemmet eo bet an hent adtapout-mañ gant un implijer all. Ha fellout a ra deoc'h adkargañ stumm ar servijer pe mirout ho kemmoù ?";;
+
+business-recovery-path-number
+=> "Recovery path {$number}"
+=> "Hent adtapout {$number}";;
+
+business-register-devices => "Register Devices" => "Enskrivañ an trevnadoù"
+
+business-register-wallet-devices-help
+=> "Register the wallet descriptor on each device, or skip if unavailable."
+=> "Enskrivit descriptor ar yalc'h war bep trevnad, pe tremenit ar bazenn-mañ ma n'eo ket hegerz.";;
+
+business-registered-on-device => "Registered on device" => "Enskrivet war an trevnad"
+
+business-registering-wallet => "Registering Wallet" => "Oc'h enskrivañ ar yalc'h"
+
+business-registration-failed => "Registration Failed" => "C'hwitet eo an enskrivadur"
+
+business-request-template-edits-help
+=> "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
+=> "Evit goulenn kemmoù, kit e darempred war-eeun gant Wizardsardine : gallout a reont ober ar c'hemmoù hag e adkas deoc'h evit aprouadur.";;
+
+business-role-manager => "Manager" => "Merour"
+
+business-role-participant => "Participant" => "Perzhiad"
+
+business-search-members-or-email
+=> "Search organization members or enter email"
+=> "Klask izili an aozadur pe skrivañ ur postel";;
+
+business-select-account-placeholder => "Select account" => "Diuzañ ur gont"
+
+business-select-key-source
+=> "Select key source · {$alias}"
+=> "Diuzañ tarzh an alc'hwez · {$alias}";;
+
+business-select-xpub-file => "Select xpub file" => "Diuzañ ar restr xpub"
+
+business-service-token => "Service token" => "Token servij"
+
+business-service-token-help
+=> "Paste the token from the provider. Their firm name is fetched automatically."
+=> "Pegit an token digant ar pourchaser. Anv o embregerezh a vez adtapet ent emgefreek.";;
+
+business-service-token-placeholder
+=> "e.g. 42-absent-cake-eagle"
+=> "sk. 42-absent-cake-eagle";;
+
+business-service-unavailable
+=> "The service is temporarily unavailable. Your wallet data and funds are not affected."
+=> "N'eo ket hegerz ar servij evit ar mare. Roadennoù ho yalc'h hag ho arc'hant n'int ket tizhet.";;
+
+business-set-keys => "Set Keys" => "Termeniñ an alc'hwezioù"
+
+business-signer-email => "Signer email" => "Postel ar siner"
+
+business-spending-policy => "Spending policy" => "Reolenn dispign"
+
+business-template-locked-approve
+=> "Template is locked and pending approval. You must approve it to continue."
+=> "Prennet eo ar patrom hag e gortoz un aprouadenn. Ret eo deoc'h e aprouiñ evit kenderc'hel.";;
+
+business-template-locked-unlock
+=> "Template is locked and pending approval. Unlock to make further changes."
+=> "Prennet eo ar patrom hag e gortoz un aprouadenn. Dibrennit anezhañ evit degas kemmoù all.";;
+
+business-template-read-only
+=> "Read-only. Only a WS Admin can edit this template."
+=> "Lenn hepken. Ur WS Admin hepken a c'hall kemmañ ar patrom-mañ.";;
+
+business-text-files => "Text files" => "Restroù testenn"
+
+business-threshold-range => "Threshold (1-{$count}):" => "Treuzoù (1-{$count}):"
+
+business-timelock => "Timelock:" => "Prenn-amzer:"
+
+business-timelock-unit-days => "days" => "devezhioù"
+
+business-timelock-unit-hours => "hours" => "eurioù"
+
+business-timelock-unit-months => "months" => "mizioù"
+
+business-timelock-zero
+=> "Timelock cannot be zero"
+=> "Ne c'hall ket ar prenn-amzer bezañ mann";;
+
+business-token-duplicate => "Duplicate token." => "Token doubl."
+
+business-token-invalid => "Invalid token." => "Token direizh."
+
+business-try-again-support
+=> "Please try again shortly. If the issue persists, contact support."
+=> "Klaskit en-dro a-benn nebeut. Ma kendalc'h ar gudenn, kit e darempred gant ar skoazell.";;
+
+business-unable-load-wallet
+=> "Unable to load wallet"
+=> "Dic'houest da gargañ ar yalc'h";;
+
+business-unsupported-method
+=> "Unsupported method: {$method}"
+=> "Hentenn n'eo ket skoret: {$method}";;
+
+business-use-email => "Use {$email}" => "Implijout {$email}"
+
+business-user-session-not-found
+=> "User session not found. Please log in again or contact Wizardsardine."
+=> "N'eo ket bet kavet dalc'h an implijer. Kevreit en-dro pe kit e darempred gant Wizardsardine.";;
+
+business-wallet-access-denied
+=> "You do not have access to this wallet. Contact Wizardsardine."
+=> "N'hoc'h eus ket haez d'ar yalc'h-mañ. Kit e darempred gant Wizardsardine.";;
+
+business-wallet-count-label
+=> "{ $count ->\n    [one] 1 wallet\n   *[other] {$count} wallets\n}"
+=> "{ $count ->\n    [one] 1 yalc'h\n   *[other] {$count} yalc'h\n}";;
+
+business-wallets => "Wallets" => "Yalc'hoù"
+
+business-wrong-network-device
+=> "Wrong network in device settings"
+=> "Rouedad fall e arventennoù an trevnad";;
+
+business-xpub-empty
+=> "Extended public key cannot be empty."
+=> "Ne c'hall ket an alc'hwez publik astennet bezañ goullo.";;
+
+business-xpub-invalid-format
+=> "Invalid extended public key format: {$error}"
+=> "Furmad direizh an alc'hwez publik astennet: {$error}";;
+
+business-xpub-invalid-network
+=> "Extended public key is not valid for {$network}."
+=> "N'eo ket reizh an alc'hwez publik astennet evit {$network}.";;
+
+business-xpub-replace-existing-help
+=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting."
+=> "Un xpub en deus an alc'hwez-mañ dija. Gallout a rit e erlec'hiañ en ur adtapout unan diwar un trevnad, en ur enporzhiañ unan diwar ur restr pe en ur begañ unan.";;
+
+business-your-keys => "Your keys" => "Hoc'h alc'hwezioù"
+
+coins-address-label => "Address label:" => "Tikedenn ar chomlec'h:"
+
+coins-block-height => "Block height:" => "Uhelder ar bloc'h:"
+
+coins-deposit-transaction-label
+=> "Deposit transaction label:"
+=> "Tikedenn an treuzgread diellañ:";;
+
+coins-first-recovery-in-blocks
+=> "First recovery path will be available in {$blocks} blocks"
+=> "Hegerz e vo an hent adtapout kentañ a-benn {$blocks} bloc'h";;
+
+coins-not-in-block => "Not in a block" => "N'emañ ket en ur bloc'h"
+
+coins-outpoint => "Outpoint:" => "Outpoint:"
+
+coins-recovery-available
+=> "One or more recovery paths are available"
+=> "Hegerz eo un hent adtapout pe muioc'h";;
+
+coins-refresh-coin => "Refresh coin" => "Freskaat ar pezh"
+
+coins-spend-block-height => "Spend block height:" => "Uhelder bloc'h an dispign:"
+
+coins-spend-txid => "Spend txid:" => "Txid an dispign:"
+
+combobox-already-signer => "already a signer" => "siner dija"
+
+common-address => "Address" => "Chomlec'h"
+
+common-address-label => "Address:" => "Chomlec'h:"
+
+common-and => "and" => "ha"
+
+common-approx-feerate-value => "(~{$rate} sats/vbyte)" => "(~{$rate} sats/vbyte)"
+
+common-are-you-sure => "Are you sure?" => "Ha sur oc'h?"
+
+common-blocks => "blocks" => "bloc'hoù"
+
+common-connecting-ellipsis => "Connecting..." => "O kevreañ..."
+
+common-connection-failed => "Connection failed" => "C'hwitet eo ar c'hevreañ"
+
+common-copy => "Copy" => "Eilañ"
+
+common-descriptor => "Descriptor" => "Descriptor"
+
+common-descriptor-label => "Descriptor:" => "Descriptor:"
+
+common-email => "Email" => "Postel"
+
+common-error => "Error" => "Fazi"
+
+common-error-with-detail => "{$message} ({$error})" => "{$message} ({$error})"
+
+common-feerate => "Feerate" => "Feur ar fresoù"
+
+common-feerate-value => "({$rate} sats/vbyte)" => "({$rate} sats/vbyte)"
+
+common-fetching => "Fetching ..." => "O adtapout ..."
+
+common-from => "From" => "Diwar"
+
+common-learn-more => "Learn more" => "Gouzout hiroc'h"
+
+common-loading => "Loading..." => "O kargañ..."
+
+common-login => "Login" => "Kevreañ"
+
+common-no-label => "No label" => "Tikedenn ebet"
+
+common-no-label-parenthesized => "(No label)" => "(Tikedenn ebet)"
+
+common-not-available => "N/A" => "N/A"
+
+common-other-options => "Other options" => "Dibaboù all"
+
+common-paste => "Paste" => "Pegañ"
+
+common-processing => "Processing..." => "O plediñ..."
+
+common-ready => "Ready" => "Prest"
+
+common-recovery => "Recovery" => "Adtapout"
+
+common-register => "Register" => "Enskrivañ"
+
+common-see-more => "See more" => "Gwelet muioc'h"
+
+common-select-account
+=> "Select an account to continue"
+=> "Dibabit ur gont evit kenderc'hel";;
+
+common-self-transfer => "Self-transfer" => "Treuzkas deoc'h hoc'h-unan"
+
+common-something-wrong => "Something wrong happened" => "Ur fazi a zo c'hoarvezet"
+
+common-token => "Token" => "Token"
+
+common-wallet => "Wallet" => "Yalc'h"
+
+connect-account-missing-from-cache
+=> "Account must be in cache"
+=> "Ret eo d'ar gont bezañ er grubuilh";;
+
+connect-cache-update-failed
+=> "Failed to update cache: {$error}"
+=> "C'hwitet eo hizivadur ar grubuilh: {$error}";;
+
+connect-remote-servers-unresponsive
+=> "Remote servers are unresponsive"
+=> "Ne respont ket ar servijerioù a-bell";;
+
+decrypt-airgap-help
+=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
+=> "Implijout a rit un trevnad air-gapped? Ezporzhiit an xpub diwar ho trevnad, ha goude implijit an dibab pellgas pe pegañ. Ma n'anavezit ket an hent deveradur reizh, klaskit gant an hini da-heul:";;
+
+decrypt-backup-file => "Decrypt backup file" => "Dirinegañ ar restr gwarezadur"
+
+decrypt-device-description
+=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup"
+=> "Kevreit ha dibrennit un trevnad periant a zo ezel eus ar c'hefluniadur-mañ evit dirinegañ ar gwarezadur ent emgefreek";;
+
+decrypt-device-failed
+=> "Failed to decrypt file with this device"
+=> "C'hwitet eo dirinegañ ar restr gant an trevnad-mañ";;
+
+decrypt-enter-mnemonic-unsafe
+=> "UNSAFE: Enter mnemonic of one of the keys"
+=> "DIASUR: bizskrivañ mnemonek unan eus an alc'hwezioù";;
+
+decrypt-enter-mnemonic-warning
+=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds."
+=> "N'eo ket diarvar an dibab-mañ. Kompren a ran e c'hallfe bizskrivañ ur mnemonek war un urzhiataer degas laeradenn ma arc'hant.";;
+
+decrypt-invalid-descriptor
+=> "The file has been decrypted but the descriptor is not a valid Liana descriptor."
+=> "Dirineget eo bet ar restr met n'eo ket an descriptor un descriptor Liana reizh.";;
+
+decrypt-invalid-encoding
+=> "The file cannot be decoded properly, it seems not to be an encrypted backup."
+=> "Ne c'hall ket ar restr bezañ diskodet ent reizh; ne seblant ket bezañ ur gwarezadur rineget.";;
+
+decrypt-invalid-mnemonic => "Invalid mnemonic" => "Mnemonek direizh"
+
+decrypt-invalid-type
+=> "The file has been decrypted but the content type is not supported."
+=> "Dirineget eo bet ar restr met n'eo ket skoret seurt an endalc'had.";;
+
+decrypt-invalid-xpub => "Invalid xpub" => "xpub direizh"
+
+decrypt-mnemonic-cannot-decrypt
+=> "Mnemonic is valid but cannot decrypt the file"
+=> "Reizh eo ar mnemonek met ne c'hall ket dirinegañ ar restr";;
+
+decrypt-mnemonic-source => "Mnemonic" => "Mnemonek"
+
+decrypt-pairing-code => "Pairing code: {$code}" => "Kod koublañ: {$code}"
+
+decrypt-paste-xpub
+=> "Paste an extended public key"
+=> "Pegañ un alc'hwez publik astennet";;
+
+decrypt-provide-xpub
+=> "Provide one of the xpubs used in this wallet."
+=> "Roit unan eus an xpubs implijet er yalc'h-mañ.";;
+
+decrypt-try-device
+=> "Try to decrypt with this device..."
+=> "Klask dirinegañ gant an trevnad-mañ...";;
+
+decrypt-unlock-device
+=> "Please unlock or open app on the device"
+=> "Dibrennit an trevnad pe digorit an arload warnañ";;
+
+decrypt-xpub-cannot-decrypt
+=> "Xpub is valid but cannot decrypt this file"
+=> "Reizh eo an Xpub met ne c'hall ket dirinegañ ar restr-mañ";;
+
+device-already-used => "Already used" => "Implijet dija"
+
+device-check-device => "Please check your device" => "Gwiriit ho trevnad"
+
+device-enter-cosigner-token
+=> "Enter a Cosigner token"
+=> "Bizskrivañ un token Cosigner";;
+
+device-enter-safety-net-token
+=> "Enter a Safety Net token"
+=> "Bizskrivañ un token Safety Net";;
+
+device-generate-hot-key
+=> "Generate hot key stored on this computer"
+=> "Genel un alc'hwez hot kadavet war an urzhiataer-mañ";;
+
+device-hot-key-test-only
+=> "We recommend using this option only for test purposes"
+=> "Erbediñ a reomp implijout an dibab-mañ evit amprouiñ hepken";;
+
+device-install-firmware-version-or-later
+=> "Install firmware version {$version} \nor later"
+=> "Staliañ ar stumm firmware {$version} \npe diwezhatoc'h";;
+
+device-locked => "Locked" => "Prennet"
+
+device-locked-check-code
+=> "Locked, check code: {$code}"
+=> "Prennet, gwiriit ar c'hod: {$code}";;
+
+device-open-app
+=> "Please open the app on device"
+=> "Digorit an arload war an trevnad";;
+
+device-processing-check-device
+=> "Processing, please check your device"
+=> "O plediñ, gwiriit ho trevnad";;
+
+device-registered => "Registered" => "Enskrivet"
+
+device-signed => "Signed" => "Sinet"
+
+device-unlock => "Please unlock the device" => "Dibrennit an trevnad"
+
+device-unrelated-wallet
+=> "This signing device is not related to this Liana wallet."
+=> "N'eo ket liammet an trevnad sinañ-mañ ouzh ar yalc'h Liana-mañ.";;
+
+device-version-unsupported
+=> "Device version not supported, upgrade to version > {$version}"
+=> "Stumm an trevnad n'eo ket skoret, hizivait betek ur stumm > {$version}";;
+
+duration-days
+=> "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
+=> "{ $count ->\n    [one] 1 devezh\n   *[other] {$count} devezh\n}";;
+
+duration-days-approx => "~{$count} days" => "~{$count} devezh"
+
+duration-days-compact => "{$count}d" => "{$count}d"
+
+duration-days-compact-approx => "~{$count}d" => "~{$count}d"
+
+duration-hours
+=> "{ $count ->\n    [one] 1 hour\n   *[other] {$count} hours\n}"
+=> "{ $count ->\n    [one] 1 eur\n   *[other] {$count} eur\n}";;
+
+duration-hours-compact => "{$count}h" => "{$count}e"
+
+duration-minutes
+=> "{ $count ->\n    [one] 1 minute\n   *[other] {$count} minutes\n}"
+=> "{ $count ->\n    [one] 1 vunutenn\n   *[other] {$count} munutenn\n}";;
+
+duration-minutes-compact => "{$count}m" => "{$count}mun"
+
+duration-months
+=> "{ $count ->\n    [one] 1 month\n   *[other] {$count} months\n}"
+=> "{ $count ->\n    [one] 1 miz\n   *[other] {$count} miz\n}";;
+
+duration-months-compact => "{$count}m" => "{$count}m"
+
+duration-years
+=> "{ $count ->\n    [one] 1 year\n   *[other] {$count} years\n}"
+=> "{ $count ->\n    [one] 1 bloaz\n   *[other] {$count} bloaz\n}";;
+
+duration-years-compact => "{$count}y" => "{$count}b"
+
+error-unknown => "Unknown error occurred" => "C'hoarvezet eo ur fazi dianav"
+
+export-aliases-conflict
+=> "Aliases conflict, what do you want to do?"
+=> "Tabut etre al lesanvioù, petra a fell deoc'h ober?";;
+
+export-canceled => "Export canceled" => "Ezporzhiadur nullet"
+
+export-labels-conflict
+=> "Labels conflict, what do you want to do?"
+=> "Tabut etre an tikedennoù, petra a fell deoc'h ober?";;
+
+export-progress => "Progress: {$progress}%" => "Araokadur: {$progress}%"
+
+export-select-path
+=> "Select the path you want to export in the popup window..."
+=> "Dibabit an hent da ezporzhiañ er prenestr difoup...";;
+
+export-starting => "Starting export..." => "O loc'hañ an ezporzhiadur..."
+
+export-success => "Export successful!" => "Ezporzhiadur graet!"
+
+export-timeout
+=> "Export failed: timeout"
+=> "C'hwitet eo an ezporzhiadur: amzer aet dreist";;
+
+export-title-export-backup => "Export Backup" => "Ezporzhiañ ar gwarezadur"
+
+export-title-export-descriptor => "Export Descriptor" => "Ezporzhiañ an descriptor"
+
+export-title-export-encrypted-descriptor
+=> "Export Encrypted Descriptor"
+=> "Ezporzhiañ an descriptor rineget";;
+
+export-title-export-labels => "Export Labels" => "Ezporzhiañ an tikedennoù"
+
+export-title-export-psbt => "Export PSBT" => "Ezporzhiañ ar PSBT"
+
+export-title-export-xpub => "Export Xpub" => "Ezporzhiañ an Xpub"
+
+export-title-import-descriptor => "Import Descriptor" => "Enporzhiañ un descriptor"
+
+export-title-import-psbt => "Import PSBT" => "Enporzhiañ ur PSBT"
+
+export-title-import-wallet-backup
+=> "Import existing wallet from backup"
+=> "Enporzhiañ ur yalc'h a zo anezhañ diwar ur gwarezadur";;
+
+export-title-import-xpub => "Import Xpub" => "Enporzhiañ un Xpub"
+
+export-title-restore-backup => "Restore Backup" => "Assevel ar gwarezadur"
+
+export-title-transactions => "Export Transactions" => "Ezporzhiañ an treuzgreadoù"
+
+fiat-amount-non-negative
+=> "Amount must be non-negative"
+=> "Ret eo d'ar sammad bezañ pozitivel pe mann";;
+
+fiat-currency-mismatch
+=> "Currency mismatch: expected {$expected}, got {$actual}"
+=> "Moneiz digenglotus: gortozet {$expected}, bet {$actual}";;
+
+fiat-exchange-rate
+=> "Exchange rate: 1 BTC ~ {$amount} {$currency}"
+=> "Feur eskemm: 1 BTC ~ {$amount} {$currency}";;
+
+fiat-invalid-currency => "Invalid currency" => "Moneiz direizh"
+
+fiat-last-requested => "Last requested: {$time}" => "Goulenn diwezhañ: {$time}"
+
+fiat-last-updated-source
+=> "Last updated at source: {$time}"
+=> "Hizivadur diwezhañ er vammenn: {$time}";;
+
+fiat-price-positive
+=> "Price per BTC must be positive"
+=> "Ret eo d'ar priz dre BTC bezañ pozitivel";;
+
+fiat-source => "Source: {$source}" => "Mammenn: {$source}"
+
+fiat-source-timestamp
+=> "Default price at the time the transaction has been confirmed"
+=> "Priz dre ziouer d'ar mare ma'z eo bet kadarnaet an treuzgread";;
+
+fiat-source-user
+=> "Price you have filled yourself"
+=> "Priz leuniet ganeoc'h hoc'h-unan";;
+
+fiat-source-wizardsardine
+=> "Price automatically processed by WS when you crafted the transaction"
+=> "Priz jedet ent emgefreek gant WS pa hoc'h eus savet an treuzgread";;
+
+home-balance => "Balance" => "Saldo"
+
+home-checking-transactions
+=> "Checking for new transactions"
+=> "O klask treuzgreadoù nevez";;
+
+home-payment-history => "Payment History" => "Istor ar paeamantoù"
+
+home-recovery-left
+=> "≈ {$units} left before first recovery path becomes available."
+=> "≈ {$units} a chom a-raok ma vo hegerz an hent adtapout kentañ.";;
+
+home-recovery-warning
+=> "Recovery path is or will soon be available for {$count} coin(s)."
+=> "Hegerz eo pe e vo hegerz a-benn nebeut an hent adtapout evit {$count} pezh.";;
+
+home-rescan-warning-backup
+=> "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
+=> "Peogwir eo bet assavet ar yalc'h-mañ diwar ur gwarezadur, marteze e vo ret deoc'h adc'hwiliañ ar blockchain evit gwelet an treuzgreadoù tremenet.";;
+
+home-rescan-warning-descriptor
+=> "As this wallet was imported from a descriptor, you may need to rescan the blockchain to see past transactions."
+=> "Peogwir eo bet enporzhiet ar yalc'h-mañ diwar un descriptor, marteze e vo ret deoc'h adc'hwiliañ ar blockchain evit gwelet an treuzgreadoù tremenet.";;
+
+home-syncing => "Syncing" => "O kempredañ"
+
+home-syncing-blockchain
+=> "Syncing blockchain ({$progress}%)"
+=> "O kempredañ ar blockchain ({$progress}%)";;
+
+hw-descriptor-not-registered
+=> "The wallet descriptor is not registered on the device.\n You can register it in the settings."
+=> "N'eo ket enskrivet descriptor ar yalc'h war an trevnad.\n Gallout a rit e enskrivañ en arventennoù.";;
+
+hw-display-address-unavailable
+=> "Liana cannot request the device to display the address. \n Verify it with the QR code in the options below."
+=> "Ne c'hall ket Liana goulenn digant an trevnad diskouez ar chomlec'h.\nGwiriit anezhañ gant ar c'hod QR en dibaboù amañ dindan.";;
+
+hw-no-taproot-miniscript
+=> "Device firmware version does not support taproot miniscript"
+=> "Ne skor ket stumm firmware an trevnad taproot miniscript";;
+
+hw-not-in-spending-path
+=> "This signing device is not part of this spending path."
+=> "N'eo ket an trevnad sinañ-mañ ezel eus an hent dispign-mañ.";;
+
+import-success => "Import successful" => "Enporzhiadur graet"
+
+installer-able-to-move-any-time
+=> "Able to move the funds at any time."
+=> "Gallout a ra dilec'hiañ an arc'hant forzh pegoulz.";;
+
+installer-accept-invitation-for
+=> "Accept invitation for wallet:"
+=> "Degemer ar bedadenn evit ar yalc'h:";;
+
+installer-accepted-wallet-not-found
+=> "Wallet of accepted invitation not found"
+=> "N'eo ket bet kavet yalc'h ar bedadenn degemeret";;
+
+installer-add-key => "Add key" => "Ouzhpennañ un alc'hwez"
+
+installer-add-safety-net-key
+=> "Add Safety Net key"
+=> "Ouzhpennañ un alc'hwez Safety Net";;
+
+installer-advanced-settings => "Advanced settings" => "Arventennoù araokaet"
+
+installer-already-have-node => "I already have a node" => "Ur skoulm am eus dija"
+
+installer-already-used-sources => "Already used sources" => "Mammennoù implijet dija"
+
+installer-auth-token-emailed-to
+=> "An authentication token has been emailed to"
+=> "Kaset eo bet un token dilesa dre bostel da";;
+
+installer-auto-install-node
+=> "I want Liana to automatically install a Bitcoin node on my device"
+=> "Fellout a ra din e stalfe Liana ent emgefreek ur skoulm Bitcoin war ma zrevnad";;
+
+installer-available-after-inactivity
+=> "Available after inactivity of ~"
+=> "Hegerz goude un dioberiantiz a ~";;
+
+installer-available-port-failed
+=> "Could not get available port: {$error}."
+=> "Dic'houest da gaout ur porzh hegerz: {$error}.";;
+
+installer-available-ports-failed
+=> "Could not get available ports: {$error1}; {$error2}."
+=> "Dic'houest da gaout porzhioù hegerz: {$error1}; {$error2}.";;
+
+installer-backed-up-descriptor-checkbox
+=> "I have backed up my descriptor"
+=> "Gwaredet em eus ma descriptor";;
+
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my mnemonic"
+=> "Gwaredet em eus ma mnemonek";;
+
+installer-backed-up-mnemonic-show-xpub
+=> "I have backed up the mnemonic, show the extended public key"
+=> "Gwaredet em eus ar mnemonek, diskouez an alc'hwez publik astennet";;
+
+installer-backup-descriptor-help
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
+=> "E Bitcoin, evit dispign diwar ur yalc'h n'eo ket ur c'hefluniadur boutin gant un alc'hwez hepken, ho peus ezhomm war un dro eus hoc'h alc'hwezioù prevez (kadavet peurvuiañ evel gerioù seed) evit sinañ an treuzgreadoù, hag eus descriptor ho yalc'h evit lec'hiañ ho pezhioù, evel ur gartenn eus ho chomlec'hioù.\nHep an descriptor, marteze ne gavo ket ho yalc'h ho pezhioù, zoken ma'z eus c'hoazh an alc'hwezioù ganeoc'h.\nPa glikit war \"Gwarediñ an descriptor\", e krou Liana ur restr rineget na c'hall bezañ dirineget nemet gant unan eus alc'hwezioù publik ho yalc'h.\nLiana a ra se ent emgefreek e-pad an argerzh assevel ur yalc'h en ur c'houlenn diganeoc'h kevreañ un trevnad pe bizskrivañ un alc'hwez.\nSuroc'h ha prevezoc'h eo ar restr-mañ eget eilañ an descriptor gant an dorn.";;
+
+installer-backup-descriptor-message
+=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
+=> "Ret eo ar gwarezadur-mañ evit adtapout hoc'h arc'hant.\nKlikit war \"Gwarediñ an descriptor\" evit pellgargañ ur restr rineget eus kefluniadur ho yalc'h ha kadavit anezhi e lec'hioù diarvar hag aes da dizhout.\nGallout a rit ivez eilañ chadenn an descriptor e testenn blaen, met nebeutoc'h prevez eo.\nDIWALLIT: ne endalc'h ket ar restr-mañ ho frazenn(où) seed. Gwaredit anezho a-ziforc'h.";;
+
+installer-backup-descriptor-missing
+=> "Backup imported but descriptor missing!"
+=> "Gwarezadur enporzhiet met descriptor o vankout!";;
+
+installer-backup-descriptor-title
+=> "Back Up your wallet configuration (Descriptor)"
+=> "Gwaredit kefluniadur ho yalc'h (Descriptor)";;
+
+installer-backup-imported
+=> "Backup successfully imported!"
+=> "Gwarezadur enporzhiet gant berzh!";;
+
+installer-backup-mnemonic-title => "Back Up your mnemonic" => "Gwarediñ ho mnemonek"
+
+installer-backup-mnemonic-warning
+=> "Beware to back up the mnemonic as it will NOT be stored on the computer."
+=> "Diwallit da warediñ ar mnemonek rak NE vo KET kadavet war an urzhiataer.";;
+
+installer-backup-network-mismatch
+=> "The backup network does not match the selected network."
+=> "Ne glot ket rouedad ar gwarezadur gant ar rouedad dibabet.";;
+
+installer-bitcoin-node-management
+=> "Bitcoin node management"
+=> "Merañ ar skoulm Bitcoin";;
+
+installer-bitcoind-already-installed
+=> "Liana-managed bitcoind already installed"
+=> "bitcoind meret gant Liana staliet dija";;
+
+installer-bitcoind-canonicalize-datadir-error
+=> "Failed to canonicalize datadir: {$error}"
+=> "C'hwitet eo kanonekaat an datadir: {$error}";;
+
+installer-bitcoind-command-error
+=> "Command to start bitcoind returned an error: {$error}"
+=> "Ur fazi en deus distroet an urzhiad loc'hañ bitcoind: {$error}";;
+
+installer-bitcoind-connection-error
+=> "bitcoind connection check failed: {$error}"
+=> "C'hwitet eo gwiriadur ar c'hevreañ ouzh bitcoind: {$error}";;
+
+installer-bitcoind-executable-not-found
+=> "bitcoind executable not found."
+=> "N'eo ket bet kavet an erounadus bitcoind.";;
+
+installer-bitcoind-lock-error
+=> "lock file error: {$error}"
+=> "Fazi gant ar restr prennañ: {$error}";;
+
+installer-bitcoind-process-exited
+=> "bitcoind process exited with status '{$status}'."
+=> "Echuet eo an argerzh bitcoind gant ar statud '{$status}'.";;
+
+installer-build-your-own => "Build your own" => "Sevel ho kefluniadur deoc'h"
+
+installer-build-your-own-description
+=> "Create a custom setup that fits all your needs."
+=> "Krouit ur c'hefluniadur personelaet a glot gant hoc'h holl ezhommoù.";;
+
+installer-canonicalize-cookie-failed
+=> "Failed to canonicalize cookie path: {$error}"
+=> "C'hwitet eo kanonekaat hent ar cookie: {$error}";;
+
+installer-canonicalize-datadir-failed
+=> "Failed to canonicalize datadir path: {$error}"
+=> "C'hwitet eo kanonekaat hent an datadir: {$error}";;
+
+installer-change-alias-later
+=> "You will be able to change it later in Settings > Wallet"
+=> "Gallout a reot e gemmañ diwezhatoc'h en Arventennoù > Yalc'h";;
+
+installer-checking-connection
+=> "Checking connection..."
+=> "O wiriañ ar gevreadenn...";;
+
+installer-choose-backend => "Choose backend" => "Dibab ar backend"
+
+installer-choose-wallet-type => "Choose wallet type" => "Dibab seurt ar yalc'h"
+
+installer-connected-to => "Connected to" => "Kevreet ouzh"
+
+installer-connection-checked => "Connection checked" => "Kevreadenn gwiriet"
+
+installer-cookie-path => "Cookie path" => "Hent ar cookie"
+
+installer-cosigner-token-disallowed
+=> "Cosigner tokens are not allowed for this path"
+=> "N'eo ket aotreet an tokenoù Cosigner evit an hent-mañ";;
+
+installer-create-datadir-path-failed
+=> "Failed to create datadir path: {$error}"
+=> "N'eus ket bet gallet krouiñ hent an datadir : {$error}";;
+
+installer-create-random-key
+=> "Or create a new random key:"
+=> "Pe krouit un alc'hwez dargouezhek nevez :";;
+
+installer-custom-template-description-1
+=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them."
+=> "Evit ar c'hefluniadur-mañ e rankot termeniñ ho reolennoù dispign pennañ hag adtapout. Evit abegoù surentez e kinnigomp deoc'h implijout ur yalc'h periant disheñvel evit pep alc'hwez a zo dezho.";;
+
+installer-custom-template-description-2
+=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
+=> "An alc'hwezioù a zo d'ho reolenn bennañ a c'hall dispign atav. Ar re a zo d'ar reolennoù adtapout ne c'hallint dispign nemet goude un amzer termenet hep obererezh er yalc'h, evit un adtapout diogel ha reolennoù dispign araokaet.";;
+
+installer-descriptor-generating
+=> "Generating and validating your wallet descriptor. This can take a few seconds."
+=> "O c'henel hag o kadarnaat descriptor ho yalc'h. Gallout a ra padout un nebeud eilennoù.";;
+
+installer-descriptor-invalid
+=> "Either descriptor is invalid or incompatible with network"
+=> "Direizh eo an descriptor pe n'eo ket kenglotus gant ar rouedad";;
+
+installer-descriptor-missing => "Descriptor missing" => "Descriptor o vankout"
+
+installer-descriptor-read-failed
+=> "Failed to read the descriptor"
+=> "N'eus ket bet gallet lenn an descriptor";;
+
+installer-descriptor-template => "Descriptor template" => "Patrom descriptor"
+
+installer-descriptor-type => "Descriptor type" => "Seurt descriptor"
+
+installer-descriptor-wrong-network
+=> "The descriptor is for another network"
+=> "Evit ur rouedad all eo an descriptor";;
+
+installer-detected-hardware => "Detected hardware" => "Periant dinoet"
+
+installer-device-method-unsupported
+=> "Device not supported, method: {$method}"
+=> "N'eo ket skoret an trevnad, hentenn : {$method}";;
+
+installer-device-no-taproot
+=> "This device does not support Taproot"
+=> "Ne skor ket an trevnad-mañ Taproot";;
+
+installer-device-wrong-network
+=> "The device is configured on the wrong network"
+=> "Kefluniet eo an trevnad war ar rouedad fall";;
+
+installer-distinct-ports-unavailable
+=> "Could not get distinct ports. Please try again."
+=> "N'eus ket bet gallet kaout porzhioù disheñvel. Klaskit en-dro, mar plij.";;
+
+installer-download-complete => "Download complete" => "Pellgargadenn echu"
+
+installer-download-failed
+=> "Download failed: '{$error}'."
+=> "C'hwitet eo ar bellgargadenn : '{$error}'.";;
+
+installer-downloading-bitcoin-core-progress
+=> "Downloading Bitcoin Core {$version}... {$progress}%"
+=> "O pellgargañ Bitcoin Core {$version}... {$progress} %";;
+
+installer-duplicate-token => "Duplicate token" => "Token doublet"
+
+installer-electrum-address-notes
+=> "Note: include \"ssl://\" as a prefix for SSL connections."
+=> "Notenn : lakait \"ssl://\" da rakger evit ar c'hevreadennoù SSL.";;
+
+installer-email-invalid => "Email is not valid" => "N'eo ket reizh ar postel"
+
+installer-enter-correct-address
+=> "Please enter correct address"
+=> "Enankit ur chomlec'h reizh, mar plij";;
+
+installer-enter-correct-electrum-address
+=> "Please enter correct address (including port), optionally prefixed with tcp:// or ssl://"
+=> "Enankit ur chomlec'h reizh (gant ar porzh), gant tcp:// pe ssl:// da rakger ma karit, mar plij";;
+
+installer-enter-correct-password
+=> "Please enter correct password"
+=> "Enankit ur ger-tremen reizh, mar plij";;
+
+installer-enter-correct-path
+=> "Please enter correct path"
+=> "Enankit un hent reizh, mar plij";;
+
+installer-enter-correct-user
+=> "Please enter correct user"
+=> "Enankit un implijer reizh, mar plij";;
+
+installer-existing-node-description
+=> "Select this option if you already have a Bitcoin node running locally or remotely. Liana will connect to it."
+=> "Dibabit an dibarzh-mañ m'ho peus dija ur skoulm Bitcoin o treiñ en ho lec'h pe a-bell. Liana a gevreo outañ.";;
+
+installer-expanding-multisig => "Expanding multisig" => "Multisig astennus"
+
+installer-expanding-multisig-description
+=> "Two keys required to spend, with an extra key as a backup."
+=> "Daou alc'hwez a zo ret evit dispign, gant un alc'hwez ouzhpenn evel gwarezadur.";;
+
+installer-expanding-multisig-wallet
+=> "Expanding multisig wallet"
+=> "Yalc'h multisig astennus";;
+
+installer-export-backup-failed
+=> "Failed to export backup"
+=> "N'eus ket bet gallet ezporzhiañ ar gwarezadur";;
+
+installer-finalize-installation
+=> "Finalize installation"
+=> "Peurechuiñ ar staliadur";;
+
+installer-generate-mnemonic => "Generate a new mnemonic" => "Genel ur mnemonek nevez"
+
+installer-give-wallet-alias
+=> "Give your wallet an alias"
+=> "Roit ul lesanv d'ho yalc'h";;
+
+installer-hot-signer => "Hot Signer" => "Siner hot"
+
+installer-import-backup => "Import a backup" => "Enporzhiañ ur gwarezadur"
+
+installer-import-descriptor => "Import a descriptor" => "Enporzhiañ un descriptor"
+
+installer-import-mnemonic => "Import mnemonic" => "Enporzhiañ ar mnemonek"
+
+installer-import-mnemonic-title => "Import Mnemonic" => "Enporzhiañ ur mnemonek"
+
+installer-import-wallet-rescan-help
+=> "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
+=> "Ma implijit ur skoulm Bitcoin Core e rankot adc'hwilervañ ar blockchain goude bezañ krouet ar yalc'h evit gwelout ho pezhioù hag ho treuzgreadoù kent. Gallout a reer ober se en Arventennoù > Skoulm.";;
+
+installer-import-wallet-title => "Import the wallet" => "Enporzhiañ ar yalc'h"
+
+installer-import-xpub-device
+=> "Import an extended public key by selecting a signing device:"
+=> "Enporzhiit un alc'hwez foran astennet en ur zibab un trevnad sinañ :";;
+
+installer-imported-key-already-used
+=> "Imported key already used"
+=> "Alc'hwez enporzhiet implijet dija";;
+
+installer-inheritance-description-1
+=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Evit ar c'hefluniadur-mañ ho po ezhomm eus 2 alc'hwez : hoc'h alc'hwez pennañ (evidoc'h) hag un alc'hwez hêrezh (evit hoc'h hêr). Evit abegoù surentez e kinnigomp deoc'h implijout ur yalc'h periant disheñvel evit pep alc'hwez.";;
+
+installer-inheritance-description-2
+=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds."
+=> "Atav e c'hallot dispign gant hoc'h alc'hwez pennañ. Goude ur prantad hep obererezh (ha n'eo ket a-raok) e c'hallo hoc'h alc'hwez hêrezh adtapout hoc'h arc'hant.";;
+
+installer-inheritance-key => "Inheritance key" => "Alc'hwez hêrezh"
+
+installer-installation-complete => "Installation complete" => "Staliadur echu"
+
+installer-installation-failed
+=> "Installation failed: '{$error}'."
+=> "C'hwitet eo ar staliadur : '{$error}'.";;
+
+installer-installed => "Installed" => "Staliet"
+
+installer-installing => "Installing..." => "O staliañ..."
+
+installer-installing-bitcoind => "Installing bitcoind..." => "O staliañ bitcoind..."
+
+installer-introduction => "Introduction" => "Digoradur"
+
+installer-invalid-descriptor => "Invalid descriptor" => "Descriptor direizh"
+
+installer-invalid-token => "Invalid token!" => "Token direizh !"
+
+installer-invitation-invalid
+=> "Invitation token is invalid or expired"
+=> "Direizh pe diamzeret eo an token pedadenn";;
+
+installer-invitation-token => "Invitation token" => "Token pedadenn"
+
+installer-invitation-token-help
+=> "Type the invitation token you received by email"
+=> "Skrivit an token pedadenn ho peus resevet dre bostel";;
+
+installer-key-alias-already-used
+=> "This alias is already used for another key"
+=> "Implijet eo dija al lesanv-mañ evit un alc'hwez all";;
+
+installer-key-alias-placeholder
+=> "E.g. My Hardware Wallet"
+=> "Sk. Ma yalc'h periant";;
+
+installer-key-already-in-wallet
+=> "Fetched key has already been added to the wallet."
+=> "Ouzhpennet eo bet dija an alc'hwez adtapet d'ar yalc'h.";;
+
+installer-key-already-used => "Key already used" => "Alc'hwez implijet dija"
+
+installer-key-already-used-in-path
+=> "Key already used in this path"
+=> "Alc'hwez implijet dija en hent-mañ";;
+
+installer-key-fetch-wrong-network
+=> "Failed to fetch key. Switch network on device and retry"
+=> "N'eus ket bet gallet adtapout an alc'hwez. Cheñchit rouedad war an trevnad ha klaskit en-dro";;
+
+installer-key-index => "Key @{$index}:" => "Alc'hwez @{$index} :"
+
+installer-key-name-alias => "Key name (alias):" => "Anv an alc'hwez (lesanv) :"
+
+installer-key-name-help
+=> "Give this key a friendly name. It will help you identify it later:"
+=> "Roit un anv aes d'an alc'hwez-mañ. Sikour a raio ac'hanoc'h d'he anavezout diwezhatoc'h :";;
+
+installer-key-path-account => "Key path account:" => "Kont hent an alc'hwez :"
+
+installer-key-wrong-network
+=> "Fetched key does not have the correct network"
+=> "N'eo ket mat rouedad an alc'hwez adtapet";;
+
+installer-keys-inactivity
+=> "Keys can move the funds after inactivity of:"
+=> "An alc'hwezioù a c'hall dilec'hiañ an arc'hant goude ur prantad hep obererezh a :";;
+
+installer-load-previous-wallet
+=> "Load a previously used wallet"
+=> "Kargañ ur yalc'h implijet a-raok";;
+
+installer-load-shared-wallet => "Load a shared wallet" => "Kargañ ur yalc'h rannet"
+
+installer-local-wallet-description
+=> "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet."
+=> "Implijit ho skoulm Bitcoin a zo anezhañ dija pe staliit unan ent emgefreek. Ne gevreo ket ar yalc'h Liana ouzh servijer diavaez ebet.\n\nAn dibarzh prevezañ eo, met war an urzhiataer-mañ hepken e vez miret ar roadennoù. Ret eo deoc'h ober ho kwarezadurioù hoc'h-unan ha rannañ an descriptor gant an dud all a fell deoc'h e c'hallfent tizhout ar yalc'h.";;
+
+installer-managed-node-description
+=> "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
+=> "Liana a stalio ur skoulm pruned war hoc'h urzhiataer. N'ho po netra d'ober nemet kaout egor pladenn a-walc'h (~30 Go ret war mainnet) ha gortoz ar goubredadur kentañ gant ar rouedad (gallout a ra padout meur a zevezh hervez tizh ho kevreadenn internet).";;
+
+installer-mnemonic-backup-help
+=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
+=> "Un alc'hwez hot ganet war an urzhiataer-mañ a zo bet implijet evit krouiñ ar yalc'h-mañ. Ret eo he gwarediñ.\nMirit anezhi en ul lec'h diogel. Na rannit anezhi biskoazh gant den ebet.";;
+
+installer-mnemonic-recovery-help
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step."
+=> "M'ho poa implijet un alc'hwez hot (un alc'hwez miret war an urzhiataer) en ho yalc'h e rankot he adtapout diwar ar mnemonekoù evit gallout sinañ treuzgreadoù en-dro. A-hend-all e c'hallit mont war-eeun d'ar bazenn war-lerc'h.";;
+
+installer-multisig-description-1
+=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key."
+=> "Evit ar c'hefluniadur-mañ ho po ezhomm eus 3 alc'hwez : daou alc'hwez pennañ hag un alc'hwez adtapout. Evit abegoù surentez e kinnigomp deoc'h implijout ur yalc'h periant disheñvel evit pep alc'hwez.";;
+
+installer-multisig-description-2
+=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):"
+=> "An alc'hwezioù pennañ a raio ur multisig 2-diwar-2 a c'hallo dispign atav. Ma teu unan eus hoc'h alc'hwezioù da vezañ dihegerz, goude ur prantad hep obererezh e c'hallot adtapout hoc'h arc'hant gant an alc'hwez adtapout hag unan eus hoc'h alc'hwezioù pennañ (multisig 2-diwar-3) :";;
+
+installer-no-current-wallets
+=> "You have no current wallets"
+=> "N'ho peus yalc'h ebet evit ar mare";;
+
+installer-node-setup-title
+=> "Set up connection to the Bitcoin node"
+=> "Kefluniañ ar gevreadenn ouzh ar skoulm Bitcoin";;
+
+installer-node-type => "Node type:" => "Seurt skoulm :"
+
+installer-password => "Password" => "Ger-tremen"
+
+installer-paste-descriptor => "Paste a descriptor" => "Pegañ un descriptor"
+
+installer-paste-descriptor-description
+=> "Creates a new wallet from the pasted descriptor"
+=> "Krouiñ a ra ur yalc'h nevez diwar an descriptor peget";;
+
+installer-path-duplicate-sequence
+=> "No two recovery options may become available at the very same date."
+=> "Ne c'hall ket daou zibarzh adtapout dont da vezañ hegerz d'an hevelep deiziad resis.";;
+
+installer-path-key-source-disallowed
+=> "Path contains a key that is disallowed for this kind of path."
+=> "An hent en deus un alc'hwez n'eo ket aotreet evit ar seurt hent-mañ.";;
+
+installer-path-only-cosigner-keys
+=> "A path cannot contain only cosigner keys."
+=> "Un hent ne c'hall ket kaout alc'hwezioù Cosigner hepken.";;
+
+installer-port-attempts-exhausted => "Exhausted attempts" => "Taolioù-esae echu"
+
+installer-primary-key => "Primary key" => "Alc'hwez pennañ"
+
+installer-primary-key-number
+=> "Primary key #{$number}"
+=> "Alc'hwez pennañ niv. {$number}";;
+
+installer-primary-spending-option
+=> "Primary spending option:"
+=> "Dibarzh dispign pennañ :";;
+
+installer-read-cookie-file-failed
+=> "Failed to read cookie file: {$error}"
+=> "N'eus ket bet gallet lenn ar restr cookie : {$error}";;
+
+installer-recovery-key => "Recovery key" => "Alc'hwez adtapout"
+
+installer-recovery-option
+=> "Recovery option #{$number}:"
+=> "Dibarzh adtapout niv. {$number} :";;
+
+installer-register-descriptor-failed
+=> "Failed to register descriptor"
+=> "N'eus ket bet gallet enskrivañ an descriptor";;
+
+installer-register-descriptor-help
+=> "To be used with the wallet, a signing device needs the descriptor. If the descriptor contains one or more keys imported from an external signing device, the descriptor must be registered on it. Registration confirms that the device is able to handle the policy. Registration on a device is not a substitute for backing up the descriptor."
+=> "Evit bezañ implijet gant ar yalc'h en deus ezhomm un trevnad sinañ eus an descriptor. Ma'z eus en descriptor un alc'hwez pe meur a hini enporzhiet diwar un trevnad sinañ diavaez, ret eo enskrivañ an descriptor warnañ. Gant an enskrivadur e vez kadarnaet e c'hall an trevnad merañ ar reolenn. An enskrivadur war un trevnad ne zeu ket e plas gwarediñ an descriptor.";;
+
+installer-register-descriptor-optional
+=> "This step is only necessary if you are using a signing device."
+=> "Ret eo ar bazenn-mañ nemet m'implijit un trevnad sinañ.";;
+
+installer-register-descriptor-title
+=> "Register descriptor"
+=> "Enskrivañ an descriptor";;
+
+installer-registered-descriptor-checkbox
+=> "I have registered the descriptor on my device(s)"
+=> "Enskrivet em eus an descriptor war ma zrevnad(où)";;
+
+installer-remote-backend-description
+=> "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
+=> "Implijit hor servij evit bezañ prest da dreuzgreañ diouzhtu. Wizardsardine a ra war-dro ar framm-diazez, ar pezh a ro tro da veur a urzhiataer pe a berzhiad da gevreañ ha da goubredañ.\n\nUn dibarzh aesoc'h ha suroc'h eo evit an dud a fell dezho e virfe Wizardsardine ur gwarezadur eus o descriptor. Mestr oc'h atav war hoc'h alc'hwezioù, ha n'en deus Wizardsardine galloud ebet war hoc'h arc'hant, met gallout a raio gwelout titouroù ho yalc'h, liammet ouzh ur chomlec'h postel. An implijerien a zalc'h d'o buhez prevez a rankfe merañ o framm-diazez dezho o-unan kentoc'h.";;
+
+installer-remote-bitcoin-node-warning
+=> "Connection to a remote Bitcoin node is not supported. Insert an IP address bound to the same machine running Liana (ignore this warning if that's already the case)"
+=> "N'eo ket skoret ar c'hevreañ ouzh ur skoulm Bitcoin a-bell. Enankit ur chomlec'h IP liammet ouzh an hevelep mekanik hag an hini a lañs Liana (na zalc'hit ket kont eus ar c'hemenn diwall-mañ m'eo dija ar c'hiz)";;
+
+installer-rpc-auth => "RPC authentication:" => "Dilesadur RPC :"
+
+installer-rpc-user-password => "User and password" => "Implijer ha ger-tremen"
+
+installer-safety-net => "Safety Net:" => "Safety Net :"
+
+installer-safety-net-description
+=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
+=> "Ouzhpennañ a ra un dibarzh adtapout diwezhañ gant alc'hwezioù ajanted alc'hwezioù a-vicher.\n\nImplijit an dibarzh-mañ m'eo bet roet deoc'h un token Safety Net pe meur a hini.";;
+
+installer-safety-net-key => "Safety Net key" => "Alc'hwez Safety Net"
+
+installer-safety-net-token-disallowed
+=> "SafetyNet tokens are not allowed for this path"
+=> "N'eo ket aotreet an tokenoù SafetyNet evit an hent-mañ";;
+
+installer-seed-key-not-in-descriptor
+=> "The descriptor does not use a key derived from this seed"
+=> "N'implij ket an descriptor un alc'hwez deveret diwar ar seed-mañ";;
+
+installer-select-device-register
+=> "Select hardware wallet to register descriptor on:"
+=> "Dibabit ar yalc'h periant evit enskrivañ an descriptor warnañ :";;
+
+installer-select-device-register-if-needed
+=> "If necessary, please select the signing device to register descriptor on:"
+=> "Mar bez ezhomm, dibabit an trevnad sinañ evit enskrivañ an descriptor warnañ, mar plij :";;
+
+installer-select-key-source => "Select key source" => "Dibab tarzh an alc'hwez"
+
+installer-sequence-value-warning
+=> "Value must be greater than 0 and lower than 65535"
+=> "Ret eo d'an talvoud bezañ brasoc'h eget 0 ha bihanoc'h eget 65535";;
+
+installer-serialize-daemon-config-failed
+=> "Failed to serialize daemon config: {$error}"
+=> "N'eus ket bet gallet heuliadañ kefluniadur an daemon : {$error}";;
+
+installer-serialize-gui-config-failed
+=> "Failed to serialize GUI config: {$error}"
+=> "N'eus ket bet gallet heuliadañ kefluniadur ar GUI : {$error}";;
+
+installer-share-xpubs-title
+=> "Share your public keys (Xpubs)"
+=> "Rannañ hoc'h alc'hwezioù foran (xpubs)";;
+
+installer-shared-wallet-help
+=> "If you received an invitation to join a shared wallet"
+=> "M'ho peus resevet ur bedadenn da vont en ur yalc'h rannet";;
+
+installer-simple-inheritance => "Simple inheritance" => "Hêrezh eeun"
+
+installer-simple-inheritance-description
+=> "Two keys required, one for yourself to spend and another for your heir."
+=> "Daou alc'hwez a zo ret, unan evidoc'h da zispign hag unan all evit hoc'h hêr.";;
+
+installer-simple-inheritance-wallet
+=> "Simple inheritance wallet"
+=> "Yalc'h hêrezh eeun";;
+
+installer-start-bitcoin-node
+=> "Start Bitcoin full node"
+=> "Loc'hañ ar skoulm Bitcoin klok";;
+
+installer-start-daemon-failed
+=> "Failed to start Liana daemon: {$error}"
+=> "N'eus ket bet gallet loc'hañ an daemon Liana : {$error}";;
+
+installer-started => "Started" => "Loc'het"
+
+installer-starting => "Starting..." => "O loc'hañ..."
+
+installer-stop-daemon-failed
+=> "Failed to stop Liana daemon: {$error}"
+=> "N'eus ket bet gallet paouez an daemon Liana : {$error}";;
+
+installer-store-mnemonic-failed
+=> "Failed to store mnemonic: {$error}"
+=> "N'eus ket bet gallet mirout ar mnemonek : {$error}";;
+
+installer-switch-account-help
+=> "Switch account if you already use the same hardware in other configurations"
+=> "Cheñchit kont m'implijit dija an hevelep periant e kefluniadurioù all";;
+
+installer-taproot-supported-version
+=> "Taproot is only supported by Liana version 5.0 and above"
+=> "Taproot n'eo skoret nemet gant Liana stumm 5.0 hag uheloc'h";;
+
+installer-template-custom-primary => "Primary keys" => "Alc'hwezioù pennañ"
+
+installer-template-custom-recovery => "Recovery keys" => "Alc'hwezioù adtapout"
+
+installer-template-event-receipt => "Receipt of funds" => "Degemer an arc'hant"
+
+installer-template-event-timelock
+=> "After some time* of wallet inactivity"
+=> "Goude ur mare* hep obererezh er yalc'h";;
+
+installer-template-footnote
+=> "*The time range (timelock) for the activation of keys can be configured in the next step."
+=> "*Ar prantad (prenn-amzer) a-raok gweredekaat an alc'hwezioù a vez kefluniet er bazenn war-lerc'h.";;
+
+installer-template-multisig-primary => "2-of-2 multisig" => "Multisig 2-diwar-2"
+
+installer-template-multisig-recovery => "2-of-3 multisig" => "Multisig 2-diwar-3"
+
+installer-template-policy-primary
+=> "Primary spending policy"
+=> "Reolenn dispign pennañ";;
+
+installer-template-policy-recovery
+=> "Recovery spending policy"
+=> "Reolenn dispign adtapout";;
+
+installer-template-state-locked => "Can't spend" => "Ne c'hall ket dispign"
+
+installer-template-state-spend => "Can spend" => "A c'hall dispign"
+
+installer-the-descriptor => "The descriptor" => "An descriptor"
+
+installer-the-descriptor-label => "The descriptor:" => "An descriptor :"
+
+installer-threshold => "Threshold:" => "Treuzoù :"
+
+installer-threshold-keys
+=> "{ $total ->\n    [one] {$threshold} out of 1 key\n   *[other] {$threshold} out of {$total} keys\n}"
+=> "{ $total ->\n    [one] {$threshold} alc'hwez diwar 1\n   *[other] {$threshold} alc'hwez diwar {$total}\n}";;
+
+installer-token-type-disallowed
+=> "Token type not allowed in this path"
+=> "Seurt token n'eo ket aotreet en hent-mañ";;
+
+installer-use-liana-connect => "Use Liana Connect" => "Implijout Liana Connect"
+
+installer-use-own-node => "Use your own node" => "Implijout ho skoulm deoc'h"
+
+installer-user => "User" => "Implijer"
+
+installer-wallet-alias => "Wallet alias" => "Lesanv ar yalc'h"
+
+installer-wallet-alias-too-long
+=> "Wallet alias is too long."
+=> "Re hir eo lesanv ar yalc'h.";;
+
+installer-xpub-invalid => "Invalid Xpub" => "Xpub direizh"
+
+installer-xpub-origin-missing => "Origin missing" => "Orin o vankout"
+
+installer-xpub-wrong-derivation-path
+=> "Wrong derivation path"
+=> "Hent deveradur direizh";;
+
+installer-xpub-wrong-network => "Wrong network" => "Rouedad fall"
+
+label-edit => "Edit label" => "Kemmañ an dikedenn"
+
+label-external-output => "(External Output)" => "(Ezvont diavaez)"
+
+label-invalid-length
+=> "Invalid label length, must be 80 bytes or less"
+=> "Hirder tikedenn direizh, ret eo dezhi bezañ 80 okted pe nebeutoc'h";;
+
+label-label => "Label" => "Tikedenn"
+
+launcher-add-existing-wallet
+=> "Add an existing Liana wallet"
+=> "Ouzhpennañ ur yalc'h Liana a zo anezhañ dija";;
+
+launcher-config-descriptor-origin-error
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1."
+=> "Ur gudenn a zo gant kefluniadur ar rouedad-mañ. Moarvat e implijit un descriptor ennañ un alc'hwez foran pe meur a hini hep orin. Liana v0.2 hag ar stummoù diwezhatoc'h ne skoront nemet alc'hwezioù foran gant orin. Divroit hoc'h arc'hant gant Liana v0.1, mar plij.";;
+
+launcher-create-new-wallet
+=> "Create a new Liana wallet"
+=> "Krouiñ ur yalc'h Liana nevez";;
+
+launcher-default-wallet-name
+=> "My Liana {$network} wallet"
+=> "Ma yalc'h Liana {$network}";;
+
+launcher-delete-all-data-confirmation
+=> "Are you sure you want to delete the configuration and all associated data for the wallet {$wallet}?"
+=> "Ha sur oc'h e fell deoc'h dilemel ar c'hefluniadur hag an holl roadennoù liammet ouzh ar yalc'h {$wallet} ?";;
+
+launcher-delete-connect-all-members
+=> "Also permanently delete this wallet from Liana Connect (for all members)."
+=> "Dilemel ivez ar yalc'h-mañ da viken diwar Liana Connect (evit an holl izili).";;
+
+launcher-delete-connect-disassociate
+=> "Also disassociate {$email} from this Liana Connect wallet."
+=> "Diliammañ ivez {$email} diouzh ar yalc'h Liana Connect-mañ.";;
+
+launcher-delete-local-config-confirmation
+=> "Are you sure you want to delete locally the configuration for the wallet {$wallet}?"
+=> "Ha sur oc'h e fell deoc'h dilemel ent lec'hel kefluniadur ar yalc'h {$wallet} ?";;
+
+launcher-delete-node-not-affected
+=> "(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"
+=> "(M'implijit ur skoulm Bitcoin meret gant Liana, ne vo ket tizhet gant an ober-mañ.)";;
+
+launcher-delete-node-not-affected-this-network
+=> "(The Liana-managed Bitcoin node for this network will not be affected by this action.)"
+=> "(Ne vo ket tizhet ar skoulm Bitcoin meret gant Liana evit ar rouedad-mañ gant an ober-mañ.)";;
+
+launcher-delete-title
+=> "Delete configuration for Liana-{$checksum}"
+=> "Dilemel kefluniadur Liana-{$checksum}";;
+
+launcher-delete-title-alias
+=> "Delete configuration for {$alias} (Liana-{$checksum})"
+=> "Dilemel kefluniadur {$alias} (Liana-{$checksum})";;
+
+launcher-delete-warning-irreversible
+=> "WARNING: This cannot be undone."
+=> "DIWALLIT : n'haller ket nullañ an ober-mañ.";;
+
+launcher-read-daemon-config-failed
+=> "Failed to read daemon configuration file in the directory: {$path}"
+=> "N'eus ket bet gallet lenn restr kefluniadur an daemon en teuliad : {$path}";;
+
+launcher-read-gui-config-failed
+=> "Failed to read GUI configuration file in the directory: {$path}"
+=> "N'eus ket bet gallet lenn restr kefluniadur ar GUI en teuliad : {$path}";;
+
+launcher-unexpected-error => "Unexpected {$error}" => "Dic'hortoz {$error}"
+
+launcher-wallet-deleted
+=> "Wallet successfully deleted"
+=> "Dilamet eo bet ar yalc'h";;
+
+launcher-wallet-id-not-found
+=> "Wallet {$wallet_id} not found"
+=> "N'eo ket bet kavet ar yalc'h {$wallet_id}";;
+
+launcher-wallet-not-found => "Wallet not found" => "N'eo ket bet kavet ar yalc'h"
+
+launcher-welcome => "Welcome" => "Degemer mat"
+
+launcher-welcome-back => "Welcome back" => "Degemer mat en-dro"
+
+lianalite-auth-sent
+=> "An authentication was sent to your email:"
+=> "Un dilesadur a zo bet kaset d'ho postel :";;
+
+lianalite-token-expired
+=> "Token is expired or is invalid"
+=> "Diamzeret pe direizh eo an token";;
+
+lianalite-token-has-expired-or-invalid
+=> "Token has expired or is invalid"
+=> "Diamzeret pe direizh eo an token";;
+
+lianalite-token-invalid => "Token is not valid" => "N'eo ket reizh an token"
+
+lianalite-wallet-deleted
+=> "This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor."
+=> "Dilamet eo bet ar yalc'h-mañ gant e grouer evit an holl berzhidi ha n'hall ket bezañ digoret. Evit e dizhout en-dro, assavit anezhañ gant ur restr gwarezadur pe gant descriptor ar yalc'h.";;
+
+loader-connecting-daemon
+=> "Connecting to daemon..."
+=> "O kevreañ ouzh an daemon...";;
+
+loader-failed => "Liana failed to start" => "N'eo ket deuet a-benn Liana da loc'hañ"
+
+loader-failed-bitcoind
+=> "Liana failed to start, please check if bitcoind is running"
+=> "N'eo ket deuet a-benn Liana da loc'hañ, gwiriit hag-eñ emañ bitcoind o treiñ, mar plij";;
+
+loader-internal-daemon-error
+=> "Error while starting the internal daemon"
+=> "Fazi en ur loc'hañ an daemon diabarzh";;
+
+loader-progress => "Progress {$progress}%" => "Araokadur {$progress} %"
+
+loader-starting-daemon => "Starting daemon..." => "O loc'hañ an daemon..."
+
+loader-sync-progress-1
+=> "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+=> "Emañ Bitcoin Core o koubredañ ar blockchain. Ur goubredadur klok a bad un nebeud devezhioù peurliesañ hag a implij kalz a zanvezioù. Ur wech echu ar goubredadur kentañ e vo buanoc'h-buan ar re war-lerc'h.";;
+
+loader-sync-progress-2
+=> "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Emañ Bitcoin Core o koubredañ ar blockchain. Pad a raio ur pennad, hervez ar wech diwezhañ ma voe graet, ho kevreadenn internet ha barregezh hoc'h urzhiataer.";;
+
+loader-sync-progress-3
+=> "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+=> "Emañ Bitcoin Core o koubredañ ar blockchain. Gallout a ra padout un nebeud munutennoù, hervez ar wech diwezhañ ma voe graet, ho kevreadenn internet ha barregezh hoc'h urzhiataer.";;
+
+menu-coins-utxos => "Coins/UTXOs" => "Pezhioù/UTXO"
+
+menu-dashboard => "Dashboard" => "Taolenn-vourzh"
+
+menu-drafts-approvals => "Drafts & Approvals" => "Brouennoù hag aprouadennoù"
+
+menu-receive => "Receive" => "Degemer"
+
+menu-send => "Send" => "Kas"
+
+menu-settings => "Settings" => "Arventennoù"
+
+menu-transactions => "Transactions" => "Treuzgreadoù"
+
+network-coins-have => ", COINS HAVE{ \" \" }" => ", AR PEZHIOÙ{ \" \" }"
+
+network-no-value => "NO VALUE" => "N'O DEUS TALVOUDEGEZH EBET"
+
+network-this-is-a => "THIS IS A{ \" \" }" => "HEMAÑ A ZO UR{ \" \" }"
+
+network-wallet => "{$network} WALLET" => "YALC'H {$network}"
+
+payment-address-label => "address label: {$label}" => "tikedenn chomlec'h : {$label}"
+
+payment-incoming => "Incoming payment" => "Paeamant o tont"
+
+payment-outgoing => "Outgoing payment" => "Paeamant o vont kuit"
+
+payment-title => "Payment" => "Paeamant"
+
+pill-active => "Active" => "Oberiant"
+
+pill-always-available => "Always available" => "Atav hegerz"
+
+pill-available => "Available" => "Hegerz"
+
+pill-available-compact => "Avail." => "Heg."
+
+pill-batch => "Batch" => "Strollad"
+
+pill-batch-tooltip
+=> "This transaction contains multiple payments"
+=> "Meur a baeamant a zo en treuzgread-mañ";;
+
+pill-confirmed => "Confirmed" => "Kadarnaet"
+
+pill-confirmed-tooltip
+=> "This transaction has been included in a block"
+=> "An treuzgread-mañ a zo bet lakaet en ur bloc'had";;
+
+pill-deprecated => "Deprecated" => "Diamzeret"
+
+pill-deprecated-tooltip
+=> "This transaction cannot be included in the blockchain anymore."
+=> "An treuzgread-mañ ne c'hall ket bezañ lakaet er blockchain ken.";;
+
+pill-draft => "Draft" => "Brouilhed"
+
+pill-first-recovery-in
+=> "First recovery option available in {$units}"
+=> "Kentañ dibarzh adtapout hegerz a-benn {$units}";;
+
+pill-first-recovery-today
+=> "First recovery option available today"
+=> "Kentañ dibarzh adtapout hegerz hiziv";;
+
+pill-key-cosigner => "Cosigner" => "Cosigner"
+
+pill-key-cosigner-tooltip
+=> "Professional third party co-signing key"
+=> "Alc'hwez kensinañ micherel gant un trede";;
+
+pill-key-external => "External" => "External"
+
+pill-key-external-tooltip
+=> "Key held by third parties"
+=> "Alc'hwez dalc'het gant tredeoù";;
+
+pill-key-internal => "Internal" => "Internal"
+
+pill-key-internal-tooltip
+=> "Key held by your organization"
+=> "Alc'hwez dalc'het gant hoc'h aozadur";;
+
+pill-key-safety-net => "Safety Net" => "Safety Net"
+
+pill-key-safety-net-tooltip
+=> "Professional third party recovery key"
+=> "Alc'hwez adtapout micherel gant un trede";;
+
+pill-not-in-policy => "Not in policy yet" => "N'emañ ket er reolenn c'hoazh"
+
+pill-recovery-available-tooltip
+=> "Recovery option(s) already available"
+=> "Dibarzh(où) adtapout hegerz dija";;
+
+pill-recovery-tooltip
+=> "This transaction is using a recovery path"
+=> "An treuzgread-mañ a implij un hent adtapout";;
+
+pill-rescan-progress => "Rescan... {$progress}%" => "Adc'hwiliañ... {$progress} %"
+
+pill-signed => "To broadcast" => "Da skignañ"
+
+pill-signed-tooltip
+=> "This transaction is signed & ready to broadcast"
+=> "An treuzgread-mañ a zo sinet ha prest da vezañ skignet";;
+
+pill-spent => "Spent" => "Dispignet"
+
+pill-spent-tooltip
+=> "The transaction was included in the blockchain."
+=> "An treuzgread a zo bet lakaet er blockchain.";;
+
+pill-timelocked => "Timelocked" => "Dindan prenn-amzer"
+
+pill-timelocked-tooltip
+=> "This recovery transaction is signed but can't be broadcast before its timelock expires"
+=> "An treuzgread adtapout-mañ a zo sinet met ne c'hall ket bezañ skignet a-raok ma tremeno e brenn-amzer";;
+
+pill-to-approve => "To approve" => "Da aprouiñ"
+
+pill-today => "Today" => "Hiziv"
+
+pill-unconfirmed => "Unconfirmed" => "Nann-kadarnaet"
+
+pill-unconfirmed-tooltip
+=> "Do not treat this as a payment until it is confirmed"
+=> "Na gemerit ket anezhañ evel ur paeamant keit ha ma n'eo ket kadarnaet";;
+
+pill-unsigned => "Unsigned" => "Nann-sinet"
+
+pill-unsigned-tooltip
+=> "This transaction is missing signature(s)"
+=> "Mankout a ra sinadur(où) d'an treuzgread-mañ";;
+
+pill-used-in-spending-paths
+=> "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
+=> "{ $count ->\n    [one] Implijet en 1 hent dispign\n   *[other] Implijet e {$count} hent dispign\n}";;
+
+pill-ws-admin => "WS Admin" => "WS Admin"
+
+pill-xpub-not-set => "Not Set" => "Nann-termenet"
+
+pill-xpub-set => "✓ Set" => "✓ Termenet"
+
+policy-block-duration
+=> "{$blocks} blocks (~{$duration})"
+=> "{$blocks} bloc'had (~{$duration})";;
+
+policy-by => "by" => "gant"
+
+policy-inactive-for
+=> "can spend coins inactive for"
+=> "a c'hall dispign ar pezhioù dizoberiant e-pad";;
+
+policy-out-of-by => "out of {$count} by" => "diwar {$count} gant"
+
+policy-primary-path
+=> "can always spend this wallet's funds (Primary path)"
+=> "a c'hall dispign atav arc'hant ar yalc'h-mañ (hent pennañ)";;
+
+policy-recovery-path
+=> "(Recovery path #{$number})"
+=> "(hent adtapout niv. {$number})";;
+
+policy-safety-net-path => "(Safety Net path)" => "(hent Safety Net)"
+
+policy-signatures
+=> "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
+=> "{ $count ->\n    [one] 1 sinadur\n   *[other] {$count} sinadur\n}";;
+
+policy-wallet-policy => "The wallet policy:" => "Reolenn ar yalc'h :"
+
+psbt-already-signed-by => ", already signed by" => ", sinet dija gant"
+
+psbt-broadcast-conflicts-one
+=> "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
+=> "An treuzgread da-heul a zispign unan pe meur a enankad eus an treuzgread da vezañ skignet hag a vo dilezet, kenkoulz ha kement treuzgread all a zalc'h warnañ :";;
+
+psbt-broadcast-conflicts-some
+=> "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
+=> "An treuzgreadoù da-heul a zispign unan pe meur a enankad eus an treuzgread da vezañ skignet hag a vo dilezet, kenkoulz ha kement treuzgread all a zalc'h warno :";;
+
+psbt-broadcast-invalidates-one
+=> "WARNING: Broadcasting this transaction will invalidate a pending payment."
+=> "DIWALLIT : skignañ an treuzgread-mañ a zidalvoudekaio ur paeamant war c'hortoz.";;
+
+psbt-broadcast-invalidates-some
+=> "WARNING: Broadcasting this transaction will invalidate some pending payments."
+=> "DIWALLIT : skignañ an treuzgread-mañ a zidalvoudekaio paeamantoù zo war c'hortoz.";;
+
+psbt-broadcast-transaction => "Broadcast the transaction" => "Skignañ an treuzgread"
+
+psbt-change => "Change" => "Distro"
+
+psbt-coins-spent
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
+=> "{ $count ->\n    [one] 1 pezh dispignet\n   *[other] {$count} pezh dispignet\n}";;
+
+psbt-delete-success
+=> "Successfully deleted this transaction."
+=> "Dilamet eo bet an treuzgread-mañ gant berzh.";;
+
+psbt-delete-this => "Delete this PSBT" => "Dilemel ar PSBT-mañ"
+
+psbt-device-sign-failed
+=> "Device failed to sign"
+=> "N'eo ket deuet an trevnad a-benn da sinañ";;
+
+psbt-finalizing-requires
+=> "Finalizing this transaction requires:"
+=> "Evit peurechuiñ an treuzgread-mañ ez eus ezhomm :";;
+
+psbt-missing-inputs
+=> "Missing information about transaction inputs"
+=> "Titouroù a vank diwar-benn enankadoù an treuzgread";;
+
+psbt-more-signatures
+=> "{ $count ->\n    [0] no more signatures\n    [one] 1 more signature from\n   *[other] {$count} more signatures from\n}"
+=> "{ $count ->\n    [0] sinadur ebet ouzhpenn\n    [one] 1 sinadur ouzhpenn digant\n   *[other] {$count} sinadur ouzhpenn digant\n}";;
+
+psbt-not-ready => "Not ready" => "N'eo ket prest"
+
+psbt-payments
+=> "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
+=> "{ $count ->\n    [one] 1 paeamant\n   *[other] {$count} paeamant\n}";;
+
+psbt-save-transaction => "Save this transaction" => "Enrollañ an treuzgread-mañ"
+
+psbt-select-signing-device
+=> "Select signing device to sign with:"
+=> "Diuzit an trevnad sinañ da implijout :";;
+
+psbt-sign-save-before-export
+=> "Sign or save the transaction first to enable export"
+=> "Sinit pe enrollit an treuzgread da gentañ evit gweredekaat an ezporzhiañ";;
+
+psbt-signed-by => "signed by" => "sinet gant"
+
+psbt-status => "Status" => "Statud"
+
+psbt-title => "PSBT" => "PSBT"
+
+psbt-transaction-broadcast
+=> "Transaction is broadcast"
+=> "Skignet eo an treuzgread";;
+
+psbt-transaction-saved => "Transaction is saved" => "Enrollet eo an treuzgread"
+
+psbts-hide-confirmed
+=> "Hide confirmed transactions"
+=> "Kuzhat an treuzgreadoù kadarnaet";;
+
+psbts-signatures-collected
+=> "{ $count ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
+=> "{ $count ->\n    [one] {$count}/{$threshold} sinadur dastumet\n   *[other] {$count}/{$threshold} sinadur dastumet\n}";;
+
+receive-address-label-placeholder
+=> "Enter an address label"
+=> "Skrivañ un dikedenn evit ar chomlec'h";;
+
+receive-derivation-index => "Derivation index:" => "Niverenn deveradur :"
+
+receive-generate-new-address-help
+=> "Always generate a new address for each deposit."
+=> "Krouit atav ur chomlec'h nevez evit pep dasparzh.";;
+
+receive-generating-address => "Generating address ..." => "O krouiñ ar chomlec'h ..."
+
+receive-generating-address-title => "Generating address" => "O krouiñ ar chomlec'h"
+
+receive-previous-addresses
+=> "Previously generated addresses still awaiting deposit"
+=> "Chomlec'hioù krouet a-raok hag a c'hortoz un dasparzh c'hoazh";;
+
+receive-select-device
+=> "Select device to verify address on:"
+=> "Diuzit an trevnad evit gwiriañ ar chomlec'h warnañ :";;
+
+receive-specter-diy-tooltip
+=> "For Specter DIY devices"
+=> "Evit an trevnadoù Specter DIY";;
+
+receive-verify-address => "Verify address" => "Gwiriañ ar chomlec'h"
+
+recovery-coins-total
+=> "{ $count ->\n    [one] can recover 1 coin totalling\n   *[other] can recover {$count} coins totalling\n}"
+=> "{ $count ->\n    [one] a c'hall adtapout 1 pezh evit un hollad a\n   *[other] a c'hall adtapout {$count} pezh evit un hollad a\n}";;
+
+recovery-info
+=> "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
+=> "Adtapit hoc'h arc'hant en ur gas anezhañ d'ur yalc'h all ma n'hoc'h eus ket tu da dizhout hoc'h hent dispign pennañ ken.";;
+
+recovery-none-available
+=> "No recovery path is currently available."
+=> "Hent adtapout ebet n'eo hegerz evit poent.";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available:\n   *[other] {$count} recovery paths are available:\n}"
+=> "{ $count ->\n    [one] 1 hent adtapout a zo hegerz :\n   *[other] {$count} hent adtapout a zo hegerz :\n}";;
+
+recovery-signatures-from
+=> "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
+=> "{ $count ->\n    [one] 1 sinadur digant\n   *[other] {$count} sinadur digant\n}";;
+
+settings-alias => "Alias" => "Lesanv"
+
+settings-alias-too-long
+=> "Please enter alias that is not too long"
+=> "Skrivit ul lesanv n'eo ket re hir, mar plij";;
+
+settings-backup-encrypted-descriptor-tooltip
+=> "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs."
+=> "Ur restr descriptor enrineget (.bed) a c'hallit mirout e forzh pelec'h. Evit e zienrinegañ ho po ezhomm eus unan eus hoc'h trevnadoù sinañ pe xpubs.";;
+
+settings-block-height => "Block Height:" => "Uhelder bloc'had :"
+
+settings-blockchain-rescan => "Blockchain rescan" => "Adc'hwiliañ ar blockchain"
+
+settings-change-node-or-connect
+=> "I want to change node type or use Liana Connect"
+=> "C'hoant am eus da cheñch seurt skoulm pe da implijout Liana Connect";;
+
+settings-connect-own-node
+=> "I want to connect to my own node"
+=> "C'hoant am eus da gevreañ ouzh ma skoulm din-me";;
+
+settings-cookie-file-path => "Cookie file path" => "Hent ar restr cookie"
+
+settings-correct-alias
+=> "Please enter correct alias"
+=> "Skrivit ul lesanv reizh, mar plij";;
+
+settings-currency => "Currency:" => "Moneiz :"
+
+settings-date-before-prune
+=> "Provided date earlier than the node prune height"
+=> "A-raok uhelder prune ar skoulm emañ an deiziad roet";;
+
+settings-date-future
+=> "Provided date is in the future"
+=> "En dazont emañ an deiziad roet";;
+
+settings-date-invalid => "Provided date is invalid" => "Direizh eo an deiziad roet"
+
+settings-day => "Day:" => "Deiz :"
+
+settings-email-invalid => "Email is invalid" => "Direizh eo ar postel"
+
+settings-exchange-rate-source
+=> "Exchange rate source:"
+=> "Mammenn ar feur eskemm :";;
+
+settings-export-descriptor
+=> "Descriptor only - plain-text"
+=> "Descriptor hepken - testenn blaen";;
+
+settings-export-descriptor-description
+=> "Plain-text (not encrypted) descriptor file only, to use with other wallets."
+=> "Restr descriptor e testenn blaen (nann-enrineget) hepken, d'he implijout gant yalc'hoù all.";;
+
+settings-export-encrypted-descriptor
+=> "Encrypted descriptor"
+=> "Descriptor enrineget";;
+
+settings-export-encrypted-descriptor-description
+=> ".bed file, can be decrypted with one of your signing devices or xpubs."
+=> "Restr .bed, a c'haller dienrinegañ gant unan eus hoc'h trevnadoù sinañ pe xpubs.";;
+
+settings-export-labels => "BIP 329 labels" => "Tikedennoù BIP 329"
+
+settings-export-labels-description
+=> "BIP 329 label export, compatible with other wallets."
+=> "Ezporzhiañ tikedennoù BIP 329, kenglotus gant yalc'hoù all.";;
+
+settings-export-transactions => "Transactions table" => "Taolenn an treuzgreadoù"
+
+settings-export-transactions-description
+=> ".CSV file of past transactions, for accounting purposes."
+=> "Restr .CSV eus an treuzgreadoù tremenet, evit ar gontouriezh.";;
+
+settings-export-wallet => "Export wallet" => "Ezporzhiañ ar yalc'h"
+
+settings-export-wallet-description
+=> "File (not encrypted) with wallet info useful to sync labels and data on other devices."
+=> "Restr (nann-enrineget) gant titouroù ar yalc'h, talvoudus evit kempredañ an tikedennoù hag ar roadennoù war trevnadoù all.";;
+
+settings-fiat-price => "Fiat price:" => "Priz e moneiz fiat :"
+
+settings-fiat-price-tooltip
+=> "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed."
+=> "Roadennoù priz e moneiz fiat a zo pourchaset gant servijoù trede. N'eo gwarantet na o hegerzted na o resisted.";;
+
+settings-fingerprint-aliases
+=> "Fingerprint aliases:"
+=> "Lesanvioù ar fingerprints :";;
+
+settings-grant-wallet-access
+=> "Grant access to wallet to another user"
+=> "Reiñ tu d'un implijer all da dizhout ar yalc'h";;
+
+settings-import-export-description
+=> "A collection of the export and import functions present in Liana."
+=> "Un dastumad eus an arc'hwelioù ezporzhiañ hag enporzhiañ a zo e Liana.";;
+
+settings-import-wallet => "Import wallet" => "Enporzhiañ ur yalc'h"
+
+settings-import-wallet-description
+=> "Upload a backup file to update wallet info."
+=> "Pellgasit ur restr gwarezadur evit hizivaat titouroù ar yalc'h.";;
+
+settings-invitation-sent => "Invitation was sent" => "Kaset eo bet ar bedadenn"
+
+settings-language => "Language" => "Yezh"
+
+settings-language-description
+=> "Choose the language used by the application."
+=> "Dibabit ar yezh implijet gant an arload.";;
+
+settings-month => "Month:" => "Miz :"
+
+settings-network => "Network:" => "Rouedad :"
+
+settings-not-running => "Not running" => "N'emañ ket en-dro"
+
+settings-other-formats => "Other formats" => "Mentrezhoù all"
+
+settings-rescan-success
+=> "Successfully rescanned the blockchain"
+=> "Adc'hwilet eo bet ar blockchain gant berzh";;
+
+settings-rescanning
+=> "Rescanning...{$progress}%"
+=> "Oc'h adc'hwiliañ...{$progress} %";;
+
+settings-running => "Running" => "En-dro"
+
+settings-section-about => "About" => "Diwar-benn"
+
+settings-section-backend => "Backend" => "Backend"
+
+settings-section-general => "General" => "Hollek"
+
+settings-section-import-export => "Import/Export" => "Enporzhiañ/Ezporzhiañ"
+
+settings-section-node => "Node" => "Skoulm"
+
+settings-select-device => "Select device:" => "Diuzañ un trevnad :"
+
+settings-socket-address => "Socket address:" => "Chomlec'h ar socket :"
+
+settings-updated => "Updated" => "Hizivaet"
+
+settings-user-email => "User email" => "Postel an implijer"
+
+settings-valid-address
+=> "Please enter a valid address"
+=> "Skrivit ur chomlec'h reizh, mar plij";;
+
+settings-valid-filesystem-path
+=> "Please enter a valid filesystem path"
+=> "Skrivit un hent restr reizh, mar plij";;
+
+settings-valid-password
+=> "Please enter a valid password"
+=> "Skrivit ur ger-tremen reizh, mar plij";;
+
+settings-valid-user
+=> "Please enter a valid user"
+=> "Skrivit un implijer reizh, mar plij";;
+
+settings-version => "Version" => "Stumm"
+
+settings-wallet-alias => "Wallet alias:" => "Lesanv ar yalc'h :"
+
+settings-wallet-descriptor => "Wallet descriptor:" => "Descriptor ar yalc'h :"
+
+settings-year => "Year:" => "Bloaz :"
+
+spend-amount-btc => "Amount (BTC)" => "Sammad (BTC)"
+
+spend-amount-truncated
+=> "Amount has been truncated to 8 decimal places"
+=> "Troc'het eo bet ar sammad da 8 sifr goude ar skej";;
+
+spend-batch-label => "Batch label" => "Tikedenn ar strollad"
+
+spend-btc-placeholder => "0.001 (in BTC)" => "0.001 (e BTC)"
+
+spend-coins-selection => "Coins selection" => "Dibab ar pezhioù"
+
+spend-could-not-convert-btc => "Could not convert to BTC" => "Dibosupl amdreiñ e BTC"
+
+spend-description => "Description" => "Deskrivadur"
+
+spend-duplicate-addresses
+=> "Two payment addresses are the same"
+=> "Daou chomlec'h paeamant a zo heñvel";;
+
+spend-dust-add-funds
+=> "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+=> "0.00 000 500 BTC eo ar sammad izelañ. Ouzhpennit arc'hant d'ho yalc'h evit dispign ar pezh(ioù).";;
+
+spend-dust-select-more-coins
+=> "Minimum amount is 0.00 000 500 BTC. Select more coins to continue."
+=> "0.00 000 500 BTC eo ar sammad izelañ. Diuzit muioc'h a bezhioù evit kenderc'hel.";;
+
+spend-fee => "Fee:" => "Fresoù :"
+
+spend-fee-manual => "Manual" => "Dre zorn"
+
+spend-fee-rate => "Fee ({$feerate} sats/vb):" => "Fresoù ({$feerate} sats/vb) :"
+
+spend-fee-smart-select => "Smart Select" => "Dibab speredek"
+
+spend-fee-smart-select-tooltip
+=> "Pick a preset feerate instead of entering one manually."
+=> "Dibab ur feur fresoù rakdermenet e-lec'h skrivañ unan dre zorn.";;
+
+spend-feerate => "Feerate:" => "Feur fresoù :"
+
+spend-feerate-example => "e.g. 5 (in sats/vb)" => "sk. 5 (e sats/vb)"
+
+spend-feerate-max-warning
+=> "Feerate must be an integer less than or equal to {$max_feerate} sats/vbyte"
+=> "Ar feur fresoù a rank bezañ un niver anterin izeloc'h pe par da {$max_feerate} sats/vbyte";;
+
+spend-feerate-missing-invalid
+=> "The feerate is missing or invalid"
+=> "Mankout a ra ar feur fresoù pe direizh eo";;
+
+spend-fiat-placeholder
+=> "Enter amount in {$currency}"
+=> "Skrivañ ar sammad e {$currency}";;
+
+spend-invalid-address
+=> "Invalid address (maybe it is for another network?)"
+=> "Chomlec'h direizh (marteze eo evit ur rouedad all ?)";;
+
+spend-invalid-amount
+=> "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"
+=> "Sammad direizh. (Notennit ez eo direizh ar sammadoù izeloc'h eget 0,000005 BTC.)";;
+
+spend-left-to-select => "left to select" => "da ziuzañ c'hoazh"
+
+spend-max => "MAX" => "MAX"
+
+spend-max-tooltip
+=> "Total amount remaining after paying fee and any other recipients"
+=> "Sammad hollek a chom goude paeañ ar fresoù hag ar resevourien all";;
+
+spend-payment-description-invalid
+=> "Payment description is missing or invalid"
+=> "Mankout a ra deskrivadur ar paeamant pe direizh eo";;
+
+spend-payment-label => "Payment label" => "Tikedenn ar paeamant"
+
+spend-recipient-address-invalid
+=> "A recipient address is missing or invalid"
+=> "Mankout a ra ur chomlec'h resever pe direizh eo";;
+
+spend-recipient-amount-invalid
+=> "A recipient amount is missing or invalid"
+=> "Mankout a ra ur sammad resever pe direizh eo";;
+
+spend-select-coins-to-cover-amount
+=> "Select coins to cover the amount"
+=> "Diuzit pezhioù evit goleiñ ar sammad";;
+
+spend-select-one-coin => "Select at least one coin." => "Diuzit ur pezh da nebeutañ."
+
+spend-select-or-add-funds
+=> "Select or add more funds."
+=> "Diuzit pe ouzhpennit muioc'h a arc'hant.";;
+
+spend-warning-recovery-own-address
+=> "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
+=> "Ar chomlec'h adtapout a zo d'ar memes yalc'h. Ma ne c'hallit ket dispign gant an hent pennañ ken, implijit kentoc'h ur chomlec'h eus ur yalc'h all.";;
+
+tab-installer => "Installer" => "Staliadur"
+
+tab-launcher => "Launcher" => "Loc'her"
+
+tab-pending => "Pending" => "O c'hortoz"
+
+time-days-ago
+=> "{ $count ->\n    [one] 1 day ago\n   *[other] {$count} days ago\n}"
+=> "{ $count ->\n    [one] 1 devezh zo\n   *[other] {$count} devezh zo\n}";;
+
+time-hours-ago
+=> "{ $count ->\n    [one] 1 hour ago\n   *[other] {$count} hours ago\n}"
+=> "{ $count ->\n    [one] 1 eur zo\n   *[other] {$count} eur zo\n}";;
+
+time-just-now => "just now" => "bremaik"
+
+time-minutes-ago
+=> "{ $count ->\n    [one] 1 minute ago\n   *[other] {$count} minutes ago\n}"
+=> "{ $count ->\n    [one] 1 munut zo\n   *[other] {$count} munut zo\n}";;
+
+time-months-ago
+=> "{ $count ->\n    [one] 1 month ago\n   *[other] {$count} months ago\n}"
+=> "{ $count ->\n    [one] 1 miz zo\n   *[other] {$count} miz zo\n}";;
+
+time-seconds-ago
+=> "{ $count ->\n    [one] 1 second ago\n   *[other] {$count} seconds ago\n}"
+=> "{ $count ->\n    [one] 1 eilenn zo\n   *[other] {$count} eilenn zo\n}";;
+
+time-weeks-ago
+=> "{ $count ->\n    [one] 1 week ago\n   *[other] {$count} weeks ago\n}"
+=> "{ $count ->\n    [one] 1 sizhun zo\n   *[other] {$count} sizhun zo\n}";;
+
+transactions-cancel-tooltip
+=> "Best effort attempt at double spending an unconfirmed outgoing transaction"
+=> "Klask ar gwellañ ma c'haller ober un dispign doubl eus un treuzgread o vont kuit nann-kadarnaet";;
+
+transactions-date => "Date:" => "Deiziad :"
+
+transactions-incoming => "Incoming transaction" => "Treuzgread o tont"
+
+transactions-miner-fee => "Miner fee:{ \" \" }" => "Fresoù mengleuzier :{ \" \" }"
+
+transactions-outgoing => "Outgoing transaction" => "Treuzgread o vont kuit"
+
+transactions-rbf-bump-help
+=> "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
+=> "Erlec'hiañ an treuzgread gant unan all a bae ur feur fresoù uheloc'h evit broudañ ur c'hadarnadur buanoc'h. Enankadoù nevez a c'hall bezañ implijet evit an treuzgread erlec'hiañ.";;
+
+transactions-rbf-cancel-help
+=> "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
+=> "Erlec'hiañ an treuzgread gant unan all a bae ur feur fresoù uheloc'h hag a gas ar pezhioù en-dro d'ho yalc'h. N'eus gwarant ebet ne vo ket mengleuzet an treuzgread orin da gentañ. Enankadoù nevez a c'hall bezañ implijet evit an treuzgread erlec'hiañ.";;
+
+transactions-rbf-created
+=> "Replacement PSBT created successfully and ready to be signed"
+=> "PSBT erlec'hiañ krouet gant berzh ha prest da vezañ sinet";;
+
+transactions-rbf-descendants-one
+=> "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
+=> "An treuzgread da-heul a zispign unan pe meur a ec'hankad eus an treuzgread da erlec'hiañ hag a vo dilezet pa vo skignet an erlec'hiadur, kenkoulz ha kement treuzgread all a zalc'h warnañ :";;
+
+transactions-rbf-descendants-some
+=> "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
+=> "An treuzgreadoù da-heul a zispign unan pe meur a ec'hankad eus an treuzgread da erlec'hiañ hag a vo dilezet pa vo skignet an erlec'hiadur, kenkoulz ha kement treuzgread all a zalc'h warno :";;
+
+transactions-rbf-feerate-warning
+=> "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
+=> "Ar feur fresoù a rank bezañ uheloc'h eget an dalvoudegezh gent hag izeloc'h pe par da 1000 sats/vbyte";;
+
+transactions-rbf-invalidates-one
+=> "WARNING: Replacing this transaction will invalidate a later payment."
+=> "DIWALLIT : erlec'hiañ an treuzgread-mañ a zidalvoudekaio ur paeamant diwezhatoc'h.";;
+
+transactions-rbf-invalidates-some
+=> "WARNING: Replacing this transaction will invalidate some later payments."
+=> "DIWALLIT : erlec'hiañ an treuzgread-mañ a zidalvoudekaio paeamantoù diwezhatoc'h zo.";;
+
+transactions-replacement => "Transaction replacement" => "Erlec'hiadur treuzgread"
+
+transactions-transaction => "Transaction" => "Treuzgread"
+
+transactions-txid => "Tx ID" => "Txid"
+
+warning-hardware-wallet-error
+=> "Hardware wallet error"
+=> "Fazi gant ar yalc'h periant";;
