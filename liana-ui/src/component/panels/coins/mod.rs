@@ -94,7 +94,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let outpoint_row = info_row(
         t!("coins-outpoint"),
         row![
-            new::b2(outpoint).style(theme::text::secondary),
+            new::caption(outpoint).style(theme::text::secondary),
             copy_outpoint
         ]
         .align_y(Alignment::Center),
@@ -102,7 +102,7 @@ pub fn coin_entry<'a, M: Clone + 'static>(
     let block_height = block_height.map(|b| {
         info_row(
             t!("coins-block-height"),
-            new::b2(b.to_string()).style(theme::text::secondary),
+            new::caption(b.to_string()).style(theme::text::secondary),
         )
     });
     let coin_info =
@@ -112,12 +112,12 @@ pub fn coin_entry<'a, M: Clone + 'static>(
         Some(CoinSpend { txid, height }) => {
             let spend_txid = info_row(
                 t!("coins-spend-txid"),
-                new::b2(txid.to_string()).style(theme::text::secondary),
+                new::caption(txid.to_string()).style(theme::text::secondary),
             );
             let spend_height = match height {
                 Some(height) => info_row(
                     t!("coins-spend-block-height"),
-                    new::b2(height.to_string()).style(theme::text::secondary),
+                    new::caption(height.to_string()).style(theme::text::secondary),
                 ),
                 None => {
                     row![new::b2_medium(t!("coins-not-in-block"))]
