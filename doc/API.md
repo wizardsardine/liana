@@ -496,7 +496,8 @@ is known to belong to this wallet, since recovered funds would be locked under t
 
 Update the labels from a given map of key/value, with the labelled bitcoin addresses, txids and
 outpoints as keys and the label as value. If a label already exists for the given item, the new label
-overrides the previous one. If a `null` value is passed, the label is deleted.
+overrides the previous one. If a `null` value is passed, the label is deleted. The default labels
+of all transactions and coins are recomputed from the labels after the update.
 
 #### Request
 

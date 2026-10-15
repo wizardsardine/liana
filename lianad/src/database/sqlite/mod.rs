@@ -917,20 +917,25 @@ impl SqliteConn {
         w_txs
     }
 
+    pub fn list_txs(&mut self) -> Vec<bitcoin::Transaction> {
+        self.query_txs("SELECT tx FROM transactions")
+    }
+
     pub fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
-        db_query(
-            &mut self.conn,
+        self.query_txs(
             "SELECT t.tx FROM transactions t \
             LEFT JOIN default_labels d ON d.txid = t.txid AND d.vout IS NULL \
             WHERE d.id IS NULL",
-            rusqlite::params![],
-            |row| {
-                let tx: Vec<u8> = row.get(0)?;
-                let tx: bitcoin::Transaction =
-                    encode::deserialize(&tx).expect("We only store valid txs");
-                Ok(tx)
-            },
         )
+    }
+
+    fn query_txs(&mut self, query: &str) -> Vec<bitcoin::Transaction> {
+        db_query(&mut self.conn, query, rusqlite::params![], |row| {
+            let tx: Vec<u8> = row.get(0)?;
+            let tx: bitcoin::Transaction =
+                encode::deserialize(&tx).expect("We only store valid txs");
+            Ok(tx)
+        })
         .expect("Db must not fail")
     }
 
@@ -952,7 +957,7 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
-    /// Store the default label of transactions and coins, keeping the ones already stored.
+    /// Store the default label of transactions and coins, replacing the ones already stored.
     pub fn store_default_labels(
         &mut self,
         txs: &HashMap<bitcoin::Txid, Label>,
@@ -964,8 +969,8 @@ impl SqliteConn {
                     continue;
                 };
                 db_tx.execute(
-                    "INSERT INTO default_labels (txid, vout, kind, value) VALUES (?1, NULL, ?2, ?3) \
-                     ON CONFLICT DO NOTHING",
+                    "INSERT OR REPLACE INTO default_labels (txid, vout, kind, value) \
+                     VALUES (?1, NULL, ?2, ?3)",
                     rusqlite::params![txid[..].to_vec(), kind as i64, text],
                 )?;
             }
@@ -974,8 +979,8 @@ impl SqliteConn {
                     continue;
                 };
                 db_tx.execute(
-                    "INSERT INTO default_labels (txid, vout, kind, value) VALUES (?1, ?2, ?3, ?4) \
-                     ON CONFLICT DO NOTHING",
+                    "INSERT OR REPLACE INTO default_labels (txid, vout, kind, value) \
+                     VALUES (?1, ?2, ?3, ?4)",
                     rusqlite::params![outpoint.txid[..].to_vec(), outpoint.vout, kind as i64, text],
                 )?;
             }
@@ -2841,16 +2846,20 @@ CREATE TABLE labels (
             assert_eq!(txs.len(), 1);
             assert_eq!(txs[0].default_label, Some(salary.clone()));
 
-            // Storing again keeps the first labels.
+            // Storing again replaces the labels.
+            let gift = Label::Transaction("gift".to_string());
             conn.store_default_labels(
                 &HashMap::from([(txid, Label::None)]),
-                &HashMap::from([(outpoint, Label::Transaction("gift".to_string()))]),
+                &HashMap::from([(outpoint, gift.clone())]),
             );
-            assert_eq!(conn.coins(&[], &[outpoint])[0].default_label, Some(rent));
+            assert_eq!(conn.coins(&[], &[outpoint])[0].default_label, Some(gift));
             assert_eq!(
                 conn.list_wallet_transactions(&[txid])[0].default_label,
-                Some(salary)
+                Some(Label::None)
             );
+            assert_eq!(conn.list_txs(), vec![tx]);
+            assert!(conn.list_txs_without_default_label().is_empty());
+            assert!(conn.list_coins_without_default_label().is_empty());
         }
     }
 
