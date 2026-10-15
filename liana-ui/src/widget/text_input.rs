@@ -662,6 +662,7 @@ where
                     }
 
                     state.last_click = Some(click);
+                    shell.capture_event();
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
