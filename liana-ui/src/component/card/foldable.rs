@@ -231,7 +231,15 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for FoldableCard<'a, Mess
         limits: &layout::Limits,
     ) -> layout::Node {
         let expanded = self.is_expanded(tree);
-        let padding = self.padding;
+        // The cards are drawn inset by the accent stripe, so their content is laid out inset too.
+        let accent = match self.accent {
+            Some(_) => LIST_ENTRY_ACCENT_WIDTH,
+            None => 0.0,
+        };
+        let padding = Padding {
+            left: self.padding.left + accent,
+            ..self.padding
+        };
         let limits = limits.width(self.width);
         let inner_limits = limits.shrink(padding);
 
@@ -306,7 +314,10 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for FoldableCard<'a, Mess
                 foldable.as_widget_mut().layout(
                     &mut tree.children[Child::Foldable as usize],
                     renderer,
-                    &limits,
+                    &limits.shrink(Padding {
+                        left: accent,
+                        ..Padding::ZERO
+                    }),
                 )
             })
         } else {
@@ -323,14 +334,14 @@ impl<'a, Message: 'a> Widget<Message, Theme, Renderer> for FoldableCard<'a, Mess
         let foldable_size = foldable_node.size();
         let total_height = header_height + CARD_GAP + foldable_size.height;
         let total_width = header_width
-            .max(foldable_size.width)
+            .max(foldable_size.width + accent)
             .min(limits.max().width);
 
         layout::Node::with_children(
             Size::new(total_width, total_height),
             vec![
                 header_node,
-                foldable_node.move_to(Point::new(0.0, header_height + CARD_GAP)),
+                foldable_node.move_to(Point::new(accent, header_height + CARD_GAP)),
             ],
         )
     }
