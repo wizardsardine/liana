@@ -25,7 +25,7 @@ use crate::{
 
 use super::text::truncate;
 
-const COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING: u16 = 10;
+const COLLAPSIBLE_ENTRY_CONTENT_V_PADDING: u16 = 10;
 /// Gap between the leading tile and the body of an entry row.
 pub const ENTRY_H_SPACING: HSpacing = HSpacing::L;
 
@@ -260,10 +260,10 @@ pub fn entry_collapsible<'a, M: Clone + 'static>(cfg: CollapsibleEntry<'a, M>) -
     };
     let header = collapsible_entry_header(cfg.tile, cfg.title, subtitle);
     let content = Container::new(cfg.content).padding(iced::Padding {
-        left: button::LIST_ENTRY_PADDING[1].into(),
+        top: COLLAPSIBLE_ENTRY_CONTENT_V_PADDING.into(),
         right: button::LIST_ENTRY_PADDING[1].into(),
-        bottom: COLLAPSIBLE_ENTRY_CONTENT_BOTTOM_PADDING.into(),
-        ..iced::Padding::ZERO
+        bottom: COLLAPSIBLE_ENTRY_CONTENT_V_PADDING.into(),
+        left: button::LIST_ENTRY_PADDING[1].into(),
     });
 
     let accent = cfg.accent.map(entry_accent);

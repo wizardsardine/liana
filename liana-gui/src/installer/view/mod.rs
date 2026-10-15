@@ -204,14 +204,13 @@ pub fn import_wallet_or_descriptor<'a>(
     ]
     .align_y(Alignment::Start)
     .spacing(10);
-    let descriptor_content = column![Space::with_height(0), descriptor_form,].spacing(10);
     let paste_descriptor = list::entry_collapsible(list::CollapsibleEntry {
         accent: wallet_accent,
         tile: Tile::Paste,
         title: t!("installer-paste-descriptor"),
         collapsed_subtitle: Some(t!("installer-paste-descriptor-description")),
         expanded_subtitle: Some(t!("installer-paste-descriptor-description")),
-        content: descriptor_content.into(),
+        content: descriptor_form.into(),
         expanded: active_option == Some(message::ImportWalletOption::PasteDescriptor),
         on_toggle: Message::ImportRemoteWallet(message::ImportRemoteWallet::ToggleOption(
             message::ImportWalletOption::PasteDescriptor,
