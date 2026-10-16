@@ -1,0 +1,121 @@
+# Translator-friendly catalog
+# Language: Português (Portugal)
+# Format: id => "English" => "Translation"
+# Use \n for line breaks
+# Entries translated for the first time: the 34 entries changed by one commit, to review
+
+bitcoind-upgrade-hint
+=> "Updating your Liana-managed Bitcoin node."
+=> "A atualizar o seu nó Bitcoin gerido pela Liana.";;
+
+bitcoind-upgrade-title
+=> "Upgrading Bitcoin Core to {$version}"
+=> "A atualizar o Bitcoin Core para {$version}";;
+
+bitcoind-upgrade-verified
+=> "The downloaded binary is verified before it is installed."
+=> "O binário descarregado é verificado antes de ser instalado.";;
+
+bitcoind-upgrade-waiting
+=> "Waiting for another wallet to finish the Bitcoin Core upgrade"
+=> "À espera que outra carteira termine a atualização do Bitcoin Core";;
+
+btn-see-more-details => "See more details" => "Ver mais detalhes"
+
+btn-try-other-paths
+=> "Try other derivation paths"
+=> "Tentar outros caminhos de derivação";;
+
+coins-recovery-active
+=> "Recovery path is active"
+=> "O caminho de recuperação está ativo";;
+
+decrypt-other-paths-confirm-on-device
+=> "You will have to accept some of these derivation paths on the device."
+=> "Terá de aceitar alguns destes caminhos de derivação no dispositivo.";;
+
+decrypt-other-paths-hint
+=> "{$device} could not decrypt the backup with the derivation paths Liana uses. Other common derivation paths can be tried with it, but it is very unlikely to work as Liana does not use them."
+=> "{$device} não conseguiu desencriptar a cópia de segurança com os caminhos de derivação que a Liana usa. Podem ser tentados outros caminhos de derivação comuns, mas é muito pouco provável que funcione, pois a Liana não os usa.";;
+
+decrypt-other-paths-title
+=> "Try other derivation paths?"
+=> "Tentar outros caminhos de derivação?";;
+
+download-stalled
+=> "Download failed, check your internet connection"
+=> "A transferência falhou, verifique a sua ligação à internet";;
+
+export-encrypted-descriptor-include-paths
+=> "Include derivation paths"
+=> "Incluir caminhos de derivação";;
+
+export-encrypted-descriptor-include-paths-tooltip
+=> "Including them makes recovery faster. Leaving them out is more private, but recovering from this file can take several minutes on some signing devices."
+=> "Incluí-los torna a recuperação mais rápida. Omiti-los é mais privado, mas recuperar a partir deste ficheiro pode demorar vários minutos nalguns dispositivos de assinatura.";;
+
+hw-no-taproot-miniscript
+=> "This device doesn't support Taproot. Switch to Segwit or use another device."
+=> "Este dispositivo não suporta Taproot. Mude para Segwit ou use outro dispositivo.";;
+
+hw-taproot-firmware-outdated
+=> "Update firmware to {$version} or later to use Taproot."
+=> "Atualize o firmware para a versão {$version} ou posterior para usar Taproot.";;
+
+installer-descriptor-type-segwit => "Segwit" => "Segwit"
+
+installer-descriptor-type-taproot
+=> "Taproot (recommended)"
+=> "Taproot (recomendado)";;
+
+installer-descriptor-type-tooltip
+=> "The type of addresses your wallet uses. Taproot lowers fees and improves privacy when spending."
+=> "O tipo de endereços que a sua carteira usa. Taproot reduz as taxas e melhora a privacidade ao gastar.";;
+
+installer-manual-xpub-taproot-note
+=> "Use with a Taproot-compatible device"
+=> "Usar com um dispositivo compatível com Taproot";;
+
+installer-xpub-taproot-note
+=> "Taproot selected. Use an xpub from a compatible"
+=> "Taproot selecionado. Use um xpub de um";;
+
+installer-xpub-taproot-note-device => "device" => "dispositivo compatível"
+
+pill-payjoin => "Payjoin" => "Payjoin"
+
+psbt-fully-signed-by => "Signed by" => "Assinada por"
+
+psbt-requires-signatures
+=> "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}"
+=> "{ $count ->\n    [one] Requer mais 1 assinatura de\n   *[other] Requer mais {$count} assinaturas de\n}";;
+
+psbt-signatures => "Signatures" => "Assinaturas"
+
+psbt-signatures-count => "{$count} of {$threshold}" => "{$count} de {$threshold}"
+
+psbts-signatures-collected
+=> "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
+=> "{ $threshold ->\n    [one] {$count}/{$threshold} assinatura recolhida\n   *[other] {$count}/{$threshold} assinaturas recolhidas\n}";;
+
+recovery-coins-total
+=> "{ $count ->\n    [one] Can recover 1 coin totalling\n   *[other] Can recover {$count} coins totalling\n}"
+=> "{ $count ->\n    [one] pode recuperar 1 moeda num total de\n   *[other] pode recuperar {$count} moedas num total de\n}";;
+
+recovery-paths-available
+=> "{ $count ->\n    [one] 1 recovery path is available\n   *[other] {$count} recovery paths are available\n}"
+=> "{ $count ->\n    [one] 1 caminho de recuperação está disponível\n   *[other] {$count} caminhos de recuperação estão disponíveis\n}";;
+
+spend-self-transfer-info
+=> "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin."
+=> "Envie fundos para outro endereço desta carteira, para renovar timelocks ou consolidar moedas. As moedas selecionadas são fundidas numa única moeda nova.";;
+
+spend-tx-label => "Transaction label" => "Etiqueta da transação"
+
+transactions-date-unconfirmed
+=> "not included in a block yet"
+=> "ainda não incluída num bloco";;
+
+transactions-miner-fee => "Miner fee:" => "Taxa de mineração:{ \" \" }"
+
+transactions-txid => "Tx ID:" => "Tx ID:"
