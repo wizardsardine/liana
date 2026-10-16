@@ -3,17 +3,21 @@
 # Format: id => "English" => "Translation"
 # Use \n for line breaks
 
-bitcoind-upgrade-hint => "Updating your Liana-managed Bitcoin node." => NONE
+bitcoind-upgrade-hint
+=> "Updating your Liana-managed Bitcoin node."
+=> "Mise à jour de votre nœud Bitcoin géré par Liana.";;
 
-bitcoind-upgrade-title => "Upgrading Bitcoin Core to {$version}" => NONE
+bitcoind-upgrade-title
+=> "Upgrading Bitcoin Core to {$version}"
+=> "Mise à niveau de Bitcoin Core vers {$version}";;
 
 bitcoind-upgrade-verified
 => "The downloaded binary is verified before it is installed."
-=> NONE;;
+=> "Le logiciel téléchargé est vérifié avant d'être installé.";;
 
 bitcoind-upgrade-waiting
 => "Waiting for another wallet to finish the Bitcoin Core upgrade"
-=> NONE;;
+=> "En attente qu'un autre portefeuille termine la mise à niveau de Bitcoin Core";;
 
 btn-accept => "Accept" => "Accepter"
 
@@ -145,7 +149,7 @@ btn-retry => "Retry" => "Réessayer"
 
 btn-save => "Save" => "Enregistrer"
 
-btn-see-more-details => "See more details" => NONE
+btn-see-more-details => "See more details" => "Détails"
 
 btn-select => "Select" => "Sélectionner"
 
@@ -179,7 +183,9 @@ btn-template-help
 => "Something’s wrong with this template?"
 => "Un problème avec ce modèle ?";;
 
-btn-try-other-paths => "Try other derivation paths" => NONE
+btn-try-other-paths
+=> "Try other derivation paths"
+=> "Essayer d'autres chemins de dérivation";;
 
 btn-unlock-all => "Unlock all" => "Tout déverrouiller"
 
@@ -711,7 +717,9 @@ coins-not-in-block => "Not in a block" => "Pas dans un bloc"
 
 coins-outpoint => "Outpoint:" => "Outpoint :"
 
-coins-recovery-active => "Recovery path is active" => NONE
+coins-recovery-active
+=> "Recovery path is active"
+=> "Le chemin de récupération est actif";;
 
 coins-spend-block-height => "Spend block height:" => "Hauteur du bloc de dépense :"
 
@@ -851,13 +859,15 @@ decrypt-mnemonic-source => "Seed phrase" => "Phrase mnémonique"
 
 decrypt-other-paths-confirm-on-device
 => "You will have to accept some of these derivation paths on the device."
-=> NONE;;
+=> "Vous devrez accepter certains de ces chemins de dérivation sur l'appareil.";;
 
 decrypt-other-paths-hint
 => "{$device} could not decrypt the backup with the derivation paths Liana uses. Other common derivation paths can be tried with it, but it is very unlikely to work as Liana does not use them."
-=> NONE;;
+=> "{$device} n'a pas pu déchiffrer la sauvegarde avec les chemins de dérivation utilisés par Liana. D'autres chemins de dérivation courants peuvent être essayés, mais il est très peu probable que cela fonctionne, Liana ne les utilisant pas.";;
 
-decrypt-other-paths-title => "Try other derivation paths?" => NONE
+decrypt-other-paths-title
+=> "Try other derivation paths?"
+=> "Essayer d'autres chemins de dérivation ?";;
 
 decrypt-pairing-code => "Pairing code: {$code}" => "Code d'appairage : {$code}"
 
@@ -933,7 +943,9 @@ device-version-unsupported
 => "Device version not supported, upgrade to version > {$version}"
 => "Version de l'appareil non prise en charge, mettez à jour vers une version > {$version}";;
 
-download-stalled => "Download failed, check your internet connection" => NONE
+download-stalled
+=> "Download failed, check your internet connection"
+=> "Échec du téléchargement, vérifiez votre connexion internet";;
 
 duration-days
 => "{ $count ->\n    [one] 1 day\n   *[other] {$count} days\n}"
@@ -977,11 +989,13 @@ export-aliases-conflict
 
 export-canceled => "Export canceled" => "Exportation annulée"
 
-export-encrypted-descriptor-include-paths => "Include derivation paths" => NONE
+export-encrypted-descriptor-include-paths
+=> "Include derivation paths"
+=> "Inclure les chemins de dérivation";;
 
 export-encrypted-descriptor-include-paths-tooltip
 => "Including them makes recovery faster. Leaving them out is more private, but recovering from this file can take several minutes on some signing devices."
-=> NONE;;
+=> "Les inclure accélère la récupération. Les omettre est plus confidentiel, mais la récupération depuis ce fichier peut prendre plusieurs minutes sur certains appareils.";;
 
 export-labels-conflict
 => "Labels conflict, what do you want to do?"
@@ -1111,7 +1125,7 @@ hw-display-address-unavailable
 
 hw-no-taproot-miniscript
 => "This device doesn't support Taproot. Switch to Segwit or use another device."
-=> NONE;; # "La version du firmware de l'appareil ne prend pas en charge Taproot miniscript"
+=> "Cet appareil ne prend pas en charge Taproot. Passez en Segwit ou utilisez un autre appareil.";;
 
 hw-not-in-spending-path
 => "This signing device is not part of this spending path."
@@ -1119,7 +1133,7 @@ hw-not-in-spending-path
 
 hw-taproot-firmware-outdated
 => "Update firmware to {$version} or later to use Taproot."
-=> NONE;;
+=> "Mettez à jour le firmware vers la version {$version} ou ultérieure pour utiliser Taproot.";;
 
 import-success => "Import successful" => "Importation réussie"
 
@@ -1311,13 +1325,15 @@ installer-descriptor-template => "Descriptor template" => "Modèle de descriptor
 
 installer-descriptor-type => "Descriptor type" => "Type de descriptor"
 
-installer-descriptor-type-segwit => "Segwit" => NONE
+installer-descriptor-type-segwit => "Segwit" => "Segwit"
 
-installer-descriptor-type-taproot => "Taproot (recommended)" => NONE
+installer-descriptor-type-taproot
+=> "Taproot (recommended)"
+=> "Taproot (recommandé)";;
 
 installer-descriptor-type-tooltip
 => "The type of addresses your wallet uses. Taproot lowers fees and improves privacy when spending."
-=> NONE;;
+=> "Le type d'adresses utilisé par votre portefeuille. Taproot réduit les frais et améliore la confidentialité des dépenses.";;
 
 installer-descriptor-wrong-network
 => "The descriptor is for another network"
@@ -1527,7 +1543,9 @@ installer-managed-node-description
 => "Liana will install a pruned node on your computer. You won't need to do anything except have some disk space available (~30GB required on mainnet) and wait for the initial synchronization with the network (it can take some days depending on your internet connection speed)."
 => "Liana installera un nœud élagué sur votre ordinateur. Vous n'aurez rien à faire, sauf disposer d'un peu d'espace disque disponible (~30 Go requis sur mainnet) et attendre la synchronisation initiale avec le réseau (cela peut prendre plusieurs jours selon la vitesse de votre connexion internet).";;
 
-installer-manual-xpub-taproot-note => "Use with a Taproot-compatible device" => NONE
+installer-manual-xpub-taproot-note
+=> "Use with a Taproot-compatible device"
+=> "À utiliser avec un appareil compatible Taproot";;
 
 installer-mnemonic-backup-help
 => "A hot key generated on this computer was used for creating this wallet. Its seed phrase needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
@@ -1773,9 +1791,9 @@ installer-xpub-origin-missing => "Origin missing" => "Origine manquante"
 
 installer-xpub-taproot-note
 => "Taproot selected. Use an xpub from a compatible"
-=> NONE;;
+=> "Taproot sélectionné. Utilisez une xpub d'un";;
 
-installer-xpub-taproot-note-device => "device" => NONE
+installer-xpub-taproot-note-device => "device" => "appareil compatible"
 
 installer-xpub-wrong-derivation-path
 => "Wrong derivation path"
@@ -2015,7 +2033,7 @@ pill-key-safety-net-tooltip
 
 pill-not-in-policy => "Not in policy yet" => "Pas encore dans la politique"
 
-pill-payjoin => "Payjoin" => NONE
+pill-payjoin => "Payjoin" => "Payjoin"
 
 pill-payjoin-tooltip
 => "This transaction also spends coins that are not from this wallet"
@@ -2139,7 +2157,7 @@ psbt-delete-this => "Delete this PSBT" => "Supprimer cette PSBT"
 
 psbt-device-sign-failed => "Device failed to sign" => "L'appareil n'a pas pu signer"
 
-psbt-fully-signed-by => "Signed by" => NONE
+psbt-fully-signed-by => "Signed by" => "Signée par"
 
 psbt-payments
 => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
@@ -2147,7 +2165,7 @@ psbt-payments
 
 psbt-requires-signatures
 => "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}"
-=> NONE;;
+=> "{ $count ->\n    [one] Nécessite 1 signature de plus de\n   *[other] Nécessite {$count} signatures de plus de\n}";;
 
 psbt-save-transaction => "Save this transaction" => "Enregistrer cette transaction"
 
@@ -2159,9 +2177,9 @@ psbt-sign-save-before-export
 => "Sign or save the transaction first to enable export"
 => "Signez ou enregistrez d'abord la transaction pour activer l'exportation";;
 
-psbt-signatures => "Signatures" => NONE
+psbt-signatures => "Signatures" => "Signatures"
 
-psbt-signatures-count => "{$count} of {$threshold}" => NONE
+psbt-signatures-count => "{$count} of {$threshold}" => "{$count} sur {$threshold}"
 
 psbt-transaction-broadcast => "Transaction is broadcast" => "Transaction diffusée"
 
@@ -2173,7 +2191,7 @@ psbts-hide-confirmed
 
 psbts-signatures-collected
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
-=> NONE;; # "{ $count ->\n    [one] {$count}/{$threshold} signature collectée\n   *[other] {$count}/{$threshold} signatures collectées\n}"
+=> "{ $threshold ->\n    [one] {$count}/{$threshold} signature collectée\n   *[other] {$count}/{$threshold} signatures collectées\n}";;
 
 receive-address-label-placeholder
 => "Enter an address label"
@@ -2207,7 +2225,7 @@ receive-verify-address => "Verify address" => "Vérifier l'adresse"
 
 recovery-coins-total
 => "{ $count ->\n    [one] Can recover 1 coin totalling\n   *[other] Can recover {$count} coins totalling\n}"
-=> NONE;; # "{ $count ->\n    [one] peut récupérer 1 pièce totalisant\n   *[other] peut récupérer {$count} pièces totalisant\n}"
+=> "{ $count ->\n    [one] peut récupérer 1 pièce totalisant\n   *[other] peut récupérer {$count} pièces totalisant\n}";;
 
 recovery-info
 => "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
@@ -2219,7 +2237,7 @@ recovery-none-available
 
 recovery-paths-available
 => "{ $count ->\n    [one] 1 recovery path is available\n   *[other] {$count} recovery paths are available\n}"
-=> NONE;; # "{ $count ->\n    [one] 1 chemin de récupération est disponible :\n   *[other] {$count} chemins de récupération sont disponibles :\n}"
+=> "{ $count ->\n    [one] 1 chemin de récupération est disponible\n   *[other] {$count} chemins de récupération sont disponibles\n}";;
 
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
@@ -2493,13 +2511,13 @@ spend-select-or-add-funds
 
 spend-self-transfer-info
 => "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin."
-=> NONE;;
+=> "Envoyez des fonds vers une autre adresse de ce portefeuille, pour rafraîchir les timelocks ou consolider des pièces. Les pièces sélectionnées sont fusionnées en une seule nouvelle pièce.";;
 
 spend-tx-description
 => "Description of the transaction"
 => "Description de la transaction";;
 
-spend-tx-label => "Transaction label" => NONE
+spend-tx-label => "Transaction label" => "Étiquette de la transaction"
 
 spend-warning-recovery-own-address
 => "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
@@ -2543,9 +2561,11 @@ transactions-cancel-tooltip
 
 transactions-date => "Date:" => "Date :"
 
-transactions-date-unconfirmed => "not included in a block yet" => NONE
+transactions-date-unconfirmed
+=> "not included in a block yet"
+=> "pas encore incluse dans un bloc";;
 
-transactions-miner-fee => "Miner fee:" => NONE # "Frais de minage :{ \" \" }"
+transactions-miner-fee => "Miner fee:" => "Frais de minage :{ \" \" }"
 
 transactions-rbf-bump-help
 => "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
@@ -2585,7 +2605,7 @@ transactions-replacement
 
 transactions-transaction => "Transaction" => "Transaction"
 
-transactions-txid => "Tx ID:" => NONE # "Txid"
+transactions-txid => "Tx ID:" => "Txid :"
 
 warning-hardware-wallet-error
 => "Signing device error"
