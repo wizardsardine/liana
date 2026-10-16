@@ -42,8 +42,9 @@ See [this issue](https://github.com/wizardsardine/liana/issues/414) for details.
 
 #### Apple, Windows, codesigned and notarized binaries
 
-We distribute both a non-codesigned and a codesigned-and-notarized MacOS application
-(`Liana-noncodesigned.zip` and `Liana.zip`).  To run the non-codesigned app, see [this Apple support
+We distribute both a non-codesigned and a codesigned-and-notarized MacOS application, as disk images
+(`liana-<version>-macos-noncodesigned.dmg` and `liana-<version>-macos.dmg`). Open the disk image and
+drag the application to your `Applications` folder. To run the non-codesigned app, see [this Apple support
 guide](https://support.apple.com/en-us/HT202491) (section "If you want to open an app that hasn’t
 been notarized or is from an unidentified developer").
 

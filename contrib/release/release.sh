@@ -25,6 +25,18 @@ if [ "$TARGET" != "liana" ] && [ "$TARGET" != "liana-business" ]; then
     exit 1
 fi
 
+# The packaging tools (dpkg-deb, unzip, tar, xorrisofs, dmg) come from the
+# release dev shell. Re-enter it through Nix rather than require them on the host.
+if [ -z "${IN_LIANA_RELEASE_SHELL:-}" ]; then
+    export IN_LIANA_RELEASE_SHELL=1
+    exec nix develop "$PWD#release" --command "$0" "$@"
+fi
+
+if ! command -v guix >/dev/null 2>&1; then
+    echo "Error: guix is needed to build the Linux binaries, see contrib/reproducible/guix/README.md"
+    exit 1
+fi
+
 # Auto-detect version from git:
 # - If HEAD is exactly at a matching tag, use the tag version (e.g., v13.1 -> 13.1)
 # - Otherwise, use the latest matching tag (by version sort) combined with the short
@@ -63,19 +75,10 @@ create_dir() {
 }
 
 
-
 # Determine the reference time used for determinism (overridable by environment)
 export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
 export TZ=UTC
 export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --sort=name"
-
-zip_archive () {
-    local archive="$1"
-    shift
-    touch -d "@$SOURCE_DATE_EPOCH" "$@"
-    find "$@" -type f -exec touch -d "@$SOURCE_DATE_EPOCH" {} +
-    find "$@" -type f | sort | zip -oX "$archive" -@
-}
 
 # We'll use a folder for the builds output and another one for the final assets.
 RELEASE_DIR="$PWD/release_assets"
@@ -113,7 +116,7 @@ if [ "$TARGET" = "liana" ]; then
         cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
     )
 
-    # Create the MacOS archive and a zipped application bundle of liana-gui.
+    # Create the MacOS archive and a disk image of the liana-gui application bundle.
     (
         cd "$BUILD_DIR"
         create_dir "$LIANA_PREFIX-x86_64-apple-darwin"
@@ -129,8 +132,8 @@ if [ "$TARGET" = "liana" ]; then
         unzip ../contrib/release/macos/Liana.app.zip
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
         cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
-        zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Liana.app
-        mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
+        ../contrib/release/macos/create-dmg.sh Liana.app "$LIANA_PREFIX-macos-noncodesigned.dmg" "Liana $VERSION"
+        mv "$LIANA_PREFIX-macos-noncodesigned.dmg" "$RELEASE_DIR/"
     )
 else
     # Build liana-business using Guix for Linux and Nix for other platforms
@@ -190,8 +193,8 @@ else
         sed -i "s/liana/liana-business/g" ./Liana.app/Contents/Info.plist
         cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-business" ./Liana.app/Contents/MacOS/LianaBusiness
         mv Liana.app LianaBusiness.app
-        zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" LianaBusiness.app
-        mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
+        ../contrib/release/macos/create-dmg.sh LianaBusiness.app "$LIANA_PREFIX-macos-noncodesigned.dmg" "LianaBusiness $VERSION"
+        mv "$LIANA_PREFIX-macos-noncodesigned.dmg" "$RELEASE_DIR/"
     )
 fi
 
