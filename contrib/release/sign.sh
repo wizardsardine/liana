@@ -28,6 +28,13 @@ if [ "$TARGET" != "liana" ] && [ "$TARGET" != "liana-business" ]; then
     exit 1
 fi
 
+# The signing and disk image tools (rcodesign, xorrisofs, dmg) come from the
+# release dev shell. Re-enter it through Nix rather than require them on the host.
+if [ -z "${IN_LIANA_RELEASE_SHELL:-}" ]; then
+    export IN_LIANA_RELEASE_SHELL=1
+    exec nix develop "$PWD#release" --command "$0" "$TARGET" "$@"
+fi
+
 # Auto-detect version from git:
 # - If HEAD is exactly at a matching tag, use the tag version (e.g., v13.1 -> 13.1)
 # - Otherwise, use the latest matching tag (by version sort) combined with the short

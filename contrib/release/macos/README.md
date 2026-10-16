@@ -16,6 +16,13 @@ through `nix/libdmg-hfsplus.nix` since it is not packaged in nixpkgs.
 (`dmg-ds-store.py`, using the `ds_store` Python package), then builds the image. It honours
 `SOURCE_DATE_EPOCH`, so the output is reproducible.
 
+`release.sh` and `sign.sh` re-execute themselves inside that dev shell (guarded by
+`IN_LIANA_RELEASE_SHELL`), so they can be run straight from a checkout without installing `dpkg`,
+`unzip`, `rcodesign` or the disk image tools. To run the script on its own outside the shell:
+```
+nix develop .#release --command ./contrib/release/macos/create-dmg.sh Liana.app liana.dmg "Liana 13.1"
+```
+
 For the codesigned release we sign and notarize the app bundle first, and then sign and notarize the
 disk image containing it. Note `hdiutil imageinfo` reports an "internal error" on images produced by
 `libdmg-hfsplus` even though `hdiutil verify` passes; this is a known cosmetic quirk of the tool.

@@ -25,6 +25,18 @@ if [ "$TARGET" != "liana" ] && [ "$TARGET" != "liana-business" ]; then
     exit 1
 fi
 
+# The packaging tools (dpkg-deb, unzip, tar, xorrisofs, dmg) come from the
+# release dev shell. Re-enter it through Nix rather than require them on the host.
+if [ -z "${IN_LIANA_RELEASE_SHELL:-}" ]; then
+    export IN_LIANA_RELEASE_SHELL=1
+    exec nix develop "$PWD#release" --command "$0" "$@"
+fi
+
+if ! command -v guix >/dev/null 2>&1; then
+    echo "Error: guix is needed to build the Linux binaries, see contrib/reproducible/guix/README.md"
+    exit 1
+fi
+
 # Auto-detect version from git:
 # - If HEAD is exactly at a matching tag, use the tag version (e.g., v13.1 -> 13.1)
 # - Otherwise, use the latest matching tag (by version sort) combined with the short
@@ -61,7 +73,6 @@ create_dir() {
     fi
     mkdir "$1"
 }
-
 
 
 # Determine the reference time used for determinism (overridable by environment)
