@@ -21,9 +21,9 @@ btn-add-key => "Add a key" => "Adicionar uma chave"
 
 btn-add-payment => "Add payment" => "Adicionar pagamento"
 
-btn-add-recovery-option => "Add recovery path" => NONE # "Adicionar opção de recuperação"
+btn-add-recovery-option => "Add recovery path" => "Adicionar caminho de recuperação"
 
-btn-add-recovery-path => "Add recovery path" => NONE # "Adicionar um caminho de recuperação"
+btn-add-recovery-path => "Add recovery path" => "Adicionar caminho de recuperação"
 
 btn-add-safety-net => "Add Safety Net" => "Adicionar Safety Net"
 
@@ -35,7 +35,7 @@ btn-approve => "Approve" => "Aprovar"
 
 btn-back => "Back" => "Voltar"
 
-btn-back-up-descriptor => "Back up descriptor" => NONE # "Fazer backup do descritor"
+btn-back-up-descriptor => "Back up descriptor" => "Fazer backup do descritor"
 
 btn-backup-encrypted-descriptor
 => "Back up encrypted descriptor"
@@ -49,13 +49,13 @@ btn-cancel => "Cancel" => "Cancelar"
 
 btn-cancel-transaction => "Cancel transaction" => "Cancelar transação"
 
-btn-change-email => "Change email" => NONE # "Alterar e-mail"
+btn-change-email => "Change email" => "Alterar e-mail"
 
 btn-check-connection => "Check connection" => "Verificar conexão"
 
 btn-clear => "Clear" => "Limpar"
 
-btn-clear-all => "Clear all" => NONE # "Limpar tudo"
+btn-clear-all => "Clear all" => "Limpar tudo"
 
 btn-close-tab => "Close" => "Fechar"
 
@@ -107,7 +107,7 @@ btn-keep-my-changes => "Keep my changes" => "Manter minhas alterações"
 
 btn-login => "Login" => "Entrar"
 
-btn-manage-keys => "Manage keys" => NONE # "Gerenciar chaves"
+btn-manage-keys => "Manage keys" => "Gerenciar chaves"
 
 btn-mark-keys-ready => "Mark keys as ready" => "Marcar chaves como prontas"
 
@@ -159,9 +159,9 @@ btn-set => "Set" => "Definir"
 
 btn-set-keys => "Set keys" => "Definir chaves"
 
-btn-share-xpubs => "Share xpubs" => NONE # "Compartilhar xpubs"
+btn-share-xpubs => "Share xpubs" => "Compartilhar xpubs"
 
-btn-show-qr => "Show QR code" => NONE # "Mostrar código QR"
+btn-show-qr => "Show QR code" => "Mostrar código QR"
 
 btn-sign => "Sign" => "Assinar"
 
@@ -187,11 +187,13 @@ btn-update => "Update" => "Atualizar"
 
 btn-updating => "Updating" => "Atualizando"
 
-btn-verify-on-device => "Verify on signing device" => NONE # "Verificar no dispositivo de hardware"
+btn-verify-on-device
+=> "Verify on signing device"
+=> "Verificar no dispositivo de assinatura";;
 
 btn-yes => "Yes" => "Sim"
 
-business-access-error => "Access error" => NONE # "Erro de acesso"
+business-access-error => "Access error" => "Erro de acesso"
 
 business-account-connection-failed
 => "Failed to connect with account {$email}. The session may have expired."
@@ -259,21 +261,23 @@ business-confirm-device
 => "Please confirm on your device..."
 => "Confirme no seu dispositivo...";;
 
-business-confirm-registration => "Confirm registration" => NONE # "Confirmar registro"
+business-confirm-registration => "Confirm registration" => "Confirmar registro"
 
 business-connect-device-register
 => "Connect the associated device to register"
 => "Conecte o dispositivo associado para registrar";;
 
-business-connection-error => "Connection error" => NONE # "Erro de conexão"
+business-connection-error => "Connection error" => "Erro de conexão"
 
 business-contact-create-account
 => "Contact Wizardsardine to create an account."
 => "Entre em contato com a Wizardsardine para criar uma conta.";;
 
-business-create-new-path => "Create new path" => NONE # "Criar novo caminho"
+business-create-new-path => "Create new path" => "Criar novo caminho"
 
-business-current-xpub => "Current extended public key" => NONE # "Xpub atual"
+business-current-xpub
+=> "Current extended public key"
+=> "Chave pública estendida atual";;
 
 business-detected-devices => "Detected devices" => "Dispositivos detectados"
 
@@ -297,11 +301,13 @@ business-did-registration-succeed
 
 business-duplicate-timelock => "Duplicate timelock" => "Timelock duplicado"
 
-business-edit-key => "Edit key" => NONE # "Editar chave"
+business-edit-key => "Edit key" => "Editar chave"
 
-business-edit-primary-path => "Edit primary path" => NONE # "Editar caminho principal"
+business-edit-primary-path => "Edit primary path" => "Editar caminho principal"
 
-business-edit-recovery-path => "Edit recovery path" => NONE # "Editar caminho de recuperação"
+business-edit-recovery-path
+=> "Edit recovery path"
+=> "Editar caminho de recuperação";;
 
 business-edited => "Edited" => "Editado"
 
@@ -351,7 +357,9 @@ business-filter-wallets => "Filter wallets..." => "Filtrar carteiras..."
 
 business-from-your-organization => "From your organization" => "Da sua organização"
 
-business-hardware-wallet-not-found => "Signing device not found" => NONE # "Carteira de hardware não encontrada"
+business-hardware-wallet-not-found
+=> "Signing device not found"
+=> "Dispositivo de assinatura não encontrado";;
 
 business-import-xpub-file
 => "Import extended public key file"
@@ -363,7 +371,7 @@ business-internal-signer-help
 
 business-invalid-threshold => "Invalid threshold value" => "Valor de limiar inválido"
 
-business-key-alias => "Key alias" => NONE # "Apelido da chave"
+business-key-alias => "Key alias" => "Apelido da chave"
 
 business-key-alias-placeholder
 => "e.g. Alice, Treasury, Lawyer..."
@@ -375,15 +383,15 @@ business-key-count
 
 business-key-definition-help
 => "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its extended public key."
-=> NONE;; # "Defina o nome da chave e quem a detém. Você vai configurá-la depois, conectando um dispositivo ou adicionando a chave pública dela."
+=> "Defina o nome da chave e quem a detém. Você vai configurá-la depois, conectando um dispositivo ou adicionando a chave pública estendida dela.";;
 
-business-key-deleted => "Key deleted" => NONE # "Chave excluída"
+business-key-deleted => "Key deleted" => "Chave excluída"
 
 business-key-deleted-message
 => "The key you were editing was deleted by another user."
 => "A chave que você estava editando foi excluída por outro usuário.";;
 
-business-key-modified => "Key modified" => NONE # "Chave modificada"
+business-key-modified => "Key modified" => "Chave modificada"
 
 business-key-modified-message
 => "This key was modified by another user. Would you like to reload the server version or keep your changes?"
@@ -395,23 +403,23 @@ business-key-path-account-help
 => "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device."
 => "O número da conta no caminho de derivação desta chave. Escolha uma conta diferente para derivar uma chave independente do mesmo dispositivo.";;
 
-business-key-removed => "Key removed" => NONE # "Chave removida"
+business-key-removed => "Key removed" => "Chave removida"
 
 business-key-removed-from-path
 => "\"{$alias}\" was deleted by another user and has been removed from your path selection."
 => "\"{$alias}\" foi excluída por outro usuário e removida da sua seleção de caminho.";;
 
-business-key-type => "Key type" => NONE # "Tipo de chave"
+business-key-type => "Key type" => "Tipo de chave"
 
 business-key-type-help
 => "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafety Net: Professional recovery service."
-=> NONE;; # "Interna: sob custódia de um membro da sua organização.\nExterna: sob custódia de um terceiro de confiança.\nCossignatário: serviço profissional de coassinatura.\nSafety Net: serviço profissional de recuperação."
+=> "Interna: sob custódia de um membro da sua organização.\nExterna: sob custódia de um terceiro de confiança.\nCossignatário: serviço profissional de coassinatura.\nSafety Net: serviço profissional de recuperação.";;
 
 business-keys-awaiting-manager
 => "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
 => "Aguardando o gerente da carteira. Ele ainda não marcou as chaves e signatários como prontos.";;
 
-business-keys-in-path => "Keys in path:" => NONE # "Chaves no caminho:"
+business-keys-in-path => "Keys in path:" => "Chaves no caminho:"
 
 business-keys-manager-instruction
 => "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
@@ -441,7 +449,7 @@ business-keys-shared-with-policy
 => "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
 => "Estas chaves são compartilhadas com a aba Política de gastos, onde você as organiza em caminhos de gastos.";;
 
-business-keys-signers => "Keys & signers" => NONE # "Chaves e signatários"
+business-keys-signers => "Keys & signers" => "Chaves e signatários"
 
 business-loading-wallet => "Loading wallet..." => "Carregando carteira..."
 
@@ -475,7 +483,7 @@ business-no-devices-to-register
 
 business-no-hardware-wallets
 => "No signing device detected. Connect one and unlock it."
-=> NONE;; # "Nenhum dispositivo de hardware detectado. Conecte um dispositivo e desbloqueie-o."
+=> "Nenhum dispositivo de assinatura detectado. Conecte um e desbloqueie-o.";;
 
 business-no-keys-assigned
 => "No keys assigned to you."
@@ -517,15 +525,15 @@ business-other-participants-keys
 
 business-participant-set-keys-help
 => "Select a key assigned to you to complete its setup. You can connect a signing device or add an extended public key manually."
-=> NONE;; # "Selecione uma chave atribuída a você para concluir a configuração dela. Você pode conectar um dispositivo de hardware ou adicionar uma chave pública estendida manualmente."
+=> "Selecione uma chave atribuída a você para concluir a configuração dela. Você pode conectar um dispositivo de assinatura ou adicionar uma chave pública estendida manualmente.";;
 
-business-path-deleted => "Path deleted" => NONE # "Caminho excluído"
+business-path-deleted => "Path deleted" => "Caminho excluído"
 
 business-path-deleted-message
 => "The path you were editing was deleted by another user."
 => "O caminho que você estava editando foi excluído por outro usuário.";;
 
-business-path-modified => "Path modified" => NONE # "Caminho modificado"
+business-path-modified => "Path modified" => "Caminho modificado"
 
 business-primary-path => "Primary path" => "Caminho principal"
 
@@ -547,7 +555,7 @@ business-recovery-path-number
 => "Recovery path {$number}"
 => "Caminho de recuperação {$number}";;
 
-business-register-devices => "Register devices" => NONE # "Registrar dispositivos"
+business-register-devices => "Register devices" => "Registrar dispositivos"
 
 business-register-wallet-devices-help
 => "Register the wallet descriptor on each device, or skip if unavailable."
@@ -557,9 +565,9 @@ business-registered-on-device
 => "Registered on device"
 => "Registrado no dispositivo";;
 
-business-registering-wallet => "Registering wallet" => NONE # "Registrando carteira"
+business-registering-wallet => "Registering wallet" => "Registrando carteira"
 
-business-registration-failed => "Registration failed" => NONE # "Falha no registro"
+business-registration-failed => "Registration failed" => "Falha no registro"
 
 business-request-template-edits-help
 => "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval."
@@ -579,7 +587,9 @@ business-select-key-source
 => "Select key source · {$alias}"
 => "Selecionar origem da chave · {$alias}";;
 
-business-select-xpub-file => "Select extended public key file" => NONE # "Selecionar arquivo xpub"
+business-select-xpub-file
+=> "Select extended public key file"
+=> "Selecionar arquivo de chave pública estendida";;
 
 business-service-token => "Service token" => "Token de serviço"
 
@@ -595,7 +605,7 @@ business-service-unavailable
 => "The service is temporarily unavailable. Your wallet data and funds are not affected."
 => "O serviço está temporariamente indisponível. Os dados da sua carteira e seus fundos não são afetados.";;
 
-business-set-keys => "Set keys" => NONE # "Definir chaves"
+business-set-keys => "Set keys" => "Definir chaves"
 
 business-signer-email => "Signer email" => "E-mail do signatário"
 
@@ -677,7 +687,7 @@ business-xpub-invalid-network
 
 business-xpub-replace-existing-help
 => "This key already has an extended public key. You can replace it by fetching from a device, importing from file, or pasting."
-=> NONE;; # "Esta chave já tem um xpub. Você pode substituí-lo buscando em um dispositivo, importando de um arquivo ou colando."
+=> "Esta chave já tem uma chave pública estendida. Você pode substituí-la buscando em um dispositivo, importando de um arquivo ou colando.";;
 
 business-your-keys => "Your keys" => "Suas chaves"
 
@@ -787,13 +797,13 @@ connect-remote-servers-unresponsive
 
 decrypt-airgap-help
 => "Using an air-gapped device? Export the extended public key from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"
-=> NONE;; # "Está usando um dispositivo air-gapped? Exporte o xpub do seu dispositivo e use a opção de enviar arquivo ou de colar. Se você não souber o caminho de derivação correto, tente com o seguinte:"
+=> "Está usando um dispositivo air-gapped? Exporte a chave pública estendida do seu dispositivo e use a opção de enviar arquivo ou de colar. Se você não souber o caminho de derivação correto, tente com o seguinte:";;
 
 decrypt-backup-file => "Decrypt backup file" => "Descriptografar arquivo de backup"
 
 decrypt-device-description
 => "Plug in and unlock a signing device belonging to this setup to automatically decrypt the backup"
-=> NONE;; # "Conecte e desbloqueie um dispositivo de hardware que pertença a esta configuração para descriptografar o backup automaticamente"
+=> "Conecte e desbloqueie um dispositivo de assinatura que pertença a esta configuração para descriptografar o backup automaticamente";;
 
 decrypt-device-failed
 => "Failed to decrypt file with this device"
@@ -801,11 +811,11 @@ decrypt-device-failed
 
 decrypt-enter-mnemonic-unsafe
 => "UNSAFE: Enter the seed phrase of one of the keys"
-=> NONE;;
+=> "INSEGURO: digitar a frase semente de uma das chaves";;
 
 decrypt-enter-mnemonic-warning
 => "This option is not secure. I understand that entering a seed phrase on a computer may result in theft of my funds."
-=> NONE;; # "Esta opção não é segura. Eu entendo que digitar um mnemônico em um computador pode resultar no roubo dos meus fundos."
+=> "Esta opção não é segura. Eu entendo que digitar uma frase semente em um computador pode resultar no roubo dos meus fundos.";;
 
 decrypt-invalid-descriptor
 => "The file has been decrypted but the descriptor is not a valid Liana descriptor."
@@ -815,19 +825,21 @@ decrypt-invalid-encoding
 => "The file cannot be decoded properly, it seems not to be an encrypted backup."
 => "O arquivo não pode ser decodificado corretamente; parece não ser um backup criptografado.";;
 
-decrypt-invalid-mnemonic => "Invalid seed phrase" => NONE # "Mnemônico inválido"
+decrypt-invalid-mnemonic => "Invalid seed phrase" => "Frase semente inválida"
 
 decrypt-invalid-type
 => "The file has been decrypted but the content type is not supported."
 => "O arquivo foi descriptografado, mas o tipo de conteúdo não é suportado.";;
 
-decrypt-invalid-xpub => "Invalid extended public key" => NONE # "Xpub inválido"
+decrypt-invalid-xpub
+=> "Invalid extended public key"
+=> "Chave pública estendida inválida";;
 
 decrypt-mnemonic-cannot-decrypt
 => "Seed phrase is valid but cannot decrypt the file"
-=> NONE;;
+=> "A frase semente é válida, mas não consegue descriptografar o arquivo";;
 
-decrypt-mnemonic-source => "Seed phrase" => NONE # "Mnemônico"
+decrypt-mnemonic-source => "Seed phrase" => "Frase semente"
 
 decrypt-other-paths-confirm-on-device
 => "You will have to accept some of these derivation paths on the device."
@@ -841,11 +853,13 @@ decrypt-other-paths-title => "Try other derivation paths?" => NONE
 
 decrypt-pairing-code => "Pairing code: {$code}" => "Código de pareamento: {$code}"
 
-decrypt-paste-xpub => "Paste an extended public key (xpub)" => NONE # "Colar uma chave pública estendida"
+decrypt-paste-xpub
+=> "Paste an extended public key (xpub)"
+=> "Colar uma chave pública estendida (xpub)";;
 
 decrypt-provide-xpub
 => "Provide one of the extended public keys used in this wallet."
-=> NONE;; # "Forneça um dos xpubs usados nesta carteira."
+=> "Forneça uma das chaves públicas estendidas usadas nesta carteira.";;
 
 decrypt-try-device
 => "Try to decrypt with this device..."
@@ -857,7 +871,7 @@ decrypt-unlock-device
 
 decrypt-xpub-cannot-decrypt
 => "Extended public key is valid but cannot decrypt this file"
-=> NONE;; # "O xpub é válido, mas não consegue descriptografar este arquivo"
+=> "A chave pública estendida é válida, mas não consegue descriptografar este arquivo";;
 
 device-already-used => "Already used" => "Já usado"
 
@@ -977,19 +991,23 @@ export-success => "Export successful!" => "Exportação concluída com sucesso!"
 
 export-timeout => "Export failed: timeout" => "Falha na exportação: tempo esgotado"
 
-export-title-export-backup => "Export backup" => NONE # "Exportar backup"
+export-title-export-backup => "Export backup" => "Exportar backup"
 
-export-title-export-descriptor => "Export descriptor" => NONE
+export-title-export-descriptor => "Export descriptor" => "Exportar descritor"
 
-export-title-export-encrypted-descriptor => "Export encrypted descriptor" => NONE # "Exportar descritor criptografado"
+export-title-export-encrypted-descriptor
+=> "Export encrypted descriptor"
+=> "Exportar descritor criptografado";;
 
-export-title-export-labels => "Export labels" => NONE # "Exportar rótulos"
+export-title-export-labels => "Export labels" => "Exportar rótulos"
 
 export-title-export-psbt => "Export PSBT" => "Exportar PSBT"
 
-export-title-export-xpub => "Export extended public key (xpub)" => NONE # "Exportar Xpub"
+export-title-export-xpub
+=> "Export extended public key (xpub)"
+=> "Exportar chave pública estendida (xpub)";;
 
-export-title-import-descriptor => "Import descriptor" => NONE # "Importar descritor"
+export-title-import-descriptor => "Import descriptor" => "Importar descritor"
 
 export-title-import-psbt => "Import PSBT" => "Importar PSBT"
 
@@ -997,11 +1015,13 @@ export-title-import-wallet-backup
 => "Import existing wallet from backup"
 => "Importar carteira existente de um backup";;
 
-export-title-import-xpub => "Import extended public key (xpub)" => NONE # "Importar Xpub"
+export-title-import-xpub
+=> "Import extended public key (xpub)"
+=> "Importar chave pública estendida (xpub)";;
 
-export-title-restore-backup => "Restore backup" => NONE # "Restaurar backup"
+export-title-restore-backup => "Restore backup" => "Restaurar backup"
 
-export-title-transactions => "Export transactions" => NONE # "Exportar transações"
+export-title-transactions => "Export transactions" => "Exportar transações"
 
 fiat-amount-non-negative
 => "Amount must be non-negative"
@@ -1047,7 +1067,7 @@ home-checking-transactions
 => "Checking for new transactions"
 => "Verificando novas transações";;
 
-home-payment-history => "Payment history" => NONE # "Histórico de pagamentos"
+home-payment-history => "Payment history" => "Histórico de pagamentos"
 
 home-recovery-left
 => "≈ {$units} left before first recovery path becomes available."
@@ -1137,19 +1157,21 @@ installer-backed-up-descriptor-checkbox
 => "I have backed up my descriptor"
 => "Fiz backup do meu descritor";;
 
-installer-backed-up-mnemonic-checkbox => "I have backed up my seed phrase" => NONE
+installer-backed-up-mnemonic-checkbox
+=> "I have backed up my seed phrase"
+=> "Fiz o backup da minha frase semente";;
 
 installer-backed-up-mnemonic-show-xpub
 => "I have backed up the seed phrase, show the extended public key"
-=> NONE;;
+=> "Fiz o backup da frase semente, mostrar a chave pública estendida";;
 
 installer-backup-descriptor-help
 => "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed phrases) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back up descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's extended public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
-=> NONE;;
+=> "Em Bitcoin, para gastar de uma carteira que não é uma configuração padrão de chave única, você precisa das suas chaves privadas (normalmente armazenadas como frases semente) para assinar transações e do descritor da sua carteira para localizar suas moedas, como um mapa dos seus endereços.\nSem o descritor, sua carteira pode não encontrar suas moedas, mesmo que você ainda tenha as chaves.\nQuando você clica em \"Fazer backup do descritor\", a Liana cria um arquivo criptografado que só pode ser descriptografado usando uma das chaves públicas estendidas da sua carteira.\nA Liana cuida disso automaticamente durante a restauração de uma carteira, pedindo que você conecte um dispositivo ou insira uma chave.\nEste arquivo é mais seguro e mais privado do que copiar o descritor manualmente.";;
 
 installer-backup-descriptor-message
 => "This backup is required to recover your funds.\nClick \"Back up descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
-=> NONE;; # "Este backup é necessário para recuperar seus fundos.\nClique em \"Fazer backup do descritor\" para baixar um arquivo criptografado da configuração da sua carteira e guarde-o em locais seguros e acessíveis.\nVocê também pode copiar o descritor em texto simples, mas é menos privado.\nAVISO: este arquivo não inclui sua(s) frase(s) seed. Faça backup delas separadamente."
+=> "Este backup é necessário para recuperar seus fundos.\nClique em \"Fazer backup do descritor\" para baixar um arquivo criptografado da configuração da sua carteira e guarde-o em locais seguros e acessíveis.\nVocê também pode copiar o descritor em texto simples, mas é menos privado.\nAVISO: este arquivo não inclui sua(s) frase(s) semente. Faça backup delas separadamente.";;
 
 installer-backup-descriptor-missing
 => "Backup imported but descriptor missing!"
@@ -1157,17 +1179,19 @@ installer-backup-descriptor-missing
 
 installer-backup-descriptor-title
 => "Back up your wallet configuration (descriptor)"
-=> NONE;; # "Faça backup da configuração da sua carteira (Descritor)"
+=> "Faça backup da configuração da sua carteira (descritor)";;
 
 installer-backup-imported
 => "Backup successfully imported!"
 => "Backup importado com sucesso!";;
 
-installer-backup-mnemonic-title => "Back up your seed phrase" => NONE
+installer-backup-mnemonic-title
+=> "Back up your seed phrase"
+=> "Faça backup da sua frase semente";;
 
 installer-backup-mnemonic-warning
 => "Beware to back up the seed phrase as it will NOT be stored on the computer."
-=> NONE;; # "Atenção: faça o backup do mnemônico, pois ele NÃO será armazenado no computador."
+=> "Atenção: faça o backup da frase semente, pois ela NÃO será armazenada no computador.";;
 
 installer-backup-network-mismatch
 => "The backup network does not match the selected network."
@@ -1249,11 +1273,11 @@ installer-create-random-key
 
 installer-custom-template-description-1
 => "For this setup you will need to define your primary and recovery spending paths. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key belonging to them."
-=> NONE;; # "Para esta configuração você vai precisar definir suas políticas de gastos principal e de recuperação. Por motivos de segurança, sugerimos que você use uma carteira de hardware separada para cada chave que pertença a elas."
+=> "Para esta configuração você vai precisar definir seus caminhos de gasto principal e de recuperação. Por motivos de segurança, sugerimos que você use um dispositivo de assinatura separado, comumente chamado de carteira de hardware, para cada chave que pertença a eles.";;
 
 installer-custom-template-description-2
 => "The keys belonging to your primary path can always spend. Those belonging to the recovery paths will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
-=> NONE;; # "As chaves da sua política principal podem gastar a qualquer momento. As chaves das políticas de recuperação só poderão gastar após um tempo definido de inatividade da carteira, permitindo uma recuperação segura e políticas de gastos avançadas."
+=> "As chaves do seu caminho principal podem gastar a qualquer momento. As chaves dos caminhos de recuperação só poderão gastar após um tempo definido de inatividade da carteira, permitindo uma recuperação segura e políticas de gastos avançadas.";;
 
 installer-descriptor-generating
 => "Generating and validating your wallet descriptor. This can take a few seconds."
@@ -1285,7 +1309,7 @@ installer-descriptor-wrong-network
 => "The descriptor is for another network"
 => "O descritor é de outra rede";;
 
-installer-detected-hardware => "Detected devices" => NONE # "Hardware detectado"
+installer-detected-hardware => "Detected devices" => "Dispositivos detectados"
 
 installer-device-method-unsupported
 => "Device not supported, method: {$method}"
@@ -1357,21 +1381,23 @@ installer-export-backup-failed
 
 installer-finalize-installation => "Finalize installation" => "Finalizar instalação"
 
-installer-generate-mnemonic => "Generate a new seed phrase" => NONE # "Gerar um novo mnemônico"
+installer-generate-mnemonic
+=> "Generate a new seed phrase"
+=> "Gerar uma nova frase semente";;
 
 installer-give-wallet-alias
 => "Give your wallet an alias"
 => "Dê um apelido à sua carteira";;
 
-installer-hot-signer => "Hot signer" => NONE # "Signatário local"
+installer-hot-signer => "Hot signer" => "Signatário local"
 
 installer-import-backup => "Import a backup" => "Importar um backup"
 
 installer-import-descriptor => "Import a descriptor" => "Importar um descritor"
 
-installer-import-mnemonic => "Import seed phrase" => NONE
+installer-import-mnemonic => "Import seed phrase" => "Importar frase semente"
 
-installer-import-mnemonic-title => "Import seed phrase" => NONE # "Importar mnemônico"
+installer-import-mnemonic-title => "Import seed phrase" => "Importar frase semente"
 
 installer-import-wallet-rescan-help
 => "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
@@ -1389,11 +1415,11 @@ installer-imported-key-already-used
 
 installer-inheritance-description-1
 => "For this setup you will need 2 keys: your primary key (for yourself) and an inheritance key (for your heir). For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> NONE;; # "Para esta configuração você vai precisar de 2 chaves: sua chave principal (para você) e uma chave de herança (para o seu herdeiro). Por motivos de segurança, sugerimos que você use uma carteira de hardware separada para cada chave."
+=> "Para esta configuração você vai precisar de 2 chaves: sua chave principal (para você) e uma chave de herança (para o seu herdeiro). Por motivos de segurança, sugerimos que você use um dispositivo de assinatura separado, comumente chamado de carteira de hardware, para cada chave.";;
 
 installer-inheritance-description-2
 => "You will always be able to spend using your primary key. After a period of inactivity (but not before that) your inheritance key will become able to recover your funds."
-=> NONE;; # "Você sempre poderá gastar usando sua chave principal. Após um período de inatividade (mas não antes disso), sua chave de herança poderá recuperar seus fundos."
+=> "Você sempre poderá gastar usando sua chave principal. Após um período de inatividade (mas não antes disso), sua chave de herança poderá recuperar seus fundos.";;
 
 installer-inheritance-key => "Inheritance key" => "Chave de herança"
 
@@ -1431,7 +1457,9 @@ installer-key-alias-already-used
 => "This alias is already used for another key"
 => "Este apelido já está sendo usado por outra chave";;
 
-installer-key-alias-placeholder => "E.g. My signing device" => NONE # "Ex.: Minha carteira de hardware"
+installer-key-alias-placeholder
+=> "E.g. My signing device"
+=> "Ex.: Meu dispositivo de assinatura";;
 
 installer-key-already-in-wallet
 => "Fetched key has already been added to the wallet."
@@ -1485,19 +1513,19 @@ installer-manual-xpub-taproot-note => "Use with a Taproot-compatible device" => 
 
 installer-mnemonic-backup-help
 => "A hot key generated on this computer was used for creating this wallet. Its seed phrase needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
-=> NONE;; # "Uma chave local gerada neste computador foi usada para criar esta carteira. É preciso fazer backup dela. \n Guarde-a em um lugar seguro. Nunca a compartilhe com ninguém."
+=> "Uma chave local gerada neste computador foi usada para criar esta carteira. É preciso fazer backup da frase semente dela. \n Guarde-a em um lugar seguro. Nunca a compartilhe com ninguém.";;
 
 installer-mnemonic-recovery-help
 => "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from its seed phrase to be able to sign transactions again. Otherwise you can directly go the next step."
-=> NONE;; # "Se você estava usando uma chave local (uma chave armazenada no computador) na sua carteira, vai precisar recuperá-la a partir dos mnemônicos para poder assinar as transações novamente. Caso contrário, você pode ir direto para a próxima etapa."
+=> "Se você estava usando uma chave local (uma chave armazenada no computador) na sua carteira, vai precisar recuperá-la a partir da frase semente dela para poder assinar transações novamente. Caso contrário, você pode ir direto para a próxima etapa.";;
 
 installer-multisig-description-1
 => "For this setup you will need 3 keys: two primary keys and a recovery key. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> NONE;; # "Para esta configuração você vai precisar de 3 chaves: duas chaves principais e uma chave de recuperação. Por motivos de segurança, sugerimos que você use uma carteira de hardware separada para cada chave."
+=> "Para esta configuração você vai precisar de 3 chaves: duas chaves principais e uma chave de recuperação. Por motivos de segurança, sugerimos que você use um dispositivo de assinatura separado, comumente chamado de carteira de hardware, para cada chave.";;
 
 installer-multisig-description-2
 => "The primary keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the recovery key together with one of your primary keys (2-of-3 multisig):"
-=> NONE;; # "As chaves principais vão compor um multisig 2-de-2 que poderá gastar a qualquer momento. Caso uma das suas chaves fique indisponível, após um período de inatividade você poderá recuperar seus fundos usando a chave de recuperação junto com uma das suas chaves principais (multisig 2-de-3):"
+=> "As chaves principais vão compor um multisig 2-de-2 que poderá gastar a qualquer momento. Caso uma das suas chaves fique indisponível, após um período de inatividade você poderá recuperar seus fundos usando a chave de recuperação junto com uma das suas chaves principais (multisig 2-de-3):";;
 
 installer-no-current-wallets
 => "You have no current wallets"
@@ -1519,7 +1547,7 @@ installer-paste-descriptor-description
 
 installer-path-duplicate-sequence
 => "No two recovery paths may become available at the very same date."
-=> NONE;; # "Duas opções de recuperação não podem ficar disponíveis exatamente na mesma data."
+=> "Dois caminhos de recuperação não podem ficar disponíveis exatamente na mesma data.";;
 
 installer-path-key-source-disallowed
 => "Path contains a key that is disallowed for this kind of path."
@@ -1537,7 +1565,9 @@ installer-primary-key-number
 => "Primary key #{$number}"
 => "Chave principal nº {$number}";;
 
-installer-primary-spending-option => "Primary spending path:" => NONE # "Opção de gasto principal:"
+installer-primary-spending-option
+=> "Primary spending path:"
+=> "Caminho de gasto principal:";;
 
 installer-read-cookie-file-failed
 => "Failed to read cookie file: {$error}"
@@ -1545,7 +1575,9 @@ installer-read-cookie-file-failed
 
 installer-recovery-key => "Recovery key" => "Chave de recuperação"
 
-installer-recovery-option => "Recovery path #{$number}:" => NONE # "Opção de recuperação nº {$number}:"
+installer-recovery-option
+=> "Recovery path #{$number}:"
+=> "Caminho de recuperação nº {$number}:";;
 
 installer-register-descriptor-failed
 => "Failed to register descriptor"
@@ -1581,21 +1613,21 @@ installer-safety-net => "Safety Net:" => "Safety Net:"
 
 installer-safety-net-description
 => "This adds a final recovery path containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
-=> NONE;; # "Isso adiciona uma opção final de recuperação com chaves de agentes profissionais de chaves.\n\nUse esta opção se você recebeu um ou mais tokens Safety Net."
+=> "Isso adiciona um caminho final de recuperação com chaves de agentes profissionais.\n\nUse esta opção se você recebeu um ou mais tokens Safety Net.";;
 
 installer-safety-net-key => "Safety Net key" => "Chave Safety Net"
 
 installer-safety-net-token-disallowed
 => "Safety Net tokens are not allowed for this path"
-=> NONE;; # "Tokens SafetyNet não são permitidos neste caminho"
+=> "Tokens Safety Net não são permitidos neste caminho";;
 
 installer-seed-key-not-in-descriptor
 => "The descriptor does not use a key derived from this seed phrase"
-=> NONE;;
+=> "O descritor não usa uma chave derivada desta frase semente";;
 
 installer-select-device-register
 => "Select signing device to register descriptor on:"
-=> NONE;; # "Selecione a carteira de hardware onde registrar o descritor:"
+=> "Selecione o dispositivo de assinatura onde registrar o descritor:";;
 
 installer-select-device-register-if-needed
 => "If necessary, please select the signing device to register descriptor on:"
@@ -1615,7 +1647,9 @@ installer-serialize-gui-config-failed
 => "Failed to serialize GUI config: {$error}"
 => "Falha ao serializar a configuração da GUI: {$error}";;
 
-installer-share-xpubs-title => "Share your extended public keys (xpubs)" => NONE # "Compartilhe suas chaves públicas (xpubs)"
+installer-share-xpubs-title
+=> "Share your extended public keys (xpubs)"
+=> "Compartilhe suas chaves públicas estendidas (xpubs)";;
 
 installer-shared-wallet-help
 => "If you received an invitation to join a shared wallet"
@@ -1647,11 +1681,13 @@ installer-stop-daemon-failed
 => "Failed to stop Liana daemon: {$error}"
 => "Falha ao parar o daemon da Liana: {$error}";;
 
-installer-store-mnemonic-failed => "Failed to store seed phrase: {$error}" => NONE # "Falha ao armazenar o mnemônico: {$error}"
+installer-store-mnemonic-failed
+=> "Failed to store seed phrase: {$error}"
+=> "Falha ao armazenar a frase semente: {$error}";;
 
 installer-switch-account-help
 => "Switch account if you already use the same device in other configurations"
-=> NONE;; # "Troque de conta se você já usa o mesmo hardware em outras configurações"
+=> "Troque de conta se você já usa o mesmo dispositivo em outras configurações";;
 
 installer-template-custom-primary => "Primary keys" => "Chaves principais"
 
@@ -1671,9 +1707,13 @@ installer-template-multisig-primary => "2-of-2 multisig" => "Multisig 2-de-2"
 
 installer-template-multisig-recovery => "2-of-3 multisig" => "Multisig 2-de-3"
 
-installer-template-policy-primary => "Primary spending path" => NONE # "Política de gastos principal"
+installer-template-policy-primary
+=> "Primary spending path"
+=> "Caminho de gasto principal";;
 
-installer-template-policy-recovery => "Recovery spending path" => NONE # "Política de gastos de recuperação"
+installer-template-policy-recovery
+=> "Recovery spending path"
+=> "Caminho de gasto de recuperação";;
 
 installer-template-state-locked => "Can't spend" => "Não pode gastar"
 
@@ -1705,7 +1745,9 @@ installer-wallet-alias-too-long
 => "Wallet alias is too long."
 => "O apelido da carteira é muito longo.";;
 
-installer-xpub-invalid => "Invalid extended public key" => NONE # "Xpub inválido"
+installer-xpub-invalid
+=> "Invalid extended public key"
+=> "Chave pública estendida inválida";;
 
 installer-xpub-origin-missing => "Origin missing" => "Origem faltando"
 
@@ -1723,23 +1765,23 @@ installer-xpub-wrong-network => "Wrong network" => "Rede errada"
 
 label-edit => "Edit label" => "Editar rótulo"
 
-label-external-output => "(External output)" => NONE # "(Saída externa)"
+label-external-output => "(External output)" => "(Saída externa)"
 
 label-inherited-address
 => "This label was inherited from the one assigned to its address. You can change it anytime."
-=> NONE;;
+=> "Este rótulo foi herdado do rótulo do seu endereço. Você pode alterá-lo a qualquer momento.";;
 
 label-inherited-funding
 => "This label was inherited from the coin spent to create it. You can change it anytime."
-=> NONE;;
+=> "Este rótulo foi herdado da moeda gasta para criá-la. Você pode alterá-lo a qualquer momento.";;
 
 label-inherited-payment
 => "This label was inherited from the one assigned to its payment. You can change it anytime."
-=> NONE;;
+=> "Este rótulo foi herdado do rótulo do seu pagamento. Você pode alterá-lo a qualquer momento.";;
 
 label-inherited-transaction
 => "This label was inherited from the transaction that created this change. You can change it anytime."
-=> NONE;;
+=> "Este rótulo foi herdado da transação que criou este troco. Você pode alterá-lo a qualquer momento.";;
 
 label-invalid-length
 => "Invalid label length, must be 80 bytes or less"
@@ -1753,7 +1795,7 @@ launcher-add-existing-wallet
 
 launcher-config-descriptor-origin-error
 => "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more extended public key(s) without origin. Liana v0.2 and later only support extended public keys with origins. Please migrate your funds using Liana v0.1."
-=> NONE;; # "Há um problema com a configuração desta rede. Você provavelmente usa um descritor que contém uma ou mais chaves públicas sem origem. A Liana v0.2 e posteriores só suportam chaves públicas com origem. Migre seus fundos usando a Liana v0.1."
+=> "Há um problema com a configuração desta rede. Você provavelmente usa um descritor que contém uma ou mais chaves públicas estendidas sem origem. A Liana v0.2 e posteriores só suportam chaves públicas estendidas com origem. Migre seus fundos usando a Liana v0.1.";;
 
 launcher-create-new-wallet
 => "Create a new Liana wallet"
@@ -1873,7 +1915,7 @@ menu-coins-utxos => "Coins/UTXOs" => "Moedas/UTXOs"
 
 menu-dashboard => "Dashboard" => "Painel"
 
-menu-drafts-approvals => "Drafts & approvals" => NONE # "Rascunhos e aprovações"
+menu-drafts-approvals => "Drafts & approvals" => "Rascunhos e aprovações"
 
 menu-receive => "Receive" => "Receber"
 
@@ -1919,9 +1961,13 @@ pill-deprecated-tooltip
 
 pill-draft => "Draft" => "Rascunho"
 
-pill-first-recovery-in => "First recovery path available in {$units}" => NONE # "Primeira opção de recuperação disponível em {$units}"
+pill-first-recovery-in
+=> "First recovery path available in {$units}"
+=> "Primeiro caminho de recuperação disponível em {$units}";;
 
-pill-first-recovery-today => "First recovery path available today" => NONE # "Primeira opção de recuperação disponível hoje"
+pill-first-recovery-today
+=> "First recovery path available today"
+=> "Primeiro caminho de recuperação disponível hoje";;
 
 pill-key-cosigner => "Cosigner" => "Cossignatário"
 
@@ -1953,9 +1999,11 @@ pill-payjoin => "Payjoin" => NONE
 
 pill-payjoin-tooltip
 => "This transaction also spends coins that are not from this wallet"
-=> NONE;;
+=> "Esta transação também gasta moedas que não são desta carteira";;
 
-pill-recovery-available-tooltip => "Recovery path(s) already available" => NONE # "Opção(ões) de recuperação já disponível(is)"
+pill-recovery-available-tooltip
+=> "Recovery path(s) already available"
+=> "Caminho(s) de recuperação já disponível(is)";;
 
 pill-recovery-tooltip
 => "This transaction is using a recovery path"
@@ -2003,7 +2051,7 @@ pill-used-in-spending-paths
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
-pill-xpub-not-set => "Not set" => NONE # "Não definida"
+pill-xpub-not-set => "Not set" => "Não definida"
 
 pill-xpub-set => "✓ Set" => "✓ Definida"
 
@@ -2019,9 +2067,13 @@ policy-inactive-for
 
 policy-out-of-by => "out of {$count} by" => "de {$count} por"
 
-policy-primary-path => "can always spend this wallet's funds (primary path)" => NONE # "podem gastar os fundos desta carteira a qualquer momento (caminho principal)"
+policy-primary-path
+=> "can always spend this wallet's funds (primary path)"
+=> "podem gastar os fundos desta carteira a qualquer momento (caminho principal)";;
 
-policy-recovery-path => "(recovery path #{$number})" => NONE # "(Caminho de recuperação nº {$number})"
+policy-recovery-path
+=> "(recovery path #{$number})"
+=> "(caminho de recuperação nº {$number})";;
 
 policy-safety-net-path => "(Safety Net path)" => "(Caminho Safety Net)"
 
@@ -2055,7 +2107,7 @@ psbt-change => "Change" => "Troco"
 
 psbt-coins-spent
 => "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}"
-=> NONE;; # "{ $count ->\n    [one] 1 moeda gasta\n   *[other] {$count} moedas gastas\n}"
+=> "{ $count ->\n    [one] 1 moeda gasta\n   *[other] {$count} moedas gastas\n}";;
 
 psbt-delete-success
 => "Successfully deleted this transaction."
@@ -2071,7 +2123,7 @@ psbt-fully-signed-by => "Signed by" => NONE
 
 psbt-payments
 => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
-=> NONE;; # "{ $count ->\n    [one] 1 pagamento\n   *[other] {$count} pagamentos\n}"
+=> "{ $count ->\n    [one] 1 pagamento\n   *[other] {$count} pagamentos\n}";;
 
 psbt-requires-signatures
 => "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}"
@@ -2161,9 +2213,9 @@ settings-alias-too-long
 
 settings-backup-encrypted-descriptor-tooltip
 => "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or extended public keys."
-=> NONE;; # "Um arquivo de descriptor criptografado (.bed) que você pode guardar em qualquer lugar. Para descriptografá-lo, você precisa de um dos seus dispositivos de assinatura ou xpubs."
+=> "Um arquivo de descritor criptografado (.bip138) que você pode guardar em qualquer lugar. Para descriptografá-lo, você precisa de um dos seus dispositivos de assinatura ou de uma das suas chaves públicas estendidas.";;
 
-settings-block-height => "Block height:" => NONE # "Altura do bloco:"
+settings-block-height => "Block height:" => "Altura do bloco:"
 
 settings-blockchain-rescan => "Blockchain rescan" => "Reescaneamento da blockchain"
 
@@ -2213,7 +2265,7 @@ settings-export-encrypted-descriptor
 
 settings-export-encrypted-descriptor-description
 => ".bip138 file, can be decrypted with one of your signing devices or extended public keys."
-=> NONE;; # "Arquivo .bed, que pode ser descriptografado com um dos seus dispositivos de assinatura ou xpubs."
+=> "Arquivo .bip138, que pode ser descriptografado com um dos seus dispositivos de assinatura ou uma das suas chaves públicas estendidas.";;
 
 settings-export-labels => "BIP 329 labels" => "Rótulos BIP 329"
 
@@ -2279,7 +2331,7 @@ settings-section-backend => "Backend" => "Backend"
 
 settings-section-general => "General" => "Geral"
 
-settings-section-import-export => "Import/export" => NONE # "Importar/Exportar"
+settings-section-import-export => "Import/export" => "Importar/exportar"
 
 settings-section-node => "Node" => "Nó"
 
@@ -2345,7 +2397,7 @@ spend-fee-manual => "Manual" => "Manual"
 
 spend-fee-rate => "Fee ({$feerate} sats/vb):" => "Taxa ({$feerate} sats/vb):"
 
-spend-fee-smart-select => "Smart select" => NONE # "Seleção inteligente"
+spend-fee-smart-select => "Smart select" => "Seleção inteligente"
 
 spend-fee-smart-select-tooltip
 => "Pick a preset feerate instead of entering one manually."
@@ -2383,7 +2435,7 @@ spend-max-tooltip
 => "Total amount remaining after paying fee and any other recipients"
 => "Valor total restante depois de pagar a taxa e quaisquer outros destinatários";;
 
-spend-payment-description => "Description of the payment" => NONE
+spend-payment-description => "Description of the payment" => "Descrição do pagamento"
 
 spend-payment-description-invalid
 => "Payment description is missing or invalid"
@@ -2415,7 +2467,7 @@ spend-self-transfer-info
 => "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin."
 => NONE;;
 
-spend-tx-description => "Description of the transaction" => NONE
+spend-tx-description => "Description of the transaction" => "Descrição da transação"
 
 spend-tx-label => "Transaction label" => NONE
 
@@ -2503,4 +2555,6 @@ transactions-transaction => "Transaction" => "Transação"
 
 transactions-txid => "Tx ID:" => NONE # "ID da transação"
 
-warning-hardware-wallet-error => "Signing device error" => NONE # "Erro da carteira de hardware"
+warning-hardware-wallet-error
+=> "Signing device error"
+=> "Erro do dispositivo de assinatura";;
