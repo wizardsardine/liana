@@ -19,9 +19,9 @@ btn-add-key => "Add a key"
 
 btn-add-payment => "Add payment"
 
-btn-add-recovery-option => "Add recovery option"
+btn-add-recovery-option => "Add recovery path"
 
-btn-add-recovery-path => "Add a recovery path"
+btn-add-recovery-path => "Add recovery path"
 
 btn-add-safety-net => "Add Safety Net"
 
@@ -33,7 +33,7 @@ btn-approve => "Approve"
 
 btn-back => "Back"
 
-btn-back-up-descriptor => "Back Up Descriptor"
+btn-back-up-descriptor => "Back up descriptor"
 
 btn-backup-encrypted-descriptor => "Back up encrypted descriptor"
 
@@ -45,13 +45,13 @@ btn-cancel => "Cancel"
 
 btn-cancel-transaction => "Cancel transaction"
 
-btn-change-email => "Change Email"
+btn-change-email => "Change email"
 
 btn-check-connection => "Check connection"
 
 btn-clear => "Clear"
 
-btn-clear-all => "Clear All"
+btn-clear-all => "Clear all"
 
 btn-close-tab => "Close"
 
@@ -101,7 +101,7 @@ btn-keep-my-changes => "Keep my changes"
 
 btn-login => "Login"
 
-btn-manage-keys => "Manage Keys"
+btn-manage-keys => "Manage keys"
 
 btn-mark-keys-ready => "Mark keys as ready"
 
@@ -151,9 +151,9 @@ btn-set => "Set"
 
 btn-set-keys => "Set keys"
 
-btn-share-xpubs => "Share Xpubs"
+btn-share-xpubs => "Share xpubs"
 
-btn-show-qr => "Show QR Code"
+btn-show-qr => "Show QR code"
 
 btn-sign => "Sign"
 
@@ -177,11 +177,11 @@ btn-update => "Update"
 
 btn-updating => "Updating"
 
-btn-verify-on-device => "Verify on hardware device"
+btn-verify-on-device => "Verify on signing device"
 
 btn-yes => "Yes"
 
-business-access-error => "Access Error"
+business-access-error => "Access error"
 
 business-account-connection-failed
 => "Failed to connect with account {$email}. The session may have expired.";;
@@ -231,17 +231,17 @@ business-confirm-coldcard-success
 
 business-confirm-device => "Please confirm on your device..."
 
-business-confirm-registration => "Confirm Registration"
+business-confirm-registration => "Confirm registration"
 
 business-connect-device-register => "Connect the associated device to register"
 
-business-connection-error => "Connection Error"
+business-connection-error => "Connection error"
 
 business-contact-create-account => "Contact Wizardsardine to create an account."
 
-business-create-new-path => "Create New Path"
+business-create-new-path => "Create new path"
 
-business-current-xpub => "Current xpub"
+business-current-xpub => "Current extended public key"
 
 business-detected-devices => "Detected devices"
 
@@ -257,11 +257,11 @@ business-did-registration-succeed => "Did the registration succeed on your Coldc
 
 business-duplicate-timelock => "Duplicate timelock"
 
-business-edit-key => "Edit Key"
+business-edit-key => "Edit key"
 
-business-edit-primary-path => "Edit Primary Path"
+business-edit-primary-path => "Edit primary path"
 
-business-edit-recovery-path => "Edit Recovery Path"
+business-edit-recovery-path => "Edit recovery path"
 
 business-edited => "Edited"
 
@@ -298,16 +298,16 @@ business-filter-wallets => "Filter wallets..."
 
 business-from-your-organization => "From your organization"
 
-business-hardware-wallet-not-found => "Hardware wallet not found"
+business-hardware-wallet-not-found => "Signing device not found"
 
-business-import-xpub-file => "Import extended public key file"
+business-import-xpub-file => "Import extended public key file (xpub)"
 
 business-internal-signer-help
 => "The organization member who will set up and sign with this key. They'll be invited by email.";;
 
 business-invalid-threshold => "Invalid threshold value"
 
-business-key-alias => "Key Alias"
+business-key-alias => "Key alias"
 
 business-key-alias-placeholder => "e.g. Alice, Treasury, Lawyer..."
 
@@ -315,14 +315,14 @@ business-key-count
 => "{ $count ->\n    [one] (1 key)\n   *[other] ({$count} keys)\n}";;
 
 business-key-definition-help
-=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its public key.";;
+=> "Define the key's name and who holds it. You'll set it up later, by connecting a device or adding its extended public key.";;
 
-business-key-deleted => "Key Deleted"
+business-key-deleted => "Key deleted"
 
 business-key-deleted-message
 => "The key you were editing was deleted by another user.";;
 
-business-key-modified => "Key Modified"
+business-key-modified => "Key modified"
 
 business-key-modified-message
 => "This key was modified by another user. Would you like to reload the server version or keep your changes?";;
@@ -332,20 +332,20 @@ business-key-number => "Key {$id}"
 business-key-path-account-help
 => "The account number in this key's derivation path. Pick a different account to derive an independent key from the same device.";;
 
-business-key-removed => "Key Removed"
+business-key-removed => "Key removed"
 
 business-key-removed-from-path
 => "\"{$alias}\" was deleted by another user and has been removed from your path selection.";;
 
-business-key-type => "Key Type"
+business-key-type => "Key type"
 
 business-key-type-help
-=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafetyNet: Professional recovery service.";;
+=> "Internal: Held by a member of your organization.\nExternal: Held by a trusted third party.\nCosigner: Professional co-signing service.\nSafety Net: Professional recovery service.";;
 
 business-keys-awaiting-manager
 => "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet.";;
 
-business-keys-in-path => "Keys in Path:"
+business-keys-in-path => "Keys in path:"
 
 business-keys-manager-instruction
 => "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys.";;
@@ -368,7 +368,7 @@ business-keys-shared-policy-tab
 business-keys-shared-with-policy
 => "These keys are shared with the Spending policy tab, where you arrange them into spending paths.";;
 
-business-keys-signers => "Keys & Signers"
+business-keys-signers => "Keys & signers"
 
 business-loading-wallet => "Loading wallet..."
 
@@ -393,7 +393,7 @@ business-no-descriptor-available => "No descriptor available"
 business-no-devices-to-register => "You have no devices to register."
 
 business-no-hardware-wallets
-=> "No hardware device detected. Connect a device and unlock it.";;
+=> "No signing device detected. Connect one and unlock it.";;
 
 business-no-keys-assigned => "No keys assigned to you."
 
@@ -420,14 +420,14 @@ business-organizations => "Organizations"
 business-other-participants-keys => "Other participants' keys"
 
 business-participant-set-keys-help
-=> "Select a key assigned to you to complete its setup. You can connect a hardware device or add an extended public key manually.";;
+=> "Select a key assigned to you to complete its setup. You can connect a signing device or add an extended public key manually.";;
 
-business-path-deleted => "Path Deleted"
+business-path-deleted => "Path deleted"
 
 business-path-deleted-message
 => "The path you were editing was deleted by another user.";;
 
-business-path-modified => "Path Modified"
+business-path-modified => "Path modified"
 
 business-primary-path => "Primary path"
 
@@ -445,16 +445,16 @@ business-recovery-path-modified-message
 
 business-recovery-path-number => "Recovery path {$number}"
 
-business-register-devices => "Register Devices"
+business-register-devices => "Register devices"
 
 business-register-wallet-devices-help
 => "Register the wallet descriptor on each device, or skip if unavailable.";;
 
 business-registered-on-device => "Registered on device"
 
-business-registering-wallet => "Registering Wallet"
+business-registering-wallet => "Registering wallet"
 
-business-registration-failed => "Registration Failed"
+business-registration-failed => "Registration failed"
 
 business-request-template-edits-help
 => "To request edits, reach out to Wizardsardine directly: they can make the changes and send it back for approval.";;
@@ -469,7 +469,7 @@ business-select-account-placeholder => "Select account"
 
 business-select-key-source => "Select key source · {$alias}"
 
-business-select-xpub-file => "Select xpub file"
+business-select-xpub-file => "Select extended public key file"
 
 business-service-token => "Service token"
 
@@ -481,7 +481,7 @@ business-service-token-placeholder => "e.g. 42-absent-cake-eagle"
 business-service-unavailable
 => "The service is temporarily unavailable. Your wallet data and funds are not affected.";;
 
-business-set-keys => "Set Keys"
+business-set-keys => "Set keys"
 
 business-signer-email => "Signer email"
 
@@ -542,7 +542,7 @@ business-xpub-invalid-format => "Invalid extended public key format: {$error}"
 business-xpub-invalid-network => "Extended public key is not valid for {$network}."
 
 business-xpub-replace-existing-help
-=> "This key already has an xpub. You can replace it by fetching from a device, importing from file, or pasting.";;
+=> "This key already has an extended public key. You can replace it by fetching from a device, importing from file, or pasting.";;
 
 business-your-keys => "Your keys"
 
@@ -642,19 +642,19 @@ connect-cache-update-failed => "Failed to update cache: {$error}"
 connect-remote-servers-unresponsive => "Remote servers are unresponsive"
 
 decrypt-airgap-help
-=> "Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:";;
+=> "Using an air-gapped device? Export the extended public key from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:";;
 
 decrypt-backup-file => "Decrypt backup file"
 
 decrypt-device-description
-=> "Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup";;
+=> "Plug in and unlock a signing device belonging to this setup to automatically decrypt the backup";;
 
 decrypt-device-failed => "Failed to decrypt file with this device"
 
-decrypt-enter-mnemonic-unsafe => "UNSAFE: Enter mnemonic of one of the keys"
+decrypt-enter-mnemonic-unsafe => "UNSAFE: Enter the seed phrase of one of the keys"
 
 decrypt-enter-mnemonic-warning
-=> "This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.";;
+=> "This option is not secure. I understand that entering a seed phrase on a computer may result in theft of my funds.";;
 
 decrypt-invalid-descriptor
 => "The file has been decrypted but the descriptor is not a valid Liana descriptor.";;
@@ -662,16 +662,16 @@ decrypt-invalid-descriptor
 decrypt-invalid-encoding
 => "The file cannot be decoded properly, it seems not to be an encrypted backup.";;
 
-decrypt-invalid-mnemonic => "Invalid mnemonic"
+decrypt-invalid-mnemonic => "Invalid seed phrase"
 
 decrypt-invalid-type
 => "The file has been decrypted but the content type is not supported.";;
 
-decrypt-invalid-xpub => "Invalid xpub"
+decrypt-invalid-xpub => "Invalid extended public key"
 
-decrypt-mnemonic-cannot-decrypt => "Mnemonic is valid but cannot decrypt the file"
+decrypt-mnemonic-cannot-decrypt => "Seed phrase is valid but cannot decrypt the file"
 
-decrypt-mnemonic-source => "Mnemonic"
+decrypt-mnemonic-source => "Seed phrase"
 
 decrypt-other-paths-confirm-on-device
 => "You will have to accept some of these derivation paths on the device.";;
@@ -683,15 +683,17 @@ decrypt-other-paths-title => "Try other derivation paths?"
 
 decrypt-pairing-code => "Pairing code: {$code}"
 
-decrypt-paste-xpub => "Paste an extended public key"
+decrypt-paste-xpub => "Paste an extended public key (xpub)"
 
-decrypt-provide-xpub => "Provide one of the xpubs used in this wallet."
+decrypt-provide-xpub
+=> "Provide one of the extended public keys used in this wallet.";;
 
 decrypt-try-device => "Try to decrypt with this device..."
 
 decrypt-unlock-device => "Please unlock or open app on the device"
 
-decrypt-xpub-cannot-decrypt => "Xpub is valid but cannot decrypt this file"
+decrypt-xpub-cannot-decrypt
+=> "Extended public key is valid but cannot decrypt this file";;
 
 device-already-used => "Already used"
 
@@ -777,29 +779,29 @@ export-success => "Export successful!"
 
 export-timeout => "Export failed: timeout"
 
-export-title-export-backup => "Export Backup"
+export-title-export-backup => "Export backup"
 
-export-title-export-descriptor => "Export Descriptor"
+export-title-export-descriptor => "Export descriptor"
 
-export-title-export-encrypted-descriptor => "Export Encrypted Descriptor"
+export-title-export-encrypted-descriptor => "Export encrypted descriptor"
 
-export-title-export-labels => "Export Labels"
+export-title-export-labels => "Export labels"
 
 export-title-export-psbt => "Export PSBT"
 
-export-title-export-xpub => "Export Xpub"
+export-title-export-xpub => "Export extended public key (xpub)"
 
-export-title-import-descriptor => "Import Descriptor"
+export-title-import-descriptor => "Import descriptor"
 
 export-title-import-psbt => "Import PSBT"
 
 export-title-import-wallet-backup => "Import existing wallet from backup"
 
-export-title-import-xpub => "Import Xpub"
+export-title-import-xpub => "Import extended public key (xpub)"
 
-export-title-restore-backup => "Restore Backup"
+export-title-restore-backup => "Restore backup"
 
-export-title-transactions => "Export Transactions"
+export-title-transactions => "Export transactions"
 
 fiat-amount-non-negative => "Amount must be non-negative"
 
@@ -829,7 +831,7 @@ home-balance => "Balance"
 
 home-checking-transactions => "Checking for new transactions"
 
-home-payment-history => "Payment History"
+home-payment-history => "Payment history"
 
 home-recovery-left => "≈ {$units} left before first recovery path becomes available."
 
@@ -890,27 +892,27 @@ installer-available-ports-failed
 
 installer-backed-up-descriptor-checkbox => "I have backed up my descriptor"
 
-installer-backed-up-mnemonic-checkbox => "I have backed up my mnemonic"
+installer-backed-up-mnemonic-checkbox => "I have backed up my seed phrase"
 
 installer-backed-up-mnemonic-show-xpub
-=> "I have backed up the mnemonic, show the extended public key";;
+=> "I have backed up the seed phrase, show the extended public key";;
 
 installer-backup-descriptor-help
-=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed words) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back Up Descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually.";;
+=> "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed phrases) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back up descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's extended public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually.";;
 
 installer-backup-descriptor-message
-=> "This backup is required to recover your funds.\nClick \"Back Up Descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately.";;
+=> "This backup is required to recover your funds.\nClick \"Back up descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately.";;
 
 installer-backup-descriptor-missing => "Backup imported but descriptor missing!"
 
-installer-backup-descriptor-title => "Back Up your wallet configuration (Descriptor)"
+installer-backup-descriptor-title => "Back up your wallet configuration (descriptor)"
 
 installer-backup-imported => "Backup successfully imported!"
 
-installer-backup-mnemonic-title => "Back Up your mnemonic"
+installer-backup-mnemonic-title => "Back up your seed phrase"
 
 installer-backup-mnemonic-warning
-=> "Beware to back up the mnemonic as it will NOT be stored on the computer.";;
+=> "Beware to back up the seed phrase as it will NOT be stored on the computer.";;
 
 installer-backup-network-mismatch
 => "The backup network does not match the selected network.";;
@@ -968,10 +970,10 @@ installer-create-datadir-path-failed => "Failed to create datadir path: {$error}
 installer-create-random-key => "Or create a new random key:"
 
 installer-custom-template-description-1
-=> "For this setup you will need to define your primary and recovery spending policies. For security reasons, we suggest you use a separate Hardware Wallet for each key belonging to them.";;
+=> "For this setup you will need to define your primary and recovery spending paths. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key belonging to them.";;
 
 installer-custom-template-description-2
-=> "The keys belonging to your primary policy can always spend. Those belonging to the recovery policies will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.";;
+=> "The keys belonging to your primary path can always spend. Those belonging to the recovery paths will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies.";;
 
 installer-descriptor-generating
 => "Generating and validating your wallet descriptor. This can take a few seconds.";;
@@ -996,7 +998,7 @@ installer-descriptor-type-tooltip
 
 installer-descriptor-wrong-network => "The descriptor is for another network"
 
-installer-detected-hardware => "Detected hardware"
+installer-detected-hardware => "Detected devices"
 
 installer-device-method-unsupported => "Device not supported, method: {$method}"
 
@@ -1044,19 +1046,19 @@ installer-export-backup-failed => "Failed to export backup"
 
 installer-finalize-installation => "Finalize installation"
 
-installer-generate-mnemonic => "Generate a new mnemonic"
+installer-generate-mnemonic => "Generate a new seed phrase"
 
 installer-give-wallet-alias => "Give your wallet an alias"
 
-installer-hot-signer => "Hot Signer"
+installer-hot-signer => "Hot signer"
 
 installer-import-backup => "Import a backup"
 
 installer-import-descriptor => "Import a descriptor"
 
-installer-import-mnemonic => "Import mnemonic"
+installer-import-mnemonic => "Import seed phrase"
 
-installer-import-mnemonic-title => "Import Mnemonic"
+installer-import-mnemonic-title => "Import seed phrase"
 
 installer-import-wallet-rescan-help
 => "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node.";;
@@ -1069,10 +1071,10 @@ installer-import-xpub-device
 installer-imported-key-already-used => "Imported key already used"
 
 installer-inheritance-description-1
-=> "For this setup you will need 2 Keys: Your Primary Key (for yourself) and an Inheritance Key (for your heir). For security reasons, we suggest you use a separate Hardware Wallet for each key.";;
+=> "For this setup you will need 2 keys: your primary key (for yourself) and an inheritance key (for your heir). For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key.";;
 
 installer-inheritance-description-2
-=> "You will always be able to spend using your Primary Key. After a period of inactivity (but not before that) your Inheritance Key will become able to recover your funds.";;
+=> "You will always be able to spend using your primary key. After a period of inactivity (but not before that) your inheritance key will become able to recover your funds.";;
 
 installer-inheritance-key => "Inheritance key"
 
@@ -1100,7 +1102,7 @@ installer-invitation-token-help => "Type the invitation token you received by em
 
 installer-key-alias-already-used => "This alias is already used for another key"
 
-installer-key-alias-placeholder => "E.g. My Hardware Wallet"
+installer-key-alias-placeholder => "E.g. My signing device"
 
 installer-key-already-in-wallet
 => "Fetched key has already been added to the wallet.";;
@@ -1138,16 +1140,16 @@ installer-managed-node-description
 installer-manual-xpub-taproot-note => "Use with a Taproot-compatible device"
 
 installer-mnemonic-backup-help
-=> "A hot key generated on this computer was used for creating this wallet. It needs to be backed up. \n Keep it in a safe place. Never share it with anyone.";;
+=> "A hot key generated on this computer was used for creating this wallet. Its seed phrase needs to be backed up. \n Keep it in a safe place. Never share it with anyone.";;
 
 installer-mnemonic-recovery-help
-=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from mnemonics to be able to sign transactions again. Otherwise you can directly go the next step.";;
+=> "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from its seed phrase to be able to sign transactions again. Otherwise you can directly go the next step.";;
 
 installer-multisig-description-1
-=> "For this setup you will need 3 keys: two Primary Keys and a Recovery Key. For security reasons, we suggest you use a separate Hardware Wallet for each key.";;
+=> "For this setup you will need 3 keys: two primary keys and a recovery key. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key.";;
 
 installer-multisig-description-2
-=> "The Primary Keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the Recovery Key together with one of your Primary Keys (2-of-3 multisig):";;
+=> "The primary keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the recovery key together with one of your primary keys (2-of-3 multisig):";;
 
 installer-no-current-wallets => "You have no current wallets"
 
@@ -1163,7 +1165,7 @@ installer-paste-descriptor-description
 => "Creates a new wallet from the pasted descriptor";;
 
 installer-path-duplicate-sequence
-=> "No two recovery options may become available at the very same date.";;
+=> "No two recovery paths may become available at the very same date.";;
 
 installer-path-key-source-disallowed
 => "Path contains a key that is disallowed for this kind of path.";;
@@ -1176,13 +1178,13 @@ installer-primary-key => "Primary key"
 
 installer-primary-key-number => "Primary key #{$number}"
 
-installer-primary-spending-option => "Primary spending option:"
+installer-primary-spending-option => "Primary spending path:"
 
 installer-read-cookie-file-failed => "Failed to read cookie file: {$error}"
 
 installer-recovery-key => "Recovery key"
 
-installer-recovery-option => "Recovery option #{$number}:"
+installer-recovery-option => "Recovery path #{$number}:"
 
 installer-register-descriptor-failed => "Failed to register descriptor"
 
@@ -1210,18 +1212,18 @@ installer-rpc-user-password => "User and password"
 installer-safety-net => "Safety Net:"
 
 installer-safety-net-description
-=> "This adds a final recovery option containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";;
+=> "This adds a final recovery path containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens.";;
 
 installer-safety-net-key => "Safety Net key"
 
 installer-safety-net-token-disallowed
-=> "SafetyNet tokens are not allowed for this path";;
+=> "Safety Net tokens are not allowed for this path";;
 
 installer-seed-key-not-in-descriptor
-=> "The descriptor does not use a key derived from this seed";;
+=> "The descriptor does not use a key derived from this seed phrase";;
 
 installer-select-device-register
-=> "Select hardware wallet to register descriptor on:";;
+=> "Select signing device to register descriptor on:";;
 
 installer-select-device-register-if-needed
 => "If necessary, please select the signing device to register descriptor on:";;
@@ -1236,7 +1238,7 @@ installer-serialize-daemon-config-failed
 
 installer-serialize-gui-config-failed => "Failed to serialize GUI config: {$error}"
 
-installer-share-xpubs-title => "Share your public keys (Xpubs)"
+installer-share-xpubs-title => "Share your extended public keys (xpubs)"
 
 installer-shared-wallet-help
 => "If you received an invitation to join a shared wallet";;
@@ -1258,10 +1260,10 @@ installer-starting => "Starting..."
 
 installer-stop-daemon-failed => "Failed to stop Liana daemon: {$error}"
 
-installer-store-mnemonic-failed => "Failed to store mnemonic: {$error}"
+installer-store-mnemonic-failed => "Failed to store seed phrase: {$error}"
 
 installer-switch-account-help
-=> "Switch account if you already use the same hardware in other configurations";;
+=> "Switch account if you already use the same device in other configurations";;
 
 installer-template-custom-primary => "Primary keys"
 
@@ -1278,9 +1280,9 @@ installer-template-multisig-primary => "2-of-2 multisig"
 
 installer-template-multisig-recovery => "2-of-3 multisig"
 
-installer-template-policy-primary => "Primary spending policy"
+installer-template-policy-primary => "Primary spending path"
 
-installer-template-policy-recovery => "Recovery spending policy"
+installer-template-policy-recovery => "Recovery spending path"
 
 installer-template-state-locked => "Can't spend"
 
@@ -1307,7 +1309,7 @@ installer-wallet-alias => "Wallet alias"
 
 installer-wallet-alias-too-long => "Wallet alias is too long."
 
-installer-xpub-invalid => "Invalid Xpub"
+installer-xpub-invalid => "Invalid extended public key"
 
 installer-xpub-origin-missing => "Origin missing"
 
@@ -1321,19 +1323,19 @@ installer-xpub-wrong-network => "Wrong network"
 
 label-edit => "Edit label"
 
-label-external-output => "(External Output)"
+label-external-output => "(External output)"
 
 label-inherited-address
-=> "This label was inherited from the one assigned to its address. You can change it anytime";;
+=> "This label was inherited from the one assigned to its address. You can change it anytime.";;
 
 label-inherited-funding
-=> "This label was inherited from the coin spent to create it. You can change it anytime";;
+=> "This label was inherited from the coin spent to create it. You can change it anytime.";;
 
 label-inherited-payment
-=> "This label was inherited from the one assigned to its payment. You can change it anytime";;
+=> "This label was inherited from the one assigned to its payment. You can change it anytime.";;
 
 label-inherited-transaction
-=> "This label was inherited from the transaction that created this change. You can change it anytime";;
+=> "This label was inherited from the transaction that created this change. You can change it anytime.";;
 
 label-invalid-length => "Invalid label length, must be 80 bytes or less"
 
@@ -1342,7 +1344,7 @@ label-label => "Label"
 launcher-add-existing-wallet => "Add an existing Liana wallet"
 
 launcher-config-descriptor-origin-error
-=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin. Liana v0.2 and later only support public keys with origins. Please migrate your funds using Liana v0.1.";;
+=> "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more extended public key(s) without origin. Liana v0.2 and later only support extended public keys with origins. Please migrate your funds using Liana v0.1.";;
 
 launcher-create-new-wallet => "Create a new Liana wallet"
 
@@ -1428,7 +1430,7 @@ menu-coins-utxos => "Coins/UTXOs"
 
 menu-dashboard => "Dashboard"
 
-menu-drafts-approvals => "Drafts & Approvals"
+menu-drafts-approvals => "Drafts & approvals"
 
 menu-receive => "Receive"
 
@@ -1469,9 +1471,9 @@ pill-deprecated-tooltip
 
 pill-draft => "Draft"
 
-pill-first-recovery-in => "First recovery option available in {$units}"
+pill-first-recovery-in => "First recovery path available in {$units}"
 
-pill-first-recovery-today => "First recovery option available today"
+pill-first-recovery-today => "First recovery path available today"
 
 pill-key-cosigner => "Cosigner"
 
@@ -1493,9 +1495,10 @@ pill-not-in-policy => "Not in policy yet"
 
 pill-payjoin => "Payjoin"
 
-pill-payjoin-tooltip => "This transaction also spends coins that are not ours"
+pill-payjoin-tooltip
+=> "This transaction also spends coins that are not from this wallet";;
 
-pill-recovery-available-tooltip => "Recovery option(s) already available"
+pill-recovery-available-tooltip => "Recovery path(s) already available"
 
 pill-recovery-tooltip => "This transaction is using a recovery path"
 
@@ -1531,7 +1534,7 @@ pill-used-in-spending-paths
 
 pill-ws-admin => "WS Admin"
 
-pill-xpub-not-set => "Not Set"
+pill-xpub-not-set => "Not set"
 
 pill-xpub-set => "✓ Set"
 
@@ -1543,9 +1546,9 @@ policy-inactive-for => "can spend coins inactive for"
 
 policy-out-of-by => "out of {$count} by"
 
-policy-primary-path => "can always spend this wallet's funds (Primary path)"
+policy-primary-path => "can always spend this wallet's funds (primary path)"
 
-policy-recovery-path => "(Recovery path #{$number})"
+policy-recovery-path => "(recovery path #{$number})"
 
 policy-safety-net-path => "(Safety Net path)"
 
@@ -1573,7 +1576,7 @@ psbt-broadcast-transaction => "Broadcast the transaction"
 psbt-change => "Change"
 
 psbt-coins-spent
-=> "{ $count ->\n    [one] 1 Coin spent\n   *[other] {$count} Coins spent\n}";;
+=> "{ $count ->\n    [one] 1 coin spent\n   *[other] {$count} coins spent\n}";;
 
 psbt-delete-success => "Successfully deleted this transaction."
 
@@ -1583,7 +1586,7 @@ psbt-device-sign-failed => "Device failed to sign"
 
 psbt-fully-signed-by => "Signed by"
 
-psbt-payments => "{ $count ->\n    [one] 1 Payment\n   *[other] {$count} Payments\n}"
+psbt-payments => "{ $count ->\n    [one] 1 payment\n   *[other] {$count} payments\n}"
 
 psbt-requires-signatures
 => "{ $count ->\n    [one] Requires 1 more signature from\n   *[other] Requires {$count} more signatures from\n}";;
@@ -1645,9 +1648,9 @@ settings-alias => "Alias"
 settings-alias-too-long => "Please enter alias that is not too long"
 
 settings-backup-encrypted-descriptor-tooltip
-=> "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.";;
+=> "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or extended public keys.";;
 
-settings-block-height => "Block Height:"
+settings-block-height => "Block height:"
 
 settings-blockchain-rescan => "Blockchain rescan"
 
@@ -1681,7 +1684,7 @@ settings-export-descriptor-description
 settings-export-encrypted-descriptor => "Encrypted descriptor"
 
 settings-export-encrypted-descriptor-description
-=> ".bip138 file, can be decrypted with one of your signing devices or xpubs.";;
+=> ".bip138 file, can be decrypted with one of your signing devices or extended public keys.";;
 
 settings-export-labels => "BIP 329 labels"
 
@@ -1736,7 +1739,7 @@ settings-section-backend => "Backend"
 
 settings-section-general => "General"
 
-settings-section-import-export => "Import/Export"
+settings-section-import-export => "Import/export"
 
 settings-section-node => "Node"
 
@@ -1774,8 +1777,6 @@ spend-coins-selection => "Coins selection"
 
 spend-could-not-convert-btc => "Could not convert to BTC"
 
-spend-description => "Description"
-
 spend-duplicate-addresses => "Two payment addresses are the same"
 
 spend-dust-add-funds
@@ -1790,7 +1791,7 @@ spend-fee-manual => "Manual"
 
 spend-fee-rate => "Fee ({$feerate} sats/vb):"
 
-spend-fee-smart-select => "Smart Select"
+spend-fee-smart-select => "Smart select"
 
 spend-fee-smart-select-tooltip
 => "Pick a preset feerate instead of entering one manually.";;
@@ -1818,6 +1819,8 @@ spend-max => "MAX"
 spend-max-tooltip
 => "Total amount remaining after paying fee and any other recipients";;
 
+spend-payment-description => "Description of the payment"
+
 spend-payment-description-invalid => "Payment description is missing or invalid"
 
 spend-payment-label => "Payment label"
@@ -1834,6 +1837,8 @@ spend-select-or-add-funds => "Select or add more funds."
 
 spend-self-transfer-info
 => "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin.";;
+
+spend-tx-description => "Description of the transaction"
 
 spend-tx-label => "Transaction label"
 
@@ -1904,4 +1909,4 @@ transactions-transaction => "Transaction"
 
 transactions-txid => "Tx ID:"
 
-warning-hardware-wallet-error => "Hardware wallet error"
+warning-hardware-wallet-error => "Signing device error"
