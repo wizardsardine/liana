@@ -136,10 +136,10 @@ pub fn create_spend_tx<'a>(
     let title = column![title_row, subtitle].spacing(VSpacing::L);
 
     let tx_label_input = tx_label.map(|tx_label| {
-        form::Form::new(t!("spend-tx-label"), tx_label, |s| {
+        form::Form::new(t!("spend-tx-description"), tx_label, |s| {
             Message::CreateSpend(CreateSpendMessage::TxLabelEdited(s))
         })
-        .label(t!("spend-description"))
+        .label(t!("spend-tx-label"))
         .warning(t!("label-invalid-length"))
     });
 

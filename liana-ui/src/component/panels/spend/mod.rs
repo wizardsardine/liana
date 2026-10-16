@@ -93,8 +93,8 @@ pub fn recipient_card<'a, M: Clone + 'static>(
             .into();
 
     let description_form: Element<'a, M> =
-        form::Form::new(t!("spend-payment-label"), label, on_label_edit)
-            .label(t!("spend-description"))
+        form::Form::new(t!("spend-payment-description"), label, on_label_edit)
+            .label(t!("spend-payment-label"))
             .warning(t!("label-invalid-length"))
             .size(P1_SIZE)
             .padding(10)

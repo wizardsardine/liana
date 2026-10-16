@@ -300,7 +300,7 @@ business-from-your-organization => "From your organization"
 
 business-hardware-wallet-not-found => "Signing device not found"
 
-business-import-xpub-file => "Import extended public key file"
+business-import-xpub-file => "Import extended public key file (xpub)"
 
 business-internal-signer-help
 => "The organization member who will set up and sign with this key. They'll be invited by email.";;
@@ -683,7 +683,7 @@ decrypt-other-paths-title => "Try other derivation paths?"
 
 decrypt-pairing-code => "Pairing code: {$code}"
 
-decrypt-paste-xpub => "Paste an extended public key"
+decrypt-paste-xpub => "Paste an extended public key (xpub)"
 
 decrypt-provide-xpub
 => "Provide one of the extended public keys used in this wallet.";;
@@ -789,7 +789,7 @@ export-title-export-labels => "Export labels"
 
 export-title-export-psbt => "Export PSBT"
 
-export-title-export-xpub => "Export extended public key"
+export-title-export-xpub => "Export extended public key (xpub)"
 
 export-title-import-descriptor => "Import descriptor"
 
@@ -797,7 +797,7 @@ export-title-import-psbt => "Import PSBT"
 
 export-title-import-wallet-backup => "Import existing wallet from backup"
 
-export-title-import-xpub => "Import extended public key"
+export-title-import-xpub => "Import extended public key (xpub)"
 
 export-title-restore-backup => "Restore backup"
 
@@ -1313,8 +1313,7 @@ installer-xpub-invalid => "Invalid extended public key"
 
 installer-xpub-origin-missing => "Origin missing"
 
-installer-xpub-taproot-note
-=> "Taproot selected. Use an extended public key from a compatible";;
+installer-xpub-taproot-note => "Taproot selected. Use an xpub from a compatible"
 
 installer-xpub-taproot-note-device => "device"
 
@@ -1778,8 +1777,6 @@ spend-coins-selection => "Coins selection"
 
 spend-could-not-convert-btc => "Could not convert to BTC"
 
-spend-description => "Description"
-
 spend-duplicate-addresses => "Two payment addresses are the same"
 
 spend-dust-add-funds
@@ -1822,6 +1819,8 @@ spend-max => "MAX"
 spend-max-tooltip
 => "Total amount remaining after paying fee and any other recipients";;
 
+spend-payment-description => "Description of the payment"
+
 spend-payment-description-invalid => "Payment description is missing or invalid"
 
 spend-payment-label => "Payment label"
@@ -1838,6 +1837,8 @@ spend-select-or-add-funds => "Select or add more funds."
 
 spend-self-transfer-info
 => "Send funds to another address of this wallet, to refresh timelocks or consolidate coins. The selected coins are merged into a single new coin.";;
+
+spend-tx-description => "Description of the transaction"
 
 spend-tx-label => "Transaction label"
 
