@@ -40,7 +40,7 @@ use crate::{
 pub const BTN_W: u32 = 500;
 pub const V_SPACING: VSpacing = VSpacing::S;
 pub const H_SPACING: HSpacing = HSpacing::S;
-const MODAL_PADDING: f32 = 20.0;
+pub const MODAL_PADDING: f32 = 20.0;
 const MODAL_SPACING: VSpacing = VSpacing::M;
 const TOKEN_PLACEHOLDER: &str = "aaaa-bbbb-cccc";
 const MNEMONIC_PLACEHOLDER: &str = "code code code code code code code code code code code brave";

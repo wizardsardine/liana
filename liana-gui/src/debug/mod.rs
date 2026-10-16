@@ -33,6 +33,7 @@ use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
 pub mod buttons;
+pub mod entries;
 pub mod pill_styles;
 pub mod pills;
 pub mod texts;
@@ -62,6 +63,13 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &buttons::ENTRY_INSTALLER_1,
         &buttons::ENTRY_INSTALLER_2,
         &buttons::ENTRY_ENTRIES,
+        &entries::ENTRY_LIST_1,
+        &entries::ENTRY_LIST_2,
+        &entries::ENTRY_LIST_3,
+        &entries::ENTRY_DEVICES_1,
+        &entries::ENTRY_DEVICES_2,
+        &entries::ENTRY_MODAL_1,
+        &entries::ENTRY_MODAL_2,
         &texts::ENTRY_LEGACY,
         &texts::ENTRY_NEW,
         &texts::ENTRY_THEMES,
