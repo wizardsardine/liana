@@ -964,25 +964,30 @@ impl SqliteConn {
         coins: &HashMap<bitcoin::OutPoint, Label>,
     ) {
         db_exec(&mut self.conn, |db_tx| {
+            let mut tx_stmt = db_tx.prepare_cached(
+                "INSERT OR REPLACE INTO default_labels (txid, vout, kind, value) \
+                 VALUES (?1, NULL, ?2, ?3)",
+            )?;
             for (txid, label) in txs {
                 let Some((kind, text)) = default_label_columns(label) else {
                     continue;
                 };
-                db_tx.execute(
-                    "INSERT OR REPLACE INTO default_labels (txid, vout, kind, value) \
-                     VALUES (?1, NULL, ?2, ?3)",
-                    rusqlite::params![txid[..].to_vec(), kind as i64, text],
-                )?;
+                tx_stmt.execute(rusqlite::params![txid[..].to_vec(), kind as i64, text])?;
             }
+            let mut coin_stmt = db_tx.prepare_cached(
+                "INSERT OR REPLACE INTO default_labels (txid, vout, kind, value) \
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
             for (outpoint, label) in coins {
                 let Some((kind, text)) = default_label_columns(label) else {
                     continue;
                 };
-                db_tx.execute(
-                    "INSERT OR REPLACE INTO default_labels (txid, vout, kind, value) \
-                     VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![outpoint.txid[..].to_vec(), outpoint.vout, kind as i64, text],
-                )?;
+                coin_stmt.execute(rusqlite::params![
+                    outpoint.txid[..].to_vec(),
+                    outpoint.vout,
+                    kind as i64,
+                    text
+                ])?;
             }
             Ok(())
         })
