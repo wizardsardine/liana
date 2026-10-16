@@ -123,7 +123,8 @@ CREATE TABLE labels (
     value TEXT NOT NULL
 );
 
-/* Default labels of coins (vout set) and transactions (vout NULL), snapshotted when first seen.
+/* Default labels of coins (vout set) and transactions (vout NULL), saved when first seen and
+ * recomputed on every label update.
  * The kind is none (0), from its transaction (1), from the receiving address (2), from the
  * funding transactions (3) or from the payment (4). The value is NULL for none.
  */
