@@ -1,8 +1,11 @@
 //! Gallery of every pill constructor exposed by `liana-ui`.
 
-use liana_ui::{component::pill, theme};
+use liana_ui::component::{list::EntryKeyKind, pill};
 
-use crate::debug::Sample;
+use crate::{
+    debug::{debug_section, layout_page, Sample},
+    t,
+};
 
 #[rustfmt::skip]
 fn pill_components_a() -> Sample<13> {
@@ -49,27 +52,35 @@ fn pill_components_c() -> Sample<14> {
         (pill::ws_admin(),                                 "liana_ui::component::pill::ws_admin()"),
         (pill::role_manager(),                             "liana_ui::component::pill::role_manager()"),
         (pill::role_participant(),                         "liana_ui::component::pill::role_participant()"),
-        (pill::compact_metric("Draft", theme::pill::simple), "liana_ui::component::pill::compact_metric(\"Draft\", theme::pill::simple)"),
-        (pill::compact_metric("To Approve", theme::pill::warning), "liana_ui::component::pill::compact_metric(\"To Approve\", theme::pill::warning)"),
-        (pill::compact_metric("Active", theme::pill::success), "liana_ui::component::pill::compact_metric(\"Active\", theme::pill::success)"),
+        (pill::draft(),                                    "liana_ui::component::pill::draft()"),
+        (pill::to_approve(),                               "liana_ui::component::pill::to_approve()"),
+        (pill::set_keys(),                                 "liana_ui::component::pill::set_keys()"),
+        (pill::active(),                                   "liana_ui::component::pill::active()"),
         (pill::key_internal(),                             "liana_ui::component::pill::key_internal()"),
         (pill::key_external(),                             "liana_ui::component::pill::key_external()"),
         (pill::key_safety_net(),                           "liana_ui::component::pill::key_safety_net()"),
         (pill::key_cosigner(),                             "liana_ui::component::pill::key_cosigner()"),
-        (pill::to_approve(),                               "liana_ui::component::pill::to_approve()"),
-        (pill::draft(),                                    "liana_ui::component::pill::draft()"),
-        (pill::set_keys(),                                 "liana_ui::component::pill::set_keys()"),
-        (pill::active(),                                   "liana_ui::component::pill::active()"),
+        (pill::key_kind(EntryKeyKind::Internal, "alice"),  "liana_ui::component::pill::key_kind(Internal, \"alice\")"),
+        (pill::key_kind(EntryKeyKind::SafetyNet, "Wizardsardine"), "liana_ui::component::pill::key_kind(SafetyNet, \"Wizardsardine\")"),
+        (pill::registered(),                               "liana_ui::component::pill::registered()"),
     ]
 }
 
-crate::debug_page!(
-    "Pill debug view",
+#[rustfmt::skip]
+fn pill_components_d() -> Sample<7> {
     [
-        [("Pill components", pill_components_a())],
-        [
-            ("Pill components", pill_components_b()),
-            ("Pill components (business-installer)", pill_components_c())
-        ],
-    ],
+        (pill::path_always_available(),                    "liana_ui::component::pill::path_always_available()"),
+        (pill::path_timelock(t!("business-after-days", count = 30)), "liana_ui::component::pill::path_timelock(business-after-days)"),
+        (pill::in_policy(2),                               "liana_ui::component::pill::in_policy(2)"),
+        (pill::not_in_policy(),                            "liana_ui::component::pill::not_in_policy()"),
+        (pill::coin_sequence_compact(0),                   "liana_ui::component::pill::coin_sequence_compact(0)"),
+        (pill::coin_sequence_compact(200),                 "liana_ui::component::pill::coin_sequence_compact(200)"),
+        (pill::coin_sequence_compact(52_596),              "liana_ui::component::pill::coin_sequence_compact(52_596)"),
+    ]
+}
+
+#[rustfmt::skip]
+crate::debug_pages!(
+    (ENTRY_1, layout_page("Pill debug view 1/2", [vec![debug_section("Pill components", pill_components_a())], vec![debug_section("Pill components", pill_components_b())]])),
+    (ENTRY_2, layout_page("Pill debug view 2/2", [vec![debug_section("Pill components (business-installer)", pill_components_c())], vec![debug_section("Pill components (business-installer)", pill_components_d())]])),
 );

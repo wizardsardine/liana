@@ -43,7 +43,8 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
     #[rustfmt::skip]
     pages: &[
         &badges::ENTRY,
-        &pills::ENTRY,
+        &pills::ENTRY_1,
+        &pills::ENTRY_2,
         &pill_styles::ENTRY,
         &buttons::ENTRY_THEMES_1,
         &buttons::ENTRY_THEMES_2,
