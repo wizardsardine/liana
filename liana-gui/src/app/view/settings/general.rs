@@ -30,6 +30,7 @@ use crate::app::view::message::*;
 use crate::app::view::settings::SettingsMessage;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 use crate::t;
+use liana_i18n::{self as i18n, SupportedLocale};
 
 pub fn general_section<'a>(
     cache: &'a cache::Cache,
@@ -43,11 +44,28 @@ pub fn general_section<'a>(
         Some(SettingsMessage::GeneralSection.into()),
     );
 
+    let language = language();
     let fiat_price = fiat_price(new_price_setting, currencies_list);
 
-    let content = column![header, fiat_price].spacing(VSpacing::L);
+    let content = column![header, language, fiat_price].spacing(VSpacing::L);
 
     dashboard(&Menu::Settings, cache, warning, content)
+}
+
+pub fn language<'a>() -> Element<'a, Message> {
+    let picker = pick_list::pick_list(
+        &SupportedLocale::ALL[..],
+        Some(i18n::current_locale()),
+        |locale| SettingsMessage::LanguageEdited(locale).into(),
+    )
+    .padding(pick_list::PICK_LIST_PADDING);
+    let language = setting_row(t!("settings-language"), None, picker);
+    let description =
+        new::caption(t!("settings-language-description")).style(theme::text::secondary);
+
+    card::simple(column![language, description].spacing(VSpacing::S))
+        .width(Length::Fill)
+        .into()
 }
 
 pub fn fiat_price<'a>(
