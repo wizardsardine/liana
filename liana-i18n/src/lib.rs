@@ -169,6 +169,10 @@ mod tests {
     #[test]
     fn supported_locales_parse() {
         assert_eq!(SupportedLocale::from_str("en-US"), Ok(SupportedLocale::En));
+        assert_eq!(
+            SupportedLocale::from_str("pt_PT.UTF-8"),
+            Ok(SupportedLocale::PtPt)
+        );
         assert_eq!(SupportedLocale::from_str("en--US"), Err(()));
         assert_eq!(SupportedLocale::from_str("english"), Err(()));
         assert_eq!(SupportedLocale::from_str("de-DE"), Err(()));

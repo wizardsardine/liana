@@ -5,6 +5,7 @@ use iced::{
 };
 
 use liana::miniscript::bitcoin::Network;
+use liana_i18n::{self as i18n, SupportedLocale};
 use liana_ui::{
     component::{
         button::{btn_add_wallet, btn_delete_wallet, btn_remove, btn_select, EntryWidth},
@@ -105,6 +106,14 @@ impl Launcher {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::View(ViewMessage::LanguageEdited(locale)) => {
+                i18n::set_locale(locale);
+                let path = settings::global::GlobalSettings::path(&self.datadir_path);
+                if let Err(e) = settings::global::GlobalSettings::update_locale(&path, locale) {
+                    tracing::error!("Failed to save language: {e}");
+                }
+                Task::none()
+            }
             Message::View(ViewMessage::ImportWallet) => {
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
@@ -303,6 +312,7 @@ fn launcher_layout<'a>(
                 selected_network,
                 on_network_selected: |network| Message::View(ViewMessage::SelectNetwork(network)),
             },
+            on_language_selected: Some(|locale| Message::View(ViewMessage::LanguageEdited(locale))),
             content_width: 800.0,
         },
         content,
@@ -423,6 +433,7 @@ pub enum ViewMessage {
     Check,
     Run(usize),
     DeleteWallet(DeleteWalletMessage),
+    LanguageEdited(SupportedLocale),
 }
 
 #[derive(Debug, Clone)]
