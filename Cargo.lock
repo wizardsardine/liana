@@ -852,6 +852,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bwk-backoff"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b66e133685fd7fa9212a4b0266eb889c033de89612771420467b525cd1f111a"
+dependencies = [
+ "rand 0.9.2",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3386,6 +3395,7 @@ dependencies = [
  "backtrace",
  "bdk_electrum",
  "bip329",
+ "bwk-backoff",
  "dirs",
  "fern",
  "jsonrpc",

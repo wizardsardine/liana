@@ -2,70 +2,255 @@ name: CI
 
 on:
   push:
+    branches: [master]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   linter:
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
         with:
-            toolchain: 1.88.0
-            components: rustfmt, clippy
-            override: true
+          toolchain: 1.88.0
+          components: rustfmt
       - name: rustfmt
         run: cargo fmt -- --check
-      - name: clippy
+      - name: Check the crate slices cover every crate
         run: |
-          sudo apt-get update &&
-          sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev &&
-          cargo clippy --all-features --all-targets -- -D warnings
+          python3 - <<'EOF'
+          import json, subprocess
+          slices = json.load(open(".github/crate-slices.json"))
+          tested = [p for s in slices for p in s["packages"].split() if p != "-p"]
+          meta = json.loads(subprocess.check_output(
+              ["cargo", "metadata", "--no-deps", "--format-version", "1"]
+          ))
+          names = {p["id"]: p["name"] for p in meta["packages"]}
+          members = sorted(names[i] for i in meta["workspace_default_members"])
+          assert sorted(tested) == members, f"slices {sorted(tested)} != members {members}"
+          EOF
+
+  clippy:
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
+    steps:
+      - uses: actions/checkout@v4
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
+          shared-key: ubuntu-latest-1.88.0
+          save-if: false
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+      - name: clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
 
   lint-i18n:
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.88.0
-          override: true
-          profile: minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
+          shared-key: ubuntu-latest-1.88.0
+          save-if: false
       - name: Check locale catalogs are synced from English
         run: cargo run -p liana-i18n-toolbox -- sync --verify
       - name: Validate i18n ids used in Rust sources
         run: cargo run -p liana-i18n-toolbox -- check-ids
 
-  unit_tests:
-    needs: [linter, lint-i18n]
-    strategy:
-      matrix:
-        toolchain:
-          - 1.88.0
-          - nightly
-        os:
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+  # The crate slices the unit tests and the release build are split into. GitHub runs at most 5
+  # macOS jobs at once, so on macOS the unit tests run the slices grouped by their "macos" name.
+  # The caches restored by the slices depend on them, so their key prefix hashes the slices.
+  slices:
+    runs-on: ubuntu-latest
+    outputs:
+      slices: ${{ steps.read.outputs.slices }}
+      unit-tests: ${{ steps.read.outputs.unit-tests }}
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v2
-      - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/crate-slices.json
+          sparse-checkout-cone-mode: false
+      - id: read
+        run: |
+          echo "slices=$(jq -c . .github/crate-slices.json)" >> "$GITHUB_OUTPUT"
+          unit_tests=$(jq -c '
+            [("ubuntu-latest", "windows-latest") as $os | .[] | {name, packages, os: $os}]
+            + (group_by(.macos)
+                | map({name: .[0].macos, packages: map(.packages) | join(" "), os: "macOS-latest"}))
+          ' .github/crate-slices.json)
+          echo "unit-tests=$unit_tests" >> "$GITHUB_OUTPUT"
+
+  # Builds the tests of every slice on master and saves the cache restored by the other jobs.
+  # Each slice resolves its own dependency features, so each one must be built here.
+  warm-cache:
+    if: github.event_name == 'push'
+    needs: slices
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [1.88.0, nightly]
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+    steps:
+      - uses: actions/checkout@v4
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          override: true
-          profile: minimal
-      - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
-        if: matrix.os == 'windows-latest'
-        run: cargo test --verbose --no-default-features
-      - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
-        if: matrix.os == 'macOS-latest'
-        run: cargo test --verbose --color always -- --nocapture
-      - name: Test on Rust ${{ matrix.toolchain }} (non Windows)
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
+          shared-key: ${{ matrix.os }}-${{ matrix.toolchain }}
+      - name: Install system dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update &&
-          sudo apt-get install libudev-dev libfontconfig1-dev &&
-          cargo test --verbose --color always -- --nocapture
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+      - name: Build the tests of every slice
+        shell: bash
+        env:
+          UNIT_TESTS: ${{ needs.slices.outputs.unit-tests }}
+        run: |
+          flags=${{ matrix.os == 'windows-latest' && '--no-default-features' || '' }}
+          jq -r --arg os "${{ matrix.os }}" '.[] | select(.os == $os) | .packages' <<< "$UNIT_TESTS" \
+            | while read -r packages; do
+              packages=${packages%$'\r'}
+              # shellcheck disable=SC2086
+              cargo test $flags $packages --no-run
+            done
+      - name: Build clippy
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == '1.88.0'
+        run: cargo clippy --all-features --all-targets
+
+  unit_tests:
+    needs: slices
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [1.88.0, nightly]
+        slice: ${{ fromJSON(needs.slices.outputs.unit-tests) }}
+    name: unit_tests (${{ matrix.toolchain }}, ${{ matrix.slice.os }}, ${{ matrix.slice.name }})
+    runs-on: ${{ matrix.slice.os }}
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+    steps:
+      - uses: actions/checkout@v4
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
+          shared-key: ${{ matrix.slice.os }}-${{ matrix.toolchain }}
+          save-if: false
+      - name: Install system dependencies
+        if: matrix.slice.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libfontconfig1-dev
+      - name: Test (Windows)
+        if: matrix.slice.os == 'windows-latest'
+        run: cargo test --verbose --no-default-features ${{ matrix.slice.packages }}
+      - name: Test
+        if: matrix.slice.os != 'windows-latest'
+        run: cargo test --verbose ${{ matrix.slice.packages }} -- --nocapture
+
+  release:
+    needs: slices
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: ${{ fromJSON(needs.slices.outputs.slices) }}
+    name: release (${{ matrix.slice.name }})
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
+    steps:
+      # The release build is the longest CI job, so the install overlaps the next steps.
+      - name: Start installing the system dependencies
+        run: |
+          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+           echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
+      - uses: actions/checkout@v4
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
+          shared-key: ubuntu-latest-release-${{ matrix.slice.name }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Wait for the system dependencies
+        run: |
+          while [ ! -e "$RUNNER_TEMP/apt.status" ]; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt.status")"
+      - name: build
+        run: cargo build --release ${{ matrix.slice.packages }}
+
+  # A change to the manifests or the toolchain saves the caches under new keys: drop the
+  # superseded ones of master so they don't fill the cache quota and evict the current ones.
+  prune-caches:
+    if: github.event_name == 'push'
+    needs: [warm-cache, release]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Delete the superseded caches
+        run: |
+          gh cache list -R "$GITHUB_REPOSITORY" --ref refs/heads/master --key v0-rust- -L 1000 \
+            --sort created_at --order desc --json id,key \
+            --jq '.[] | "\(.id) \(.key | sub("^v0-rust-([0-9a-f]{64}-)?"; "") | sub("-[0-9a-f]+-[0-9a-f]+$"; ""))"' \
+            | awk 'seen[$2]++ { print $1 }' \
+            | xargs -r -n1 gh cache delete -R "$GITHUB_REPOSITORY"

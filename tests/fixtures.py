@@ -320,7 +320,15 @@ def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
     signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
 
-    lianad = Lianad(datadir, signer, main_desc, bitcoin_backend, legacy_datadir=True)
+    # The old lianad run on this datadir only reads a whole number of seconds.
+    lianad = Lianad(
+        datadir,
+        signer,
+        main_desc,
+        bitcoin_backend,
+        legacy_datadir=True,
+        poll_interval_secs=1,
+    )
 
     try:
         lianad.start()
