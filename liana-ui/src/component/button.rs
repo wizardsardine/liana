@@ -825,7 +825,7 @@ pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::usb_icon()),
         t!("btn-verify-on-device"),
-        BtnWidth::XXL,
+        BtnWidth::Auto,
         Some(msg),
     )
 }
@@ -834,7 +834,7 @@ pub fn btn_register_on_device<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::chip_icon()),
         t!("btn-register-on-device"),
-        BtnWidth::XL,
+        BtnWidth::XXL,
         Some(msg),
     )
 }
@@ -932,7 +932,7 @@ pub fn btn_add_safety_net<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
         Some(icon::plus_icon()),
         t!("btn-add-safety-net"),
         Some(t!("installer-safety-net-description")),
-        BtnWidth::XL,
+        BtnWidth::Auto,
         msg,
         theme::button::tertiary,
     )

@@ -7,8 +7,11 @@ use iced::{
 use liana_i18n::t;
 
 use crate::{
-    component::{text::new, tooltip::tooltip},
-    theme,
+    component::{
+        text::{self, new},
+        tooltip::tooltip,
+    },
+    icon, theme,
     widget::{CheckBox, Element, Radio, Row, Toggler},
 };
 
@@ -88,4 +91,15 @@ pub fn derivation_paths_checkbox<'a, M: Clone + 'a>(
     row![control, help]
         .spacing(LABEL_SPACING)
         .align_y(Alignment::Center)
+}
+
+pub fn derivation_paths_checkbox_width() -> f32 {
+    let label = t!("export-encrypted-descriptor-include-paths");
+    text::width(
+        &label,
+        new::CAPTION_SPEC.font,
+        new::CAPTION_SPEC.size.expect("caption size"),
+    ) + CHECKBOX_SIZE
+        + icon::FONT_ICON_WIDTH
+        + 2.0 * LABEL_SPACING as f32
 }
