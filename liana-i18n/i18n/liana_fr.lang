@@ -51,7 +51,7 @@ btn-bump-fee => "Bump fee" => "Augmenter les frais"
 
 btn-cancel => "Cancel" => "Annuler"
 
-btn-cancel-transaction => "Cancel transaction" => "Annuler la transaction"
+btn-cancel-transaction => "Cancel transaction" => "Annuler transaction"
 
 btn-change-email => "Change email" => "Changer l'e-mail"
 
@@ -77,7 +77,7 @@ btn-delete-wallet => "Delete wallet" => "Supprimer le portefeuille"
 
 btn-dismiss => "Dismiss" => "Ignorer"
 
-btn-edit => "Edit" => "Modifier"
+btn-edit => "Edit" => "Éditer"
 
 btn-edit-keys => "Edit keys" => "Modifier les clés"
 
@@ -99,7 +99,7 @@ btn-go-back => "Go back" => "Retour"
 
 btn-go-back-to-psbts => "Go back to PSBTs" => "Retour aux PSBT"
 
-btn-go-to-replacement => "Go to replacement" => "Voir la transaction de remplacement"
+btn-go-to-replacement => "Go to replacement" => "Voir remplacement"
 
 btn-go-to-rescan => "Go to rescan" => "Réanalyser la blockchain"
 
@@ -161,7 +161,7 @@ btn-send-token => "Send token" => "Envoyer le token"
 
 btn-set => "Set" => "Définir"
 
-btn-set-keys => "Set keys" => "Définir les clés"
+btn-set-keys => "Set keys" => "Définir clés"
 
 btn-share-xpubs => "Share xpubs" => "Partager les xpubs"
 
@@ -177,7 +177,7 @@ btn-split-tab => "Split" => "Diviser"
 
 btn-start-rescan => "Start rescan" => "Démarrer la réanalyse"
 
-btn-starting-rescan => "Starting rescan..." => "Démarrage de la réanalyse..."
+btn-starting-rescan => "Starting rescan..." => "Démarrer..."
 
 btn-template-help
 => "Something’s wrong with this template?"
@@ -187,11 +187,11 @@ btn-try-other-paths
 => "Try other derivation paths"
 => "Essayer d'autres chemins de dérivation";;
 
-btn-unlock-all => "Unlock all" => "Tout déverrouiller"
+btn-unlock-all => "Unlock all" => "Déverrouiller"
 
 btn-update => "Update" => "Mettre à jour"
 
-btn-updating => "Updating" => "Mise à jour en cours"
+btn-updating => "Updating" => "Mise à jour..."
 
 btn-verify-on-device => "Verify on signing device" => "Vérifier sur l'appareil"
 
@@ -909,7 +909,7 @@ device-generate-hot-key
 
 device-hot-key-test-only
 => "We recommend using this option only for test purposes"
-=> "Nous recommandons d'utiliser cette option uniquement à des fins de test";;
+=> "Option recommandée uniquement pour des tests";;
 
 device-install-firmware-version-or-later
 => "Install firmware version {$version} \nor later"
@@ -1691,7 +1691,7 @@ installer-share-xpubs-title
 
 installer-shared-wallet-help
 => "If you received an invitation to join a shared wallet"
-=> "Si vous avez reçu une invitation à rejoindre un portefeuille partagé";;
+=> "Si vous avez reçu une invitation à un portefeuille partagé";;
 
 installer-simple-inheritance => "Simple inheritance" => "Héritage simple"
 
@@ -1953,7 +1953,7 @@ menu-coins-utxos => "Coins/UTXOs" => "Pièces/UTXO"
 
 menu-dashboard => "Dashboard" => "Tableau de bord"
 
-menu-drafts-approvals => "Drafts & approvals" => "Brouillons et approbations"
+menu-drafts-approvals => "Drafts & approvals" => "Brouillons & approb."
 
 menu-receive => "Receive" => "Recevoir"
 
@@ -1973,7 +1973,7 @@ network-wallet => "{$network} WALLET" => "PORTEFEUILLE {$network}"
 
 pill-active => "Active" => "Actif"
 
-pill-always-available => "Always available" => "Toujours disponible"
+pill-always-available => "Always available" => "Toujours actif"
 
 pill-available => "Available" => "Disponible"
 
@@ -2047,7 +2047,7 @@ pill-recovery-tooltip
 => "This transaction is using a recovery path"
 => "Cette transaction utilise un chemin de récupération";;
 
-pill-rescan-progress => "Rescan... {$progress}%" => "Réanalyse... {$progress} %"
+pill-rescan-progress => "Rescan... {$progress}%" => "Rescan... {$progress}%"
 
 pill-signed => "To broadcast" => "À diffuser"
 
@@ -2071,7 +2071,7 @@ pill-to-approve => "To approve" => "À approuver"
 
 pill-today => "Today" => "Aujourd'hui"
 
-pill-unconfirmed => "Unconfirmed" => "Non confirmée"
+pill-unconfirmed => "Unconfirmed" => "En attente"
 
 pill-unconfirmed-tooltip
 => "Do not treat this as a payment until it is confirmed"
@@ -2089,7 +2089,7 @@ pill-used-in-spending-paths
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
-pill-xpub-not-set => "Not set" => "Non définie"
+pill-xpub-not-set => "Not set" => "À définir"
 
 pill-xpub-set => "✓ Set" => "✓ Définie"
 
