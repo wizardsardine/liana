@@ -91,7 +91,7 @@ pub fn verify_address_modal<'a>(
         Some(t!("receive-verify-address")),
         None,
         Some(Message::Close),
-        modal::ModalWidth::XL,
+        modal::ModalWidth::XXL,
         content,
     )
 }

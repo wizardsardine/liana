@@ -37,7 +37,7 @@ use crate::{
     widget::{Button, CheckBox, Column, ColumnExt, Element, PickList, SpaceExt},
 };
 
-pub const BTN_W: u32 = 500;
+pub const BTN_W: u32 = list::STANDARD_ENTRY_WIDTH as u32;
 pub const V_SPACING: VSpacing = VSpacing::S;
 pub const H_SPACING: HSpacing = HSpacing::S;
 pub const MODAL_PADDING: f32 = 20.0;
@@ -51,7 +51,8 @@ pub enum ModalWidth {
     S = 400,
     M = 550,
     L = 650,
-    XL = 800,
+    XL = 720,
+    XXL = 800,
 }
 
 impl From<ModalWidth> for Length {
@@ -359,7 +360,7 @@ pub fn key_entry<'a, M: 'a + Clone>(
         caption(fingerprint.unwrap_or(" - ".to_string()))
     ]
     .align_x(Horizontal::Left)
-    .width(200);
+    .width(list::KEY_ALIAS_WIDTH);
     let row = row![
         badge::tile(kind.into()),
         designation,
@@ -371,12 +372,7 @@ pub fn key_entry<'a, M: 'a + Clone>(
     .align_y(Vertical::Center)
     .spacing(list::ENTRY_H_SPACING)
     .width(Length::Fill);
-    button::list_entry(
-        row,
-        None,
-        button::EntryWidth::Custom(BTN_W as f32),
-        on_press,
-    )
+    button::list_entry(row, None, button::EntryWidth::Standard, on_press)
 }
 
 /// Liana derives its keys at `48'/coin'/account'/2'`, from account 0 up to this one excluded.
@@ -431,6 +427,7 @@ fn device_designation<'a, M: 'a>(
         column![fg_row]
     }
     .align_x(Horizontal::Left)
+    .width(list::KEY_ALIAS_WIDTH)
 }
 
 pub fn device_entry<'a, M, F, K, A>(
@@ -448,16 +445,16 @@ where
 {
     let tile = device_tile(kind.is_some());
     let designation = device_designation(kind, alias, fingerprint);
-    let row = row![
-        badge::tile(tile),
-        designation,
-        Space::fill_width(),
-        Option::<Element<'a, M>>::from(status)
-    ]
-    .align_y(Vertical::Center)
-    .spacing(list::ENTRY_H_SPACING)
-    .width(Length::Fill);
-    button::list_entry(row, None, button::EntryWidth::Fill, on_press)
+    let trailing = Option::<Element<'a, M>>::from(status).map(|status| {
+        Container::new(status)
+            .width(Length::Fill)
+            .align_x(Horizontal::Right)
+    });
+    let row = row![badge::tile(tile), designation, trailing]
+        .align_y(Vertical::Center)
+        .spacing(list::ENTRY_H_SPACING)
+        .width(Length::Fill);
+    button::list_entry(row, None, button::EntryWidth::Standard, on_press)
 }
 
 /// Derivation-account picker: a dropdown over the Liana accounts for the given device.
@@ -722,7 +719,7 @@ where
     Collapse: 'static + Fn() -> Message,
     Message: Clone + 'static,
 {
-    acked_input_button(
+    Container::new(acked_input_button(
         collapsed,
         ack,
         Tile::Mnemonic,
@@ -734,7 +731,9 @@ where
         input_message,
         paste_message,
         collapse_message,
-    )
+    ))
+    .width(button::EntryWidth::Standard)
+    .into()
 }
 
 fn example_xpub(network: Network) -> String {

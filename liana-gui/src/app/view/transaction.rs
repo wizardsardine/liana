@@ -141,7 +141,7 @@ pub fn create_rbf_modal<'a>(
         Some(t!("transactions-replacement")),
         None,
         close,
-        ModalWidth::XL,
+        ModalWidth::XXL,
         content,
     )
 }

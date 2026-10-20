@@ -47,7 +47,7 @@ use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 7;
 pub const MENU_ENTRY_HEIGHT: u32 = 100;
-const CONTENT_WIDTH: f32 = button::STANDARD_ENTRY_WIDTH;
+const CONTENT_WIDTH: f32 = list::STANDARD_ENTRY_WIDTH;
 
 /// Build the collapsed line and the hover detail for a last-edit info.
 /// Visible: "Edited <relative time>". Hover: "Edited by <editor> on <absolute time>".
@@ -140,7 +140,7 @@ fn layout_inner<'a>(
                 breadcrumb: breadcrumb.to_vec(),
                 previous_message,
             },
-            on_language_selected: None,
+            on_language_selected: Some(Msg::LanguageEdited),
             content_width: CONTENT_WIDTH,
         },
         content,
@@ -203,7 +203,7 @@ pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, 
     let content = content.width(Length::Fill).height(Length::Fill);
     let card = button::list_entry(content, None, EntryWidth::Standard, message);
     container(card)
-        .width(button::STANDARD_ENTRY_WIDTH)
+        .width(list::STANDARD_ENTRY_WIDTH)
         .height(MENU_ENTRY_HEIGHT)
 }
 

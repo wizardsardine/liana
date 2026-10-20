@@ -896,14 +896,14 @@ impl SelectKeySource {
         let scrollable_content = column![no_devices, devices, keys, self.view_other_options()]
             .spacing(10)
             .align_x(Horizontal::Center)
-            .width(modal::MODAL_WIDTH as u32);
+            .width(modal::BTN_W);
         let scrollable = liana_ui::component::scrollable::vertical_thin(scrollable_content);
 
         liana_ui::component::modal::modal_view(
             Some(crate::t!("installer-select-key-source")),
             None,
             Some(Message::Close),
-            modal::ModalWidth::L,
+            modal::ModalWidth::XL,
             scrollable,
         )
     }

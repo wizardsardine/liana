@@ -30,6 +30,8 @@ impl From<CardPadding> for Padding {
     }
 }
 
+pub const SIMPLE_PADDING: u16 = 15;
+
 macro_rules! cards {
     ($($entry:tt),* $(,)?) => {
         $( cards!(@one $entry); )*
@@ -72,7 +74,7 @@ cards! {
     soft_warning,
     success,
     (modal, 15),
-    (simple, 15),
+    (simple, SIMPLE_PADDING),
     (invalid, 15),
     (section, 0),
     (flat, pad_arg),

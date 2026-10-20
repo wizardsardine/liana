@@ -41,6 +41,7 @@ const ROW_PITCH: f32 = 80.0;
 const FOOTNOTE_HEIGHT: f32 = 68.0;
 /// A chip label wraps past this.
 const LABEL_MAX: f32 = 124.0;
+const CUSTOM_CHIP_WIDTH: f32 = 200.0;
 const COLUMN_MIN: f32 = 190.0;
 /// The rails need the rest.
 const COLUMN_MAX: f32 = 280.0;
@@ -357,8 +358,13 @@ impl Painter<'_> {
                     1,
                 );
                 let tiles = tiles_width(policy.keys);
+                let chip_width = if template == Template::Custom {
+                    CUSTOM_CHIP_WIDTH
+                } else {
+                    CHIP_INSET_LEFT + tiles + CHIP_GAP + chip_label.bounds.width + CHIP_INSET_RIGHT
+                };
                 let chip = Size::new(
-                    CHIP_INSET_LEFT + tiles + CHIP_GAP + chip_label.bounds.width + CHIP_INSET_RIGHT,
+                    chip_width,
                     2.0 * CHIP_INSET_Y + TILE_SIDE.max(chip_label.bounds.height),
                 );
                 Row {

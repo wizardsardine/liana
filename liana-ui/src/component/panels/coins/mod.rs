@@ -138,7 +138,11 @@ pub fn coin_entry<'a, M: Clone + 'static>(
         }
         None => {
             let reset = button::btn_reset_timelock(Some(reset_timelock), seq == 0);
-            column![row![Space::fill_width(), reset]].into()
+            column![
+                row![Space::fill_width(), reset],
+                Space::with_height(VSpacing::S)
+            ]
+            .into()
         }
     };
 

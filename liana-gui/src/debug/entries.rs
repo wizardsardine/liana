@@ -47,10 +47,8 @@ fn modal_sample(entry: Element<'static, DebugMessage>) -> Container<'static, Deb
     at(modal::BTN_W, entry)
 }
 
-/// Sign modal: the entries fill `ModalWidth::L` minus the modal padding.
-const SIGN_MODAL_W: u32 = modal::ModalWidth::L as u32 - 2 * modal::MODAL_PADDING as u32;
-/// Settings register modal: the entries fill a 500 wide `card::simple`, 15 of padding each side.
-const REGISTER_MODAL_W: u32 = 470;
+/// Sign modal: the entries fill `ModalWidth::XL` minus the modal padding.
+const SIGN_MODAL_W: u32 = modal::ModalWidth::XL as u32 - 2 * modal::MODAL_PADDING as u32;
 /// Business registration page: the entries fill the 600 content column, 20 of padding each side.
 const REGISTRATION_W: u32 = 560;
 
@@ -127,17 +125,14 @@ fn registration(
 }
 
 /// A device entry as liana-gui builds it: the key alias as title, kind and fingerprint below.
-fn device(width: u32, status: DeviceStatus) -> Container<'static, DebugMessage> {
-    at(
-        width,
-        list::entry_device_list(
-            KEY,
-            Some(format!("ledger {}", fingerprint_label())),
-            status,
-            EntryWidth::Fill,
-            Some(()),
-        ),
-    )
+fn device(status: DeviceStatus) -> Container<'static, DebugMessage> {
+    sample(list::entry_device_list(
+        KEY,
+        Some(format!("ledger {}", fingerprint_label())),
+        status,
+        EntryWidth::Standard,
+        Some(()),
+    ))
 }
 
 /// A device entry as the business xpub modal builds it: kind and version as title, a reason below.
@@ -166,32 +161,31 @@ fn register_entries() -> Sample<4> {
 
 #[rustfmt::skip]
 fn device_entries_a() -> Sample<9> {
-    let w = REGISTER_MODAL_W;
     [
-        (device(w, DeviceStatus::None),                                        "liana_ui::component::list::entry_device_list(None), fill 470 (settings register modal)"),
-        (device(w, DeviceStatus::Processing),                                  "liana_ui::component::list::entry_device_list(Processing), fill 470"),
-        (device(w, DeviceStatus::Selected),                                    "liana_ui::component::list::entry_device_list(Selected), fill 470"),
-        (device(w, DeviceStatus::Registered),                                  "liana_ui::component::list::entry_device_list(Registered), fill 470"),
-        (device(w, DeviceStatus::Warning(t!("hw-no-taproot-miniscript"))),     "liana_ui::component::list::entry_device_list(Warning(hw-no-taproot-miniscript)), fill 470"),
-        (device(w, DeviceStatus::Unrelated),                                   "liana_ui::component::list::entry_device_list(Unrelated), fill 470"),
-        (device(w, DeviceStatus::WrongNetwork),                                "liana_ui::component::list::entry_device_list(WrongNetwork), fill 470"),
-        (device(w, DeviceStatus::OutdatedFirmware("2.2.0".to_string())),       "liana_ui::component::list::entry_device_list(OutdatedFirmware), fill 470"),
-        (device(w, DeviceStatus::ConnectionError),                             "liana_ui::component::list::entry_device_list(ConnectionError), fill 470"),
+        (device(DeviceStatus::None),                                        "liana_ui::component::list::entry_device_list(None), width 680 (settings register modal)"),
+        (device(DeviceStatus::Processing),                                  "liana_ui::component::list::entry_device_list(Processing), width 680"),
+        (device(DeviceStatus::Selected),                                    "liana_ui::component::list::entry_device_list(Selected), width 680"),
+        (device(DeviceStatus::Registered),                                  "liana_ui::component::list::entry_device_list(Registered), width 680"),
+        (device(DeviceStatus::Warning(t!("hw-no-taproot-miniscript"))),     "liana_ui::component::list::entry_device_list(Warning(hw-no-taproot-miniscript)), width 680"),
+        (device(DeviceStatus::Unrelated),                                   "liana_ui::component::list::entry_device_list(Unrelated), width 680"),
+        (device(DeviceStatus::WrongNetwork),                                "liana_ui::component::list::entry_device_list(WrongNetwork), width 680"),
+        (device(DeviceStatus::OutdatedFirmware("2.2.0".to_string())),       "liana_ui::component::list::entry_device_list(OutdatedFirmware), width 680"),
+        (device(DeviceStatus::ConnectionError),                             "liana_ui::component::list::entry_device_list(ConnectionError), width 680"),
     ]
 }
 
 #[rustfmt::skip]
 fn device_entries_b() -> Sample<9> {
     [
-        (device(REGISTER_MODAL_W, DeviceStatus::Locked(Some("1234".to_string()))),          "liana_ui::component::list::entry_device_list(Locked(Some(code))), fill 470"),
-        (device(REGISTER_MODAL_W, DeviceStatus::Locked(None)),                              "liana_ui::component::list::entry_device_list(Locked(None)), fill 470"),
-        (device(SIGN_MODAL_W, DeviceStatus::NotInPath),                                     "liana_ui::component::list::entry_device_list(NotInPath), fill 610 (sign modal)"),
-        (device(SIGN_MODAL_W, DeviceStatus::Signed),                                        "liana_ui::component::list::entry_device_list(Signed), fill 610"),
-        (device(SIGN_MODAL_W, DeviceStatus::Warning(t!("hw-descriptor-not-registered"))),   "liana_ui::component::list::entry_device_list(Warning(hw-descriptor-not-registered)), fill 610"),
-        (business_device(None, DeviceStatus::AlreadyUsed),                                  "liana_ui::component::list::entry_device_list(AlreadyUsed), 600 (business xpub modal)"),
-        (business_device(None, DeviceStatus::Selectable(fingerprint())),                    "liana_ui::component::list::entry_device_list(Selectable), 600"),
-        (business_device(Some(t!("decrypt-pairing-code", code = "1234")), DeviceStatus::Fingerprint(fingerprint())), "liana_ui::component::list::entry_device_list(decrypt-pairing-code, Fingerprint), 600"),
-        (business_device(Some(t!("business-not-part-wallet", fingerprint = fingerprint())), DeviceStatus::None), "liana_ui::component::list::entry_device_list(business-not-part-wallet, None), 600"),
+        (device(DeviceStatus::Locked(Some("1234".to_string()))),          "liana_ui::component::list::entry_device_list(Locked(Some(code))), width 680"),
+        (device(DeviceStatus::Locked(None)),                              "liana_ui::component::list::entry_device_list(Locked(None)), width 680"),
+        (device(DeviceStatus::NotInPath),                                     "liana_ui::component::list::entry_device_list(NotInPath), width 680 (sign modal)"),
+        (device(DeviceStatus::Signed),                                        "liana_ui::component::list::entry_device_list(Signed), width 680"),
+        (device(DeviceStatus::Warning(t!("hw-descriptor-not-registered"))),   "liana_ui::component::list::entry_device_list(Warning(hw-descriptor-not-registered)), width 680"),
+        (business_device(None, DeviceStatus::AlreadyUsed),                                  "liana_ui::component::list::entry_device_list(AlreadyUsed), width 680 (business xpub modal)"),
+        (business_device(None, DeviceStatus::Selectable(fingerprint())),                    "liana_ui::component::list::entry_device_list(Selectable), width 680"),
+        (business_device(Some(t!("decrypt-pairing-code", code = "1234")), DeviceStatus::Fingerprint(fingerprint())), "liana_ui::component::list::entry_device_list(decrypt-pairing-code, Fingerprint), width 680"),
+        (business_device(Some(t!("business-not-part-wallet", fingerprint = fingerprint())), DeviceStatus::None), "liana_ui::component::list::entry_device_list(business-not-part-wallet, None), width 680"),
     ]
 }
 
@@ -218,8 +212,8 @@ fn modal_entries_a() -> Sample<8> {
         (key_entry(KeySourceKind::HotKey, Some(t!("device-hot-key-test-only")), None),       "liana_ui::component::modal::key_entry(HotKey, message: device-hot-key-test-only)"),
         (key_entry(KeySourceKind::Imported, None, Some(t!("installer-key-already-used-in-path"))), "liana_ui::component::modal::key_entry(Imported, error: installer-key-already-used-in-path)"),
         (key_entry(KeySourceKind::Token, None, None),                                        "liana_ui::component::modal::key_entry(Token)"),
-        (at(SIGN_MODAL_W, modal::device_entry(Some(fingerprint_label()), Some("Ledger"), Some(DEVICE), DeviceStatus::None, Some(()))), "liana_ui::component::modal::device_entry(Some(fp), Some(kind), Some(alias), None), fill 610 (sign modal)"),
-        (at(SIGN_MODAL_W, modal::device_entry(Some(fingerprint_label()), None::<String>, Some(t!("installer-hot-signer")), DeviceStatus::Signed, Some(()))), "liana_ui::component::modal::device_entry(Some(fp), None, installer-hot-signer, Signed), fill 610"),
+        (at(SIGN_MODAL_W, modal::device_entry(Some(fingerprint_label()), Some("Ledger"), Some(DEVICE), DeviceStatus::None, Some(()))), "liana_ui::component::modal::device_entry(Some(fp), Some(kind), Some(alias), None), width 680 (sign modal)"),
+        (at(SIGN_MODAL_W, modal::device_entry(Some(fingerprint_label()), None::<String>, Some(t!("installer-hot-signer")), DeviceStatus::Signed, Some(()))), "liana_ui::component::modal::device_entry(Some(fp), None, installer-hot-signer, Signed), width 680"),
         (at(REGISTRATION_W, modal::registration_key_entry(fingerprint_label(), Some("Ledger".to_string()), Some(DEVICE.to_string()), EntryRegisterStatus::Registered, Some(t!("business-registered-on-device")), Some(|| ()))), "liana_ui::component::modal::registration_key_entry(Registered, business-registered-on-device), fill 560 (business registration)"),
         (at(REGISTRATION_W, modal::registration_key_entry(fingerprint_label(), Some("Ledger".to_string()), None, EntryRegisterStatus::Unregistered, Some(t!("business-connect-device-register")), None::<fn() -> DebugMessage>)), "liana_ui::component::modal::registration_key_entry(Unregistered, business-connect-device-register), fill 560"),
     ]

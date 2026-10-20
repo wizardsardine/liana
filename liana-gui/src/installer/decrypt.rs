@@ -884,7 +884,7 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
 
     let content = scrollable::vertical(
         Container::new(content)
-            .padding(15)
+            .padding(card::SIMPLE_PADDING)
             .align_x(Horizontal::Center),
     );
 
@@ -895,7 +895,7 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
         .align_x(alignment::Horizontal::Center);
 
     card::simple(column)
-        .width(modal::MODAL_WIDTH as u32)
+        .width(modal::BTN_W + 4 * u32::from(card::SIMPLE_PADDING))
         .height(Length::Fixed(450.0))
 }
 

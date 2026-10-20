@@ -1716,7 +1716,7 @@ pub fn login<'a>(
         ]
         .spacing(VSpacing::L)
         .align_x(Alignment::Center)
-        .width(button::STANDARD_ENTRY_WIDTH),
+        .width(list::STANDARD_ENTRY_WIDTH),
     )
     .center_x(Length::Fill);
 
@@ -1790,7 +1790,7 @@ pub fn connection_step_select_account<'a>(
                 previous_message: (!processing).then_some(Message::Previous),
             },
             on_language_selected: Some(Message::LanguageEdited),
-            content_width: button::STANDARD_ENTRY_WIDTH,
+            content_width: list::STANDARD_ENTRY_WIDTH,
         },
         Some(header_content),
         list_content,
