@@ -47,7 +47,7 @@ btn-backup-encrypted-descriptor
 
 btn-broadcast => "Broadcast" => "Trasmetti"
 
-btn-bump-fee => "Bump fee" => "Aumenta commissione"
+btn-bump-fee => "Bump fee" => "Alza commissione"
 
 btn-cancel => "Cancel" => "Annulla"
 
@@ -77,7 +77,7 @@ btn-delete-wallet => "Delete wallet" => "Elimina portafoglio"
 
 btn-dismiss => "Dismiss" => "Ignora"
 
-btn-edit => "Edit" => "Modifica"
+btn-edit => "Edit" => "Edita"
 
 btn-edit-keys => "Edit keys" => "Modifica chiavi"
 
@@ -159,9 +159,9 @@ btn-send-invitation => "Send invitation" => "Invia invito"
 
 btn-send-token => "Send token" => "Invia token"
 
-btn-set => "Set" => "Imposta"
+btn-set => "Set" => "Scegli"
 
-btn-set-keys => "Set keys" => "Imposta chiavi"
+btn-set-keys => "Set keys" => "Impostare"
 
 btn-share-xpubs => "Share xpubs" => "Condividi xpub"
 
@@ -1495,7 +1495,7 @@ installer-key-already-used => "Key already used" => "Chiave già usata"
 
 installer-key-already-used-in-path
 => "Key already used in this path"
-=> "Chiave già usata in questa opzione di spesa";;
+=> "Chiave già usata in questo percorso";;
 
 installer-key-fetch-wrong-network
 => "Failed to fetch key. Switch network on device and retry"
@@ -1965,7 +1965,7 @@ network-wallet => "{$network} WALLET" => "PORTAFOGLIO {$network}"
 
 pill-active => "Active" => "Attiva"
 
-pill-always-available => "Always available" => "Sempre disponibile"
+pill-always-available => "Always available" => "Sempre attivo"
 
 pill-available => "Available" => "Disponibile"
 
@@ -2039,9 +2039,9 @@ pill-recovery-tooltip
 => "This transaction is using a recovery path"
 => "Questa transazione usa un'opzione di recupero";;
 
-pill-rescan-progress => "Rescan... {$progress}%" => "Scansione... {$progress}%"
+pill-rescan-progress => "Rescan... {$progress}%" => "Rescan... {$progress}%"
 
-pill-signed => "To broadcast" => "Da trasmettere"
+pill-signed => "To broadcast" => "Da inviare"
 
 pill-signed-tooltip
 => "This transaction is signed & ready to broadcast"
@@ -2059,11 +2059,11 @@ pill-timelocked-tooltip
 => "This recovery transaction is signed but can't be broadcast before its timelock expires"
 => "Questa transazione di recupero è firmata ma non può essere trasmessa prima della scadenza del suo timelock";;
 
-pill-to-approve => "To approve" => "Da approvare"
+pill-to-approve => "To approve" => "Approvare"
 
 pill-today => "Today" => "Oggi"
 
-pill-unconfirmed => "Unconfirmed" => "Non confermata"
+pill-unconfirmed => "Unconfirmed" => "In attesa"
 
 pill-unconfirmed-tooltip
 => "Do not treat this as a payment until it is confirmed"
@@ -2081,9 +2081,9 @@ pill-used-in-spending-paths
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
-pill-xpub-not-set => "Not set" => "Non impostata"
+pill-xpub-not-set => "Not set" => "Mancante"
 
-pill-xpub-set => "✓ Set" => "✓ Impostata"
+pill-xpub-set => "✓ Set" => "✓ Definita"
 
 policy-block-duration
 => "{$blocks} blocks (~{$duration})"
