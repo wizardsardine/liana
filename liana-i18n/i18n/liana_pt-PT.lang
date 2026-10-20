@@ -39,9 +39,7 @@ btn-approve => "Approve" => "Aprovar"
 
 btn-back => "Back" => "Voltar"
 
-btn-back-up-descriptor
-=> "Back up descriptor"
-=> "Fazer cópia de segurança do descriptor";;
+btn-back-up-descriptor => "Back up descriptor" => "Guardar descriptor"
 
 btn-backup-encrypted-descriptor
 => "Back up encrypted descriptor"
@@ -97,7 +95,7 @@ btn-generate-address => "Generate address" => "Gerar endereço"
 
 btn-go-back => "Go back" => "Voltar"
 
-btn-go-back-to-psbts => "Go back to PSBTs" => "Voltar para os PSBTs"
+btn-go-back-to-psbts => "Go back to PSBTs" => "Voltar aos PSBTs"
 
 btn-go-to-replacement => "Go to replacement" => "Ir para a substituição"
 
@@ -135,7 +133,7 @@ btn-previous-arrow => "< Previous" => "< Anterior"
 
 btn-processing => "Processing..." => "A processar..."
 
-btn-register-on-device => "Register on device" => "Registar na carteira de hardware"
+btn-register-on-device => "Register on device" => "Registar no dispositivo"
 
 btn-reload => "Reload" => "Recarregar"
 
@@ -145,7 +143,7 @@ btn-resend-token => "Resend token" => "Reenviar token"
 
 btn-reset-timelock => "Reset timelock" => "Repor timelock"
 
-btn-retry => "Retry" => "Tentar novamente"
+btn-retry => "Retry" => "Repetir"
 
 btn-save => "Save" => "Guardar"
 
@@ -161,7 +159,7 @@ btn-send-token => "Send token" => "Enviar token"
 
 btn-set => "Set" => "Definir"
 
-btn-set-keys => "Set keys" => "Definir chaves"
+btn-set-keys => "Set keys" => "A definir"
 
 btn-share-xpubs => "Share xpubs" => "Partilhar xpubs"
 
@@ -187,15 +185,13 @@ btn-try-other-paths
 => "Try other derivation paths"
 => "Tentar outros caminhos de derivação";;
 
-btn-unlock-all => "Unlock all" => "Desbloquear tudo"
+btn-unlock-all => "Unlock all" => "Desbloquear"
 
 btn-update => "Update" => "Atualizar"
 
 btn-updating => "Updating" => "A atualizar"
 
-btn-verify-on-device
-=> "Verify on signing device"
-=> "Verificar no dispositivo de assinatura";;
+btn-verify-on-device => "Verify on signing device" => "Verificar no dispositivo"
 
 btn-yes => "Yes" => "Sim"
 
@@ -819,7 +815,7 @@ decrypt-device-failed
 
 decrypt-enter-mnemonic-unsafe
 => "UNSAFE: Enter the seed phrase of one of the keys"
-=> "INSEGURO: introduzir a frase-semente de uma das chaves";;
+=> "INSEGURO: introduza a frase-semente de uma chave";;
 
 decrypt-enter-mnemonic-warning
 => "This option is not secure. I understand that entering a seed phrase on a computer may result in theft of my funds."
@@ -1931,7 +1927,7 @@ menu-coins-utxos => "Coins/UTXOs" => "Moedas/UTXOs"
 
 menu-dashboard => "Dashboard" => "Painel"
 
-menu-drafts-approvals => "Drafts & approvals" => "Rascunhos e aprovações"
+menu-drafts-approvals => "Drafts & approvals" => "Rascunhos e aprov."
 
 menu-receive => "Receive" => "Receber"
 
@@ -2025,7 +2021,7 @@ pill-recovery-tooltip
 => "This transaction is using a recovery path"
 => "Esta transação usa um caminho de recuperação";;
 
-pill-rescan-progress => "Rescan... {$progress}%" => "Nova análise... {$progress}%"
+pill-rescan-progress => "Rescan... {$progress}%" => "Rescan... {$progress}%"
 
 pill-signed => "To broadcast" => "Para difundir"
 
@@ -2049,7 +2045,7 @@ pill-to-approve => "To approve" => "A aprovar"
 
 pill-today => "Today" => "Hoje"
 
-pill-unconfirmed => "Unconfirmed" => "Não confirmada"
+pill-unconfirmed => "Unconfirmed" => "Pendente"
 
 pill-unconfirmed-tooltip
 => "Do not treat this as a payment until it is confirmed"
@@ -2067,7 +2063,7 @@ pill-used-in-spending-paths
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
-pill-xpub-not-set => "Not set" => "Não definida"
+pill-xpub-not-set => "Not set" => "A definir"
 
 pill-xpub-set => "✓ Set" => "✓ Definida"
 
