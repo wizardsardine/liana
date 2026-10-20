@@ -85,11 +85,11 @@ btn-email-wizardsardine => "Email WS" => "Enviar e-mail à WS"
 
 btn-export => "Export" => "Exportar"
 
-btn-fee-level-high => "High" => "Alta"
+btn-fee-level-high => "High" => "Alto"
 
-btn-fee-level-low => "Low" => "Baixa"
+btn-fee-level-low => "Low" => "Baixo"
 
-btn-fee-level-medium => "Medium" => "Média"
+btn-fee-level-medium => "Medium" => "Médio"
 
 btn-generate => "Generate" => "Gerar"
 
@@ -107,7 +107,7 @@ btn-ignore => "Ignore" => "Ignorar"
 
 btn-import => "Import" => "Importar"
 
-btn-keep-my-changes => "Keep my changes" => "Manter minhas alterações"
+btn-keep-my-changes => "Keep my changes" => "Manter alterações"
 
 btn-login => "Login" => "Entrar"
 
@@ -237,11 +237,11 @@ business-assigned-keys-set-waiting
 
 business-auth-code-request-failed
 => "Failed to request authentication code from server."
-=> "Falha ao solicitar o código de autenticação ao servidor.";;
+=> "Falha ao solicitar o código de autenticação do servidor.";;
 
 business-authenticated => "Authenticated" => "Autenticado"
 
-business-backend-error => "Backend error" => "Erro do backend"
+business-backend-error => "Backend error" => "Erro do servidor"
 
 business-cannot-approve-template
 => "Can't approve this template?"
@@ -347,7 +347,7 @@ business-fetching-device => "Fetching from device..." => "Buscando no dispositiv
 
 business-file-dialog-result-failed
 => "Failed to receive result from file dialog thread"
-=> "Falha ao receber o resultado da janela de arquivos";;
+=> "Falha ao receber o resultado da operação de seleção de arquivo.";;
 
 business-file-read-failed
 => "Failed to read file: {$error}"
@@ -661,7 +661,7 @@ business-use-email => "Use {$email}" => "Usar {$email}"
 
 business-user-session-not-found
 => "User session not found. Please log in again or contact Wizardsardine."
-=> "Sessão de usuário não encontrada. Entre novamente ou entre em contato com a Wizardsardine.";;
+=> "Sessão de usuário não encontrada. Faça o login novamente ou entre em contato com a Wizardsardine.";;
 
 business-wallet-access-denied
 => "You do not have access to this wallet. Contact Wizardsardine."
@@ -715,7 +715,7 @@ coins-spend-block-height => "Spend block height:" => "Altura do bloco de gasto:"
 
 coins-spend-txid => "Spend txid:" => "Txid de gasto:"
 
-combobox-already-signer => "already a signer" => "já é signatário"
+combobox-already-signer => "already a signer" => "já é um signatário"
 
 common-address => "Address" => "Endereço"
 
@@ -817,11 +817,11 @@ decrypt-device-failed
 
 decrypt-enter-mnemonic-unsafe
 => "UNSAFE: Enter the seed phrase of one of the keys"
-=> "INSEGURO: digitar a frase semente de uma das chaves";;
+=> "INSEGURO: digite a frase-semente de uma das chaves";;
 
 decrypt-enter-mnemonic-warning
 => "This option is not secure. I understand that entering a seed phrase on a computer may result in theft of my funds."
-=> "Esta opção não é segura. Eu entendo que digitar uma frase semente em um computador pode resultar no roubo dos meus fundos.";;
+=> "Esta opção não é segura. Eu entendo que digitar uma frase-semente em um computador pode resultar no roubo dos meus fundos.";;
 
 decrypt-invalid-descriptor
 => "The file has been decrypted but the descriptor is not a valid Liana descriptor."
@@ -831,7 +831,7 @@ decrypt-invalid-encoding
 => "The file cannot be decoded properly, it seems not to be an encrypted backup."
 => "O arquivo não pode ser decodificado corretamente; parece não ser um backup criptografado.";;
 
-decrypt-invalid-mnemonic => "Invalid seed phrase" => "Frase semente inválida"
+decrypt-invalid-mnemonic => "Invalid seed phrase" => "Frase-semente inválida"
 
 decrypt-invalid-type
 => "The file has been decrypted but the content type is not supported."
@@ -843,9 +843,9 @@ decrypt-invalid-xpub
 
 decrypt-mnemonic-cannot-decrypt
 => "Seed phrase is valid but cannot decrypt the file"
-=> "A frase semente é válida, mas não consegue descriptografar o arquivo";;
+=> "A frase-semente é válida, mas não consegue descriptografar o arquivo";;
 
-decrypt-mnemonic-source => "Seed phrase" => "Frase semente"
+decrypt-mnemonic-source => "Seed phrase" => "Frase-semente"
 
 decrypt-other-paths-confirm-on-device
 => "You will have to accept some of these derivation paths on the device."
@@ -1041,7 +1041,7 @@ fiat-amount-non-negative
 
 fiat-currency-mismatch
 => "Currency mismatch: expected {$expected}, got {$actual}"
-=> "Moeda incompatível: esperada {$expected}, recebida {$actual}";;
+=> "Moeda incompatível: esperado {$expected}, recebido {$actual}";;
 
 fiat-exchange-rate
 => "Exchange rate: 1 BTC ~ {$amount} {$currency}"
@@ -1127,7 +1127,7 @@ import-success => "Import successful" => "Importação concluída com sucesso"
 
 installer-able-to-move-any-time
 => "Able to move the funds at any time."
-=> "Pode mover os fundos a qualquer momento.";;
+=> "Capaz de mover os fundos a qualquer momento.";;
 
 installer-accept-invitation-for
 => "Accept invitation for wallet:"
@@ -1143,7 +1143,7 @@ installer-add-safety-net-key => "Add Safety Net key" => "Adicionar chave Safety 
 
 installer-already-have-node => "I already have a node" => "Já tenho um nó"
 
-installer-already-used-sources => "Already used sources" => "Origens já usadas"
+installer-already-used-sources => "Already used sources" => "Fontes já utilizadas"
 
 installer-auth-token-emailed-to
 => "An authentication token has been emailed to"
@@ -1171,19 +1171,19 @@ installer-backed-up-descriptor-checkbox
 
 installer-backed-up-mnemonic-checkbox
 => "I have backed up my seed phrase"
-=> "Fiz o backup da minha frase semente";;
+=> "Fiz o backup da minha frase-semente";;
 
 installer-backed-up-mnemonic-show-xpub
 => "I have backed up the seed phrase, show the extended public key"
-=> "Fiz o backup da frase semente, mostrar a chave pública estendida";;
+=> "Fiz o backup da frase-semente, mostre a chave pública estendida";;
 
 installer-backup-descriptor-help
 => "In Bitcoin, to spend from a wallet that isn't a standard single-key setup, you need both your private keys (usually stored as seed phrases) to sign transactions, and your wallet descriptor to locate your coins - like a map of your addresses.\nWithout the descriptor, your wallet may not find your coins - even if you still have the keys.\nWhen you click \"Back up descriptor\", Liana creates an encrypted file that can only be decrypted using one of your wallet's extended public keys.\nLiana handles this automatically during the restore of a wallet process by asking you to connect a device or enter a key.\nThis file is safer and more private than copying the descriptor manually."
-=> "Em Bitcoin, para gastar de uma carteira que não é uma configuração padrão de chave única, você precisa das suas chaves privadas (normalmente armazenadas como frases semente) para assinar transações e do descritor da sua carteira para localizar suas moedas, como um mapa dos seus endereços.\nSem o descritor, sua carteira pode não encontrar suas moedas, mesmo que você ainda tenha as chaves.\nQuando você clica em \"Fazer backup do descritor\", a Liana cria um arquivo criptografado que só pode ser descriptografado usando uma das chaves públicas estendidas da sua carteira.\nA Liana cuida disso automaticamente durante a restauração de uma carteira, pedindo que você conecte um dispositivo ou insira uma chave.\nEste arquivo é mais seguro e mais privado do que copiar o descritor manualmente.";;
+=> "Na rede Bitcoin, para gastar bitcoins de uma carteira que não usa uma configuração padrão de chave única, você precisa das chaves privadas (geralmente armazenadas em uma frase-semente) para assinar as transações, além do descritor da carteira, que funciona como um mapa para localizar seus bitcoins.\nSem o descritor, sua carteira pode não encontrar suas moedas, mesmo que você ainda tenha as chaves.\nQuando você clica em \"Fazer backup do descritor\", a Liana cria um arquivo criptografado que só pode ser descriptografado usando uma das chaves públicas estendidas da sua carteira.\nA Liana cuida disso automaticamente durante a restauração de uma carteira, pedindo que você conecte um dispositivo ou insira uma chave.\nEste arquivo é mais seguro e mais privado do que copiar o descritor manualmente.";;
 
 installer-backup-descriptor-message
 => "This backup is required to recover your funds.\nClick \"Back up descriptor\" to download an encrypted file of your wallet configuration and store it in safe, accessible places.\nYou can also copy the plain-text descriptor string, but it's less private.\nWARNING: This file does not include your seed phrase(s). Back those up separately."
-=> "Este backup é necessário para recuperar seus fundos.\nClique em \"Fazer backup do descritor\" para baixar um arquivo criptografado da configuração da sua carteira e guarde-o em locais seguros e acessíveis.\nVocê também pode copiar o descritor em texto simples, mas é menos privado.\nAVISO: este arquivo não inclui sua(s) frase(s) semente. Faça backup delas separadamente.";;
+=> "Este backup é necessário para recuperar seus fundos.\nClique em \"Fazer backup do descritor\" para baixar um arquivo criptografado da configuração da sua carteira e guarde-o em locais seguros e acessíveis.\nVocê também pode copiar o descritor em texto simples, mas é menos privado.\nAVISO: este arquivo não inclui sua(s) frase(s)-semente(s). Faça backup delas separadamente.";;
 
 installer-backup-descriptor-missing
 => "Backup imported but descriptor missing!"
@@ -1191,7 +1191,7 @@ installer-backup-descriptor-missing
 
 installer-backup-descriptor-title
 => "Back up your wallet configuration (descriptor)"
-=> "Faça backup da configuração da sua carteira (descritor)";;
+=> "Faça backup da configuração da sua carteira (Descritor)";;
 
 installer-backup-imported
 => "Backup successfully imported!"
@@ -1199,11 +1199,11 @@ installer-backup-imported
 
 installer-backup-mnemonic-title
 => "Back up your seed phrase"
-=> "Faça backup da sua frase semente";;
+=> "Faça backup da sua frase-semente";;
 
 installer-backup-mnemonic-warning
 => "Beware to back up the seed phrase as it will NOT be stored on the computer."
-=> "Atenção: faça o backup da frase semente, pois ela NÃO será armazenada no computador.";;
+=> "Atenção: faça o backup da frase-semente, pois ela NÃO será armazenada no computador.";;
 
 installer-backup-network-mismatch
 => "The backup network does not match the selected network."
@@ -1245,11 +1245,11 @@ installer-build-your-own => "Build your own" => "Criar a sua própria configura�
 
 installer-build-your-own-description
 => "Create a custom setup that fits all your needs."
-=> "Crie uma configuração personalizada que atenda a todas as suas necessidades.";;
+=> "Crie uma configuração personalizada para atender a todas as suas necessidades.";;
 
 installer-canonicalize-cookie-failed
 => "Failed to canonicalize cookie path: {$error}"
-=> "Falha ao canonicalizar o caminho do cookie: {$error}";;
+=> "Falha ao normalizar o caminho do cookie: {$error}";;
 
 installer-canonicalize-datadir-failed
 => "Failed to canonicalize datadir path: {$error}"
@@ -1285,7 +1285,7 @@ installer-create-random-key
 
 installer-custom-template-description-1
 => "For this setup you will need to define your primary and recovery spending paths. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key belonging to them."
-=> "Para esta configuração você vai precisar definir seus caminhos de gasto principal e de recuperação. Por motivos de segurança, sugerimos que você use um dispositivo de assinatura separado, comumente chamado de carteira de hardware, para cada chave que pertença a eles.";;
+=> "Para esta configuração, você precisará especificar os caminhos de gasto principal e de recuperação. Por segurança, recomendamos usar um dispositivo de assinatura separado (também conhecido como carteira de hardware) para cada chave que pertença a eles.";;
 
 installer-custom-template-description-2
 => "The keys belonging to your primary path can always spend. Those belonging to the recovery paths will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
@@ -1397,7 +1397,7 @@ installer-finalize-installation => "Finalize installation" => "Finalizar instala
 
 installer-generate-mnemonic
 => "Generate a new seed phrase"
-=> "Gerar uma nova frase semente";;
+=> "Gerar uma nova frase-semente";;
 
 installer-give-wallet-alias
 => "Give your wallet an alias"
@@ -1409,9 +1409,9 @@ installer-import-backup => "Import a backup" => "Importar um backup"
 
 installer-import-descriptor => "Import a descriptor" => "Importar um descritor"
 
-installer-import-mnemonic => "Import seed phrase" => "Importar frase semente"
+installer-import-mnemonic => "Import seed phrase" => "Importar frase-semente"
 
-installer-import-mnemonic-title => "Import seed phrase" => "Importar frase semente"
+installer-import-mnemonic-title => "Import seed phrase" => "Importar frase-semente"
 
 installer-import-wallet-rescan-help
 => "If you are using a Bitcoin Core node, you will need to perform a rescan of the blockchain after creating the wallet in order to see your coins and past transactions. This can be done in Settings > Node."
@@ -1429,7 +1429,7 @@ installer-imported-key-already-used
 
 installer-inheritance-description-1
 => "For this setup you will need 2 keys: your primary key (for yourself) and an inheritance key (for your heir). For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> "Para esta configuração você vai precisar de 2 chaves: sua chave principal (para você) e uma chave de herança (para o seu herdeiro). Por motivos de segurança, sugerimos que você use um dispositivo de assinatura separado, comumente chamado de carteira de hardware, para cada chave.";;
+=> "Para esta configuração você vai precisar de 2 chaves: sua chave principal (para você) e uma chave de herança (para o seu herdeiro). Por motivos de segurança, sugerimos que você use um dispositivo de assinatura separado, comumente chamado de hardware wallet, para cada chave.";;
 
 installer-inheritance-description-2
 => "You will always be able to spend using your primary key. After a period of inactivity (but not before that) your inheritance key will become able to recover your funds."
@@ -1529,11 +1529,11 @@ installer-manual-xpub-taproot-note
 
 installer-mnemonic-backup-help
 => "A hot key generated on this computer was used for creating this wallet. Its seed phrase needs to be backed up. \n Keep it in a safe place. Never share it with anyone."
-=> "Uma chave local gerada neste computador foi usada para criar esta carteira. É preciso fazer backup da frase semente dela. \n Guarde-a em um lugar seguro. Nunca a compartilhe com ninguém.";;
+=> "Uma chave local gerada neste computador foi usada para criar esta carteira. É preciso fazer backup da frase-semente dela. \n Guarde-a em um lugar seguro. Nunca a compartilhe com ninguém.";;
 
 installer-mnemonic-recovery-help
 => "If you were using a hot key (a key stored on the computer) in your wallet, you will need to recover it from its seed phrase to be able to sign transactions again. Otherwise you can directly go the next step."
-=> "Se você estava usando uma chave local (uma chave armazenada no computador) na sua carteira, vai precisar recuperá-la a partir da frase semente dela para poder assinar transações novamente. Caso contrário, você pode ir direto para a próxima etapa.";;
+=> "Se você estava usando uma chave local (uma chave armazenada no computador) na sua carteira, vai precisar recuperá-la a partir da frase-semente dela para poder assinar transações novamente. Caso contrário, você pode ir direto para a próxima etapa.";;
 
 installer-multisig-description-1
 => "For this setup you will need 3 keys: two primary keys and a recovery key. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
@@ -1611,7 +1611,7 @@ installer-register-descriptor-title => "Register descriptor" => "Registrar descr
 
 installer-registered-descriptor-checkbox
 => "I have registered the descriptor on my device(s)"
-=> "Registrei o descritor no(s) meu(s) dispositivo(s)";;
+=> "Eu registrei o descritor no(s) meu(s) dispositivo(s)";;
 
 installer-remote-backend-description
 => "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead."
@@ -1639,7 +1639,7 @@ installer-safety-net-token-disallowed
 
 installer-seed-key-not-in-descriptor
 => "The descriptor does not use a key derived from this seed phrase"
-=> "O descritor não usa uma chave derivada desta frase semente";;
+=> "O descritor não usa uma chave derivada desta frase-semente";;
 
 installer-select-device-register
 => "Select signing device to register descriptor on:"
@@ -1699,7 +1699,7 @@ installer-stop-daemon-failed
 
 installer-store-mnemonic-failed
 => "Failed to store seed phrase: {$error}"
-=> "Falha ao armazenar a frase semente: {$error}";;
+=> "Falha ao armazenar a frase-semente: {$error}";;
 
 installer-switch-account-help
 => "Switch account if you already use the same device in other configurations"
@@ -2547,7 +2547,7 @@ transactions-rbf-bump-help
 
 transactions-rbf-cancel-help
 => "Replace the transaction with one paying a higher feerate that sends the coins back to your wallet. There is no guarantee the original transaction won't get mined first. New inputs may be used for the replacement transaction."
-=> "Substitui a transação por outra que paga uma taxa de transação mais alta e que envia as moedas de volta para a sua carteira. Não há garantia de que a transação original não será minerada primeiro. Novas entradas podem ser usadas na transação de substituição.";;
+=> "Substitui a transação por outra, com uma taxa mais alta, que devolve as moedas à sua carteira. Não há garantia de que a transação original não seja incluída em um bloco primeiro. A transação de substituição pode usar novas entradas.";;
 
 transactions-rbf-created
 => "Replacement PSBT created successfully and ready to be signed"
