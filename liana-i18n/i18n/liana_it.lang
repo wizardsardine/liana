@@ -25,9 +25,9 @@ btn-add-key => "Add a key" => "Aggiungi una chiave"
 
 btn-add-payment => "Add payment" => "Aggiungi pagamento"
 
-btn-add-recovery-option => "Add recovery path" => "Aggiungi opzione di recupero"
+btn-add-recovery-option => "Add recovery path" => "Aggiungi percorso"
 
-btn-add-recovery-path => "Add recovery path" => "Aggiungi opzione di recupero"
+btn-add-recovery-path => "Add recovery path" => "Aggiungi percorso"
 
 btn-add-safety-net => "Add Safety Net" => "Aggiungi Safety Net"
 
@@ -45,7 +45,7 @@ btn-backup-encrypted-descriptor
 => "Back up encrypted descriptor"
 => "Backup descriptor cifrato";;
 
-btn-broadcast => "Broadcast" => "Trasmetti"
+btn-broadcast => "Broadcast" => "Invia"
 
 btn-bump-fee => "Bump fee" => "Alza commissione"
 
@@ -161,7 +161,7 @@ btn-send-token => "Send token" => "Invia token"
 
 btn-set => "Set" => "Scegli"
 
-btn-set-keys => "Set keys" => "Impostare"
+btn-set-keys => "Set keys" => "Scegli chiavi"
 
 btn-share-xpubs => "Share xpubs" => "Condividi xpub"
 
@@ -277,7 +277,7 @@ business-contact-create-account
 => "Contact Wizardsardine to create an account."
 => "Contatta Wizardsardine per creare un account.";;
 
-business-create-new-path => "Create new path" => "Crea nuova opzione"
+business-create-new-path => "Create new path" => "Crea nuovo percorso"
 
 business-current-xpub
 => "Current extended public key"
@@ -307,9 +307,11 @@ business-duplicate-timelock => "Duplicate timelock" => "Timelock duplicato"
 
 business-edit-key => "Edit key" => "Modifica chiave"
 
-business-edit-primary-path => "Edit primary path" => "Modifica opzione primaria"
+business-edit-primary-path => "Edit primary path" => "Modifica percorso primario"
 
-business-edit-recovery-path => "Edit recovery path" => "Modifica opzione di recupero"
+business-edit-recovery-path
+=> "Edit recovery path"
+=> "Modifica percorso di recupero";;
 
 business-edited => "Edited" => "Modificato"
 
@@ -427,7 +429,7 @@ business-keys-awaiting-manager
 => "Awaiting the Wallet Manager. They haven't marked the keys & signers as ready yet."
 => "In attesa del gestore del portafoglio. Non ha ancora segnato chiavi e firmatari come pronti.";;
 
-business-keys-in-path => "Keys in path:" => "Chiavi nell'opzione:"
+business-keys-in-path => "Keys in path:" => "Chiavi nel percorso:"
 
 business-keys-manager-instruction
 => "List the keys that will be part of this wallet and assign a signer to each. The spending policy will be crafted from these keys."
@@ -455,7 +457,7 @@ business-keys-shared-policy-tab
 
 business-keys-shared-with-policy
 => "These keys are shared with the Spending policy tab, where you arrange them into spending paths."
-=> "Queste chiavi sono condivise con la scheda \"Policy di spesa\", dove le organizzi in opzioni di spesa.";;
+=> "Queste chiavi sono condivise con la scheda \"Policy di spesa\", dove le organizzi in percorsi di spesa.";;
 
 business-keys-signers => "Keys & signers" => "Chiavi e firmatari"
 
@@ -537,33 +539,33 @@ business-participant-set-keys-help
 => "Select a key assigned to you to complete its setup. You can connect a signing device or add an extended public key manually."
 => "Seleziona una chiave assegnata a te per completarne la configurazione. Puoi collegare un dispositivo di firma o aggiungere manualmente una chiave pubblica estesa.";;
 
-business-path-deleted => "Path deleted" => "Opzione eliminata"
+business-path-deleted => "Path deleted" => "Percorso eliminato"
 
 business-path-deleted-message
 => "The path you were editing was deleted by another user."
-=> "l'opzione che stavi modificando è stata eliminata da un altro utente.";;
+=> "Il percorso che stavi modificando è stato eliminato da un altro utente.";;
 
-business-path-modified => "Path modified" => "Opzione modificata"
+business-path-modified => "Path modified" => "Percorso modificato"
 
-business-primary-path => "Primary path" => "Opzione primaria"
+business-primary-path => "Primary path" => "Percorso primario"
 
 business-primary-path-modified-message
 => "The primary path was modified by another user. Would you like to reload the server version or keep your changes?"
-=> "L'opzione primaria è stata modificata da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+=> "Il percorso primario è stato modificato da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
 
 business-professional-service => "Professional service" => "Servizio professionale"
 
 business-provider-name => "Provider · {$provider}" => "Provider · {$provider}"
 
-business-recovery-path => "Recovery path" => "Opzione di recupero"
+business-recovery-path => "Recovery path" => "Percorso di recupero"
 
 business-recovery-path-modified-message
 => "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?"
-=> "Questa opzione di recupero è stata modificata da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
+=> "Questo percorso di recupero è stato modificato da un altro utente. Vuoi ricaricare la versione del server o mantenere le modifiche?";;
 
 business-recovery-path-number
 => "Recovery path {$number}"
-=> "Opzione di recupero {$number}";;
+=> "Percorso di recupero {$number}";;
 
 business-register-devices => "Register devices" => "Registra dispositivi"
 
@@ -615,7 +617,7 @@ business-service-unavailable
 => "The service is temporarily unavailable. Your wallet data and funds are not affected."
 => "Il servizio è temporaneamente non disponibile. I dati del portafoglio e i fondi non sono stati interessati.";;
 
-business-set-keys => "Set keys" => "Imposta chiavi"
+business-set-keys => "Set keys" => "Scegli chiavi"
 
 business-signer-email => "Signer email" => "Email firmatario"
 
@@ -709,7 +711,7 @@ coins-block-height => "Block height:" => "Altezza blocco:"
 
 coins-first-recovery-in-blocks
 => "First recovery path will be available in {$blocks} blocks"
-=> "La prima opzione di recupero sarà disponibile tra {$blocks} blocchi";;
+=> "Il primo percorso di recupero sarà disponibile tra {$blocks} blocchi";;
 
 coins-not-in-block => "Not in a block" => "Non in un blocco"
 
@@ -717,7 +719,7 @@ coins-outpoint => "Outpoint:" => "Outpoint:"
 
 coins-recovery-active
 => "Recovery path is active"
-=> "L'opzione di recupero è attiva";;
+=> "Il percorso di recupero è attivo";;
 
 coins-spend-block-height => "Spend block height:" => "Altezza blocco di spesa:"
 
@@ -1089,11 +1091,11 @@ home-payment-history => "Payment history" => "Storico pagamenti"
 
 home-recovery-left
 => "≈ {$units} left before first recovery path becomes available."
-=> "≈ {$units} rimanenti prima che la prima opzione di recupero diventi disponibile.";;
+=> "≈ {$units} rimanenti prima che il primo percorso di recupero diventi disponibile.";;
 
 home-recovery-warning
 => "Recovery path is or will soon be available for {$count} coin(s)."
-=> "L'opzione di recupero è o sarà presto disponibile per {$count} moneta/e.";;
+=> "Il percorso di recupero è o sarà presto disponibile per {$count} moneta/e.";;
 
 home-rescan-warning-backup
 => "As this wallet was restored from a backup, you may need to rescan the blockchain to see past transactions."
@@ -1123,7 +1125,7 @@ hw-no-taproot-miniscript
 
 hw-not-in-spending-path
 => "This signing device is not part of this spending path."
-=> "Questo dispositivo di firma non fa parte di questa opzione di spesa.";;
+=> "Questo dispositivo di firma non fa parte di questo percorso di spesa.";;
 
 hw-taproot-firmware-outdated
 => "Update firmware to {$version} or later to use Taproot."
@@ -1281,7 +1283,7 @@ installer-cookie-path => "Cookie path" => "Percorso cookie"
 
 installer-cosigner-token-disallowed
 => "Cosigner tokens are not allowed for this path"
-=> "I token Cosigner non sono consentiti per questa opzione";;
+=> "I token Cosigner non sono consentiti per questo percorso";;
 
 installer-create-datadir-path-failed
 => "Failed to create datadir path: {$error}"
@@ -1293,11 +1295,11 @@ installer-create-random-key
 
 installer-custom-template-description-1
 => "For this setup you will need to define your primary and recovery spending paths. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key belonging to them."
-=> "Per questa configurazione dovrai definire le opzioni di spesa primaria e di recupero. Per motivi di sicurezza, suggeriamo di usare un dispositivo di firma separato, comunemente chiamato hardware wallet, per ogni chiave che vi appartiene.";;
+=> "Per questa configurazione dovrai definire i percorsi di spesa primario e di recupero. Per motivi di sicurezza, suggeriamo di usare un dispositivo di firma separato, comunemente noto come hardware wallet, per ogni chiave che vi appartiene.";;
 
 installer-custom-template-description-2
 => "The keys belonging to your primary path can always spend. Those belonging to the recovery paths will be able to spend only after a defined time of wallet inactivity, allowing for secure recovery and advanced spending policies."
-=> "Le chiavi appartenenti all'opzione primaria possono sempre spendere. Quelle delle opzioni di recupero potranno spendere solo dopo un tempo definito di inattività del portafoglio, consentendo un recupero sicuro e policy di spesa avanzate.";;
+=> "Le chiavi appartenenti al percorso primario possono sempre spendere. Quelli dei percorsi di recupero potranno spendere solo dopo un tempo definito di inattività del portafoglio, consentendo un recupero sicuro e policy di spesa avanzate.";;
 
 installer-descriptor-generating
 => "Generating and validating your wallet descriptor. This can take a few seconds."
@@ -1439,7 +1441,7 @@ installer-imported-key-already-used
 
 installer-inheritance-description-1
 => "For this setup you will need 2 keys: your primary key (for yourself) and an inheritance key (for your heir). For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> "Per questa configurazione servono 2 chiavi: la tua chiave primaria (per te) e una chiave di eredità (per il tuo erede). Per motivi di sicurezza, suggeriamo di usare un dispositivo di firma separato, comunemente chiamato hardware wallet, per ogni chiave.";;
+=> "Per questa configurazione servono 2 chiavi: la tua chiave primaria (per te) e una chiave di eredità (per il tuo erede). Per motivi di sicurezza, suggeriamo di usare un dispositivo di firma separato, comunemente noto come hardware wallet, per ogni chiave.";;
 
 installer-inheritance-description-2
 => "You will always be able to spend using your primary key. After a period of inactivity (but not before that) your inheritance key will become able to recover your funds."
@@ -1495,7 +1497,7 @@ installer-key-already-used => "Key already used" => "Chiave già usata"
 
 installer-key-already-used-in-path
 => "Key already used in this path"
-=> "Chiave già usata in questo percorso";;
+=> "Chiave già usata in questo percorso di spesa";;
 
 installer-key-fetch-wrong-network
 => "Failed to fetch key. Switch network on device and retry"
@@ -1551,7 +1553,7 @@ installer-mnemonic-recovery-help
 
 installer-multisig-description-1
 => "For this setup you will need 3 keys: two primary keys and a recovery key. For security reasons, we suggest you use a separate signing device, commonly known as a hardware wallet, for each key."
-=> "Per questa configurazione servono 3 chiavi: due chiavi primarie e una chiave di recupero. Per motivi di sicurezza, suggeriamo di usare un dispositivo di firma separato, comunemente chiamato hardware wallet, per ogni chiave.";;
+=> "Per questa configurazione servono 3 chiavi: due chiavi primarie e una chiave di recupero. Per motivi di sicurezza, suggeriamo di usare un dispositivo di firma separato, comunemente noto come hardware wallet, per ogni chiave.";;
 
 installer-multisig-description-2
 => "The primary keys will compose a 2-of-2 multisig which will always be able to spend. In case one of your keys becomes unavailable, after a period of inactivity you will be able to recover your funds using the recovery key together with one of your primary keys (2-of-3 multisig):"
@@ -1577,15 +1579,15 @@ installer-paste-descriptor-description
 
 installer-path-duplicate-sequence
 => "No two recovery paths may become available at the very same date."
-=> "Due opzioni di recupero non possono diventare disponibili nella stessa identica data.";;
+=> "Due percorsi di recupero non possono diventare disponibili nella stessa identica data.";;
 
 installer-path-key-source-disallowed
 => "Path contains a key that is disallowed for this kind of path."
-=> "È presente una chiave non consentita per questo tipo di opzione di spesa.";;
+=> "È presente una chiave non consentita per questo tipo di percorso di spesa.";;
 
 installer-path-only-cosigner-keys
 => "A path cannot contain only cosigner keys."
-=> "Un'opzione di spesa non può contenere solo chiavi Cosigner.";;
+=> "Un percorso di spesa non può contenere solo chiavi Cosigner.";;
 
 installer-port-attempts-exhausted => "Exhausted attempts" => "Tentativi esauriti"
 
@@ -1597,7 +1599,7 @@ installer-primary-key-number
 
 installer-primary-spending-option
 => "Primary spending path:"
-=> "Opzione di spesa primaria:";;
+=> "Percorso di spesa primario:";;
 
 installer-read-cookie-file-failed
 => "Failed to read cookie file: {$error}"
@@ -1607,7 +1609,7 @@ installer-recovery-key => "Recovery key" => "Chiave di recupero"
 
 installer-recovery-option
 => "Recovery path #{$number}:"
-=> "Opzione di recupero n. {$number}:";;
+=> "Percorso di recupero n. {$number}:";;
 
 installer-register-descriptor-failed
 => "Failed to register descriptor"
@@ -1643,13 +1645,13 @@ installer-safety-net => "Safety Net:" => "Safety Net:"
 
 installer-safety-net-description
 => "This adds a final recovery path containing keys from professional key agents.\n\nUse this option if you have been provided one or more Safety Net tokens."
-=> "Aggiunge un'opzione finale di recupero contenente chiavi di agenti professionali.\n\nUsa questa opzione se ti sono stati forniti uno o più token Safety Net.";;
+=> "Aggiunge un percorso finale di recupero contenente chiavi di agenti professionali.\n\nUsa questo percorso se ti sono stati forniti uno o più token Safety Net.";;
 
 installer-safety-net-key => "Safety Net key" => "Chiave Safety Net"
 
 installer-safety-net-token-disallowed
 => "Safety Net tokens are not allowed for this path"
-=> "I token Safety Net non sono consentiti per questa opzione";;
+=> "I token Safety Net non sono consentiti per questo percorso";;
 
 installer-seed-key-not-in-descriptor
 => "The descriptor does not use a key derived from this seed phrase"
@@ -1739,11 +1741,11 @@ installer-template-multisig-recovery => "2-of-3 multisig" => "Multisig 2-di-3"
 
 installer-template-policy-primary
 => "Primary spending path"
-=> "Opzione di spesa primaria";;
+=> "Percorso di spesa primario";;
 
 installer-template-policy-recovery
 => "Recovery spending path"
-=> "Opzione di spesa di recupero";;
+=> "Percorso di spesa di recupero";;
 
 installer-template-state-locked => "Can't spend" => "Non può spendere"
 
@@ -1761,7 +1763,7 @@ installer-threshold-keys
 
 installer-token-type-disallowed
 => "Token type not allowed in this path"
-=> "Tipo di token non consentito in questa opzione di spesa";;
+=> "Tipo di token non consentito in questo percorso di spesa";;
 
 installer-use-liana-connect => "Use Liana Connect" => "Usa Liana Connect"
 
@@ -1783,7 +1785,7 @@ installer-xpub-origin-missing => "Origin missing" => "Origine mancante"
 
 installer-xpub-taproot-note
 => "Taproot selected. Use an xpub from a compatible"
-=> "Taproot selezionato. Usa un xpub di un";;
+=> "Taproot selezionato. Usa una xpub di un";;
 
 installer-xpub-taproot-note-device => "device" => "dispositivo compatibile"
 
@@ -1993,11 +1995,11 @@ pill-draft => "Draft" => "Bozza"
 
 pill-first-recovery-in
 => "First recovery path available in {$units}"
-=> "Prima opzione di recupero disponibile tra {$units}";;
+=> "Primo percorso di recupero disponibile tra {$units}";;
 
 pill-first-recovery-today
 => "First recovery path available today"
-=> "Prima opzione di recupero disponibile oggi";;
+=> "Primo percorso di recupero disponibile oggi";;
 
 pill-key-cosigner => "Cosigner" => "Cosigner"
 
@@ -2033,11 +2035,11 @@ pill-payjoin-tooltip
 
 pill-recovery-available-tooltip
 => "Recovery path(s) already available"
-=> "Opzioni di recupero già disponibili";;
+=> "Percorsi di recupero già disponibili";;
 
 pill-recovery-tooltip
 => "This transaction is using a recovery path"
-=> "Questa transazione usa un'opzione di recupero";;
+=> "Questa transazione usa un percorso di recupero";;
 
 pill-rescan-progress => "Rescan... {$progress}%" => "Rescan... {$progress}%"
 
@@ -2057,13 +2059,13 @@ pill-timelocked => "Timelocked" => "Timelocked"
 
 pill-timelocked-tooltip
 => "This recovery transaction is signed but can't be broadcast before its timelock expires"
-=> "Questa transazione di recupero è firmata ma non può essere trasmessa prima della scadenza del suo timelock";;
+=> "Questa transazione di recupero è firmata ma non può essere inviata prima della scadenza del suo timelock";;
 
 pill-to-approve => "To approve" => "Approvare"
 
 pill-today => "Today" => "Oggi"
 
-pill-unconfirmed => "Unconfirmed" => "In attesa"
+pill-unconfirmed => "Unconfirmed" => "In conferma"
 
 pill-unconfirmed-tooltip
 => "Do not treat this as a payment until it is confirmed"
@@ -2077,7 +2079,7 @@ pill-unsigned-tooltip
 
 pill-used-in-spending-paths
 => "{ $count ->\n    [one] Used in 1 spending path\n   *[other] Used in {$count} spending paths\n}"
-=> "{ $count ->\n    [one] Usata in 1 opzione di spesa\n   *[other] Usata in {$count} opzioni di spesa\n}";;
+=> "{ $count ->\n    [one] Usato in 1 percorso di spesa\n   *[other] Usato in {$count} percorsi di spesa\n}";;
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
@@ -2093,19 +2095,19 @@ policy-by => "by" => "da"
 
 policy-inactive-for
 => "can spend coins inactive for"
-=> "richiesta/e per spendere monete inattive per";;
+=> "in grado di spendere monete inattive per";;
 
 policy-out-of-by => "out of {$count} by" => "su {$count} da"
 
 policy-primary-path
 => "can always spend this wallet's funds (primary path)"
-=> "possono sempre spendere i fondi di questo portafoglio (opzione primaria)";;
+=> "sempre in grado di spendere i fondi di questo portafoglio (percorso primario)";;
 
 policy-recovery-path
 => "(recovery path #{$number})"
-=> "(opzione di recupero n. {$number})";;
+=> "(percorso di recupero n. {$number})";;
 
-policy-safety-net-path => "(Safety Net path)" => "(opzione Safety Net)"
+policy-safety-net-path => "(Safety Net path)" => "(percorso Safety Net)"
 
 policy-signatures
 => "{ $count ->\n    [one] 1 signature\n   *[other] {$count} signatures\n}"
@@ -2117,23 +2119,21 @@ psbt-already-signed-by => ", already signed by" => ", già firmato da"
 
 psbt-broadcast-conflicts-one
 => "The following transaction is spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on it:"
-=> "La seguente transazione sta spendendo uno o più input della transazione da trasmettere e sarà scartata, insieme a qualsiasi altra transazione che dipende da essa:";;
+=> "La seguente transazione sta spendendo uno o più input della transazione da inviare e sarà scartata, insieme a qualsiasi altra transazione che dipende da essa:";;
 
 psbt-broadcast-conflicts-some
 => "The following transactions are spending one or more inputs from the transaction to be broadcast and will be dropped, along with any other transactions that depend on them:"
-=> "Le seguenti transazioni stanno spendendo uno o più input della transazione da trasmettere e saranno scartate, insieme a qualsiasi altra transazione che dipende da esse:";;
+=> "Le seguenti transazioni stanno spendendo uno o più input della transazione da inviare e saranno scartate, insieme a qualsiasi altra transazione che dipende da esse:";;
 
 psbt-broadcast-invalidates-one
 => "WARNING: Broadcasting this transaction will invalidate a pending payment."
-=> "ATTENZIONE: trasmettere questa transazione invaliderà un pagamento in sospeso.";;
+=> "ATTENZIONE: tinviare questa transazione invaliderà un pagamento in sospeso.";;
 
 psbt-broadcast-invalidates-some
 => "WARNING: Broadcasting this transaction will invalidate some pending payments."
-=> "ATTENZIONE: trasmettere questa transazione invaliderà alcuni pagamenti in sospeso.";;
+=> "ATTENZIONE: inviare questa transazione invaliderà alcuni pagamenti in sospeso.";;
 
-psbt-broadcast-transaction
-=> "Broadcast the transaction"
-=> "Trasmetti la transazione";;
+psbt-broadcast-transaction => "Broadcast the transaction" => "Invia la transazione"
 
 psbt-change => "Change" => "Resto"
 
@@ -2173,7 +2173,7 @@ psbt-signatures => "Signatures" => "Firme"
 
 psbt-signatures-count => "{$count} of {$threshold}" => "{$count} di {$threshold}"
 
-psbt-transaction-broadcast => "Transaction is broadcast" => "Transazione trasmessa"
+psbt-transaction-broadcast => "Transaction is broadcast" => "Transazione inviata"
 
 psbt-transaction-saved => "Transaction is saved" => "Transazione salvata"
 
@@ -2215,19 +2215,19 @@ receive-verify-address => "Verify address" => "Verifica indirizzo"
 
 recovery-coins-total
 => "{ $count ->\n    [one] Can recover 1 coin totalling\n   *[other] Can recover {$count} coins totalling\n}"
-=> "{ $count ->\n    [one] può recuperare 1 moneta per un totale di\n   *[other] può recuperare {$count} monete per un totale di\n}";;
+=> "{ $count ->\n    [one] Può recuperare 1 moneta per un totale di\n   *[other] Può recuperare {$count} monete per un totale di\n}";;
 
 recovery-info
 => "Recover your funds by sending them to another wallet if you have lost access to your primary spending path."
-=> "Recupera i tuoi fondi inviandoli a un altro portafoglio se hai perso l'accesso all'opzione di spesa principale.";;
+=> "Recupera i tuoi fondi inviandoli a un altro portafoglio se hai perso l'accesso al percorso di spesa principale.";;
 
 recovery-none-available
 => "No recovery path is currently available."
-=> "Nessuna opzione di recupero è attualmente disponibile.";;
+=> "Nessun percorso di recupero è attualmente disponibile.";;
 
 recovery-paths-available
 => "{ $count ->\n    [one] 1 recovery path is available\n   *[other] {$count} recovery paths are available\n}"
-=> "{ $count ->\n    [one] 1 opzione di recupero disponibile\n   *[other] {$count} opzioni di recupero disponibili\n}";;
+=> "{ $count ->\n    [one] 1 percorso di recupero disponibile\n   *[other] {$count} percorsi di recupero disponibili\n}";;
 
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
@@ -2517,7 +2517,7 @@ spend-tx-label => "Transaction label" => "Etichetta transazione"
 
 spend-warning-recovery-own-address
 => "Recovery address belongs to the same wallet. If you can no longer spend with the primary path, use an address from a different wallet instead."
-=> "L'indirizzo di recupero appartiene allo stesso portafoglio. Se non puoi più spendere con l'opzione di spesa primaria, usa un indirizzo di un altro portafoglio.";;
+=> "L'indirizzo di recupero appartiene allo stesso portafoglio. Se non puoi più spendere con il percorso di spesa primario, usa un indirizzo di un altro portafoglio.";;
 
 tab-installer => "Installer" => "Installazione"
 
@@ -2561,7 +2561,7 @@ transactions-date-unconfirmed
 => "not included in a block yet"
 => "non ancora inclusa in un blocco";;
 
-transactions-miner-fee => "Miner fee:" => "Commissione miner:{ \" \" }"
+transactions-miner-fee => "Miner fee:" => "Commissione miner:"
 
 transactions-rbf-bump-help
 => "Replace the transaction with one paying a higher feerate to incentivize faster confirmation. New inputs may be used for the replacement transaction."
@@ -2577,11 +2577,11 @@ transactions-rbf-created
 
 transactions-rbf-descendants-one
 => "The following transaction is spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on it:"
-=> "La seguente transazione spende uno o più output della transazione da sostituire e sarà scartata quando la sostituzione verrà trasmessa, insieme a qualsiasi altra transazione che dipende da essa:";;
+=> "La seguente transazione spende uno o più output della transazione da sostituire e sarà scartata quando la sostituzione verrà inviata, insieme a qualsiasi altra transazione che dipende da essa:";;
 
 transactions-rbf-descendants-some
 => "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
-=> "Le seguenti transazioni spendono uno o più output della transazione da sostituire e saranno scartate quando la sostituzione verrà trasmessa, insieme a qualsiasi altra transazione che dipende da esse:";;
+=> "Le seguenti transazioni spendono uno o più output della transazione da sostituire e saranno scartate quando la sostituzione verrà inviata, insieme a qualsiasi altra transazione che dipende da esse:";;
 
 transactions-rbf-feerate-warning
 => "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
