@@ -145,7 +145,7 @@ btn-resend-token => "Resend token" => "Reenviar token"
 
 btn-reset-timelock => "Reset timelock" => "Redefinir timelock"
 
-btn-retry => "Retry" => "Tentar novamente"
+btn-retry => "Retry" => "Repetir"
 
 btn-save => "Save" => "Salvar"
 
@@ -161,7 +161,7 @@ btn-send-token => "Send token" => "Enviar token"
 
 btn-set => "Set" => "Definir"
 
-btn-set-keys => "Set keys" => "Definir chaves"
+btn-set-keys => "Set keys" => "A definir"
 
 btn-share-xpubs => "Share xpubs" => "Compartilhar xpubs"
 
@@ -177,7 +177,7 @@ btn-split-tab => "Split" => "Dividir"
 
 btn-start-rescan => "Start rescan" => "Iniciar reescaneamento"
 
-btn-starting-rescan => "Starting rescan..." => "Iniciando reescaneamento..."
+btn-starting-rescan => "Starting rescan..." => "Iniciando..."
 
 btn-template-help
 => "Something’s wrong with this template?"
@@ -187,15 +187,13 @@ btn-try-other-paths
 => "Try other derivation paths"
 => "Tentar outros caminhos de derivação";;
 
-btn-unlock-all => "Unlock all" => "Desbloquear tudo"
+btn-unlock-all => "Unlock all" => "Desbloquear"
 
 btn-update => "Update" => "Atualizar"
 
 btn-updating => "Updating" => "Atualizando"
 
-btn-verify-on-device
-=> "Verify on signing device"
-=> "Verificar no dispositivo de assinatura";;
+btn-verify-on-device => "Verify on signing device" => "Verificar no dispositivo"
 
 btn-yes => "Yes" => "Sim"
 
@@ -1671,7 +1669,7 @@ installer-share-xpubs-title
 
 installer-shared-wallet-help
 => "If you received an invitation to join a shared wallet"
-=> "Se você recebeu um convite para entrar em uma carteira compartilhada";;
+=> "Se recebeu um convite para uma carteira compartilhada";;
 
 installer-simple-inheritance => "Simple inheritance" => "Herança simples"
 
@@ -1933,7 +1931,7 @@ menu-coins-utxos => "Coins/UTXOs" => "Moedas/UTXOs"
 
 menu-dashboard => "Dashboard" => "Painel"
 
-menu-drafts-approvals => "Drafts & approvals" => "Rascunhos e aprovações"
+menu-drafts-approvals => "Drafts & approvals" => "Rascunhos e aprov."
 
 menu-receive => "Receive" => "Receber"
 
@@ -2027,9 +2025,9 @@ pill-recovery-tooltip
 => "This transaction is using a recovery path"
 => "Esta transação está usando um caminho de recuperação";;
 
-pill-rescan-progress => "Rescan... {$progress}%" => "Reescaneando... {$progress}%"
+pill-rescan-progress => "Rescan... {$progress}%" => "Rescan... {$progress}%"
 
-pill-signed => "To broadcast" => "Para transmitir"
+pill-signed => "To broadcast" => "A transmitir"
 
 pill-signed-tooltip
 => "This transaction is signed & ready to broadcast"
@@ -2047,11 +2045,11 @@ pill-timelocked-tooltip
 => "This recovery transaction is signed but can't be broadcast before its timelock expires"
 => "Esta transação de recuperação está assinada, mas não pode ser transmitida antes que seu timelock expire";;
 
-pill-to-approve => "To approve" => "Para aprovar"
+pill-to-approve => "To approve" => "A aprovar"
 
 pill-today => "Today" => "Hoje"
 
-pill-unconfirmed => "Unconfirmed" => "Não confirmada"
+pill-unconfirmed => "Unconfirmed" => "Pendente"
 
 pill-unconfirmed-tooltip
 => "Do not treat this as a payment until it is confirmed"
@@ -2069,7 +2067,7 @@ pill-used-in-spending-paths
 
 pill-ws-admin => "WS Admin" => "WS Admin"
 
-pill-xpub-not-set => "Not set" => "Não definida"
+pill-xpub-not-set => "Not set" => "A definir"
 
 pill-xpub-set => "✓ Set" => "✓ Definida"
 
