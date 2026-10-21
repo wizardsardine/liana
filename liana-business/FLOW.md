@@ -259,6 +259,15 @@ State::update() (state/update.rs)
 +---------------------+----------------------------------------------------------+
 ```
 
+### Installer Language Selection
+
+The shared navigation bar shows the same language picker as the liana-gui installer.
+`BusinessInstaller::update()` handles `LanguageEdited` before routing to `State`: it
+changes the active locale immediately and saves it in the data directory's
+`global_settings.json`. Startup loads this preference. The picker and menus read the
+current locale when rendered. As in liana-gui, a save failure is logged and the selected
+language stays active for the session.
+
 ### Backend Notifications
 
 ```

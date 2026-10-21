@@ -13,6 +13,7 @@ use liana_ui::{
     component::{
         button::btn_update,
         card, form,
+        list::STANDARD_ENTRY_WIDTH,
         panels::setting::{descriptor_card, header, SectionKind},
         scrollable,
         text::new,
@@ -285,6 +286,8 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
+const REGISTER_DEVICE_CARD_WIDTH: f32 = STANDARD_ENTRY_WIDTH + 2.0 * card::SIMPLE_PADDING as f32;
+
 pub fn register_wallet_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
@@ -323,5 +326,7 @@ pub fn register_wallet_modal<'a>(
         .width(Length::Fill);
     let warning = warning.map(|w| warn(Some(w)));
 
-    column![warning, card::simple(devices)].width(500).into()
+    column![warning, card::simple(devices)]
+        .width(REGISTER_DEVICE_CARD_WIDTH)
+        .into()
 }

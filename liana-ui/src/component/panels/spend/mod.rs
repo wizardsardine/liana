@@ -27,7 +27,7 @@ use crate::{
 
 const COIN_LIST_MAX_HEIGHT: f32 = 300.0;
 const COIN_LIST_MAX_HEIGHT_TALL: f32 = 450.0;
-const FEERATE_INPUT_WIDTH: f32 = 150.0;
+const FEERATE_INPUT_WIDTH: f32 = 160.0;
 
 pub enum CoinStatus {
     Spent,

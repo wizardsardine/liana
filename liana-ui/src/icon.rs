@@ -9,11 +9,12 @@ pub const ICON_SIZE_S: u16 = 16;
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 const LIANA_ICONS: Font = Font::with_name("liana-icons");
+pub(crate) const FONT_ICON_WIDTH: f32 = 20.0;
 
 fn font_icon<'a>(font: Font, unicode: char) -> Text<'a> {
     Text::new(unicode.to_string())
         .font(font)
-        .width(Length::Fixed(20.0))
+        .width(Length::Fixed(FONT_ICON_WIDTH))
         .align_x(alignment::Horizontal::Center)
         .size(P1_SIZE)
 }

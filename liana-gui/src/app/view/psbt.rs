@@ -160,7 +160,7 @@ pub fn broadcast_action<'a>(
     let width = if conflicting_txids.is_empty() {
         ModalWidth::S
     } else {
-        ModalWidth::XL
+        ModalWidth::XXL
     };
 
     modal_view(None::<String>, None, None, width, content)
@@ -421,7 +421,7 @@ pub fn sign_action<'a>(
         .spacing(VSpacing::S)
         .width(Length::Fill);
 
-    let modal_width = ModalWidth::L;
+    let modal_width = ModalWidth::XL;
     let content = modal_view(Some(title), None, None, modal_width, signers);
     let warning = warning.map(|w| warn(Some(w)));
 

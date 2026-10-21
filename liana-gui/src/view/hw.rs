@@ -3,7 +3,10 @@ use std::fmt::Display;
 use async_hwi::{DeviceKind, Version};
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::bip32::Fingerprint};
 use liana_ui::{
-    component::list::{self, DeviceStatus},
+    component::{
+        button::EntryWidth,
+        list::{self, DeviceStatus},
+    },
     widget::*,
 };
 
@@ -240,11 +243,5 @@ where
         (None, None) => None,
     };
 
-    list::entry_device_list(
-        title,
-        subtitle,
-        status,
-        liana_ui::component::button::EntryWidth::Fill,
-        on_press,
-    )
+    list::entry_device_list(title, subtitle, status, EntryWidth::Standard, on_press)
 }

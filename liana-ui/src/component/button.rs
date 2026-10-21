@@ -9,6 +9,7 @@ use super::{
     tooltip,
 };
 use crate::{
+    component::list::STANDARD_ENTRY_WIDTH,
     font::{BOLD, MANROPE_SEMIBOLD, MEDIUM},
     icon::{self, ICON_SIZE_L},
     theme::{self, button::round_icon_btn, Theme},
@@ -400,7 +401,6 @@ impl From<BtnWidth> for Length {
     }
 }
 
-pub const STANDARD_ENTRY_WIDTH: f32 = 600.0;
 pub const ENTRY_DELETE_SLOT: f32 = 40.0;
 pub const ENTRY_DELETE_GAP: f32 = 10.0;
 
@@ -682,7 +682,7 @@ pub fn btn_send_for_approval<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T>
 }
 
 pub fn btn_keep_changes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_secondary(None, t!("btn-keep-my-changes"), BtnWidth::XL, msg)
+    btn_secondary(None, t!("btn-keep-my-changes"), BtnWidth::XXL, msg)
 }
 
 pub fn btn_send_token<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -748,7 +748,7 @@ pub fn btn_manage_keys<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Butt
 }
 
 pub fn btn_mark_keys_ready<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(None, t!("btn-mark-keys-ready"), BtnWidth::XL, msg)
+    btn_primary(None, t!("btn-mark-keys-ready"), BtnWidth::XXL, msg)
 }
 
 pub fn btn_edit_keys<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -825,7 +825,7 @@ pub fn btn_verify<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::usb_icon()),
         t!("btn-verify-on-device"),
-        BtnWidth::XXL,
+        BtnWidth::Auto,
         Some(msg),
     )
 }
@@ -834,7 +834,7 @@ pub fn btn_register_on_device<'a, T: Clone + 'a>(msg: T) -> Button<'a, T> {
     btn_tertiary(
         Some(icon::chip_icon()),
         t!("btn-register-on-device"),
-        BtnWidth::XL,
+        BtnWidth::Auto,
         Some(msg),
     )
 }
@@ -922,7 +922,7 @@ pub fn btn_add_recovery_option<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, 
     btn_tertiary(
         Some(icon::plus_icon()),
         t!("btn-add-recovery-option"),
-        BtnWidth::XL,
+        BtnWidth::Auto,
         msg,
     )
 }
@@ -932,7 +932,7 @@ pub fn btn_add_safety_net<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
         Some(icon::plus_icon()),
         t!("btn-add-safety-net"),
         Some(t!("installer-safety-net-description")),
-        BtnWidth::XL,
+        BtnWidth::Auto,
         msg,
         theme::button::tertiary,
     )
@@ -943,7 +943,7 @@ pub fn btn_select<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_share_xpubs<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_tertiary(None, t!("btn-share-xpubs"), BtnWidth::M, msg)
+    btn_tertiary(None, t!("btn-share-xpubs"), BtnWidth::XL, msg)
 }
 
 pub fn btn_add_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
@@ -1032,7 +1032,7 @@ pub fn btn_add_payment<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 
 pub fn btn_delete_wallet<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     destructive(None, t!("btn-delete-wallet"))
-        .width(Length::Fixed(200.0))
+        .width(BtnWidth::XL)
         .on_press_maybe(msg)
 }
 
@@ -1045,7 +1045,7 @@ pub fn btn_optional_section<'a, T: Clone + 'a>(content: Row<'a, T>, msg: T) -> B
 pub fn btn_backup_descriptor<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
     let icon = Some(icon::backup_icon());
     let label = t!("btn-back-up-descriptor");
-    let width = BtnWidth::XL;
+    let width = BtnWidth::Auto;
     if primary {
         btn_primary(icon, label, width, msg)
     } else {
@@ -1055,7 +1055,7 @@ pub fn btn_backup_descriptor<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -
 
 pub fn btn_check_connection<'a, T: Clone + 'a>(msg: Option<T>, primary: bool) -> Button<'a, T> {
     let label = t!("btn-check-connection");
-    let width = BtnWidth::L;
+    let width = BtnWidth::XL;
 
     if primary {
         btn_primary(None, label, width, msg)

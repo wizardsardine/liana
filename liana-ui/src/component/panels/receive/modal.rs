@@ -76,7 +76,7 @@ pub fn show_address_modal<'a, M: 'a + Clone>(
         Some(t!("common-address")),
         None,
         Some(close),
-        component::modal::ModalWidth::XL,
+        component::modal::ModalWidth::XXL,
         content,
     )
 }

@@ -32,6 +32,8 @@ use liana_ui::{
 use crate::app::{cache::Cache, menu::Menu, view::Message as ViewMessage};
 
 pub mod badges;
+pub mod buttons;
+pub mod entries;
 pub mod pill_styles;
 pub mod pills;
 pub mod texts;
@@ -42,8 +44,32 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
     #[rustfmt::skip]
     pages: &[
         &badges::ENTRY,
-        &pills::ENTRY,
+        &pills::ENTRY_1,
+        &pills::ENTRY_2,
         &pill_styles::ENTRY,
+        &buttons::ENTRY_THEMES_1,
+        &buttons::ENTRY_THEMES_2,
+        &buttons::ENTRY_THEMES_3,
+        &buttons::ENTRY_THEMED_1,
+        &buttons::ENTRY_THEMED_2,
+        &buttons::ENTRY_WIDTHS,
+        &buttons::ENTRY_FEERATE_LINKS,
+        &buttons::ENTRY_ACTIONS_1,
+        &buttons::ENTRY_ACTIONS_2,
+        &buttons::ENTRY_ACTIONS_3,
+        &buttons::ENTRY_NAVIGATION,
+        &buttons::ENTRY_WALLET_1,
+        &buttons::ENTRY_WALLET_2,
+        &buttons::ENTRY_INSTALLER_1,
+        &buttons::ENTRY_INSTALLER_2,
+        &buttons::ENTRY_ENTRIES,
+        &entries::ENTRY_LIST_1,
+        &entries::ENTRY_LIST_2,
+        &entries::ENTRY_LIST_3,
+        &entries::ENTRY_DEVICES_1,
+        &entries::ENTRY_DEVICES_2,
+        &entries::ENTRY_MODAL_1,
+        &entries::ENTRY_MODAL_2,
         &texts::ENTRY_LEGACY,
         &texts::ENTRY_NEW,
         &texts::ENTRY_THEMES,
@@ -600,5 +626,18 @@ macro_rules! debug_page {
                 ),* ],
             )
         }
+    };
+}
+
+/// Define several debug pages in one module: each `(ENTRY, view)` pair becomes a
+/// `pub static ENTRY: DebugPageEntry` rendering `view`.
+#[macro_export]
+macro_rules! debug_pages {
+    ($(($entry:ident, $view:expr)),* $(,)?) => {
+        $(
+            pub static $entry: $crate::debug::DebugPageEntry = $crate::debug::DebugPageEntry {
+                view: || $view,
+            };
+        )*
     };
 }

@@ -9,9 +9,9 @@ use liana_i18n::t;
 use crate::{
     component::{
         badge::{self, Tile},
-        button::{self, EntryWidth},
+        button::{self, BtnWidth, EntryWidth},
         card,
-        checkbox::derivation_paths_checkbox,
+        checkbox::{derivation_paths_checkbox, derivation_paths_checkbox_width},
         list, scrollable, separation,
         text::new,
     },
@@ -187,11 +187,6 @@ pub fn setting_row<'a, M: 'a>(
     .align_y(Alignment::Center)
 }
 
-/// Narrowest buttons row of the descriptor card that holds both buttons on one line, with and
-/// without the derivation paths checkbox.
-const DESCRIPTOR_BUTTONS_ONE_LINE: f32 = 820.0;
-const DESCRIPTOR_BUTTONS_ONE_LINE_NO_PATHS: f32 = 600.0;
-
 type OnToggle<M> = fn(bool) -> M;
 
 pub fn descriptor_card<'a, M: Clone + 'a>(
@@ -210,11 +205,13 @@ pub fn descriptor_card<'a, M: Clone + 'a>(
         .width(Length::Fill);
     // too narrow for one line: the register button goes under the backup one
     let btn_row = responsive(move |size| {
-        let one_line = if privacy_mode.is_some() {
-            DESCRIPTOR_BUTTONS_ONE_LINE
+        let checkbox_width = if privacy_mode.is_some() {
+            derivation_paths_checkbox_width() + HSpacing::XL.pixels() as f32
         } else {
-            DESCRIPTOR_BUTTONS_ONE_LINE_NO_PATHS
+            0.0
         };
+        let one_line =
+            f32::from(BtnWidth::XXL as u16) * 2.0 + HSpacing::M.pixels() as f32 + checkbox_width;
         let paths = privacy_mode.map(|(privacy_mode, on_toggle)| {
             Element::from(derivation_paths_checkbox(privacy_mode, on_toggle))
         });

@@ -99,7 +99,7 @@ fn short_identity(key: &ws_business::Key) -> String {
 
 fn section_heading(label: String, top_padding: f32) -> Element<'static, Msg> {
     Container::new(text::new::h3_semi(label).style(theme::text::primary))
-        .width(button::STANDARD_ENTRY_WIDTH)
+        .width(list::STANDARD_ENTRY_WIDTH)
         .padding(iced::Padding {
             top: top_padding,
             left: 4.0,
@@ -183,14 +183,14 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     let owned_entries = if owned_keys.is_empty() {
         column![text::new::caption(t!("business-no-keys-assigned")).style(theme::text::secondary)]
             .spacing(VSpacing::M)
-            .width(button::STANDARD_ENTRY_WIDTH)
+            .width(list::STANDARD_ENTRY_WIDTH)
     } else {
         owned_keys
             .iter()
             .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Own))
             })
-            .width(button::STANDARD_ENTRY_WIDTH)
+            .width(list::STANDARD_ENTRY_WIDTH)
     };
 
     let mut list_content = column![
@@ -208,7 +208,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
             })
-            .width(button::STANDARD_ENTRY_WIDTH);
+            .width(list::STANDARD_ENTRY_WIDTH);
         list_content = list_content
             .push(section_heading(t!("business-other-participants-keys"), 0.0))
             .push(entries)
@@ -221,7 +221,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             .fold(column![].spacing(VSpacing::M), |column, (key_id, key)| {
                 column.push(xpub_key_card(**key_id, key, EntrySetKeyOwner::Other))
             })
-            .width(button::STANDARD_ENTRY_WIDTH);
+            .width(list::STANDARD_ENTRY_WIDTH);
         list_content = list_content
             .push(section_heading(t!("business-external-keys"), 0.0))
             .push(entries)

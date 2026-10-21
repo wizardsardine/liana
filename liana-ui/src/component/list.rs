@@ -3,7 +3,7 @@ use std::fmt::Display;
 use bitcoin::bip32::Fingerprint;
 use iced::{
     alignment::Horizontal,
-    widget::{column, row},
+    widget::{column, row, Space},
     Alignment, Length,
 };
 use liana_i18n::t;
@@ -20,14 +20,16 @@ use crate::{
     icon,
     spacing::HSpacing,
     theme,
-    widget::{Button, Container, Element, Row},
+    widget::{Button, Container, Element, Row, SpaceExt},
 };
 
 use super::text::truncate;
 
 const COLLAPSIBLE_ENTRY_CONTENT_V_PADDING: u16 = 10;
+pub const STANDARD_ENTRY_WIDTH: f32 = 680.0;
 /// Gap between the leading tile and the body of an entry row.
 pub const ENTRY_H_SPACING: HSpacing = HSpacing::L;
+pub const KEY_ALIAS_WIDTH: u32 = 200;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum EntryAccent {
@@ -587,15 +589,14 @@ pub fn entry_device_list<'a, M: Clone + 'static>(
     width: EntryWidth,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    leaf_entry(
-        Tile::Device,
-        title,
-        subtitle,
-        trailing.into(),
-        None,
-        width,
-        msg,
-    )
+    let designation = Container::new(item_body(title, subtitle)).width(KEY_ALIAS_WIDTH);
+    let trailing: Option<Element<'a, M>> = trailing.into();
+    let trailing = trailing.map(|status| row![Space::fill_width(), status]);
+    let content = row![badge::tile(Tile::Device), designation, trailing]
+        .spacing(ENTRY_H_SPACING)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    button::list_entry(content, None, width, msg)
 }
 
 /// A device-entry-styled action row (leading badge tile + body) for arbitrary actions.

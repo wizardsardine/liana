@@ -13,7 +13,7 @@ use liana_i18n::t;
 use liana_ui::{
     component::{
         badge::Tile,
-        button::{self, btn_cancel, btn_clear, btn_retry, btn_save},
+        button::{self, btn_cancel, btn_clear, btn_retry, btn_save, EntryWidth},
         card, form, list,
         modal::{self, modal_view, ModalWidth},
         scrollable,
@@ -92,7 +92,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         Some(t!("business-select-key-source", alias = alias)),
         None,
         Some(Msg::XpubCancelModal),
-        ModalWidth::L,
+        ModalWidth::XL,
         body,
     )
 }
@@ -270,7 +270,7 @@ fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
             title,
             None::<String>,
             list::DeviceStatus::AlreadyUsed,
-            button::EntryWidth::Standard,
+            EntryWidth::Standard,
             None,
         );
     }
@@ -287,7 +287,7 @@ fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
                 title,
                 None::<String>,
                 list::DeviceStatus::Selectable(fingerprint),
-                button::EntryWidth::Standard,
+                EntryWidth::Standard,
                 Some(Msg::XpubSelectDevice(fingerprint)),
             )
         }
@@ -295,14 +295,14 @@ fn device_card(data: DeviceRenderData, in_use: bool) -> Element<'static, Msg> {
             title,
             Some(locked_message(data.kind, pairing_code)),
             fingerprint,
-            button::EntryWidth::Standard,
+            EntryWidth::Standard,
             None,
         ),
         DeviceState::Unsupported { reason } => list::entry_device_list(
             title,
             Some(unsupported_message(data.kind, &reason)),
             fingerprint,
-            button::EntryWidth::Standard,
+            EntryWidth::Standard,
             None,
         ),
     }
