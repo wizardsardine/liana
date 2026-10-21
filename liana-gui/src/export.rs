@@ -743,7 +743,9 @@ pub async fn import_xpub(
     let (descriptor_pubkey, key) =
         if let Some(DescriptorPublicKey::XPub(key)) = parse_raw_xpub(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
-        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_json(&xpub_str) {
+        } else if let Some(DescriptorPublicKey::XPub(key)) =
+            parse_coldcard_xpub_json(&xpub_str, network)?
+        {
             (DescriptorPublicKey::XPub(key.clone()), key)
         } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_ccxp(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
@@ -807,10 +809,13 @@ pub fn parse_raw_xpub(raw_xpub: &str) -> Option<DescriptorPublicKey> {
 
 // NOTE: this function is intended to import xpub that have been exported from a coldcard device
 // via this menu: Advanced/Tools => Export Wallet => Generic JSON (Any Edge firmware)
-pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
-    parse_json_xpubs(coldcard_xpub)
+pub fn parse_coldcard_xpub_json(
+    coldcard_xpub: &str,
+    network: Network,
+) -> Result<Option<DescriptorPublicKey>, Error> {
+    let keys: Vec<_> = parse_json_xpubs(coldcard_xpub)
         .into_iter()
-        .find(|key| {
+        .filter(|key| {
             // BIP48 p2wsh: m/48'/coin'/account'/2'
             key.origin.as_ref().is_some_and(|(_, path)| {
                 matches!(
@@ -824,7 +829,17 @@ pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicK
                 )
             })
         })
-        .map(DescriptorPublicKey::XPub)
+        .collect();
+    if let Some(key) = keys
+        .iter()
+        .find(|key| (key.xkey.network == Network::Bitcoin.into()) == (network == Network::Bitcoin))
+    {
+        Ok(Some(DescriptorPublicKey::XPub(key.clone())))
+    } else if keys.is_empty() {
+        Ok(None)
+    } else {
+        Err(Error::XpubNetwork)
+    }
 }
 
 // NOTE: this function is intended to import xpub that have been exported from a coldcard device
@@ -1588,8 +1603,54 @@ pub mod tests {
         let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p";
         assert_eq!(
             expected,
-            parse_coldcard_xpub_json(&raw).unwrap().to_string()
+            parse_coldcard_xpub_json(&raw, Network::Signet)
+                .unwrap()
+                .unwrap()
+                .to_string()
         );
+    }
+
+    #[test]
+    fn test_parse_coldcard_xpub_json_network() {
+        let testnet = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p";
+        let DescriptorPublicKey::XPub(mut key) = DescriptorPublicKey::from_str(testnet).unwrap()
+        else {
+            panic!("expected xpub");
+        };
+        key.xkey.network = Network::Bitcoin.into();
+        let mainnet = DescriptorPublicKey::XPub(key).to_string();
+        let mixed = serde_json::json!({"testnet": testnet, "mainnet": mainnet}).to_string();
+
+        assert_eq!(
+            parse_coldcard_xpub_json(&mixed, Network::Bitcoin)
+                .unwrap()
+                .unwrap()
+                .to_string(),
+            mainnet
+        );
+        for network in [Network::Signet, Network::Testnet, Network::Regtest] {
+            assert_eq!(
+                parse_coldcard_xpub_json(&mixed, network)
+                    .unwrap()
+                    .unwrap()
+                    .to_string(),
+                testnet
+            );
+            assert!(matches!(
+                parse_coldcard_xpub_json(
+                    &serde_json::json!({"mainnet": mainnet}).to_string(),
+                    network
+                ),
+                Err(Error::XpubNetwork)
+            ));
+        }
+        assert!(matches!(
+            parse_coldcard_xpub_json(
+                &serde_json::json!({"testnet": testnet}).to_string(),
+                Network::Bitcoin
+            ),
+            Err(Error::XpubNetwork)
+        ));
     }
 
     const COLDCARD_BIP48_XPUBS: &[&str] = &[
