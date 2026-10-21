@@ -243,6 +243,26 @@ pub fn update_default_labels(db_conn: &mut Box<dyn DatabaseConnection>) {
             .into_iter()
             .map(|wtx| (wtx.tx.compute_txid(), wtx.tx)),
     );
+    store_default_labels_for(db_conn, &txs, &labelled_txids);
+}
+
+/// Compute the default labels of the whole wallet again and store them.
+pub fn recompute_default_labels(db_conn: &mut Box<dyn DatabaseConnection>) {
+    let txs = db_conn
+        .list_txs()
+        .into_iter()
+        .map(|tx| (tx.compute_txid(), tx))
+        .collect();
+    store_default_labels_for(db_conn, &txs, &HashSet::new());
+}
+
+/// Store the default labels of the coins of `txs`, and of the transactions not in
+/// `labelled_txids`.
+fn store_default_labels_for(
+    db_conn: &mut Box<dyn DatabaseConnection>,
+    txs: &HashMap<bitcoin::Txid, bitcoin::Transaction>,
+    labelled_txids: &HashSet<bitcoin::Txid>,
+) {
     // Only the coins these transactions spend or create, not the whole wallet.
     let outpoints: Vec<_> = txs
         .values()
@@ -272,8 +292,8 @@ pub fn update_default_labels(db_conn: &mut Box<dyn DatabaseConnection>) {
         .collect();
     let labels = db_conn.labels(&items);
     let default_labels = label::default_labels(
-        &txs,
-        &labelled_txids,
+        txs,
+        labelled_txids,
         &owned_coins,
         &coin_defaults,
         &labels,
@@ -508,7 +528,7 @@ pub fn poll(
 #[cfg(test)]
 mod tests {
     use crate::{
-        bitcoin::poller::looper::update_default_labels,
+        bitcoin::poller::looper::{recompute_default_labels, update_default_labels},
         database::{Coin, DatabaseConnection, DatabaseInterface, LabelItem},
         testutils::{dummy_descriptor, DummyDatabase, DEFAULT_TIMELOCK},
     };
@@ -720,6 +740,43 @@ mod tests {
         assert_eq!(
             coin_default_label(&mut db_conn, consolidated),
             salary_funding
+        );
+    }
+
+    #[test]
+    fn recompute_replaces_default_labels() {
+        let db = DummyDatabase::new(dummy_descriptor(DEFAULT_TIMELOCK));
+        let mut db_conn = db.connection();
+
+        let incoming = tx(&[foreign_outpoint(1)], &[1]);
+        let to_self = tx(&[OutPoint::new(incoming.compute_txid(), 0)], &[2]);
+        add_txs(&mut db_conn, &[&incoming, &to_self]);
+        set_label(&mut db_conn, address(1), RENT);
+        update_default_labels(&mut db_conn);
+
+        set_label(&mut db_conn, address(1), SALARY);
+        recompute_default_labels(&mut db_conn);
+
+        let salary_address = Label::Address(SALARY.to_string());
+        assert_eq!(
+            default_labels(&mut db_conn, &incoming),
+            (salary_address.clone(), salary_address)
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &to_self),
+            (Label::None, funding(SALARY))
+        );
+
+        db_conn.update_labels(&HashMap::from([(address(1).into(), None)]));
+        recompute_default_labels(&mut db_conn);
+
+        assert_eq!(
+            default_labels(&mut db_conn, &incoming),
+            (Label::None, Label::None)
+        );
+        assert_eq!(
+            default_labels(&mut db_conn, &to_self),
+            (Label::None, Label::None)
         );
     }
 

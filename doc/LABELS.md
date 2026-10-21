@@ -14,8 +14,8 @@ A payment is one output of a transaction, as listed in the transaction details. 
 output paying you is also one of your coins, and the payment and the coin show the
 same label. A payment to someone else is not a coin of yours.
 
-The default label of an output is saved once, when the wallet first sees the
-transaction that creates it. It is never computed again
+The default label of an output is saved when the wallet first sees the transaction
+that creates it, and computed again whenever a label changes
 (see [When defaults are saved](#when-defaults-are-saved)).
 
 | The output is...                                       | It shows by default...       | Example                               |
@@ -73,14 +73,17 @@ The chain changes in three cases:
    "rent" coin  ---+       (none)         (none)
    ```
 
-3. **A label is changed after the move.** Coins already created keep the label they
-   had. A coin created later still gets the old label too, because it reads the saved
-   default of the coin it spends. The new text only travels down from a coin that has
-   its own label.
+3. **A label is changed after the move.** The new text travels down the whole chain,
+   coins already created included, until a coin that has its own label.
+
+   ```
+   "salary" coin, relabelled "wage"  ->  moved  ->  moved, you labelled it "savings"  ->  moved
+     wage                                 wage       savings                              savings
+   ```
 
 ## When defaults are saved
 
-Default labels are saved by the daemon when it first sees a transaction, and never
-computed again. Changing a label later does not rewrite the defaults of items that
-already exist. The defaults are saved for the wallet's own coins and transactions
-only.
+Default labels are saved by the daemon when it first sees a transaction, and computed
+again for the whole wallet every time a label is added, changed or removed. A label you
+wrote yourself is never touched. The defaults are saved for the wallet's own coins and
+transactions only.

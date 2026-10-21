@@ -1489,6 +1489,63 @@ def test_labels(lianad, bitcoind):
     assert res[random_address] == "this address is random"
 
 
+def test_default_labels_recomputed(lianad, bitcoind):
+    """Updating a label replaces the default labels derived from it."""
+
+    def default_labels(*txids):
+        coins = {c["outpoint"]: c["default_label"] for c in lianad.rpc.listcoins()["coins"]}
+        txs = {
+            txid: lianad.rpc.listtransactions([txid])["transactions"][0]["default_label"]
+            for txid in txids
+        }
+        return coins, txs
+
+    # A coin received on an address without a label has no default label, nor has its
+    # transaction.
+    addr = lianad.rpc.getnewaddress()["address"]
+    txid = bitcoind.rpc.sendtoaddress(addr, 1)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+    outpoint = lianad.rpc.listcoins()["coins"][0]["outpoint"]
+    assert default_labels(txid) == ({outpoint: "none"}, {txid: "none"})
+
+    # Labelling the address replaces the stored default labels.
+    lianad.rpc.updatelabels({addr: "salary"})
+    assert default_labels(txid) == (
+        {outpoint: {"address": "salary"}},
+        {txid: {"address": "salary"}},
+    )
+
+    # A coin moved to ourselves inherits the default label of the coin it spends.
+    res = lianad.rpc.createspend({}, [outpoint], 2)
+    psbt = lianad.signer.sign_psbt(PSBT.from_base64(res["psbt"]))
+    lianad.rpc.updatespend(psbt.to_base64())
+    spend_txid = psbt.tx.txid().hex()
+    lianad.rpc.broadcastspend(spend_txid)
+    bitcoind.generate_block(1, wait_for_mempool=spend_txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+    moved = f"{spend_txid}:0"
+    assert default_labels(txid, spend_txid) == (
+        {outpoint: {"address": "salary"}, moved: {"funding": "salary"}},
+        {txid: {"address": "salary"}, spend_txid: "none"},
+    )
+
+    # Changing the address label replaces every default label derived from it, the
+    # inherited one included.
+    lianad.rpc.updatelabels({addr: "wage"})
+    assert default_labels(txid, spend_txid) == (
+        {outpoint: {"address": "wage"}, moved: {"funding": "wage"}},
+        {txid: {"address": "wage"}, spend_txid: "none"},
+    )
+
+    # Removing the label clears them all.
+    lianad.rpc.updatelabels({addr: None})
+    assert default_labels(txid, spend_txid) == (
+        {outpoint: "none", moved: "none"},
+        {txid: "none", spend_txid: "none"},
+    )
+
+
 def test_labels_bip329(lianad, bitcoind):
     # Label 5 addresses
     addresses = []

@@ -11,7 +11,7 @@ use crate::{
         Coin, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface, WalletTransaction,
     },
     miniscript::bitcoin::absolute::LockTime,
-    poller::PollerMessage,
+    poller::{looper::recompute_default_labels, PollerMessage},
     DaemonControl, VERSION,
 };
 
@@ -847,9 +847,11 @@ impl DaemonControl {
         Ok(())
     }
 
+    /// Update labels and recompute every stored default label with them.
     pub fn update_labels(&self, items: &HashMap<LabelItem, Option<String>>) {
         let mut db_conn = self.db.connection();
         db_conn.update_labels(items);
+        recompute_default_labels(&mut db_conn);
     }
 
     pub fn get_labels(&self, items: &HashSet<LabelItem>) -> GetLabelsResult {
@@ -1494,7 +1496,7 @@ pub struct ListCoinsEntry {
     /// this same wallet. If the coin is unconfirmed, it also means that all its
     /// unconfirmed ancestors, if any, are also from self.
     pub is_from_self: bool,
-    /// Default label snapshotted when the coin was first seen.
+    /// Default label saved when the coin was first seen, recomputed on every label update.
     #[serde(default)]
     pub default_label: Label,
 }
@@ -1550,7 +1552,7 @@ pub struct TransactionInfo {
     pub tx: bitcoin::Transaction,
     pub height: Option<i32>,
     pub time: Option<u32>,
-    /// Default label snapshotted when the transaction was first seen.
+    /// Default label saved when the transaction was first seen, recomputed on every label update.
     #[serde(default)]
     pub default_label: Label,
 }

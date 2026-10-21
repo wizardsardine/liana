@@ -197,11 +197,14 @@ pub trait DatabaseConnection {
     /// labels.
     fn list_wallet_transactions(&mut self, txids: &[bitcoin::Txid]) -> Vec<WalletTransaction>;
 
+    /// List all the wallet transactions.
+    fn list_txs(&mut self) -> Vec<bitcoin::Transaction>;
+
     fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction>;
 
     fn list_coins_without_default_label(&mut self) -> Vec<bitcoin::OutPoint>;
 
-    /// Store the default label of transactions and coins, keeping the ones already stored.
+    /// Store the default label of transactions and coins, replacing the ones already stored.
     fn store_default_labels(
         &mut self,
         txs: &HashMap<bitcoin::Txid, Label>,
@@ -436,6 +439,10 @@ impl DatabaseConnection for SqliteConn {
             .into_iter()
             .map(WalletTransaction::from)
             .collect()
+    }
+
+    fn list_txs(&mut self) -> Vec<bitcoin::Transaction> {
+        self.list_txs()
     }
 
     fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {

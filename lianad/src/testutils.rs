@@ -605,6 +605,10 @@ impl DatabaseConnection for DummyDatabase {
         wallet_txs
     }
 
+    fn list_txs(&mut self) -> Vec<bitcoin::Transaction> {
+        self.db.read().unwrap().txs.values().cloned().collect()
+    }
+
     fn list_txs_without_default_label(&mut self) -> Vec<bitcoin::Transaction> {
         let db = self.db.read().unwrap();
         db.txs
@@ -630,14 +634,10 @@ impl DatabaseConnection for DummyDatabase {
     ) {
         let mut db = self.db.write().unwrap();
         for (txid, label) in txs {
-            db.tx_default_labels
-                .entry(*txid)
-                .or_insert_with(|| label.clone());
+            db.tx_default_labels.insert(*txid, label.clone());
         }
         for (outpoint, label) in coins {
-            db.coin_default_labels
-                .entry(*outpoint)
-                .or_insert_with(|| label.clone());
+            db.coin_default_labels.insert(*outpoint, label.clone());
         }
     }
 
