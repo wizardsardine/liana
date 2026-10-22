@@ -67,6 +67,8 @@ fn setup_logger(log_level: log::LevelFilter) -> Result<(), fern::InitError> {
 }
 
 fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let args = env::args().collect();
     let conf_file = parse_args(args);
 

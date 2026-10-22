@@ -27,6 +27,7 @@ miniscript = { workspace = true, features = ["serde", "compiler", "base64"] }
 
 # For Electrum backend.
 bdk_electrum = { workspace = true, default-features = false, features = [ "use-rustls-ring" ] }
+rustls = { workspace = true, features = ["ring"] }
 
 # Don't reinvent the wheel
 dirs = { workspace = true }
