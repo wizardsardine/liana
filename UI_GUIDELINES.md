@@ -15,6 +15,12 @@ Paths are under `liana-ui/src/` unless noted.
   and never `Row::new()` / `Column::new()` for a fixed set. Only genuinely dynamic building uses `.push`: a
   loop reassigning `x = x.push(...)`, a `.fold(col, |c, x| c.push(x))`, or `Vec::push`. Flatten deep view
   bodies into named `let` bindings first.
+- **Narrow widths.** When a row must give way on narrow widths, build it with `priority_row!` (same
+  shape as `row!`) and wrap the children allowed to give way in `priority::truncate(rank, child)` or
+  `priority::hide(rank, child)` (`widget/priority.rs`). Rank 1 is the most important and gives way
+  last; unwrapped and fill children never give way. Cut single line text by its measured width with
+  `TruncatedText::new(content, spec)` (`.middle()` for emails, addresses and txids, `.tooltip()` to
+  show the full text on hover). Never cap text with a character count or a width formula.
 - **Spacing.** Use the shared scales from `liana_ui::spacing`: `VSpacing` for vertical gaps and
   `HSpacing` for horizontal gaps. `VSpacing::M` is the standard business-installer stack/list
   spacing. Use the
