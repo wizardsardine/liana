@@ -686,10 +686,10 @@ pub async fn import_descriptor(
     path: PathBuf,
     required_network: Network,
 ) -> Result<(), Error> {
-    let mut file = File::open(path)?;
-
-    let mut descr_str = String::new();
-    file.read_to_string(&mut descr_str)?;
+    let Some(descr_str) = read_or_forward_encrypted(sender, path)? else {
+        // read_of_forward_encrypted already sent the descriptor
+        return Ok(());
+    };
     let descr_str = descr_str.trim();
 
     let descriptor = if let Ok(d) = LianaDescriptor::from_str(descr_str) {
@@ -1107,6 +1107,31 @@ impl From<DaemonError> for RestoreBackupError {
     }
 }
 
+/// Read an imported file as text. An encrypted backup is sent as `EncryptedFile` to be decrypted
+/// by the caller and `None` is returned.
+fn read_or_forward_encrypted(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+) -> Result<Option<String>, Error> {
+    let mut file = File::open(path)?;
+
+    let mut bytes = vec![];
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return Err(Error::Io(e.to_string()));
+    }
+
+    if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        send_progress!(sender, EncryptedFile(bytes));
+        send_progress!(sender, Progress(100.0));
+        send_progress!(sender, Ended);
+        return Ok(None);
+    }
+
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| Error::UnknownFormat)
+}
+
 /// Try to import descriptor/backup from file, several input types are supported:
 ///    - encrypted file
 ///    - liana wallet backup
@@ -1116,28 +1141,11 @@ pub async fn from_backup(
     path: PathBuf,
     required_network: Network,
 ) -> Result<(), Error> {
-    // Load file
-    let mut file = File::open(path)?;
-
-    let mut bytes = vec![];
-    if let Err(e) = file.read_to_end(&mut bytes) {
-        return Err(Error::Io(e.to_string()));
-    }
-
-    // first we try to parse as an encrypted backup
-    if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
-        send_progress!(sender, EncryptedFile(bytes));
-        send_progress!(sender, Progress(100.0));
-        send_progress!(sender, Ended);
+    let Some(backup_str) = read_or_forward_encrypted(sender, path)? else {
         return Ok(());
-    }
-
-    let backup_str = match String::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(_) => return Err(Error::UnknownFormat),
     };
 
-    // else we try to parse as plaintext descriptor or backup file
+    // try to parse as plaintext descriptor or backup file
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,
@@ -1659,6 +1667,24 @@ pub mod tests {
         for name in ["v0.bed", "v1.bip138", "v1.txt"] {
             let (sender, mut receiver) = unbounded_channel();
             from_backup(&sender, test_asset_path(name), Network::Signet)
+                .await
+                .unwrap();
+            match receiver.try_recv() {
+                Ok(Progress::EncryptedFile(bytes)) => assert_eq!(bytes, test_asset(name)),
+                other => panic!("{} not detected as encrypted: {:?}", name, other),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_import_descriptor_detects_encrypted_file() {
+        for name in [
+            "v0.bed",    /*v0*/
+            "v1.bip138", /*v1 binary*/
+            "v1.txt",    /*v1 base64*/
+        ] {
+            let (sender, mut receiver) = unbounded_channel();
+            import_descriptor(&sender, test_asset_path(name), Network::Signet)
                 .await
                 .unwrap();
             match receiver.try_recv() {
