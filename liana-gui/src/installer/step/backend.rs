@@ -670,7 +670,10 @@ impl Step for ImportRemoteWallet {
             }
             Message::ImportExport(ImportExportMessage::Progress(Progress::Descriptor(desc))) => {
                 self.imported_descriptor.value = desc.to_string();
-                return Task::done(Message::Next);
+                self.modal = ImportDescriptorModal::None;
+                return Task::done(Message::ImportRemoteWallet(
+                    message::ImportRemoteWallet::ConfirmDescriptor,
+                ));
             }
             Message::ImportExport(m) => return self.modal.update(Message::ImportExport(m)),
             Message::HardwareWalletUpdate => {
