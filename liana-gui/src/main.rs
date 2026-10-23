@@ -24,6 +24,8 @@ use liana_i18n as i18n;
 fn main() -> Result<(), Box<dyn Error>> {
     use Network::{Bitcoin, Regtest, Signet, Testnet4};
 
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let args = parse_args(
         std::env::args().collect(),
         VERSION,

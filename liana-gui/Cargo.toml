@@ -56,7 +56,8 @@ chrono = { workspace = true }
 libc = { workspace = true }
 base64 = { workspace = true }
 bitcoin_hashes = { workspace = true }
-reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { workspace = true, default-features = false, features = ["json", "rustls-no-provider", "stream"] }
+rustls = { workspace = true, features = ["ring"] }
 rust-ini = { workspace = true }
 rfd = { workspace = true }
 fs2 = { workspace = true }

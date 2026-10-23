@@ -19,7 +19,7 @@ bip329 = { workspace = true }
 bip39 = { workspace = true }
 getrandom = { workspace = true }
 miniscript = { workspace = true, features = ["serde"]}
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "rustls-no-provider"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }

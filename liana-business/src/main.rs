@@ -35,6 +35,8 @@ pub type LianaBusiness = GUI<BusinessInstaller, BusinessSettings, Message>;
 fn main() -> Result<(), Box<dyn Error>> {
     use bitcoin::Network::{Bitcoin, Signet};
 
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Check if Signet is enabled via environment variable
     let signet_enabled = std::env::var("LIANA_BUSINESS_SIGNET")
         .map(|v| v == "1")

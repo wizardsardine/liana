@@ -23,6 +23,7 @@ liana = { path = "../liana" }
 liana-gui = { path = "../liana-gui", default-features = false, features = ["skip-windows-icon"] }
 liana-i18n = { workspace = true }
 liana-ui = { path = "../liana-ui" }
+rustls = { workspace = true, features = ["ring"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 backtrace = { workspace = true }

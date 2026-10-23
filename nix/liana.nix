@@ -68,7 +68,8 @@ let
       export SDKROOT=${pkgs.darwin.xcode_12_2}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
       export MACOSX_DEPLOYMENT_TARGET=11.0
       export CFLAGS_x86_64_apple_darwin="-isysroot $SDKROOT -iframework $SDKROOT/System/Library/Frameworks"
-      export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-F$SDKROOT/System/Library/Frameworks -C link-arg=-Wl,-dead_strip_dylibs"
+      # zig's MachO linker rejects relative switch tables pointing at the end of a literal section ("bad relocation" in hyper)
+      export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-F$SDKROOT/System/Library/Frameworks -C link-arg=-Wl,-dead_strip_dylibs -C llvm-args=-switch-to-lookup=false"
       export XDG_CACHE_HOME=$TMPDIR/xdg_cache
       mkdir -p $XDG_CACHE_HOME
       export CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/cargo-zigbuild-cache
