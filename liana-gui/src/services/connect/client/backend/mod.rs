@@ -10,7 +10,6 @@ use std::{
 use async_trait::async_trait;
 use liana::{
     descriptors::LianaDescriptor,
-    label::Label,
     miniscript::bitcoin::{
         address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
     },
@@ -1227,7 +1226,7 @@ fn coin_from_api(value: api::Coin) -> ListCoinsEntry {
             height: info.height,
         }),
         is_from_self: value.is_from_self,
-        default_label: Label::None,
+        default_label: value.default_label,
     }
 }
 
