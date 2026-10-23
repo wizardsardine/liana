@@ -23,6 +23,10 @@ let
 
   lianaBusinessInfo = craneLib.crateNameFromCargoToml { cargoToml = rootPath + "/liana-business/Cargo.toml"; };
 
+  # zig 0.16's MachO linker fails on hyper with "bad relocation"
+  zig = pkgs.zig_0_15;
+  cargoZigbuild = pkgs.cargo-zigbuild.override { inherit zig; };
+
   # Windows-specific settings shared between deps and final build
   windowsSettings = {
     inherit (commonBuildSettings) src strictDeps cargoLock cargoVendorDir LIANA_SKIP_GUI_ICON;
@@ -75,8 +79,8 @@ let
     doNotPostBuildInstallCargoBinaries = true;
 
     depsBuildBuild = [
-      pkgs.zig
-      pkgs.cargo-zigbuild
+      zig
+      cargoZigbuild
       pkgs.darwin.xcode_12_2
     ];
 
@@ -108,8 +112,8 @@ let
     doNotPostBuildInstallCargoBinaries = true;
 
     depsBuildBuild = [
-      pkgs.zig
-      pkgs.cargo-zigbuild
+      zig
+      cargoZigbuild
       pkgs.darwin.xcode_12_2
     ];
 
