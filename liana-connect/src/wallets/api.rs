@@ -284,6 +284,9 @@ pub struct Coin {
     pub is_immature: bool,
     pub is_change_address: bool,
     pub is_from_self: bool,
+    /// Label the coin falls back to, snapshotted by the server when first seen.
+    #[serde(default)]
+    pub default_label: Label,
 }
 
 #[derive(Clone, Deserialize)]
@@ -646,6 +649,28 @@ mod tests {
         .unwrap();
         assert!(list.next_cursor.is_none());
         assert!(list.next_cursor_txid.is_none());
+    }
+
+    #[test]
+    fn coin_default_label_defaults_to_none() {
+        let coin = serde_json::json!({
+            "address": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+            "amount": 100_000,
+            "derivation_index": 0,
+            "outpoint": "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b:1",
+            "block_height": null,
+            "spend_info": null,
+            "is_immature": false,
+            "is_change_address": false,
+            "is_from_self": true,
+        });
+        let parsed: Coin = serde_json::from_value(coin.clone()).unwrap();
+        assert_eq!(parsed.default_label, Label::None);
+
+        let mut labelled = coin;
+        labelled["default_label"] = serde_json::json!({ "funding": "salary" });
+        let parsed: Coin = serde_json::from_value(labelled).unwrap();
+        assert_eq!(parsed.default_label, Label::Funding("salary".to_string()));
     }
 
     #[test]
