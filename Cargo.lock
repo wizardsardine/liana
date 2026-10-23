@@ -530,7 +530,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bdk_chain"
 version = "0.16.0"
-source = "git+https://github.com/wizardsardine/bdk?branch=release%2F1.0.0-alpha.13#8936e828861f0f32500c4156b6534238e5154b0f"
+source = "git+https://github.com/wizardsardine/bdk?branch=release%2F1.0.0-alpha.13#5d1ca732fd385d3ced0f13eb3a37a8ce3233b115"
 dependencies = [
  "bitcoin",
  "miniscript",
@@ -545,7 +545,7 @@ checksum = "d2e57e4db8b917d554a0eb142be5267bbc88d787c3346c8dc0590fbe76be68bd"
 [[package]]
 name = "bdk_electrum"
 version = "0.15.0"
-source = "git+https://github.com/wizardsardine/bdk?branch=release%2F1.0.0-alpha.13#8936e828861f0f32500c4156b6534238e5154b0f"
+source = "git+https://github.com/wizardsardine/bdk?branch=release%2F1.0.0-alpha.13#5d1ca732fd385d3ced0f13eb3a37a8ce3233b115"
 dependencies = [
  "bdk_chain",
  "electrum-client",
@@ -1568,9 +1568,9 @@ checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
 name = "electrum-client"
-version = "0.23.1"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed9a037f88aa61d3627a20af1c68fa0405ed5a16d9a0d9dc0e66adcda44afbe"
+checksum = "4dbd0717be286867521d8a650d7dab83c886b2ec28bf3a4741fb7f86173fafe8"
 dependencies = [
  "bitcoin",
  "byteorder",
@@ -1579,7 +1579,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "webpki-roots 0.25.4",
+ "webpki-roots 1.0.10",
  "winapi",
 ]
 
@@ -3499,7 +3499,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -5432,7 +5432,7 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9465315bc9d4566e1724f0fffcbcc446268cb522e60f9a27bcded6b19c108113"
 dependencies = [
- "bitcoin_hashes 0.14.0",
+ "bitcoin_hashes 0.12.0",
  "secp256k1-sys",
  "serde",
 ]
@@ -7023,12 +7023,6 @@ checksum = "58ec80e73fd8baf57bf0d9615554c75348bda990d6d5bbeab964dd068319fecb"
 dependencies = [
  "rustls-pki-types",
 ]
-
-[[package]]
-name = "webpki-roots"
-version = "0.25.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f20c57d8d7db6d3b86154206ae5d8fba62dd39573114de97c2cb0578251f8e1"
 
 [[package]]
 name = "webpki-roots"
