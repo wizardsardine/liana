@@ -48,6 +48,22 @@ use crate::{
 };
 pub use liana_ui::component::amount::FiatAmount;
 
+fn truncate_pasted_btc_amount(amount: &str) -> Option<String> {
+    let (integer, fraction) = amount.split_once('.')?;
+    if integer.is_empty()
+        || fraction.len() <= 8
+        || !integer.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+
+    let truncated = format!("{}.{}", integer, &fraction[..8]);
+    Amount::from_str_in(&truncated, Denomination::Bitcoin)
+        .is_ok()
+        .then_some(truncated)
+}
+
 #[derive(Clone)]
 pub struct TransactionDraft {
     network: Network,
@@ -1070,18 +1086,11 @@ impl Recipient {
                 self.fiat_converter = None;
                 self.amount.warning = None;
 
-                // If a float has been passed with more than 8 decimal places, and truncating it
+                // If a decimal amount has been passed with more than 8 decimal places, and truncating it
                 // to 8 decimal places would result in a valid BTC amount, we truncate it and show a warning.
                 // This can only happen if the user pastes an amount, as the input only allows up to 8 decimal places.
                 // Otherwise, keep the full string value.
-                self.amount.value = f64::from_str(&amount)
-                    .ok()
-                    .and_then(|_| amount.split_once('.'))
-                    .filter(|(_, fraction)| fraction.len() > 8)
-                    .map(|(integer, fraction)| format!("{}.{}", integer, &fraction[..8]))
-                    .filter(|truncated| {
-                        Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
-                    })
+                self.amount.value = truncate_pasted_btc_amount(&amount)
                     .inspect(|_| {
                         self.amount.warning = Some(crate::t!("spend-amount-truncated"));
                     })
@@ -1403,4 +1412,27 @@ fn recovery_paths(wallet: &Wallet, coins: &[Coin], tip_height: i32) -> Vec<Recov
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_pasted_btc_amount;
+
+    #[test]
+    fn truncates_pasted_btc_amounts_to_eight_decimal_places() {
+        assert_eq!(
+            truncate_pasted_btc_amount("1.123456789"),
+            Some("1.12345678".to_string())
+        );
+        assert_eq!(
+            truncate_pasted_btc_amount("0.000000001"),
+            Some("0.00000000".to_string())
+        );
+    }
+
+    #[test]
+    fn leaves_scientific_notation_unchanged() {
+        assert_eq!(truncate_pasted_btc_amount("1.123456789e2"), None);
+        assert_eq!(truncate_pasted_btc_amount("1e-8"), None);
+    }
 }
