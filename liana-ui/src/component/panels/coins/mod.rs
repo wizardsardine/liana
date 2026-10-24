@@ -12,9 +12,10 @@ use crate::{
         button, card, panels, pill,
         text::new,
     },
+    priority_row,
     spacing::{HSpacing, VSpacing},
     theme,
-    widget::{Container, Element, Fit, Row, SpaceExt},
+    widget::{priority, Container, Element, Fit, Row, SpaceExt},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -62,9 +63,9 @@ pub fn coin_entry<'a, M: Clone + 'static>(
         .spacing(HSpacing::L)
         .align_y(Alignment::Center);
     let header = if editing {
-        row![label]
+        priority_row![label]
     } else {
-        row![label, Space::fill_width(), right]
+        priority_row![priority::truncate(1, label), Space::fill_width(), right]
     }
     .align_y(Alignment::Center)
     .spacing(HSpacing::L)

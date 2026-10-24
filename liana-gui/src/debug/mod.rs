@@ -36,6 +36,7 @@ pub mod buttons;
 pub mod entries;
 pub mod pill_styles;
 pub mod pills;
+pub mod priority_row;
 pub mod texts;
 
 pub const DESIGN_SYSTEM: DebugStack = DebugStack {
@@ -73,6 +74,7 @@ pub const DESIGN_SYSTEM: DebugStack = DebugStack {
         &texts::ENTRY_LEGACY,
         &texts::ENTRY_NEW,
         &texts::ENTRY_THEMES,
+        &priority_row::ENTRY,
     ],
 };
 
