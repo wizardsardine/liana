@@ -11,6 +11,7 @@ use crate::{
     DaemonControl,
 };
 
+use bwk_backoff::Backoff;
 use std::{
     fs, io,
     os::unix::{fs::PermissionsExt, net},
@@ -21,6 +22,9 @@ use std::{
 
 // Maximum number of concurrent RPC connections we may accept.
 const MAX_CONNECTIONS: u32 = 16;
+
+// Maximum time we wait before checking again for a new RPC connection.
+const ACCEPT_MAX_BACKOFF_MS: u64 = 30;
 
 // Read a command from the stream.
 //
@@ -132,11 +136,15 @@ pub fn rpcserver_loop(
     let connections_counter = sync::Arc::from(atomic::AtomicU32::new(0));
 
     listener.set_nonblocking(true)?;
+    let mut backoff = Backoff::new_ms(ACCEPT_MAX_BACKOFF_MS);
     while !shutdown.load(atomic::Ordering::Relaxed) {
         let (connection, _) = match listener.accept() {
-            Ok(c) => c,
+            Ok(c) => {
+                backoff.reset();
+                c
+            }
             Err(_) => {
-                thread::sleep(time::Duration::from_millis(100));
+                backoff.snooze();
                 continue;
             }
         };

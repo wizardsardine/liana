@@ -28,16 +28,18 @@ def test_getinfo(lianad):
     assert "timestamp" in res.keys()
     assert res["version"] == "15.0-dev"
     assert res["network"] == "regtest"
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == 101)
+    # The poll timestamp is recorded after the tip.
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == 101
+        and lianad.rpc.getinfo()["last_poll_timestamp"] is not None
+    )
     res = lianad.rpc.getinfo()
     assert res["sync"] == 1.0
     assert "main" in res["descriptors"]
     assert res["rescan_progress"] is None
     last_poll_timestamp = res["last_poll_timestamp"]
     assert last_poll_timestamp is not None
-    time.sleep(lianad.poll_interval_secs + 1)
-    res = lianad.rpc.getinfo()
-    assert res["last_poll_timestamp"] > last_poll_timestamp
+    wait_for(lambda: lianad.rpc.getinfo()["last_poll_timestamp"] > last_poll_timestamp)
     assert res["receive_index"] == 0
     assert res["change_index"] == 0
 
@@ -1820,7 +1822,8 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
     bitcoind.generate_block(1, wait_for_mempool=rbf_2_txid)
     wait_for(
         lambda: all(
-            c["spend_info"]["txid"] == rbf_2_txid
+            c["spend_info"] is not None
+            and c["spend_info"]["txid"] == rbf_2_txid
             and c["spend_info"]["height"] is not None
             for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
         )
@@ -2020,7 +2023,8 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
     bitcoind.generate_block(1, wait_for_mempool=rbf_2_txid)
     wait_for(
         lambda: all(
-            c["spend_info"]["txid"] == rbf_2_txid
+            c["spend_info"] is not None
+            and c["spend_info"]["txid"] == rbf_2_txid
             and c["spend_info"]["height"] is not None
             for c in lianad.rpc.listcoins([], [rbf_1_outpoint])["coins"]
         )
