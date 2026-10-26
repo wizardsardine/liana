@@ -1,6 +1,89 @@
 
 # Liana daemon and GUI release notes
 
+## 16.0
+
+This release brings internationalisation to liana-gui, continues the UI rework through the PSBT,
+coins, transaction, recovery and settings panels, introduces default labels inherited from
+addresses and transactions, and moves the encrypted descriptor backup to bip138.
+
+### Features
+
+#### Liana GUI
+
+- Internationalisation: French, Italian, Brazilian Portuguese and European Portuguese catalogs,
+  with a language picker in the settings.
+- UI rework: reworked the PSBT, coins, transaction, recovery, settings and self-transfer panels
+  around new foldable card, list entry and label components, and reworked the installer template
+  diagrams.
+- Default labels: coins, transactions and payments inherit the label of their address or
+  transaction, shown with an info tooltip.
+- Use bip138 for the encrypted descriptor backup, add a privacy mode to it, and offer the other
+  common derivation paths when decrypting a backup.
+- Export the encrypted descriptor from the business settings.
+- Enable taproot by default in the installer, and warn when a manually imported xpub needs a
+  taproot-capable device.
+- Offer managed Bitcoin Core upgrades on wallet open, and bump the managed Bitcoin Core to 31.1.
+- Display the spend status of PSBTs and add a toggle to hide the confirmed ones.
+- Page the Liana Connect payment history with a (block_time, txid) cursor.
+- Display the `createrecovery` warnings.
+- Show a rescan warning when a pasted descriptor is imported.
+- Sanity check the network on descriptor and backup import.
+
+#### Liana daemon
+
+- Store and serve a default label for transactions.
+- Warn when `createrecovery` recovers to an address of the same wallet.
+
+#### Dependencies
+
+- Bump async-hwi to 0.0.35.
+- Bump reqwest to 0.13.
+- Bump electrum-client to 0.24.2.
+- Bump rustls-webpki to 0.103.16 and webpki-roots to 1.0.10.
+- Require bip39 2.1, and use a vendored bip329.
+
+#### Packaging
+
+- Distribute the macOS application as a `.dmg` instead of a `.zip`.
+
+### Fixes
+
+#### Liana GUI
+
+- Fix the import of test network backups.
+- Check the daemon receive addresses against the wallet descriptor.
+- Set the descriptor when importing it from a file in the Liana Connect installer, and detect
+  encrypted files.
+- Close Liana Connect sessions when dropping cached credentials and before pruning the cache, and
+  refresh cached tokens from their expiry.
+- Fail downloads that stop receiving data.
+- Correct the Electrum address placeholder in the settings.
+- Hide the edit button in the node settings of a managed bitcoind, and make the node configuration
+  non-editable while waiting for the ping.
+- Slice tab titles by characters instead of bytes.
+- Drop the pending coin label edit when its card is folded, and limit the label length in the coin
+  details view.
+- Hide the payment section of a PSBT that has none.
+- Improve mouseless navigation in the key import flow, and make the select key modal scrollable.
+- Fix the node selection view, the imported key tile and badge colors, the key color in the
+  decaying multisig template, and the dismiss button icon.
+
+#### Liana daemon
+
+- Encode the bitcoind wallet RPC path, fixing wallet paths that contain spaces.
+
+#### Liana
+
+- Recompute the receive and change descriptors on deserialization.
+- Reject a key used alongside a k-of-N primary path when k > 1.
+
+#### Documentation
+
+- Add an AI contribution policy.
+- Add `krux` to the supported signing devices.
+- Replace the IRC channel references with Discord.
+
 ## 15.0
 
 This release delivers a major UI rework of liana-gui and the installer, a bump to iced 0.14, and
