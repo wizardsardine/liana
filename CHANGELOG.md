@@ -3,9 +3,10 @@
 
 ## 16.0
 
-This release brings internationalisation to liana-gui, continues the UI rework through the PSBT,
-coins, transaction, recovery and settings panels, introduces default labels inherited from
-addresses and transactions, and moves the encrypted descriptor backup to bip138.
+This release brings internationalisation to liana-gui, enables taproot by default in the installer,
+continues the UI rework through the "Drafts & approvals", "Transactions", "Coins/UTXOs" and
+"Settings" pages, introduces default labels inherited from addresses, coins and transactions, and
+moves the encrypted descriptor backup to bip138.
 
 ### Features
 
@@ -13,21 +14,23 @@ addresses and transactions, and moves the encrypted descriptor backup to bip138.
 
 - Internationalisation: French, Italian, Brazilian Portuguese and European Portuguese catalogs,
   with a language picker in the settings.
-- UI rework: reworked the PSBT, coins, transaction, recovery, settings and self-transfer panels
-  around new foldable card, list entry and label components, and reworked the installer template
-  diagrams.
-- Default labels: coins, transactions and payments inherit the label of their address or
-  transaction, shown with an info tooltip.
+- UI rework: reworked the "Drafts & approvals", "Transactions", "Coins/UTXOs", "Recovery" and
+  "Settings" pages and the "Self-transfer", "Payment details" and "Transaction details" panels
+  around new foldable card, list entry and label components, reworked the installer template
+  diagrams, and reworked the "Coin selection" header and divider of the "Send" screen.
+- Default labels: coins, transactions and payments now show the label of a related item when they
+  have none of their own, with an info tooltip saying where it comes from. See
+  [`doc/LABELS.md`](doc/LABELS.md) for the whole logic.
 - Use bip138 for the encrypted descriptor backup, add a privacy mode to it, and offer the other
   common derivation paths when decrypting a backup.
-- Export the encrypted descriptor from the business settings.
-- Enable taproot by default in the installer, and warn when a manually imported xpub needs a
-  taproot-capable device.
+- Enable taproot by default in the installer: the address type menu now offers "Taproot
+  (recommended)" and "Segwit" instead of "Advanced settings" and "P2WSH", and a device that cannot
+  do taproot says what to do about it instead of only stating the incompatibility.
 - Offer managed Bitcoin Core upgrades on wallet open, and bump the managed Bitcoin Core to 31.1.
 - Display the spend status of PSBTs and add a toggle to hide the confirmed ones.
 - Page the Liana Connect payment history with a (block_time, txid) cursor.
-- Display the `createrecovery` warnings.
-- Show a rescan warning when a pasted descriptor is imported.
+- Display the recovery warnings, including the new one raised when the recovery transaction sends
+  to an address of the same wallet.
 - Sanity check the network on descriptor and backup import.
 
 #### Liana daemon
@@ -62,8 +65,8 @@ addresses and transactions, and moves the encrypted descriptor backup to bip138.
 - Hide the edit button in the node settings of a managed bitcoind, and make the node configuration
   non-editable while waiting for the ping.
 - Slice tab titles by characters instead of bytes.
-- Drop the pending coin label edit when its card is folded, and limit the label length in the coin
-  details view.
+- Limit the label length in the coin details view.
+- Show a rescan warning when a pasted descriptor is imported.
 - Hide the payment section of a PSBT that has none.
 - Improve mouseless navigation in the key import flow, and make the select key modal scrollable.
 - Fix the node selection view, the imported key tile and badge colors, the key color in the
