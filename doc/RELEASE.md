@@ -8,7 +8,8 @@ The repository releases two targets from the same tree:
   release notes live in [`liana-business/CHANGELOG.md`](../liana-business/CHANGELOG.md).
 
 Both targets share a release branch: `MAJOR.x` is named after the `liana` major, and the
-`liana-business` tags of that cycle are created on the same branch.
+`liana-business` tags of that cycle are created on the same branch. Their version numbers are
+independent of each other, so the same branch can carry, say, `v16.0` and `business-v2.0`.
 
 ## Releasing `liana`
 
