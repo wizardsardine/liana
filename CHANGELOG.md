@@ -1,6 +1,92 @@
 
 # Liana daemon and GUI release notes
 
+## 16.0
+
+This release brings internationalisation to liana-gui, enables taproot by default in the installer,
+continues the UI rework through the "Drafts & approvals", "Transactions", "Coins/UTXOs" and
+"Settings" pages, introduces default labels inherited from addresses, coins and transactions, and
+moves the encrypted descriptor backup to bip138.
+
+### Features
+
+#### Liana GUI
+
+- Internationalisation: French, Italian, Brazilian Portuguese and European Portuguese catalogs,
+  with a language picker in the settings.
+- UI rework: reworked the "Drafts & approvals", "Transactions", "Coins/UTXOs", "Recovery" and
+  "Settings" pages and the "Self-transfer", "Payment details" and "Transaction details" panels
+  around new foldable card, list entry and label components, reworked the installer template
+  diagrams, and reworked the "Coin selection" header and divider of the "Send" screen.
+- Default labels: coins, transactions and payments now show the label of a related item when they
+  have none of their own, with an info tooltip saying where it comes from. See
+  [`doc/LABELS.md`](doc/LABELS.md) for the whole logic.
+- Use bip138 for the encrypted descriptor backup, add a privacy mode to it, and offer the other
+  common derivation paths when decrypting a backup.
+- Enable taproot by default in the installer: the address type menu now offers "Taproot
+  (recommended)" and "Segwit" instead of "Advanced settings" and "P2WSH", and a device that cannot
+  do taproot says what to do about it instead of only stating the incompatibility.
+- Offer managed Bitcoin Core upgrades on wallet open, and bump the managed Bitcoin Core to 31.1.
+- Display the spend status of PSBTs and add a toggle to hide the confirmed ones.
+- Page the Liana Connect payment history with a (block_time, txid) cursor.
+- Display the recovery warnings, including the new one raised when the recovery transaction sends
+  to an address of the same wallet.
+- Sanity check the network on descriptor and backup import.
+
+#### Liana daemon
+
+- Store and serve a default label for transactions.
+- Warn when `createrecovery` recovers to an address of the same wallet.
+
+#### Dependencies
+
+- Bump async-hwi to 0.0.35.
+- Bump reqwest to 0.13.
+- Bump electrum-client to 0.24.2.
+- Bump rustls-webpki to 0.103.16 and webpki-roots to 1.0.10.
+- Require bip39 2.1, and use a vendored bip329.
+
+#### Packaging
+
+- Distribute the macOS application as a `.dmg` instead of a `.zip`.
+
+### Fixes
+
+#### Liana GUI
+
+- Fix the import of test network backups.
+- Check the daemon receive addresses against the wallet descriptor.
+- Set the descriptor when importing it from a file in the Liana Connect installer, and detect
+  encrypted files.
+- Close Liana Connect sessions when dropping cached credentials and before pruning the cache, and
+  refresh cached tokens from their expiry.
+- Fail downloads that stop receiving data.
+- Correct the Electrum address placeholder in the settings.
+- Hide the edit button in the node settings of a managed bitcoind, and make the node configuration
+  non-editable while waiting for the ping.
+- Slice tab titles by characters instead of bytes.
+- Limit the label length in the coin details view.
+- Show a rescan warning when a pasted descriptor is imported.
+- Hide the payment section of a PSBT that has none.
+- Improve mouseless navigation in the key import flow, and make the select key modal scrollable.
+- Fix the node selection view, the imported key tile and badge colors, the key color in the
+  decaying multisig template, and the dismiss button icon.
+
+#### Liana daemon
+
+- Encode the bitcoind wallet RPC path, fixing wallet paths that contain spaces.
+
+#### Liana
+
+- Recompute the receive and change descriptors on deserialization.
+- Reject a key used alongside a k-of-N primary path when k > 1.
+
+#### Documentation
+
+- Add an AI contribution policy.
+- Add `krux` to the supported signing devices.
+- Replace the IRC channel references with Discord.
+
 ## 15.0
 
 This release delivers a major UI rework of liana-gui and the installer, a bump to iced 0.14, and

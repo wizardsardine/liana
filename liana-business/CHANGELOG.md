@@ -1,6 +1,25 @@
 
 # Liana Business release notes
 
+## 2.0
+
+This release reworks the business settings, translates the business installer and settings, and
+adds the encrypted descriptor export.
+
+Liana Business is built on liana-gui, liana-ui and liana-connect, so it also carries everything
+listed under 16.0 in the [Liana release notes](../CHANGELOG.md). Only what is specific to Liana
+Business is listed below.
+
+### Features
+
+- Rework the business settings views.
+- Export the encrypted descriptor from the business settings.
+- Translate the business installer and settings screens.
+
+### Fixes
+
+- Fix typos and casing in the business installer and settings text.
+
 ## 1.0
 
 First release of Liana Business and its installer.

@@ -41,10 +41,11 @@ const SETTINGS_KEY: &str = "settings";
 const LIANA_VERSION_KEY: &str = "liana_version";
 
 pub fn liana_version() -> String {
-    VERSION
-        .trim_end_matches("-dev")
-        .trim_end_matches("-rc")
-        .to_string()
+    strip_version_suffix(VERSION).to_string()
+}
+
+fn strip_version_suffix(version: &str) -> &str {
+    version.split_once('-').map_or(version, |(v, _)| v)
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -435,6 +436,14 @@ mod test {
         let serialized = serde_json::to_string(backup).unwrap();
         let parsed: Backup = serde_json::from_str(&serialized).unwrap();
         *backup == parsed
+    }
+
+    #[test]
+    fn version_suffix() {
+        assert_eq!(strip_version_suffix("16.0"), "16.0");
+        assert_eq!(strip_version_suffix("16.0-dev"), "16.0");
+        assert_eq!(strip_version_suffix("16.0-rc1"), "16.0");
+        assert_eq!(strip_version_suffix("16.0-rc10"), "16.0");
     }
 
     #[test]
