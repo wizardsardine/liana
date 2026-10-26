@@ -8,6 +8,18 @@ continues the UI rework through the "Drafts & approvals", "Transactions", "Coins
 "Settings" pages, introduces default labels inherited from addresses, coins and transactions, and
 moves the encrypted descriptor backup to bip138.
 
+### Breaking changes
+
+Running Liana v16 on an existing installation will migrate its database.
+Once migrated the database won't be compatible with previous versions of Liana.
+This means you won't be able to open with Liana v15 (or below) any wallet opened or created with Liana v16.
+
+#### Liana GUI
+
+- The encrypted descriptor backup is now written as a BIP138 v1 `.bip138` file instead of a `.bed`
+  file. Liana v15 and below cannot read it. Reading is unaffected: the `.bed` files and the base64
+  text backups written by previous versions still decrypt.
+
 ### Features
 
 #### Liana GUI

@@ -69,7 +69,8 @@ let
       export MACOSX_DEPLOYMENT_TARGET=11.0
       export CFLAGS_x86_64_apple_darwin="-isysroot $SDKROOT -iframework $SDKROOT/System/Library/Frameworks"
       # zig's MachO linker rejects relative switch tables pointing at the end of a literal section ("bad relocation" in hyper)
-      export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-F$SDKROOT/System/Library/Frameworks -C link-arg=-Wl,-dead_strip_dylibs -C llvm-args=-switch-to-lookup=false"
+      # zig only ad-hoc signs arm64, so x86_64 needs header room for rcodesign to add LC_CODE_SIGNATURE
+      export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-F$SDKROOT/System/Library/Frameworks -C link-arg=-Wl,-dead_strip_dylibs -C link-arg=-Wl,-headerpad,0x1000 -C llvm-args=-switch-to-lookup=false"
       export XDG_CACHE_HOME=$TMPDIR/xdg_cache
       mkdir -p $XDG_CACHE_HOME
       export CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/cargo-zigbuild-cache
