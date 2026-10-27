@@ -33,8 +33,15 @@ independent of each other, so the same branch can carry, say, `v16.0` and `busin
   The script derives the version from the tag and re-enters the `release` dev shell by itself, so
   there is nothing to configure. Sign the assets with
   [`contrib/release/sign.sh`](../contrib/release/sign.sh): `./contrib/release/sign.sh liana gpg`.
+  To codesign the Windows installer, run `./contrib/release/sign.sh liana osslsigncode` before
+  the gpg step, with the Certum smart card plugged in: it produces `liana-<version>-setup.exe` and
+  the detached signature `liana-<version>-setup.exe.pem`, both to be published (see
+  [`contrib/release/windows`](../contrib/release/windows/README.md)).
 - Publish a pre-release for this tag on Github (https://github.com/wizardsardine/liana/releases)
-  with the reproducibly built binaries.
+  with the reproducibly built binaries. For Windows this is three files: the reproducible
+  `liana-<version>-setup-noncodesigned.exe`, the codesigned `liana-<version>-setup.exe` and the
+  detached signature `liana-<version>-setup.exe.pem`, which lets anyone check that the codesigned installer is
+  the reproducible one plus the signature.
 - If bugs are discovered when testing the release candidate, fix them in master and backport them to
   the release branch. (Example: [this PR for v5](https://github.com/wizardsardine/liana/pull/1066).)
 - If needed, repeat this process with new release candidates.
@@ -68,7 +75,8 @@ The flow is the same, with its own version numbering, on the release branch of t
   for v1](https://github.com/wizardsardine/liana/pull/2225).)
 - Create a `business-vA.Brc1` tag on this branch and push it.
 - Build and sign with the `liana-business` target: `./contrib/release/release.sh liana-business`,
-  then `./contrib/release/sign.sh liana-business rcodesign <cert_path> <key_path> <apikey_json_path>`.
+  then `./contrib/release/sign.sh liana-business rcodesign <cert_path> <key_path> <apikey_json_path>`
+  and `./contrib/release/sign.sh liana-business osslsigncode`.
 - Publish the pre-release, iterate on release candidates, then drop the "rc" suffix and tag
   `business-vA.B` the same way.
 
