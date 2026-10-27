@@ -2065,7 +2065,7 @@ pill-to-approve => "To approve" => "Approvare"
 
 pill-today => "Today" => "Oggi"
 
-pill-unconfirmed => "Unconfirmed" => "In conferma"
+pill-unconfirmed => "Unconfirmed" => "Pendente"
 
 pill-unconfirmed-tooltip
 => "Do not treat this as a payment until it is confirmed"
