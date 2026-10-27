@@ -61,6 +61,9 @@ This means you won't be able to open with Liana v15 (or below) any wallet opened
 #### Packaging
 
 - Distribute the macOS application as a `.dmg` instead of a `.zip`.
+- Distribute the Windows application as a `.msi` installer instead of a bare `.exe`, built
+  reproducibly with `wixl`, and codesign it with a detached Authenticode signature that anyone can
+  re-attach to the reproducible installer.
 
 ### Fixes
 
