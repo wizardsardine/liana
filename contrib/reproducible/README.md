@@ -30,10 +30,25 @@ experimental-features = nix-command flakes
 Simply run:
 
 ```
-nix build .#x86_64-pc-windows-gnu
+nix build .#liana.x86_64-pc-windows-gnu
 ```
+(or `.#liana-business.x86_64-pc-windows-gnu` for Liana Business).
 
-Binary will be present in the `./result` folder.
+The `.msi` installer will be present in the `./result/x86_64-pc-windows-gnu` folder. It wraps the
+cross-compiled executable with `wixl` (GNOME msitools); see
+[`contrib/release/windows`](../release/windows/README.md) for how the installer is kept
+reproducible. The bare executable is still available under `.#liana.x86_64-pc-windows-gnu-exe`.
+
+#### Verifying the codesigned installer
+
+The codesigned `liana-<version>.msi` is the reproducible `liana-<version>-noncodesigned.msi` with
+an Authenticode signature attached. The signature is published on its own as
+`liana-<version>.msi.pem`, so you can rebuild the installer and check it against the signed one:
+
+```
+./contrib/release/windows/attach-signature.sh ./result/x86_64-pc-windows-gnu/liana-gui.msi liana-<version>.msi.pem /tmp/liana.msi
+sha256sum /tmp/liana.msi liana-<version>.msi
+```
 
 
 ### MACOS
@@ -59,11 +74,11 @@ It may take a long time.
 
 Then to compile binaries for new apple CPUs:
 ```
-nix build .#aarch64-apple-darwin
+nix build .#liana.aarch64-apple-darwin
 ```
 Or for legacy CPUs:
 ```
-nix build .#x86_64-apple-darwin
+nix build .#liana.x86_64-apple-darwin
 ```
 
 Binaries will be present in the `./result` folder.
