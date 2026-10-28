@@ -71,7 +71,7 @@ pub enum CommandError {
     TxBroadcast(String),
     AlreadyRescanning,
     InsaneRescanTimestamp(u32),
-    /// An error that might occur in the racy rescan triggering logic.
+    /// An error that might occur while starting a rescan.
     RescanTrigger(String),
     RecoveryNotAvailable,
     // Include timelock in error as it may not have been set explicitly by the user.
@@ -1201,7 +1201,10 @@ impl DaemonControl {
     /// The date must be after the genesis block time and before the current tip blocktime.
     pub fn start_rescan(&mut self, timestamp: u32) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
-        let genesis_timestamp = self.bitcoin.genesis_block_timestamp();
+        let genesis_timestamp = self
+            .bitcoin
+            .genesis_block_timestamp()
+            .map_err(CommandError::RescanTrigger)?;
 
         let future_timestamp = self
             .bitcoin

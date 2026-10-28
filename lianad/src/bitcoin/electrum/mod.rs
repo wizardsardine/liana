@@ -1,21 +1,24 @@
 use std::collections::HashMap;
 
 use bdk_electrum::bdk_chain::{
-    bitcoin::{self, bip32::ChildNumber, BlockHash, OutPoint},
+    bitcoin::{self, bip32::ChildNumber, secp256k1, BlockHash, OutPoint},
+    keychain::KeychainTxOutIndex,
     local_chain::LocalChain,
     spk_client::{FullScanRequest, SyncRequest},
-    ChainPosition,
+    tx_graph::TxGraph,
+    ChainPosition, ConfirmationTimeHeightAnchor,
 };
 
 pub mod client;
 mod utils;
 pub mod wallet;
-use crate::bitcoin::{Block, BlockChainTip, Coin};
+use crate::bitcoin::{check_our_inputs, Block, BlockChainTip, Coin, InputsCheck};
 
 /// An error in the Electrum interface.
 #[derive(Debug)]
 pub enum ElectrumError {
     Client(client::Error),
+    MaliciousServer(bitcoin::Txid),
     GenesisHashMismatch(
         BlockHash, /*expected hash*/
         BlockHash, /*server hash*/
@@ -27,6 +30,11 @@ impl std::fmt::Display for ElectrumError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             ElectrumError::Client(e) => write!(f, "Electrum client error: '{e}'."),
+            ElectrumError::MaliciousServer(txid) => write!(
+                f,
+                "Electrum server sent transaction '{txid}' with invalid signatures for our \
+                coins. Disconnecting."
+            ),
             ElectrumError::GenesisHashMismatch(expected, server, wallet) => {
                 write!(
                     f,
@@ -45,6 +53,9 @@ pub struct Electrum {
     /// Used for setting the `last_seen` of unconfirmed transactions in a strictly
     /// increasing manner.
     sync_count: u64,
+    /// The reason why the server can not be trusted anymore, set when we detected it serving
+    /// a spend of our coins with invalid signatures.
+    fatal_error: Option<String>,
     /// Set to `true` to force a full scan from the genesis block regardless of
     /// the wallet's local chain height.
     full_scan: bool,
@@ -60,6 +71,7 @@ impl Electrum {
             client,
             bdk_wallet,
             sync_count: 0,
+            fatal_error: None,
             full_scan,
         })
     }
@@ -83,6 +95,12 @@ impl Electrum {
 
     pub fn client(&self) -> &client::Client {
         &self.client
+    }
+
+    /// The reason why the server can not be trusted anymore, if we detected it serving a
+    /// spend of our coins with invalid signatures.
+    pub fn fatal_error(&self) -> Option<String> {
+        self.fatal_error.clone()
     }
 
     fn local_chain(&self) -> &LocalChain {
@@ -132,13 +150,16 @@ impl Electrum {
         );
 
         // We'll only need to calculate fees of mempool transactions and this will be done separately from our graph
-        // so we don't need to fetch prev txouts. In any case, we'll already have these for our own transactions.
+        // so we don't need to fetch prev txouts. In any case, the prevouts of the inputs of a
+        // transaction spending our coins are always part of our wallet, which is enough to
+        // check its signatures.
         const FETCH_PREV_TXOUTS: bool = false;
         const STOP_GAP: usize = 200;
 
         // TODO: See if this caching can be done in a more optimal way, e.g. only new txs after syncing.
         self.client
             .bdk_electrum_client()
+            .map_err(ElectrumError::Client)?
             .populate_tx_cache(self.bdk_wallet.graph());
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
             log::debug!("Performing sync.");
@@ -177,9 +198,6 @@ impl Electrum {
                     FETCH_PREV_TXOUTS,
                 )
                 .map_err(ElectrumError::Client)?;
-            // A full scan only makes sense to do once, in most cases. Don't do it again unless
-            // explicitly asked to by a user.
-            self.full_scan = false;
             log::info!("Full scan complete.");
             (
                 scan_result.chain_update,
@@ -195,8 +213,14 @@ impl Electrum {
         log::debug!("Full local chain: {:?}", self.local_chain());
         log::debug!("Full chain update: {:?}", chain_update);
 
-        // Increment the sync count and apply changes.
+        // A forged spend could replace one of our payments in our history and have us bump it to
+        // the server's choice of outputs. Disconnect from a server sending one.
+        let index = self.bdk_wallet.index_with_update(keychain_update.as_ref());
+        self.verify_graph_update(&index, &graph_update)?;
+
+        // Only apply the server update after checking it.
         self.sync_count = self.sync_count.checked_add(1).expect("must fit");
+        self.full_scan = false;
         if let Some(keychain_update) = keychain_update {
             self.bdk_wallet.apply_keychain_update(keychain_update);
         }
@@ -245,6 +269,41 @@ impl Electrum {
         }
         self.bdk_wallet.apply_graph_update(graph_update);
         Ok(reorg_common_ancestor)
+    }
+
+    /// Check every transaction of the update the server served us: one spending our coins must
+    /// carry a valid satisfaction. Disconnect from a server sending one that doesn't, it could
+    /// have us bump one of our payments to its choice of outputs. A transaction whose prevouts
+    /// are missing from both the update and our wallet is left unchecked: as a spend of one of
+    /// our coins always resolves from our wallet, none of its inputs is recognized as ours and
+    /// there is nothing to check. It is not cached, so it is checked again at every sync as
+    /// long as the server keeps it in our histories.
+    fn verify_graph_update(
+        &mut self,
+        index: &KeychainTxOutIndex<wallet::KeychainType>,
+        graph_update: &TxGraph<ConfirmationTimeHeightAnchor>,
+    ) -> Result<(), ElectrumError> {
+        let secp = secp256k1::Secp256k1::verification_only();
+        for tx in &graph_update.initial_changeset().txs {
+            let wallet_graph = self.bdk_wallet.graph();
+            let mut resolve_prevout = |op: &OutPoint| {
+                graph_update
+                    .get_txout(*op)
+                    .or_else(|| wallet_graph.get_txout(*op))
+                    .cloned()
+            };
+            let is_ours = |_: &OutPoint, spk: &bitcoin::Script| index.index_of_spk(spk).is_some();
+            match check_our_inputs(&secp, tx, &mut resolve_prevout, &is_ours) {
+                InputsCheck::NotOurs | InputsCheck::Unknown | InputsCheck::Signed => {}
+                InputsCheck::Forged => {
+                    let error = ElectrumError::MaliciousServer(tx.compute_txid());
+                    self.fatal_error = Some(error.to_string());
+                    self.client.disconnect();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn wallet_transaction(

@@ -161,6 +161,18 @@ impl BdkWallet {
         &self.graph.index
     }
 
+    /// Get the transaction index as it would be after applying this update.
+    pub fn index_with_update(
+        &self,
+        keychain_update: Option<&BTreeMap<KeychainType, u32>>,
+    ) -> KeychainTxOutIndex<KeychainType> {
+        let mut index = self.graph.index.clone();
+        if let Some(update) = keychain_update {
+            let _ = index.reveal_to_target_multi(update);
+        }
+        index
+    }
+
     /// Reveal SPKs based on derivation indices set in DB.
     pub fn reveal_spks(&mut self, receive_index: ChildNumber, change_index: ChildNumber) {
         let mut keychain_update = BTreeMap::new();
