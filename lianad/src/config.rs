@@ -24,15 +24,21 @@ pub fn serialize_to_string<T: std::fmt::Display, S: Serializer>(
     s.serialize_str(&field.to_string())
 }
 
+/// Seconds, either a whole number or a fractional one (e.g. `0.1`).
 fn deserialize_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let secs = u64::deserialize(deserializer)?;
-    Ok(Duration::from_secs(secs))
+    let secs = f64::deserialize(deserializer)?;
+    Duration::try_from_secs_f64(secs)
+        .map_err(|e| de::Error::custom(format!("Invalid duration '{secs}': {e}")))
 }
 pub fn serialize_duration<S: Serializer>(duration: &Duration, s: S) -> Result<S::Ok, S::Error> {
-    s.serialize_u64(duration.as_secs())
+    if duration.subsec_nanos() == 0 {
+        s.serialize_u64(duration.as_secs())
+    } else {
+        s.serialize_f64(duration.as_secs_f64())
+    }
 }
 
 fn deserialize_rpc_auth<'de, D>(deserializer: D) -> Result<BitcoindRpcAuth, D::Error>
@@ -548,6 +554,27 @@ mod tests {
             validate_domain: true,
         };
         assert_eq!(parsed, expected,);
+    }
+
+    #[test]
+    fn toml_poll_interval() {
+        for (value, expected) in [
+            ("18", Duration::from_secs(18)),
+            ("0.1", Duration::from_millis(100)),
+            ("1.5", Duration::from_millis(1500)),
+        ] {
+            let toml_str = format!("network = \"regtest\"\npoll_interval_secs = {value}\n");
+            let parsed =
+                toml::from_str::<BitcoinConfig>(&toml_str).expect("Deserializing toml_str");
+            assert_eq!(parsed.poll_interval_secs, expected);
+            let serialized = toml::to_string(&parsed).expect("Serializing to toml");
+            assert_eq!(serialized, toml_str);
+        }
+
+        for value in ["-1", "-0.1", "nan", "inf"] {
+            let toml_str = format!("network = \"regtest\"\npoll_interval_secs = {value}\n");
+            toml::from_str::<BitcoinConfig>(&toml_str).expect_err("Invalid poll interval");
+        }
     }
 
     #[test]

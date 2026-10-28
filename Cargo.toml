@@ -47,6 +47,7 @@ iced_core = "0.14.0"
 chrono = "0.4.38"
 dirs = "5.0"
 jsonrpc = { version = "0.17", default-features = false }
+bwk-backoff = "0.0.3"
 fluent-bundle = "0.15"
 sys-locale = "0.3"
 unic-langid = "0.9"
