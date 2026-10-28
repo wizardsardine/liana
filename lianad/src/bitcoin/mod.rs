@@ -48,6 +48,24 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
+/// An error met while syncing the wallet with the Bitcoin backend.
+#[derive(Debug)]
+pub enum SyncError {
+    /// The backend is unrecoverably out of sync, for instance an Electrum server which lied
+    /// to us about the state of our coins. The poller must stop polling it.
+    Fatal(String),
+    /// Any other error, polling the backend may be retried.
+    Transient(String),
+}
+
+impl fmt::Display for SyncError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SyncError::Fatal(e) | SyncError::Transient(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum TxSanityStatus {
     NotOwned,
@@ -131,7 +149,7 @@ pub fn tx_sanity_check(
 
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
-    fn genesis_block_timestamp(&self) -> u32;
+    fn genesis_block_timestamp(&self) -> Result<u32, String>;
 
     fn genesis_block(&self) -> BlockChainTip;
 
@@ -158,7 +176,7 @@ pub trait BitcoinInterface: Send {
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String>;
+    ) -> Result<Option<BlockChainTip>, SyncError>;
 
     /// Get coins received since the specified tip.
     fn received_coins(
@@ -222,16 +240,24 @@ pub trait BitcoinInterface: Send {
     ///
     /// Returns `None` if the transaction is not in the mempool.
     fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry>;
+
+    /// Whether the backend served data it can no longer be trusted for, for instance a spend
+    /// of our coins with invalid signatures. The poller must stop polling it. The string is
+    /// the reason, for display.
+    fn fatal_error(&self) -> Option<String> {
+        None
+    }
 }
 
 impl BitcoinInterface for d::BitcoinD {
-    fn genesis_block_timestamp(&self) -> u32 {
-        self.get_block_stats(
-            self.get_block_hash(0)
-                .expect("Genesis block hash must always be there"),
-        )
-        .expect("Genesis block must always be there")
-        .time
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        Ok(self
+            .get_block_stats(
+                self.get_block_hash(0)
+                    .expect("Genesis block hash must always be there"),
+            )
+            .expect("Genesis block must always be there")
+            .time)
     }
 
     fn genesis_block(&self) -> BlockChainTip {
@@ -261,7 +287,7 @@ impl BitcoinInterface for d::BitcoinD {
         &mut self,
         _receive_index: ChildNumber,
         _change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
         Ok(None)
     }
 
@@ -494,13 +520,32 @@ impl BitcoinInterface for d::BitcoinD {
 }
 
 impl BitcoinInterface for electrum::Electrum {
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        self.client()
+            .genesis_block_timestamp()
+            .map_err(|e| e.to_string())
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.fatal_error()
+    }
+
     fn sync_wallet(
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
-        self.sync_wallet(receive_index, change_index)
-            .map_err(|e| e.to_string())
+    ) -> Result<Option<BlockChainTip>, SyncError> {
+        self.sync_wallet(receive_index, change_index).map_err(|e| {
+            let error = e.to_string();
+            match e {
+                electrum::ElectrumError::MaliciousServer(_)
+                | electrum::ElectrumError::Client(electrum::client::Error::Disconnected) => {
+                    SyncError::Fatal(error)
+                }
+                electrum::ElectrumError::Client(_)
+                | electrum::ElectrumError::GenesisHashMismatch(..) => SyncError::Transient(error),
+            }
+        })
     }
 
     fn received_coins(
@@ -596,12 +641,6 @@ impl BitcoinInterface for electrum::Electrum {
         (spent, expired_spending)
     }
 
-    fn genesis_block_timestamp(&self) -> u32 {
-        self.client()
-            .genesis_block_timestamp()
-            .expect("Genesis block timestamp must always be there")
-    }
-
     fn genesis_block(&self) -> BlockChainTip {
         self.client()
             .genesis_block()
@@ -682,7 +721,7 @@ impl BitcoinInterface for electrum::Electrum {
 
 // FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
-    fn genesis_block_timestamp(&self) -> u32 {
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
         self.lock().unwrap().genesis_block_timestamp()
     }
 
@@ -706,7 +745,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
         self.lock()
             .unwrap()
             .sync_wallet(receive_index, change_index)

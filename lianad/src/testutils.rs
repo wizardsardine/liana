@@ -1,5 +1,7 @@
 use crate::{
-    bitcoin::{BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncProgress, UTxO},
+    bitcoin::{
+        BitcoinInterface, Block, BlockChainTip, MempoolEntry, SyncError, SyncProgress, UTxO,
+    },
     config::{BitcoinConfig, Config},
     database::{
         BlockInfo, Coin, CoinStatus, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface,
@@ -43,8 +45,8 @@ impl DummyBitcoind {
 }
 
 impl BitcoinInterface for DummyBitcoind {
-    fn genesis_block_timestamp(&self) -> u32 {
-        1231006505
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        Ok(1231006505)
     }
 
     fn genesis_block(&self) -> BlockChainTip {
@@ -77,7 +79,7 @@ impl BitcoinInterface for DummyBitcoind {
         &mut self,
         _receive_index: bip32::ChildNumber,
         _change_index: bip32::ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
         Ok(None)
     }
 
