@@ -6,7 +6,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::BitcoinInterface,
+    bitcoin::{check_our_inputs, BitcoinInterface, InputsCheck, SigCheck},
     database::{
         Coin, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface, WalletTransaction,
     },
@@ -151,6 +151,8 @@ pub enum RbfErrorInfo {
     SuperfluousFeerate,
     TooLowFeerate(u64, u64),
     NotSignaling,
+    DishonestSpend,
+    UnsatisfiablePsbt,
 }
 
 impl fmt::Display for RbfErrorInfo {
@@ -166,6 +168,14 @@ impl fmt::Display for RbfErrorInfo {
                 write!(f, "Feerate {r} too low for minimum feerate {m}.")
             }
             Self::NotSignaling => write!(f, "Replacement candidate does not signal for RBF."),
+            Self::DishonestSpend => write!(
+                f,
+                "Refusing to replace a transaction which does not verifiably spend our coins."
+            ),
+            Self::UnsatisfiablePsbt => write!(
+                f,
+                "Replacement candidate PSBT cannot be satisfied by our signers."
+            ),
         }
     }
 }
@@ -975,15 +985,53 @@ impl DaemonControl {
         }
 
         let prev_tx = if let Some(psbt) = db_conn.spend_tx(txid) {
+            // A PSBT our signers cannot satisfy has no reason to go through the RBF path. Ours
+            // always carry the derivations and prevout of each input, this rejects one merged
+            // from elsewhere.
+            if psbt.inputs.len() != psbt.unsigned_tx.input.len()
+                || psbt.inputs.iter().any(|psbtin| {
+                    (psbtin.bip32_derivation.is_empty() && psbtin.tap_key_origins.is_empty())
+                        || psbtin.witness_utxo.is_none()
+                })
+            {
+                return Err(CommandError::RbfError(RbfErrorInfo::UnsatisfiablePsbt));
+            }
             psbt.unsigned_tx
         } else {
-            db_conn
+            let tx = db_conn
                 .coins(&[CoinStatus::Spending], &[])
                 .into_values()
                 .find(|c| c.spend_txid == Some(*txid))
                 .and_then(|_| tx_getter.get_tx(txid))
-                .ok_or(CommandError::UnknownSpend(*txid))?
+                .ok_or(CommandError::UnknownSpend(*txid))?;
+            // We are about to rebuild a transaction we did not create ourselves. Refuse one that
+            // is not an honest spend of our coins: fully signed, and only with SIGHASH_ALL
+            // signatures so that our replacement conflicts with it whichever inputs and outputs
+            // its signatures committed to.
+            let mut resolve_prevout = |op: &bitcoin::OutPoint| {
+                tx_getter
+                    .get_tx(&op.txid)
+                    .and_then(|prev_tx| prev_tx.output.get(op.vout as usize).cloned())
+            };
+            if !matches!(
+                check_our_inputs(
+                    &self.secp,
+                    &tx,
+                    &mut resolve_prevout,
+                    &|_: &bitcoin::OutPoint, _: &bitcoin::Script| true,
+                    SigCheck::ValidSighashAll,
+                ),
+                InputsCheck::Signed
+            ) {
+                return Err(CommandError::RbfError(RbfErrorInfo::DishonestSpend));
+            }
+            tx
         };
+        // Make sure the transaction we are about to replace is the one identified by the txid
+        // we were asked to replace.
+        if prev_tx.compute_txid() != *txid {
+            return Err(CommandError::UnknownSpend(*txid));
+        }
         if !prev_tx.is_explicitly_rbf() {
             return Err(CommandError::RbfError(RbfErrorInfo::NotSignaling));
         }
@@ -2768,14 +2816,31 @@ mod tests {
             }],
             output: vec![],
         };
-        // PSBT corresponding to the above transaction.
+        // PSBT corresponding to the above transaction, with the metadata our signers need to
+        // satisfy it. Ours always carry the derivations and prevout of each input.
         let dummy_psbt_a = Psbt {
             unsigned_tx: dummy_tx_a.clone(),
             version: 0,
             xpub: BTreeMap::new(),
             proprietary: BTreeMap::new(),
             unknown: BTreeMap::new(),
-            inputs: vec![],
+            inputs: vec![bitcoin::psbt::Input {
+                witness_utxo: Some(bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(300_000),
+                    script_pubkey: bitcoin::ScriptBuf::new(),
+                }),
+                bip32_derivation: BTreeMap::from([(
+                    bitcoin::secp256k1::PublicKey::from_str(
+                        "023a664c5617412f0b292665b1fd9d766456a7a3b1614c7e7c5f411200ff1958ef",
+                    )
+                    .unwrap(),
+                    (
+                        bip32::Fingerprint::default(),
+                        bip32::DerivationPath::master(),
+                    ),
+                )]),
+                ..Default::default()
+            }],
             outputs: vec![],
         };
         let dummy_txid_a = dummy_psbt_a.unsigned_tx.compute_txid();

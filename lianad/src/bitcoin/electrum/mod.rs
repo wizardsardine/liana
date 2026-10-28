@@ -12,7 +12,7 @@ use bdk_electrum::bdk_chain::{
 pub mod client;
 mod utils;
 pub mod wallet;
-use crate::bitcoin::{check_our_inputs, Block, BlockChainTip, Coin, InputsCheck};
+use crate::bitcoin::{check_our_inputs, Block, BlockChainTip, Coin, InputsCheck, SigCheck};
 
 /// An error in the Electrum interface.
 #[derive(Debug)]
@@ -293,7 +293,7 @@ impl Electrum {
                     .cloned()
             };
             let is_ours = |_: &OutPoint, spk: &bitcoin::Script| index.index_of_spk(spk).is_some();
-            match check_our_inputs(&secp, tx, &mut resolve_prevout, &is_ours) {
+            match check_our_inputs(&secp, tx, &mut resolve_prevout, &is_ours, SigCheck::Valid) {
                 InputsCheck::NotOurs | InputsCheck::Unknown | InputsCheck::Signed => {}
                 InputsCheck::Forged => {
                     let error = ElectrumError::MaliciousServer(tx.compute_txid());

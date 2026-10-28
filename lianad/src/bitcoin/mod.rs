@@ -12,8 +12,15 @@ use liana::descriptors;
 
 use std::{fmt, sync};
 
-use miniscript::bitcoin::{self, address, bip32::ChildNumber, sighash};
-use miniscript::Interpreter;
+use miniscript::{
+    bitcoin::{
+        self, address,
+        bip32::ChildNumber,
+        sighash::{self, EcdsaSighashType, TapSighashType},
+    },
+    interpreter::KeySigPair,
+    Interpreter,
+};
 
 // A spent coin's outpoint together with its spend transaction's txid, height and time.
 type SpentCoin = (bitcoin::OutPoint, bitcoin::Txid, i32, u32);
@@ -59,6 +66,17 @@ impl fmt::Display for SyncError {
     }
 }
 
+/// How strict the check on the signatures spending our coins must be.
+#[derive(Clone, Copy)]
+pub enum SigCheck {
+    /// The satisfaction of each input spending our coins must be valid.
+    Valid,
+    /// Additionally, every signature must commit to the whole transaction (SIGHASH_ALL). Needed
+    /// before replacing a transaction, so that the replacement conflicts with it under BIP125
+    /// rules whichever inputs and outputs its signatures committed to.
+    ValidSighashAll,
+}
+
 /// The outcome of checking the inputs of a transaction which may spend our coins.
 #[derive(Debug, PartialEq, Eq)]
 pub enum InputsCheck {
@@ -81,6 +99,7 @@ pub fn check_our_inputs(
     tx: &bitcoin::Transaction,
     resolve_prevout: &mut dyn FnMut(&bitcoin::OutPoint) -> Option<bitcoin::TxOut>,
     is_ours: &dyn Fn(&bitcoin::OutPoint, &bitcoin::Script) -> bool,
+    check: SigCheck,
 ) -> InputsCheck {
     let mut prev_txouts: Vec<Option<bitcoin::TxOut>> = Vec::with_capacity(tx.input.len());
     let mut our_inputs = Vec::new();
@@ -122,6 +141,28 @@ pub fn check_our_inputs(
             .iter(secp, tx, index, &prevouts)
             .all(|res| res.is_ok())
         {
+            return InputsCheck::Forged;
+        }
+        if matches!(check, SigCheck::Valid) {
+            continue;
+        }
+        // The satisfaction is valid: walk it once more with signature checking disabled to
+        // collect the signatures the interpreter meets, and require each of them to commit
+        // to the whole transaction.
+        let mut sighash_all = true;
+        let _ = interpreter
+            .iter_custom(Box::new(|keysig| {
+                sighash_all &= match keysig {
+                    KeySigPair::Ecdsa(_, sig) => sig.sighash_type == EcdsaSighashType::All,
+                    KeySigPair::Schnorr(_, sig) => matches!(
+                        sig.sighash_type,
+                        TapSighashType::All | TapSighashType::Default
+                    ),
+                };
+                true
+            }))
+            .count();
+        if !sighash_all {
             return InputsCheck::Forged;
         }
     }
@@ -1027,6 +1068,7 @@ mod tests {
             &tx,
             &mut |op: &OutPoint| prevouts.remove(op),
             &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
         );
         assert_eq!(check, InputsCheck::Signed);
     }
@@ -1061,6 +1103,7 @@ mod tests {
             &tx,
             &mut |op: &OutPoint| prevouts.remove(op),
             &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
         );
         assert_eq!(check, InputsCheck::Unknown);
     }
@@ -1091,6 +1134,7 @@ mod tests {
             &tx,
             &mut |op: &OutPoint| prevouts.remove(op),
             &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
         );
         assert_eq!(check, InputsCheck::Forged);
     }
@@ -1113,7 +1157,49 @@ mod tests {
             &tx,
             &mut |op: &OutPoint| prevouts.remove(op),
             &|_: &OutPoint, _: &bitcoin::Script| false,
+            SigCheck::Valid,
         );
         assert_eq!(check, InputsCheck::NotOurs);
+    }
+
+    #[test]
+    fn replacement_requires_sighash_all() {
+        let sk = secret_key(0x01);
+        let (our_op, our_prevout) = our_coin(
+            &sk,
+            outpoint(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                0,
+            ),
+        );
+        let mut tx = spending_tx(&[our_op]);
+        sign_p2wpkh(
+            &mut tx,
+            0,
+            &our_prevout,
+            &sk,
+            sighash::EcdsaSighashType::None,
+        );
+        let mut prevouts = HashMap::from([(our_op, our_prevout.clone())]);
+        let secp = secp256k1::Secp256k1::verification_only();
+        // A signature not committing to the outputs is still a valid satisfaction, but must
+        // not be accepted before replacing the transaction.
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
+        );
+        assert_eq!(check, InputsCheck::Signed);
+        let mut prevouts = HashMap::from([(our_op, our_prevout)]);
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::ValidSighashAll,
+        );
+        assert_eq!(check, InputsCheck::Forged);
     }
 }

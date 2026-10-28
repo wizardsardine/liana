@@ -4,7 +4,7 @@
 
 mod utils;
 use crate::{
-    bitcoin::{check_our_inputs, Block, BlockChainTip, InputsCheck},
+    bitcoin::{check_our_inputs, Block, BlockChainTip, InputsCheck, SigCheck},
     config,
 };
 use liana::descriptors::LianaDescriptor;
@@ -967,6 +967,7 @@ impl BitcoinD {
             tx,
             &mut resolve_prevout,
             &|op: &bitcoin::OutPoint, _: &bitcoin::Script| our_outpoints.contains(op),
+            SigCheck::Valid,
         ) {
             InputsCheck::Signed => SpendCheck::Signed,
             // The transaction spends none, or not all, of the coins bitcoind said it spends.
