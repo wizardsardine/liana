@@ -288,7 +288,16 @@ impl BitcoinInterface for d::BitcoinD {
         _receive_index: ChildNumber,
         _change_index: ChildNumber,
     ) -> Result<Option<BlockChainTip>, SyncError> {
+        if let Some(error) = self.fatal_error() {
+            return Err(SyncError::Fatal(error));
+        }
         Ok(None)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.forged_spend().map(|txid| {
+            format!("bitcoind served a spend of our coins with invalid signatures: '{txid}'.")
+        })
     }
 
     fn received_coins(
@@ -389,7 +398,31 @@ impl BitcoinInterface for d::BitcoinD {
             }
         }
 
-        spent
+        // bitcoind must only ever relay consensus-valid transactions. Make sure the spends of
+        // our coins it reports are honestly signed, and report none of them if one isn't or if
+        // we could not check it: the endpoint is not to be trusted.
+        let mut verified = Vec::with_capacity(spent.len());
+        for (op, txid) in spent {
+            let res = match self.get_transaction(&txid) {
+                Some(res) => res,
+                None => {
+                    log::error!(
+                        "Could not get spending transaction '{}' from bitcoind.",
+                        txid
+                    );
+                    self.record_forged_spend(&txid);
+                    continue;
+                }
+            };
+            if matches!(
+                self.check_spent_tx(&txid, &res.tx, &op, outpoints),
+                d::SpendCheck::Signed
+            ) {
+                verified.push((op, txid));
+            }
+        }
+
+        verified
     }
 
     fn spent_coins(
@@ -402,6 +435,9 @@ impl BitcoinInterface for d::BitcoinD {
         let mut expired = Vec::new();
         // Cached calls to `gettransaction`.
         let mut tx_getter = CachedTxGetter::new(self);
+        // The coins whose spend we are asked about. Their spent outputs are the ones we know
+        // to be ours for the sanity check below.
+        let our_outpoints: Vec<bitcoin::OutPoint> = outpoints.iter().map(|(op, _)| *op).collect();
 
         for (op, txid) in outpoints {
             let res = if let Some(res) = tx_getter.get_transaction(txid) {
@@ -410,6 +446,16 @@ impl BitcoinInterface for d::BitcoinD {
                 log::error!("Could not get tx {} spending coin {}.", txid, op);
                 continue;
             };
+
+            // bitcoind must only ever relay consensus-valid transactions: make sure this spend
+            // of our coin is honestly signed, and report none of them if it isn't or if we
+            // could not check it.
+            if !matches!(
+                self.check_spent_tx(txid, &res.tx, op, &our_outpoints),
+                d::SpendCheck::Signed
+            ) {
+                continue;
+            }
 
             // If the transaction was confirmed, mark it as such.
             if let Some(block) = res.block {
@@ -436,6 +482,17 @@ impl BitcoinInterface for d::BitcoinD {
                 })
             });
             if let Some((txid, block)) = conflict {
+                // The conflicting transaction spends our coin too: sanity check it like the one
+                // it conflicts with before reporting it as the confirmed spender.
+                if tx_getter.get_transaction(&txid).map(|res| {
+                    matches!(
+                        self.check_spent_tx(&txid, &res.tx, op, &our_outpoints),
+                        d::SpendCheck::Signed
+                    )
+                }) != Some(true)
+                {
+                    continue;
+                }
                 spent.push((*op, txid, block.height, block.time));
                 continue;
             }
@@ -749,6 +806,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock()
             .unwrap()
             .sync_wallet(receive_index, change_index)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.lock().unwrap().fatal_error()
     }
 
     fn received_coins(
