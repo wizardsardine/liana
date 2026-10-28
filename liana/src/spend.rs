@@ -814,7 +814,7 @@ pub fn create_spend(
                 .update_change_psbt_out(&mut psbt_out);
         }
 
-        // TODO: shuffle once we have Taproot
+        // TODO: Shuffle transaction outputs.
         change_txo.value = change_amount;
         tx.output.push(change_txo);
         psbt_outs.push(psbt_out);
@@ -839,7 +839,7 @@ pub fn create_spend(
         tx.input.push(bitcoin::TxIn {
             previous_output: cand.outpoint,
             sequence,
-            // TODO: once we move to Taproot, anti-fee-sniping using nSequence
+            // TODO: Use nSequence for anti-fee-sniping.
             ..bitcoin::TxIn::default()
         });
 
