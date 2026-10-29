@@ -45,6 +45,8 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    /// Close the modal warning about the Bitcoin backend detected as untrustworthy.
+    CloseBackendFailureModal,
 }
 
 impl Close for Message {
