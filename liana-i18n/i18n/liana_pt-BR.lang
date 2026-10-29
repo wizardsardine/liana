@@ -2561,6 +2561,14 @@ transactions-rbf-descendants-some
 => "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
 => "As transações a seguir estão gastando uma ou mais saídas da transação que será substituída e serão descartadas quando a substituição for transmitida, junto com quaisquer outras transações que dependam delas:";;
 
+transactions-rbf-disabled-body
+=> "Its signatures don't match your coins, so the node you are connected to may be providing false data. Connect to a different node, ideally your own, in Settings > Node and check your payment."
+=> NONE;;
+
+transactions-rbf-disabled-title
+=> "This transaction can't be bumped or cancelled."
+=> NONE;;
+
 transactions-rbf-feerate-warning
 => "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"
 => "A taxa de transação deve ser maior que o valor anterior e menor ou igual a 1000 sats/vbyte";;
