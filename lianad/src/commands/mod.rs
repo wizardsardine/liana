@@ -6,7 +6,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::BitcoinInterface,
+    bitcoin::{tx_sanity_check, BitcoinInterface, TxSanityStatus},
     database::{
         Coin, CoinWithDefaultLabel, DatabaseConnection, DatabaseInterface, WalletTransaction,
     },
@@ -151,6 +151,8 @@ pub enum RbfErrorInfo {
     SuperfluousFeerate,
     TooLowFeerate(u64, u64),
     NotSignaling,
+    DishonestSpend,
+    UnfinalizablePsbt,
 }
 
 impl fmt::Display for RbfErrorInfo {
@@ -166,6 +168,14 @@ impl fmt::Display for RbfErrorInfo {
                 write!(f, "Feerate {r} too low for minimum feerate {m}.")
             }
             Self::NotSignaling => write!(f, "Replacement candidate does not signal for RBF."),
+            Self::DishonestSpend => write!(
+                f,
+                "Refusing to replace a transaction which does not verifiably spend our coins."
+            ),
+            Self::UnfinalizablePsbt => write!(
+                f,
+                "Replacement candidate PSBT cannot be finalized: it is not fully signed, or is malformed or malicious."
+            ),
         }
     }
 }
@@ -939,7 +949,8 @@ impl DaemonControl {
         Ok(())
     }
 
-    /// Load the spend candidate `txid`, from our wallet transactions or else its stored PSBT.
+    /// Load and sanity check the spend candidate `txid`, from our wallet transactions or else
+    /// its stored PSBT.
     fn rbf_candidate(&self, txid: &bitcoin::Txid) -> Result<bitcoin::Transaction, CommandError> {
         let mut db_conn = self.db.connection();
         let mut tx_getter = DbTxGetter::new(&self.db);
@@ -951,14 +962,33 @@ impl DaemonControl {
         {
             Some(tx) => tx,
             // Fall back to the stored PSBT, only for a spend which is not among our wallet
-            // transactions: never broadcast or evicted.
+            // transactions: never broadcast or evicted. Rebuild the signed transaction from it, so
+            // that it goes through the same checks.
             None => {
-                db_conn
+                let mut psbt = db_conn
                     .spend_tx(txid)
-                    .ok_or(CommandError::UnknownSpend(*txid))?
-                    .unsigned_tx
+                    .ok_or(CommandError::UnknownSpend(*txid))?;
+                psbt.finalize_mut(&self.secp)
+                    .map_err(|_| CommandError::RbfError(RbfErrorInfo::UnfinalizablePsbt))?;
+                psbt.extract_tx_unchecked_fee_rate()
             }
         };
+        // We may be about to rebuild a transaction we did not create ourselves. Refuse one that
+        // is not an honest spend of our coins: fully signed, and only with SIGHASH_ALL
+        // signatures so that our replacement conflicts with it whichever inputs and outputs
+        // its signatures committed to.
+        let mut resolve_prev_tx = |txid: &bitcoin::Txid| tx_getter.get_tx(txid);
+        if !matches!(
+            tx_sanity_check(
+                &self.secp,
+                &tx,
+                &mut resolve_prev_tx,
+                &|_: &bitcoin::OutPoint, _: &bitcoin::Script| true,
+            ),
+            TxSanityStatus::Signed
+        ) {
+            return Err(CommandError::RbfError(RbfErrorInfo::DishonestSpend));
+        }
         Ok(tx)
     }
 
@@ -983,8 +1013,9 @@ impl DaemonControl {
 
     /// Create PSBT to replace the given transaction using RBF.
     ///
-    /// `txid` must either point to a PSBT in our database (not necessarily broadcast) or an
-    /// unconfirmed spend transaction (whether or not any associated PSBT is saved in our database).
+    /// `txid` must either point to an unconfirmed spend transaction (whether or not any associated
+    /// PSBT is saved in our database) or, failing that, to a signed PSBT in our database (not
+    /// necessarily broadcast).
     ///
     /// `is_cancel` indicates whether to "cancel" the transaction by including only a single (change)
     /// output in the replacement or otherwise to keep the same (non-change) outputs and simply
@@ -1017,6 +1048,11 @@ impl DaemonControl {
         }
 
         let prev_tx = self.rbf_candidate(txid)?;
+        // Make sure the transaction we are about to replace is the one identified by the txid
+        // we were asked to replace.
+        if prev_tx.compute_txid() != *txid {
+            return Err(CommandError::UnknownSpend(*txid));
+        }
         if !prev_tx.is_explicitly_rbf() {
             return Err(CommandError::RbfError(RbfErrorInfo::NotSignaling));
         }
@@ -1645,16 +1681,17 @@ impl fmt::Display for CreateRecoveryWarning {
 mod tests {
     use super::*;
     use crate::{bitcoin::Block, database::BlockInfo, testutils::*};
-    use liana::spend::InsaneFeeInfo;
+    use liana::{signer::HotSigner, spend::InsaneFeeInfo};
 
     use bitcoin::{
         bip32::{self, ChildNumber},
         blockdata::transaction::{TxIn, TxOut, Version as TxVersion},
         locktime::absolute,
-        Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
+        secp256k1, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
+    use miniscript::descriptor::DescriptorPublicKey;
     use spend::{InsufficientFunds, DUST_OUTPUT_SATS};
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::str::FromStr;
 
     const DUST: u64 = DUST_OUTPUT_SATS;
 
@@ -2788,73 +2825,113 @@ mod tests {
 
     #[test]
     fn rbf_psbt() {
-        let dummy_op_a = bitcoin::OutPoint::from_str(
-            "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810:0",
+        const COIN_VALUE: u64 = 300_000;
+        let secp = secp256k1::Secp256k1::new();
+        // A wallet whose owner key we can sign with, so that the stored spend can be finalized.
+        let signer = HotSigner::from_str(
+            bitcoin::Network::Bitcoin,
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
         )
         .unwrap();
-        let mut dummy_bitcoind = DummyBitcoind::new();
-        // Transaction spends outpoint a.
-        let dummy_tx_a = bitcoin::Transaction {
-            version: TxVersion::TWO,
-            lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
-            input: vec![bitcoin::TxIn {
-                previous_output: dummy_op_a,
-                sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
-                ..bitcoin::TxIn::default()
-            }],
-            output: vec![],
-        };
-        // PSBT corresponding to the above transaction.
-        let dummy_psbt_a = Psbt {
-            unsigned_tx: dummy_tx_a.clone(),
-            version: 0,
-            xpub: BTreeMap::new(),
-            proprietary: BTreeMap::new(),
-            unknown: BTreeMap::new(),
-            inputs: vec![],
-            outputs: vec![],
-        };
-        let dummy_txid_a = dummy_psbt_a.unsigned_tx.compute_txid();
-        dummy_bitcoind.txs.insert(dummy_txid_a, (dummy_tx_a, None));
-        let ms = DummyLiana::new_timelock(dummy_bitcoind, DEFAULT_TIMELOCK);
-        let control = &ms.control();
-        let mut db_conn = control.db().lock().unwrap().connection();
-        // The spend needs to be in DB before using RBF.
-        assert_eq!(
-            control.rbf_psbt(&dummy_txid_a, true, None),
-            Err(CommandError::UnknownSpend(dummy_txid_a))
+        let owner_key = descriptors::PathInfo::Single(
+            DescriptorPublicKey::from_str(&format!(
+                "[{}]{}/<0;1>/*",
+                signer.fingerprint(&secp),
+                signer.xpub_at(&bip32::DerivationPath::master(), &secp)
+            ))
+            .unwrap(),
         );
-        // Store the spend.
-        db_conn.store_spend(&dummy_psbt_a);
-        // Now add the coin to DB, but as spent.
-        db_conn.new_unspent_coins(&[Coin {
-            outpoint: dummy_op_a,
+        let heir_key = descriptors::PathInfo::Single(
+            DescriptorPublicKey::from_str(TEST_HEIR_KEY_SINGLE).unwrap(),
+        );
+        let policy = descriptors::LianaPolicy::new_legacy(
+            owner_key,
+            [(DEFAULT_TIMELOCK, heir_key)].iter().cloned().collect(),
+        )
+        .unwrap();
+        let desc = descriptors::LianaDescriptor::new(policy);
+        // A deposit paying two of our receive addresses. Coin b keeps the deposit among our
+        // wallet transactions once coin a is removed.
+        let receive_txout = |index: u32| TxOut {
+            value: Amount::from_sat(COIN_VALUE),
+            script_pubkey: desc
+                .receive_descriptor()
+                .derive(ChildNumber::from(index), &secp)
+                .script_pubkey(),
+        };
+        let deposit_tx = Transaction {
+            version: TxVersion::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn::default()],
+            output: vec![receive_txout(11), receive_txout(12)],
+        };
+        let op_a = OutPoint::new(deposit_tx.compute_txid(), 0);
+        let op_b = OutPoint::new(deposit_tx.compute_txid(), 1);
+        let coin = |outpoint: OutPoint, derivation_index: u32| Coin {
+            outpoint,
             is_immature: false,
             block_info: Some(BlockInfo {
                 height: 174500,
                 time: 174500,
             }),
-            amount: bitcoin::Amount::from_sat(300_000),
-            derivation_index: bip32::ChildNumber::from(11),
+            amount: Amount::from_sat(COIN_VALUE),
+            derivation_index: ChildNumber::from(derivation_index),
             is_change: false,
-            spend_txid: Some(dummy_txid_a),
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: false,
+        };
+        let ms = DummyLiana::new(
+            DummyBitcoind::new(),
+            DummyDatabase::new(desc.clone()),
+            false,
+        );
+        let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+        db_conn.new_txs(&[deposit_tx]);
+        db_conn.new_unspent_coins(&[coin(op_a, 11), coin(op_b, 12)]);
+        // A spend of coin a, signed by the owner.
+        let destinations: HashMap<bitcoin::Address<address::NetworkUnchecked>, u64> =
+            HashMap::from([(
+                bitcoin::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap(),
+                100_000,
+            )]);
+        let CreateSpendResult::Success { psbt, .. } = control
+            .create_spend(&destinations, &[op_a], 1, None)
+            .unwrap()
+        else {
+            panic!("expect successful spend creation")
+        };
+        let psbt = signer.sign_psbt(psbt, &secp).unwrap();
+        let txid_a = psbt.unsigned_tx.compute_txid();
+        // The spend needs to be in DB before using RBF.
+        assert_eq!(
+            control.rbf_psbt(&txid_a, true, None),
+            Err(CommandError::UnknownSpend(txid_a))
+        );
+        // Store the spend.
+        db_conn.store_spend(&psbt);
+        // Now mark the coin as spent.
+        db_conn.remove_coins(&[op_a]);
+        db_conn.new_unspent_coins(&[Coin {
+            spend_txid: Some(txid_a),
             spend_block: Some(BlockInfo {
                 height: 184500,
                 time: 184500,
             }),
-            is_from_self: false,
+            ..coin(op_a, 11)
         }]);
         // The coin is spent so we cannot RBF.
         assert_eq!(
-            control.rbf_psbt(&dummy_txid_a, true, None),
-            Err(CommandError::AlreadySpent(dummy_op_a))
+            control.rbf_psbt(&txid_a, true, None),
+            Err(CommandError::AlreadySpent(op_a))
         );
-        db_conn.unspend_coins(&[dummy_op_a]);
+        db_conn.unspend_coins(&[op_a]);
         // Now remove the coin.
-        db_conn.remove_coins(&[dummy_op_a]);
+        db_conn.remove_coins(&[op_a]);
         assert_eq!(
-            control.rbf_psbt(&dummy_txid_a, true, None),
-            Err(CommandError::UnknownOutpoint(dummy_op_a))
+            control.rbf_psbt(&txid_a, true, None),
+            Err(CommandError::UnknownOutpoint(op_a))
         );
         // A target feerate not higher than the previous should return an error. This is tested in
         // the functional tests.

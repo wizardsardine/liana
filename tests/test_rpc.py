@@ -1652,8 +1652,9 @@ def test_rbfpsbt_bump_fee(lianad, bitcoind):
         lianad.rpc.rbfpsbt(first_txid, False, 1)
     # Now save the PSBT.
     lianad.rpc.updatespend(first_res["psbt"])
-    # The RBF command succeeds even if transaction has not been signed.
-    lianad.rpc.rbfpsbt(first_txid, False, 2)
+    # The RBF command fails if the transaction has not been signed, as it cannot be checked.
+    with pytest.raises(RpcError, match="Replacement candidate PSBT cannot be finalized"):
+        lianad.rpc.rbfpsbt(first_txid, False, 2)
     # The RBF command also succeeds if transaction has been signed but not broadcast.
     first_psbt = lianad.signer.sign_psbt(first_psbt)
     lianad.rpc.updatespend(first_psbt.to_base64())
@@ -2029,6 +2030,10 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
 
 def test_checkrbf(lianad, bitcoind):
     """Test the sanity checks run on a replacement candidate."""
+    # TODO: cover a candidate which does not verifiably spend our coins (invalid signature,
+    # signature not committing to the whole transaction, previous transaction not matching
+    # its txid). The functional test framework cannot store one in our database yet.
+
     # An unknown transaction cannot be replaced.
     unknown_txid = "00" * 32
     assert lianad.rpc.checkrbf(unknown_txid) == {
@@ -2052,6 +2057,11 @@ def test_checkrbf(lianad, bitcoind):
     psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
 
+    # A stored PSBT which is not signed cannot be checked.
+    lianad.rpc.updatespend(res["psbt"])
+    res = lianad.rpc.checkrbf(txid)
+    assert res["replaceable"] is False
+    assert "Replacement candidate PSBT cannot be finalized" in res["reason"]
     # A signed PSBT can be checked, even if not broadcast.
     psbt = lianad.signer.sign_psbt(psbt)
     lianad.rpc.updatespend(psbt.to_base64())
