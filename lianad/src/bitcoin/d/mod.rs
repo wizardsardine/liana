@@ -4,7 +4,7 @@
 
 mod utils;
 use crate::{
-    bitcoin::{Block, BlockChainTip},
+    bitcoin::{check_our_inputs, Block, BlockChainTip, InputsCheck, SigCheck},
     config,
 };
 use liana::descriptors::LianaDescriptor;
@@ -16,7 +16,7 @@ use std::{
     convert::TryInto,
     fs, io,
     str::FromStr,
-    thread,
+    sync, thread,
     time::Duration,
 };
 
@@ -206,6 +206,33 @@ impl std::fmt::Display for WalletError {
     }
 }
 
+/// The outcome of the sanity check of a spend of our coins served by bitcoind.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SpendCheck {
+    /// Every input of the spend which consumes one of our coins carries a valid satisfaction.
+    Signed,
+    /// Some of the data needed to check the spend is unavailable, for instance the prevout of
+    /// a transaction which is neither part of the watchonly wallet nor known to a non-pruned
+    /// node. The spend must not be reported, but bitcoind is not necessarily dishonest.
+    Unknown,
+    /// bitcoind served a spend of our coins with invalid signatures, or a transaction which
+    /// does not actually spend the coin it claims to spend. It is not an honest bitcoind.
+    Forged,
+}
+
+/// State of the sanity check of the spends of our coins reported by bitcoind.
+#[derive(Default)]
+struct SpendSanity {
+    /// The spends of our coins already checked, with the outpoints of our coins they were
+    /// checked against. A spend is checked again if it is later found to spend another of our
+    /// coins.
+    checked: HashMap<bitcoin::Txid, HashSet<bitcoin::OutPoint>>,
+    /// The first spend of our coins served with invalid signatures, if any. bitcoind only
+    /// relays consensus-valid transactions, so this means the endpoint is not an honest
+    /// bitcoind and none of what it serves can be trusted.
+    forged: Option<bitcoin::Txid>,
+}
+
 pub struct BitcoinD {
     /// Client for generalistic calls.
     node_client: Client,
@@ -216,6 +243,8 @@ pub struct BitcoinD {
     watchonly_wallet_path: String,
     /// How many times we'll retry upon failure to send a request.
     retries: usize,
+    /// Sanity check of the spends of our coins it reports.
+    spend_sanity: sync::Mutex<SpendSanity>,
 }
 
 macro_rules! params {
@@ -289,6 +318,7 @@ impl BitcoinD {
             watchonly_client: dummy_wo_client,
             watchonly_wallet_path: watchonly_wallet_path.clone(),
             retries: 0,
+            spend_sanity: sync::Mutex::new(SpendSanity::default()),
         };
         log::info!("Checking the connection to bitcoind.");
         dummy_bitcoind.check_connection()?;
@@ -324,6 +354,7 @@ impl BitcoinD {
             watchonly_client,
             watchonly_wallet_path,
             retries: BITCOIND_RETRY_LIMIT,
+            spend_sanity: sync::Mutex::new(SpendSanity::default()),
         })
     }
 
@@ -863,12 +894,138 @@ impl BitcoinD {
 
     pub fn get_transaction(&self, txid: &bitcoin::Txid) -> Option<GetTxRes> {
         // TODO: Maybe assert we got a -5 error, and not any other kind of error?
-        self.make_faillible_wallet_request(
-            "gettransaction",
-            params!(Json::String(txid.to_string())),
-        )
-        .ok()
-        .map(|res| res.into())
+        let res = self
+            .make_faillible_wallet_request(
+                "gettransaction",
+                params!(Json::String(txid.to_string())),
+            )
+            .ok()
+            .map(GetTxRes::from)?;
+        // bitcoind must only ever serve the transaction we asked for. Refuse one which computes
+        // to another txid: the endpoint is not to be trusted.
+        if res.tx.compute_txid() != *txid {
+            log::error!(
+                "bitcoind served a transaction computing to '{}' instead of '{}'.",
+                res.tx.compute_txid(),
+                txid
+            );
+            return None;
+        }
+        Some(res)
+    }
+
+    /// Whether bitcoind served us a spend of our coins with invalid signatures.
+    pub fn forged_spend(&self) -> Option<bitcoin::Txid> {
+        self.spend_sanity.lock().unwrap().forged
+    }
+
+    pub fn record_forged_spend(&self, txid: &bitcoin::Txid) {
+        let mut sanity = self.spend_sanity.lock().unwrap();
+        if sanity.forged.is_none() {
+            sanity.forged = Some(*txid);
+        }
+    }
+
+    /// Sanity check a transaction which bitcoind reports as spending the coin at
+    /// `spent_outpoint`: the signatures spending our coins must be valid. bitcoind only relays
+    /// consensus-valid transactions, so a spend of our coins with invalid signatures, or one
+    /// which does not actually spend the coin it claims to, means the endpoint is not an
+    /// honest bitcoind: record it and refuse the spend.
+    pub fn check_spent_tx(
+        &self,
+        txid: &bitcoin::Txid,
+        tx: &bitcoin::Transaction,
+        spent_outpoint: &bitcoin::OutPoint,
+        our_outpoints: &[bitcoin::OutPoint],
+    ) -> SpendCheck {
+        let mut sanity = self.spend_sanity.lock().unwrap();
+        if sanity.forged.is_some() {
+            return SpendCheck::Forged;
+        }
+        if sanity
+            .checked
+            .get(txid)
+            .is_some_and(|checked| checked.contains(spent_outpoint))
+        {
+            return SpendCheck::Signed;
+        }
+        let our_outpoints: HashSet<bitcoin::OutPoint> = our_outpoints.iter().copied().collect();
+        let mut tx_getter = CachedTxGetter::new(self);
+        // Fall back to the node client to resolve the prevouts of transactions which are not
+        // part of the watchonly wallet. On a pruned node we may not be able to, and the spend
+        // is then left unchecked rather than reported.
+        let mut resolve_prevout = |op: &bitcoin::OutPoint| {
+            tx_getter
+                .get_transaction(&op.txid)
+                .map(|res| res.tx)
+                .or_else(|| self.get_raw_transaction(&op.txid))
+                .and_then(|prev_tx| prev_tx.output.get(op.vout as usize).cloned())
+        };
+        let secp = bitcoin::secp256k1::Secp256k1::verification_only();
+        let check = match check_our_inputs(
+            &secp,
+            tx,
+            &mut resolve_prevout,
+            &|op: &bitcoin::OutPoint, _: &bitcoin::Script| our_outpoints.contains(op),
+            SigCheck::Valid,
+        ) {
+            InputsCheck::Signed => SpendCheck::Signed,
+            // The transaction spends none, or not all, of the coins bitcoind said it spends.
+            InputsCheck::NotOurs => {
+                log::error!(
+                    "bitcoind served transaction '{}' as spending coin '{}' but it does not spend it.",
+                    txid,
+                    spent_outpoint
+                );
+                SpendCheck::Forged
+            }
+            InputsCheck::Unknown => {
+                log::error!(
+                    "Could not gather the data to check the signatures of spend '{}' of coin '{}'. Refusing the spend for now.",
+                    txid,
+                    spent_outpoint
+                );
+                SpendCheck::Unknown
+            }
+            InputsCheck::Forged => SpendCheck::Forged,
+        };
+        if let SpendCheck::Signed = check {
+            sanity.checked.entry(*txid).or_default().extend(
+                tx.input
+                    .iter()
+                    .map(|txin| txin.previous_output)
+                    .filter(|op| our_outpoints.contains(op)),
+            );
+        }
+        if let SpendCheck::Forged = check {
+            if sanity.forged.is_none() {
+                sanity.forged = Some(*txid);
+            }
+        }
+        check
+    }
+
+    /// Get a transaction, even one which is not part of the watchonly wallet.
+    fn get_raw_transaction(&self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
+        let hex = self
+            .make_fallible_node_request(
+                "getrawtransaction",
+                params!(Json::String(txid.to_string())),
+            )
+            .ok()?
+            .as_str()
+            .map(str::to_string)?;
+        let bytes = Vec::from_hex(&hex).ok()?;
+        let tx: bitcoin::Transaction = bitcoin::consensus::encode::deserialize(&bytes).ok()?;
+        if tx.compute_txid() != *txid {
+            log::error!(
+                "bitcoind served a transaction computing to '{}' instead of '{}'.",
+                tx.compute_txid(),
+                txid
+            );
+            return None;
+        }
+        Some(tx)
     }
 
     /// Efficient check that a coin is spent.
@@ -1759,8 +1916,62 @@ mod tests {
         ));
         assert!(current_descs_contain_desc_timestamp(
             &current_descs,
+            recv_desc,
+            1598918400
+        ));
+        assert!(current_descs_contain_desc_timestamp(
+            &current_descs,
             change_desc,
             1598918380
         ));
+    }
+
+    /// A bitcoind interface with clients pointed at nothing. Enough to check the spends
+    /// sanity state, as long as no RPC call is made.
+    fn dummy_bitcoind() -> BitcoinD {
+        let dummy_client = || {
+            let transport = MinreqHttpTransport::builder()
+                .url("http://127.0.0.1:1")
+                .unwrap()
+                .timeout(Duration::from_secs(1))
+                .build();
+            Client::with_transport(transport)
+        };
+        BitcoinD {
+            node_client: dummy_client(),
+            sendonly_client: dummy_client(),
+            watchonly_client: dummy_client(),
+            watchonly_wallet_path: "test".to_string(),
+            retries: 0,
+            spend_sanity: sync::Mutex::new(SpendSanity::default()),
+        }
+    }
+
+    #[test]
+    fn forged_spend_on_unrelated_transaction() {
+        let bitcoind = dummy_bitcoind();
+        // bitcoind claims this transaction spends our coin, but it spends nothing at all.
+        let tx = bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![],
+            output: vec![bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(1_000),
+                script_pubkey: bitcoin::ScriptBuf::new(),
+            }],
+        };
+        let txid = tx.compute_txid();
+        let coin_op = bitcoin::OutPoint::new(
+            bitcoin::Txid::from_str(
+                "3753a1d74c0af8dd0a0f3b763c14faf3bd9ed03cbdf33337a074fb0e9f6c7810",
+            )
+            .unwrap(),
+            0,
+        );
+        assert_eq!(
+            bitcoind.check_spent_tx(&txid, &tx, &coin_op, &[coin_op]),
+            SpendCheck::Forged
+        );
+        assert_eq!(bitcoind.forged_spend(), Some(txid));
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
+    bitcoin::{BitcoinInterface, BlockChainTip, SyncError, UTxO, UTxOAddress},
     database::{Coin, DatabaseConnection, DatabaseInterface, LabelItem},
 };
 
@@ -34,7 +34,7 @@ fn update_coins(
     previous_tip: &BlockChainTip,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-) -> UpdatedCoins {
+) -> Result<UpdatedCoins, SyncError> {
     let network = db_conn.network();
     let curr_coins = db_conn.coins(&[], &[]);
     log::debug!("Current coins: {:?}", curr_coins);
@@ -155,14 +155,20 @@ fn update_coins(
     let (spent, expired_spending) = bit.spent_coins(spending_coins.as_slice());
     log::debug!("Newly spent coins: {:?}", spent);
 
-    UpdatedCoins {
+    // The backend may have served us a spend of our coins with invalid signatures while we
+    // updated the state of our coins. Make sure not to record anything it says anymore.
+    if let Some(error) = bit.fatal_error() {
+        return Err(SyncError::Fatal(error));
+    }
+
+    Ok(UpdatedCoins {
         received,
         confirmed,
         expired,
         spending,
         expired_spending,
         spent,
-    }
+    })
 }
 
 // Add new deposit and spend transactions to the database.
@@ -354,7 +360,7 @@ fn updates(
     bit: &mut impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-) {
+) -> Result<(), SyncError> {
     // Check if there was a new block before we update our state.
     //
     // Some backends (such as Electrum) need to perform an explicit sync to provide updated data
@@ -398,7 +404,10 @@ fn updates(
             }
             return updates(db_conn, bit, descs, secp);
         }
-        Err(e) => {
+        // A fatal error means the backend is unrecoverably out of sync, for instance a
+        // malicious Electrum server. Hand it over so that the poller stops polling.
+        Err(e @ SyncError::Fatal(_)) => return Err(e),
+        Err(SyncError::Transient(e)) => {
             log::error!("Error syncing wallet: '{}'.", e);
             thread::sleep(time::Duration::from_secs(2));
             return updates(db_conn, bit, descs, secp);
@@ -407,7 +416,7 @@ fn updates(
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp);
+    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp)?;
 
     // If the tip changed while we were polling our Bitcoin interface, start over.
     if bit.chain_tip() != latest_tip {
@@ -436,6 +445,7 @@ fn updates(
     }
 
     log::debug!("Updates done.");
+    Ok(())
 }
 
 // Check if there is any rescan of the backend ongoing or one that just finished.
@@ -444,7 +454,7 @@ fn rescan_check(
     bit: &mut impl BitcoinInterface,
     descs: &[descriptors::SinglePathLianaDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-) {
+) -> Result<(), SyncError> {
     log::debug!("Checking the state of an ongoing rescan if there is any");
 
     // Check if there is an ongoing rescan. If there isn't and we previously asked for a rescan of
@@ -457,6 +467,7 @@ fn rescan_check(
         if rescan_timestamp.is_none() {
             log::warn!("Backend is rescanning but we didn't ask for it.");
         }
+        Ok(())
     } else if let Some(timestamp) = rescan_timestamp {
         log::info!("Rescan completed on the backend.");
         // TODO: we could check if the timestamp of the descriptors in the Bitcoin backend are
@@ -471,7 +482,7 @@ fn rescan_check(
                     "Could not retrieve block height for timestamp '{}'",
                     timestamp
                 );
-                return;
+                return Ok(());
             }
         };
         db_conn.rollback_tip(&rescan_tip);
@@ -483,6 +494,7 @@ fn rescan_check(
         updates(db_conn, bit, descs, secp)
     } else {
         log::debug!("No ongoing rescan.");
+        Ok(())
     }
 }
 
@@ -512,10 +524,10 @@ pub fn poll(
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     descs: &[descriptors::SinglePathLianaDesc],
-) {
+) -> Result<(), SyncError> {
     let mut db_conn = db.connection();
-    updates(&mut db_conn, bit, descs, secp);
-    rescan_check(&mut db_conn, bit, descs, secp);
+    updates(&mut db_conn, bit, descs, secp)?;
+    rescan_check(&mut db_conn, bit, descs, secp)?;
     let now: u32 = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
         .expect("current system time must be later than epoch")
@@ -523,6 +535,7 @@ pub fn poll(
         .try_into()
         .expect("system clock year is earlier than 2106");
     db_conn.set_last_poll(now);
+    Ok(())
 }
 
 #[cfg(test)]

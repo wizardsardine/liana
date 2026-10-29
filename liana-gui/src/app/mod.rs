@@ -23,7 +23,7 @@ use tracing::{error, info, warn};
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
     component::{network_banner, panels::home::WalletOrigin},
-    widget::{Column, Element},
+    widget::{modal::Modal, Column, Element},
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
@@ -167,6 +167,8 @@ pub struct App<S: SettingsTrait = LianaSettings> {
     internal_bitcoind: Option<Bitcoind>,
 
     panels: Panels<S>,
+    /// Whether the user closed the modal warning about the backend detected as untrustworthy.
+    backend_failure_modal_closed: bool,
 }
 
 /// Type alias for the standard Liana application.
@@ -217,6 +219,7 @@ impl<S: SettingsTrait> App<S> {
                 daemon,
                 wallet,
                 internal_bitcoind,
+                backend_failure_modal_closed: false,
             },
             cmd,
         )
@@ -397,6 +400,7 @@ impl<S: SettingsTrait> App<S> {
                         rescan_progress: info.rescan_progress,
                         sync_progress: info.sync,
                         last_poll_timestamp: info.last_poll_timestamp,
+                        backend_failure: info.backend_failure,
                         last_tick: tick,
                     })
                 },
@@ -575,6 +579,10 @@ impl<S: SettingsTrait> App<S> {
                 Task::none()
             }
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
+            Message::View(view::Message::CloseBackendFailureModal) => {
+                self.backend_failure_modal_closed = true;
+                Task::none()
+            }
             _ => self
                 .panels
                 .current_mut()
@@ -614,7 +622,22 @@ impl<S: SettingsTrait> App<S> {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let content = self.panels.current().view(&self.cache).map(Message::View);
+        let content = self.panels.current().view(&self.cache);
+        let content = match self
+            .cache
+            .daemon_cache
+            .backend_failure
+            .as_ref()
+            .filter(|_| !self.backend_failure_modal_closed)
+        {
+            Some(reason) => Modal::new(
+                content,
+                view::backend_failure_modal(reason, view::Message::CloseBackendFailureModal),
+            )
+            .into(),
+            None => content,
+        }
+        .map(Message::View);
         if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children(vec![network_banner(self.cache.network).into(), content]).into()
         } else {

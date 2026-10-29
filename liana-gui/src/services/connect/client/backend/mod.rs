@@ -627,6 +627,8 @@ impl Daemon for BackendWalletClient {
             last_poll_timestamp: None,
             receive_index: wallet.deposit_derivation_index,
             change_index: wallet.change_derivation_index,
+            // The remote backend is trusted, its client never reports a failure.
+            backend_failure: None,
         })
     }
 

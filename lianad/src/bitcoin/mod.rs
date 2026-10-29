@@ -12,7 +12,15 @@ use liana::descriptors;
 
 use std::{fmt, sync};
 
-use miniscript::bitcoin::{self, address, bip32::ChildNumber};
+use miniscript::{
+    bitcoin::{
+        self, address,
+        bip32::ChildNumber,
+        sighash::{self, EcdsaSighashType, TapSighashType},
+    },
+    interpreter::KeySigPair,
+    Interpreter,
+};
 
 // A spent coin's outpoint together with its spend transaction's txid, height and time.
 type SpentCoin = (bitcoin::OutPoint, bitcoin::Txid, i32, u32);
@@ -40,9 +48,130 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
+/// An error met while syncing the wallet with the Bitcoin backend.
+#[derive(Debug)]
+pub enum SyncError {
+    /// The backend is unrecoverably out of sync, for instance an Electrum server which lied
+    /// to us about the state of our coins. The poller must stop polling it.
+    Fatal(String),
+    /// Any other error, polling the backend may be retried.
+    Transient(String),
+}
+
+impl fmt::Display for SyncError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SyncError::Fatal(e) | SyncError::Transient(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// How strict the check on the signatures spending our coins must be.
+#[derive(Clone, Copy)]
+pub enum SigCheck {
+    /// The satisfaction of each input spending our coins must be valid.
+    Valid,
+    /// Additionally, every signature must commit to the whole transaction (SIGHASH_ALL). Needed
+    /// before replacing a transaction, so that the replacement conflicts with it under BIP125
+    /// rules whichever inputs and outputs its signatures committed to.
+    ValidSighashAll,
+}
+
+/// The outcome of checking the inputs of a transaction which may spend our coins.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InputsCheck {
+    /// None of the resolved prevouts is one of our coins.
+    NotOurs,
+    /// Some prevout could not be resolved, so we cannot tell whether the inputs spending our
+    /// coins are honestly signed.
+    Unknown,
+    /// Every input spending our coins carries a valid satisfaction.
+    Signed,
+    /// At least one input spending one of our coins carries an invalid satisfaction.
+    Forged,
+}
+
+/// Check the inputs of `tx` spending prevouts for which `is_ours` returns true. The spent
+/// outputs are resolved with `resolve_prevout`; one we cannot resolve makes the check
+/// inconclusive, as we cannot tell whether the input is honest.
+pub fn check_our_inputs(
+    secp: &bitcoin::secp256k1::Secp256k1<bitcoin::secp256k1::VerifyOnly>,
+    tx: &bitcoin::Transaction,
+    resolve_prevout: &mut dyn FnMut(&bitcoin::OutPoint) -> Option<bitcoin::TxOut>,
+    is_ours: &dyn Fn(&bitcoin::OutPoint, &bitcoin::Script) -> bool,
+    check: SigCheck,
+) -> InputsCheck {
+    let mut prev_txouts: Vec<Option<bitcoin::TxOut>> = Vec::with_capacity(tx.input.len());
+    let mut our_inputs = Vec::new();
+    for (index, txin) in tx.input.iter().enumerate() {
+        let prev_txout = resolve_prevout(&txin.previous_output);
+        if prev_txout
+            .as_ref()
+            .is_some_and(|txout| is_ours(&txin.previous_output, &txout.script_pubkey))
+        {
+            our_inputs.push(index);
+        }
+        prev_txouts.push(prev_txout);
+    }
+    if our_inputs.is_empty() {
+        return if prev_txouts.iter().all(Option::is_some) {
+            InputsCheck::NotOurs
+        } else {
+            InputsCheck::Unknown
+        };
+    }
+    let Some(prev_txouts) = prev_txouts.into_iter().collect::<Option<Vec<_>>>() else {
+        return InputsCheck::Unknown;
+    };
+    let prevouts = sighash::Prevouts::All(&prev_txouts);
+    for &index in &our_inputs {
+        let txin = &tx.input[index];
+        let prev_txout = &prev_txouts[index];
+        let interpreter = match Interpreter::from_txdata(
+            &prev_txout.script_pubkey,
+            &txin.script_sig,
+            &txin.witness,
+            txin.sequence,
+            tx.lock_time,
+        ) {
+            Ok(interpreter) => interpreter,
+            Err(_) => return InputsCheck::Forged,
+        };
+        if !interpreter
+            .iter(secp, tx, index, &prevouts)
+            .all(|res| res.is_ok())
+        {
+            return InputsCheck::Forged;
+        }
+        if matches!(check, SigCheck::Valid) {
+            continue;
+        }
+        // The satisfaction is valid: walk it once more with signature checking disabled to
+        // collect the signatures the interpreter meets, and require each of them to commit
+        // to the whole transaction.
+        let mut sighash_all = true;
+        let _ = interpreter
+            .iter_custom(Box::new(|keysig| {
+                sighash_all &= match keysig {
+                    KeySigPair::Ecdsa(_, sig) => sig.sighash_type == EcdsaSighashType::All,
+                    KeySigPair::Schnorr(_, sig) => matches!(
+                        sig.sighash_type,
+                        TapSighashType::All | TapSighashType::Default
+                    ),
+                };
+                true
+            }))
+            .count();
+        if !sighash_all {
+            return InputsCheck::Forged;
+        }
+    }
+    InputsCheck::Signed
+}
+
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
-    fn genesis_block_timestamp(&self) -> u32;
+    fn genesis_block_timestamp(&self) -> Result<u32, String>;
 
     fn genesis_block(&self) -> BlockChainTip;
 
@@ -69,7 +198,7 @@ pub trait BitcoinInterface: Send {
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String>;
+    ) -> Result<Option<BlockChainTip>, SyncError>;
 
     /// Get coins received since the specified tip.
     fn received_coins(
@@ -133,16 +262,24 @@ pub trait BitcoinInterface: Send {
     ///
     /// Returns `None` if the transaction is not in the mempool.
     fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry>;
+
+    /// Whether the backend served data it can no longer be trusted for, for instance a spend
+    /// of our coins with invalid signatures. The poller must stop polling it. The string is
+    /// the reason, for display.
+    fn fatal_error(&self) -> Option<String> {
+        None
+    }
 }
 
 impl BitcoinInterface for d::BitcoinD {
-    fn genesis_block_timestamp(&self) -> u32 {
-        self.get_block_stats(
-            self.get_block_hash(0)
-                .expect("Genesis block hash must always be there"),
-        )
-        .expect("Genesis block must always be there")
-        .time
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        Ok(self
+            .get_block_stats(
+                self.get_block_hash(0)
+                    .expect("Genesis block hash must always be there"),
+            )
+            .expect("Genesis block must always be there")
+            .time)
     }
 
     fn genesis_block(&self) -> BlockChainTip {
@@ -172,8 +309,17 @@ impl BitcoinInterface for d::BitcoinD {
         &mut self,
         _receive_index: ChildNumber,
         _change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
+        if let Some(error) = self.fatal_error() {
+            return Err(SyncError::Fatal(error));
+        }
         Ok(None)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.forged_spend().map(|txid| {
+            format!("bitcoind served a spend of our coins with invalid signatures: '{txid}'.")
+        })
     }
 
     fn received_coins(
@@ -274,7 +420,31 @@ impl BitcoinInterface for d::BitcoinD {
             }
         }
 
-        spent
+        // bitcoind must only ever relay consensus-valid transactions. Make sure the spends of
+        // our coins it reports are honestly signed, and report none of them if one isn't or if
+        // we could not check it: the endpoint is not to be trusted.
+        let mut verified = Vec::with_capacity(spent.len());
+        for (op, txid) in spent {
+            let res = match self.get_transaction(&txid) {
+                Some(res) => res,
+                None => {
+                    log::error!(
+                        "Could not get spending transaction '{}' from bitcoind.",
+                        txid
+                    );
+                    self.record_forged_spend(&txid);
+                    continue;
+                }
+            };
+            if matches!(
+                self.check_spent_tx(&txid, &res.tx, &op, outpoints),
+                d::SpendCheck::Signed
+            ) {
+                verified.push((op, txid));
+            }
+        }
+
+        verified
     }
 
     fn spent_coins(
@@ -287,6 +457,9 @@ impl BitcoinInterface for d::BitcoinD {
         let mut expired = Vec::new();
         // Cached calls to `gettransaction`.
         let mut tx_getter = CachedTxGetter::new(self);
+        // The coins whose spend we are asked about. Their spent outputs are the ones we know
+        // to be ours for the sanity check below.
+        let our_outpoints: Vec<bitcoin::OutPoint> = outpoints.iter().map(|(op, _)| *op).collect();
 
         for (op, txid) in outpoints {
             let res = if let Some(res) = tx_getter.get_transaction(txid) {
@@ -295,6 +468,16 @@ impl BitcoinInterface for d::BitcoinD {
                 log::error!("Could not get tx {} spending coin {}.", txid, op);
                 continue;
             };
+
+            // bitcoind must only ever relay consensus-valid transactions: make sure this spend
+            // of our coin is honestly signed, and report none of them if it isn't or if we
+            // could not check it.
+            if !matches!(
+                self.check_spent_tx(txid, &res.tx, op, &our_outpoints),
+                d::SpendCheck::Signed
+            ) {
+                continue;
+            }
 
             // If the transaction was confirmed, mark it as such.
             if let Some(block) = res.block {
@@ -321,6 +504,17 @@ impl BitcoinInterface for d::BitcoinD {
                 })
             });
             if let Some((txid, block)) = conflict {
+                // The conflicting transaction spends our coin too: sanity check it like the one
+                // it conflicts with before reporting it as the confirmed spender.
+                if tx_getter.get_transaction(&txid).map(|res| {
+                    matches!(
+                        self.check_spent_tx(&txid, &res.tx, op, &our_outpoints),
+                        d::SpendCheck::Signed
+                    )
+                }) != Some(true)
+                {
+                    continue;
+                }
                 spent.push((*op, txid, block.height, block.time));
                 continue;
             }
@@ -405,13 +599,32 @@ impl BitcoinInterface for d::BitcoinD {
 }
 
 impl BitcoinInterface for electrum::Electrum {
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        self.client()
+            .genesis_block_timestamp()
+            .map_err(|e| e.to_string())
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.fatal_error()
+    }
+
     fn sync_wallet(
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
-        self.sync_wallet(receive_index, change_index)
-            .map_err(|e| e.to_string())
+    ) -> Result<Option<BlockChainTip>, SyncError> {
+        self.sync_wallet(receive_index, change_index).map_err(|e| {
+            let error = e.to_string();
+            match e {
+                electrum::ElectrumError::MaliciousServer(_)
+                | electrum::ElectrumError::Client(electrum::client::Error::Disconnected) => {
+                    SyncError::Fatal(error)
+                }
+                electrum::ElectrumError::Client(_)
+                | electrum::ElectrumError::GenesisHashMismatch(..) => SyncError::Transient(error),
+            }
+        })
     }
 
     fn received_coins(
@@ -507,12 +720,6 @@ impl BitcoinInterface for electrum::Electrum {
         (spent, expired_spending)
     }
 
-    fn genesis_block_timestamp(&self) -> u32 {
-        self.client()
-            .genesis_block_timestamp()
-            .expect("Genesis block timestamp must always be there")
-    }
-
     fn genesis_block(&self) -> BlockChainTip {
         self.client()
             .genesis_block()
@@ -593,7 +800,7 @@ impl BitcoinInterface for electrum::Electrum {
 
 // FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
-    fn genesis_block_timestamp(&self) -> u32 {
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
         self.lock().unwrap().genesis_block_timestamp()
     }
 
@@ -617,10 +824,14 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
         self.lock()
             .unwrap()
             .sync_wallet(receive_index, change_index)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.lock().unwrap().fatal_error()
     }
 
     fn received_coins(
@@ -731,4 +942,264 @@ pub struct Coin {
     pub block_info: Option<BlockInfo>,
     pub spend_txid: Option<bitcoin::Txid>,
     pub spend_block: Option<BlockInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::{collections::HashMap, str::FromStr};
+
+    use miniscript::bitcoin::{
+        absolute,
+        hashes::Hash,
+        key::PrivateKey,
+        secp256k1::{self, SecretKey},
+        transaction::Version,
+        Amount, Network, OutPoint, ScriptBuf, Sequence, TxIn, TxOut, Txid, Witness,
+    };
+
+    fn secret_key(byte: u8) -> SecretKey {
+        SecretKey::from_str(&format!("{byte:02x}").repeat(32)).unwrap()
+    }
+
+    /// A transaction spending `input_ops`, with one dummy output.
+    fn spending_tx(input_ops: &[OutPoint]) -> bitcoin::Transaction {
+        bitcoin::Transaction {
+            version: Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: input_ops
+                .iter()
+                .map(|op| TxIn {
+                    previous_output: *op,
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                    witness: Witness::new(),
+                })
+                .collect(),
+            output: vec![TxOut {
+                value: Amount::from_sat(50_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        }
+    }
+
+    /// The p2wpkh output owned by `sk`, along with the outpoint it is spent at.
+    fn our_coin(sk: &SecretKey, op: OutPoint) -> (OutPoint, TxOut) {
+        let secp = secp256k1::Secp256k1::signing_only();
+        let pk =
+            bitcoin::PublicKey::from_private_key(&secp, &PrivateKey::new(*sk, Network::Regtest));
+        (
+            op,
+            TxOut {
+                value: Amount::from_sat(100_000),
+                script_pubkey: ScriptBuf::new_p2wpkh(&pk.wpubkey_hash().unwrap()),
+            },
+        )
+    }
+
+    fn foreign_coin(op: OutPoint) -> (OutPoint, TxOut) {
+        (
+            op,
+            TxOut {
+                value: Amount::from_sat(200_000),
+                script_pubkey: ScriptBuf::from_hex(
+                    "512053a1f6e444c9bd1e2b5c2b2c6b8c9bd1e2b5c2b2c6b8c9bd1e2b5c2b2c6b8ca1",
+                )
+                .unwrap(),
+            },
+        )
+    }
+
+    /// Sign input `index` of `tx` with `sk`, assuming it spends the p2wpkh output of `sk`.
+    fn sign_p2wpkh(
+        tx: &mut bitcoin::Transaction,
+        index: usize,
+        prevout: &TxOut,
+        sk: &SecretKey,
+        sighash_type: sighash::EcdsaSighashType,
+    ) {
+        let sighash = sighash::SighashCache::new(&*tx)
+            .p2wpkh_signature_hash(index, &prevout.script_pubkey, prevout.value, sighash_type)
+            .unwrap();
+        let secp = secp256k1::Secp256k1::signing_only();
+        let mut sig = secp
+            .sign_ecdsa(
+                &secp256k1::Message::from_digest(sighash.to_byte_array()),
+                sk,
+            )
+            .serialize_der()
+            .to_vec();
+        sig.push(sighash_type.to_u32() as u8);
+        let pk_bytes = sk.public_key(&secp).serialize().to_vec();
+        tx.input[index].witness = Witness::from_slice(&[sig, pk_bytes]);
+    }
+
+    fn outpoint(txid_hex: &str, vout: u32) -> OutPoint {
+        OutPoint::new(Txid::from_str(txid_hex).unwrap(), vout)
+    }
+
+    #[test]
+    fn valid_spend_of_our_coin() {
+        let sk = secret_key(0x01);
+        let (our_op, our_prevout) = our_coin(
+            &sk,
+            outpoint(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                0,
+            ),
+        );
+        let (foreign_op, foreign_prevout) = foreign_coin(outpoint(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            1,
+        ));
+        let mut tx = spending_tx(&[foreign_op, our_op]);
+        sign_p2wpkh(
+            &mut tx,
+            1,
+            &our_prevout,
+            &sk,
+            sighash::EcdsaSighashType::All,
+        );
+        let mut prevouts = HashMap::from([(foreign_op, foreign_prevout), (our_op, our_prevout)]);
+        let secp = secp256k1::Secp256k1::verification_only();
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
+        );
+        assert_eq!(check, InputsCheck::Signed);
+    }
+
+    #[test]
+    fn unknown_prevout_is_not_a_forgery() {
+        let sk = secret_key(0x01);
+        let (our_op, our_prevout) = our_coin(
+            &sk,
+            outpoint(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                0,
+            ),
+        );
+        let foreign_op = outpoint(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            1,
+        );
+        let mut tx = spending_tx(&[our_op, foreign_op]);
+        sign_p2wpkh(
+            &mut tx,
+            0,
+            &our_prevout,
+            &sk,
+            sighash::EcdsaSighashType::All,
+        );
+        // The server did not provide the prevout of the foreign input.
+        let mut prevouts = HashMap::from([(our_op, our_prevout)]);
+        let secp = secp256k1::Secp256k1::verification_only();
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
+        );
+        assert_eq!(check, InputsCheck::Unknown);
+    }
+
+    #[test]
+    fn invalid_satisfaction_is_a_forgery() {
+        let sk = secret_key(0x01);
+        let attacker_sk = secret_key(0x02);
+        let (our_op, our_prevout) = our_coin(
+            &sk,
+            outpoint(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                0,
+            ),
+        );
+        let mut tx = spending_tx(&[our_op]);
+        sign_p2wpkh(
+            &mut tx,
+            0,
+            &our_prevout,
+            &attacker_sk,
+            sighash::EcdsaSighashType::All,
+        );
+        let mut prevouts = HashMap::from([(our_op, our_prevout)]);
+        let secp = secp256k1::Secp256k1::verification_only();
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
+        );
+        assert_eq!(check, InputsCheck::Forged);
+    }
+
+    #[test]
+    fn spend_of_foreign_coins_only() {
+        let (first_op, first_prevout) = foreign_coin(outpoint(
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            0,
+        ));
+        let (second_op, second_prevout) = foreign_coin(outpoint(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+            1,
+        ));
+        let tx = spending_tx(&[first_op, second_op]);
+        let mut prevouts = HashMap::from([(first_op, first_prevout), (second_op, second_prevout)]);
+        let secp = secp256k1::Secp256k1::verification_only();
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|_: &OutPoint, _: &bitcoin::Script| false,
+            SigCheck::Valid,
+        );
+        assert_eq!(check, InputsCheck::NotOurs);
+    }
+
+    #[test]
+    fn replacement_requires_sighash_all() {
+        let sk = secret_key(0x01);
+        let (our_op, our_prevout) = our_coin(
+            &sk,
+            outpoint(
+                "1111111111111111111111111111111111111111111111111111111111111111",
+                0,
+            ),
+        );
+        let mut tx = spending_tx(&[our_op]);
+        sign_p2wpkh(
+            &mut tx,
+            0,
+            &our_prevout,
+            &sk,
+            sighash::EcdsaSighashType::None,
+        );
+        let mut prevouts = HashMap::from([(our_op, our_prevout.clone())]);
+        let secp = secp256k1::Secp256k1::verification_only();
+        // A signature not committing to the outputs is still a valid satisfaction, but must
+        // not be accepted before replacing the transaction.
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::Valid,
+        );
+        assert_eq!(check, InputsCheck::Signed);
+        let mut prevouts = HashMap::from([(our_op, our_prevout)]);
+        let check = check_our_inputs(
+            &secp,
+            &tx,
+            &mut |op: &OutPoint| prevouts.remove(op),
+            &|op: &OutPoint, _: &bitcoin::Script| *op == our_op,
+            SigCheck::ValidSighashAll,
+        );
+        assert_eq!(check, InputsCheck::Forged);
+    }
 }
