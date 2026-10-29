@@ -2025,3 +2025,53 @@ def test_rbfpsbt_cancel(lianad, bitcoind):
             for c in lianad.rpc.listcoins([], [rbf_1_outpoint])["coins"]
         )
     )
+
+
+def test_checkrbf(lianad, bitcoind):
+    """Test the sanity checks run on a replacement candidate."""
+    # An unknown transaction cannot be replaced.
+    unknown_txid = "00" * 32
+    assert lianad.rpc.checkrbf(unknown_txid) == {
+        "replaceable": False,
+        "reason": f"Unknown spend transaction '{unknown_txid}'.",
+    }
+    with pytest.raises(RpcError, match="Invalid 'txid' parameter."):
+        lianad.rpc.checkrbf("foo")
+
+    # Get a coin and create a spend of it.
+    deposit_txid = bitcoind.rpc.sendtoaddress(
+        lianad.rpc.getnewaddress()["address"], 0.01
+    )
+    bitcoind.generate_block(1, wait_for_mempool=deposit_txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["confirmed"])["coins"]]
+    destinations = {
+        bitcoind.rpc.getnewaddress(): 500_000,
+    }
+    res = lianad.rpc.createspend(destinations, outpoints, 1)
+    psbt = PSBT.from_base64(res["psbt"])
+    txid = psbt.tx.txid().hex()
+
+    # A signed PSBT can be checked, even if not broadcast.
+    psbt = lianad.signer.sign_psbt(psbt)
+    lianad.rpc.updatespend(psbt.to_base64())
+    assert lianad.rpc.checkrbf(txid) == {"replaceable": True, "reason": None}
+
+    # Once broadcast, it can also be checked without the PSBT.
+    lianad.rpc.broadcastspend(txid)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == txid
+            for c in lianad.rpc.listcoins([], outpoints)["coins"]
+        )
+    )
+    lianad.rpc.delspendtx(txid)
+    assert lianad.rpc.checkrbf(txid) == {"replaceable": True, "reason": None}
+
+    # Once confirmed, it cannot be replaced anymore.
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["spent"], outpoints)["coins"]) == 1)
+    assert lianad.rpc.checkrbf(txid) == {
+        "replaceable": False,
+        "reason": f"Unknown spend transaction '{txid}'.",
+    }

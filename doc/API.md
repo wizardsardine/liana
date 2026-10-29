@@ -20,6 +20,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                             |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it                |
 | [`rbfpsbt`](#rbfpsbt)                                       | Create a new RBF Spend transaction                            |
+| [`checkrbf`](#checkrbf)                                     | Check whether a Spend transaction can be replaced             |
 | [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date            |
 | [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
 | [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
@@ -391,6 +392,26 @@ allowed in order to replace this transaction using RBF (see https://github.com/b
 #### Response
 
 The response is the same as for [`createspend`](#createspend).
+
+### `checkrbf`
+
+Check whether the given transaction could be replaced using [`rbfpsbt`](#rbfpsbt), without creating the
+replacement. This runs the checks `rbfpsbt` runs on the transaction to be replaced: it must be found the same
+way. It does not check the RBF signaling, the feerate or whether we have enough funds to pay for the
+replacement.
+
+#### Request
+
+| Field  | Type   | Description                                                    |
+| ------ | ------ | -------------------------------------------------------------- |
+| `txid` | string | Hex encoded txid of the Spend transaction to be replaced.      |
+
+#### Response
+
+| Field         | Type           | Description                                                     |
+| ------------- | -------------- | --------------------------------------------------------------- |
+| `replaceable` | bool           | Whether the transaction can be replaced.                        |
+| `reason`      | string or null | Why the transaction cannot be replaced, `null` if it can.       |
 
 ### `startrescan`
 

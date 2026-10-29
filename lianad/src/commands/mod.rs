@@ -939,6 +939,48 @@ impl DaemonControl {
         Ok(())
     }
 
+    /// Load the spend candidate `txid`, from our wallet transactions or else its stored PSBT.
+    fn rbf_candidate(&self, txid: &bitcoin::Txid) -> Result<bitcoin::Transaction, CommandError> {
+        let mut db_conn = self.db.connection();
+        let mut tx_getter = DbTxGetter::new(&self.db);
+        let tx = match db_conn
+            .coins(&[CoinStatus::Spending], &[])
+            .into_values()
+            .find(|c| c.spend_txid == Some(*txid))
+            .and_then(|_| tx_getter.get_tx(txid))
+        {
+            Some(tx) => tx,
+            // Fall back to the stored PSBT, only for a spend which is not among our wallet
+            // transactions: never broadcast or evicted.
+            None => {
+                db_conn
+                    .spend_tx(txid)
+                    .ok_or(CommandError::UnknownSpend(*txid))?
+                    .unsigned_tx
+            }
+        };
+        Ok(tx)
+    }
+
+    /// Run the `rbf_psbt` sanity checks on the spend candidate `txid`, without building a
+    /// replacement.
+    pub fn check_rbf(&self, txid: &bitcoin::Txid) -> CheckRbfResult {
+        match self.rbf_candidate(txid) {
+            Ok(prev_tx) if prev_tx.compute_txid() == *txid => CheckRbfResult {
+                replaceable: true,
+                reason: None,
+            },
+            Ok(_) => CheckRbfResult {
+                replaceable: false,
+                reason: Some(CommandError::UnknownSpend(*txid).to_string()),
+            },
+            Err(e) => CheckRbfResult {
+                replaceable: false,
+                reason: Some(e.to_string()),
+            },
+        }
+    }
+
     /// Create PSBT to replace the given transaction using RBF.
     ///
     /// `txid` must either point to a PSBT in our database (not necessarily broadcast) or an
@@ -974,16 +1016,7 @@ impl DaemonControl {
             return Err(CommandError::RbfError(RbfErrorInfo::SuperfluousFeerate));
         }
 
-        let prev_tx = if let Some(psbt) = db_conn.spend_tx(txid) {
-            psbt.unsigned_tx
-        } else {
-            db_conn
-                .coins(&[CoinStatus::Spending], &[])
-                .into_values()
-                .find(|c| c.spend_txid == Some(*txid))
-                .and_then(|_| tx_getter.get_tx(txid))
-                .ok_or(CommandError::UnknownSpend(*txid))?
-        };
+        let prev_tx = self.rbf_candidate(txid)?;
         if !prev_tx.is_explicitly_rbf() {
             return Err(CommandError::RbfError(RbfErrorInfo::NotSignaling));
         }
@@ -1379,6 +1412,12 @@ pub struct GetInfoResult {
     pub receive_index: u32,
     /// Last index used to generate a change address
     pub change_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckRbfResult {
+    pub replaceable: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
