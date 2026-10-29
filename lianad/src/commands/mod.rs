@@ -352,6 +352,7 @@ impl DaemonControl {
             last_poll_timestamp: wallet.last_poll_timestamp,
             receive_index,
             change_index,
+            backend_failure: self.bitcoin.fatal_error(),
         }
     }
 
@@ -1430,6 +1431,11 @@ pub struct GetInfoResult {
     pub receive_index: u32,
     /// Last index used to generate a change address
     pub change_index: u32,
+    /// The reason why the Bitcoin backend can not be trusted anymore and the poller stopped
+    /// updating the wallet, if any. For instance the backend served a spend of our coins
+    /// with invalid signatures.
+    #[serde(default)]
+    pub backend_failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
