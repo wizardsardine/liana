@@ -1448,6 +1448,11 @@ network-this-is-a => "THIS IS A{ \" \" }"
 
 network-wallet => "{$network} WALLET"
 
+node-third-party-warning-body
+=> "A third-party node can show you incorrect balances and transactions.";;
+
+node-third-party-warning-title => "Only connect to a node you control."
+
 pill-active => "Active"
 
 pill-always-available => "Always available"

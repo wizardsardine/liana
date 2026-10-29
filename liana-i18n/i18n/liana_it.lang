@@ -1965,6 +1965,12 @@ network-this-is-a => "THIS IS A{ \" \" }" => "QUESTO È UN{ \" \" }"
 
 network-wallet => "{$network} WALLET" => "PORTAFOGLIO {$network}"
 
+node-third-party-warning-body
+=> "A third-party node can show you incorrect balances and transactions."
+=> NONE;;
+
+node-third-party-warning-title => "Only connect to a node you control." => NONE
+
 pill-active => "Active" => "Attiva"
 
 pill-always-available => "Always available" => "Sempre attivo"
