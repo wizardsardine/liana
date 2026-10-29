@@ -76,6 +76,8 @@ pub struct DaemonCache {
     pub sync_progress: f64,
     /// The most recent `last_poll_timestamp`.
     pub last_poll_timestamp: Option<u32>,
+    /// The reason why the daemon stopped polling its Bitcoin backend, if any.
+    pub backend_failure: Option<String>,
     pub last_tick: std::time::Instant,
 }
 
@@ -88,6 +90,7 @@ impl std::default::Default for DaemonCache {
             rescan_progress: None,
             sync_progress: 1.0,
             last_poll_timestamp: None,
+            backend_failure: None,
             last_tick: Instant::now(),
         }
     }
