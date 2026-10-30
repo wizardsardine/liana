@@ -32,6 +32,7 @@ pub enum Message {
     RedirectLianaConnectLogin,
     UpdateDaemonCache(Result<DaemonCache, Error>),
     CacheUpdated,
+    RbfChecked(Result<CheckRbfResult, String>),
     Fiat(FiatMessage),
     UpdatePanelCache(/* is current panel */ bool),
     View(view::Message),

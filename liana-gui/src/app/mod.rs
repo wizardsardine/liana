@@ -248,15 +248,19 @@ impl<S: SettingsTrait> App<S> {
 
         match &menu {
             menu::Menu::TransactionPreSelected(txid) => {
+                let txid = *txid;
                 if let Ok(Some(tx)) = Handle::current().block_on(async {
                     self.daemon
-                        .get_history_txs(&[*txid])
+                        .get_history_txs(&[txid])
                         .await
                         .map(|txs| txs.first().cloned())
                 }) {
                     self.panels.transactions.preselect(tx);
                     self.panels.current = menu;
-                    return Task::none();
+                    // Sanity check the replacement candidate while its details are
+                    // displayed, so that the replacement actions can be disabled if it
+                    // cannot be replaced.
+                    return TransactionsPanel::check_rbf_task(self.daemon.clone(), txid);
                 };
             }
             menu::Menu::PsbtPreSelected(txid) => {
@@ -575,6 +579,10 @@ impl<S: SettingsTrait> App<S> {
                 Task::none()
             }
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
+            Message::RbfChecked(res) => {
+                self.panels.transactions.set_rbf_check(res);
+                Task::none()
+            }
             _ => self
                 .panels
                 .current_mut()

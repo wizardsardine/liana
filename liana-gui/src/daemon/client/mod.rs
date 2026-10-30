@@ -5,7 +5,9 @@ use std::iter::FromIterator;
 use async_trait::async_trait;
 use lianad::{
     bip329::Labels,
-    commands::{CreateRecoveryWarning, GetLabelsBip329Result, UpdateDerivIndexesResult},
+    commands::{
+        CheckRbfResult, CreateRecoveryWarning, GetLabelsBip329Result, UpdateDerivIndexesResult,
+    },
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -203,6 +205,10 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
 
     async fn list_txs(&self, txids: &[Txid]) -> Result<ListTransactionsResult, DaemonError> {
         self.call("listtransactions", Some(vec![txids]))
+    }
+
+    async fn check_rbf(&self, txid: Txid) -> Result<CheckRbfResult, DaemonError> {
+        self.call("checkrbf", Some(vec![json!(txid.to_string())]))
     }
 
     async fn create_recovery(

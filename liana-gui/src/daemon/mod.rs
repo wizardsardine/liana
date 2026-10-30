@@ -189,6 +189,11 @@ pub trait Daemon: Debug {
         sequence: Option<u16>,
     ) -> Result<(Psbt, Vec<CreateRecoveryWarning>), DaemonError>;
     async fn list_txs(&self, txid: &[Txid]) -> Result<model::ListTransactionsResult, DaemonError>;
+    async fn check_rbf(&self, _txid: Txid) -> Result<model::CheckRbfResult, DaemonError> {
+        // TODO: implement it for the Liana Connect backend once the backend runs the sanity
+        // checks on its side, through a dedicated endpoint.
+        Err(DaemonError::NotImplemented)
+    }
     async fn get_labels(
         &self,
         labels: &HashSet<LabelItem>,
