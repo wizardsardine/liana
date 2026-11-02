@@ -974,20 +974,20 @@ mod tests {
 
     #[test]
     fn outgoing_change_ignores_the_tx_label() {
-        let tx = outgoing_single(Label::Transaction(SALARY.to_string()));
+        let tx = outgoing_single(Label::Payment(SALARY.to_string()));
         let tx = labelled(tx.clone(), &[(tx.txid.to_string(), RENT)]);
         let change = Payment::from_tx_output(&tx, 1).unwrap();
-        assert_eq!(change.label(), Label::Transaction(SALARY.to_string()));
+        assert_eq!(change.label(), Label::Payment(SALARY.to_string()));
     }
 
     #[test]
     fn payment_own_label_edit_takes_over_the_default() {
-        let tx = outgoing_single(Label::Transaction(RENT.to_string()));
+        let tx = outgoing_single(Label::Payment(RENT.to_string()));
         let mut change = Payment::from_tx_output(&tx, 1).unwrap();
         let outpoint = change.outpoint.to_string();
         change.load_labels(&edited(outpoint.clone(), Some(SALARY)));
         assert_eq!(change.label(), Label::Own(SALARY.to_string()));
         change.load_labels(&edited(outpoint, None));
-        assert_eq!(change.label(), Label::Transaction(RENT.to_string()));
+        assert_eq!(change.label(), Label::Payment(RENT.to_string()));
     }
 }
