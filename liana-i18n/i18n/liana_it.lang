@@ -1965,6 +1965,14 @@ network-this-is-a => "THIS IS A{ \" \" }" => "QUESTO È UN{ \" \" }"
 
 network-wallet => "{$network} WALLET" => "PORTAFOGLIO {$network}"
 
+node-third-party-warning-body
+=> "A third-party node can show you incorrect balances and transactions."
+=> "Un nodo di terze parti può mostrarti saldi e transazioni errati.";;
+
+node-third-party-warning-title
+=> "Only connect to a node you control."
+=> "Collegati solo a un nodo che controlli.";;
+
 pill-active => "Active" => "Attiva"
 
 pill-always-available => "Always available" => "Sempre attivo"
@@ -2582,6 +2590,14 @@ transactions-rbf-descendants-one
 transactions-rbf-descendants-some
 => "The following transactions are spending one or more outputs from the transaction to be replaced and will be dropped when the replacement is broadcast, along with any other transactions that depend on them:"
 => "Le seguenti transazioni spendono uno o più output della transazione da sostituire e saranno scartate quando la sostituzione verrà inviata, insieme a qualsiasi altra transazione che dipende da esse:";;
+
+transactions-rbf-disabled-body
+=> "Its signatures don't match your coins, so the node you are connected to may be providing false data. Connect to a different node, ideally your own, in Settings > Node and check your payment."
+=> "Le sue firme non corrispondono alle tue monete, quindi il nodo a cui sei connesso potrebbe fornire dati falsi. Collegati a un altro nodo, idealmente il tuo, in Impostazioni > Nodo e controlla il tuo pagamento.";;
+
+transactions-rbf-disabled-title
+=> "This transaction can't be bumped or cancelled."
+=> "Non è possibile alzare la commissione di questa transazione né annullarla.";;
 
 transactions-rbf-feerate-warning
 => "Feerate must be greater than previous value and less than or equal to 1000 sats/vbyte"

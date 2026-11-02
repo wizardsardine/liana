@@ -37,7 +37,7 @@ use crate::{
             FiatAmountConverter,
         },
     },
-    daemon::model::{Fingerprint, HistoryTransaction, SpendStatus, SpendTx, Txid},
+    daemon::model::{CheckRbfResult, Fingerprint, HistoryTransaction, SpendStatus, SpendTx, Txid},
     t,
 };
 
@@ -164,6 +164,7 @@ pub fn tx_view<'a>(
     detail: TxDetail<'a>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     fiat_converter: Option<FiatAmountConverter>,
+    rbf_check: Option<&'a Result<CheckRbfResult, String>>,
 ) -> Element<'a, Message> {
     let (txid, unsigned_tx, wallet_tx, labels, coins, label) = match &detail {
         TxDetail::Transaction(tx) => (
@@ -218,14 +219,43 @@ pub fn tx_view<'a>(
     let miner_fee = fees_row(wallet_tx.fee(), feerate, to_fiat);
     // If unconfirmed, give option to use RBF.
     // Check fee amount is some as otherwise we may be missing coins for this transaction.
-    let rbf = match &detail {
+    // If the replacement candidate fails the daemon sanity check, the actions are disabled
+    // and the user is warned: there is no point offering to replace a transaction which may
+    // be malicious.
+    let rbf: Option<Element<'_, Message>> = match &detail {
         TxDetail::Transaction(tx) => {
             (tx.time.is_none() && tx.wallet_tx.fee().is_some()).then(|| {
-                row![
-                    btn_bump_fee(Some(Message::CreateRbf(CreateRbfMessage::New(false)))),
-                    btn_cancel_transaction(Some(Message::CreateRbf(CreateRbfMessage::New(true)))),
+                let can_replace = match rbf_check {
+                    // Not before the check answered, it may be malicious.
+                    None => false,
+                    Some(Ok(res)) => res.replaceable,
+                    // No verdict, e.g. from a backend which does not run the check.
+                    Some(Err(_)) => true,
+                };
+                let is_forged = matches!(rbf_check, Some(Ok(res)) if !res.replaceable);
+                let disabled_notice = is_forged.then(|| {
+                    column![
+                        new::b5_bold(t!("transactions-rbf-disabled-title"))
+                            .style(theme::text::error),
+                        new::caption(t!("transactions-rbf-disabled-body"))
+                            .style(theme::text::error),
+                    ]
+                    .spacing(VSpacing::XS)
+                });
+                column![
+                    row![
+                        btn_bump_fee(
+                            can_replace.then(|| Message::CreateRbf(CreateRbfMessage::New(false)))
+                        ),
+                        btn_cancel_transaction(
+                            can_replace.then(|| Message::CreateRbf(CreateRbfMessage::New(true)))
+                        ),
+                    ]
+                    .spacing(HSpacing::M),
+                    disabled_notice,
                 ]
-                .spacing(HSpacing::M)
+                .spacing(VSpacing::S)
+                .into()
             })
         }
         TxDetail::Psbt { .. } => None,

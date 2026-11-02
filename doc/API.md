@@ -20,6 +20,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`delspendtx`](#delspendtx)                                 | Delete a stored Spend transaction                             |
 | [`broadcastspend`](#broadcastspend)                         | Finalize a stored Spend PSBT, and broadcast it                |
 | [`rbfpsbt`](#rbfpsbt)                                       | Create a new RBF Spend transaction                            |
+| [`checkrbf`](#checkrbf)                                     | Check whether a Spend transaction can be replaced             |
 | [`startrescan`](#startrescan)                               | Start rescanning the block chain from a given date            |
 | [`listconfirmed`](#listconfirmed)                           | List of confirmed transactions of incoming and outgoing funds |
 | [`listtransactions`](#listtransactions)                     | List of transactions with the given txids                     |
@@ -357,9 +358,13 @@ This command does not return anything for now.
 
 ### `rbfpsbt`
 
-Create PSBT to replace, using RBF, the given transaction, which must either point to a PSBT in our database
-(not necessarily broadcast) or an unconfirmed spend transaction (whether or not any associated
-PSBT is saved in our database).
+Create PSBT to replace, using RBF, the given transaction, which must either point to an unconfirmed spend
+transaction (whether or not any associated PSBT is saved in our database) or, failing that, to a signed PSBT in
+our database (not necessarily broadcast).
+
+The transaction to be replaced is checked not to be malicious: it must have been signed by ourselves, every one
+of its inputs carrying valid signatures of our keys which commit to the whole transaction (`SIGHASH_ALL`). A
+stored PSBT is finalized for this check, so a PSBT which is not fully signed cannot be replaced.
 
 This command can be used to either:
 - "cancel" the transaction: the replacement will include at least one input from the previous transaction and will have only
@@ -391,6 +396,26 @@ allowed in order to replace this transaction using RBF (see https://github.com/b
 #### Response
 
 The response is the same as for [`createspend`](#createspend).
+
+### `checkrbf`
+
+Check whether the given transaction could be replaced using [`rbfpsbt`](#rbfpsbt), without creating the
+replacement. This runs the checks `rbfpsbt` runs on the transaction to be replaced: it must be found the same
+way, and must verifiably spend our coins. It does not check the RBF signaling, the feerate or whether we have
+enough funds to pay for the replacement.
+
+#### Request
+
+| Field  | Type   | Description                                                    |
+| ------ | ------ | -------------------------------------------------------------- |
+| `txid` | string | Hex encoded txid of the Spend transaction to be replaced.      |
+
+#### Response
+
+| Field         | Type           | Description                                                     |
+| ------------- | -------------- | --------------------------------------------------------------- |
+| `replaceable` | bool           | Whether the transaction can be replaced.                        |
+| `reason`      | string or null | Why the transaction cannot be replaced, `null` if it can.       |
 
 ### `startrescan`
 

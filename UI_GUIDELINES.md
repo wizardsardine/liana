@@ -29,8 +29,8 @@ Paths are under `liana-ui/src/` unless noted.
   `.width(Length::Fixed(LOGIN_WIDTH))`), shared width enums (`BtnWidth`, `EntryWidth`, `ModalWidth`,
   `PillWidth`), and named `Length` constants for reusable dimensions. For `Space`, always use `SpaceExt`.
 - **Typography.** Use the `text::new::*` roles (`component/text/new.rs`): display `d2/d3/d4`, headings
-  `h1..h3` (plus `_semi`), body `b1..b5` (plus `_medium` / `_bold`), `caption` / `small_caption`. Do not size
-  text by hand.
+  `h1..h3` (plus `_semi`), body `b1..b5` (plus `_medium` / `_bold`), `caption` (plus `_semi`) /
+  `small_caption`. Do not size text by hand.
 - **Styling and color.** Style through the theme, never a hardcoded hex or `Color`:
   `theme::text::{primary,secondary,tertiary,...}`, `theme::card::*`, `theme::button::*`, `theme::pill::*`,
   `theme::badge::*`, `theme::container::*`. Applied as a closure: `.style(theme::text::secondary)`.

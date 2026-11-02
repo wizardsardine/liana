@@ -79,7 +79,7 @@ pub fn spend_view<'a>(
         previous: true,
         warnings,
     };
-    let content = tx_view(cache, detail, labels_editing, fiat_converter);
+    let content = tx_view(cache, detail, labels_editing, fiat_converter, None);
 
     dashboard(
         if is_recovery {

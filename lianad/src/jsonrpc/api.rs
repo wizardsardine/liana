@@ -517,6 +517,18 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
             })?;
             rbf_psbt(control, params)?
         }
+        "checkrbf" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
+            let txid = params
+                .get(0, "txid")
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+                .as_str()
+                .and_then(|s| bitcoin::Txid::from_str(s).ok())
+                .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+            serde_json::json!(&control.check_rbf(&txid))
+        }
         "getinfo" => serde_json::json!(&control.get_info()),
         "getnewaddress" => serde_json::json!(&control.get_new_address()),
         "updatederivationindexes" => {
