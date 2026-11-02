@@ -29,8 +29,8 @@ use crate::{
     },
     daemon::{
         model::{
-            self, CreateSpendResult, HistoryCursor, HistoryPage, HistoryTransaction, LabelItem,
-            Labelled, LabelsLoader,
+            self, CheckRbfResult, CreateSpendResult, HistoryCursor, HistoryPage,
+            HistoryTransaction, LabelItem, Labelled, LabelsLoader,
         },
         Daemon,
     },
@@ -53,6 +53,7 @@ pub struct TransactionsPanel {
     txs: Vec<HistoryTransaction>,
     labels_edited: LabelsEdited,
     selected_tx: Option<HistoryTransaction>,
+    rbf_check: Option<Result<CheckRbfResult, String>>,
     warning: Option<Error>,
     modal: TransactionsModal,
     is_last_page: bool,
@@ -67,6 +68,7 @@ impl TransactionsPanel {
             selected_tx: None,
             txs: Vec::new(),
             labels_edited: LabelsEdited::default(),
+            rbf_check: None,
             warning: None,
             modal: TransactionsModal::None,
             is_last_page: false,
@@ -77,8 +79,22 @@ impl TransactionsPanel {
 
     pub fn preselect(&mut self, tx: HistoryTransaction) {
         self.selected_tx = Some(tx);
+        self.rbf_check = None;
         self.warning = None;
         self.modal = TransactionsModal::None;
+    }
+
+    pub fn set_rbf_check(&mut self, check: Result<CheckRbfResult, String>) {
+        self.rbf_check = Some(check);
+    }
+
+    /// Sanity check the replacement candidate `txid`, to disable the replacement actions if
+    /// it cannot be replaced.
+    pub fn check_rbf_task(daemon: Arc<dyn Daemon + Sync + Send>, txid: Txid) -> Task<Message> {
+        Task::perform(
+            async move { daemon.check_rbf(txid).await.map_err(|e| e.to_string()) },
+            Message::RbfChecked,
+        )
     }
 
     fn tx_view<'a>(
@@ -95,6 +111,7 @@ impl TransactionsPanel {
                 view::transaction::TxDetail::Transaction(tx),
                 self.labels_edited.cache(),
                 fiat_converter_for_wallet(&self.wallet, cache),
+                self.rbf_check.as_ref(),
             ),
         );
         match &self.modal {
@@ -181,6 +198,7 @@ impl State for TransactionsPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = self.txs.get(i).cloned();
+                self.rbf_check = None;
                 // Clear modal if it's for a different tx.
                 if let TransactionsModal::CreateRbf(modal) = &self.modal {
                     if Some(modal.tx.tx.compute_txid())
@@ -191,6 +209,16 @@ impl State for TransactionsPanel {
                     {
                         self.modal = TransactionsModal::None;
                     }
+                }
+                // Sanity check the replacement candidate while its details are displayed,
+                // so that the replacement actions can be disabled if it cannot be
+                // replaced.
+                if let Some(tx) = self
+                    .selected_tx
+                    .as_ref()
+                    .filter(|tx| tx.time.is_none() && tx.wallet_tx.fee().is_some())
+                {
+                    return Self::check_rbf_task(daemon, tx.txid);
                 }
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Cancel)) => {

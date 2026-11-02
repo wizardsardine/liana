@@ -30,7 +30,7 @@ pub use tooltip::{tooltip, tooltip_custom};
 
 use iced::{widget::row, Alignment, Length, Padding};
 
-use crate::{theme, widget::*};
+use crate::{icon, spacing::HSpacing, theme, widget::*};
 
 use self::text::Text;
 
@@ -65,6 +65,18 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
     .padding(5)
     .center_x(Length::Fill)
     .style(theme::banner::network)
+}
+
+/// Warning that a node the user does not control can serve forged data.
+pub fn third_party_node_warning<'a, M: 'a>() -> Element<'a, M> {
+    row![
+        icon::warning_icon().style(theme::text::warning),
+        text::new::caption_semi(t!("node-third-party-warning-title")).style(theme::text::warning),
+        text::new::caption(t!("node-third-party-warning-body")).style(theme::text::warning),
+    ]
+    .spacing(HSpacing::XS)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 pub fn section<'a, T: 'a>(title: impl std::fmt::Display) -> Row<'a, T> {

@@ -17,6 +17,7 @@ use liana_ui::{
         panels::setting::{header, SectionKind},
         scrollable, separation,
         text::new,
+        third_party_node_warning,
     },
     icon,
     spacing::{HSpacing, VSpacing},
@@ -115,7 +116,8 @@ pub fn bitcoind_edit<'a>(
         SettingsEditMessage::FieldEdited("socket_address", value)
     })
     .warning(t!("settings-valid-address"));
-    let address = column![address_label, address_input].spacing(VSpacing::XS);
+    let address =
+        column![address_label, address_input, third_party_node_warning()].spacing(VSpacing::XS);
     let fields = column![node_info, auth_type, auth_fields, address].spacing(VSpacing::L);
 
     let title = row![badge::tile(Tile::Bitcoin), new::h3_semi("Bitcoin Core")]
@@ -217,8 +219,14 @@ pub fn electrum_edit<'a>(
     })
     .warning(t!("settings-valid-address"));
     let address_notes = new::small_caption(electrum::ADDRESS_NOTES).style(theme::text::secondary);
-    let address =
-        column![address_label, address_input, checkbox, address_notes].spacing(VSpacing::XS);
+    let address = column![
+        address_label,
+        address_input,
+        checkbox,
+        address_notes,
+        third_party_node_warning()
+    ]
+    .spacing(VSpacing::XS);
     let fields = column![node_info, address].spacing(VSpacing::L);
 
     let title = row![badge::tile(Tile::Bitcoin), new::h3_semi("Electrum")]

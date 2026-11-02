@@ -36,6 +36,7 @@ use liana_ui::{
         list::{self, DeviceStatus, EntryAccent},
         modal, scrollable, separation,
         text::{self, new, text, Text as _},
+        third_party_node_warning,
     },
     icon,
     spacing::VSpacing,
@@ -1017,7 +1018,7 @@ pub fn define_bitcoind<'a>(
     let loopback_warning = (!is_loopback && address.valid).then_some(
         text::new::caption(t!("installer-remote-bitcoin-node-warning")).style(theme::text::warning),
     );
-    let address = column![address_input, loopback_warning].spacing(10);
+    let address = column![address_input, loopback_warning, third_party_node_warning()].spacing(10);
 
     let auth_type = [RpcAuthType::CookieFile, RpcAuthType::UserPass]
         .iter()
@@ -1128,6 +1129,7 @@ pub fn define_electrum<'a>(
         address_input,
         checkbox,
         text::new::caption(t!("installer-electrum-address-notes")),
+        third_party_node_warning(),
     ]
     .spacing(10);
 

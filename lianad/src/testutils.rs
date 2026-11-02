@@ -25,7 +25,7 @@ use miniscript::{
 };
 
 const TEST_OWNER_KEY_SINGLE: &str = "[aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/<0;1>/*";
-const TEST_HEIR_KEY_SINGLE: &str = "[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*";
+pub const TEST_HEIR_KEY_SINGLE: &str = "[aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/<0;1>/*";
 pub const DEFAULT_TIMELOCK: u16 = 10_000;
 
 pub struct DummyBitcoind {

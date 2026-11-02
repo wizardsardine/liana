@@ -100,6 +100,10 @@ impl Daemon for EmbeddedDaemon {
         self.command(|daemon| Ok(daemon.get_info())).await
     }
 
+    async fn check_rbf(&self, txid: Txid) -> Result<CheckRbfResult, DaemonError> {
+        self.command(|daemon| Ok(daemon.check_rbf(&txid))).await
+    }
+
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         self.command(|daemon| Ok(daemon.get_new_address())).await
     }
