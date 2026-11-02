@@ -315,7 +315,7 @@ fn to_self_default_label(
             funding_label.map(|label| Label::Funding(label.to_string()))
         }
         (TransactionKind::Outgoing(_), Some(payment)) => {
-            get(labels, payment).map(|label| Label::Transaction(label.to_string()))
+            get(labels, payment).map(|label| Label::Payment(label.to_string()))
         }
         (TransactionKind::Outgoing(_), None) | (TransactionKind::PayjoinSend(_), _) => tx_label(),
         (TransactionKind::Incoming(_) | TransactionKind::PayjoinReceive(_), _) => None,
@@ -741,6 +741,10 @@ mod tests {
         Label::Transaction(label.to_string())
     }
 
+    fn payment_label(label: &str) -> Label {
+        Label::Payment(label.to_string())
+    }
+
     #[test]
     fn send_to_self_passes_the_funding_label_to_its_coin_only() {
         let funding = labelled_incoming(1, SALARY);
@@ -817,7 +821,7 @@ mod tests {
         let labels = labels(&[(outgoing.outpoint(0).to_string(), RENT)]);
         let outgoing = outgoing.seen(&labels, &[]);
         // The change of `outgoing` is its second output.
-        assert_eq!(outgoing.coin_default(1), transaction_label(RENT));
+        assert_eq!(outgoing.coin_default(1), payment_label(RENT));
         let tx = move_coin(outgoing.outpoint(1)).seen(&labels, &[&outgoing]);
         assert_eq!(tx.default_label, Label::None);
         assert_eq!(tx.coin_default(0), funding_label(RENT));
@@ -874,7 +878,7 @@ mod tests {
             (tx.outpoint(0).to_string(), RENT),
         ]);
         let tx = tx.seen(&labels, &[]);
-        assert_eq!(tx.coin_default(1), transaction_label(RENT));
+        assert_eq!(tx.coin_default(1), payment_label(RENT));
     }
 
     #[test]
@@ -958,7 +962,7 @@ mod tests {
         let payment_labelled = labels(&[(tx.outpoint(0).to_string(), RENT)]);
         assert_eq!(
             unseen_coin_defaults(&tx, &funding, &payment_labelled),
-            vec![(tx.outpoint(1), transaction_label(RENT))]
+            vec![(tx.outpoint(1), payment_label(RENT))]
         );
     }
 
