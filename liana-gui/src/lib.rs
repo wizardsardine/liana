@@ -26,8 +26,7 @@ pub mod window;
 pub const VERSION: &str = concat!(
     env!("CARGO_PKG_VERSION_MAJOR"),
     ".",
-    env!("CARGO_PKG_VERSION_MINOR"),
-    "-rc1"
+    env!("CARGO_PKG_VERSION_MINOR")
 );
 
 #[cfg(test)]
