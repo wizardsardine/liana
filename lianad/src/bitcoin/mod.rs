@@ -48,6 +48,24 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
+/// An error met while syncing the wallet with the Bitcoin backend.
+#[derive(Debug)]
+pub enum SyncError {
+    /// The backend is unrecoverably out of sync, for instance an Electrum server which lied
+    /// to us about the state of our coins. The poller must stop polling it.
+    Fatal(String),
+    /// Any other error, polling the backend may be retried.
+    Transient(String),
+}
+
+impl fmt::Display for SyncError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SyncError::Fatal(e) | SyncError::Transient(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum TxSanityStatus {
     NotOwned,
@@ -131,7 +149,7 @@ pub fn tx_sanity_check(
 
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
-    fn genesis_block_timestamp(&self) -> u32;
+    fn genesis_block_timestamp(&self) -> Result<u32, String>;
 
     fn genesis_block(&self) -> BlockChainTip;
 
@@ -158,7 +176,7 @@ pub trait BitcoinInterface: Send {
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String>;
+    ) -> Result<Option<BlockChainTip>, SyncError>;
 
     /// Get coins received since the specified tip.
     fn received_coins(
@@ -222,16 +240,24 @@ pub trait BitcoinInterface: Send {
     ///
     /// Returns `None` if the transaction is not in the mempool.
     fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry>;
+
+    /// Whether the backend served data it can no longer be trusted for, for instance a spend
+    /// of our coins with invalid signatures. The poller must stop polling it. The string is
+    /// the reason, for display.
+    fn fatal_error(&self) -> Option<String> {
+        None
+    }
 }
 
 impl BitcoinInterface for d::BitcoinD {
-    fn genesis_block_timestamp(&self) -> u32 {
-        self.get_block_stats(
-            self.get_block_hash(0)
-                .expect("Genesis block hash must always be there"),
-        )
-        .expect("Genesis block must always be there")
-        .time
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        Ok(self
+            .get_block_stats(
+                self.get_block_hash(0)
+                    .expect("Genesis block hash must always be there"),
+            )
+            .expect("Genesis block must always be there")
+            .time)
     }
 
     fn genesis_block(&self) -> BlockChainTip {
@@ -261,8 +287,17 @@ impl BitcoinInterface for d::BitcoinD {
         &mut self,
         _receive_index: ChildNumber,
         _change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
+        if let Some(error) = self.fatal_error() {
+            return Err(SyncError::Fatal(error));
+        }
         Ok(None)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.forged_spend().map(|txid| {
+            format!("bitcoind served a spend of our coins with invalid signatures: '{txid}'.")
+        })
     }
 
     fn received_coins(
@@ -363,7 +398,31 @@ impl BitcoinInterface for d::BitcoinD {
             }
         }
 
-        spent
+        // bitcoind must only ever relay consensus-valid transactions. Make sure the spends of
+        // our coins it reports are honestly signed, and report none of them if one isn't or if
+        // we could not check it: the endpoint is not to be trusted.
+        let mut verified = Vec::with_capacity(spent.len());
+        for (op, txid) in spent {
+            let res = match self.get_transaction(&txid) {
+                Some(res) => res,
+                None => {
+                    log::error!(
+                        "Could not get spending transaction '{}' from bitcoind.",
+                        txid
+                    );
+                    self.record_forged_spend(&txid);
+                    continue;
+                }
+            };
+            if matches!(
+                self.check_spent_tx(&txid, &res.tx, &op, outpoints),
+                d::SpendCheck::Signed
+            ) {
+                verified.push((op, txid));
+            }
+        }
+
+        verified
     }
 
     fn spent_coins(
@@ -376,6 +435,9 @@ impl BitcoinInterface for d::BitcoinD {
         let mut expired = Vec::new();
         // Cached calls to `gettransaction`.
         let mut tx_getter = CachedTxGetter::new(self);
+        // The coins whose spend we are asked about. Their spent outputs are the ones we know
+        // to be ours for the sanity check below.
+        let our_outpoints: Vec<bitcoin::OutPoint> = outpoints.iter().map(|(op, _)| *op).collect();
 
         for (op, txid) in outpoints {
             let res = if let Some(res) = tx_getter.get_transaction(txid) {
@@ -384,6 +446,16 @@ impl BitcoinInterface for d::BitcoinD {
                 log::error!("Could not get tx {} spending coin {}.", txid, op);
                 continue;
             };
+
+            // bitcoind must only ever relay consensus-valid transactions: make sure this spend
+            // of our coin is honestly signed, and report none of them if it isn't or if we
+            // could not check it.
+            if !matches!(
+                self.check_spent_tx(txid, &res.tx, op, &our_outpoints),
+                d::SpendCheck::Signed
+            ) {
+                continue;
+            }
 
             // If the transaction was confirmed, mark it as such.
             if let Some(block) = res.block {
@@ -410,6 +482,17 @@ impl BitcoinInterface for d::BitcoinD {
                 })
             });
             if let Some((txid, block)) = conflict {
+                // The conflicting transaction spends our coin too: sanity check it like the one
+                // it conflicts with before reporting it as the confirmed spender.
+                if tx_getter.get_transaction(&txid).map(|res| {
+                    matches!(
+                        self.check_spent_tx(&txid, &res.tx, op, &our_outpoints),
+                        d::SpendCheck::Signed
+                    )
+                }) != Some(true)
+                {
+                    continue;
+                }
                 spent.push((*op, txid, block.height, block.time));
                 continue;
             }
@@ -494,13 +577,32 @@ impl BitcoinInterface for d::BitcoinD {
 }
 
 impl BitcoinInterface for electrum::Electrum {
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
+        self.client()
+            .genesis_block_timestamp()
+            .map_err(|e| e.to_string())
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.fatal_error()
+    }
+
     fn sync_wallet(
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
-        self.sync_wallet(receive_index, change_index)
-            .map_err(|e| e.to_string())
+    ) -> Result<Option<BlockChainTip>, SyncError> {
+        self.sync_wallet(receive_index, change_index).map_err(|e| {
+            let error = e.to_string();
+            match e {
+                electrum::ElectrumError::MaliciousServer(_)
+                | electrum::ElectrumError::Client(electrum::client::Error::Disconnected) => {
+                    SyncError::Fatal(error)
+                }
+                electrum::ElectrumError::Client(_)
+                | electrum::ElectrumError::GenesisHashMismatch(..) => SyncError::Transient(error),
+            }
+        })
     }
 
     fn received_coins(
@@ -596,12 +698,6 @@ impl BitcoinInterface for electrum::Electrum {
         (spent, expired_spending)
     }
 
-    fn genesis_block_timestamp(&self) -> u32 {
-        self.client()
-            .genesis_block_timestamp()
-            .expect("Genesis block timestamp must always be there")
-    }
-
     fn genesis_block(&self) -> BlockChainTip {
         self.client()
             .genesis_block()
@@ -682,7 +778,7 @@ impl BitcoinInterface for electrum::Electrum {
 
 // FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
 impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>> {
-    fn genesis_block_timestamp(&self) -> u32 {
+    fn genesis_block_timestamp(&self) -> Result<u32, String> {
         self.lock().unwrap().genesis_block_timestamp()
     }
 
@@ -706,10 +802,14 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, String> {
+    ) -> Result<Option<BlockChainTip>, SyncError> {
         self.lock()
             .unwrap()
             .sync_wallet(receive_index, change_index)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.lock().unwrap().fatal_error()
     }
 
     fn received_coins(

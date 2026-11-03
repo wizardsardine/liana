@@ -71,7 +71,7 @@ pub enum CommandError {
     TxBroadcast(String),
     AlreadyRescanning,
     InsaneRescanTimestamp(u32),
-    /// An error that might occur in the racy rescan triggering logic.
+    /// An error that might occur while starting a rescan.
     RescanTrigger(String),
     RecoveryNotAvailable,
     // Include timelock in error as it may not have been set explicitly by the user.
@@ -352,6 +352,7 @@ impl DaemonControl {
             last_poll_timestamp: wallet.last_poll_timestamp,
             receive_index,
             change_index,
+            backend_failure: self.bitcoin.fatal_error(),
         }
     }
 
@@ -1270,7 +1271,10 @@ impl DaemonControl {
     /// The date must be after the genesis block time and before the current tip blocktime.
     pub fn start_rescan(&mut self, timestamp: u32) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
-        let genesis_timestamp = self.bitcoin.genesis_block_timestamp();
+        let genesis_timestamp = self
+            .bitcoin
+            .genesis_block_timestamp()
+            .map_err(CommandError::RescanTrigger)?;
 
         let future_timestamp = self
             .bitcoin
@@ -1448,6 +1452,11 @@ pub struct GetInfoResult {
     pub receive_index: u32,
     /// Last index used to generate a change address
     pub change_index: u32,
+    /// The reason why the Bitcoin backend can not be trusted anymore and the poller stopped
+    /// updating the wallet, if any. For instance the backend served a spend of our coins
+    /// with invalid signatures.
+    #[serde(default)]
+    pub backend_failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

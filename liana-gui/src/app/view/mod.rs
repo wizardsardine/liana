@@ -18,6 +18,7 @@ pub mod transactions;
 
 pub use fiat::FiatAmountConverter;
 pub use message::*;
+pub use warning::backend_failure_modal;
 use warning::warn;
 
 use iced::{
