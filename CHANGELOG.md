@@ -66,6 +66,13 @@ This means you won't be able to open with Liana v15 (or below) any wallet opened
 
 #### Liana GUI
 
+- Disable replacing a transaction which cannot verifiably be replaced, by running the daemon
+  `checkrbf` sanity checks before offering the RBF options. This prevents a malicious Electrum
+  server from tricking the wallet into paying a bogus replacement, see
+  [GHSA-6jp4-8v48-cc5v](https://github.com/spesmilo/electrum/security/advisories/GHSA-6jp4-8v48-cc5v).
+- Warn against connecting to a third-party node: the Electrum and bitcoind steps of the installer
+  and the node settings now display "Only connect to a node you control", explaining that a
+  third-party node can show incorrect balances and transactions.
 - Fix the import of test network backups.
 - Check the daemon receive addresses against the wallet descriptor.
 - Set the descriptor when importing it from a file in the Liana Connect installer, and detect
@@ -86,6 +93,8 @@ This means you won't be able to open with Liana v15 (or below) any wallet opened
 
 #### Liana daemon
 
+- Sanity check the transaction to be replaced before creating its replacement in `rbfpsbt`, and
+  add a `checkrbf` RPC running the same checks without creating the replacement.
 - Encode the bitcoind wallet RPC path, fixing wallet paths that contain spaces.
 
 #### Liana
