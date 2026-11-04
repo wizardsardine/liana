@@ -2,6 +2,17 @@ name: Commit history check
 on:
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  RUSTUP_TOOLCHAIN: 1.88.0
+
 jobs:
   # first we list all commits
   list-commits:
@@ -9,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commits: ${{ steps.list.outputs.commits }}
+      slices: ${{ steps.slices.outputs.slices }}
+      cache-prefix: ${{ steps.slices.outputs.cache-prefix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,34 +50,56 @@ jobs:
           echo "Intermediate commits: $commits"
           echo "commits=$commits" >> "$GITHUB_OUTPUT"
 
-  # second we start one CI task per commit
-  check-commit:
+      - id: slices
+        name: Read the crate slices
+        run: |
+          echo "slices=$(jq -c . .github/crate-slices.json)" >> "$GITHUB_OUTPUT"
+          echo "cache-prefix=v0-rust-${{ hashFiles('.github/crate-slices.json') }}" >> "$GITHUB_OUTPUT"
+
+  # then we check every commit: lints, then the tests and the release build of each crate slice
+  lint-commit:
     needs: list-commits
     if: needs.list-commits.outputs.commits != '[]' && needs.list-commits.outputs.commits != ''
-    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # MAX 360
+    timeout-minutes: 60
+    name: ${{ matrix.commit.name }} (lint)
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.list-commits.outputs.commits) }}
+        commit: ${{ fromJSON(needs.list-commits.outputs.commits) }}
     steps:
+      # The install overlaps the toolchain and cache setup.
+      - name: Start installing the system dependencies
+        run: |
+          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+           echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ matrix.sha }}
+          ref: ${{ matrix.commit.sha }}
 
-      - uses: actions-rs/toolchain@v1
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88
+          toolchain: 1.88.0
           components: rustfmt, clippy
-          override: true
-          profile: minimal
 
-      - name: Install system dependencies
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ needs.list-commits.outputs.cache-prefix }}
+          shared-key: ubuntu-latest-1.88.0
+          save-if: false
+
+      - name: Wait for the system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+          while [ ! -e "$RUNNER_TEMP/apt.status" ]; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt.status")"
 
       - name: Show commit
         run: git log -1 --oneline
@@ -75,8 +110,128 @@ jobs:
       - name: clippy
         run: cargo clippy --all-features --all-targets -- -D warnings
 
+  test-commit:
+    needs: list-commits
+    if: needs.list-commits.outputs.commits != '[]' && needs.list-commits.outputs.commits != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    name: ${{ matrix.commit.name }} (test ${{ matrix.slice.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        commit: ${{ fromJSON(needs.list-commits.outputs.commits) }}
+        slice: ${{ fromJSON(needs.list-commits.outputs.slices) }}
+    steps:
+      # The install overlaps the toolchain and cache setup.
+      - name: Start installing the system dependencies
+        run: |
+          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+           echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ matrix.commit.sha }}
+
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ needs.list-commits.outputs.cache-prefix }}
+          shared-key: ubuntu-latest-1.88.0
+          save-if: false
+
+      - name: List the crates of the slice in this commit
+        id: packages
+        run: |
+          members=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name')
+          packages=""
+          for p in ${{ matrix.slice.packages }}; do
+            if [ "$p" != -p ] && grep -qx "$p" <<< "$members"; then
+              packages="$packages -p $p"
+            fi
+          done
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the system dependencies
+        run: |
+          while [ ! -e "$RUNNER_TEMP/apt.status" ]; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt.status")"
+
+      - name: Show commit
+        run: git log -1 --oneline
+
       - name: tests
-        run: cargo test --verbose --color always -- --nocapture
+        if: steps.packages.outputs.packages != ''
+        run: cargo test --verbose ${{ steps.packages.outputs.packages }} -- --nocapture
+
+  release-commit:
+    needs: list-commits
+    if: needs.list-commits.outputs.commits != '[]' && needs.list-commits.outputs.commits != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    name: ${{ matrix.commit.name }} (release ${{ matrix.slice.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        commit: ${{ fromJSON(needs.list-commits.outputs.commits) }}
+        slice: ${{ fromJSON(needs.list-commits.outputs.slices) }}
+    steps:
+      # The install overlaps the toolchain and cache setup.
+      - name: Start installing the system dependencies
+        run: |
+          (sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config libvulkan-dev libfontconfig1-dev
+           echo $? > "$RUNNER_TEMP/apt.status") > "$RUNNER_TEMP/apt.log" 2>&1 &
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ matrix.commit.sha }}
+
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: ${{ needs.list-commits.outputs.cache-prefix }}
+          shared-key: ubuntu-latest-release-${{ matrix.slice.name }}
+          save-if: false
+
+      - name: List the crates of the slice in this commit
+        id: packages
+        run: |
+          members=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name')
+          packages=""
+          for p in ${{ matrix.slice.packages }}; do
+            if [ "$p" != -p ] && grep -qx "$p" <<< "$members"; then
+              packages="$packages -p $p"
+            fi
+          done
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the system dependencies
+        run: |
+          while [ ! -e "$RUNNER_TEMP/apt.status" ]; do sleep 1; done
+          cat "$RUNNER_TEMP/apt.log"
+          exit "$(cat "$RUNNER_TEMP/apt.status")"
+
+      - name: Show commit
+        run: git log -1 --oneline
 
       - name: build
-        run: cargo build --release
+        if: steps.packages.outputs.packages != ''
+        run: cargo build --release ${{ steps.packages.outputs.packages }}

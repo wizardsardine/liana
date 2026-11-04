@@ -83,6 +83,15 @@ In order to run tests in parallel, you can use `-n` arg:
 ```
 pytest -n 8 tests/
 ```
+
+#### Running a shard of the tests
+
+The CI splits the test suite across several jobs. To run one of `N` shards, with `I` from `0` to
+`N - 1`:
+
+```
+pytest tests/ --num-shards N --shard-id I
+```
 ### Test lints
 
 Just use [`black`](https://github.com/psf/black).

@@ -2,20 +2,58 @@ name: Functional Tests
 
 on:
   push:
+    branches: [master]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: 1.88.0
+
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
+      - name: Use a toolchain directory of our own
+        shell: bash
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lianad-release
+          workspaces: |
+            . -> target
+            tests/tools/taproot_signer -> target
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Build lianad and taproot_signer
+        run: |
+          cargo build --release -p lianad
+          cd tests/tools/taproot_signer
+          cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            target/release/lianad
+            tests/tools/taproot_signer/target/release/taproot_signer
+          retention-days: 1
+
   functional-tests:
-    runs-on: self-hosted
-    timeout-minutes: 90
-
-    # NOTE: uncomment this to enable docker
-    # container:
-    #   image: rust:1-bookworm
-
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
       matrix:
-        include:
+        config:
           - USE_TAPROOT: 0
             BITCOIN_BACKEND_TYPE: 'bitcoind'
             USE_MIN_BITCOIN_VERSION: 'TRUE'
@@ -30,112 +68,90 @@ jobs:
             BITCOIN_BACKEND_TYPE: 'electrs'
           - USE_TAPROOT: 1
             BITCOIN_BACKEND_TYPE: 'electrs'
+        shard: [0, 1]
+    name: functional-tests (${{ matrix.config.USE_TAPROOT }}, ${{ matrix.config.BITCOIN_BACKEND_TYPE }}, ${{ matrix.config.USE_MIN_BITCOIN_VERSION }}, shard ${{ matrix.shard }})
 
     env:
+      NUM_SHARDS: 2
       EXECUTOR_WORKERS: 3
       VERBOSE: 0
       LOG_LEVEL: debug
       TIMEOUT: 120
-      USE_MIN_BITCOIN_VERSION: ${{ matrix.USE_MIN_BITCOIN_VERSION }}
-      USE_TAPROOT: ${{ matrix.USE_TAPROOT }}
-      BITCOIN_BACKEND_TYPE: ${{ matrix.BITCOIN_BACKEND_TYPE }}
+      USE_MIN_BITCOIN_VERSION: ${{ matrix.config.USE_MIN_BITCOIN_VERSION }}
+      USE_TAPROOT: ${{ matrix.config.USE_TAPROOT }}
+      BITCOIN_BACKEND_TYPE: ${{ matrix.config.BITCOIN_BACKEND_TYPE }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # NOTE: uncomment this if docker enabled
-      # - name: Install system dependencies
-      #   run: |
-      #     apt update
-      #     apt install -y python3 python3-pip unzip curl
-
-      - name: cleanup /tmp
-        run: |
-          find /tmp -maxdepth 1 -type d -name 'lianad*' -mtime +0 -exec rm -rf {} +
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
 
       - name: Setup Python dependencies
-        run: |
-          rm -rf .venv
-          python3 -m venv .venv
-          .venv/bin/pip install -r tests/requirements.txt
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+        run: pip install -r tests/requirements.txt
 
-      - name: Add local bin to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
 
-      - name: Cache Cargo registry
+      - name: Cache the test binaries
+        id: cache-bins
         uses: actions/cache@v4
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+          path: bins
+          key: test-bins-bitcoin-24.0.1-31.1-electrs-0.11.1-liana.2-liana-0.3.1
 
-      - name: Cache Cargo git
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-git-
-
-      - name: Cache target/
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-target-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-target-
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('tests/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Build lianad and taproot_signer
-        run: |
-          cd lianad
-          cargo build --release
-          cd ../tests/tools/taproot_signer
-          cargo build --release
-
-      - name: Prepare and run functional tests
+      - name: Download the test binaries
+        if: steps.cache-bins.outputs.cache-hit != 'true'
         run: |
           set -xe
+          mkdir -p bins
+          cd bins
 
-          if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
-            curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
-            echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-            tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
-            export BITCOIND_PATH=bitcoin-24.0.1/bin/bitcoind
-            export IS_NOT_BITCOIND_24=0
-          else
-            curl -O https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz
-            echo "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e bitcoin-31.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-            tar -xzf bitcoin-31.1-x86_64-linux-gnu.tar.gz
-            export BITCOIND_PATH=bitcoin-31.1/bin/bitcoind
-          fi
+          curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
+          echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
 
-          echo "BITCOIN_BACKEND_TYPE = $BITCOIN_BACKEND_TYPE"
+          curl -O https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz
+          echo "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e bitcoin-31.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf bitcoin-31.1-x86_64-linux-gnu.tar.gz
 
-          if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
-            curl -OL https://github.com/jp1ac4/electrsd/releases/download/electrs-v0.10.6-ubuntu-20.04/electrs_linux_v0.10.6.zip
-            echo "34934bedbc4003867353f23c7983d4aa2d901dfccfd0bd74167f9fd305c56f7b electrs_linux_v0.10.6.zip" | sha256sum -c
-            unzip electrs_linux_v0.10.6.zip
-            chmod 754 electrs
-            export ELECTRS_PATH=$PWD/electrs
-          fi
+          # electrs 0.11.1 fetching blocks over RPC, as over p2p it hangs on reorgs, and not
+          # losing the txs of a block found during its mempool sync.
+          curl -OL https://github.com/ws-plaude/electrs/releases/download/v0.11.1-liana.2/electrs-v0.11.1-liana.2-x86_64-linux-gnu.tar.gz
+          echo "e0faf3ff5817d2a3d65ccce99368dce66c9c4cf66ecaffede8051619fd6a64db electrs-v0.11.1-liana.2-x86_64-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf electrs-v0.11.1-liana.2-x86_64-linux-gnu.tar.gz
 
           curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
           echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 liana-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
           tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
-          export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
 
-          # Clean Cargo index before cache save
-          rm -rf ~/.cargo/registry/index
+          rm ./*.tar.gz
 
-          # Run the functional tests
-          LIANAD_PATH=$PWD/target/release/lianad .venv/bin/pytest tests/ -vvv -n 8
+      - name: Run functional tests
+        run: |
+          set -xe
+          chmod +x target/release/lianad tests/tools/taproot_signer/target/release/taproot_signer
+
+          if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
+            export BITCOIND_PATH=$PWD/bins/bitcoin-24.0.1/bin/bitcoind
+            export IS_NOT_BITCOIND_24=0
+          else
+            export BITCOIND_PATH=$PWD/bins/bitcoin-31.1/bin/bitcoind
+          fi
+          export ELECTRS_PATH=$PWD/bins/electrs-v0.11.1-liana.2-x86_64-linux-gnu/electrs
+          export OLD_LIANAD_PATH=$PWD/bins/liana-0.3.1-x86_64-linux-gnu/lianad
+
+          LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 8 \
+            --num-shards "$NUM_SHARDS" --shard-id ${{ matrix.shard }}
+
+      - name: Upload the test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ strategy.job-index }}
+          path: /tmp/lianad-tests-*
+          retention-days: 7
