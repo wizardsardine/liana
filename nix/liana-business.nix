@@ -23,6 +23,8 @@ let
 
   lianaBusinessInfo = craneLib.crateNameFromCargoToml { cargoToml = rootPath + "/liana-business/Cargo.toml"; };
 
+  mkWindowsMsi = import ./windows-msi.nix { inherit pkgs lib rootPath; };
+
   # Windows-specific settings shared between deps and final build
   windowsSettings = {
     inherit (commonBuildSettings) src strictDeps cargoLock cargoVendorDir LIANA_SKIP_GUI_ICON;
@@ -52,7 +54,7 @@ let
     doCheck = false;
   });
 
-  x86_64-pc-windows-gnu = craneLib.buildPackage (windowsSettings // {
+  x86_64-pc-windows-gnu-exe = craneLib.buildPackage (windowsSettings // {
     inherit (lianaBusinessInfo) pname version;
     doCheck = false;
 
@@ -65,6 +67,17 @@ let
       cp target/x86_64-pc-windows-gnu/release/liana-business.exe $out/x86_64-pc-windows-gnu
     '';
   });
+
+  x86_64-pc-windows-gnu = mkWindowsMsi {
+    inherit (lianaBusinessInfo) pname version;
+    productName = "Liana Business";
+    exeName = "liana-business.exe";
+    exePath = "${x86_64-pc-windows-gnu-exe}/x86_64-pc-windows-gnu/liana-business.exe";
+    icon = rootPath + "/liana-ui/static/logos/liana-business.ico";
+    upgradeCode = "1fec2772-32d2-4c27-9ca1-84d195dd5023";
+    exeComponentGuid = "2ec2df16-d9cb-4fbd-9244-47ba327525db";
+    docsComponentGuid = "16494fc8-2307-4b27-86d4-801940f1797c";
+  };
 
   x86_64-apple-darwin = craneLib.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
@@ -146,7 +159,7 @@ let
   '';
 
 in {
-  inherit x86_64-pc-windows-gnu x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
+  inherit x86_64-pc-windows-gnu x86_64-pc-windows-gnu-exe x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
   release = pkgs.buildEnv {
     name = "release";
     paths = [

@@ -16,6 +16,12 @@ Business is listed below.
 - Export the encrypted descriptor from the business settings.
 - Translate the business installer and settings screens.
 
+#### Packaging
+
+- Distribute the Windows application as a `.msi` installer instead of a bare `.exe`, built
+  reproducibly with `wixl`, and codesign it with a detached Authenticode signature that anyone can
+  re-attach to the reproducible installer.
+
 ### Fixes
 
 - Fix typos and casing in the business installer and settings text.

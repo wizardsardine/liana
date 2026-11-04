@@ -83,6 +83,8 @@
             pkgs.gnutar
             pkgs.dpkg
             pkgs.rcodesign
+            # Windows .msi Authenticode signing (contrib/release/sign.sh, contrib/release/windows/)
+            pkgs.osslsigncode
             # macOS .dmg creation (contrib/release/macos/create-dmg.sh)
             pkgs.xorriso
             libdmg-hfsplus

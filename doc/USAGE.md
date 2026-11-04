@@ -48,7 +48,10 @@ drag the application to your `Applications` folder. To run the non-codesigned ap
 guide](https://support.apple.com/en-us/HT202491) (section "If you want to open an app that hasn’t
 been notarized or is from an unidentified developer").
 
-We do not yet distribute codesigned binaries for Windows at this time.
+On Windows we distribute an installer, both non-codesigned and codesigned
+(`liana-<version>-noncodesigned.msi` and `liana-<version>.msi`). Run it to install Liana under
+`Program Files` with a Start Menu shortcut; it can be removed from "Apps & features" like any other
+program. Installing a newer version over an existing one upgrades it in place.
 
 
 ### Starting the software

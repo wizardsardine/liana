@@ -110,10 +110,10 @@ if [ "$TARGET" = "liana" ]; then
         mv "$DIRNAME.deb" "$RELEASE_DIR"
     )
 
-    # Create the Windows archive and the raw executable
+    # Copy the Windows installer
     (
         cd "$BUILD_DIR"
-        cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
+        cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.msi" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.msi"
     )
 
     # Create the MacOS archive and a disk image of the liana-gui application bundle.
@@ -167,10 +167,10 @@ else
         mv "$DIRNAME.deb" "$RELEASE_DIR"
     )
 
-    # Create the Windows executable
+    # Copy the Windows installer
     (
         cd "$BUILD_DIR"
-        cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-business.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
+        cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-business.msi" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.msi"
     )
 
     # Create the MacOS archives

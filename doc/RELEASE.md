@@ -33,6 +33,10 @@ independent of each other, so the same branch can carry, say, `v16.0` and `busin
   The script derives the version from the tag and re-enters the `release` dev shell by itself, so
   there is nothing to configure. Sign the assets with
   [`contrib/release/sign.sh`](../contrib/release/sign.sh): `./contrib/release/sign.sh liana gpg`.
+  To codesign the Windows installer, run `./contrib/release/sign.sh liana osslsigncode <cert_path>
+  <key_path>` before the gpg step: it produces `liana-<version>.msi` and the detached signature
+  `liana-<version>.msi.pem`, both to be published (see
+  [`contrib/release/windows`](../contrib/release/windows/README.md)).
 - Publish a pre-release for this tag on Github (https://github.com/wizardsardine/liana/releases)
   with the reproducibly built binaries.
 - If bugs are discovered when testing the release candidate, fix them in master and backport them to
@@ -68,7 +72,8 @@ The flow is the same, with its own version numbering, on the release branch of t
   for v1](https://github.com/wizardsardine/liana/pull/2225).)
 - Create a `business-vA.Brc1` tag on this branch and push it.
 - Build and sign with the `liana-business` target: `./contrib/release/release.sh liana-business`,
-  then `./contrib/release/sign.sh liana-business rcodesign <cert_path> <key_path> <apikey_json_path>`.
+  then `./contrib/release/sign.sh liana-business rcodesign <cert_path> <key_path> <apikey_json_path>`
+  and `./contrib/release/sign.sh liana-business osslsigncode <cert_path> <key_path>`.
 - Publish the pre-release, iterate on release candidates, then drop the "rc" suffix and tag
   `business-vA.B` the same way.
 

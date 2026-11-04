@@ -3,19 +3,20 @@
 # ==============================================================================
 # Script for signing the release assets.
 #
-# Usage: ./contrib/release/sign.sh <target> <gpg|rcodesign> [args...]
+# Usage: ./contrib/release/sign.sh <target> <gpg|rcodesign|osslsigncode> [args...]
 #   target: "liana" or "liana-business"
 #
 # Examples:
 #   ./contrib/release/sign.sh liana gpg
 #   ./contrib/release/sign.sh liana-business rcodesign <cert_path> <key_path> <apikey_json_path>
+#   ./contrib/release/sign.sh liana osslsigncode <cert_path> <key_path>
 # ==============================================================================
 
 set -e  # Exit immediately if a command exits with a non-zero status
 set -x  # Print commands and their arguments as they are executed
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 <target> <gpg|rcodesign> [args...]"
+    echo "Usage: $0 <target> <gpg|rcodesign|osslsigncode> [args...]"
     echo "  target: 'liana' or 'liana-business'"
     exit 1
 fi
@@ -28,8 +29,8 @@ if [ "$TARGET" != "liana" ] && [ "$TARGET" != "liana-business" ]; then
     exit 1
 fi
 
-# The signing and disk image tools (rcodesign, xorrisofs, dmg) come from the
-# release dev shell. Re-enter it through Nix rather than require them on the host.
+# The signing and disk image tools (rcodesign, osslsigncode, xorrisofs, dmg) come
+# from the release dev shell. Re-enter it through Nix rather than require them on the host.
 if [ -z "${IN_LIANA_RELEASE_SHELL:-}" ]; then
     export IN_LIANA_RELEASE_SHELL=1
     exec nix develop "$PWD#release" --command "$0" "$TARGET" "$@"
@@ -156,6 +157,64 @@ sign_with_rcodesign() {
     sha256sum "$RELEASE_DIR/$DMG" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 }
 
+# Function to sign the Windows installer with osslsigncode and extract the
+# detached signature (see contrib/release/windows/README.md).
+sign_with_osslsigncode() {
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: $0 <target> osslsigncode <cert_path> <key_path>"
+        exit 1
+    fi
+
+    CODESIGN_CERT="$(absolute_path $1)"
+    CODESIGN_KEY="$(absolute_path $2)"
+    TIMESTAMP_SERVER="${TIMESTAMP_SERVER:-http://timestamp.digicert.com}"
+
+    if [ ! -f "$CODESIGN_CERT" ]; then
+        echo "Certificate file not found: $CODESIGN_CERT"
+        exit 1
+    fi
+
+    if [ ! -f "$CODESIGN_KEY" ]; then
+        echo "Key file not found: $CODESIGN_KEY"
+        exit 1
+    fi
+
+    if [ "$TARGET" = "liana" ]; then
+        PRODUCT_NAME="Liana"
+    else
+        PRODUCT_NAME="Liana Business"
+    fi
+
+    UNSIGNED_MSI="$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.msi"
+    SIGNED_MSI="$RELEASE_DIR/$LIANA_PREFIX.msi"
+    DETACHED_SIG="$RELEASE_DIR/$LIANA_PREFIX.msi.pem"
+
+    if [ ! -f "$UNSIGNED_MSI" ]; then
+        echo "Installer not found: $UNSIGNED_MSI (run release.sh first)"
+        exit 1
+    fi
+
+    osslsigncode sign \
+        -certs "$CODESIGN_CERT" \
+        -key "$CODESIGN_KEY" \
+        -n "$PRODUCT_NAME" \
+        -i "https://wizardsardine.com/liana/" \
+        -h sha256 \
+        -ts "$TIMESTAMP_SERVER" \
+        -in "$UNSIGNED_MSI" \
+        -out "$SIGNED_MSI"
+
+    osslsigncode extract-signature -pem -in "$SIGNED_MSI" -out "$DETACHED_SIG"
+
+    # The published signature must reproduce the published signed installer.
+    REATTACHED_MSI="$(mktemp --suffix=.msi)"
+    "$SCRIPT_DIR/windows/attach-signature.sh" "$UNSIGNED_MSI" "$DETACHED_SIG" "$REATTACHED_MSI"
+    cmp "$REATTACHED_MSI" "$SIGNED_MSI"
+    rm -f "$REATTACHED_MSI"
+
+    sha256sum "$SIGNED_MSI" "$DETACHED_SIG" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
+}
+
 COMMAND="$1"
 shift  # Shift the arguments to access any additional parameters
 
@@ -166,9 +225,12 @@ case "$COMMAND" in
     rcodesign)
         sign_with_rcodesign "$@"
         ;;
+    osslsigncode)
+        sign_with_osslsigncode "$@"
+        ;;
     *)
         echo "Invalid command: $COMMAND"
-        echo "Usage: $0 <target> <version> <gpg|rcodesign> [args...]"
+        echo "Usage: $0 <target> <gpg|rcodesign|osslsigncode> [args...]"
         exit 1
         ;;
 esac
