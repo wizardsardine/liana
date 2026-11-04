@@ -9,7 +9,7 @@ use crate::{
     component::{
         self,
         amount::{amount_column_width, amount_with_fiat_tooltip, AmountSize, FiatAmount},
-        label::{display_label, LABEL_DISPLAY_MAX_CHARS},
+        label::display_label,
         pill,
         text::{
             format_date,
@@ -17,9 +17,9 @@ use crate::{
         },
         tooltip::tooltip_with_style,
     },
-    icon,
+    icon, priority_row,
     theme::{self, amount},
-    widget::{Container, Element, SpaceExt},
+    widget::{priority, Container, Element, SpaceExt},
 };
 
 const ICON_SIZE: u32 = 16;
@@ -89,7 +89,7 @@ pub fn list_entry<'a, M: 'a + Clone>(
     fiat_price: Option<FiatPrice>,
     msg: Option<M>,
 ) -> Element<'a, M> {
-    let label = display_label(label, new::H2_SPEC, Some(LABEL_DISPLAY_MAX_CHARS));
+    let label = display_label(label, new::H2_SPEC);
 
     let time = time.map(|time| caption(format_date(time)).style(theme::text::card_secondary));
     let unconfirmed = time.is_none().then_some(pill::unconfirmed());
@@ -119,7 +119,12 @@ pub fn list_entry<'a, M: 'a + Clone>(
     let right = row![unconfirmed, payjoin, batch, amount]
         .spacing(5)
         .align_y(Alignment::Center);
-    let content =
-        row![left, Space::fill_width(), right].height(component::panels::ListEntryHeight::Standard);
-    component::card::list_entry_with_padding(content, msg, component::panels::LIST_ENTRY_PADDING)
+    let content = priority_row![priority::truncate(1, left), Space::fill_width(), right]
+        .align_y(Alignment::Center)
+        .height(component::panels::ListEntryHeight::Standard);
+    component::card::list_entry_with_padding(
+        row![content],
+        msg,
+        component::panels::LIST_ENTRY_PADDING,
+    )
 }

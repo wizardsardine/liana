@@ -3,12 +3,7 @@ use std::collections::HashMap;
 use iced::{widget::column, Alignment, Length};
 
 use liana_ui::{
-    component::{
-        form,
-        label::{display_label, LABEL_DISPLAY_MAX_CHARS},
-        panels::coins,
-        text::new,
-    },
+    component::{form, label::display_label, panels::coins, text::new},
     spacing::VSpacing,
     widget::{Column, Container, Element},
 };
@@ -84,11 +79,7 @@ fn coin_list_view<'a>(
             LabelSize::Entry,
         )
     } else {
-        display_label(
-            &coin_label,
-            LabelSize::Entry.spec(),
-            Some(LABEL_DISPLAY_MAX_CHARS),
-        )
+        display_label(&coin_label, LabelSize::Entry.spec())
     };
 
     coins::coin_entry(
