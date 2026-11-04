@@ -915,7 +915,7 @@ pub fn btn_edit<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
 }
 
 pub fn btn_set<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
-    btn_primary(Some(icon::edit_icon()), t!("btn-set"), BtnWidth::S, msg)
+    btn_primary(Some(icon::edit_icon()), t!("btn-set"), BtnWidth::Auto, msg)
 }
 
 pub fn btn_add_recovery_option<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
