@@ -56,5 +56,5 @@ See the [Krux documentation](https://selfcustody.github.io/krux/getting-started/
 Miniscript support was introduced in
 [v25.03.0](https://github.com/selfcustody/krux/releases/tag/v25.03.0).
 
-NOTE: Krux devices will not be dectected by Liana; you use it by exporting the
+NOTE: Krux devices will not be detected by Liana; you use it by exporting the
 PSBT from Liana to an SD card, signing on the device, and importing the signed PSBT back.
