@@ -28,24 +28,24 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const DETACHED_PROCESS: u32 = 0x00000008;
 
 /// Current and previous managed bitcoind versions, in order of descending version.
-pub const VERSIONS: [&str; 8] = [
-    "31.1", "29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0",
+pub const VERSIONS: [&str; 9] = [
+    "32.1", "31.1", "29.0", "28.0", "27.1", "26.1", "26.0", "25.1", "25.0",
 ];
 
 /// Current managed bitcoind version for new installations.
 pub const VERSION: &str = VERSIONS[0];
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "bc506958d0f387c1ea770bdc7c7192a505fa645ff62cabcc7761fa7eb89e867e";
+pub const SHA256SUM: &str = "53b1e6ffd92843ca82ef4a737d7a53cb0a9fab15816a417a41f12fc954071447";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub const SHA256SUM: &str = "16a097c09fbd7eb78b240ce1dae123663ea2e5e377cfd6a951e71e227e23cf2f";
+pub const SHA256SUM: &str = "cd3dcdacb4ff861e862b2d7df4786ecef66472e2468dca1673a70dd761e064e7";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e";
+pub const SHA256SUM: &str = "61545c17c3120fb7412f896d248b11993af04ec8817aad3649c55b2afb044963";
 
 #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-pub const SHA256SUM: &str = "c99ef173471c58e6766d9eebd12e6c35349082eeed3939bc99eed58ef57db587";
+pub const SHA256SUM: &str = "b5b0c2cd007d69e96880907c79f9ae19ae82728f95fc8c923b4a07dab795b45d";
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
 pub fn download_filename() -> String {
@@ -753,25 +753,32 @@ pub mod tests {
     #[test]
     fn older_liana_does_not_run_newer_bitcoind() {
         let older_liana = ["31.1", "29.0"];
-        let newer_liana = ["32.0", "31.1", "29.0"];
+        let newer_liana = VERSIONS;
 
         // Only the newer Liana's Bitcoin Core is installed.
-        let directory = test_directory(&["32.0"]);
+        let directory = test_directory(&[VERSION]);
         assert_eq!(installed_bitcoind_exe_path(&directory, &older_liana), None);
         assert_eq!(
             installed_bitcoind_exe_path(&directory, &newer_liana),
-            Some(internal_bitcoind_exe_path(&directory, "32.0"))
+            Some(internal_bitcoind_exe_path(&directory, VERSION))
+        );
+
+        // Without the upgrade, the newer Liana can still start Bitcoin Core 31.1.
+        let directory = test_directory(&["31.1"]);
+        assert_eq!(
+            installed_bitcoind_exe_path(&directory, &newer_liana),
+            Some(internal_bitcoind_exe_path(&directory, "31.1"))
         );
 
         // Both are installed: each Liana runs its own Bitcoin Core.
-        let directory = test_directory(&["31.1", "32.0"]);
+        install(&directory, VERSION);
         assert_eq!(
             installed_bitcoind_exe_path(&directory, &older_liana),
             Some(internal_bitcoind_exe_path(&directory, "31.1"))
         );
         assert_eq!(
             installed_bitcoind_exe_path(&directory, &newer_liana),
-            Some(internal_bitcoind_exe_path(&directory, "32.0"))
+            Some(internal_bitcoind_exe_path(&directory, VERSION))
         );
     }
 

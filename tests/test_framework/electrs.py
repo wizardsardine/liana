@@ -1,8 +1,16 @@
+import json
 import logging
 import os
+import socket
 
 from ephemeral_port_reserve import reserve
-from test_framework.utils import BitcoinBackend, TailableProc, ELECTRS_PATH, TIMEOUT
+from test_framework.utils import (
+    BitcoinBackend,
+    TailableProc,
+    ELECTRS_PATH,
+    TIMEOUT,
+    wait_for,
+)
 
 
 class Electrs(BitcoinBackend):
@@ -25,6 +33,7 @@ class Electrs(BitcoinBackend):
 
         self.electrs_dir = electrs_dir
         self.rpcport = rpcport
+        self.use_rest = os.getenv("ELECTRS_USE_REST") == "1"
 
         regtestdir = os.path.join(electrs_dir, "regtest")
         if not os.path.exists(regtestdir):
@@ -39,12 +48,13 @@ class Electrs(BitcoinBackend):
             "daemon_dir": bitcoind_dir,
             "cookie_file": os.path.join(bitcoind_dir, "regtest", ".cookie"),
             "daemon_rpc_addr": f"127.0.0.1:{bitcoind_rpcport}",
-            "daemon_p2p_addr": f"127.0.0.1:{bitcoind_p2pport}",
             "db_dir": electrs_dir,
             "network": "regtest",
             "electrum_rpc_addr": f"127.0.0.1:{self.rpcport}",
             "monitoring_addr": f"127.0.0.1:{monitoring_port}",
         }
+        if not self.use_rest:
+            electrs_conf["daemon_p2p_addr"] = f"127.0.0.1:{bitcoind_p2pport}"
         self.conf_file = os.path.join(regtestdir, "electrs.toml")
         with open(self.conf_file, "w") as f:
             for k, v in electrs_conf.items():
@@ -52,9 +62,24 @@ class Electrs(BitcoinBackend):
 
         self.env = {"RUST_LOG": "DEBUG"}
 
+    def has_indexed_blocks(self):
+        try:
+            with socket.create_connection(("127.0.0.1", self.rpcport), timeout=1) as peer:
+                peer.sendall(
+                    b'{"id":1,"method":"blockchain.headers.subscribe","params":[]}\n'
+                )
+                with peer.makefile("rb") as response:
+                    result = json.loads(response.readline()).get("result") or {}
+                    return result.get("height", 0) > 0
+        except (OSError, ValueError):
+            return False
+
     def start(self):
         TailableProc.start(self)
-        self.wait_for_log("auto-compactions enabled", timeout=TIMEOUT)
+        if self.use_rest:
+            wait_for(self.has_indexed_blocks)
+        else:
+            self.wait_for_log("auto-compactions enabled", timeout=TIMEOUT)
         logging.info("Electrs started")
 
     def startup(self):

@@ -5,8 +5,10 @@ import socket
 import time
 
 from decimal import Decimal
+from io import BytesIO
 from ephemeral_port_reserve import reserve
 from test_framework.authproxy import AuthServiceProxy
+from test_framework.serializations import deser_compact_size, hash256
 from test_framework.utils import (
     BitcoinBackend,
     TailableProc,
@@ -79,6 +81,8 @@ class Bitcoind(BitcoinBackend):
             # h/t pythcoiner :)
             "peertimeout": 2 * 24 * 60 * 60,  # 2 days
         }
+        if os.getenv("ELECTRS_USE_REST") == "1":
+            bitcoind_conf["rest"] = 1
         self.conf_file = os.path.join(bitcoin_dir, "bitcoin.conf")
         with open(self.conf_file, "w") as f:
             f.write("chain=regtest\n")
@@ -183,9 +187,7 @@ class Bitcoind(BitcoinBackend):
             final_len = 1 + orig_len
 
         self.rpc.invalidateblock(old_hash)
-        self.wait_for_log(
-            r"InvalidChainFound: invalid block=.*  height={}".format(height)
-        )
+        wait_for(lambda: self.rpc.getblockcount() == height - 1)
         memp = self.rpc.getrawmempool()
 
         if shift < 0:
@@ -195,7 +197,7 @@ class Bitcoind(BitcoinBackend):
         else:
             self.generate_empty_blocks(shift)
             self.generate_block(1 + final_len - (height + shift), memp)
-        self.wait_for_log(r"UpdateTip: new best=.* height={}".format(final_len))
+        wait_for(lambda: self.rpc.getblockcount() == final_len)
 
     def send_p2p_message(self, s, command, payload):
         magic_bytes = b"\xfa\xbf\xb5\xda"
@@ -212,7 +214,24 @@ class Bitcoind(BitcoinBackend):
         s.sendall(message)
         logging.debug(f"Sent message to bitcoind: {command}")
 
-    def connect_p2p(self, cur_height):
+    def wait_for_p2p_message(self, sock, stream, expected):
+        # TCP reads can split messages, and the peer may send other commands in between.
+        deadline = time.monotonic() + TIMEOUT
+        while (remaining := deadline - time.monotonic()) > 0:
+            sock.settimeout(remaining)
+            header = stream.read(24)
+            assert len(header) == 24 and header[:4] == b"\xfa\xbf\xb5\xda", header
+            command = header[4:16].rstrip(b"\x00")
+            length = int.from_bytes(header[16:20], "little")
+            payload = stream.read(length)
+            assert len(payload) == length, command
+            if command == expected:
+                return payload
+            if command == b"ping":
+                self.send_p2p_message(sock, "pong", payload)
+        raise TimeoutError(f"Timed out waiting for P2P message {expected!r}")
+
+    def handshake_p2p(self, sock, stream, cur_height):
         version = int(70016).to_bytes(4, "little")
         services = int((1 << 0) | (1 << 3)).to_bytes(8, "little")
         timestamp = int(time.time()).to_bytes(8, "little")
@@ -234,38 +253,24 @@ class Bitcoind(BitcoinBackend):
             + relay
         )
 
-        logging.debug("Connecting to bitcoind p2p port")
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect(("127.0.0.1", self.p2pport))
-        self.send_p2p_message(s, "version", ver_payload)
-        s.recv(102 + 24)  # Recv version
-        s.recv(0 + 24)  # Recv wtxidrelay
-        s.recv(0 + 24)  # Recv sendaddrv2
-        s.recv(0 + 24)  # Recv verack
-        self.send_p2p_message(s, "verack", b"")
-        s.recv(9 + 24)  # Recv sendcmpct
-        ping = s.recv(8 + 24)  # Recv ping, reply with pong
-        assert ping[4:8].decode("ascii") == "ping", ping
-        self.send_p2p_message(s, "pong", ping[-8:])
-        s.recv(613 + 24)  # Recv getheaders (ignore it)
-        s.recv(8 + 24)  # Recv feefilter
-
+        self.send_p2p_message(sock, "version", ver_payload)
+        self.wait_for_p2p_message(sock, stream, b"verack")
+        self.send_p2p_message(sock, "verack", b"")
         logging.debug("Handshake to bitcoind complete")
-        return s
 
     def submit_block(self, cur_height, block_hex):
         """Submit a block through the P2P interface."""
-        s = self.connect_p2p(cur_height)
-        self.send_p2p_message(s, "block", bytes.fromhex(block_hex))
+        block = bytes.fromhex(block_hex)
+        with socket.create_connection(("127.0.0.1", self.p2pport), TIMEOUT) as sock:
+            with sock.makefile("rb") as stream:
+                self.handshake_p2p(sock, stream, cur_height)
+                self.send_p2p_message(sock, "block", block)
 
-        # Make sure the block was received by waiting for the inv.
-        inv = s.recv(37 + 24)
-        assert (
-            inv[4:7].decode("ascii") == "inv"
-            and int.from_bytes(inv[24 + 1 : 24 + 1 + 4], "little") == 2
-        ), inv
-
-        s.close()
+                # Check that the peer announces the exact block just submitted.
+                inv = BytesIO(self.wait_for_p2p_message(sock, stream, b"inv"))
+                count = deser_compact_size(inv)
+                announced = (inv.read(36) for _ in range(count))
+                assert (2).to_bytes(4, "little") + hash256(block[:80]) in announced
 
     def startup(self):
         try:
