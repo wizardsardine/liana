@@ -52,13 +52,16 @@ What the script does, in order:
   uninstaller and the Start Menu shortcut, and registers the "Apps & features" entry (name,
   version, icon, publisher, URL, install location, uninstall strings, size).
 - Uninstall: deletes exactly the files it installed, the shortcut and the registry key. The
-  install directory is removed only if empty. Nothing outside it is ever touched; the wallet data
-  directory lives in the user profile.
+  install directory is removed only if empty. The wallet data directory (`%APPDATA%\Liana`, shared
+  by Liana and Liana Business) is kept unless the user answers Yes to a prompt whose default is No;
+  a silent uninstall never asks and never removes it.
 
 The installer and the uninstaller are 32-bit programs (that is what NSIS produces), so the script
 switches to the 64-bit registry view and `$PROGRAMFILES64` explicitly. If the application is
-running during an upgrade or an uninstall, the executable cannot be replaced and NSIS shows an
-abort/retry/ignore box: close the application first.
+running during an upgrade or an uninstall, the executable cannot be replaced: the uninstaller
+aborts before removing anything else, and the installer refuses to register the new version over
+the old files (`AllowSkipFiles off`, so a silent install fails instead of skipping the locked
+file). Close the application first.
 
 ## Keeping the installer reproducible
 
@@ -78,7 +81,7 @@ with 7-Zip:
 
 ```
 7zz l liana-<v>-setup.exe                # list the payload and the NSIS script
-7zz x -o out/ liana-<v>-setup.exe        # extract the payload
+7zz x -oout/ liana-<v>-setup.exe         # extract the payload
 osslsigncode verify -in liana-<v>-setup.exe   # signature, timestamp and version info
 ```
 
@@ -96,10 +99,13 @@ osslsigncode prompts for the card PIN. The script finds the only certificate on 
 key behind it, reads the certificate from the card, fetches the issuing CA from the certificate's
 CA Issuers URL to build the chain, and produces `liana-<v>-setup.exe`
 (signed, RFC 3161 timestamped, `TIMESTAMP_SERVER` overrides the timestamp authority) and
-`liana-<v>-setup.exe.pem`, the detached signature. It then checks that re-attaching the detached
-signature to the non-codesigned installer reproduces the signed one byte for byte. Both files are
-appended to the shasums. Only the installer is signed; the executable it installs is not, which is
-also what Bitcoin Core does.
+`liana-<v>-setup.exe.pem`, the detached signature. The signed installer is verified with
+`osslsigncode verify` against the CA bundle of the release shell (`TRUST_BUNDLE` overrides it),
+for both the signer chain and the timestamp authority chain, and the script checks that
+re-attaching the detached signature to the non-codesigned installer reproduces the signed one byte
+for byte. Only then are the two files moved to `release_assets/` and their entries written to the
+shasums, replacing any entry from a previous run. Only the installer is signed; the executable it
+installs is not, which is also what Bitcoin Core does.
 
 If the card holds several certificates, pass the key's PKCS#11 URI, e.g.
 `'pkcs11:token=<label>;object=<key_label>;type=private'`, as the only argument. The script also
@@ -134,7 +140,8 @@ sha256sum /tmp/liana-setup.exe liana-<v>-setup.exe
 ```
 
 `attach-signature.sh` accepts an optional CA bundle as fourth argument to also run
-`osslsigncode verify` on the result.
+`osslsigncode verify` on the result, checking both the signer and the timestamp authority chains
+against it.
 
 ### The Certum smart card
 

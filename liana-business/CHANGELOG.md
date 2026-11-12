@@ -18,8 +18,8 @@ Business is listed below.
 
 #### Packaging
 
-- Distribute the Windows application as a `.msi` installer instead of a bare `.exe`, built
-  reproducibly with `wixl`, and codesign it with a detached Authenticode signature that anyone can
+- Distribute the Windows application as a `-setup.exe` installer instead of a bare `.exe`, built
+  reproducibly with NSIS, and codesign it with a detached Authenticode signature that anyone can
   re-attach to the reproducible installer.
 
 ### Fixes

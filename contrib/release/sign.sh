@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 
 # ==============================================================================
 # Script for signing the release assets.
@@ -69,6 +69,22 @@ LIANA_PREFIX="$TARGET-$VERSION"
 RELEASE_DIR="$PWD/release_assets"
 RELEASE_BUILD_DIR="$PWD/release_build"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Record the sha256 of release assets in the shasums file, replacing any previous
+# entry for the same file so that re-running a signing step does not leave
+# conflicting lines behind.
+record_shasums() {
+    local shasums="$RELEASE_DIR/$LIANA_PREFIX-shasums.txt" name
+    (
+        cd "$RELEASE_DIR"
+        touch "$shasums"
+        for name in "$@"; do
+            awk -v name="$name" '$2 != name' "$shasums" > "$shasums.tmp"
+            mv "$shasums.tmp" "$shasums"
+        done
+        sha256sum "$@" | tee -a "$shasums"
+    )
+}
 
 # Function to perform GPG signing
 sign_with_gpg() {
@@ -156,7 +172,7 @@ sign_with_rcodesign() {
         --api-key-path "$NOTARY_API_CREDS_FILE" \
         --staple "$DMG"
     mv "$DMG" "$RELEASE_DIR/"
-    sha256sum "$RELEASE_DIR/$DMG" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
+    record_shasums "$DMG"
 }
 
 # Decode one percent-encoded attribute of a PKCS#11 URI (RFC 7512).
@@ -224,8 +240,20 @@ read_card_certificate_chain() {
 # certificate's CA Issuers URL. The card is reached through the module in
 # PKCS11_MODULE (default: Certum common profile, built from the flake).
 # Alternatively <cert_path> <key_path> as PEM files.
+# The signed installer is verified against TRUST_BUNDLE (default: the CA bundle
+# of the release shell) for both the signer and the timestamp authority chains,
+# and checked to be reproducible from the detached signature, before the release
+# assets are replaced.
 sign_with_osslsigncode() {
     TIMESTAMP_SERVER="${TIMESTAMP_SERVER:-http://timestamp.digicert.com}"
+    TRUST_BUNDLE="${TRUST_BUNDLE:-${LIANA_CA_BUNDLE:-}}"
+    if [ ! -f "$TRUST_BUNDLE" ]; then
+        echo "CA bundle not found: '$TRUST_BUNDLE' (set TRUST_BUNDLE)"
+        exit 1
+    fi
+
+    WORK_DIR="$(mktemp -d)"
+    trap 'rm -rf "$WORK_DIR"' EXIT
 
     case "$#:${1:-}" in
         0:|1:pkcs11:*)
@@ -244,8 +272,8 @@ sign_with_osslsigncode() {
                 KEY_URI="$(card_key_uri)"
             fi
 
-            CERT_DIR="$(mktemp -d)"
-            trap 'rm -rf "$CERT_DIR"' EXIT
+            CERT_DIR="$WORK_DIR/certs"
+            mkdir -p "$CERT_DIR"
             read_card_certificate_chain "$KEY_URI" "$CERT_DIR"
             CODESIGN_CERT="$CERT_DIR/chain.pem"
             KEY_ARGS=(-provider pkcs11 -pkcs11module "$PKCS11_MODULE" -key "$KEY_URI" -askpass)
@@ -276,16 +304,15 @@ sign_with_osslsigncode() {
     fi
 
     UNSIGNED_SETUP="$RELEASE_DIR/$LIANA_PREFIX-setup-noncodesigned.exe"
-    SIGNED_SETUP="$RELEASE_DIR/$LIANA_PREFIX-setup.exe"
-    DETACHED_SIG="$RELEASE_DIR/$LIANA_PREFIX-setup.exe.pem"
+    SIGNED_NAME="$LIANA_PREFIX-setup.exe"
+    DETACHED_SIG_NAME="$LIANA_PREFIX-setup.exe.pem"
+    SIGNED_SETUP="$WORK_DIR/$SIGNED_NAME"
+    DETACHED_SIG="$WORK_DIR/$DETACHED_SIG_NAME"
 
     if [ ! -f "$UNSIGNED_SETUP" ]; then
         echo "Installer not found: $UNSIGNED_SETUP (run release.sh first)"
         exit 1
     fi
-
-    # osslsigncode refuses to overwrite its outputs.
-    rm -f "$SIGNED_SETUP" "$DETACHED_SIG"
 
     osslsigncode sign \
         -certs "$CODESIGN_CERT" \
@@ -297,15 +324,17 @@ sign_with_osslsigncode() {
         -in "$UNSIGNED_SETUP" \
         -out "$SIGNED_SETUP"
 
+    osslsigncode verify -CAfile "$TRUST_BUNDLE" -TSA-CAfile "$TRUST_BUNDLE" -in "$SIGNED_SETUP"
+
     osslsigncode extract-signature -pem -in "$SIGNED_SETUP" -out "$DETACHED_SIG"
 
     # The published signature must reproduce the published signed installer.
-    REATTACHED_DIR="$(mktemp -d)"
-    "$SCRIPT_DIR/windows/attach-signature.sh" "$UNSIGNED_SETUP" "$DETACHED_SIG" "$REATTACHED_DIR/reattached.exe"
-    cmp "$REATTACHED_DIR/reattached.exe" "$SIGNED_SETUP"
-    rm -rf "$REATTACHED_DIR"
+    "$SCRIPT_DIR/windows/attach-signature.sh" "$UNSIGNED_SETUP" "$DETACHED_SIG" "$WORK_DIR/reattached.exe" "$TRUST_BUNDLE"
+    cmp "$WORK_DIR/reattached.exe" "$SIGNED_SETUP"
 
-    sha256sum "$SIGNED_SETUP" "$DETACHED_SIG" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
+    mv -f "$SIGNED_SETUP" "$RELEASE_DIR/$SIGNED_NAME"
+    mv -f "$DETACHED_SIG" "$RELEASE_DIR/$DETACHED_SIG_NAME"
+    record_shasums "$SIGNED_NAME" "$DETACHED_SIG_NAME"
 }
 
 COMMAND="$1"

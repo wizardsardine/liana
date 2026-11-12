@@ -81,6 +81,8 @@
         certumPkcs11 = pkgs.callPackage ./nix/certum-pkcs11.nix { };
 
         releaseShell = pkgs.mkShell {
+          # Trust bundle for `osslsigncode verify` (contrib/release/sign.sh)
+          LIANA_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
           buildInputs = [
             pkgs.unzip
             pkgs.gnutar

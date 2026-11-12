@@ -34,22 +34,23 @@ nix build .#liana.x86_64-pc-windows-gnu
 ```
 (or `.#liana-business.x86_64-pc-windows-gnu` for Liana Business).
 
-The `.msi` installer will be present in the `./result/x86_64-pc-windows-gnu` folder. It wraps the
-cross-compiled executable with `wixl` (GNOME msitools); see
+The `liana-gui-setup.exe` installer will be present in the `./result/x86_64-pc-windows-gnu`
+folder. It wraps the cross-compiled executable with [NSIS](https://nsis.sourceforge.io/); see
 [`contrib/release/windows`](../release/windows/README.md) for how the installer is kept
 reproducible. The bare executable is still available under `.#liana.x86_64-pc-windows-gnu-exe`.
 
 #### Verifying the codesigned installer
 
-The codesigned `liana-<version>.msi` is the reproducible `liana-<version>-noncodesigned.msi` with
-an Authenticode signature attached. The signature is published on its own as
-`liana-<version>.msi.pem` (the signing certificate, the signature over the installer's hash and
-the timestamp), so you can rebuild the installer, attach the published signature and check that
-the result is byte for byte the codesigned installer we distribute:
+The codesigned `liana-<version>-setup.exe` is the reproducible
+`liana-<version>-setup-noncodesigned.exe` with an Authenticode signature attached. The signature
+is published on its own as `liana-<version>-setup.exe.pem` (the signing certificate, the signature
+over the installer's hash and the timestamp), so you can rebuild the installer, attach the
+published signature and check that the result is byte for byte the codesigned installer we
+distribute:
 
 ```
-./contrib/release/windows/attach-signature.sh ./result/x86_64-pc-windows-gnu/liana-gui.msi liana-<version>.msi.pem /tmp/liana.msi
-sha256sum /tmp/liana.msi liana-<version>.msi
+./contrib/release/windows/attach-signature.sh ./result/x86_64-pc-windows-gnu/liana-gui-setup.exe liana-<version>-setup.exe.pem /tmp/liana-setup.exe
+sha256sum /tmp/liana-setup.exe liana-<version>-setup.exe
 ```
 
 

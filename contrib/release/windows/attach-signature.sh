@@ -10,7 +10,8 @@
 #
 # Usage: attach-signature.sh <setup-noncodesigned.exe> <signature.pem> <out.exe> [ca_bundle.pem]
 #
-# When a CA bundle is given the output is also verified against it.
+# When a CA bundle is given the output is also verified against it, both the
+# signer chain and the timestamp authority chain.
 # ==============================================================================
 
 set -euo pipefail
@@ -41,7 +42,7 @@ CA_BUNDLE="${4:-}"
 osslsigncode attach-signature -sigin "$SIG" -in "$IN_SETUP" -out "$OUT_SETUP"
 
 if [ -n "$CA_BUNDLE" ]; then
-    osslsigncode verify -CAfile "$CA_BUNDLE" -in "$OUT_SETUP"
+    osslsigncode verify -CAfile "$CA_BUNDLE" -TSA-CAfile "$CA_BUNDLE" -in "$OUT_SETUP"
 fi
 
 echo "created $OUT_SETUP"
