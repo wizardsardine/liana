@@ -88,6 +88,15 @@ fn connection_handler(
     mut stream: net::UnixStream,
     shutdown: sync::Arc<atomic::AtomicBool>,
 ) -> Result<(), io::Error> {
+    // The listener is set non-blocking so `accept` can poll for
+    // shutdown; on macOS the accepted connection inherits that
+    // flag. Force blocking on the connection so the response write
+    // below doesn't see `WouldBlock` once the kernel send buffer
+    // fills (default `SO_SNDBUF` of 8 KiB on macOS), which would
+    // otherwise truncate any RPC response larger than 8 KiB —
+    // notably `createspend` PSBTs for any non-trivial multipath
+    // descriptor.
+    stream.set_nonblocking(false)?;
     let mut buf = vec![0; 2048];
     let mut end = 0;
     let mut cursor = 0;
@@ -111,7 +120,20 @@ fn connection_handler(
         let response =
             api::handle_request(&mut control, req).unwrap_or_else(|e| Response::error(req_id, e));
         log::trace!("JSONRPC response: {:?}", serde_json::to_string(&response));
-        if let Err(e) = serde_json::to_writer(&stream, &response) {
+        // Serialize fully then `write_all`, rather than
+        // `serde_json::to_writer(&stream, ...)` directly. The
+        // `Write` impl for `&UnixStream` calls `write(2)` once;
+        // `to_writer` does not loop on short writes, so a response
+        // partially accepted by the kernel ends up truncated on
+        // the wire. `write_all` loops until every byte is flushed.
+        let response_bytes = match serde_json::to_vec(&response) {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("Error serializing response: '{}'", e);
+                return Ok(());
+            }
+        };
+        if let Err(e) = io::Write::write_all(&mut &stream, &response_bytes) {
             log::error!("Error writing response: '{}'", e);
             return Ok(());
         }
