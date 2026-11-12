@@ -113,20 +113,29 @@ jobs:
             export BITCOIND_PATH=bitcoin-24.0.1/bin/bitcoind
             export IS_NOT_BITCOIND_24=0
           else
-            curl -O https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz
-            echo "b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e bitcoin-31.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-            tar -xzf bitcoin-31.1-x86_64-linux-gnu.tar.gz
-            export BITCOIND_PATH=bitcoin-31.1/bin/bitcoind
+            curl -O https://bitcoincore.org/bin/bitcoin-core-32.1/bitcoin-32.1-x86_64-linux-gnu.tar.gz
+            echo "61545c17c3120fb7412f896d248b11993af04ec8817aad3649c55b2afb044963 bitcoin-32.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+            tar -xzf bitcoin-32.1-x86_64-linux-gnu.tar.gz
+            export BITCOIND_PATH=bitcoin-32.1/bin/bitcoind
           fi
 
           echo "BITCOIN_BACKEND_TYPE = $BITCOIN_BACKEND_TYPE"
 
           if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
-            curl -OL https://github.com/jp1ac4/electrsd/releases/download/electrs-v0.10.6-ubuntu-20.04/electrs_linux_v0.10.6.zip
-            echo "34934bedbc4003867353f23c7983d4aa2d901dfccfd0bd74167f9fd305c56f7b electrs_linux_v0.10.6.zip" | sha256sum -c
-            unzip electrs_linux_v0.10.6.zip
-            chmod 754 electrs
-            export ELECTRS_PATH=$PWD/electrs
+            if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
+              curl -OL https://github.com/jp1ac4/electrsd/releases/download/electrs-v0.10.6-ubuntu-20.04/electrs_linux_v0.10.6.zip
+              echo "34934bedbc4003867353f23c7983d4aa2d901dfccfd0bd74167f9fd305c56f7b electrs_linux_v0.10.6.zip" | sha256sum -c
+              unzip electrs_linux_v0.10.6.zip
+              chmod 754 electrs
+              export ELECTRS_PATH=$PWD/electrs
+            else
+              # Electrs 0.12.1 supports Core's getmempoolentry without bip125-replaceable.
+              curl -fLO https://github.com/mars-llm/liana/releases/download/electrs-v0.12.1-ci/electrs-v0.12.1-x86_64-linux-gnu.tar.gz
+              echo "f2b39a63705957d054793b353b7ef598ed4b734afeeb2076bfb846a8293aa57d electrs-v0.12.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+              tar -xzf electrs-v0.12.1-x86_64-linux-gnu.tar.gz
+              export ELECTRS_PATH="$PWD/electrs-v0.12.1-x86_64-linux-gnu/electrs"
+              export ELECTRS_USE_REST=1
+            fi
           fi
 
           curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
