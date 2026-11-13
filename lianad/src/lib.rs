@@ -1,3 +1,4 @@
+mod backoff;
 mod bitcoin;
 pub mod commands;
 pub mod config;
