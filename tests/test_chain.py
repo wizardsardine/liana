@@ -27,32 +27,40 @@ def test_reorg_detection(lianad, bitcoind):
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
 
     # Re-mine the last block. We should detect it as a reorg.
-    bitcoind.invalidate_remine(initial_height)
+    bitcoind.invalidate_remine(bitcoind.rpc.getblockcount())
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
 
     # Same if we re-mine the next-to-last block.
-    bitcoind.invalidate_remine(initial_height - 1)
+    bitcoind.invalidate_remine(bitcoind.rpc.getblockcount() - 1)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
 
     # Same if we re-mine a deep block.
     bitcoind.invalidate_remine(initial_height - 50)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
 
-    # Same if the new chain is longer.
+    # Same if the new chain is much longer.
     bitcoind.simple_reorg(initial_height - 10, shift=20)
     lianad.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height + 10)
+    wait_for(
+        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+    )
 
 
 def test_reorg_exclusion(lianad, bitcoind):
@@ -122,31 +130,22 @@ def test_reorg_exclusion(lianad, bitcoind):
     assert coin_d["is_from_self"] is True
     assert coin_d["block_height"] is not None
 
-    # Make sure the transaction were confirmed >10 blocks ago, so bitcoind won't update the
-    # mempool during the reorg to the initial height.
-    bitcoind.generate_block(10)
-
     # Reorg the chain down to the initial height, excluding all transactions.
     current_height = bitcoind.rpc.getblockcount()
     bitcoind.simple_reorg(initial_height, shift=-1)
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == current_height + 1)
 
-    # During a reorg, bitcoind doesn't update the mempool for blocks too deep (>10 confs).
-    # The deposit transactions were dropped. And we discard the unconfirmed coins whose deposit
-    # tx isn't part of our mempool anymore: the coins must have been marked as unconfirmed and
-    # subsequently discarded.
-    wait_for(lambda: len(bitcoind.rpc.getrawmempool()) == 0)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
+    # The reorg put the transactions back in the mempool: the coins must have been marked as
+    # unconfirmed.
+    wait_for(lambda: len(bitcoind.rpc.getrawmempool()) == 5)
+    wait_for(
+        lambda: len(lianad.rpc.listcoins()["coins"]) == 4
+        and all(c["block_height"] is None for c in lianad.rpc.listcoins()["coins"])
+    )
 
     # And if we now confirm everything, they'll be marked as such. The one that was 'spending'
     # will now be spent (its spending transaction will be confirmed) and the one that was spent
     # will be marked as such.
-    deposit_txids = [c["outpoint"][:-2] for c in (coin_a, coin_b, coin_c)]
-    for txid in deposit_txids:
-        tx = bitcoind.rpc.gettransaction(txid)["hex"]
-        bitcoind.rpc.sendrawtransaction(tx)
-    bitcoind.rpc.sendrawtransaction(b_spend_tx)
-    sign_and_broadcast_psbt(lianad, c_spend_psbt)
     bitcoind.generate_block(1, wait_for_mempool=5)
     new_height = bitcoind.rpc.getblockcount()
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
@@ -234,16 +233,14 @@ def test_reorg_status_recovery(lianad, bitcoind):
     new_coin_b = get_coin(lianad, coin_b["outpoint"])
 
     if locktime == initial_height:
-        # Cannot be mined until next block (initial_height + 1).
-        coin_b["spend_info"] = None
-        # coin_c no longer exists.
-        with pytest.raises(StopIteration):
-            get_coin(lianad, coin_c["outpoint"])
+        # Cannot be mined until next block (initial_height + 1): the fork didn't mine it and
+        # the reorg put it back in the mempool.
+        coin_b["spend_info"]["height"] = None
     else:
         # Otherwise, the tx will be mined at the height the reorg happened.
         coin_b["spend_info"]["height"] = initial_height
-        new_coin_c = get_coin(lianad, coin_c["outpoint"])
-        assert new_coin_c["is_from_self"] is True
+    new_coin_c = get_coin(lianad, coin_c["outpoint"])
+    assert new_coin_c["is_from_self"] is True
     assert new_coin_b == coin_b
 
 
@@ -262,12 +259,13 @@ def test_rescan_edge_cases(lianad, bitcoind):
         """Remine the chain from given height, shifting the txs by one block."""
         delta = bitcoind.rpc.getblockcount() - height + 1
         assert delta > 2
-        h = bitcoind.rpc.getblockhash(height)
-        bitcoind.rpc.invalidateblock(h)
-        bitcoind.generate_block(1)
-        for tx in txs:
-            bitcoind.rpc.sendrawtransaction(tx)
-        bitcoind.generate_block(delta - 1, wait_for_mempool=len(txs))
+        addr = bitcoind.rpc.getnewaddress()
+        with bitcoind.fork(height) as fork_rpc:
+            fork_rpc.generatetoaddress(1, addr)
+            for tx in txs:
+                fork_rpc.sendrawtransaction(tx)
+            # One more block than we drop, so the fork has more work.
+            fork_rpc.generatetoaddress(delta, addr)
 
     # Create 3 coins and spend 2 of them. Keep the transactions in memory to
     # rebroadcast them on reorgs.
