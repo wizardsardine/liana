@@ -1,0 +1,6 @@
+[
+  { "name": "core", "packages": "-p liana -p liana-connect -p liana-i18n -p liana-i18n-toolbox", "macos": "core+lianad" },
+  { "name": "lianad", "packages": "-p lianad", "macos": "core+lianad" },
+  { "name": "gui", "packages": "-p liana-ui -p liana-gui", "macos": "gui+business" },
+  { "name": "business", "packages": "-p liana-business -p business-installer", "macos": "gui+business" }
+]

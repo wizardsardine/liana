@@ -4,9 +4,10 @@ import os
 import socket
 import time
 
+from contextlib import contextmanager
 from decimal import Decimal
 from ephemeral_port_reserve import reserve
-from test_framework.authproxy import AuthServiceProxy
+from test_framework.authproxy import AuthServiceProxy, JSONRPCException
 from test_framework.utils import (
     BitcoinBackend,
     TailableProc,
@@ -92,6 +93,8 @@ class Bitcoind(BitcoinBackend):
             bitcoin_dir, "regtest", rpcport, wallet="lianad-tests"
         )
         self.node_rpc = BitcoindRpcInterface(bitcoin_dir, "regtest", rpcport)
+        # A second node to mine competing chains on, started on the first reorg.
+        self.fork_node = None
 
     def start(self):
         TailableProc.start(self)
@@ -149,11 +152,50 @@ class Bitcoind(BitcoinBackend):
         for _ in range(n):
             self.rpc.generateblock(addr, [])
 
+    @contextmanager
+    def fork(self, height):
+        """
+        Reorganize the chain like on mainnet: the second node syncs with us, gets disconnected,
+        drops its blocks from {height} and the caller mines a competing chain on it (through
+        the yielded RPC interface). Once reconnected, we switch to this chain if it has more
+        work. Our old blocks stay valid, so we keep serving them to our peers (electrs).
+        """
+        if self.fork_node is None:
+            self.fork_node = Bitcoind(
+                os.path.join(os.path.dirname(self.bitcoin_dir), "bitcoind-fork")
+            )
+            self.fork_node.startup()
+        fork_rpc = self.fork_node.node_rpc
+        fork_addr = f"127.0.0.1:{self.fork_node.p2pport}"
+
+        # Follow our mocked time, else the fork node rejects our blocks as too far in the future.
+        tip_time = self.rpc.getblockheader(self.rpc.getbestblockhash())["time"]
+        fork_rpc.setmocktime(tip_time if tip_time > time.time() else 0)
+
+        self.node_rpc.addnode(fork_addr, "onetry")
+        wait_for(lambda: fork_rpc.getbestblockhash() == self.rpc.getbestblockhash())
+        self.disconnect_fork_node(fork_addr)
+
+        fork_rpc.invalidateblock(fork_rpc.getblockhash(height))
+        yield fork_rpc
+
+        self.node_rpc.addnode(fork_addr, "onetry")
+        wait_for(lambda: self.rpc.getbestblockhash() == fork_rpc.getbestblockhash())
+        self.disconnect_fork_node(fork_addr)
+
+    def disconnect_fork_node(self, fork_addr):
+        self.node_rpc.disconnectnode(fork_addr)
+        wait_for(
+            lambda: all(p["addr"] != fork_addr for p in self.node_rpc.getpeerinfo())
+        )
+
     def invalidate_remine(self, height):
+        """Re-mine empty blocks from {height}, one more than we drop to have more work."""
         delta = self.rpc.getblockcount() - height + 1
-        h = self.rpc.getblockhash(height)
-        self.rpc.invalidateblock(h)
-        self.generate_empty_blocks(delta)
+        addr = self.rpc.getnewaddress()
+        with self.fork(height) as fork_rpc:
+            for _ in range(delta + 1):
+                fork_rpc.generateblock(addr, [])
 
     def simple_reorg(self, height, shift=0):
         """
@@ -164,7 +206,7 @@ class Bitcoind(BitcoinBackend):
                 - don't re-mine the mempool transactions
 
         Note that tx's that become invalid at {height} (because coin maturity,
-        locktime etc.) are removed from mempool. The length of the new chain
+        locktime etc.) are not re-mined. The length of the new chain
         will be original + 1 OR original + {shift}, whichever is larger.
 
         For example: to push tx's backward from height h1 to h2 < h1,
@@ -176,26 +218,31 @@ class Bitcoind(BitcoinBackend):
         2. Set {height}=h2 and {shift}= h1-h2
         """
         orig_len = self.rpc.getblockcount()
-        old_hash = self.rpc.getblockhash(height)
         if height + shift > orig_len:
             final_len = height + shift
         else:
             final_len = 1 + orig_len
-
-        self.rpc.invalidateblock(old_hash)
-        self.wait_for_log(
-            r"InvalidChainFound: invalid block=.*  height={}".format(height)
+        addr = self.rpc.getnewaddress()
+        # Parents first, so the fork node accepts them.
+        mempool = sorted(
+            self.rpc.getrawmempool(True).items(), key=lambda e: e[1]["ancestorcount"]
         )
-        memp = self.rpc.getrawmempool()
 
-        if shift < 0:
-            self.generate_empty_blocks(1 + final_len - height)
-        elif shift == 0:
-            self.generate_block(1 + final_len - height, memp)
-        else:
-            self.generate_empty_blocks(shift)
-            self.generate_block(1 + final_len - (height + shift), memp)
-        self.wait_for_log(r"UpdateTip: new best=.* height={}".format(final_len))
+        with self.fork(height) as fork_rpc:
+            if shift >= 0:
+                for txid, _ in mempool:
+                    try:
+                        fork_rpc.sendrawtransaction(self.rpc.getrawtransaction(txid))
+                    except JSONRPCException:
+                        # Not valid at {height}, it won't be re-mined.
+                        pass
+            if shift < 0:
+                for _ in range(1 + final_len - height):
+                    fork_rpc.generateblock(addr, [])
+            else:
+                for _ in range(shift):
+                    fork_rpc.generateblock(addr, [])
+                fork_rpc.generatetoaddress(1 + final_len - (height + shift), addr)
 
     def send_p2p_message(self, s, command, payload):
         magic_bytes = b"\xfa\xbf\xb5\xda"
@@ -283,6 +330,9 @@ class Bitcoind(BitcoinBackend):
             )
 
     def cleanup(self):
+        if self.fork_node is not None:
+            self.fork_node.cleanup()
+            self.fork_node = None
         try:
             self.stop()
         except Exception:
