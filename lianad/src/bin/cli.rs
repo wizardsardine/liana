@@ -94,27 +94,13 @@ fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
     data_dir.lianad_rpc_socket_path()
 }
 
-fn trimmed(mut vec: Vec<u8>, bytes_read: usize) -> Vec<u8> {
-    vec.truncate(bytes_read);
-
-    // Until there is some whatever-newline character, pop.
-    while let Some(byte) = vec.last() {
-        // Of course, we assume utf-8
-        if !(&0x0a..=&0x0d).contains(&byte) {
-            break;
-        }
-        vec.pop();
-    }
-
-    vec
-}
-
 fn main() {
     let args = env::args().collect();
     let (conf_file, raw, method, params) = parse_args(args);
     let request = rpc_request(method, params);
     let socket_file = socket_file(conf_file);
-    let mut raw_response = vec![0; 256];
+    let mut raw_response = Vec::new();
+    let mut chunk = [0u8; 4096];
 
     let mut socket = UnixStream::connect(&socket_file).unwrap_or_else(|e| {
         eprintln!("Could not connect to {socket_file:?}: '{e}'");
@@ -127,22 +113,21 @@ fn main() {
             process::exit(1);
         });
 
-    let mut total_read = 0;
     loop {
-        let n = socket
-            .read(&mut raw_response[total_read..])
-            .unwrap_or_else(|e| {
-                eprintln!("Reading from {:?}: '{}'", &socket_file, e);
-                process::exit(1);
-            });
-        total_read += n;
-        if total_read == raw_response.len() {
-            raw_response.resize(2 * total_read, 0);
-            continue;
+        let n = socket.read(&mut chunk).unwrap_or_else(|e| {
+            eprintln!("Reading from {:?}: '{}'", &socket_file, e);
+            process::exit(1);
+        });
+        if n == 0 {
+            eprintln!(
+                "Reading from {:?}: '{}'",
+                &socket_file,
+                std::io::Error::from(std::io::ErrorKind::UnexpectedEof)
+            );
+            process::exit(1);
         }
+        raw_response.extend_from_slice(&chunk[..n]);
 
-        // FIXME: do actual incremental parsing instead of this hack!!
-        raw_response = trimmed(raw_response, total_read);
         match serde_json::from_slice::<Json>(&raw_response) {
             Ok(response) => {
                 if response.get("id") == request.get("id") {
@@ -153,13 +138,20 @@ fn main() {
                     } else if let Some(e) = response.get("error") {
                         println!("{:#}", serde_json::json!({ "error": e }));
                     } else {
-                        log::warn!("lianad response doesn't contain result or error: '{response}'",);
-                        println!("{response:#}");
+                        eprintln!(
+                            "Reading from {:?}: 'Response contains neither result nor error'",
+                            &socket_file
+                        );
+                        process::exit(1);
                     }
                     return;
                 }
             }
-            Err(_) => continue,
+            Err(e) if e.is_eof() => continue,
+            Err(e) => {
+                eprintln!("Reading from {:?}: '{}'", &socket_file, e);
+                process::exit(1);
+            }
         }
     }
 }
