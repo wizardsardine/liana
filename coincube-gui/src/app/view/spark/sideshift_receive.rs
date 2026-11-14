@@ -595,8 +595,8 @@ fn confirmations_block<'a>(confirmations: Option<u32>, pulse_dim: bool) -> Eleme
         localized_copy("Confirmed. Adding it to your Spark wallet.").to_owned()
     } else {
         localized_format!(
-            "About {} minutes left. You can leave this page; the bitcoin is added automatically. Come back to it from Spark → Receive.",
-            "Faltan unos {} minutos. Puedes salir de esta página; el bitcoin se añade automáticamente. Vuelve a ella desde Spark → Recibir.",
+            "About {} minutes left. You can leave this page; the bitcoin is added automatically. Come back to it with View conversion on your Spark wallet.",
+            "Faltan unos {} minutos. Puedes salir de esta página; el bitcoin se añade automáticamente. Vuelve a ella con Ver conversión en tu cartera Spark.",
             (required - have) * 10,
         )
     };
@@ -1309,7 +1309,7 @@ mod tests {
                     "Confirming on-chain",
                     "Confirmations",
                     "1 of 3",
-                    "About 20 minutes left. You can leave this page; the bitcoin is added automatically. Come back to it from Spark → Receive.",
+                    "About 20 minutes left. You can leave this page; the bitcoin is added automatically. Come back to it with View conversion on your Spark wallet.",
                 ],
                 vec!["≈ 31,250 SATS", "Copy address"],
             ),
