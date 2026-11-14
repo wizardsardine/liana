@@ -2,6 +2,7 @@ mod activity_routing;
 mod connect_auth;
 mod connect_stream;
 mod cube_name;
+mod fiat_updates;
 mod recovery_settings;
 
 pub mod breez_liquid;
@@ -7897,56 +7898,7 @@ impl App {
                 return Task::done(Message::CacheUpdated);
             }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if self.cube_settings.network.is_blake2b() {
-                    let relevant = self
-                        .cube_settings
-                        .fiat_price
-                        .as_ref()
-                        .is_some_and(|setting| {
-                            setting.is_enabled && setting.currency == fiat_price.currency()
-                        });
-                    if relevant && self.cache.accept_btcb2_price(fiat_price) {
-                        return Task::done(Message::CacheUpdated);
-                    }
-                    return Task::none();
-                }
-                // A scoped BTCB2 quote must never seed Bitcoin/USD conversion.
-                if fiat_price.request.origin.is_some() {
-                    return Task::none();
-                }
-                let mut updated = false;
-
-                // Always extract BTC/USD price for USDt→sats conversion,
-                // regardless of whether fiat display is enabled.
-                if fiat_price.currency() == crate::services::fiat::Currency::USD {
-                    if let Ok(price) = fiat_price.res.as_ref() {
-                        self.cache.btc_usd_price = Some(price.value);
-                        updated = true;
-                    }
-                }
-
-                // Store user's selected currency price (only when fiat display is enabled).
-                let is_relevant = self.cube_settings.fiat_price.as_ref().is_some_and(|sett| {
-                    sett.is_enabled
-                        && sett.source == fiat_price.source()
-                        && sett.currency == fiat_price.currency()
-                });
-
-                if is_relevant
-                    // make sure we only update if the price is newer than the cached one
-                    && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
-                        cached.source() == fiat_price.source()
-                            && cached.currency() == fiat_price.currency()
-                            && cached.requested_at() >= fiat_price.requested_at()
-                    })
-                {
-                    self.cache.fiat_price = Some(fiat_price);
-                    updated = true;
-                }
-
-                if updated {
-                    return Task::done(Message::CacheUpdated);
-                }
+                return self.handle_fiat_price(fiat_price);
             }
             Message::UpdateDaemonCache(res) => {
                 if self.cache.has_imported_bitcoin {
@@ -19482,6 +19434,176 @@ mod recovery_settings_routing_tests {
             );
             assert!(!app.show_recovery_alerts_prompt);
             assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+        });
+    }
+}
+
+#[cfg(test)]
+mod fiat_update_routing_tests {
+    use super::*;
+    use crate::services::fiat::{
+        api::{GetPriceResult, PriceApiError},
+        Currency, PriceSource,
+    };
+
+    fn with_app(test: impl FnOnce(&mut App)) {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+        app.cube_settings.fiat_price = Some(settings::fiat::PriceSetting {
+            source: PriceSource::Coincube,
+            currency: Currency::EUR,
+            is_enabled: true,
+        });
+        test(&mut app);
+    }
+
+    fn quote(source: PriceSource, currency: Currency, value: f64) -> cache::FiatPrice {
+        cache::FiatPrice {
+            res: Ok(GetPriceResult {
+                value,
+                updated_at: None,
+            }),
+            request: cache::FiatPriceRequest::new(source, currency),
+            btcb2_valid_until: None,
+        }
+    }
+
+    fn admits(app: &mut App, price: cache::FiatPrice) -> bool {
+        use iced::futures::StreamExt;
+        let task = app.update(Message::Fiat(FiatMessage::GetPriceResult(price)));
+        let Some(stream) = iced_runtime::task::into_stream(task) else {
+            return false;
+        };
+        let outputs = iced::futures::executor::block_on(stream.collect::<Vec<_>>());
+        assert!(outputs
+            .iter()
+            .all(|o| matches!(o, iced_runtime::Action::Output(Message::CacheUpdated))));
+        !outputs.is_empty()
+    }
+
+    #[test]
+    fn usd_conversion_updates_even_without_enabled_fiat_display() {
+        with_app(|app| {
+            for setting in [
+                None,
+                Some(settings::fiat::PriceSetting {
+                    is_enabled: false,
+                    ..Default::default()
+                }),
+            ] {
+                app.cube_settings.fiat_price = setting;
+                app.cache.fiat_price = None;
+                assert!(admits(
+                    app,
+                    quote(PriceSource::CoinGecko, Currency::USD, 42.0)
+                ));
+                assert_eq!(app.cache.btc_usd_price, Some(42.0));
+                assert!(app.cache.fiat_price.is_none());
+            }
+        });
+    }
+
+    #[test]
+    fn display_cache_requires_matching_source_currency_and_newer_request() {
+        with_app(|app| {
+            let current = quote(PriceSource::Coincube, Currency::EUR, 99.0);
+            let at = current.request.instant;
+            app.cache.fiat_price = Some(current);
+            for (source, currency) in [
+                (PriceSource::CoinGecko, Currency::EUR),
+                (PriceSource::Coincube, Currency::GBP),
+            ] {
+                assert!(!admits(app, quote(source, currency, 1.0)));
+                assert_eq!(
+                    app.cache
+                        .fiat_price
+                        .as_ref()
+                        .unwrap()
+                        .res
+                        .as_ref()
+                        .unwrap()
+                        .value,
+                    99.0
+                );
+            }
+            let mut stale = quote(PriceSource::Coincube, Currency::EUR, 1.0);
+            stale.request.instant = at;
+            assert!(!admits(app, stale));
+            let mut newer = quote(PriceSource::Coincube, Currency::EUR, 100.0);
+            newer.request.instant = at + std::time::Duration::from_secs(1);
+            assert!(admits(app, newer));
+            assert_eq!(
+                app.cache
+                    .fiat_price
+                    .as_ref()
+                    .unwrap()
+                    .res
+                    .as_ref()
+                    .unwrap()
+                    .value,
+                100.0
+            );
+        });
+    }
+
+    #[test]
+    fn stale_usd_still_updates_conversion_but_never_replaces_display() {
+        with_app(|app| {
+            app.cube_settings.fiat_price.as_mut().unwrap().currency = Currency::USD;
+            let current = quote(PriceSource::Coincube, Currency::USD, 99.0);
+            let at = current.request.instant;
+            app.cache.fiat_price = Some(current);
+            let mut stale = quote(PriceSource::Coincube, Currency::USD, 42.0);
+            stale.request.instant = at;
+            assert!(admits(app, stale));
+            assert_eq!(app.cache.btc_usd_price, Some(42.0));
+            assert_eq!(
+                app.cache
+                    .fiat_price
+                    .as_ref()
+                    .unwrap()
+                    .res
+                    .as_ref()
+                    .unwrap()
+                    .value,
+                99.0
+            );
+            assert!(admits(
+                app,
+                quote(PriceSource::CoinGecko, Currency::USD, 43.0)
+            ));
+            assert_eq!(app.cache.btc_usd_price, Some(43.0));
+            assert_eq!(
+                app.cache.fiat_price.as_ref().unwrap().source(),
+                PriceSource::Coincube
+            );
+        });
+    }
+
+    #[test]
+    fn scoped_quote_cannot_seed_bitcoin_caches_and_selected_errors_still_publish() {
+        with_app(|app| {
+            let mut scoped = quote(PriceSource::Coincube, Currency::USD, 42.0);
+            scoped.request.origin = Some(cache::LookupOrigin {
+                app: app.cache.app_generation,
+                chain: crate::chain::ChainId::BitcoinBlake2b,
+            });
+            assert!(!admits(app, scoped));
+            assert!(app.cache.btc_usd_price.is_none());
+            assert!(app.cache.fiat_price.is_none());
+            let mut failure = quote(PriceSource::Coincube, Currency::EUR, 1.0);
+            failure.res = Err(PriceApiError::CannotParseData(
+                "synthetic quote error".into(),
+            ));
+            assert!(admits(app, failure));
+            assert!(app.cache.fiat_price.as_ref().unwrap().res.is_err());
+            assert!(app.cache.btc_usd_price.is_none());
         });
     }
 }
