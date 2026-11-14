@@ -1,6 +1,10 @@
 use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::localized_format;
+mod billing;
 mod contacts;
+use billing::plan_billing_ux;
+#[cfg(test)]
+use billing::renewal_banner;
 pub mod cube_members;
 pub mod duress_contacts;
 pub mod duress_enroll;
@@ -24,7 +28,7 @@ use coincube_ui::{
 use iced::widget::text::IntoFragment;
 use iced::{
     advanced::widget::Id,
-    widget::{container, scrollable, QRCode},
+    widget::{container, scrollable},
     Alignment, Length,
 };
 
@@ -32,16 +36,15 @@ use crate::{
     app::{
         menu::ConnectSubMenu,
         state::connect::{
-            duress_gate_blocked, duress_tier1_gate_blocked, AvatarFlowStep, CheckoutPhase,
-            ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep, ConnectPanel,
-            CubeBackupCompleteness, DuressContactsStep, DuressCube, DuressGateStatus,
-            PlanLifecycle,
+            duress_gate_blocked, duress_tier1_gate_blocked, AvatarFlowStep, ConnectAccountPanel,
+            ConnectCubePanel, ConnectFlowStep, ConnectPanel, CubeBackupCompleteness,
+            DuressContactsStep, DuressCube, DuressGateStatus,
         },
         view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage, DuressMessage},
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
-        AvatarGender, BillingCycle, ConnectPlan, PlanStatus, PlanTier,
+        AvatarGender, ConnectPlan,
     },
 };
 
@@ -1537,380 +1540,7 @@ fn network_label(network: &str) -> String {
     }
 }
 
-fn plan_tier_color(tier: &PlanTier) -> iced::Color {
-    match tier {
-        PlanTier::Free => color::GREY_3,
-        PlanTier::Pro => color::ORANGE,
-        PlanTier::Estate => color::INFO_BLUE,
-    }
-}
-
-/// One-line plan summary shown under the price on each plan card.
-///
-/// `/connect/features` carries no description field (the plan wire shape is
-/// `name` + `price` + `features[]` + `entitlements`), so this copy lives here.
-/// Keep it aligned with the entitlement matrix in
-/// `documentation/PRICING_AND_TIERS.md` (coincube-api repo): Pro adds cube/key
-/// capacity and Connect-enforced policies; Estate adds inheritance escrow and
-/// collaborative keyholder invitations. Duress is unannounced, so it is not
-/// mentioned here even though the pricing matrix lists it.
-fn plan_tagline(tier: &PlanTier) -> &'static str {
-    match tier {
-        PlanTier::Free => {
-            "The essentials to create and recover your Cubes, with Esplora access \
-             and a Lightning address."
-        }
-        PlanTier::Pro => {
-            "More Cubes per network and Connect-enforced policies for greater control."
-        }
-        PlanTier::Estate => {
-            "Maximum Cube capacity, inheritance escrow, and collaborative \
-             multi-sig keyholder invitations."
-        }
-    }
-}
-
-// ── Renewal reminder / expired prompt banner (D1 / D3) ──────────────────────
-
-/// Pre-expiry renewal reminder (D1) or, for a lapsed plan, an expired
-/// prompt (D3). Returns `None` when the plan is comfortably active or free.
-/// Shared by the account overview and the plan view; the renewal CTA opens
-/// checkout pre-selected to the current tier + cycle, while the expired CTA
-/// opens the picker.
-///
-/// The per-session dismissal applies *only* to the pre-expiry reminder —
-/// the expired prompt is not dismissible, so dismissing the reminder and
-/// then lapsing in the same session still surfaces the expired state.
-fn renewal_banner<'a>(
-    state: &'a ConnectAccountPanel,
-) -> Option<Element<'a, ConnectAccountMessage>> {
-    // `dismissible` gates the Dismiss control: only the pre-expiry reminder
-    // honours `renewal_banner_dismissed`, so the expired prompt omits the
-    // button entirely rather than rendering a no-op.
-    let (title, accent, copy, cta_label, cta_msg, dismissible): (
-        &str,
-        iced::Color,
-        String,
-        &str,
-        ConnectAccountMessage,
-        bool,
-    ) = match state.plan_lifecycle() {
-        PlanLifecycle::RenewalDue { .. } => {
-            // Folds in per-session dismissal plus the purchasing-disabled
-            // suppression (PLAN-estate-promo PR2) — when there's no purchase
-            // path, the pre-expiry "Renew" reminder is hidden so it never
-            // becomes a dead-end CTA. The Expired arm below is navigation-only
-            // ("View plans"), so it stays unsuppressed.
-            if !state.show_renewal_banner() {
-                return None;
-            }
-            let plan = state.plan.as_ref()?;
-            let date = plan
-                .renewal_at
-                .as_deref()
-                .map(format_date)
-                .unwrap_or_else(|| "soon".to_string());
-            (
-                "Renewal reminder",
-                color::ORANGE,
-                format!(
-                    "Your {} plan renews on {}. Renew now to keep your features.",
-                    plan.tier(),
-                    date
-                ),
-                "Renew",
-                ConnectAccountMessage::RenewCurrentPlan,
-                true,
-            )
-        }
-        PlanLifecycle::Expired => {
-            let copy = match state
-                .plan
-                .as_ref()
-                .and_then(|p| p.renewal_at.as_deref())
-                .map(format_date)
-            {
-                Some(d) => format!(
-                    "Your plan expired on {} — renew to restore premium features.",
-                    d
-                ),
-                None => "Your plan expired — renew to restore premium features.".to_string(),
-            };
-            (
-                "Plan expired",
-                color::RED,
-                copy,
-                // Routes to the picker, not a direct checkout — a lapsed
-                // plan reports as Free, so the prior tier is gone and there's
-                // nothing to pre-fill an invoice with. Label reflects that.
-                "View plans",
-                ConnectAccountMessage::ComparePlans(true),
-                false,
-            )
-        }
-        PlanLifecycle::Active | PlanLifecycle::Free => return None,
-    };
-
-    let mut actions = Column::new().push(button::primary(None, cta_label).on_press(cta_msg));
-    if dismissible {
-        actions = actions
-            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-            .push(
-                button::secondary(None, localized_copy("Dismiss"))
-                    .on_press(ConnectAccountMessage::DismissRenewalBanner),
-            );
-    }
-
-    let body = Row::new()
-        .push(
-            Column::new()
-                .push(text::p2_bold(title).color(accent))
-                .push(iced::widget::Space::new().height(Length::Fixed(2.0)))
-                .push(text::p2_regular(copy).style(theme::text::primary))
-                .width(Length::Fill),
-        )
-        .push(iced::widget::Space::new().width(Length::Fixed(10.0)))
-        .push(actions.align_x(Alignment::End))
-        .align_y(Alignment::Center);
-
-    Some(
-        container(body)
-            .padding(14)
-            .width(Length::Fill)
-            .style(move |t| container::Style {
-                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                border: iced::Border {
-                    color: accent,
-                    width: 1.0,
-                    radius: 14.0.into(),
-                },
-                ..Default::default()
-            })
-            .into(),
-    )
-}
-
-/// Soft "update available" note shown in the plan picker when the
-/// backend's pricing schema version exceeds what this build supports
-/// (D4). Non-blocking — the picker still renders the plans it understands.
-fn schema_update_note<'a>() -> Element<'a, ConnectAccountMessage> {
-    container(
-        text::p2_regular(localized_copy(
-            "A newer pricing update is available. Some plan details may be \
-             incomplete — update Coincube to see the latest plans and prices.",
-        ))
-        .color(color::GREY_3),
-    )
-    .padding(12)
-    .width(Length::Fill)
-    .style(|t| container::Style {
-        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 0.5,
-            radius: 10.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-/// Informational note shown atop the plan picker when self-service
-/// purchasing is closed (`purchasing_enabled = false` — PLAN-estate-promo
-/// PR2). The plans/prices still render so the user can see what each tier
-/// offers; this just explains why there's no purchase button behind them.
-/// Copy is campaign-agnostic.
-fn purchasing_unavailable_note<'a>() -> Element<'a, ConnectAccountMessage> {
-    container(
-        text::p2_regular(localized_copy(
-            "Purchasing is currently unavailable, so plans can't be bought \
-             right now. You can still review what each tier includes below.",
-        ))
-        .color(color::GREY_3),
-    )
-    .padding(12)
-    .width(Length::Fill)
-    .style(|t| container::Style {
-        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 0.5,
-            radius: 10.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-// ── Plan & Billing — top-level router ───────────────────────────────────────
-
-fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    if let Some(checkout_state) = &state.checkout {
-        return checkout_ux(checkout_state);
-    }
-    if state.show_billing_history {
-        return billing_history_ux(state);
-    }
-    if state.show_plan_comparison {
-        return plan_selection_ux(state);
-    }
-    billing_management_ux(state)
-}
-
-fn billing_management_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let cancelled = state
-        .plan
-        .as_ref()
-        .is_some_and(|plan| matches!(plan.status, PlanStatus::Canceled));
-    let mut col = Column::new()
-        .push(sheet_title(localized_copy("Plan & billing")))
-        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-        .push(current_plan_summary(state));
-    if cancelled {
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(footnote(
-                "Your plan is cancelled. Connect services stay on until the access date.",
-            ));
-    }
-    col = col
-        .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-        .push(
-            Row::new()
-                .push(
-                    sheet_button(
-                        if cancelled {
-                            "Resubscribe…"
-                        } else {
-                            "Change plan…"
-                        },
-                        ActionKind::Secondary,
-                        true,
-                    )
-                    .on_press(ConnectAccountMessage::ComparePlans(true)),
-                )
-                .push(
-                    sheet_link(if state.show_campaign_redeem {
-                        "Hide referral code"
-                    } else {
-                        "Referral"
-                    })
-                    .on_press(ConnectAccountMessage::ShowCampaignRedeem(
-                        !state.show_campaign_redeem,
-                    )),
-                )
-                .spacing(12)
-                .align_y(Alignment::Center),
-        );
-    if state.show_campaign_redeem {
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(campaign_redeem_field(state));
-    }
-    if let Some(banner) = renewal_banner(state) {
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-            .push(banner);
-    }
-    if let Some(provenance) = state.plan.as_ref().and_then(plan_provenance_card) {
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-            .push(provenance);
-    }
-
-    let current_features = state.plan.as_ref().and_then(|plan| {
-        let tier_name = match plan.tier() {
-            PlanTier::Free => "free",
-            PlanTier::Pro => "pro",
-            PlanTier::Estate => "estate",
-        };
-        state.features.as_ref()?.plans.iter().find(|info| {
-            info.name.eq_ignore_ascii_case(tier_name)
-                || (tier_name == "estate" && info.name.eq_ignore_ascii_case("legacy"))
-        })
-    });
-    col = col
-        .push(iced::widget::Space::new().height(Length::Fixed(32.0)))
-        .push(group_title(localized_copy("Features on this account")))
-        .push(iced::widget::Space::new().height(Length::Fixed(8.0)));
-    let current_features = current_features.map(|info| {
-        info.features
-            .iter()
-            .filter_map(|feature| launch_feature_copy(feature))
-            .collect::<Vec<_>>()
-    });
-    match current_features {
-        Some(features) if !features.is_empty() => {
-            col = col.push(ruled_list(features.into_iter().map(|feature| {
-                Row::new()
-                    .push(tenshu_text::label(feature).width(Length::Fill))
-                    .push(status_line(
-                        check_circle_icon(),
-                        localized_copy("Included"),
-                        Tone::Good,
-                    ))
-                    .spacing(16)
-                    .align_y(Alignment::Center)
-                    .into()
-            })));
-        }
-        Some(_) => {
-            col = col.push(lead(localized_copy(
-                "No feature details are available for this plan.",
-            )));
-        }
-        None => {
-            col = col.push(lead(localized_copy(
-                "Current plan features are unavailable. Try again when Connect is online.",
-            )));
-        }
-    }
-    col.push(iced::widget::Space::new().height(Length::Fixed(32.0)))
-        .push(group_title(localized_copy("Billing history")))
-        .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-        .push(lead(localized_copy("Payments use Bitcoin (Lightning or on-chain). Plans are paid upfront, with no recurring subscription.")))
-        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-        .push(
-            sheet_link("View billing history")
-                .on_press(ConnectAccountMessage::ToggleBillingHistory),
-        )
-        .width(Length::Fill)
-        .into()
-}
-
-/// The "Current plan" row (`.li` with `.k`, plan and date, billing status).
-fn current_plan_summary<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let value: Element<'a, ConnectAccountMessage> = if let Some(plan) = state.plan.as_ref() {
-        let (icon, status, tone) = match plan.status {
-            PlanStatus::Active => (check_circle_icon(), "Active", Tone::Good),
-            PlanStatus::PastDue => (exclamation_circle_icon(), "Past due", Tone::Warn),
-            PlanStatus::Canceled => (dash_circle_icon(), "Cancelled", Tone::Muted),
-        };
-        let mut main = Column::new().push(tenshu_text::label(plan.tier().to_string()));
-        if let Some(date) = plan.renewal_at.as_deref() {
-            let label = match plan.status {
-                PlanStatus::Active => localized_copy("Paid through"),
-                PlanStatus::PastDue => localized_copy("Payment due"),
-                PlanStatus::Canceled => localized_copy("Access until"),
-            };
-            main = main.push(lead(format!("{label} {}", format_date(date))));
-        }
-        Row::new()
-            .push(main.width(Length::Fill))
-            .push(status_line(icon, status, tone))
-            .spacing(16)
-            .align_y(Alignment::Center)
-            .into()
-    } else {
-        lead(localized_copy("Checking your current plan…")).into()
-    };
-    ruled_list([Row::new()
-        .push(lead(localized_copy("Current plan")).width(Length::Fixed(168.0)))
-        .push(value)
-        .spacing(16)
-        .align_y(Alignment::Center)
-        .into()])
-}
+// Plan & billing views live in `billing.rs`.
 
 // ── Plan provenance card (server-driven, v2) ────────────────────────────────
 
@@ -1965,688 +1595,43 @@ fn plan_provenance_display(plan: &ConnectPlan) -> Option<(&str, Option<&str>)> {
     Some((label, badge))
 }
 
-/// Launch-safe copy for one server-authored plan feature, or `None` to hide
-/// it. Duress is unannounced, so any feature naming it is dropped; duress
-/// alerts read as the (also unreleased) recovery alerts.
-fn launch_feature_copy(feature: &str) -> Option<String> {
-    let key = feature.trim().to_ascii_lowercase();
+/// Launch-safe `(label, availability)` for one server-authored plan
+/// bullet, or `None` to hide it.
+///
+/// - Duress is unannounced: any bullet naming it is dropped.
+/// - Recovery alerts are shipped on every tier (billing v2 decision 10), so
+///   recovery- and duress-alert bullets read as included "Recovery alerts".
+/// - Connect-enforced spending policies are not sold yet (decision 9, I9):
+///   any policy bullet becomes the Coming soon row.
+/// - A bullet the server marks "(coming soon)" is Coming soon.
+/// - The per-network Cube count is its own "Cubes per network" row, built
+///   from the entitlement, so a "N cubes per network" bullet is dropped.
+fn launch_feature_copy(feature: &str) -> Option<(String, billing::FeatureValue)> {
+    use billing::FeatureValue;
+    let trimmed = feature.trim();
+    let key = trimmed.to_ascii_lowercase();
     match key.as_str() {
         "recovery alert" | "recovery alerts" | "duress alert" | "duress alerts" => {
-            Some("Recovery alerts — Coming soon".to_string())
+            return Some(("Recovery alerts".to_string(), FeatureValue::Included));
         }
-        _ if key.contains("duress") => None,
-        _ => Some(feature.to_string()),
+        _ => {}
     }
-}
-
-fn plan_provenance_card<'a>(plan: &'a ConnectPlan) -> Option<Element<'a, ConnectAccountMessage>> {
-    let prov = plan.plan_provenance.as_ref()?;
-    let (label, badge) = plan_provenance_display(plan)?;
-    let badge_color = plan_tier_color(plan.tier());
-
-    let mut header = Row::new()
-        .push(text::p1_bold(plan.tier().to_string()).color(badge_color))
-        .push(iced::widget::Space::new().width(Length::Fill));
-    if let Some(badge) = badge {
-        header = header.push(text::p2_bold(badge).color(color::ORANGE));
+    if key.contains("duress") || (key.contains("cube") && key.contains("per network")) {
+        return None;
     }
-
-    let mut card_col = Column::new()
-        .push(header.align_y(Alignment::Center))
-        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-        .push(text::p1_medium(label).style(theme::text::primary));
-    if let Some(exp) = prov.expires_at.as_deref().filter(|e| !e.is_empty()) {
-        card_col = card_col
-            .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-            .push(
-                text::p2_regular(localized_format!(
-                    "Expires {}",
-                    "Vence el {}",
-                    format_date(exp)
-                ))
-                .color(color::GREY_3),
-            );
+    if key.contains("polic") {
+        return Some((
+            billing::SPENDING_POLICIES.to_string(),
+            FeatureValue::ComingSoon,
+        ));
     }
-
-    Some(
-        container(card_col.padding(16).spacing(2))
-            .style(move |t| container::Style {
-                background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                border: iced::Border {
-                    color: badge_color,
-                    width: 1.0,
-                    radius: 16.0.into(),
-                },
-                ..Default::default()
-            })
-            .width(Length::Fill)
-            .into(),
-    )
-}
-
-// ── Campaign code redemption field (server-driven, v2) ──────────────────────
-
-/// The generic "promo or referral code" field for Settings → Plan. Campaign-
-/// agnostic: forwards the typed code to `POST /connect/campaigns/redeem` and
-/// renders the server's success/error message verbatim.
-fn campaign_redeem_field<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let rs = &state.campaign_redeem;
-    let valid = !rs.code.trim().is_empty();
-
-    let submit: Element<ConnectAccountMessage> = if rs.submitting {
-        button::secondary(None, localized_copy("Redeeming…"))
-            .width(Length::Fixed(130.0))
-            .into()
-    } else {
-        button::primary(None, localized_copy("Redeem"))
-            .on_press_maybe(valid.then_some(ConnectAccountMessage::RedeemCampaignCode))
-            .width(Length::Fixed(130.0))
-            .into()
-    };
-
-    let input = TextInput::new(localized_copy("Promo or referral code"), &rs.code)
-        // Locked while a redeem is in flight so the in-flight code can't drift
-        // out of sync with the result that comes back.
-        .on_input_maybe((!rs.submitting).then_some(ConnectAccountMessage::CampaignCodeChanged))
-        .on_submit_maybe(
-            (valid && !rs.submitting).then_some(ConnectAccountMessage::RedeemCampaignCode),
-        )
-        .size(15)
-        .padding(12);
-
-    let mut col = Column::new()
-        .push(
-            text::p2_bold(localized_copy("Have a promo or referral code?"))
-                .style(theme::text::primary),
-        )
-        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-        .push(
-            Row::new()
-                .push(input)
-                .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-                .push(submit)
-                .align_y(Alignment::Center),
-        );
-
-    if let Some(result) = &rs.result {
-        let (msg, accent) = match result {
-            Ok(m) => (coincube_ui::locale::notice(m.clone()), color::GREEN),
-            Err(e) => (coincube_ui::locale::notice(e.clone()), color::RED),
-        };
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-            .push(text::p2_regular(msg).color(accent));
-    }
-
-    container(col.padding(16).spacing(2))
-        .style(card_style)
-        .width(Length::Fill)
-        .into()
-}
-
-// ── Plan selection view ─────────────────────────────────────────────────────
-
-/// Minimum height of the tagline slot on each plan card: two lines of caption
-/// text, which is what the copy wraps to at normal window widths. The slot
-/// grows past this if a tagline wraps further.
-const TAGLINE_HEIGHT: f32 = 40.0;
-
-fn plan_selection_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let current_tier = state
-        .plan
-        .as_ref()
-        .map(|p| p.tier())
-        .unwrap_or(&PlanTier::Free);
-    let current_cycle = state.plan.as_ref().and_then(|p| p.billing_cycle);
-
-    let cycle = state.selected_billing_cycle;
-
-    // Whether to render checkout CTAs at all. Disabled while the promo
-    // window has purchasing closed server-side (PLAN-estate-promo PR2); the
-    // picker still shows plans/prices, just with no purchase path behind
-    // them so we never route to a checkout the API would reject.
-    let purchasing_enabled = state.purchasing_enabled();
-
-    // Billing cycle toggle. Both options share the secondary style; the
-    // selected one is marked by an orange border. It stays non-pressable, but
-    // is drawn in its Active state rather than iced's faded Disabled one, which
-    // left the selected label nearly invisible (worst in light mode).
-    let cycle_btn = |label: &'static str, option: BillingCycle| {
-        let selected = cycle == option;
-        let btn = button::secondary(None, label)
-            .width(Length::Fill)
-            .style(move |t, status| {
-                if !selected {
-                    return theme::button::secondary(t, status);
-                }
-                let mut style = theme::button::secondary(t, iced::widget::button::Status::Active);
-                style.border = iced::Border {
-                    color: color::ORANGE,
-                    width: 1.0,
-                    ..style.border
-                };
-                style
-            });
-        if selected {
-            btn
-        } else {
-            btn.on_press(ConnectAccountMessage::BillingCycleSelected(option))
-        }
-    };
-    let cycle_toggle = Row::new()
-        .push(cycle_btn("Monthly", BillingCycle::Monthly))
-        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
-        .push(cycle_btn("Annual", BillingCycle::Annual))
-        .width(Length::Fill);
-
-    // Determine upgrade order: Free < Pro < Estate
-    let tier_rank = |t: &PlanTier| -> u8 {
-        match t {
-            PlanTier::Free => 0,
-            PlanTier::Pro => 1,
-            PlanTier::Estate => 2,
-        }
-    };
-
-    struct PlanCardData {
-        name: String,
-        tier: PlanTier,
-        features: Vec<String>,
-        /// USD amount for the selected cycle; `None` for the unpriced Free
-        /// tier (the API emits `null`, not `$0`).
-        price_amount: Option<u32>,
-    }
-
-    let cards: Vec<PlanCardData> = state
-        .features
-        .as_ref()
-        .map(|features| {
-            features
-                .plans
-                .iter()
-                .filter_map(|info| {
-                    let tier = match info.name.as_str() {
-                        "free" => PlanTier::Free,
-                        "pro" => PlanTier::Pro,
-                        "estate" | "legacy" => PlanTier::Estate,
-                        _ => return None,
-                    };
-                    let price_amount = info.price.as_ref().map(|p| match cycle {
-                        BillingCycle::Monthly => p.monthly,
-                        BillingCycle::Annual => p.annual,
-                    });
-                    // Preserve server-authored availability while keeping
-                    // unreleased alert marketing launch-safe and duress hidden.
-                    Some(PlanCardData {
-                        name: tier.to_string(),
-                        tier,
-                        features: info
-                            .features
-                            .iter()
-                            .filter_map(|feature| launch_feature_copy(feature))
-                            .collect(),
-                        price_amount,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if cards.is_empty() {
-        // Features failed to load, but the renewal/expired prompt is driven
-        // by `/connect/plan` (not features), so still surface it here —
-        // otherwise an expired user routed to Plan & Billing only sees the
-        // generic "unavailable" copy and loses the renew messaging.
-        let mut col = Column::new()
-            .push(text::h4_bold(localized_copy("Plan & Billing")).style(theme::text::primary))
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(
-                button::secondary(None, localized_copy("Back to billing"))
-                    .on_press(ConnectAccountMessage::ComparePlans(false)),
-            )
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-            .push(current_plan_summary(state))
-            .push(iced::widget::Space::new().height(Length::Fixed(20.0)));
-        if let Some(banner) = renewal_banner(state) {
-            col = col
-                .push(banner)
-                .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-        }
-        // Plan provenance is driven by `/connect/plan`, not features, so
-        // render the grant card here too (it shows even while pricing is
-        // unavailable, e.g. offline).
-        if let Some(prov) = state.plan.as_ref().and_then(plan_provenance_card) {
-            col = col
-                .push(prov)
-                .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-        }
-        // A newer schema can rename tiers so every card is filtered out,
-        // landing here — exactly when the "update available" note is most
-        // relevant, so surface it on this path too (D4).
-        if state.pricing_schema_outdated() {
-            col = col
-                .push(schema_update_note())
-                .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
-        }
-        col = col.push(
-            text::p1_regular(localized_copy(
-                "Pricing temporarily unavailable.\n\
-                     Reconnect to the internet to view current plans and features.",
-            ))
-            .color(color::GREY_3),
-        );
-        return container(col).padding([16, 0]).into();
-    }
-
-    let mut col = Column::new()
-        .push(text::h4_bold(localized_copy("Plan & Billing")).style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-        .push(
-            button::secondary(None, localized_copy("Back to billing"))
-                .on_press(ConnectAccountMessage::ComparePlans(false)),
-        )
-        .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-        .push(current_plan_summary(state))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-
-    // Renewal reminder (D1) / expired prompt (D3). On the plan view the
-    // expired prompt sits above the picker so the user can renew in place.
-    if let Some(banner) = renewal_banner(state) {
-        col = col
-            .push(banner)
-            .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-    }
-
-    // Server-driven provenance card for a campaign-granted plan (v2) — sits
-    // above the picker so the grant reads as the headline state.
-    if let Some(prov) = state.plan.as_ref().and_then(plan_provenance_card) {
-        col = col
-            .push(prov)
-            .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-    }
-
-    // Soft "update available" note when the backend advertises a pricing
-    // schema newer than this build understands (D4).
-    if state.pricing_schema_outdated() {
-        col = col
-            .push(schema_update_note())
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
-    }
-
-    // "Purchasing closed" note while the promo window has checkout disabled
-    // (PLAN-estate-promo PR2). The upgrade CTAs below render non-pressable in
-    // that state; this explains why.
-    if !purchasing_enabled {
-        col = col
-            .push(purchasing_unavailable_note())
-            .push(iced::widget::Space::new().height(Length::Fixed(12.0)));
-    }
-
-    col = col
-        .push(cycle_toggle)
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-
-    // Stack the server-provided plans within the vertical scroll area. Three
-    // columns clip Estate at the 1024×768 window minimum once the Connect
-    // sidebar is present; stacked cards keep each tier and its action visible.
-    let mut cards_column = Column::new().spacing(12).width(Length::Fill);
-
-    let price_suffix = match cycle {
-        BillingCycle::Monthly => "/month",
-        BillingCycle::Annual => "/year",
-    };
-
-    for card in cards {
-        // Paid tiers are "current" only when both tier *and* cycle match the
-        // user's actual plan. Free tier has no cycle, so tier alone suffices.
-        let is_current = card.tier == *current_tier
-            && match current_cycle {
-                Some(cc) => cc == cycle,
-                None => true,
-            };
-        let is_upgrade = tier_rank(&card.tier) > tier_rank(current_tier);
-        let is_estate = card.tier == PlanTier::Estate;
-        let is_free = card.tier == PlanTier::Free;
-        let badge_color = plan_tier_color(&card.tier);
-        let tagline = plan_tagline(&card.tier);
-
-        // Header: tier name, plus a "Best value" pill on Estate.
-        let mut header = Row::new()
-            .push(text::h4_bold(card.name).color(badge_color))
-            .push(iced::widget::Space::new().width(Length::Fill))
-            .align_y(Alignment::Center);
-        if is_estate {
-            header = header.push(
-                container(text::caption(localized_copy("BEST VALUE")).color(color::INFO_BLUE))
-                    .padding([3, 8])
-                    .style(|_t| container::Style {
-                        background: Some(iced::Background::Color(iced::Color {
-                            a: 0.12,
-                            ..color::INFO_BLUE
-                        })),
-                        border: iced::Border {
-                            color: iced::Color {
-                                a: 0.4,
-                                ..color::INFO_BLUE
-                            },
-                            width: 1.0,
-                            radius: 6.0.into(),
-                        },
-                        ..Default::default()
-                    }),
-            );
-        }
-
-        // Price: large amount with the cycle suffix on the baseline. The
-        // unpriced Free tier reads "Free" — the API emits `null`, not `$0`,
-        // and there is no cycle to suffix.
-        let mut price_row = Row::new().align_y(Alignment::End);
-        match card.price_amount {
-            Some(amount) => {
-                price_row = price_row
-                    .push(text::h1(format!("${amount}")).style(theme::text::primary))
-                    .push(iced::widget::Space::new().width(Length::Fixed(4.0)))
-                    .push(
-                        container(text::p1_regular(price_suffix).color(color::GREY_3))
-                            .padding(iced::Padding::default().bottom(8)),
-                    );
-            }
-            None => {
-                price_row =
-                    price_row.push(text::h1(localized_copy("Free")).style(theme::text::primary));
-            }
-        }
-
-        // Every plan but the current one gets a CTA naming it. Billing hasn't
-        // shipped, so they're all disabled (no `on_press`).
-        let cta = if is_current {
-            // Non-pressable, but drawn in its normal state rather than iced's
-            // faded Disabled one so the label stays readable.
-            button::secondary(None, localized_copy("Current plan"))
-                .width(Length::Fill)
-                .style(|t, _status| {
-                    theme::button::secondary(t, iced::widget::button::Status::Active)
-                })
-        } else if is_upgrade {
-            let label = match &card.tier {
-                PlanTier::Pro => localized_copy("Upgrade to Pro"),
-                PlanTier::Estate => localized_copy("Upgrade to Estate"),
-                PlanTier::Free => localized_copy("Upgrade"),
-            };
-            button::primary(None, label).width(Length::Fill)
-        } else {
-            // A lower tier, or the current tier on the other billing cycle.
-            let label = match &card.tier {
-                PlanTier::Free => localized_copy("Switch to Free"),
-                PlanTier::Pro => localized_copy("Switch to Pro"),
-                PlanTier::Estate => localized_copy("Switch to Estate"),
-            };
-            button::secondary(None, label).width(Length::Fill)
-        };
-
-        let mut card_col = Column::new()
-            .push(header)
-            .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
-            .push(price_row)
-            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-            // Tagline slot at least TAGLINE_HEIGHT tall, so the CTA below
-            // sits on the same line in every card at normal widths, but able
-            // to grow if the copy wraps further — never overlapping the CTA.
-            // iced's `Container` has no `min_height`; a `Row` is as tall as
-            // its tallest child, so a zero-width spacer sets the floor.
-            .push(
-                Row::new()
-                    .push(
-                        iced::widget::Space::new()
-                            .width(Length::Fixed(0.0))
-                            .height(Length::Fixed(TAGLINE_HEIGHT)),
-                    )
-                    .push(
-                        text::caption(tagline)
-                            .style(theme::text::primary)
-                            .width(Length::Fill),
-                    ),
-            )
-            .push(cta)
-            .push(iced::widget::Space::new().height(Length::Fixed(18.0)));
-
-        for feature in card.features {
-            card_col = card_col.push(
-                Row::new()
-                    .push(check_circle_icon().size(14).color(badge_color))
-                    .push(iced::widget::Space::new().width(Length::Fixed(6.0)))
-                    .push(
-                        text::p2_regular(feature)
-                            .style(theme::text::primary)
-                            .width(Length::Fill),
-                    )
-                    .align_y(Alignment::Start),
-            );
-        }
-
-        // Expiry line on the user's current paid plan card.
-        if is_current && !is_free {
-            if let Some(renewal) = state.plan.as_ref().and_then(|p| p.renewal_at.as_deref()) {
-                let date_short = if renewal.len() >= 10 {
-                    &renewal[..10]
-                } else {
-                    renewal
-                };
-                card_col = card_col
-                    .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-                    .push(
-                        text::p2_regular(format!("Expires on {}", date_short)).color(color::GREY_3),
-                    );
-            }
-        }
-
-        cards_column = cards_column.push(
-            container(card_col.padding(20).spacing(8))
-                .style(move |t| container::Style {
-                    background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                    // Every card is outlined in its tier colour: full
-                    // strength on the current plan, softened on the others.
-                    // A hairline theme border vanished on the dark card.
-                    border: iced::Border {
-                        color: if is_current {
-                            badge_color
-                        } else {
-                            iced::Color {
-                                a: 0.45,
-                                ..badge_color
-                            }
-                        },
-                        width: 1.0,
-                        radius: 16.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .width(Length::Fill),
-        );
-    }
-
-    col = col
-        .push(cards_column)
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)));
-
-    col = col.push(iced::widget::Space::new().height(Length::Fixed(20.0)));
-
-    col.spacing(0).width(Length::Fill).into()
-}
-
-// ── Checkout / payment view ─────────────────────────────────────────────────
-
-fn checkout_ux<'a>(
-    checkout_state: &'a crate::app::state::connect::CheckoutState,
-) -> Element<'a, ConnectAccountMessage> {
-    let mut col = Column::new()
-        .push(text::h4_bold("Checkout").style(theme::text::primary))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-
-    match &checkout_state.phase {
-        CheckoutPhase::Creating => {
-            col = col
-                .push(text::p1_regular(localized_copy("Creating invoice…")).color(color::GREY_3));
-        }
-
-        CheckoutPhase::AwaitingPayment | CheckoutPhase::Processing => {
-            if let Some(ref resp) = checkout_state.checkout {
-                let amount_line = format!(
-                    "{} {} ({} sats)",
-                    resp.amount_fiat, resp.fiat_currency, resp.amount_sats
-                );
-                let plan_line = format!("Upgrade to {} ({})", resp.plan, resp.billing_cycle);
-
-                col = col
-                    .push(text::p1_bold(plan_line).style(theme::text::primary))
-                    .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-                    .push(text::p1_regular(amount_line).color(color::ORANGE))
-                    .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-
-                // Lightning QR
-                if let Some(ref qr) = checkout_state.lightning_qr {
-                    col = col.push(
-                        container(QRCode::new(qr).cell_size(6))
-                            .width(Length::Fill)
-                            .center_x(Length::Fill),
-                    );
-                    col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
-                }
-
-                // Lightning invoice (truncated) + copy
-                let invoice_display = if resp.lightning_invoice.len() > 40 {
-                    format!("{}…", &resp.lightning_invoice[..40])
-                } else {
-                    resp.lightning_invoice.clone()
-                };
-                col = col.push(
-                    Row::new()
-                        .push(
-                            text::p2_regular(invoice_display)
-                                .color(color::GREY_3)
-                                .width(Length::Fill),
-                        )
-                        .push(
-                            button::secondary(None, localized_copy("Copy"))
-                                .on_press(ConnectAccountMessage::CopyToClipboard(
-                                    resp.lightning_invoice.clone(),
-                                ))
-                                .width(Length::Shrink),
-                        )
-                        .align_y(Alignment::Center)
-                        .spacing(8),
-                );
-
-                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
-
-                // On-chain address + copy
-                col = col.push(
-                    Row::new()
-                        .push(
-                            text::p2_regular(format!("On-chain: {}", resp.on_chain_address))
-                                .color(color::GREY_3)
-                                .width(Length::Fill),
-                        )
-                        .push(
-                            button::secondary(None, localized_copy("Copy"))
-                                .on_press(ConnectAccountMessage::CopyToClipboard(
-                                    resp.on_chain_address.clone(),
-                                ))
-                                .width(Length::Shrink),
-                        )
-                        .align_y(Alignment::Center)
-                        .spacing(8),
-                );
-
-                col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
-
-                // Open in browser
-                col = col.push(
-                    button::secondary(None, localized_copy("Open in Browser"))
-                        .on_press(ConnectAccountMessage::OpenCheckoutUrl(
-                            resp.checkout_url.clone(),
-                        ))
-                        .width(Length::Fill),
-                );
-
-                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
-
-                // Expires
-                col = col.push(
-                    text::p2_regular(localized_format!(
-                        "Expires: {}",
-                        "Vence: {}",
-                        format_datetime(&resp.expires_at)
-                    ))
-                    .style(theme::text::secondary),
-                );
-
-                if matches!(checkout_state.phase, CheckoutPhase::Processing) {
-                    col = col
-                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                        .push(
-                            text::p2_regular(localized_copy("Payment detected, confirming…"))
-                                .color(color::ORANGE),
-                        );
-                }
-            }
-
-            col = col
-                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-                .push(
-                    button::secondary(None, localized_copy("Cancel"))
-                        .on_press(ConnectAccountMessage::DismissCheckout)
-                        .width(Length::Fill),
-                );
-        }
-
-        CheckoutPhase::Paid => {
-            let plan_name = checkout_state
-                .checkout
-                .as_ref()
-                .map(|c| c.plan.to_string())
-                .unwrap_or_else(|| "your new plan".to_string());
-            col = col
-                .push(
-                    text::p1_bold(localized_format!(
-                        "Payment confirmed! Upgraded to {}.",
-                        "Pago confirmado! Actualizado a {}.",
-                        plan_name
-                    ))
-                    .color(color::ORANGE),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-                .push(
-                    button::primary(None, localized_copy("Done"))
-                        .on_press(ConnectAccountMessage::DismissCheckout)
-                        .width(Length::Fill),
-                );
-        }
-
-        CheckoutPhase::Expired => {
-            col = col
-                .push(text::p1_regular(localized_copy("Invoice expired.")).color(color::RED))
-                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-                .push(
-                    button::primary(None, localized_copy("Try Again"))
-                        .on_press(ConnectAccountMessage::DismissCheckout)
-                        .width(Length::Fill),
-                );
-        }
-
-        CheckoutPhase::Failed(msg) => {
-            col = col
-                .push(text::p1_regular(format!("Error: {}", msg)).color(color::RED))
-                .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
-                .push(
-                    button::primary(None, localized_copy("Try Again"))
-                        .on_press(ConnectAccountMessage::DismissCheckout)
-                        .width(Length::Fill),
-                );
+    for marker in ["(coming soon)", "— coming soon", "- coming soon"] {
+        if let Some(stripped) = key.strip_suffix(marker) {
+            let name = trimmed[..stripped.trim_end().len()].to_string();
+            return Some((name, FeatureValue::ComingSoon));
         }
     }
-
-    col.spacing(0).width(Length::Fill).into()
+    Some((trimmed.to_string(), FeatureValue::Included))
 }
 
 // ── Billing history view ────────────────────────────────────────────────────
@@ -2692,6 +1677,7 @@ fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Connect
                     crate::services::coincube::ChargeStatus::Processing => "Processing",
                     crate::services::coincube::ChargeStatus::Paid => "Paid",
                     crate::services::coincube::ChargeStatus::Expired => "Expired",
+                    crate::services::coincube::ChargeStatus::Unknown => "Pending",
                 };
                 let amount_label = format!(
                     "{} {} ({} sats)",
@@ -3902,6 +2888,8 @@ mod renewal_banner_tests {
     //! `Option<Element>` and its `style`/`on_press` closures are deferred,
     //! so we can construct it headless and assert only Some/None.
     use super::*;
+    use crate::app::state::connect::{CheckoutPhase, PlanLifecycle};
+    use crate::services::coincube::{BillingCycle, PlanTier};
     use crate::user_error::UserError;
     use crate::{
         app::state::connect::{
@@ -4173,6 +3161,9 @@ mod renewal_banner_tests {
             entitlements: PlanEntitlements::default(),
             billing_cycle: Some(BillingCycle::Monthly),
             plan_provenance: None,
+            pending_plan: None,
+            pending_plan_at: None,
+            pending_billing_cycle: None,
         }
     }
 
@@ -4290,28 +3281,36 @@ mod renewal_banner_tests {
 
     #[test]
     fn unreleased_plan_features_are_hidden_or_marked_coming_soon() {
+        use billing::FeatureValue::{ComingSoon, Included};
+        let copy = |f: &str| launch_feature_copy(f);
+        assert_eq!(copy("Duress mode"), None);
+        assert_eq!(copy("Duress protection"), None);
+        assert_eq!(copy("Duress activation alerts"), None);
+        assert_eq!(copy("Duress (coming soon)"), None);
+        // Recovery alerts ship on every tier (billing v2 decision 10).
         assert_eq!(
-            plan_tagline(&PlanTier::Pro),
-            "More Cubes per network and Connect-enforced policies for greater control."
-        );
-        assert_eq!(launch_feature_copy("Duress mode"), None);
-        assert_eq!(launch_feature_copy("Duress protection"), None);
-        assert_eq!(launch_feature_copy("Duress activation alerts"), None);
-        assert_eq!(
-            launch_feature_copy("Duress alerts").as_deref(),
-            Some("Recovery alerts — Coming soon")
-        );
-        assert_eq!(
-            launch_feature_copy("Recovery alerts").as_deref(),
-            Some("Recovery alerts — Coming soon")
+            copy("Duress alerts"),
+            Some(("Recovery alerts".to_string(), Included))
         );
         assert_eq!(
-            launch_feature_copy("More Cubes").as_deref(),
-            Some("More Cubes")
+            copy("Recovery alerts"),
+            Some(("Recovery alerts".to_string(), Included))
+        );
+        // Spending policies are not sold yet (decision 9, I9).
+        assert_eq!(
+            copy("Attach Connect-enforced policies"),
+            Some((billing::SPENDING_POLICIES.to_string(), ComingSoon))
         );
         assert_eq!(
-            launch_feature_copy("Price alerts").as_deref(),
-            Some("Price alerts")
+            copy("Price alerts (coming soon)"),
+            Some(("Price alerts".to_string(), ComingSoon))
+        );
+        // The Cube count is its own row, from the entitlement.
+        assert_eq!(copy("4 cubes per network"), None);
+        assert_eq!(copy("1 cube per network"), None);
+        assert_eq!(
+            copy("More Cubes"),
+            Some(("More Cubes".to_string(), Included))
         );
     }
 
@@ -4360,6 +3359,7 @@ mod renewal_banner_tests {
                 price: None,
                 features: Vec::new(),
                 included_linked_participants: None,
+                entitlements: None,
             }],
             pricing_schema_version: None,
             purchasing_enabled: enabled,
@@ -4391,6 +3391,7 @@ mod renewal_banner_tests {
                     price: None,
                     features: vec!["One Cube".to_string()],
                     included_linked_participants: None,
+                    entitlements: None,
                 },
                 PlanFeatureInfo {
                     name: "pro".to_string(),
@@ -4400,6 +3401,7 @@ mod renewal_banner_tests {
                     }),
                     features: vec!["More Cubes".to_string(), "Duress mode".to_string()],
                     included_linked_participants: None,
+                    entitlements: None,
                 },
                 PlanFeatureInfo {
                     name: "estate".to_string(),
@@ -4409,6 +3411,7 @@ mod renewal_banner_tests {
                     }),
                     features: vec!["Recovery alerts".to_string()],
                     included_linked_participants: None,
+                    entitlements: None,
                 },
             ],
             pricing_schema_version: schema_version,
@@ -4433,7 +3436,8 @@ mod renewal_banner_tests {
             plan: PlanTier::Pro,
             billing_cycle: BillingCycle::Annual,
             checkout_url: "https://checkout.example/charge-1".to_string(),
-            expires_at: "2026-08-01T00:00:00Z".to_string(),
+            expires_at: Some("2026-08-01T00:00:00Z".to_string()),
+            starts_at: None,
         }
     }
 
@@ -4448,6 +3452,10 @@ mod renewal_banner_tests {
             status,
             created_at: "2026-07-01T12:00:00Z".to_string(),
             paid_at: Some("2026-07-02T12:00:00Z".to_string()),
+            state: None,
+            invoice_id: None,
+            amount_received_sats: 0,
+            overpaid_sats: 0,
         }
     }
 
@@ -4474,14 +3482,14 @@ mod renewal_banner_tests {
     #[test]
     fn provenance_card_present_only_with_provenance() {
         let granted = granted_estate(Some("2027-07-04T00:00:00Z"), Some("Founding member"));
-        assert!(plan_provenance_card(&granted).is_some());
+        assert!(billing::access_row(&granted).is_some());
 
         let paid = plan(
             PlanTier::Pro,
             PlanStatus::Active,
             Some("2027-01-01T00:00:00Z"),
         );
-        assert!(plan_provenance_card(&paid).is_none());
+        assert!(billing::access_row(&paid).is_none());
     }
 
     /// A granted account still gets a renewal banner gated only by the
@@ -4553,15 +3561,11 @@ mod renewal_banner_tests {
         assert_eq!(format_date("2026-04-20T14:31:00Z"), "Apr 20, 2026");
         assert_eq!(format_date("not-a-date"), "not-a-date");
         assert_eq!(format_datetime("not-a-date"), "not-a-date");
-
-        assert_ne!(
-            plan_tier_color(&PlanTier::Free),
-            plan_tier_color(&PlanTier::Pro)
-        );
-        assert_ne!(
-            plan_tier_color(&PlanTier::Pro),
-            plan_tier_color(&PlanTier::Estate)
-        );
+        assert_eq!(billing::format_usd(100.0), "100");
+        assert_eq!(billing::format_usd(33.15), "33.15");
+        assert_eq!(billing::group_sats(41_000), "41,000");
+        assert_eq!(billing::group_sats(999), "999");
+        assert_eq!(billing::group_sats(1_234_567), "1,234,567");
     }
 
     #[test]
@@ -4895,6 +3899,858 @@ mod renewal_banner_tests {
         }
     }
 
+    /// The current API's `/connect/features` payload (entitlements per tier,
+    /// v2 cube limits), for the billing v2 views.
+    fn billing_v2_features() -> FeaturesResponse {
+        let ent = |cube_limit, estate: bool, paid: bool| PlanEntitlements {
+            cube_limit,
+            recovery_alerts: true,
+            inheritance_escrow: estate,
+            collaborative_invitations: estate,
+            attach_policies: paid,
+            ..PlanEntitlements::default()
+        };
+        let info = |name: &str, price: Option<(u32, u32)>, features: &[&str], e| PlanFeatureInfo {
+            name: name.to_string(),
+            price: price.map(|(monthly, annual)| PlanPrice { monthly, annual }),
+            features: features.iter().map(|f| f.to_string()).collect(),
+            included_linked_participants: None,
+            entitlements: Some(e),
+        };
+        let mut f = priced_features(Some(SUPPORTED_PRICING_SCHEMA_VERSION), Some(true));
+        f.plans = vec![
+            info(
+                "free",
+                None,
+                &[
+                    "1 cube per network",
+                    "Esplora access",
+                    "Lightning address & avatar",
+                ],
+                ent(1, false, false),
+            ),
+            info(
+                "pro",
+                Some((10, 100)),
+                &[
+                    "3 cubes per network",
+                    "Attach Connect-enforced policies",
+                    "Duress (coming soon)",
+                    "Esplora access",
+                ],
+                ent(3, false, true),
+            ),
+            info(
+                "estate",
+                Some((20, 200)),
+                &[
+                    "10 cubes per network",
+                    "Collaborative Multi-sig Keyholder Invitations",
+                ],
+                ent(10, true, true),
+            ),
+        ];
+        f
+    }
+
+    #[test]
+    fn account_features_list_cubes_first_and_coming_soon_last() {
+        use billing::FeatureValue::{ComingSoon, Included, Muted, Value};
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let rows = billing::account_feature_rows(&account);
+        let names: Vec<&str> = rows.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Cubes per network",
+                "Esplora access",
+                "Recovery alerts",
+                billing::SPENDING_POLICIES,
+            ]
+        );
+        assert_eq!(rows[0].1, Value("Up to 3".to_string()));
+        assert_eq!(rows.last().unwrap().1, ComingSoon);
+        assert!(!names.iter().any(|n| n.to_lowercase().contains("duress")));
+
+        account.plan = Some(plan(PlanTier::Estate, PlanStatus::Active, None));
+        let rows = billing::account_feature_rows(&account);
+        assert_eq!(rows[0].1, Value("Up to 10".to_string()));
+        assert!(rows.contains(&("Inheritance escrow".to_string(), Included)));
+        assert!(rows.contains(&("Recovery alerts".to_string(), Included)));
+        assert_eq!(rows.last().unwrap().0, billing::SPENDING_POLICIES);
+
+        // Free: one Cube, recovery alerts included, no Coming soon policies.
+        account.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
+        let rows = billing::account_feature_rows(&account);
+        assert_eq!(rows[0].1, Muted("1 on Free".to_string()));
+        assert!(rows.contains(&("Recovery alerts".to_string(), Included)));
+        assert!(!rows.iter().any(|(_, v)| *v == ComingSoon));
+    }
+
+    #[test]
+    fn comparison_rows_follow_board_order_and_server_limits() {
+        use billing::FeatureValue::{ComingSoon, Included, Muted, Value};
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let rows = billing::comparison_rows(&account);
+        let names: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            [
+                "Create and recover Cubes",
+                "Cubes per network",
+                "Hosted Esplora server",
+                "Lightning Address for Spark",
+                "Recovery alerts",
+                "Inheritance escrow",
+                "Keyholder invitations",
+                billing::SPENDING_POLICIES,
+            ]
+        );
+        assert_eq!(
+            rows[1].1,
+            [
+                Value("1".to_string()),
+                Value("3".to_string()),
+                Value("10".to_string())
+            ]
+        );
+        assert_eq!(rows[4].1, [Included, Included, Included]);
+        assert_eq!(rows[7].1, [Muted("—".to_string()), ComingSoon, ComingSoon]);
+    }
+
+    #[test]
+    fn change_plan_cta_names_the_change_and_follows_the_api_rules() {
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        // /connect/plan sends no billing cycle in production.
+        let mut pro = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2099-01-01T00:00:00Z"),
+        );
+        pro.billing_cycle = None;
+        account.plan = Some(pro.clone());
+        let (label, _, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert_eq!((label.as_str(), ok), ("Review upgrade to Estate", true));
+        // The current tier is renewable on either period (Connect stacks it).
+        for cycle in [BillingCycle::Monthly, BillingCycle::Annual] {
+            let (label, note, ok) = billing::change_plan_cta(&account, &PlanTier::Pro, cycle);
+            assert!(ok, "renewal enabled for {:?}", cycle);
+            assert!(label.starts_with("Review renewal · Pro"), "{}", label);
+            assert!(note.contains("after your current one ends"), "{}", note);
+        }
+        let (label, _, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Free, BillingCycle::Annual);
+        assert_eq!((label.as_str(), ok), ("Review switch to Free", true));
+
+        // A lower tier needs a future period end and no change already scheduled.
+        let mut estate = plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2099-01-01T00:00:00Z"),
+        );
+        estate.billing_cycle = None;
+        account.plan = Some(estate.clone());
+        let (_, _, ok) = billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Annual);
+        assert!(ok);
+        estate.pending_plan = Some(PlanTier::Pro);
+        estate.pending_plan_at = Some("2099-01-01T00:00:00Z".into());
+        account.plan = Some(estate.clone());
+        let (_, note, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Annual);
+        assert!(!ok);
+        assert!(note.contains("already scheduled"), "{}", note);
+        estate.pending_plan = None;
+        estate.renewal_at = None;
+        account.plan = Some(estate);
+        let (_, _, ok) = billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Annual);
+        assert!(!ok, "no period end to start after");
+
+        // Free is never the current plan to renew; paused purchasing blocks
+        // purchases but not the switch to Free.
+        account.plan = Some(plan(PlanTier::Free, PlanStatus::Active, None));
+        let (_, _, ok) = billing::change_plan_cta(&account, &PlanTier::Free, BillingCycle::Annual);
+        assert!(!ok);
+        account.plan = Some(pro);
+        account.features.as_mut().unwrap().purchasing_enabled = Some(false);
+        let (_, note, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert!(!ok);
+        assert!(note.contains("paused"));
+        let (_, _, ok) = billing::change_plan_cta(&account, &PlanTier::Free, BillingCycle::Annual);
+        assert!(ok);
+    }
+
+    #[test]
+    fn paid_screen_keeps_the_reviewed_facts_after_the_plan_reloads() {
+        let now = chrono::Utc::now();
+        let renewal = (now + chrono::Duration::days(120)).to_rfc3339();
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        account.plan = Some(plan(PlanTier::Pro, PlanStatus::Active, Some(&renewal)));
+        let mut cs = CheckoutState::new(
+            1,
+            PlanTier::Estate,
+            BillingCycle::Annual,
+            account.plan.clone(),
+        );
+        let before = billing::review_facts(&account, &cs, now);
+        assert!(before
+            .replaces
+            .as_deref()
+            .unwrap()
+            .starts_with("Replaces Pro"));
+        assert!(
+            before.notes.iter().any(|n| n.contains("isn’t credited")),
+            "{:?}",
+            before.notes
+        );
+        // Paid: /connect/plan now says Estate for a year.
+        cs.phase = CheckoutPhase::Paid { overpaid_sats: 0 };
+        let next_year = (now + chrono::Duration::days(365)).to_rfc3339();
+        account.plan = Some(plan(PlanTier::Estate, PlanStatus::Active, Some(&next_year)));
+        let after = billing::review_facts(&account, &cs, now);
+        assert_eq!(after.covers, before.covers);
+        assert_eq!(after.replaces, before.replaces);
+    }
+
+    #[test]
+    fn lapsed_account_lists_free_features() {
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let mut lapsed = plan(
+            PlanTier::Pro,
+            PlanStatus::PastDue,
+            Some("2026-01-01T00:00:00Z"),
+        );
+        lapsed.entitlements.cube_limit = 1;
+        account.plan = Some(lapsed);
+        let rows = billing::account_feature_rows(&account);
+        assert_eq!(rows[0].1, billing::FeatureValue::Muted("1 on Free".into()));
+        assert!(!rows.iter().any(|(n, _)| n == billing::SPENDING_POLICIES));
+    }
+
+    #[test]
+    fn review_facts_cover_upgrade_renewal_and_downgrade() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-13T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let mut p = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-03-14T00:00:00Z"),
+        );
+        p.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(p);
+        let checkout = |plan: &Option<ConnectPlan>, tier, cycle| {
+            CheckoutState::new(1, tier, cycle, plan.clone())
+        };
+
+        // Upgrade starts now.
+        let up = billing::review_facts(
+            &account,
+            &checkout(&account.plan, PlanTier::Estate, BillingCycle::Annual),
+            now,
+        );
+        assert_eq!(up.plan, "Estate · Annual");
+        assert_eq!(up.replaces.as_deref(), Some("Replaces Pro · Annual"));
+        assert_eq!(up.amount.as_deref(), Some("$200 USD"));
+        assert_eq!(up.covers.as_deref(), Some("Nov 13, 2026 – Nov 13, 2027"));
+        assert_eq!(up.starts, None);
+
+        // Same-tier renewal stacks onto the paid period.
+        let renew = billing::review_facts(
+            &account,
+            &checkout(&account.plan, PlanTier::Pro, BillingCycle::Annual),
+            now,
+        );
+        assert_eq!(renew.covers.as_deref(), Some("Mar 14, 2027 – Mar 14, 2028"));
+        assert_eq!(renew.starts.as_deref(), Some("Mar 14, 2027"));
+        assert_eq!(
+            renew.replaces.as_deref(),
+            Some("Adds to your current Pro plan")
+        );
+
+        // A lower tier starts when the current period ends (decision 12).
+        let mut estate = plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2027-03-14T00:00:00Z"),
+        );
+        estate.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(estate);
+        let down = billing::review_facts(
+            &account,
+            &checkout(&account.plan, PlanTier::Pro, BillingCycle::Monthly),
+            now,
+        );
+        assert_eq!(down.amount.as_deref(), Some("$10 USD"));
+        assert_eq!(down.starts.as_deref(), Some("Mar 14, 2027"));
+        assert_eq!(down.covers.as_deref(), Some("Mar 14, 2027 – Apr 14, 2027"));
+    }
+
+    #[tokio::test]
+    async fn plan_billing_board_states_render_tenshu_copy() {
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        account.billing_history = Some(vec![
+            billing_entry(ChargeStatus::Paid),
+            billing_entry(ChargeStatus::Paid),
+            billing_entry(ChargeStatus::Expired),
+            billing_entry(ChargeStatus::Paid),
+        ]);
+
+        // Board 1, Active.
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        for expected in [
+            "Plan & billing",
+            "Current plan",
+            "Change plan…",
+            "Have a promo or referral code?",
+            "Features on this account",
+            "Cubes per network",
+            "Up to 3",
+            "Coming soon",
+            "View all billing history",
+        ] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "{}: {:?}",
+                expected,
+                labels
+            );
+        }
+        // Only the latest three history rows are inline.
+        assert_eq!(
+            labels.iter().filter(|l| l.ends_with("· bitcoin")).count(),
+            3
+        );
+        let cubes = labels
+            .iter()
+            .position(|l| l == "Cubes per network")
+            .unwrap();
+        let soon = labels
+            .iter()
+            .position(|l| l == billing::SPENDING_POLICIES)
+            .unwrap();
+        assert!(cubes < soon);
+
+        // Board 1, Promotional: the Access row.
+        account.plan = Some(granted_estate(
+            Some("2026-12-19T00:00:00Z"),
+            Some("Launch offer"),
+        ));
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(labels.iter().any(|l| l == "Access"), "{:?}", labels);
+        assert!(labels.iter().any(|l| l == "No payment on file"));
+
+        // Board 2: Change plan with the wired CTA.
+        account.plan = Some(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-01-01T00:00:00Z"),
+        ));
+        account.show_plan_comparison = true;
+        account.selected_billing_cycle = BillingCycle::Annual;
+        account.selected_plan_tier = Some(PlanTier::Estate);
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        for expected in [
+            "Change plan",
+            "Monthly",
+            "Annual",
+            "$200",
+            "per year",
+            "Review upgrade to Estate",
+            "What each plan includes",
+            "Keyholder invitations",
+        ] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "{}: {:?}",
+                expected,
+                labels
+            );
+        }
+        assert!(!labels.iter().any(|l| l == "BEST VALUE"));
+
+        // Board 3: Review.
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        for expected in [
+            "Review plan change",
+            "Estate · Annual",
+            "$200 USD",
+            "Not invoiced yet",
+            "Pay with",
+            "Bitcoin",
+            "Card",
+            "Create invoice",
+        ] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "{}: {:?}",
+                expected,
+                labels
+            );
+        }
+    }
+
+    /// Draw `account`'s Plan & billing sheet at `size` into
+    /// `$BILLING_PREVIEW_DIR/billing-{name}-{appearance}.png` for PR
+    /// evidence. A no-op unless the variable is set.
+    pub(super) async fn capture_billing_sheet(
+        account: &ConnectAccountPanel,
+        name: &str,
+        size: (u32, u32),
+    ) {
+        use iced::advanced::{layout, renderer::Headless, widget::Tree, Layout};
+        let Ok(directory) = std::env::var("BILLING_PREVIEW_DIR") else {
+            return;
+        };
+        for bytes in [
+            coincube_ui::font::REGULAR_BYTES,
+            coincube_ui::font::MEDIUM_BYTES,
+            coincube_ui::font::SEMIBOLD_BYTES,
+            coincube_ui::font::BOLD_BYTES,
+            coincube_ui::font::MONO_REGULAR_BYTES,
+            coincube_ui::font::BOOTSTRAP_ICONS_BYTE,
+            coincube_ui::font::COINCUBE_ICONS_BYTES,
+        ] {
+            iced::advanced::graphics::text::font_system()
+                .write()
+                .unwrap()
+                .load_font(std::borrow::Cow::Borrowed(bytes));
+        }
+        let (width, height) = size;
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            let mut renderer = <iced::Renderer as Headless>::new(
+                coincube_ui::font::REGULAR,
+                iced::Pixels(16.0),
+                Some("tiny-skia"),
+            )
+            .await
+            .expect("software renderer");
+            let mut element = connect_sheet(
+                account,
+                ConnectSheetPage::Sections(ConnectSheetSection::PlanBilling),
+            );
+            let mut tree = Tree::new(element.as_widget());
+            let viewport_size = iced::Size::new(width as f32, height as f32);
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, viewport_size),
+            );
+            let viewport = iced::Rectangle::with_size(viewport_size);
+            element.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut iced::advanced::Shell::new(&mut Vec::new()),
+                &viewport,
+            );
+            element.as_widget().draw(
+                &tree,
+                &mut renderer,
+                &theme,
+                &iced::advanced::renderer::Style {
+                    text_color: theme.colors.text.primary,
+                },
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            let pixels = renderer.screenshot(
+                iced::Size::new(width, height),
+                1.0,
+                theme.colors.general.background,
+            );
+            image::save_buffer(
+                std::path::Path::new(&directory).join(format!("billing-{name}-{appearance}.png")),
+                &pixels,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
+            .expect("save billing preview");
+        }
+    }
+
+    /// Board 1 and 2 states as PNGs (`BILLING_PREVIEW_DIR`). Also checks
+    /// every state lays out inside the sheet.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn plan_billing_board_captures() {
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let history = vec![
+            billing_entry(ChargeStatus::Paid),
+            billing_entry(ChargeStatus::Paid),
+            billing_entry(ChargeStatus::Expired),
+        ];
+        account.billing_history = Some(history);
+        let mut annual = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-11-13T00:00:00Z"),
+        );
+        annual.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(annual.clone());
+        capture_billing_sheet(&account, "1-active", (1040, 1180)).await;
+
+        let soon = (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339();
+        let mut due = annual.clone();
+        due.renewal_at = Some(soon);
+        account.plan = Some(due);
+        capture_billing_sheet(&account, "1-renewal-due", (1040, 1240)).await;
+
+        account.plan = Some(plan(
+            PlanTier::Free,
+            PlanStatus::PastDue,
+            Some("2026-10-01T00:00:00Z"),
+        ));
+        capture_billing_sheet(&account, "1-expired", (1040, 1240)).await;
+
+        let mut cancelled = annual.clone();
+        cancelled.status = PlanStatus::Canceled;
+        account.plan = Some(cancelled);
+        capture_billing_sheet(&account, "1-cancelled", (1040, 1240)).await;
+
+        account.plan = Some(granted_estate(
+            Some("2026-12-19T00:00:00Z"),
+            Some("Launch offer"),
+        ));
+        account.billing_history = Some(Vec::new());
+        account.show_campaign_redeem = true;
+        capture_billing_sheet(&account, "1-promotional", (1040, 1240)).await;
+        account.show_campaign_redeem = false;
+
+        account.plan = Some(annual);
+        account.show_plan_comparison = true;
+        account.selected_billing_cycle = BillingCycle::Annual;
+        account.selected_plan_tier = Some(PlanTier::Estate);
+        capture_billing_sheet(&account, "2-change-plan", (1040, 1300)).await;
+        account.features.as_mut().unwrap().purchasing_enabled = Some(false);
+        capture_billing_sheet(&account, "2-purchasing-paused", (1040, 1300)).await;
+        account.features = None;
+        capture_billing_sheet(&account, "2-pricing-unavailable", (1040, 1000)).await;
+
+        account.features = Some(billing_v2_features());
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        capture_billing_sheet(&account, "3-review", (1040, 960)).await;
+        account.checkout = None;
+        account.show_plan_comparison = true;
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Free));
+        capture_billing_sheet(&account, "3-review-free", (1040, 860)).await;
+    }
+
+    /// Every BTCPay board (B1–B10) renders its copy, and the invoice is
+    /// shown in full (no 40-character truncation).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn btcpay_phase_boards_render_and_capture() {
+        use crate::app::state::connect::account::PaymentNetwork;
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let mut p = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-03-14T00:00:00Z"),
+        );
+        p.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(p);
+        let mut resp = checkout_response();
+        resp.plan = PlanTier::Estate;
+        resp.amount_fiat = 200.0;
+        resp.amount_sats = 210_000;
+        resp.lightning_invoice = format!("lnbc2100u1p{}", "q".repeat(180));
+        resp.expires_at = Some((chrono::Utc::now() + chrono::Duration::minutes(30)).to_rfc3339());
+        let status = |json: &str| -> crate::services::coincube::ChargeStatusResponse {
+            serde_json::from_str(json).unwrap()
+        };
+        type Case<'s> = (
+            &'s str,
+            CheckoutPhase,
+            PaymentNetwork,
+            Option<&'s str>,
+            &'s [&'s str],
+        );
+        let cases: Vec<Case> = vec![
+            (
+                "b01-creating",
+                CheckoutPhase::Creating,
+                PaymentNetwork::Lightning,
+                None,
+                &["Pay for Estate", "Creating invoice…"],
+            ),
+            (
+                "b02-lightning",
+                CheckoutPhase::AwaitingPayment,
+                PaymentNetwork::Lightning,
+                None,
+                &[
+                    "Lightning invoice",
+                    "Pay on the BTCPay page instead",
+                    "Lightning",
+                    "On-chain",
+                ],
+            ),
+            (
+                "b03-onchain",
+                CheckoutPhase::AwaitingPayment,
+                PaymentNetwork::OnChain,
+                None,
+                &[
+                    "Bitcoin address",
+                    "Send exactly 210,000 sats. Estate turns on after the payment confirms.",
+                ],
+            ),
+            (
+                "b04-browser",
+                CheckoutPhase::PayingInBrowser,
+                PaymentNetwork::Lightning,
+                None,
+                &[
+                    "Finish paying on the BTCPay page",
+                    "Reopen checkout page",
+                    "Show the QR code here instead",
+                ],
+            ),
+            (
+                "b05-partial",
+                CheckoutPhase::PartlyPaid {
+                    received_sats: 130_200,
+                    due_sats: 79_800,
+                },
+                PaymentNetwork::OnChain,
+                None,
+                &[
+                    "Send the rest on-chain",
+                    "130,200 of 210,000 sats received · 79,800 sats left to pay",
+                    "Same Bitcoin address · send 79,800 sats more",
+                ],
+            ),
+            (
+                "b06-confirming",
+                CheckoutPhase::Processing,
+                PaymentNetwork::OnChain,
+                None,
+                &[
+                    "Payment seen, waiting for confirmation",
+                    "Payment seen · confirming",
+                ],
+            ),
+            (
+                "b07-paid",
+                CheckoutPhase::Paid { overpaid_sats: 0 },
+                PaymentNetwork::Lightning,
+                None,
+                &["Plan changed", "You're on Estate", "Done", "Paid"],
+            ),
+            (
+                "b07-paid-overpaid",
+                CheckoutPhase::Paid {
+                    overpaid_sats: 1_500,
+                },
+                PaymentNetwork::Lightning,
+                None,
+                &["You're on Estate"],
+            ),
+            (
+                "b08-expired",
+                CheckoutPhase::Expired,
+                PaymentNetwork::Lightning,
+                None,
+                &[
+                    "This invoice expired",
+                    "Create new invoice",
+                    "Expired · nothing received",
+                ],
+            ),
+            (
+                "b09-needs-support",
+                CheckoutPhase::NeedsSupport {
+                    invoice_id: "Q7xWqv3kP1".into(),
+                    received_sats: 210_000,
+                },
+                PaymentNetwork::Lightning,
+                Some(
+                    r#"{"chargeId":"charge-1","invoiceId":"Q7xWqv3kP1","status":"expired","state":"needs_support","plan":"estate","additionalStatus":"PaidLate","amountReceivedSats":210000}"#,
+                ),
+                &[
+                    "Payment arrived after the invoice expired",
+                    "Invoice ID",
+                    "Q7xWqv3kP1",
+                    "Needs support",
+                ],
+            ),
+            (
+                "b10-failed",
+                CheckoutPhase::Failed {
+                    message: "Connect returned 502".into(),
+                    refused: false,
+                },
+                PaymentNetwork::Lightning,
+                None,
+                &["Couldn’t create the invoice", "Try again", "Not invoiced"],
+            ),
+            (
+                "b10-poll-failed",
+                CheckoutPhase::PollFailed("timeout".into()),
+                PaymentNetwork::Lightning,
+                None,
+                &["Couldn’t check the payment", "Check again"],
+            ),
+        ];
+        for (name, phase, network, last, expected) in cases {
+            let mut cs = CheckoutState::new(
+                7,
+                PlanTier::Estate,
+                BillingCycle::Annual,
+                account.plan.clone(),
+            );
+            if phase != CheckoutPhase::Creating && !matches!(phase, CheckoutPhase::Failed { .. }) {
+                cs.checkout = Some(resp.clone());
+                cs.lightning_qr = iced::widget::qr_code::Data::new(&resp.lightning_invoice).ok();
+                cs.onchain_qr = iced::widget::qr_code::Data::new(
+                    crate::app::state::connect::account::bip21_uri(&resp.on_chain_address, 79_800),
+                )
+                .ok();
+            }
+            cs.phase = phase;
+            cs.network = network;
+            cs.last_status = last.map(status);
+            account.checkout = Some(cs);
+            let labels = visible_labels(plan_billing_ux(&account), &renderer);
+            for text in expected {
+                assert!(
+                    labels.iter().any(|l| l == text),
+                    "{}: missing {:?} in {:?}",
+                    name,
+                    text,
+                    labels
+                );
+            }
+            if network == PaymentNetwork::Lightning && name == "b02-lightning" {
+                assert!(
+                    labels.iter().any(|l| l == &resp.lightning_invoice),
+                    "full invoice shown"
+                );
+            }
+            capture_billing_sheet(&account, name, (1040, 1000)).await;
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn plan_billing_bot_findings_hold() {
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        let mut f = billing_v2_features();
+        f.purchasing_enabled = Some(false);
+        f.pricing_schema_version = Some(SUPPORTED_PRICING_SCHEMA_VERSION + 1);
+        account.features = Some(f);
+        // Plan & billing itself shows the pause and schema notices.
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(
+            labels.iter().any(|l| l == "Purchasing is paused"),
+            "{:?}",
+            labels
+        );
+        assert!(labels
+            .iter()
+            .any(|l| l == "A newer pricing update is available"));
+
+        // A paid tier without a catalog price is never labelled Free.
+        let mut f = billing_v2_features();
+        f.plans[1].price = None;
+        account.features = Some(f);
+        account.show_plan_comparison = true;
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(
+            labels.iter().any(|l| l == "Price unavailable"),
+            "{:?}",
+            labels
+        );
+        assert_eq!(labels.iter().filter(|l| *l == "No payment").count(), 1);
+        account.show_plan_comparison = false;
+
+        // Switching to Free with a paid lower tier scheduled shows no
+        // "Free from" date.
+        let mut estate = plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2099-03-14T00:00:00Z"),
+        );
+        estate.pending_plan = Some(PlanTier::Pro);
+        estate.pending_plan_at = Some("2099-03-14T00:00:00Z".into());
+        let cs = CheckoutState::new(1, PlanTier::Free, BillingCycle::Annual, Some(estate));
+        let facts = billing::review_facts(&account, &cs, chrono::Utc::now());
+        assert_eq!(facts.covers, None);
+
+        // Covers follows Connect's startsAt for a lower tier bought ahead.
+        account.features = Some(billing_v2_features());
+        let mut cs =
+            CheckoutState::new(2, PlanTier::Pro, BillingCycle::Annual, account.plan.clone());
+        let mut resp = checkout_response();
+        resp.starts_at = Some("2027-04-14T00:00:00Z".into());
+        cs.checkout = Some(resp);
+        cs.phase = CheckoutPhase::Paid { overpaid_sats: 0 };
+        account.checkout = Some(cs);
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(
+            labels.iter().any(|l| l == "Apr 14, 2027 – Apr 14, 2028"),
+            "{:?}",
+            labels
+        );
+
+        // Covers for a purchase that starts now uses when Review opened.
+        let mut cs = CheckoutState::new(
+            3,
+            PlanTier::Estate,
+            BillingCycle::Annual,
+            account.plan.clone(),
+        );
+        cs.opened_at = chrono::DateTime::parse_from_rfc3339("2026-11-13T23:59:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let facts = billing::review_facts(&account, &cs, cs.opened_at);
+        assert_eq!(facts.covers.as_deref(), Some("Nov 13, 2026 – Nov 13, 2027"));
+    }
+
     #[test]
     fn plan_billing_checkout_and_history_views_build_for_branch_states() {
         let mut account = dashboard_panel();
@@ -4942,16 +4798,18 @@ mod renewal_banner_tests {
             CheckoutPhase::Creating,
             CheckoutPhase::AwaitingPayment,
             CheckoutPhase::Processing,
-            CheckoutPhase::Paid,
+            CheckoutPhase::Paid { overpaid_sats: 0 },
             CheckoutPhase::Expired,
-            CheckoutPhase::Failed("invoice failed".to_string()),
+            CheckoutPhase::Failed {
+                message: "invoice failed".to_string(),
+                refused: false,
+            },
         ] {
-            account.checkout = Some(CheckoutState {
-                phase,
-                checkout: Some(checkout_response()),
-                lightning_qr: None,
-                poll_errors: 0,
-            });
+            let mut cs =
+                CheckoutState::new(1, PlanTier::Pro, BillingCycle::Annual, account.plan.clone());
+            cs.phase = phase;
+            cs.checkout = Some(checkout_response());
+            account.checkout = Some(cs);
             let _ = plan_billing_ux(&account);
         }
     }
@@ -5371,12 +5229,15 @@ mod renewal_banner_tests {
                             panel.review_device_removal = Some(9);
                         }
                         if section == "checkout" {
-                            panel.checkout = Some(CheckoutState {
-                                phase: CheckoutPhase::AwaitingPayment,
-                                checkout: Some(checkout_response()),
-                                lightning_qr: None,
-                                poll_errors: 0,
-                            });
+                            let mut cs = CheckoutState::new(
+                                1,
+                                PlanTier::Pro,
+                                BillingCycle::Monthly,
+                                panel.plan.clone(),
+                            );
+                            cs.phase = CheckoutPhase::AwaitingPayment;
+                            cs.checkout = Some(checkout_response());
+                            panel.checkout = Some(cs);
                         }
                     }
                 }

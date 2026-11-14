@@ -11819,6 +11819,9 @@ mod tests {
             },
             billing_cycle: None,
             plan_provenance: None,
+            pending_plan: None,
+            pending_plan_at: None,
+            pending_billing_cycle: None,
         }
     }
 

@@ -73,6 +73,9 @@ fn set_duress_gate(gui: &mut GUI, pane_id: pane_grid::Pane, entitled: bool, enab
         },
         billing_cycle: Some(BillingCycle::Monthly),
         plan_provenance: None,
+        pending_plan: None,
+        pending_plan_at: None,
+        pending_billing_cycle: None,
     });
     home.connect_account.features = Some(FeaturesResponse {
         plans: Vec::new(),
