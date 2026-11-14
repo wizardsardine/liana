@@ -479,6 +479,7 @@ pub struct UnfundedProof {
     pub addresses_checked: u64,
     pub known_coin_count: u64,
 }
+#[cfg(unix)]
 fn oracle_diagnostic(
     path: &std::path::Path,
     info: &coincubed::commands::GetInfoResult,
@@ -514,6 +515,16 @@ fn oracle_diagnostic(
         "refused_reorg_depth":info.refused_reorg_depth});
     writeln!(file, "{}", row).map_err(|_| "native_oracle_diagnostic")?;
     file.sync_all().map_err(|_| "native_oracle_diagnostic")
+}
+
+#[cfg(not(unix))]
+fn oracle_diagnostic(
+    _path: &std::path::Path,
+    _info: &coincubed::commands::GetInfoResult,
+    _requested: Option<u32>,
+) -> Result<()> {
+    // No equivalent secure diagnostic writer is implemented on this platform.
+    Err("native_oracle_diagnostic")
 }
 
 fn oracle_ready(
@@ -941,6 +952,128 @@ pub fn sign_unfunded(wallet: &Wallet) -> Result<bitcoin::psbt::Psbt> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Existing public test descriptor; no signer, daemon, account or key store.
+    fn oracle_diagnostic_info() -> coincubed::commands::GetInfoResult {
+        let descriptor = CoincubeDescriptor::from_str("wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn").unwrap();
+        coincubed::commands::GetInfoResult {
+            version: "diagnostic-fixture-version".into(),
+            network: ChainId::Testnet4.bitcoin_network(),
+            chain_id: Some(ChainId::Testnet4),
+            block_height: 100,
+            sync: 1.0,
+            descriptors: coincubed::commands::GetInfoDescriptors {
+                main: descriptor.into(),
+            },
+            imported_wallet: None,
+            rescan_progress: None,
+            refused_reorg_depth: None,
+            chain_divergence: false,
+            timestamp: 100,
+            last_poll_timestamp: Some(100),
+            history_sync: Default::default(),
+            receive_index: 0,
+            change_index: 0,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oracle_diagnostic_private_file_appends_private_rows() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("diagnostic.jsonl");
+        let info = oracle_diagnostic_info();
+        oracle_diagnostic(&path, &info, Some(123)).unwrap();
+        oracle_diagnostic(&path, &info, None).unwrap();
+        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        assert!(metadata.is_file());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+        let text = std::fs::read_to_string(&path).unwrap();
+        let rows: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["version"], 1);
+        assert_eq!(rows[0]["block_height"], 100);
+        assert_eq!(
+            rows[0]["chain"],
+            serde_json::to_value(info.chain_id).unwrap()
+        );
+        assert_eq!(rows[0]["full_scan_requested_at"], 123);
+        assert!(rows[1]["full_scan_requested_at"].is_null());
+        assert!(!text.contains("diagnostic-fixture-version"));
+        assert!(!text.contains("tpub"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oracle_diagnostic_public_permissions_refused_without_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("public.jsonl");
+        let sentinel = b"retain diagnostic sentinel\n";
+        std::fs::write(&path, sentinel).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            oracle_diagnostic(&path, &oracle_diagnostic_info(), None),
+            Err("native_oracle_diagnostic")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), sentinel);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn oracle_diagnostic_symlink_refused_without_write() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target.jsonl");
+        let link = directory.path().join("alias.jsonl");
+        let sentinel = b"retain symlink target sentinel\n";
+        std::fs::write(&target, sentinel).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        symlink(&target, &link).unwrap();
+        assert_eq!(
+            oracle_diagnostic(&link, &oracle_diagnostic_info(), None),
+            Err("native_oracle_diagnostic")
+        );
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        assert_eq!(std::fs::read(&target).unwrap(), sentinel);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn oracle_diagnostic_unsupported_platform_refuses_without_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("diagnostic.jsonl");
+        let info = oracle_diagnostic_info();
+        assert_eq!(
+            oracle_diagnostic(&path, &info, Some(123)),
+            Err("native_oracle_diagnostic")
+        );
+        assert_eq!(
+            std::fs::symlink_metadata(&path).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+        let sentinel = b"retain unsupported-platform sentinel\n";
+        std::fs::write(&path, sentinel).unwrap();
+        assert_eq!(
+            oracle_diagnostic(&path, &info, None),
+            Err("native_oracle_diagnostic")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), sentinel);
+    }
+
     fn fixture(chain: ChainId) -> (Wallet, Identity) {
         let signer = Signer::generate(chain.bitcoin_network()).unwrap();
         let fp = signer.fingerprint();
