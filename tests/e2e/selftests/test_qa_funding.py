@@ -8,8 +8,9 @@ from harness.state import Blocked, Failed
 def test_pool_excludes_concurrent_owner(tmp_path, monkeypatch):
     monkeypatch.setattr(qa_funding, 'ROOT', tmp_path / 'registry')
     with qa_funding.pool():
+        pool_context = qa_funding.pool()
         with pytest.raises(Blocked) as caught:
-            with qa_funding.pool():
+            with pool_context:
                 pytest.fail('second owner admitted')
         assert caught.value.code == 'QA_FUNDING_BUSY'
 
@@ -19,8 +20,9 @@ def test_pool_rejects_orphan_claim(tmp_path, monkeypatch):
     with qa_funding.pool() as data:
         data['claims']['tx:1'] = {'target_key': 'missing'}
         qa_funding.save_pool(data)
+    pool_context = qa_funding.pool()
     with pytest.raises(Failed) as caught:
-        with qa_funding.pool():
+        with pool_context:
             pytest.fail('orphan claim admitted')
     assert caught.value.code == 'QA_FUNDING_REGISTRY_INDEX'
 
@@ -89,7 +91,8 @@ def flow(scenario, monkeypatch, tmp_path):
             # Durable attempt and signed receipt must precede network mutation.
             data = json.loads(private_read(qa_funding.ROOT / 'pool.json'))
             claim = next(iter(data['claims'].values()))
-            assert claim['phase'] == 'broadcasting' and claim['receipt_sha256']
+            assert claim['phase'] == 'broadcasting'
+            assert claim['receipt_sha256']
             wire['posts'].append(body)
             wire['published'] = True
             return wire['receipt']['txid'].encode()
@@ -113,7 +116,8 @@ def test_automatic_funding_signs_broadcasts_and_adopts_exact_outpoint(flow):
     qa_funding.Funding(runner).execute()
     point = runner.artifacts['funding_outpoint']
     assert point == {'txid': wire['receipt']['txid'], 'vout': 0, 'value_sats': 500000}
-    assert len(wire['posts']) == 1 and wire['native'] == 1
+    assert len(wire['posts']) == 1
+    assert wire['native'] == 1
     assert wire['posts'] == [wire['receipt']['raw_tx'].encode()]
     assert private_read(runner.journal.directory / 'funding.hex') == wire['posts'][0]
     with qa_funding.pool() as data:
@@ -133,8 +137,9 @@ def test_crash_recovery_reuses_one_reserved_plan(flow, monkeypatch, phase):
             crashed.append(True)
             raise RuntimeError('synthetic crash after durable write')
     monkeypatch.setattr(qa_funding, 'save_pool', fault)
+    funding = qa_funding.Funding(runner)
     with pytest.raises(RuntimeError):
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     with qa_funding.pool() as data:
         before = deepcopy(data['claims'])
     monkeypatch.setattr(qa_funding, 'save_pool', save)
@@ -163,10 +168,12 @@ def test_lost_post_response_reconciles_without_second_payment(flow, monkeypatch)
 def test_partial_propagation_does_not_post_or_select_another_source(flow, monkeypatch):
     runner, wire = flow
     monkeypatch.setattr(qa_funding.Funding, 'observed', lambda *a: 'partial')
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Blocked) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'QA_FUNDING_PROPAGATION'
-    assert wire['posts'] == [] and wire['native'] == 1
+    assert wire['posts'] == []
+    assert wire['native'] == 1
 
 
 def test_late_faucet_is_adopted_without_signing(flow):
@@ -174,7 +181,8 @@ def test_late_faucet_is_adopted_without_signing(flow):
     wire['late'] = ('f' * 64, 0, 100000)
     qa_funding.Funding(runner).execute()
     assert runner.artifacts['funding_outpoint']['txid'] == 'f' * 64
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
     with qa_funding.pool() as data:
         assert data['claims'] == {}
 
@@ -184,8 +192,9 @@ def test_missing_target_identity_prevents_key_lookup(flow, field, value):
     runner, wire = flow
     runner.journal.artifact(field, value)
     with pytest.raises(Failed):
-        qa_funding.Funding(runner).execute()
-    assert wire['native'] == 0 and wire['posts'] == []
+        qa_funding.Funding(runner)
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 @pytest.mark.parametrize('changed_field', ['phone', 'native'])
@@ -202,23 +211,27 @@ def test_target_process_mutation_after_prepare_prevents_signature(flow, monkeypa
             atomic_write(Path(runner.provision.binary), b'replaced native candidate')
         return result
     monkeypatch.setattr(sponsor, 'execute', changed)
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Failed) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == ('QA_FUNDING_TARGET_CHANGED' if changed_field == 'phone' else 'QA_FUNDING_NATIVE_CHANGED')
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_signed_receipt_tamper_never_posts(flow, monkeypatch):
     runner, wire = flow
     monkeypatch.setattr(qa_funding.Funding, 'observed', lambda *a: 'partial')
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Blocked):
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     output = runner.journal.directory.with_name(runner.journal.directory.name + '-funding')
     raw = json.loads(private_read(output / 'sponsor-receipt.json'))
     raw['raw_tx'] += '00'
     atomic_write(output / 'sponsor-receipt.json', sponsor.encoded(raw))
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Failed) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'QA_FUNDING_RECEIPT_CHANGED'
     assert wire['posts'] == []
 
@@ -239,10 +252,12 @@ def test_global_source_reservation_cannot_be_claimed_by_another_run(flow):
         data['claims'][txid + ':1'] = {'target_key': 'other-config-and-run', 'phase': 'reserved'}
         data['runs']['other-config-and-run'] = txid + ':1'
         qa_funding.save_pool(data)
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Blocked) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'QA_FUNDING_EMPTY'
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_foreign_account_source_never_reaches_native_signer(flow):
@@ -251,10 +266,12 @@ def test_foreign_account_source_never_reaches_native_signer(flow):
     cp = json.loads(private_read(source / 'checkpoint.json'))
     cp['artifacts']['account_identity'] = 'b' * 64
     atomic_write(source / 'checkpoint.json', sponsor.encoded(cp))
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Failed) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'QA_FUNDING_ACCOUNT'
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_exhausted_source_pool_blocks_without_faucet_or_signer_retry(flow, monkeypatch):
@@ -262,10 +279,12 @@ def test_exhausted_source_pool_blocks_without_faucet_or_signer_retry(flow, monke
     def spent(*args):
         raise Failed('SOURCE_SPENT', 'synthetic spent source')
     monkeypatch.setattr(sponsor, 'observe', spent)
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Blocked) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'QA_FUNDING_EMPTY'
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_automatic_source_descendants_are_scoped_to_explicit_roots():
@@ -333,7 +352,8 @@ def test_completed_registration_snapshot_survives_live_checkpoint_replay(flow, m
     monkeypatch.setattr(sponsor, 'observe', lambda txid, vout: [{'raw_tx': raw}])
     plan, _, donor = sponsor.make_intent(snapshot, future, 400000, 1000)
     assert plan['source'] == item['source_binding']
-    assert donor['profile_dir'] == str(live / 'profile') and donor['run_id'] == runner.run_id
+    assert donor['profile_dir'] == str(live / 'profile')
+    assert donor['run_id'] == runner.run_id
     runner.config['qa_funding']['sources'].append({'source_run': '/unapproved/new-root'})
     with pytest.raises(Failed) as caught:
         qa_funding.register_completed(runner)
@@ -367,9 +387,10 @@ def test_pool_cap_must_cover_configured_spend_fee_and_change(flow):
     runner.config['qa_funding']['maximum_amount_sats'] = 100000
     configure_large_spend(runner)
     with pytest.raises(Failed) as caught:
-        qa_funding.Funding(runner).execute()
+        qa_funding.Funding(runner)
     assert caught.value.code == 'QA_FUNDING_CAPACITY'
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_depleted_donor_is_skipped_before_constructing_insufficient_payment(flow, monkeypatch):
@@ -381,10 +402,12 @@ def test_depleted_donor_is_skipped_before_constructing_insufficient_payment(flow
         return source, prior, 110000, binding  # Only108k after funding fee+source change, below111k.
     monkeypatch.setattr(qa_funding, 'source_metadata', depleted)
     monkeypatch.setattr(sponsor, 'make_intent', lambda *a: pytest.fail('insufficient donor reached transaction construction'))
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Blocked) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'QA_FUNDING_EMPTY'
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_impossible_pool_cap_fails_workstation_validation_before_phone_setup():
@@ -417,7 +440,8 @@ def test_explorer_disagreement_waits_then_adopts_late_faucet(flow, monkeypatch):
     qa_funding.Funding(runner).execute()
     assert clock[0] == 1
     assert runner.artifacts['funding_outpoint']['txid'] == 'f' * 64
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
     with qa_funding.pool() as data:
         assert data['claims'] == {}
 
@@ -434,12 +458,14 @@ def test_persistent_or_invalid_explorer_disagreement_never_funds(flow, monkeypat
         error = Failed if integrity_failure else Blocked
         raise error('FUNDING_PROPAGATION', 'synthetic disagreement')
     runner.core.utxos = utxos
+    funding = qa_funding.Funding(runner)
     with pytest.raises(Blocked) as caught:
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     assert caught.value.code == 'FUNDING_PROPAGATION'
     assert len(calls) == (1 if integrity_failure else 3)
     assert clock[0] == (0 if integrity_failure else 2)
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 def test_late_faucet_releases_only_fresh_unsigned_reservation(flow, monkeypatch):
@@ -454,9 +480,12 @@ def test_late_faucet_releases_only_fresh_unsigned_reservation(flow, monkeypatch)
             released.append(deepcopy(data))
     monkeypatch.setattr(qa_funding, 'save_pool', faucet_arrives)
     qa_funding.Funding(runner).execute()
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
     assert runner.artifacts['funding_outpoint']['txid'] == 'f' * 64
-    assert released and released[-1]['claims'] == {} and released[-1]['runs'] == {}
+    assert released
+    assert released[-1]['claims'] == {}
+    assert released[-1]['runs'] == {}
     # A separate fresh target can use the released source, not the cached
     # external target's outcome. Preserve the original source secret locator.
     old = runner.journal.directory
@@ -481,9 +510,11 @@ def test_late_faucet_releases_only_fresh_unsigned_reservation(flow, monkeypatch)
     wire['late'] = None
     monkeypatch.setattr(qa_funding, 'save_pool', save)
     qa_funding.Funding(other).execute()
-    assert wire['native'] == 1 and len(wire['posts']) == 1
+    assert wire['native'] == 1
+    assert len(wire['posts']) == 1
     with qa_funding.pool() as data:
-        assert len(data['external']) == 1 and len(data['claims']) == 1
+        assert len(data['external']) == 1
+        assert len(data['claims']) == 1
         assert next(iter(data['claims'].values()))['phase'] == 'accepted'
 
 
@@ -497,15 +528,19 @@ def test_released_target_crash_resumes_external_outcome_without_reacquiring(flow
             wire['late'] = ('f' * 64, 0, 100000)
     monkeypatch.setattr(qa_funding, 'save_pool', faucet_arrives)
     monkeypatch.setattr(qa_funding.Funding, 'adopt', lambda *a: (_ for _ in ()).throw(RuntimeError('crash after release')))
+    funding = qa_funding.Funding(runner)
     with pytest.raises(RuntimeError):
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     monkeypatch.setattr(qa_funding.Funding, 'adopt', adopt)
     monkeypatch.setattr(provisioning, 'faucet_claim', lambda *a: pytest.fail('cached external outcome retried faucet'))
     provisioning.FreshRunner.stage_funding(runner)
     assert runner.artifacts['funding_outpoint']['txid'] == 'f' * 64
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
     with qa_funding.pool() as data:
-        assert data['claims'] == {} and data['runs'] == {} and len(data['external']) == 1
+        assert data['claims'] == {}
+        assert data['runs'] == {}
+        assert len(data['external']) == 1
 
 
 @pytest.mark.parametrize('hidden_receipt', [False, True])
@@ -520,15 +555,19 @@ def test_resumed_reservation_is_not_released_even_before_broadcast(flow, monkeyp
         if not hidden_receipt and phase == 'reserved':
             raise RuntimeError('crash after reservation')
     monkeypatch.setattr(qa_funding, 'save_pool', crash)
+    funding = qa_funding.Funding(runner)
     with pytest.raises(RuntimeError):
-        qa_funding.Funding(runner).execute()
+        funding.execute()
     monkeypatch.setattr(qa_funding, 'save_pool', save)
     wire['late'] = ('f' * 64, 0, 100000)
     qa_funding.Funding(runner).execute()
     with qa_funding.pool() as data:
-        assert len(data['claims']) == 1 and len(data['runs']) == 1 and data['external'] == {}
+        assert len(data['claims']) == 1
+        assert len(data['runs']) == 1
+        assert data['external'] == {}
         assert next(iter(data['claims'].values()))['phase'] == 'external'
-    assert wire['native'] == (1 if hidden_receipt else 0) and wire['posts'] == []
+    assert wire['native'] == (1 if hidden_receipt else 0)
+    assert wire['posts'] == []
 
 
 def test_signed_late_faucet_keeps_valid_signature_source_quarantined(flow, monkeypatch):
@@ -541,10 +580,13 @@ def test_signed_late_faucet_keeps_valid_signature_source_quarantined(flow, monke
     monkeypatch.setattr(qa_funding, 'save_pool', faucet_arrives)
     qa_funding.Funding(runner).execute()
     with qa_funding.pool() as data:
-        assert len(data['claims']) == len(data['runs']) == 1 and data['external'] == {}
+        assert len(data['claims']) == len(data['runs']) == 1
+        assert data['external'] == {}
         record = next(iter(data['claims'].values()))
-        assert record['phase'] == 'external' and record['receipt_sha256']
-    assert wire['native'] == 1 and wire['posts'] == []
+        assert record['phase'] == 'external'
+        assert record['receipt_sha256']
+    assert wire['native'] == 1
+    assert wire['posts'] == []
 
 
 def test_explorer_disagreement_then_empty_reserves_only_one_donor(flow, monkeypatch):
@@ -560,7 +602,9 @@ def test_explorer_disagreement_then_empty_reserves_only_one_donor(flow, monkeypa
         return []
     runner.core.utxos = utxos
     qa_funding.Funding(runner).execute()
-    assert clock[0] == 1 and wire['native'] == 1 and len(wire['posts']) == 1
+    assert clock[0] == 1
+    assert wire['native'] == 1
+    assert len(wire['posts']) == 1
     with qa_funding.pool() as data:
         assert len(data['claims']) == len(data['runs']) == 1
 
@@ -582,7 +626,8 @@ def test_mutated_enrolled_source_binding_stops_before_keys_or_donor_selection(fl
         with pytest.raises(Failed) as caught:
             action()
         assert caught.value.code == 'QA_FUNDING_SOURCE_CHANGED'
-    assert wire['native'] == 0 and wire['posts'] == []
+    assert wire['native'] == 0
+    assert wire['posts'] == []
 
 
 @pytest.mark.parametrize('kind', ['existing_output', 'broken_symlink'])
@@ -602,5 +647,7 @@ def test_existing_helper_output_or_link_prevents_unsigned_release(flow, monkeypa
     monkeypatch.setattr(qa_funding, 'save_pool', faucet_arrives)
     qa_funding.Funding(runner).execute()
     with qa_funding.pool() as data:
-        assert len(data['claims']) == len(data['runs']) == 1 and data['external'] == {}
-    assert wire['native'] == 0 and wire['posts'] == []
+        assert len(data['claims']) == len(data['runs']) == 1
+        assert data['external'] == {}
+    assert wire['native'] == 0
+    assert wire['posts'] == []

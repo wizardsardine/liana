@@ -21,6 +21,7 @@ use crate::app::cache::Cache;
 use crate::app::menu::{Menu, SparkSubMenu};
 use crate::app::message::Message;
 use crate::app::state::{redirect, State};
+use crate::app::view::global_home::{WalletKind, WalletTransferEntry};
 use crate::app::view::spark::overview::{SparkLandingAvailability, SparkLightningAddress};
 use crate::app::view::spark::{
     SparkOverviewView, SparkPaymentMethod, SparkRecentTransaction, SparkStatus,
@@ -97,23 +98,37 @@ impl SparkOverview {
         view::dashboard_headed(
             menu,
             cache,
-            Self::page_head(cache),
+            Self::page_head(cache, None),
             self.page_body(cache, SparkLightningAddress::Unknown, None),
         )
     }
 
     #[cfg(test)]
-    pub fn page_head_for_tests<'a>(cache: &Cache) -> PageHead<'a, view::Message> {
-        Self::page_head(cache)
+    pub fn page_head_for_tests<'a>(
+        cache: &Cache,
+        transfer: Option<WalletTransferEntry>,
+    ) -> PageHead<'a, view::Message> {
+        Self::page_head(cache, transfer)
     }
 
-    fn page_head<'a>(cache: &Cache) -> PageHead<'a, view::Message> {
+    /// The head: Transfer (when App supplies its state, as the Overview
+    /// offers it), then the page's own actions.
+    fn page_head<'a>(
+        cache: &Cache,
+        transfer: Option<WalletTransferEntry>,
+    ) -> PageHead<'a, view::Message> {
+        let head = view::wallet_page_head(cache, "Spark", cache.wallet_names.spark.as_deref());
+        let head = match transfer {
+            Some(entry) => head.action(view::global_home::wallet_transfer_action(
+                &cache.cube_id,
+                WalletKind::Spark,
+                entry,
+            )),
+            None => head,
+        };
         head_actions(&cache.cube_id, super::swap::swap_available(cache.network))
             .into_iter()
-            .fold(
-                view::wallet_page_head(cache, "Spark", cache.wallet_names.spark.as_deref()),
-                |head, (_, action)| head.action(action),
-            )
+            .fold(head, |head, (_, action)| head.action(action))
     }
 
     /// The balance with the Lightning address beside it, then "Recent
@@ -184,13 +199,14 @@ impl SparkOverview {
         menu: &'a Menu,
         cache: &'a Cache,
         lightning_address: SparkLightningAddress,
+        transfer: WalletTransferEntry,
         recent_activity: impl Fn() -> Element<'a, view::Message> + 'a,
         detail: impl Fn() -> Option<Element<'a, view::Message>> + 'a,
     ) -> Element<'a, view::Message> {
         view::dashboard_with_detail(
             menu,
             cache,
-            move || Self::page_head(cache),
+            move || Self::page_head(cache, Some(transfer)),
             move || self.page_body(cache, lightning_address.clone(), Some(recent_activity())),
             detail,
         )
@@ -354,6 +370,14 @@ impl State for SparkOverview {
                 }
                 view::SparkOverviewMessage::ReceiveUsdb => {
                     return receive_into(coincube_spark_protocol::WalletAsset::Usdb);
+                }
+                view::SparkOverviewMessage::ViewConversion => {
+                    return Task::batch(vec![
+                        redirect(Menu::Spark(SparkSubMenu::Receive)),
+                        Task::done(Message::View(view::Message::SparkReceive(
+                            view::SparkReceiveMessage::ShowConversion,
+                        ))),
+                    ]);
                 }
                 view::SparkOverviewMessage::History => {
                     return redirect(Menu::Spark(SparkSubMenu::Transactions(None)));
@@ -783,7 +807,7 @@ mod tests {
             };
             let probe = capture::inspect(
                 "spark-head-swap",
-                SparkOverview::page_head_for_tests(&cache).view(view::page_gutter),
+                SparkOverview::page_head_for_tests(&cache, None).view(view::page_gutter),
                 (1440, 900),
                 "dark",
                 coincube_ui::theme::Theme::dark(),

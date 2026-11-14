@@ -401,11 +401,23 @@ pub fn display<'a, M: 'a>(props: &QuoteDisplayProps<'a>) -> Container<'a, M> {
     Container::new(col).center_x(Length::Fill).max_width(448)
 }
 
+/// The artwork alone, as [`display`] draws it, for layouts that place the
+/// quote themselves.
+pub(crate) fn artwork<'a, M: 'a>(props: &QuoteDisplayProps<'a>) -> crate::widget::Element<'a, M> {
+    crate::illustration::quote_image(
+        props.slot,
+        props.image_handle.clone(),
+        props.image_size,
+        props.payment,
+        props.existing_only,
+    )
+}
+
 /// Format the attribution line for a quote.
 ///
 /// - `scripture`: em-dash + author (which contains the verse reference)
 /// - All others: em-dash + author + source
-fn format_attribution(quote: &Quote) -> Option<String> {
+pub(crate) fn format_attribution(quote: &Quote) -> Option<String> {
     match quote.category.as_str() {
         "scripture" => Some(format!("\u{2014} {}", quote.author)),
         _ => Some(format!("\u{2014} {}, {}", quote.author, quote.source)),

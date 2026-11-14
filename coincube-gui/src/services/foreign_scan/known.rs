@@ -131,37 +131,7 @@ async fn collect_known(
     let mut found = Vec::new();
     let mut snapshots = Vec::new();
     for (address, expected) in addresses {
-        let before = source.utxos(chain, &address).await?;
-        if before.len() > MAX_UTXOS {
-            return Err(ScanError::BodyLimit);
-        }
-        let mut seen = BTreeSet::new();
-        for coin in &before {
-            let outpoint = OutPoint {
-                txid: coin.txid,
-                vout: coin.vout,
-            };
-            if !seen.insert(outpoint) {
-                return Err(ScanError::Malformed);
-            }
-            let Some(known) = expected.iter().find(|c| c.outpoint == outpoint) else {
-                continue;
-            };
-            if !coin.status.confirmed {
-                continue;
-            }
-            if coin.status.block_height.is_none() || coin.status.block_hash.is_none() {
-                return Err(ScanError::Malformed);
-            }
-            let tx = source.transaction(chain, coin.txid).await?;
-            if tx.compute_txid() != coin.txid
-                || tx.output.get(coin.vout as usize) != Some(&known.output)
-                || coin.value != known.output.value.to_sat()
-            {
-                return Err(ScanError::Prevout);
-            }
-            found.push((*known).clone());
-        }
+        let before = collect_known_address(source, chain, &address, &expected, &mut found).await?;
         snapshots.push((address, before));
     }
     // Recheck all addresses after raw transactions have been fetched, so a
@@ -178,6 +148,48 @@ async fn collect_known(
         return Err(ScanError::Changed(ChangedReason::AnchorMismatch));
     }
     Ok(found)
+}
+
+async fn collect_known_address(
+    source: &impl Source,
+    chain: ChainId,
+    address: &str,
+    expected: &[&KnownOutput],
+    found: &mut Vec<KnownOutput>,
+) -> Result<Vec<Utxo>, ScanError> {
+    let before = source.utxos(chain, address).await?;
+    if before.len() > MAX_UTXOS {
+        return Err(ScanError::BodyLimit);
+    }
+    let mut seen = BTreeSet::new();
+    for coin in &before {
+        let outpoint = OutPoint {
+            txid: coin.txid,
+            vout: coin.vout,
+        };
+        if !seen.insert(outpoint) {
+            return Err(ScanError::Malformed);
+        }
+        let Some(known) = expected.iter().find(|c| c.outpoint == outpoint) else {
+            continue;
+        };
+        if !coin.status.confirmed {
+            continue;
+        }
+        if coin.status.block_height.is_none() || coin.status.block_hash.is_none() {
+            return Err(ScanError::Malformed);
+        }
+        let tx = source.transaction(chain, coin.txid).await?;
+        if tx.compute_txid() != coin.txid
+            || tx.output.get(coin.vout as usize) != Some(&known.output)
+            || coin.value != known.output.value.to_sat()
+        {
+            return Err(ScanError::Prevout);
+        }
+        found.push((*known).clone());
+    }
+
+    Ok(before)
 }
 
 #[cfg(test)]
@@ -429,138 +441,151 @@ mod tests {
     }
     #[tokio::test]
     async fn http_known_output_positive_absent_invalid_stale_and_unavailable() {
+        for case in 0..8 {
+            check_http_known_case(case).await;
+        }
+    }
+    async fn check_http_known_case(case: i32) {
         use httpmock::prelude::*;
         use serde_json::json;
         use std::time::{SystemTime, UNIX_EPOCH};
-        for case in 0..8 {
-            let server = MockServer::start();
-            let f = Fixture::new();
-            let known = f.known();
-            let address = bitcoin::Address::from_script(
-                &known.output.script_pubkey,
-                bitcoin::Network::Bitcoin,
-            )
-            .unwrap();
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let anchor_body = json!({"success":true,"data":{"network":"bitcoin-blake2b","state":"available","anchor":{
-                "tip_hash":"11".repeat(32),"tip_height":973029,"tip_median_time_past":1800000000,
-                "observed_at": if case == 4 { now - 120 } else { now },
-                "observation":{"tip_height":973029,"fork":{"height":961640,"active":true},
-                    "rdts":{"state":"flagday","flagday":{"height":961640,"expiry_time":1800010000_i64,"active":false}}}
-            }}});
-            let anchor = server.mock(|when, then| {
-                when.method(GET)
-                    .path("/api/v1/connect/networks/bitcoin-blake2b/anchor")
-                    .header("authorization", "Bearer synthetic-notice-token");
-                then.status(200).json_body(anchor_body);
-            });
-            let tip = server.mock(|when, then| {
-                when.method(GET)
-                    .path("/api/v1/esplora/bitcoin-blake2b/mainnet/blocks/tip/hash");
-                then.status(200)
-                    .header("X-Coincube-Observation", "fresh")
-                    .header("X-Cache", "BYPASS")
-                    .header("Cache-Control", "no-store")
-                    .body("11".repeat(32));
-            });
-            let body = match case {
+
+        let server = MockServer::start();
+        let f = Fixture::new();
+        let known = f.known();
+        let address =
+            bitcoin::Address::from_script(&known.output.script_pubkey, bitcoin::Network::Bitcoin)
+                .unwrap();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let anchor_body = json!({"success":true,"data":{"network":"bitcoin-blake2b","state":"available","anchor":{
+            "tip_hash":"11".repeat(32),"tip_height":973029,"tip_median_time_past":1800000000,
+            "observed_at": if case == 4 { now - 120 } else { now },
+            "observation":{"tip_height":973029,"fork":{"height":961640,"active":true},
+                "rdts":{"state":"flagday","flagday":{"height":961640,"expiry_time":1800010000_i64,"active":false}}}
+        }}});
+        let anchor = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v1/connect/networks/bitcoin-blake2b/anchor")
+                .header("authorization", "Bearer synthetic-notice-token");
+            then.status(200).json_body(anchor_body);
+        });
+        let tip = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/v1/esplora/bitcoin-blake2b/mainnet/blocks/tip/hash");
+            then.status(200)
+                .header("X-Coincube-Observation", "fresh")
+                .header("X-Cache", "BYPASS")
+                .header("Cache-Control", "no-store")
+                .body("11".repeat(32));
+        });
+        let body = match case {
                 1 => "[]".to_string(),
                 3 => "not-json".to_string(),
                 _ => json!([{"txid":f.coin.txid.to_string(),"vout":0,"value":if case == 2 { 1001 } else { 1000 },
                     "status":{"confirmed":true,"block_height":900000,"block_hash":"22".repeat(32)}}]).to_string(),
             };
-            let utxos = server.mock(|when, then| {
-                when.method(GET)
-                    .path(format!(
-                        "/api/v1/esplora/bitcoin-blake2b/mainnet/address/{}/utxo",
-                        address
-                    ))
-                    .header("x-coincube-observation", "fresh")
-                    .matches(|r| {
-                        r.headers.as_ref().is_none_or(|hs| {
-                            hs.iter().all(|(n, _)| {
-                                ![
-                                    "authorization",
-                                    "cookie",
-                                    "x-device-fingerprint",
-                                    "x-device-name",
-                                ]
-                                .iter()
-                                .any(|bad| n.eq_ignore_ascii_case(bad))
-                            })
+        let utxos = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!(
+                    "/api/v1/esplora/bitcoin-blake2b/mainnet/address/{}/utxo",
+                    address
+                ))
+                .header("x-coincube-observation", "fresh")
+                .matches(|r| {
+                    r.headers.as_ref().is_none_or(|hs| {
+                        hs.iter().all(|(n, _)| {
+                            ![
+                                "authorization",
+                                "cookie",
+                                "x-device-fingerprint",
+                                "x-device-name",
+                            ]
+                            .iter()
+                            .any(|bad| n.eq_ignore_ascii_case(bad))
                         })
-                    });
-                let then = then.status(if case == 6 { 503 } else { 200 });
-                let then = if case == 5 {
-                    then
-                } else {
-                    then.header("X-Coincube-Observation", "fresh")
-                        .header("X-Cache", "BYPASS")
-                        .header("Cache-Control", "no-store")
-                };
-                let then = if case == 7 {
-                    then.delay(Duration::from_secs(10))
-                } else {
-                    then
-                };
-                then.body(body);
-            });
-            let raw = server.mock(|when, then| {
-                when.method(GET)
-                    .path(format!(
-                        "/api/v1/esplora/bitcoin-blake2b/mainnet/tx/{}/hex",
-                        f.coin.txid
-                    ))
-                    .matches(|r| {
-                        r.headers.as_ref().is_none_or(|hs| {
-                            hs.iter()
-                                .all(|(n, _)| !n.eq_ignore_ascii_case("authorization"))
-                        })
-                    });
-                then.status(200)
-                    .body(hex::encode(bitcoin::consensus::serialize(&f.tx)));
-            });
-            let mut client = CoincubeClient::for_test(server.base_url());
-            client.set_token("synthetic-notice-token");
-            let (live, rx) = watch::channel(7);
-            let result = if case == 7 {
-                let task = tokio::spawn(known_unspent(client, vec![known.clone()], 7, rx));
-                for _ in 0..100 {
-                    if utxos.hits() > 0 {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                assert_eq!(utxos.hits(), 1);
-                live.send_replace(8);
-                task.await.unwrap()
+                    })
+                });
+            let then = then.status(if case == 6 { 503 } else { 200 });
+            let then = if case == 5 {
+                then
             } else {
-                known_unspent(client, vec![known.clone()], 7, rx).await
+                then.header("X-Coincube-Observation", "fresh")
+                    .header("X-Cache", "BYPASS")
+                    .header("Cache-Control", "no-store")
             };
-            match case {
-                0 => {
-                    let proof = result.unwrap().unwrap();
-                    assert_eq!(proof.outputs(), &[known]);
-                    assert!(proof.is_current(7, Instant::now()));
-                    anchor.assert_hits(2);
-                    tip.assert_hits(2);
-                    utxos.assert_hits(2);
-                    raw.assert_hits(1);
-                }
-                1 => {
-                    assert!(result.unwrap().is_none());
-                    raw.assert_hits(0);
-                }
-                2 => assert!(matches!(result, Err(ScanError::Prevout))),
-                3 => assert!(matches!(result, Err(ScanError::Malformed))),
-                4 | 5 => assert!(matches!(result, Err(ScanError::Freshness))),
-                6 => assert!(matches!(result, Err(ScanError::Http(503)))),
-                7 => assert!(matches!(result, Err(ScanError::Cancelled))),
-                _ => unreachable!(),
+            let then = if case == 7 {
+                then.delay(Duration::from_secs(10))
+            } else {
+                then
+            };
+            then.body(body);
+        });
+        let raw = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!(
+                    "/api/v1/esplora/bitcoin-blake2b/mainnet/tx/{}/hex",
+                    f.coin.txid
+                ))
+                .matches(|r| {
+                    r.headers.as_ref().is_none_or(|hs| {
+                        hs.iter()
+                            .all(|(n, _)| !n.eq_ignore_ascii_case("authorization"))
+                    })
+                });
+            then.status(200)
+                .body(hex::encode(bitcoin::consensus::serialize(&f.tx)));
+        });
+        let mut client = CoincubeClient::for_test(server.base_url());
+        client.set_token("synthetic-notice-token");
+        let (live, rx) = watch::channel(7);
+        let result = run_http_known_case(case, client, &known, &live, rx, &utxos).await;
+        match case {
+            0 => {
+                let proof = result.unwrap().unwrap();
+                assert_eq!(proof.outputs(), &[known]);
+                assert!(proof.is_current(7, Instant::now()));
+                anchor.assert_hits(2);
+                tip.assert_hits(2);
+                utxos.assert_hits(2);
+                raw.assert_hits(1);
             }
+            1 => {
+                assert!(result.unwrap().is_none());
+                raw.assert_hits(0);
+            }
+            2 => assert!(matches!(result, Err(ScanError::Prevout))),
+            3 => assert!(matches!(result, Err(ScanError::Malformed))),
+            4 | 5 => assert!(matches!(result, Err(ScanError::Freshness))),
+            6 => assert!(matches!(result, Err(ScanError::Http(503)))),
+            7 => assert!(matches!(result, Err(ScanError::Cancelled))),
+            _ => unreachable!(),
+        }
+    }
+
+    async fn run_http_known_case(
+        case: i32,
+        client: CoincubeClient,
+        known: &KnownOutput,
+        live: &watch::Sender<u64>,
+        rx: watch::Receiver<u64>,
+        utxos: &httpmock::Mock<'_>,
+    ) -> Result<Option<KnownUnspent>, ScanError> {
+        if case == 7 {
+            let task = tokio::spawn(known_unspent(client, vec![known.clone()], 7, rx));
+            for _ in 0..100 {
+                if utxos.hits() > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(utxos.hits(), 1);
+            live.send_replace(8);
+            task.await.unwrap()
+        } else {
+            known_unspent(client, vec![known.clone()], 7, rx).await
         }
     }
 }

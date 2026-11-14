@@ -125,7 +125,8 @@ def test_one_hop_prepare_and_sign_keep_original_runs_and_parent_bytes(hop, monke
     args.sign_intent_sha256 = prepared['intent_sha256']
     stub_native(monkeypatch)
     result = sponsor.execute(args)
-    assert result['signed'] and result['broadcast'] is False
+    assert result['signed']
+    assert result['broadcast'] is False
     assert sponsor.execute(args) == result
     assert before == {str(p): p.read_bytes() for d in (args.source_run, args.target_run, args.source_sponsor_dir, previous_target)
                       for p in Path(d).iterdir() if p.is_file()}
@@ -249,8 +250,9 @@ def test_output_cannot_touch_either_run_or_ancestor(scenario, destination):
 def test_output_lock_is_exclusive(tmp_path):
     directory = tmp_path / 'output'
     with sponsor.output_lock(directory, []):
+        context_under_test = sponsor.output_lock(directory, [])
         with pytest.raises(Blocked) as caught:
-            with sponsor.output_lock(directory, []):
+            with context_under_test:
                 pytest.fail('concurrent sponsor admitted')
         assert caught.value.code == 'SPONSOR_BUSY'
 
@@ -356,7 +358,8 @@ def test_sign_and_replay_preserve_immutable_receipt_and_runs(scenario, monkeypat
     result = sponsor.execute(args)
     receipt_path = Path(args.output_dir) / 'sponsor-receipt.json'
     receipt = private_read(receipt_path)
-    assert result['signed'] and not result['broadcast']
+    assert result['signed']
+    assert not result['broadcast']
     assert json.loads(receipt)['native_binary_sha256'] == sponsor.sha(Path(args.native_binary).read_bytes())
     assert sponsor.execute(args) == result
     assert private_read(receipt_path) == receipt

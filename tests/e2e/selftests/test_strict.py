@@ -282,16 +282,18 @@ def test_pre_request_refresh_recorded_post_request_refresh_blocked(policy):
     ("verify_pin_resume", (None,), {}),
 ])
 def test_all_lifecycle_helpers_reject_before_driver_mutation(policy, method, args, kwargs):
+    operation_under_test = getattr(policy.phone, method)
     with pytest.raises(Blocked) as error:
-        getattr(policy.phone, method)(*args, **kwargs)
+        operation_under_test(*args, **kwargs)
     assert error.value.code == "STRICT_RESTART"
 
 
 @pytest.mark.parametrize("method,args", [("restore_navigation", ()), ("check_fixture", ("cube",)), ("home_key_card", ("key",))])
 def test_no_setup_navigation_after_request(policy, method, args):
     requested(policy)
+    operation_under_test = getattr(policy.phone, method)
     with pytest.raises(Blocked) as error:
-        getattr(policy.phone, method)(*args)
+        operation_under_test(*args)
     assert error.value.code == "STRICT_NAVIGATION"
 
 
@@ -463,8 +465,9 @@ def test_early_ready_and_broadcast_paths_require_actual_strict_proof(policy, sta
     runner = synthetic_runner(policy, {"ready": True, "signature_count_min": 2})
     if already_broadcast:
         policy.journal.artifact("already_broadcast", True)
+    operation_under_test = getattr(runner, stage)
     with pytest.raises(Blocked):
-        getattr(runner, stage)()
+        operation_under_test()
     assert "signature_count_min" not in policy.artifacts
     assert "broadcast_txid" not in policy.artifacts
 
@@ -491,8 +494,9 @@ def test_resumed_stages_do_not_restore_or_refresh_post_request(policy, method):
 @pytest.mark.parametrize("method,args", [("recover_key_generation", ({},)), ("upgrade_approval", ()), ("restart_request_discovery", ())])
 def test_runner_recovery_entrypoints_cannot_consume_allowance(policy, method, args):
     runner = synthetic_runner(policy, {})
+    operation_under_test = getattr(runner, method)
     with pytest.raises(Blocked) as error:
-        getattr(runner, method)(*args)
+        operation_under_test(*args)
     assert error.value.code == "STRICT_RESTART"
 
 

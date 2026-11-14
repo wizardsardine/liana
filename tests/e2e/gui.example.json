@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "checkout": "/absolute/path/to/pinned-reviewed-desktop-checkout",
+  "revision": "0000000000000000000000000000000000000000",
+  "app_receipt": "/absolute/path/to/private-signed-desktop-build-receipt.json",
+  "driver": {"kind": "cua_repl", "version": 1},
+  "developer_mode": true,
+  "maximum_fee_sats": 1000,
+  "funding": {
+    "testnet4": {"facility": "approved_disposable_qa", "chain": "testnet4", "maximum_sats": 1000000},
+    "bitcoin-blake2b-testnet4": {"facility": "approved_disposable_qa", "chain": "bitcoin-blake2b-testnet4", "maximum_sats": 1000000}
+  }
+}

@@ -239,7 +239,9 @@ def test_exact_action_waits_for_enabled_control_after_success_heading(monkeypatc
     phone.matching_controls = lambda label: next(results) if label == 'Back to home' else pytest.fail('wrong label')
     monkeypatch.setattr('harness.phone.time.sleep', waits.append)
     phone.click('Back to home')
-    assert waits == [.25, .25] and clicks == ['back'] and len(labels) == 3
+    assert waits == [.25, .25]
+    assert clicks == ['back']
+    assert len(labels) == 3
 
 
 @pytest.mark.parametrize('count', [0, 2])
@@ -281,7 +283,8 @@ def test_exact_action_rechecks_foreground_before_waited_click(monkeypatch):
     monkeypatch.setattr('harness.phone.time.sleep', lambda _: None)
     with pytest.raises(Blocked) as error:
         phone.click('Back to home')
-    assert error.value.code == 'PHONE_AUTH' and queries == [True]
+    assert error.value.code == 'PHONE_AUTH'
+    assert queries == [True]
 
 
 def test_gesture_card_uses_only_explicit_container_and_exact_title_line():
@@ -333,7 +336,8 @@ def test_not_now_on_unrelated_screen_is_not_dismissed():
 
 def line_element(identifier, descendants=(), clicks=None):
     def find(by, query):
-        assert by == 'xpath' and query == 'descendant::*'
+        assert by == 'xpath'
+        assert query == 'descendant::*'
         return list(descendants)
     return SimpleNamespace(id=identifier, find_elements=find,
                            click=lambda: clicks.append(identifier))
@@ -667,7 +671,8 @@ def test_home_key_card_ambiguity_blocks_before_refresh_swipe_or_tap(monkeypatch)
     with pytest.raises(Blocked) as error:
         phone.home_key_card(title)
     assert error.value.code == 'PHONE_SELECTOR'
-    assert swipes == [] and clicks == []
+    assert swipes == []
+    assert clicks == []
 
 
 def test_home_key_card_absence_has_hard_gesture_bound(monkeypatch):
@@ -686,7 +691,8 @@ def test_home_key_card_refuses_route_change_without_another_swipe(monkeypatch):
     with pytest.raises(Blocked) as error:
         phone.home_key_card(title)
     assert error.value.code == 'PHONE_HOME'
-    assert swipes == [{'direction': 'down'}] and clicks == []
+    assert swipes == [{'direction': 'down'}]
+    assert clicks == []
 
 
 def test_home_key_card_refuses_ambiguous_carousel_gesture_scope(monkeypatch):
@@ -696,7 +702,8 @@ def test_home_key_card_refuses_ambiguous_carousel_gesture_scope(monkeypatch):
     with pytest.raises(Blocked) as error:
         phone.home_key_card(title)
     assert error.value.code == 'PHONE_CAROUSEL'
-    assert swipes == [{'direction': 'down'}] and clicks == []
+    assert swipes == [{'direction': 'down'}]
+    assert clicks == []
 
 
 def discovery_phone(*, failure=None, modal=False, signed=False):
@@ -724,8 +731,10 @@ def test_discovery_restart_persists_intent_before_terminate_and_verifies_new_pro
     assert phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: True)
     assert calls == ['terminate', 'activate']
     saved = journal.data['artifacts']['request_discovery_restart']
-    assert saved['phase'] == 'completed' and saved['stopped_verified'] is True
-    assert saved['before_process']['pid'] == 10 and saved['after_process']['pid'] == 11
+    assert saved['phase'] == 'completed'
+    assert saved['stopped_verified'] is True
+    assert saved['before_process']['pid'] == 10
+    assert saved['after_process']['pid'] == 11
     with pytest.raises(Blocked): phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: True)
     assert calls == ['terminate', 'activate']
 
@@ -749,13 +758,15 @@ def test_discovery_restart_requires_public_home_without_modal_or_authentication(
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: pytest.fail('Public route first'))
     assert error.value.code == 'REQUEST_DISCOVERY_HOME'
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 def test_remote_signature_race_leaves_discovery_restart_allowance_unused():
     phone, journal, receipt, calls = discovery_phone()
     assert phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: False) is False
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 def test_modal_arriving_during_remote_guard_prevents_discovery_restart():
@@ -766,7 +777,8 @@ def test_modal_arriving_during_remote_guard_prevents_discovery_restart():
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=incoming)
     assert error.value.code == 'REQUEST_DISCOVERY_HOME'
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 @pytest.mark.parametrize('after_remote', [False, True])
@@ -781,7 +793,8 @@ def test_known_incoming_notification_selects_ordinary_discovery_without_restart(
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=remote)
     assert error.value.code == 'REQUEST_DISCOVERY_INCOMING'
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 @pytest.mark.parametrize('case', ['partial', 'ambiguous', 'missing-button', 'auth', 'unknown-modal', 'unrelated'])
@@ -796,7 +809,8 @@ def test_incoming_restart_refusal_is_narrow_and_never_excuses_other_screens(case
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: pytest.fail('Unknown UI must block first'))
     assert error.value.code == 'REQUEST_DISCOVERY_HOME'
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 def test_known_incoming_does_not_hide_a_pin_rejection():
@@ -806,7 +820,8 @@ def test_known_incoming_does_not_hide_a_pin_rejection():
     with pytest.raises(Failed) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: pytest.fail('PIN rejection must block first'))
     assert error.value.code == 'PIN_REJECTED'
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 def pending_discovery_phone(*, click_failure=False, after_back=None):
@@ -819,7 +834,8 @@ def pending_discovery_phone(*, click_failure=False, after_back=None):
     def click():
         saved = journal.data['artifacts']['request_discovery_back']
         assert saved['phase'] == 'attempted'
-        assert saved['binding'] == receipt['binding'] and saved['process']['pid'] == 10
+        assert saved['binding'] == receipt['binding']
+        assert saved['process']['pid'] == 10
         calls.append('Back')
         view['labels'] = HOME | {'Add signer key'}
         if after_back: after_back(view)
@@ -828,7 +844,9 @@ def pending_discovery_phone(*, click_failure=False, after_back=None):
     def find(_, predicate):
         if 'XCUIElementTypeAlert' in predicate:
             return [object()] if view['modal'] else []
-        assert 'XCUIElementTypeButton' in predicate and 'visible == true' in predicate and 'enabled == true' in predicate
+        assert 'XCUIElementTypeButton' in predicate
+        assert 'visible == true' in predicate
+        assert 'enabled == true' in predicate
         return [control] * view['back_count']
     phone.driver.find_elements = find
     def terminate(_):
@@ -865,7 +883,8 @@ def test_pending_queue_missing_or_ambiguous_back_is_unsupported(count):
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: pytest.fail('Unsupported route must block first'))
     assert error.value.code == 'REQUEST_DISCOVERY_NAVIGATION_UNSUPPORTED'
-    assert calls == [] and journal.data['artifacts'] == {}
+    assert calls == []
+    assert journal.data['artifacts'] == {}
 
 
 @pytest.mark.parametrize('conflict', ['Enter PIN', 'Approve transaction', 'Create new signer key', 'Home', 'Approve', 'Reject', 'Cancel', 'Done', 'modal'])
@@ -876,7 +895,8 @@ def test_pending_queue_does_not_back_out_of_conflicting_or_modal_surface(conflic
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: pytest.fail('No guard/input on conflicting screen'))
     assert error.value.code == 'REQUEST_DISCOVERY_HOME'
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 @pytest.mark.parametrize('after_remote', [False, True])
@@ -895,13 +915,15 @@ def test_queue_arrival_before_back_preserves_request_without_navigation(after_re
     with pytest.raises(Blocked) as error:
         phone.restart_for_request_discovery(journal, receipt, before_restart=guard)
     assert error.value.code == ('REQUEST_DISCOVERY_READY' if arrival == 'exact' else 'REQUEST_DISCOVERY_INCOMING')
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 def test_remote_signature_arrival_on_queue_does_not_click_back():
     phone, journal, receipt, calls, _ = pending_discovery_phone()
     assert phone.restart_for_request_discovery(journal, receipt, before_restart=lambda: False) is False
-    assert calls == [] and not journal.data['artifacts']
+    assert calls == []
+    assert not journal.data['artifacts']
 
 
 @pytest.mark.parametrize('code', ['REQUEST_DISCOVERY_INPUT', 'REQUEST_DISCOVERY_ADVANCED'])
@@ -1009,10 +1031,12 @@ def test_actual_pending_queue_entrypoints_never_relaunch_without_unique_back(tmp
     phone.driver.find_elements = lambda *args: [SimpleNamespace(click=lambda: clicks.append('Back'))] * back_count
     journal = Journal(tmp_path / 'run', {})
     try:
-        with pytest.raises(Blocked) as error:
+        def exercise_entrypoint():
             if entry == 'restore': phone.restore_navigation()
             elif entry == 'fixture': phone.check_fixture('Disposable QA Cube')
             else: phone.approve('fixture', INTENT, 612, None, journal, timeout=1)
+        with pytest.raises(Blocked) as error:
+            exercise_entrypoint()
         assert error.value.code == 'REQUEST_DISCOVERY_NAVIGATION_UNSUPPORTED'
         assert lifecycle == []
         assert clicks == (['Not now'] if incoming else [])
@@ -1034,7 +1058,8 @@ def test_actual_approve_after_exact_note_ready_cannot_take_legacy_queue_restart(
         with pytest.raises(Blocked) as error:
             phone.approve('fixture', INTENT, 612, None, journal, timeout=1)
         assert error.value.code == 'REQUEST_DISCOVERY_NAVIGATION_UNSUPPORTED'
-        assert lifecycle == [] and journal.data['artifacts'] == {}
+        assert lifecycle == []
+        assert journal.data['artifacts'] == {}
     finally:
         journal.close()
 
@@ -1049,7 +1074,8 @@ def test_actual_approve_from_supported_queue_still_reviews_and_approves_without_
     phone.driver.terminate_app = lambda _: lifecycle.append('terminate')
     phone.driver.activate_app = lambda _: lifecycle.append('activate')
     def find(_, predicate):
-        assert 'visible == true' in predicate and 'enabled == true' in predicate
+        assert 'visible == true' in predicate
+        assert 'enabled == true' in predicate
         assert 'XCUIElementTypeButton' in predicate
         return [SimpleNamespace(click=lambda: clicks.append('Back'))]
     phone.driver.find_elements = find
@@ -1140,7 +1166,8 @@ def test_strict_attach_selects_observation_target_before_binding_without_lifecyc
     def remote(*, options, client_config):
         events.append('remote')
         caps = options.to_capabilities()
-        assert caps['appium:autoLaunch'] is False and caps['appium:forceAppLaunch'] is False
+        assert caps['appium:autoLaunch'] is False
+        assert caps['appium:forceAppLaunch'] is False
         assert caps['appium:shouldTerminateApp'] is False
         return driver  # No activate/launch/terminate methods: any call fails the test.
     monkeypatch.setattr(webdriver, 'Remote', remote)
@@ -1172,8 +1199,9 @@ def test_strict_attach_selects_observation_target_before_binding_without_lifecyc
     policy.bind_phone = ordered_bind
     try:
         if setting_failure:
+            context_under_test = module.attach({'minimum_build': 39}, strict=policy)
             with pytest.raises(Blocked) as error:
-                with module.attach({'minimum_build': 39}, strict=policy):
+                with context_under_test:
                     pytest.fail('Failed preferred-app selection must not bind or fall back')
             assert error.value.code == 'APPIUM_USB'
             assert 'synthetic-sensitive-settings-error' not in str(error.value)
@@ -1183,8 +1211,9 @@ def test_strict_attach_selects_observation_target_before_binding_without_lifecyc
                 assert attached is policy.phone
                 assert journal.data['artifacts']['strict_process']['process']['pid'] == 4022
         else:
+            context_under_test = module.attach({'minimum_build': 39}, strict=policy)
             with pytest.raises(Blocked) as error:
-                with module.attach({'minimum_build': 39}, strict=policy):
+                with context_under_test:
                     pytest.fail('Background Keychain must not bind')
             assert error.value.code == 'STRICT_PROCESS'
             assert 'strict_process' not in journal.data['artifacts']
@@ -1225,8 +1254,9 @@ def test_strict_observation_checks_system_alerts_independently_of_preferred_bund
         assert result == ({'Home'} if method == 'labels' else {'pid': 4022, 'bundle_id': 'io.coincube.keychainApp'})
         assert events == ['alert']
     else:
+        operation_under_test = getattr(phone, method)
         with pytest.raises(Blocked) as error:
-            getattr(phone, method)()
+            operation_under_test()
         assert error.value.code == 'PHONE_AUTH'
         assert secret not in str(error.value)
         assert events == ['alert', 'alert-text']

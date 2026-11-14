@@ -33,5 +33,10 @@
   "qa_cleanup": {
     "version": 1,
     "preserve_runs": []
+  },
+  "native_recovery": {
+    "version": 1,
+    "checkout": "/absolute/path/to/coincube",
+    "revision": "current"
   }
 }

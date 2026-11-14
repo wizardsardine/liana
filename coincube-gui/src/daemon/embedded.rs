@@ -222,6 +222,18 @@ impl EmbeddedDaemon {
         }
     }
 
+    #[cfg(feature = "integration-tests")]
+    pub async fn integration_rescan_time_bounds(
+        &self,
+    ) -> Result<coincubed::commands::RescanTimeBounds, DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .rescan_time_bounds()
+                .map_err(|error| DaemonError::Unexpected(error.to_string()))
+        })
+        .await
+    }
+
     pub async fn command<T, F>(&self, method: F) -> Result<T, DaemonError>
     where
         F: FnOnce(&mut DaemonControl) -> Result<T, DaemonError>,

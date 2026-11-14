@@ -76,6 +76,9 @@ pub struct SparkReceiveView<'a> {
     /// The cross-network asset the SideShift flow is set to (for the THEY SEND
     /// card). `None` when a Bitcoin rail is selected.
     pub cross_network_selected: Option<DepositOption>,
+    /// A conversion set aside for another rail: what it deposits, and whether
+    /// its bitcoin has arrived. Shown as a notice that brings it back.
+    pub parked_conversion: Option<(DepositOption, bool)>,
     /// The route menu open under its tile, if any.
     pub open_menu: Option<ReceiveMenu>,
     /// The pending deposit that is the active swap's own settle output. The
@@ -101,25 +104,34 @@ impl<'a> SparkReceiveView<'a> {
                 .into();
         }
 
-        // ── Full-screen celebration for received payments ─────────────
+        // ── Payment result: the receipt first, the worldview art beside it ──
         if let SparkReceivePhase::Received { count, .. } = self.phase {
-            let verb_phrase = if *count > 1 {
-                CopyText::HaveArrived.get()
+            use coincube_ui::component::payment_result::{payment_result, Outcome};
+            let detail = if *count > 1 {
+                coincube_ui::localized_format!(
+                    "Into Spark · {} payments",
+                    "En Spark · {} pagos",
+                    count
+                )
             } else {
-                CopyText::HasArrived.get()
+                localized_copy("Into Spark").to_string()
             };
-            return coincube_ui::component::received_celebration_page(
-                self.received_celebration_context,
+            return payment_result(
+                Outcome::Received,
                 if self.mask_amounts {
                     "••••••"
                 } else {
                     self.received_amount_display
                 },
+                self.received_celebration_context,
                 self.received_quote,
                 self.received_image_handle,
-                verb_phrase,
                 Message::SparkReceive(SparkReceiveMessage::Reset),
-            );
+            )
+            .detail(detail)
+            .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
+            .on_activity(Message::SparkReceive(SparkReceiveMessage::ViewActivity))
+            .into();
         }
 
         // What the payer sends — asset and network, Bitcoin rail or stablecoin
@@ -144,6 +156,17 @@ impl<'a> SparkReceiveView<'a> {
             )
             .padding([18, 24]),
         );
+
+        if let Some((option, arrived)) = self.parked_conversion {
+            form = form.push(iced::widget::rule::horizontal(1)).push(
+                Container::new(conversion_notice(
+                    option,
+                    arrived,
+                    Message::SparkReceive(SparkReceiveMessage::ShowConversion),
+                ))
+                .padding([14, 24]),
+            );
+        }
 
         if let Some(body) = self.sideshift_body {
             // Cross-network (SideShift) selected: its refund/deposit flow renders
@@ -1291,6 +1314,57 @@ fn kv_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
         .into()
 }
 
+/// The way back to a cross-network conversion that isn't on screen: it keeps
+/// running while the user is elsewhere, and its page (Shift ID, refund
+/// address, progress) is one click away. Shown on Spark's Receive when the
+/// conversion is set aside for another rail, and on Spark's Overview.
+pub(crate) fn conversion_notice<'a>(
+    option: DepositOption,
+    arrived: bool,
+    on_view: Message,
+) -> Element<'a, Message> {
+    let copy = if arrived {
+        localized_format!(
+            "Your {} conversion has arrived in Spark.",
+            "Tu conversión de {} llegó a Spark.",
+            option.label
+        )
+    } else {
+        localized_format!(
+            "You have a {} conversion open.",
+            "Tienes una conversión de {} abierta.",
+            option.label
+        )
+    };
+    Container::new(
+        Row::new()
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .push(p2_regular(copy).width(Length::Fill))
+            .push(
+                button::transparent_border(None, localized_copy("View conversion"))
+                    .on_press(on_view),
+            ),
+    )
+    .padding([10, 12])
+    .width(Length::Fill)
+    .style(conversion_notice_style)
+    .into()
+}
+
+fn conversion_notice_style(theme: &theme::Theme) -> container::Style {
+    let shell = &theme.colors.shell;
+    container::Style {
+        background: Some(Background::Color(shell.background)),
+        border: iced::Border {
+            color: shell.line,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1992,6 +2066,7 @@ mod tests {
                         mask_amounts: false,
                         sideshift_body: None,
                         cross_network_selected: None,
+                        parked_conversion: None,
                         open_menu: None,
                         swap_deposit: None,
                         receive_usd: false,
@@ -2232,6 +2307,7 @@ mod tests {
                     mask_amounts: cache.balance_amounts_masked(),
                     sideshift_body: None,
                     cross_network_selected: None,
+                    parked_conversion: None,
                     open_menu: None,
                     swap_deposit: None,
                     receive_usd: false,
@@ -2243,7 +2319,8 @@ mod tests {
                 theme::Theme::dark(),
             );
             if privacy == Some(BalancePrivacy::Shown) {
-                assert!(mounted.contains("+87,654,321 sats"));
+                assert!(mounted.contains("+87,654,321"));
+                assert!(mounted.contains("sats"));
             } else {
                 assert!(mounted.contains("••••••"));
                 assert!(!mounted.contains("87,654,321"));

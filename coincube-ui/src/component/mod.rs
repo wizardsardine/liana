@@ -10,6 +10,7 @@ pub mod hw;
 pub mod modal;
 pub mod notification;
 pub mod pagination;
+pub mod payment_result;
 pub mod quote_display;
 pub mod session_status;
 pub mod spinner;
@@ -20,7 +21,6 @@ pub mod toast;
 pub mod tooltip;
 pub mod transaction;
 
-use crate::locale::Text as CopyText;
 use bitcoin::Network;
 pub use tooltip::{tooltip, tooltip_custom};
 
@@ -28,7 +28,7 @@ use iced::Length;
 
 use crate::{
     theme,
-    widget::{Column, ColumnExt, Container, Element, Row},
+    widget::{Column, Container, Element, Row},
 };
 
 use self::text::Text;
@@ -38,153 +38,6 @@ pub fn separation<'a, T: 'a>() -> Container<'a, T> {
         .style(theme::container::border)
         .height(Length::Fixed(1.0))
         .width(Length::Fill)
-}
-
-pub fn received_celebration_page<'a, M: Clone + 'a>(
-    context: &str,
-    amount_display: &'a str,
-    quote: &'a quote_display::Quote,
-    image_handle: &'a iced::widget::image::Handle,
-    verb_phrase: &'a str,
-    on_dismiss: M,
-) -> Element<'a, M> {
-    use quote_display::{self as qd, QuoteDisplayProps};
-
-    let page = Column::new()
-        .spacing(20)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-        .push(qd::display(
-            &QuoteDisplayProps::new(context, quote, image_handle)
-                .illustration_slot(crate::illustration::Slot::Received)
-                .image_size(480),
-        ))
-        .push(text::h3(CopyText::PaymentReceived.get()))
-        .push(
-            Row::new()
-                .spacing(5)
-                .push(
-                    iced::widget::text(amount_display)
-                        .size(20)
-                        .color(crate::color::GREEN)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                )
-                .push(iced::widget::text(verb_phrase).size(20).font(iced::Font {
-                    style: iced::font::Style::Italic,
-                    ..Default::default()
-                })),
-        )
-        .push_maybe(
-            crate::worldview_copy::VoiceLine::PaymentReceived
-                .get()
-                .map(|line| text::p2_regular(line).style(theme::text::secondary)),
-        )
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            button::primary(None, CopyText::Back.get())
-                .width(Length::Fixed(150.0))
-                .on_press(on_dismiss.clone()),
-        )
-        // Bottom breathing room below the Back button. Matches the
-        // 30px internal padding `sent_celebration_page` gets from its
-        // card wrapper — without it the button sits flush against the
-        // scrollable area's bottom edge.
-        .push(iced::widget::Space::new().height(Length::Fixed(30.0)));
-
-    // The 480px artwork pushes the "Back" button off the bottom on short
-    // windows, where it can't be scrolled into reach — leaving the user
-    // stuck on the splash. Make the whole page a dismiss target so a click
-    // anywhere (including on the image) closes it, not just the button.
-    iced::widget::mouse_area(page).on_press(on_dismiss).into()
-}
-
-fn celebration_line_size(amount_display: &str, verb_suffix: &str) -> f32 {
-    const FITS_AT_FULL_SIZE: usize = 52;
-    let chars = amount_display.chars().count() + 1 + verb_suffix.chars().count();
-    if chars <= FITS_AT_FULL_SIZE {
-        20.0
-    } else {
-        16.0
-    }
-}
-
-pub fn sent_celebration_page<'a, M: Clone + 'a>(
-    context: &str,
-    amount_display: &'a str,
-    quote: &'a quote_display::Quote,
-    image_handle: &'a iced::widget::image::Handle,
-    verb_suffix: &'a str,
-    voice: Option<&'static str>,
-    on_dismiss: M,
-) -> Element<'a, M> {
-    use quote_display::{self as qd, QuoteDisplayProps};
-
-    let line_size = celebration_line_size(amount_display, verb_suffix);
-    let inner = Column::new()
-        .spacing(20)
-        .width(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-        .push(qd::display(
-            &QuoteDisplayProps::new(context, quote, image_handle)
-                .illustration_slot(crate::illustration::Slot::Sent)
-                .image_size(480),
-        ))
-        .push(text::h3(CopyText::TransactionComplete.get()))
-        .push(
-            Row::new()
-                .spacing(5)
-                .push(
-                    iced::widget::text(amount_display)
-                        .size(line_size)
-                        .color(crate::color::ORANGE)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                )
-                .push(
-                    iced::widget::text(verb_suffix)
-                        .size(line_size)
-                        .font(iced::Font {
-                            style: iced::font::Style::Italic,
-                            ..Default::default()
-                        }),
-                ),
-        )
-        .push_maybe(voice.map(|line| text::p2_regular(line).style(theme::text::secondary)))
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            button::primary(None, CopyText::Back.get())
-                .width(Length::Fixed(150.0))
-                .on_press(on_dismiss.clone()),
-        );
-
-    // The modal widget dims the underlying content with a translucent backdrop
-    // but does not draw a surface behind its child, so without an opaque
-    // wrapper the celebration text floats over the dimmed PSBT view. Wrap in
-    // a card-styled Container so the celebration has a solid backing.
-    let card = Container::new(inner)
-        .padding(30)
-        .max_width(640)
-        .style(theme::card::modal);
-
-    // The card itself caps at 640px; without an outer fill+center wrapper it
-    // would shrink to its content width and sit left-aligned inside the
-    // dashboard's content column (visible bug on Liquid Send / Spark Send /
-    // Vault PSBT full-page celebrations). The Modal widget centers its child
-    // on its own, so this extra wrapper is a no-op in the modal use case.
-    let page = Container::new(card)
-        .width(Length::Fill)
-        .align_x(iced::alignment::Horizontal::Center);
-
-    // Like the received page, the tall artwork can push "Back" out of reach on
-    // short windows, so make a click anywhere on the splash dismiss it too.
-    iced::widget::mouse_area(page).on_press(on_dismiss).into()
 }
 
 /// Empty-state placeholder card — centered icon + title + subtitle on a

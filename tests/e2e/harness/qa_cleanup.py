@@ -530,8 +530,46 @@ def register_completed(runner):
         qa_funding.save_pool(data)
 
 
-def ensure_capacity(runner):
-    require(runner.strict is not None and not runner.strict.requested, "MODE")
+class StrictMobileAdmission:
+    """The existing mobile authorization; no alternate phone identity."""
+    def __init__(self, runner):
+        self.runner = runner
+
+    def select(self):
+        self.observe()
+
+    def observe(self):
+        require(self.runner.strict is not None and not self.runner.strict.requested, "MODE")
+        self.runner.strict.observe()
+        require(not self.runner.strict.requested, "MODE")
+
+
+def cleanup_admission(runner, admission):
+    if admission is None:
+        return StrictMobileAdmission(runner)
+    # A closed internal union, never a JSON flag or arbitrary observe callback.
+    from .native_recovery import NativeCleanupConsumerV1
+    require(type(admission) in (StrictMobileAdmission, NativeCleanupConsumerV1)
+            and admission.runner is runner, "ADMISSION")
+    return admission
+
+
+def cleanup_local(admission, operation, runner, record):
+    # The legacy mobile path is unchanged. Native contexts additionally pin
+    # real backup/audit binaries immediately around their private-key work.
+    from .native_recovery import NativeCleanupConsumerV1
+    if type(admission) is not NativeCleanupConsumerV1:
+        return operation(runner, record)
+    admission.observe()
+    try:
+        return operation(runner, record)
+    finally:
+        admission.observe()
+
+
+def ensure_capacity(runner, *, admission=None):
+    admission = cleanup_admission(runner, admission)
+    admission.observe()
     require(not any(k in runner.artifacts for k in ("request_id", "session_id", "approval_started", "pin_dispatch_started")), "ACTIVE_RUN")
     account = runner.artifacts["account_identity"]
     consumer = digest({"run_id": runner.run_id, "binding": runner.journal.data["binding"]})
@@ -546,6 +584,7 @@ def ensure_capacity(runner):
         if own:
             key, record = own[0]
         else:
+            admission.select()  # Native selection requires a fresh FULL quota.
             protections = protected_ids(runner, data)
             candidates = [(k, r) for k, r in records.items()
                           if r.get("phase") == "enrolled" and type(r.get("sealed")) is bool and r.get("account") == account
@@ -560,15 +599,15 @@ def ensure_capacity(runner):
             return  # One fixture maximum per consumer, even if another remains full.
         with candidate_lease(record):
             if record.get("sealed") is not True:
-                backup_check(runner, record)
+                cleanup_local(admission, backup_check, runner, record)
                 seal_record(record)
                 qa_funding.save_pool(data)
             def guard():
-                runner.strict.observe()
-                require(not runner.strict.requested and record["cube_id"] not in protected_ids(runner, data), "PROTECTED")
+                admission.observe()
+                require(record["cube_id"] not in protected_ids(runner, data), "PROTECTED")
                 verify_local(record)
-                backup_check(runner, record)
-                pending(runner, record)
+                cleanup_local(admission, backup_check, runner, record)
+                cleanup_local(admission, pending, runner, record)
                 amount = residual(record, data)
                 funding = qa_funding.options(runner.config.get("qa_funding", {"version": 1, "sources": []}))
                 require(amount < qa_funding.minimum_amount(runner.config) + funding["fee_sats"] + 1000, "FUNDING_SOURCE")
@@ -612,7 +651,7 @@ def ensure_capacity(runner):
             "local_recovery_retained": True, "phase": record["phase"]})
 
 
-def reconcile_capacity(runner):
+def reconcile_capacity(runner, *, admission=None):
     """Finish our prior exact retirement even after its key freed capacity."""
     consumer = digest({"run_id": runner.run_id, "binding": runner.journal.data["binding"]})
     with qa_funding.pool() as data:
@@ -622,7 +661,7 @@ def reconcile_capacity(runner):
                    and r.get("phase") != "complete"]
         require(len(pending) <= 1, "REGISTRY")
     if pending:
-        ensure_capacity(runner)
+        ensure_capacity(runner, admission=admission)
         return True
     return False
 

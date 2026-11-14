@@ -2,3 +2,4 @@
 .local/
 __pycache__/
 *.pyc
+.venv-native-recovery/

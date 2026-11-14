@@ -31,6 +31,7 @@ pub struct Floating<'a, Message> {
     align_x: Option<Horizontal>,
     gap: f32,
     on_dismiss: Option<Message>,
+    on_escape: Option<Message>,
     fit_to_window: bool,
     fit_height: Option<f32>,
     dismiss_on_escape: bool,
@@ -43,6 +44,7 @@ impl<'a, Message> Floating<'a, Message> {
             align_x: None,
             gap: 0.0,
             on_dismiss: None,
+            on_escape: None,
             fit_to_window: false,
             fit_height: None,
             dismiss_on_escape: false,
@@ -68,6 +70,16 @@ impl<'a, Message> Floating<'a, Message> {
     pub fn on_dismiss(self, on_dismiss: Message) -> Self {
         Self {
             on_dismiss: Some(on_dismiss),
+            ..self
+        }
+    }
+
+    /// Sets the message produced by an Escape the content leaves unhandled,
+    /// without making a press outside the content a dismissal. Ignored when
+    /// [`Self::on_dismiss`] is set, which already answers Escape.
+    pub fn on_escape(self, on_escape: Message) -> Self {
+        Self {
+            on_escape: Some(on_escape),
             ..self
         }
     }
@@ -219,6 +231,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Floating<'_, Message> 
             position: bounds.position() + translation,
             width: bounds.width,
             on_dismiss: self.on_dismiss.as_ref(),
+            on_escape: self.on_escape.as_ref(),
             fit_to_window: self.fit_to_window,
             fit_height: self.fit_height,
             dismiss_on_escape: self.dismiss_on_escape,
@@ -232,6 +245,7 @@ struct Overlay<'a, 'b, Message> {
     position: Point,
     width: f32,
     on_dismiss: Option<&'b Message>,
+    on_escape: Option<&'b Message>,
     fit_to_window: bool,
     fit_height: Option<f32>,
     dismiss_on_escape: bool,
@@ -315,7 +329,7 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Overlay<'_, 
             &layout.bounds(),
         );
         // Focused content (a text field, say) gets the first refusal.
-        if let Some(message) = self.on_dismiss {
+        if let Some(message) = self.on_dismiss.or(self.on_escape) {
             if !shell.is_event_captured()
                 && matches!(
                     event,

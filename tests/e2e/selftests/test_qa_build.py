@@ -45,8 +45,10 @@ def test_compatibility_is_explicit_and_cannot_downgrade_strict(config):
 @pytest.mark.parametrize("mode", [False, None, {}, {"version": True}, {"version": 2}])
 def test_invalid_strict_selection_never_becomes_compatibility(config, mode):
     config["strict_acceptance"] = mode
+    validate_strict = validate_config
+    fresh_config = qa_build.configure_fresh(config)
     with pytest.raises(Failed) as caught:
-        validate_config(qa_build.configure_fresh(config))
+        validate_strict(fresh_config)
     assert caught.value.code == "STRICT_CONFIG"
 
 
@@ -117,7 +119,8 @@ def test_build_defines_qa_hook_before_install_and_resume_never_relaunches(build)
     launch = next(i for i, args in enumerate(calls) if args[:3] == ["device", "process", "launch"])
     assert install < launch
     receipt = build.journal.data["artifacts"]["qa_build"]
-    assert receipt["source"] == "a" * 40 and receipt["app"] == build.app
+    assert receipt["source"] == "a" * 40
+    assert receipt["app"] == build.app
     calls.clear()
     build.journal.artifact("strict_process", {"pid": 123})
     prepare(build)
@@ -266,10 +269,12 @@ def test_qa_build_holds_the_phone_lease_and_releases_it_on_failure(config, tmp_p
                 fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
         raise Blocked("QA_BUILD", "synthetic signing prerequisite missing")
     monkeypatch.setattr(phone, "prepare_qa_build", build_under_lease)
+    attachment = phone.attach(config["ios"], strict=object())
     with pytest.raises(Blocked) as caught:
-        with phone.attach(config["ios"], strict=object()):
+        with attachment:
             pytest.fail("Build failure cannot attach to the phone")
-    assert caught.value.code == "QA_BUILD" and called == [True]
+    assert caught.value.code == "QA_BUILD"
+    assert called == [True]
     with path.open("rb") as competing:
         fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
@@ -323,6 +328,8 @@ def test_launcher_rejects_unsupported_python_patch_without_reexec_loop(monkeypat
         calls.append(args)
         return SimpleNamespace(returncode=1)
     monkeypatch.setattr(subprocess, "run", probe)
+    run_launcher = runpy.run_path
+    launcher_path = str(Path(__file__).resolve().parents[1] / "run")
     with pytest.raises(SystemExit, match="Python 3.11.4 or newer"):
-        runpy.run_path(str(Path(__file__).resolve().parents[1] / "run"), run_name="__main__")
+        run_launcher(launcher_path, run_name="__main__")
     assert len(calls) == 3

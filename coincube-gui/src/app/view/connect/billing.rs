@@ -113,7 +113,17 @@ fn fallback_entitlements(tier: &PlanTier) -> PlanEntitlements {
 /// Entitlements for `tier`: the catalog's, then (for the account's own tier)
 /// `/connect/plan`'s, then the offline fallback.
 fn entitlements_for(state: &ConnectAccountPanel, tier: &PlanTier) -> PlanEntitlements {
-    if let Some(ent) = plan_info(state, tier).and_then(|info| info.entitlements.clone()) {
+    if let Some(mut ent) = plan_info(state, tier).and_then(|info| info.entitlements.clone()) {
+        // An omitted cubeLimit parses as 0: never show "0 per network";
+        // use the plan's own value, else the offline default.
+        if ent.cube_limit == 0 {
+            ent.cube_limit = state
+                .plan
+                .as_ref()
+                .filter(|plan| plan.tier() == tier && plan.entitlements.cube_limit > 0)
+                .map(|plan| plan.entitlements.cube_limit)
+                .unwrap_or_else(|| fallback_entitlements(tier).cube_limit);
+        }
         return ent;
     }
     if let Some(plan) = state.plan.as_ref().filter(|plan| plan.tier() == tier) {
@@ -477,15 +487,26 @@ fn current_plan_summary<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg> 
     let mut rows: Vec<Element<'a, Msg>> = Vec::new();
     match current_plan_status(state) {
         Some((name, line, status, tone)) => {
-            let mut main = Column::new().push(tenshu_text::label(name));
+            // The plan and its date sit on the row's true center (COIN-668,
+            // COIN-669, master 7ba2a1d1e): equal Fill columns either side.
+            let mut main = Column::new()
+                .push(tenshu_text::label(name))
+                .align_x(Alignment::Center);
             if let Some(line) = line {
                 main = main.push(lead(line));
             }
-            rows.push(summary_row(
-                localized_copy("Current plan"),
-                main.into(),
-                Some(status_line(status_icon(tone), status, tone)),
-            ));
+            rows.push(
+                Row::new()
+                    .spacing(16)
+                    .align_y(Alignment::Center)
+                    .push(lead(localized_copy("Current plan")).width(Length::Fill))
+                    .push(main)
+                    .push(
+                        container(status_line(status_icon(tone), status, tone))
+                            .align_right(Length::Fill),
+                    )
+                    .into(),
+            );
         }
         None => rows.push(summary_row(
             localized_copy("Current plan"),
@@ -624,7 +645,8 @@ fn campaign_redeem_field<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg>
                 .push(container(input).width(Length::Fill))
                 .push(submit),
         )
-        .max_width(440),
+        // Flush with the sheet's edges, like the ruled rows (COIN-669).
+        .width(Length::Fill),
     );
     if let Some(result) = &rs.result {
         let (msg, tone) = match result {
@@ -1913,12 +1935,21 @@ fn checkout_phase_ux<'a>(
         .and_then(|s| s.starts_at.as_deref())
         .or_else(|| checkout.checkout.as_ref()?.starts_at.as_deref())
         .map(format_date);
+    // When the paid period starts later: Connect's startsAt, else the
+    // stacked start review_facts computed (a same-tier renewal, for which
+    // Connect sends no startsAt).
+    let paid_start = starts.clone().or_else(|| facts.starts.clone());
+    let renewal = effective_tier(checkout.plan.as_ref()) == *tier;
     let (heading, lead_text) = match &checkout.phase {
         CheckoutPhase::Creating => (
             format!("Pay for {tier}"),
             "Preparing a Bitcoin invoice for the amount above.".to_string(),
         ),
-        CheckoutPhase::Paid { .. } => match &starts {
+        CheckoutPhase::Paid { .. } => match &paid_start {
+            Some(date) if renewal => (
+                "Plan renewed".to_string(),
+                format!("Your {tier} plan continues. The new period starts on {date}."),
+            ),
             Some(date) => (
                 "Plan change scheduled".to_string(),
                 format!("{tier} starts on {date}, when your current period ends."),
@@ -2071,7 +2102,11 @@ fn checkout_phase_ux<'a>(
             Some(back_to_billing()),
         ),
         CheckoutPhase::Paid { overpaid_sats } => {
-            let mut body = match (&starts, facts.covers.as_deref()) {
+            let mut body = match (&paid_start, facts.covers.as_deref()) {
+                (Some(date), _) if renewal => format!(
+                    "The new {tier} period starts on {date}, when the current one ends. The \
+                     receipt is in your billing history."
+                ),
                 (Some(date), _) => format!(
                     "{tier} starts on {date}. Until then you keep your current plan. The receipt \
                      is in your billing history."
@@ -2090,7 +2125,8 @@ fn checkout_phase_ux<'a>(
             billing_notice(
                 check_circle_icon(),
                 Tone::Good,
-                match &starts {
+                match &paid_start {
+                    Some(_) if renewal => format!("{tier} renewed"),
                     Some(_) => format!("{tier} is paid for"),
                     None => format!("You're on {tier}"),
                 },

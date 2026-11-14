@@ -762,6 +762,7 @@ mod tests {
                         move || {
                             crate::app::state::spark::overview::SparkOverview::page_head_for_tests(
                                 cache,
+                                Some(crate::app::view::global_home::WalletTransferEntry::Ready),
                             )
                         },
                         move || {

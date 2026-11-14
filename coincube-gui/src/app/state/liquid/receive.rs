@@ -740,8 +740,12 @@ impl State for LiquidReceive {
                                     format!("{} USDt", format_usdt_display(minor))
                                 } else {
                                     use coincube_ui::component::amount::DisplayAmount;
-                                    Amount::from_sat(payment.amount_sat)
-                                        .to_formatted_string_with_unit(cache.bitcoin_unit)
+                                    format!(
+                                        "{} {}",
+                                        Amount::from_sat(payment.amount_sat)
+                                            .to_formatted_string_with_unit(cache.bitcoin_unit),
+                                        cache.bitcoin_unit.label()
+                                    )
                                 };
                                 let context = if usdt_amount.is_some() {
                                     "note-receive"
@@ -1246,7 +1250,10 @@ mod receive_privacy_tests {
                 theme::Theme::dark(),
             );
             if privacy == Some(BalancePrivacy::Shown) {
-                assert!(mounted.contains(amount));
+                // The receipt sets the unit beside the figure as its own text.
+                let (figure, unit) = amount.rsplit_once(' ').unwrap_or((amount, ""));
+                assert!(mounted.contains(figure));
+                assert!(mounted.contains(unit));
             } else {
                 assert!(mounted.contains("••••••"));
                 assert!(!mounted.contains(amount));

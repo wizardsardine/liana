@@ -29,6 +29,8 @@ pub mod phone_signer;
 pub mod pin_entry;
 pub mod pin_input;
 pub mod recover_vault;
+#[cfg(feature = "integration-tests")]
+pub mod recovery_native;
 pub mod services;
 pub mod signer;
 pub mod split_hardware;

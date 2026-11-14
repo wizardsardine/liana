@@ -18,7 +18,7 @@ pub mod field;
 pub mod fit_row;
 pub mod page;
 pub mod page_head;
-mod scope;
+pub(crate) mod scope;
 pub mod segmented;
 pub mod select;
 pub mod setting_row;

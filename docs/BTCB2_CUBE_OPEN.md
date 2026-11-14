@@ -9,16 +9,17 @@ next, and no Breez client, Liquid or Spark. That unlock needs no Connect session
 it runs under the local feature check.
 
 Create Vault inside a fork Cube runs the Vault installer with the open Cube's
-session. It does not ask for the PIN again. Like a fresh fork Cube, the Vault
-may run on a managed local node without Connect
+session. It does not ask for the PIN again. The Vault derives from the Cube's
+master seed and may run on a managed local node without Connect
 (`Context::in_cube_fork_vault`). When it is saved, the Cube reopens through the
 fork Loader from the session's signer. If that signer is gone, the Cube's unlock
 screen opens instead. Going back from the installer returns to the Vault-less
 App.
 
 The earlier route, in which the Vault installer created a fresh fork Cube with
-its own PIN step and saved the Vault signer as the Cube seed, is still in the
-installer for Cubes it creates itself; Home no longer starts it.
+its own PIN step and saved the Vault signer as the Cube seed, has been removed.
+The installer refuses Vault creation without a Cube on every chain, so it never
+generates a master seed outside a Cube.
 
 Successful fork PIN verification keeps the decrypted signer in a private,
 one-use slot owned by that unlock screen. It does not put the seed in cloned UI

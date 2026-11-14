@@ -37,6 +37,7 @@ pub struct DummyBitcoind {
     pub rescan_requests: Vec<u32>,
     pub tip_timestamp: Option<u32>,
     pub genesis_error: Option<crate::connect::AdmissionError>,
+    pub genesis_timestamp_override: Option<u32>,
     pub txs: HashMap<Txid, (Transaction, Option<Block>)>,
     /// What `chain_tip` reports. Defaults to the historical fixed value (height 100).
     pub tip: BlockChainTip,
@@ -95,6 +96,7 @@ impl DummyBitcoind {
             broadcast_error: None,
             rescan_requests: Vec::new(),
             genesis_error: None,
+            genesis_timestamp_override: None,
             tip_timestamp: None,
             txs: HashMap::new(),
             tip: BlockChainTip { hash, height: 100 },
@@ -159,7 +161,7 @@ impl BitcoinInterface for DummyBitcoind {
 
     fn genesis_block_timestamp(&self) -> Result<u32, crate::bitcoin::GenesisError> {
         self.genesis_block()?;
-        Ok(1231006505)
+        Ok(self.genesis_timestamp_override.unwrap_or(1231006505))
     }
 
     fn genesis_block(&self) -> Result<BlockChainTip, crate::bitcoin::GenesisError> {

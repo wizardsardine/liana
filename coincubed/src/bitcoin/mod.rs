@@ -222,6 +222,12 @@ pub struct HistorySync {
     /// When a full scan last finished and its result reached the database, during this
     /// run of the daemon. `None` until then, including while a first scan runs.
     pub full_scan_completed_at: Option<u32>,
+    /// Monotonic within this daemon; distinguishes same-second scan retries.
+    #[serde(default)]
+    pub full_scan_generation: u64,
+    /// Generation whose result was successfully committed by the poller.
+    #[serde(default)]
+    pub full_scan_completed_generation: u64,
     /// The poller's current run of failed polls, if the latest poll failed.
     pub last_failure: Option<PollFailure>,
 }
@@ -264,6 +270,9 @@ pub struct HistorySyncCache {
     awaiting_commit: sync::atomic::AtomicBool,
     /// Unix time of the last committed full scan; 0 for none.
     completed_at: sync::atomic::AtomicU32,
+    generation: sync::atomic::AtomicU64,
+    completed_generation: sync::atomic::AtomicU64,
+    fetched_generation: sync::atomic::AtomicU64,
     failure: sync::Mutex<Option<PollFailure>>,
 }
 
@@ -282,6 +291,7 @@ impl HistorySyncCache {
     /// count, so a scan that is retried against another server counts from zero.
     pub fn begin_full_scan(&self, expected: u64) {
         use sync::atomic::Ordering::{Relaxed, Release};
+        self.generation.fetch_add(1, Relaxed);
         self.checked.store(0, Relaxed);
         self.receive_checked.store(0, Relaxed);
         self.change_checked.store(0, Relaxed);
@@ -326,6 +336,10 @@ impl HistorySyncCache {
     /// The full scan returned a result for the backend to apply.
     pub fn full_scan_fetched(&self) {
         use sync::atomic::Ordering::Relaxed;
+        self.fetched_generation.store(
+            self.generation.load(sync::atomic::Ordering::Acquire),
+            Relaxed,
+        );
         self.scanning.store(false, Relaxed);
         self.awaiting_commit
             .store(true, sync::atomic::Ordering::Release);
@@ -338,6 +352,11 @@ impl HistorySyncCache {
         self.scanning.store(false, Relaxed);
         if self.awaiting_commit.swap(false, Relaxed) {
             self.completed_at.store(now, Relaxed);
+            self.completed_generation.store(
+                self.fetched_generation
+                    .load(sync::atomic::Ordering::Acquire),
+                sync::atomic::Ordering::Release,
+            );
         }
         *self.failure.lock().expect("never held across a panic") = None;
     }
@@ -384,6 +403,8 @@ impl HistorySyncCache {
         let full_scan_in_progress = self.scanning.load(Acquire);
         HistorySync {
             full_scan_in_progress,
+            full_scan_generation: self.generation.load(Acquire),
+            full_scan_completed_generation: self.completed_generation.load(Acquire),
             addresses_checked: if full_scan_in_progress {
                 self.checked.load(Relaxed)
             } else {
@@ -2059,6 +2080,32 @@ pub struct Coin {
 mod imported_history_projection_tests {
     use super::*;
     use bitcoin::hashes::Hash;
+
+    #[test]
+    fn committed_generation_belongs_to_fetched_result_not_later_started_scan() {
+        let cache = super::HistorySyncCache::default();
+        cache.begin_full_scan(200);
+        cache.branch_address_checked(false);
+        cache.full_scan_fetched();
+        cache.poll_failed("retryable poll commit", 100);
+        cache.begin_full_scan(200);
+        cache.branch_address_checked(true);
+        cache.poll_failed("new scan failed before fetch", 100);
+        cache.poll_succeeded(100);
+        let first = cache.snapshot();
+        assert_eq!(first.full_scan_generation, 2);
+        assert_eq!(first.full_scan_completed_generation, 1);
+        assert_eq!(first.full_scan_completed_at, Some(100));
+        assert_eq!(first.addresses_checked, 0);
+        assert!(!first.full_scan_in_progress);
+        cache.begin_full_scan(200);
+        cache.full_scan_fetched();
+        cache.poll_succeeded(100); // Same second, different actual operation.
+        let retry = cache.snapshot();
+        assert_eq!(retry.full_scan_generation, 3);
+        assert_eq!(retry.full_scan_completed_generation, 3);
+        assert_eq!(retry.addresses_checked, 0);
+    }
 
     #[test]
     fn historical_projection_includes_outputs_confirmed_before_stored_tip() {

@@ -21,16 +21,16 @@ use crate::theme::Theme;
 use crate::widget::{Element, Renderer};
 
 /// Answers a key press given the ID of the focused descendant, if any.
-pub(super) type KeyHandler<'a, M> =
+pub(crate) type KeyHandler<'a, M> =
     Box<dyn Fn(&keyboard::Key, keyboard::Modifiers, Option<&Id>) -> Option<Vec<M>> + 'a>;
 
-pub(super) struct KeyScope<'a, M> {
+pub(crate) struct KeyScope<'a, M> {
     content: Element<'a, M>,
     on_key: KeyHandler<'a, M>,
 }
 
 impl<'a, M> KeyScope<'a, M> {
-    pub(super) fn new(content: impl Into<Element<'a, M>>, on_key: KeyHandler<'a, M>) -> Self {
+    pub(crate) fn new(content: impl Into<Element<'a, M>>, on_key: KeyHandler<'a, M>) -> Self {
         Self {
             content: content.into(),
             on_key,
@@ -108,6 +108,21 @@ impl<M> Widget<M, Theme, Renderer> for KeyScope<'_, M> {
             ..
         }) = event
         {
+            // A sibling earlier in the tree (a focused top-bar action, say)
+            // already answered this key: it is not ours too.
+            if shell.is_event_captured() {
+                self.content.as_widget_mut().update(
+                    &mut tree.children[0],
+                    event,
+                    layout,
+                    cursor,
+                    renderer,
+                    clipboard,
+                    shell,
+                    viewport,
+                );
+                return;
+            }
             let mut focused = FocusedId::default();
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],

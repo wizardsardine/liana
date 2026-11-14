@@ -73,7 +73,6 @@ pub enum Message {
     HardwareWalletUpdate,
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
-    ConfirmFreshSeedBackup(bool),
     ImportMnemonic(bool),
     InstallFinished,
     BackupDescriptor,

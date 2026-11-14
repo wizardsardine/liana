@@ -629,14 +629,19 @@ pub fn received_celebration_page<'a>(
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, Message> {
-    coincube_ui::component::received_celebration_page(
-        context,
+    use coincube_ui::component::payment_result::{payment_result, Outcome};
+    payment_result(
+        Outcome::Received,
         amount_display,
+        context,
         quote,
         image_handle,
-        CopyText::HasArrived.get(),
         Message::DismissReceivedCelebration,
     )
+    .detail(localized_copy("Into Vault"))
+    .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
+    .on_activity(Message::ReceivedCelebrationActivity)
+    .into()
 }
 
 #[cfg(test)]
@@ -919,6 +924,7 @@ mod capture_tests {
                         move || {
                             crate::app::state::vault::overview::VaultOverview::page_head_for_tests(
                                 cache,
+                                Some(crate::app::view::global_home::WalletTransferEntry::Ready),
                             )
                         },
                         move || {

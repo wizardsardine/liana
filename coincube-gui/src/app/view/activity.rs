@@ -292,6 +292,168 @@ fn non_empty(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn vault_entry_label(tx: &HistoryTransaction) -> (LabelItem, Option<String>) {
+    // The title reads the single payment's label before the txid's, so
+    // an edit is stored where the title will read it back.
+    // Edit the key the title reads: the payment's own label, else the
+    // transaction's, else (nothing stored yet) the payment's.
+    let has = |key: &str| tx.labels.get(key).is_some_and(|label| !label.is_empty());
+    let label_key = match tx.is_single_payment() {
+        Some(outpoint) if has(&outpoint.to_string()) || !has(&tx.txid.to_string()) => {
+            LabelItem::OutPoint(outpoint)
+        }
+        _ => LabelItem::Txid(tx.txid),
+    };
+    let label = tx
+        .is_single_payment()
+        .and_then(|outpoint| tx.labels.get(&outpoint.to_string()))
+        .or_else(|| tx.labels.get(&tx.txid.to_string()))
+        .filter(|label| !label.is_empty())
+        .cloned();
+    (label_key, label)
+}
+
+fn spark_route_presentation(
+    method: &str,
+    received: bool,
+    address: &Option<String>,
+    invoice: &Option<String>,
+    ticker: &str,
+) -> (&'static str, String, &'static str) {
+    match (method, received) {
+        ("lightning", false) => (
+            "Spark → Lightning",
+            match (address, invoice) {
+                (Some(address), _) => format!("Lightning address · {address}"),
+                (None, Some(invoice)) => {
+                    format!("Lightning invoice · {}", short_identifier(invoice))
+                }
+                (None, None) => "Lightning payment".to_owned(),
+            },
+            "payment settled",
+        ),
+        ("lightning", true) => (
+            "Lightning → Spark",
+            "Lightning invoice paid".to_owned(),
+            "payment received",
+        ),
+        ("deposit", _) => (
+            "Bitcoin on-chain → Spark deposit",
+            "Bitcoin deposit".to_owned(),
+            "claimed into Spark",
+        ),
+        ("withdraw", _) => (
+            "Spark → Bitcoin on-chain",
+            "Bitcoin withdrawal".to_owned(),
+            "sent on-chain",
+        ),
+        ("token", true) => ("Spark token", format!("Received {ticker}"), "received"),
+        ("token", false) => ("Spark token", format!("Sent {ticker}"), "sent"),
+        (_, true) => (
+            "Spark",
+            "Received on Spark".to_owned(),
+            "received instantly",
+        ),
+        (_, false) => ("Spark", "Sent on Spark".to_owned(), "sent instantly"),
+    }
+}
+
+fn spark_conversion_presentation(
+    conversion: &coincube_spark_protocol::PaymentConversionSummary,
+    token_amount: Option<u64>,
+) -> (&'static str, String, StatusFilter) {
+    use coincube_spark_protocol::SwapStatus;
+    let to_usdb = token_amount.is_some();
+    // Only a completed conversion is "Converted": one still
+    // settling, or one that failed, says so, as the Swap
+    // screen's result does.
+    let title = match conversion.status {
+        SwapStatus::RefundNeeded | SwapStatus::Refunded => localized_copy("Swap refund"),
+        SwapStatus::Failed => localized_copy("Conversion didn't go through"),
+        SwapStatus::Pending if to_usdb => localized_copy("Converting to USDB"),
+        SwapStatus::Pending => localized_copy("Converting to bitcoin"),
+        SwapStatus::Completed if to_usdb => localized_copy("Converted to USDB"),
+        SwapStatus::Completed => localized_copy("Converted to bitcoin"),
+    };
+    let status = match conversion.status {
+        SwapStatus::Completed => StatusFilter::Confirmed,
+        SwapStatus::Pending => StatusFilter::Pending,
+        SwapStatus::Failed | SwapStatus::RefundNeeded | SwapStatus::Refunded => {
+            StatusFilter::Failed
+        }
+    };
+    ("Spark · BTC ⇄ USDB", title.to_owned(), status)
+}
+
+fn spark_entry_facts(
+    payment: &PaymentSummary,
+    conversion: Option<&coincube_spark_protocol::PaymentConversionSummary>,
+    received: bool,
+    invoice: &Option<String>,
+    description: &Option<String>,
+    identifiers: &[Fact],
+) -> Vec<Fact> {
+    let mut facts = Vec::new();
+    if let Some(amounts) = conversion.and_then(|conversion| conversion.amounts) {
+        facts.push((
+            if received {
+                "Conversion"
+            } else {
+                "Paid from USDB"
+            },
+            conversion_amounts(amounts, payment.token_decimals.unwrap_or(6)),
+        ));
+    }
+    if let Some(invoice) = invoice {
+        facts.push(("Invoice", short_identifier(invoice)));
+    }
+    if let Some(description) = description {
+        facts.push(("Description", description.clone()));
+    }
+    if identifiers.iter().all(|(name, _)| *name != "Payment ID") {
+        facts.push(("Payment ID", payment.id.clone()));
+    }
+    facts
+}
+
+fn liquid_entry_amount(payment: &DomainPayment) -> (String, String, String) {
+    match &payment.details {
+        DomainPaymentDetails::LiquidAsset {
+            asset_id,
+            asset_info,
+            ..
+        } => {
+            let usdt = asset_id == USDT_ASSET_ID_MAINNET;
+            match asset_info {
+                Some(info) => (
+                    format_token_display(info.amount_minor, u32::from(info.precision)),
+                    if usdt { "USDt" } else { asset_id.as_str() }.to_owned(),
+                    if usdt {
+                        "USDt on Liquid".to_owned()
+                    } else {
+                        asset_id.clone()
+                    },
+                ),
+                None if usdt => (
+                    format_usdt_display(payment.amount_sat),
+                    "USDt".to_owned(),
+                    "USDt on Liquid".to_owned(),
+                ),
+                None => (
+                    grouped(payment.amount_sat),
+                    format!("base units · {asset_id}"),
+                    asset_id.clone(),
+                ),
+            }
+        }
+        _ => (
+            grouped(payment.amount_sat),
+            "SATS".to_owned(),
+            "L-BTC".to_owned(),
+        ),
+    }
+}
+
 impl Entry {
     fn display_title(&self) -> &str {
         if self.generated_vault_title {
@@ -315,23 +477,7 @@ impl Entry {
         } else {
             tx.outgoing_amount
         };
-        // The title reads the single payment's label before the txid's, so
-        // an edit is stored where the title will read it back.
-        // Edit the key the title reads: the payment's own label, else the
-        // transaction's, else (nothing stored yet) the payment's.
-        let has = |key: &str| tx.labels.get(key).is_some_and(|label| !label.is_empty());
-        let label_key = match tx.is_single_payment() {
-            Some(outpoint) if has(&outpoint.to_string()) || !has(&tx.txid.to_string()) => {
-                LabelItem::OutPoint(outpoint)
-            }
-            _ => LabelItem::Txid(tx.txid),
-        };
-        let label = tx
-            .is_single_payment()
-            .and_then(|outpoint| tx.labels.get(&outpoint.to_string()))
-            .or_else(|| tx.labels.get(&tx.txid.to_string()))
-            .filter(|label| !label.is_empty())
-            .cloned();
+        let (label_key, label) = vault_entry_label(&tx);
         let generated_vault_title = label.is_none();
         let title = label.unwrap_or_else(|| {
             match direction {
@@ -466,42 +612,13 @@ impl Entry {
         let address = non_empty(details.lightning_address.as_deref());
         let tx_id = non_empty(details.tx_id.as_deref());
         let ticker = payment.token_ticker.as_deref().unwrap_or("token");
-        let (rail, fallback_title, status_note) = match (payment.method.as_str(), received) {
-            ("lightning", false) => (
-                "Spark → Lightning",
-                match (&address, &invoice) {
-                    (Some(address), _) => format!("Lightning address · {address}"),
-                    (None, Some(invoice)) => {
-                        format!("Lightning invoice · {}", short_identifier(invoice))
-                    }
-                    (None, None) => "Lightning payment".to_owned(),
-                },
-                "payment settled",
-            ),
-            ("lightning", true) => (
-                "Lightning → Spark",
-                "Lightning invoice paid".to_owned(),
-                "payment received",
-            ),
-            ("deposit", _) => (
-                "Bitcoin on-chain → Spark deposit",
-                "Bitcoin deposit".to_owned(),
-                "claimed into Spark",
-            ),
-            ("withdraw", _) => (
-                "Spark → Bitcoin on-chain",
-                "Bitcoin withdrawal".to_owned(),
-                "sent on-chain",
-            ),
-            ("token", true) => ("Spark token", format!("Received {ticker}"), "received"),
-            ("token", false) => ("Spark token", format!("Sent {ticker}"), "sent"),
-            (_, true) => (
-                "Spark",
-                "Received on Spark".to_owned(),
-                "received instantly",
-            ),
-            (_, false) => ("Spark", "Sent on Spark".to_owned(), "sent instantly"),
-        };
+        let (rail, fallback_title, status_note) = spark_route_presentation(
+            payment.method.as_str(),
+            received,
+            &address,
+            &invoice,
+            ticker,
+        );
         let (amount, unit) = if let Some(minor) = payment.token_amount {
             (
                 format_token_display(minor, payment.token_decimals.unwrap_or(0)),
@@ -546,54 +663,18 @@ impl Entry {
         let conversion = details.conversion.as_ref();
         let converted = conversion.filter(|_| received);
         let (rail, fallback_title, status) = match converted {
-            Some(conversion) => {
-                use coincube_spark_protocol::SwapStatus;
-                let to_usdb = payment.token_amount.is_some();
-                // Only a completed conversion is "Converted": one still
-                // settling, or one that failed, says so, as the Swap
-                // screen's result does.
-                let title = match conversion.status {
-                    SwapStatus::RefundNeeded | SwapStatus::Refunded => {
-                        localized_copy("Swap refund")
-                    }
-                    SwapStatus::Failed => localized_copy("Conversion didn't go through"),
-                    SwapStatus::Pending if to_usdb => localized_copy("Converting to USDB"),
-                    SwapStatus::Pending => localized_copy("Converting to bitcoin"),
-                    SwapStatus::Completed if to_usdb => localized_copy("Converted to USDB"),
-                    SwapStatus::Completed => localized_copy("Converted to bitcoin"),
-                };
-                let status = match conversion.status {
-                    SwapStatus::Completed => StatusFilter::Confirmed,
-                    SwapStatus::Pending => StatusFilter::Pending,
-                    SwapStatus::Failed | SwapStatus::RefundNeeded | SwapStatus::Refunded => {
-                        StatusFilter::Failed
-                    }
-                };
-                ("Spark · BTC ⇄ USDB", title.to_owned(), status)
-            }
+            Some(conversion) => spark_conversion_presentation(conversion, payment.token_amount),
             None => (rail, fallback_title, status),
         };
         let description = non_empty(payment.description.as_deref());
-        let mut facts = Vec::new();
-        if let Some(amounts) = conversion.and_then(|conversion| conversion.amounts) {
-            facts.push((
-                if received {
-                    "Conversion"
-                } else {
-                    "Paid from USDB"
-                },
-                conversion_amounts(amounts, payment.token_decimals.unwrap_or(6)),
-            ));
-        }
-        if let Some(invoice) = &invoice {
-            facts.push(("Invoice", short_identifier(invoice)));
-        }
-        if let Some(description) = &description {
-            facts.push(("Description", description.clone()));
-        }
-        if identifiers.iter().all(|(name, _)| *name != "Payment ID") {
-            facts.push(("Payment ID", payment.id.clone()));
-        }
+        let facts = spark_entry_facts(
+            &payment,
+            conversion,
+            received,
+            &invoice,
+            &description,
+            &identifiers,
+        );
         let rail_details = match payment.method.as_str() {
             "lightning" => Some(("Lightning details", facts)),
             "deposit" | "withdraw" => Some(("On-chain details", facts)),
@@ -680,41 +761,7 @@ impl Entry {
             DomainPaymentStatus::RefundPending => "Refund pending",
             DomainPaymentStatus::WaitingFeeAcceptance => "Awaiting fee",
         };
-        let (amount, unit, asset) = match &payment.details {
-            DomainPaymentDetails::LiquidAsset {
-                asset_id,
-                asset_info,
-                ..
-            } => {
-                let usdt = asset_id == USDT_ASSET_ID_MAINNET;
-                match asset_info {
-                    Some(info) => (
-                        format_token_display(info.amount_minor, u32::from(info.precision)),
-                        if usdt { "USDt" } else { asset_id.as_str() }.to_owned(),
-                        if usdt {
-                            "USDt on Liquid".to_owned()
-                        } else {
-                            asset_id.clone()
-                        },
-                    ),
-                    None if usdt => (
-                        format_usdt_display(payment.amount_sat),
-                        "USDt".to_owned(),
-                        "USDt on Liquid".to_owned(),
-                    ),
-                    None => (
-                        grouped(payment.amount_sat),
-                        format!("base units · {asset_id}"),
-                        asset_id.clone(),
-                    ),
-                }
-            }
-            _ => (
-                grouped(payment.amount_sat),
-                "SATS".to_owned(),
-                "L-BTC".to_owned(),
-            ),
-        };
+        let (amount, unit, asset) = liquid_entry_amount(&payment);
         let (rail, details_title) = match &payment.details {
             DomainPaymentDetails::Lightning { .. } => ("Lightning on Liquid", "Lightning details"),
             DomainPaymentDetails::OnChainBitcoin { .. } => ("Bitcoin swap", "Swap details"),
@@ -1590,6 +1637,8 @@ impl RecentScope {
     }
 }
 
+type HistoryLoadState<'a> = (bool, Option<(&'static str, &'a str)>);
+
 /// Whether `wallet`'s history is loading, and a failed read with what it
 /// read. A Vault's history is its transactions: its pending proposals load
 /// beside it and report their own failure.
@@ -1671,6 +1720,80 @@ fn day_heading_row<'a>(day: Option<NaiveDate>, today: NaiveDate) -> Element<'a, 
     .into()
 }
 
+fn push_recent_failures<'a>(
+    mut content: Column<'a, Message>,
+    entries: &[Entry],
+    states: &[(WalletFilter, HistoryLoadState<'_>)],
+) -> Column<'a, Message> {
+    for (wallet, (_, error)) in states {
+        let Some((source, error)) = error else {
+            continue;
+        };
+        let shown = entries.iter().any(|entry| entry.wallet == *wallet);
+        content = content.push(
+            row![
+                glyph::glyph(glyph::WARNING, 16.0, glyph::warn),
+                words(
+                    // The reason shows whether or not any of the source's
+                    // rows made the table.
+                    if shown {
+                        format!("Last known activity · {source} couldn't load: {error}")
+                    } else {
+                        format!("{source} couldn't load: {error}")
+                    },
+                    13.0,
+                    font::REGULAR,
+                    glyph::warn
+                )
+                .width(Length::Fill),
+                Action::new(
+                    Id::from(format!("tenshu.recent.{wallet}.retry")),
+                    text("Retry").size(13).font(font::MEDIUM),
+                    Message::FocusAction,
+                )
+                .style(theme::button::secondary)
+                .padding([6, 12])
+                .on_press(Message::Activity(ActivityMessage::RetryWallet(*wallet))),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        );
+    }
+    content
+}
+
+fn push_recent_rows<'a>(
+    mut rows: Column<'a, Message>,
+    entries: &[Entry],
+    scope: RecentScope,
+    selected: Option<&str>,
+    masked: bool,
+    today: NaiveDate,
+) -> Column<'a, Message> {
+    let mut previous_day = None;
+    for (index, entry) in entries.iter().enumerate() {
+        let day = entry_day(entry.timestamp);
+        if index == 0 || day != previous_day {
+            rows = rows.push(day_heading_row(day, today));
+            previous_day = day;
+        }
+        let press = match scope {
+            RecentScope::Cube => ActivityMessage::Open(entry.id.clone()),
+            RecentScope::Wallet(_) => ActivityMessage::Select(entry.id.clone()),
+        };
+        rows = rows.push(entry_row(
+            entry,
+            selected == Some(entry.id.as_str()),
+            masked,
+            entry_time(entry.timestamp),
+            44.0,
+            true,
+            press,
+        ));
+    }
+    rows
+}
+
 /// "Recent activity" (`P-Overview` `.sec` with `.acts5`): the scope's newest
 /// rows in Activity's own row, under Activity's column heads and day
 /// headings. On the Overview a row opens in Activity and "See all in
@@ -1746,40 +1869,7 @@ pub fn recent_activity<'a>(
             glyph::muted,
         ));
     }
-    for (wallet, (_, error)) in &states {
-        let Some((source, error)) = error else {
-            continue;
-        };
-        let shown = entries.iter().any(|entry| entry.wallet == *wallet);
-        content = content.push(
-            row![
-                glyph::glyph(glyph::WARNING, 16.0, glyph::warn),
-                words(
-                    // The reason shows whether or not any of the source's
-                    // rows made the table.
-                    if shown {
-                        format!("Last known activity · {source} couldn't load: {error}")
-                    } else {
-                        format!("{source} couldn't load: {error}")
-                    },
-                    13.0,
-                    font::REGULAR,
-                    glyph::warn
-                )
-                .width(Length::Fill),
-                Action::new(
-                    Id::from(format!("tenshu.recent.{wallet}.retry")),
-                    text("Retry").size(13).font(font::MEDIUM),
-                    Message::FocusAction,
-                )
-                .style(theme::button::secondary)
-                .padding([6, 12])
-                .on_press(Message::Activity(ActivityMessage::RetryWallet(*wallet))),
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-        );
-    }
+    content = push_recent_failures(content, &entries, &states);
     // `.acts5`: Activity's column heads, its day headings and its rows.
     let mut rows = Column::new().push(columns());
     if entries.is_empty() {
@@ -1800,27 +1890,7 @@ pub fn recent_activity<'a>(
             rule::horizontal(1)
         ]);
     }
-    let mut previous_day = None;
-    for (index, entry) in entries.iter().enumerate() {
-        let day = entry_day(entry.timestamp);
-        if index == 0 || day != previous_day {
-            rows = rows.push(day_heading_row(day, today));
-            previous_day = day;
-        }
-        let press = match scope {
-            RecentScope::Cube => ActivityMessage::Open(entry.id.clone()),
-            RecentScope::Wallet(_) => ActivityMessage::Select(entry.id.clone()),
-        };
-        rows = rows.push(entry_row(
-            entry,
-            selected == Some(entry.id.as_str()),
-            masked,
-            entry_time(entry.timestamp),
-            44.0,
-            true,
-            press,
-        ));
-    }
+    rows = push_recent_rows(rows, &entries, scope, selected, masked, today);
     content
         .push(tenshu::bleed(ROW_INSET, rows))
         .width(Length::Fill)
@@ -1969,6 +2039,164 @@ fn vault_explorer_url(chain: crate::chain::ChainId, tx: &HistoryTransaction) -> 
 
 const DETAIL_EXPLORER_ID: &str = "tenshu.activity.detail.explorer";
 
+fn push_detail_facts<'a>(
+    mut detail: Column<'a, Message>,
+    entry: &Entry,
+    cache: &Cache,
+    masked: bool,
+) -> Column<'a, Message> {
+    // `.dl.dsec`: the facts under a rule.
+    detail = detail
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(rule::horizontal(1));
+    if let Some(time) = (entry.timestamp != 0)
+        .then(|| DateTime::<Utc>::from_timestamp(entry.timestamp as i64, 0))
+        .flatten()
+    {
+        let local = time.with_timezone(&Local);
+        detail = detail.push(iced::widget::tooltip(
+            fact(
+                localized_copy("Date"),
+                local
+                    .format(&coincube_ui::locale::date_pattern(
+                        "%a %-d %b %Y, %H:%M",
+                        &local,
+                    ))
+                    .to_string(),
+                false,
+            ),
+            container(words(
+                localized_format!(
+                    "UTC{} · device time zone",
+                    "UTC{} · Zona horaria del dispositivo",
+                    local.format("%:z")
+                ),
+                12.0,
+                font::REGULAR,
+                glyph::muted,
+            ))
+            .padding([6, 10])
+            .style(theme::container::shell_menu),
+            iced::widget::tooltip::Position::Bottom,
+        ));
+    }
+    if let Some(fee) = &entry.fee {
+        detail = detail.push(fact(localized_copy("Fee"), fee_detail(fee, masked), false));
+    }
+    if let ActivityTarget::Vault(tx) = &entry.target {
+        if let Some(height) = tx.height {
+            detail = detail.push(fact(
+                localized_copy("Confirmations"),
+                vault_confirmation_detail(height, cache.blockheight()),
+                false,
+            ));
+        } else {
+            detail = detail.push(fact(
+                localized_copy("Confirmations"),
+                "0 · Pending".to_owned(),
+                false,
+            ));
+        }
+    }
+    if let Some((key, value)) = &entry.peer {
+        detail = detail.push(fact(key, private_fact(key, value, masked), true));
+    }
+    detail
+}
+
+fn push_detail_label_editor<'a>(
+    mut detail: Column<'a, Message>,
+    activity: &'a Activity,
+    entry: &Entry,
+) -> Column<'a, Message> {
+    // `.lblf`: wallets that store labels take an edit here.
+    if entry.label_key.is_some() {
+        let draft = activity.label_draft_for(&entry.id);
+        let stored = activity.stored_label(entry);
+        let value = draft.unwrap_or(stored);
+        let saving = activity.label_saving_for(&entry.id);
+        let mut field = column![
+            words("Label", 13.5, font::SEMIBOLD, glyph::ink),
+            tenshu::text_field(DETAIL_LABEL_ID, "Label", value, Message::FocusAction)
+                .size(FieldSize::Compact)
+                .hide_label()
+                .placeholder("Add a note for this transaction")
+                .on_input_maybe((!saving).then_some(|value: String| {
+                    Message::Activity(ActivityMessage::LabelEdited(value))
+                }))
+                .on_submit(Message::Activity(ActivityMessage::SaveLabel)),
+        ]
+        .spacing(6);
+        type Tone = fn(&theme::Theme) -> iced::Color;
+        let note: Option<(&str, Tone)> = if saving {
+            Some((localized_copy("Saving…"), glyph::muted))
+        } else if let Some(error) = activity.label_error_for(&entry.id) {
+            Some((error, glyph::bad))
+        } else if draft.is_some_and(|draft| draft != stored) {
+            Some((localized_copy("Press Enter to save"), glyph::muted))
+        } else {
+            None
+        };
+        if let Some((note, tone)) = note {
+            field = field.push(words(note, 12.0, font::REGULAR, tone));
+        }
+        detail = detail.push(column![
+            container(field).padding([14, 0]),
+            rule::horizontal(1)
+        ]);
+    }
+    detail
+}
+
+fn push_detail_rail_disclosure<'a>(
+    mut detail: Column<'a, Message>,
+    activity: &Activity,
+    entry: &Entry,
+    masked: bool,
+) -> Column<'a, Message> {
+    if let Some((title, facts)) = entry
+        .rail_details
+        .as_ref()
+        .filter(|(_, facts)| !facts.is_empty())
+    {
+        // `.disc`: a 44px row, the title in 14px semibold and the chevron
+        // at its right edge, turned up while open.
+        let expanded = activity.details_open_for(&entry.id);
+        detail = detail.push(
+            Action::new(
+                DETAIL_RAIL_ID,
+                row![
+                    words(*title, 14.0, font::SEMIBOLD, glyph::ink).width(Length::Fill),
+                    glyph::glyph(
+                        if expanded {
+                            glyph::CHEVRON_UP
+                        } else {
+                            glyph::CHEVRON_DOWN
+                        },
+                        16.0,
+                        glyph::muted
+                    ),
+                ]
+                .spacing(8)
+                .height(Length::Fixed(43.0))
+                .align_y(Alignment::Center),
+                Message::FocusAction,
+            )
+            .padding(0)
+            .width(Length::Fill)
+            .style(theme::button::transparent_border)
+            .on_press(Message::Activity(ActivityMessage::ToggleDetails(!expanded))),
+        );
+        detail = detail.push(rule::horizontal(1));
+        if expanded {
+            for (key, value) in facts {
+                detail = detail.push(fact(key, private_fact(key, value, masked), false));
+            }
+        }
+    }
+    detail
+}
+
 fn detail_pane<'a>(activity: &'a Activity, entry: &Entry, cache: &'a Cache) -> Column<'a, Message> {
     let masked = cache.balance_amounts_masked();
     let needs_signatures = matches!(
@@ -2109,99 +2337,9 @@ fn detail_pane<'a>(activity: &'a Activity, entry: &Entry, cache: &'a Cache) -> C
             );
     }
 
-    // `.dl.dsec`: the facts under a rule.
-    detail = detail
-        .push(Space::new().height(Length::Fixed(20.0)))
-        .push(rule::horizontal(1));
-    if let Some(time) = (entry.timestamp != 0)
-        .then(|| DateTime::<Utc>::from_timestamp(entry.timestamp as i64, 0))
-        .flatten()
-    {
-        let local = time.with_timezone(&Local);
-        detail = detail.push(iced::widget::tooltip(
-            fact(
-                localized_copy("Date"),
-                local
-                    .format(&coincube_ui::locale::date_pattern(
-                        "%a %-d %b %Y, %H:%M",
-                        &local,
-                    ))
-                    .to_string(),
-                false,
-            ),
-            container(words(
-                localized_format!(
-                    "UTC{} · device time zone",
-                    "UTC{} · Zona horaria del dispositivo",
-                    local.format("%:z")
-                ),
-                12.0,
-                font::REGULAR,
-                glyph::muted,
-            ))
-            .padding([6, 10])
-            .style(theme::container::shell_menu),
-            iced::widget::tooltip::Position::Bottom,
-        ));
-    }
-    if let Some(fee) = &entry.fee {
-        detail = detail.push(fact(localized_copy("Fee"), fee_detail(fee, masked), false));
-    }
-    if let ActivityTarget::Vault(tx) = &entry.target {
-        if let Some(height) = tx.height {
-            detail = detail.push(fact(
-                localized_copy("Confirmations"),
-                vault_confirmation_detail(height, cache.blockheight()),
-                false,
-            ));
-        } else {
-            detail = detail.push(fact(
-                localized_copy("Confirmations"),
-                "0 · Pending".to_owned(),
-                false,
-            ));
-        }
-    }
-    if let Some((key, value)) = &entry.peer {
-        detail = detail.push(fact(key, private_fact(key, value, masked), true));
-    }
+    detail = push_detail_facts(detail, entry, cache, masked);
 
-    // `.lblf`: wallets that store labels take an edit here.
-    if entry.label_key.is_some() {
-        let draft = activity.label_draft_for(&entry.id);
-        let stored = activity.stored_label(entry);
-        let value = draft.unwrap_or(stored);
-        let saving = activity.label_saving_for(&entry.id);
-        let mut field = column![
-            words("Label", 13.5, font::SEMIBOLD, glyph::ink),
-            tenshu::text_field(DETAIL_LABEL_ID, "Label", value, Message::FocusAction)
-                .size(FieldSize::Compact)
-                .hide_label()
-                .placeholder("Add a note for this transaction")
-                .on_input_maybe((!saving).then_some(|value: String| {
-                    Message::Activity(ActivityMessage::LabelEdited(value))
-                }))
-                .on_submit(Message::Activity(ActivityMessage::SaveLabel)),
-        ]
-        .spacing(6);
-        type Tone = fn(&theme::Theme) -> iced::Color;
-        let note: Option<(&str, Tone)> = if saving {
-            Some((localized_copy("Saving…"), glyph::muted))
-        } else if let Some(error) = activity.label_error_for(&entry.id) {
-            Some((error, glyph::bad))
-        } else if draft.is_some_and(|draft| draft != stored) {
-            Some((localized_copy("Press Enter to save"), glyph::muted))
-        } else {
-            None
-        };
-        if let Some((note, tone)) = note {
-            field = field.push(words(note, 12.0, font::REGULAR, tone));
-        }
-        detail = detail.push(column![
-            container(field).padding([14, 0]),
-            rule::horizontal(1)
-        ]);
-    }
+    detail = push_detail_label_editor(detail, activity, entry);
 
     for (index, (name, value)) in entry.identifiers.iter().enumerate() {
         detail = detail.push(identifier_row(index, name, value));
@@ -2223,46 +2361,7 @@ fn detail_pane<'a>(activity: &'a Activity, entry: &Entry, cache: &'a Cache) -> C
         }
     }
 
-    if let Some((title, facts)) = entry
-        .rail_details
-        .as_ref()
-        .filter(|(_, facts)| !facts.is_empty())
-    {
-        // `.disc`: a 44px row, the title in 14px semibold and the chevron
-        // at its right edge, turned up while open.
-        let expanded = activity.details_open_for(&entry.id);
-        detail = detail.push(
-            Action::new(
-                DETAIL_RAIL_ID,
-                row![
-                    words(*title, 14.0, font::SEMIBOLD, glyph::ink).width(Length::Fill),
-                    glyph::glyph(
-                        if expanded {
-                            glyph::CHEVRON_UP
-                        } else {
-                            glyph::CHEVRON_DOWN
-                        },
-                        16.0,
-                        glyph::muted
-                    ),
-                ]
-                .spacing(8)
-                .height(Length::Fixed(43.0))
-                .align_y(Alignment::Center),
-                Message::FocusAction,
-            )
-            .padding(0)
-            .width(Length::Fill)
-            .style(theme::button::transparent_border)
-            .on_press(Message::Activity(ActivityMessage::ToggleDetails(!expanded))),
-        );
-        detail = detail.push(rule::horizontal(1));
-        if expanded {
-            for (key, value) in facts {
-                detail = detail.push(fact(key, private_fact(key, value, masked), false));
-            }
-        }
-    }
+    detail = push_detail_rail_disclosure(detail, activity, entry, masked);
 
     if let Some(label) = next_step(entry, activity.vault_supports_replacement()) {
         detail = detail.push(Space::new().height(Length::Fixed(16.0))).push(
@@ -2312,28 +2411,17 @@ fn detail_surface<'a>(
         })
 }
 
-fn render_at_width<'a>(
-    activity: &'a Activity,
-    cache: &'a Cache,
-    width: f32,
-) -> Element<'a, Message> {
-    let entries = activity.entries();
-    let masked = cache.balance_amounts_masked();
-    let cutoff = activity.complete_through();
-    let loaded = entries.len();
-    let visible: Vec<_> = entries
-        .iter()
-        .filter(|entry| {
-            (entry.timestamp == 0 || cutoff.is_none_or(|cutoff| entry.timestamp > cutoff))
-                && activity.filters.includes(entry)
-        })
-        .collect();
+fn selected_feed_entry<'e>(
+    activity: &'e Activity,
+    entries: &'e [Entry],
+    visible: &[&'e Entry],
+) -> Option<&'e Entry> {
     // A retained selection may be outside the current filter or the complete
     // history window. Only a row in the visible feed may own the detail pane,
     // except the row an Overview row opened: it may sit past the cutoff, or
     // be missing while a read fails. Its fresh copy wins once loaded, and the
     // filters still apply to whichever copy is shown.
-    let selected = activity.selected_id.as_ref().and_then(|id| {
+    activity.selected_id.as_ref().and_then(|id| {
         visible
             .iter()
             .copied()
@@ -2352,7 +2440,170 @@ fn render_at_width<'a>(
                     // The filters judge the copy shown, fresh or kept.
                     .filter(|shown| activity.filters.includes(shown))
             })
-    });
+    })
+}
+
+fn push_feed_empty<'a>(
+    mut list: Column<'a, Message>,
+    activity: &Activity,
+    entries_empty: bool,
+    cutoff: Option<u64>,
+    has_history_error: bool,
+) -> Column<'a, Message> {
+    let message = if cutoff.is_some() {
+        "Load older activity to complete this date range"
+    } else if entries_empty {
+        "No transactions yet"
+    } else {
+        "No activity matches these filters"
+    };
+    let mut empty = Column::new()
+        .spacing(12)
+        .align_x(Alignment::Center)
+        .push(words(
+            localized_copy(message),
+            16.0,
+            font::SEMIBOLD,
+            glyph::ink,
+        ));
+    if entries_empty && cutoff.is_none() && !has_history_error && activity.filters.count() == 0 {
+        empty = empty.push_maybe(
+            coincube_ui::worldview_copy::VoiceLine::EmptyHistory
+                .get()
+                .map(|line| words(line, 14.0, font::REGULAR, glyph::muted)),
+        );
+    }
+    if activity.filters.count() > 0 {
+        empty = empty.push(
+            Action::new(
+                Id::from("tenshu.activity.empty.clear"),
+                text(localized_copy("Clear filters"))
+                    .size(14)
+                    .font(font::MEDIUM),
+                Message::FocusAction,
+            )
+            .style(theme::button::secondary)
+            .padding([8, 16])
+            .on_press(Message::Activity(ActivityMessage::Clear)),
+        );
+    }
+    list = list.push(
+        container(empty)
+            .width(Length::Fill)
+            .padding([64, 12])
+            .align_x(iced::alignment::Horizontal::Center),
+    );
+    list
+}
+
+fn push_feed_rows<'a>(
+    mut list: Column<'a, Message>,
+    visible: Vec<&Entry>,
+    selected: Option<&Entry>,
+    beside: bool,
+    masked: bool,
+    today: NaiveDate,
+    selected_detail: &mut Option<Column<'a, Message>>,
+) -> Column<'a, Message> {
+    let mut previous_day = None;
+    let mut first_day = true;
+    for entry in visible {
+        let is_selected = selected.is_some_and(|selected| selected.id == entry.id);
+        let day = entry_day(entry.timestamp);
+        if first_day || day != previous_day {
+            list = list.push(day_heading_row(day, today));
+            previous_day = day;
+            first_day = false;
+        }
+        list = list.push(activity_row(entry, is_selected, masked));
+        if is_selected && !beside {
+            // Keep compact detail in the selected row's scroll position and
+            // immediately after it in keyboard traversal, even deep in history.
+            if let Some(detail) = selected_detail.take() {
+                list = list.push(column![detail_surface(detail), rule::horizontal(1)]);
+            }
+        }
+    }
+    list
+}
+
+fn activity_feed_surface<'a>(
+    mut list: Column<'a, Message>,
+    activity: &Activity,
+    loading: bool,
+    frame: Frame,
+    beside: bool,
+    selected_detail: Option<Column<'a, Message>>,
+) -> Row<'a, Message> {
+    if activity.vault_has_more || activity.spark_has_more || activity.liquid_has_more {
+        let mut more = Action::new(
+            Id::from("tenshu.activity.more"),
+            text(localized_copy("Load older activity"))
+                .size(14)
+                .font(font::MEDIUM),
+            Message::FocusAction,
+        )
+        .style(theme::button::secondary)
+        .padding([8, 16]);
+        if !loading {
+            more = more.on_press(Message::Activity(ActivityMessage::LoadMore));
+        }
+        list = list.push(container(more).padding([16, 12]));
+    }
+    // `.lst`: row text on the page column and 24px below the last row. The
+    // list ends where the detail pane starts, so its right inset loses it.
+    let pane = if beside && selected_detail.is_some() {
+        DETAIL_SPAN
+    } else {
+        0.0
+    };
+    let list = scrollable(container(list).padding(iced::Padding {
+        top: 0.0,
+        right: (frame.right - pane - ROW_INSET).max(0.0),
+        bottom: 24.0,
+        left: frame.left - ROW_INSET,
+    }))
+    .id(Id::from(ACTIVITY_LIST_SCROLL_ID))
+    .width(Length::Fill)
+    .height(Length::Fill);
+    // Keep the list's widget tag stable when selection adds the pane;
+    // otherwise Iced discards the list's current scroll offset.
+    let mut split = Row::new().push(list).height(Length::Fill);
+    if let Some(detail) = selected_detail.filter(|_| beside) {
+        split = split.push(rule::vertical(1)).push(
+            container(
+                scrollable(detail_surface(detail))
+                    .id(Id::from(ACTIVITY_DETAIL_SCROLL_ID))
+                    .height(Length::Fill),
+            )
+            .width(Length::Fixed(SELECTED_DETAIL_WIDTH))
+            .height(Length::Fill)
+            .style(|theme: &theme::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(theme.colors.shell.panel)),
+                ..Default::default()
+            }),
+        );
+    }
+    split
+}
+
+fn render_at_width<'a>(
+    activity: &'a Activity,
+    cache: &'a Cache,
+    width: f32,
+) -> Element<'a, Message> {
+    let entries = activity.entries();
+    let masked = cache.balance_amounts_masked();
+    let cutoff = activity.complete_through();
+    let loaded = entries.len();
+    let visible: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            (entry.timestamp == 0 || cutoff.is_none_or(|cutoff| entry.timestamp > cutoff))
+                && activity.filters.includes(entry)
+        })
+        .collect();
+    let selected = selected_feed_entry(activity, &entries, &visible);
     let selected_listed =
         selected.is_some_and(|selected| visible.iter().any(|entry| entry.id == selected.id));
     let beside = detail_beside_list(width);
@@ -2457,52 +2708,12 @@ fn render_at_width<'a>(
         ]);
     }
     if visible.is_empty() && !loading {
-        let message = if cutoff.is_some() {
-            "Load older activity to complete this date range"
-        } else if entries.is_empty() {
-            "No transactions yet"
-        } else {
-            "No activity matches these filters"
-        };
-        let mut empty = Column::new()
-            .spacing(12)
-            .align_x(Alignment::Center)
-            .push(words(
-                localized_copy(message),
-                16.0,
-                font::SEMIBOLD,
-                glyph::ink,
-            ));
-        if entries.is_empty()
-            && cutoff.is_none()
-            && !has_history_error
-            && activity.filters.count() == 0
-        {
-            empty = empty.push_maybe(
-                coincube_ui::worldview_copy::VoiceLine::EmptyHistory
-                    .get()
-                    .map(|line| words(line, 14.0, font::REGULAR, glyph::muted)),
-            );
-        }
-        if activity.filters.count() > 0 {
-            empty = empty.push(
-                Action::new(
-                    Id::from("tenshu.activity.empty.clear"),
-                    text(localized_copy("Clear filters"))
-                        .size(14)
-                        .font(font::MEDIUM),
-                    Message::FocusAction,
-                )
-                .style(theme::button::secondary)
-                .padding([8, 16])
-                .on_press(Message::Activity(ActivityMessage::Clear)),
-            );
-        }
-        list = list.push(
-            container(empty)
-                .width(Length::Fill)
-                .padding([64, 12])
-                .align_x(iced::alignment::Horizontal::Center),
+        list = push_feed_empty(
+            list,
+            activity,
+            entries.is_empty(),
+            cutoff,
+            has_history_error,
         );
     }
     let mut selected_detail = selected.map(|entry| detail_pane(activity, entry, cache));
@@ -2514,74 +2725,16 @@ fn render_at_width<'a>(
         }
     }
     let today = Local::now().date_naive();
-    let mut previous_day = None;
-    let mut first_day = true;
-    for entry in visible {
-        let is_selected = selected.is_some_and(|selected| selected.id == entry.id);
-        let day = entry_day(entry.timestamp);
-        if first_day || day != previous_day {
-            list = list.push(day_heading_row(day, today));
-            previous_day = day;
-            first_day = false;
-        }
-        list = list.push(activity_row(entry, is_selected, masked));
-        if is_selected && !beside {
-            // Keep compact detail in the selected row's scroll position and
-            // immediately after it in keyboard traversal, even deep in history.
-            if let Some(detail) = selected_detail.take() {
-                list = list.push(column![detail_surface(detail), rule::horizontal(1)]);
-            }
-        }
-    }
-    if activity.vault_has_more || activity.spark_has_more || activity.liquid_has_more {
-        let mut more = Action::new(
-            Id::from("tenshu.activity.more"),
-            text(localized_copy("Load older activity"))
-                .size(14)
-                .font(font::MEDIUM),
-            Message::FocusAction,
-        )
-        .style(theme::button::secondary)
-        .padding([8, 16]);
-        if !loading {
-            more = more.on_press(Message::Activity(ActivityMessage::LoadMore));
-        }
-        list = list.push(container(more).padding([16, 12]));
-    }
-    // `.lst`: row text on the page column and 24px below the last row. The
-    // list ends where the detail pane starts, so its right inset loses it.
-    let pane = if beside && selected_detail.is_some() {
-        DETAIL_SPAN
-    } else {
-        0.0
-    };
-    let list = scrollable(container(list).padding(iced::Padding {
-        top: 0.0,
-        right: (frame.right - pane - ROW_INSET).max(0.0),
-        bottom: 24.0,
-        left: frame.left - ROW_INSET,
-    }))
-    .id(Id::from(ACTIVITY_LIST_SCROLL_ID))
-    .width(Length::Fill)
-    .height(Length::Fill);
-    // Keep the list's widget tag stable when selection adds the pane;
-    // otherwise Iced discards the list's current scroll offset.
-    let mut split = Row::new().push(list).height(Length::Fill);
-    if let Some(detail) = selected_detail.filter(|_| beside) {
-        split = split.push(rule::vertical(1)).push(
-            container(
-                scrollable(detail_surface(detail))
-                    .id(Id::from(ACTIVITY_DETAIL_SCROLL_ID))
-                    .height(Length::Fill),
-            )
-            .width(Length::Fixed(SELECTED_DETAIL_WIDTH))
-            .height(Length::Fill)
-            .style(|theme: &theme::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(theme.colors.shell.panel)),
-                ..Default::default()
-            }),
-        );
-    }
+    list = push_feed_rows(
+        list,
+        visible,
+        selected,
+        beside,
+        masked,
+        today,
+        &mut selected_detail,
+    );
+    let split = activity_feed_surface(list, activity, loading, frame, beside, selected_detail);
     let head = head_frame(width, frame);
     column![
         header(activity, cache, shown, loaded, head),

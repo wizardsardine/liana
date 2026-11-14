@@ -821,6 +821,16 @@ pub struct CubeSettings {
     /// Persisted pending Liquid -> Vault transfer, used to restore UX state across app restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_liquid_to_vault_transfer: Option<PendingLiquidToVaultTransfer>,
+    /// The Spark cross-network receive (SideShift → bitcoin) still in
+    /// progress, so its page survives a lock or restart. Without it, the Shift
+    /// ID (which a refund or SideShift support needs) was gone the moment the
+    /// app closed, although the bitcoin itself still arrives.
+    ///
+    /// Written when the shift is created; cleared when its bitcoin arrives,
+    /// when it expires unfunded, and when the user closes its finished page.
+    /// Holds no keys: a shift id, the two addresses and the chosen asset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_spark_shift: Option<PendingSparkShift>,
     /// Last-seen value of the account's `liquidEnabled` grant (Liquid sunset).
     ///
     /// A cache of server state, persisted because of an ordering problem: the
@@ -1031,6 +1041,19 @@ pub struct PendingLiquidToVaultTransfer {
     pub amount_sat: u64,
 }
 
+/// A Spark cross-network receive that has a live shift: everything needed to
+/// put its page back and resume polling SideShift. See
+/// [`CubeSettings::pending_spark_shift`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PendingSparkShift {
+    /// The shift as SideShift created it: id, deposit address and limits.
+    pub shift: crate::services::sideshift::ShiftResponse,
+    /// What the user deposits, as [`crate::services::sideshift::DepositOption::key`].
+    pub deposit_option: String,
+    /// Where SideShift refunds to, on the deposit's chain.
+    pub refund_address: String,
+}
+
 impl CubeSettings {
     /// Create a new `CubeSettings` with a caller-supplied id string, taken
     /// verbatim — no round-trip through `uuid::Uuid`, so the byte-exact value
@@ -1067,6 +1090,7 @@ impl CubeSettings {
             unit_setting: unit::UnitSetting::default(),
             fiat_price: Some(fiat::PriceSetting::default()), // Initialize with default (enabled: true)
             pending_liquid_to_vault_transfer: None,
+            pending_spark_shift: None,
             passkey_metadata: None,
             allow_random_grid_phrase: false,
             balance_masked: false,
@@ -1687,9 +1711,9 @@ pub enum GridSeedSource {
     /// BIP-85 from the signer with this **BIP-32 master fingerprint**.
     ///
     /// The fingerprint is the point. The installer derives the grid seed from
-    /// whichever signer that session holds — the Cube's master seed in
-    /// developer mode, a freshly generated one otherwise — and neither is
-    /// guaranteed to be the hot signer a later `Wallet` load turns up.
+    /// the Cube master in every mode. Historical installers also used unrelated
+    /// generated seeds. Neither is guaranteed to be the hot signer a later
+    /// `Wallet` load turns up.
     /// `Wallet::signer` is "some descriptor key whose seed is on this machine",
     /// which can be a *different* seed entirely (a key reused from an earlier
     /// Vault) or absent while the right seed sits in the session (a master seed
@@ -6640,5 +6664,67 @@ mod bitcoin_atomic_import_settings_tests {
         .unwrap();
         assert_eq!(Settings::from_file(&directory).unwrap().cubes.len(), 1);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+impl PendingSparkShift {
+    /// A live USDt-on-Liquid → bitcoin shift, for tests.
+    pub fn sample() -> Self {
+        let option = crate::services::sideshift::deposit_options()[0];
+        Self {
+            shift: crate::services::sideshift::ShiftResponse {
+                id: "d97d3994cd95e54364b6".to_string(),
+                deposit_address: "VJL6BYGXdepositaddressVDVL".to_string(),
+                deposit_coin: Some(option.coin.to_string()),
+                deposit_network: Some(option.network.network_slug().to_string()),
+                settle_address: Some("bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg".to_string()),
+                settle_coin: Some("BTC".to_string()),
+                settle_network: Some("bitcoin".to_string()),
+                deposit_min: Some("10".to_string()),
+                deposit_max: Some("20000".to_string()),
+                deposit_amount: None,
+                settle_amount: None,
+                rate: None,
+                // No expiry: tests that need one set it, so none of them
+                // start failing as the calendar passes a fixed date.
+                expires_at: None,
+                created_at: Some("2026-11-13T00:00:00.000Z".to_string()),
+                status: Some("waiting".to_string()),
+                affiliate_fee_percent: None,
+                network_fee_usd: None,
+            },
+            deposit_option: option.key(),
+            refund_address: "VJL6BYGXrefundaddressVDVL".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod pending_spark_shift_tests {
+    //! The stored Spark cross-network receive: absent from files that never had
+    //! one, and read back exactly as written.
+
+    use super::*;
+    use coincube_core::miniscript::bitcoin::Network;
+
+    #[test]
+    fn a_cube_without_a_conversion_writes_nothing_and_old_files_still_load() {
+        let cube = CubeSettings::new("Family".to_string(), Network::Bitcoin);
+        let json = serde_json::to_value(&cube).unwrap();
+        assert!(json.get("pending_spark_shift").is_none());
+
+        let back: CubeSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.pending_spark_shift, None);
+    }
+
+    #[test]
+    fn a_stored_conversion_round_trips_exactly() {
+        let mut cube = CubeSettings::new("Family".to_string(), Network::Bitcoin);
+        cube.pending_spark_shift = Some(PendingSparkShift::sample());
+
+        let json = serde_json::to_string(&cube).unwrap();
+        let back: CubeSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pending_spark_shift, Some(PendingSparkShift::sample()));
     }
 }

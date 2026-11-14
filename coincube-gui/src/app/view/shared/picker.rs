@@ -245,7 +245,7 @@ pub fn dropdown_note<'a, M: 'a>(note: &str) -> Element<'a, M> {
 /// under it, and a check when selected. `on_press: None` shows it disabled.
 #[allow(clippy::too_many_arguments)]
 pub fn dropdown_option<'a, M>(
-    id: &'static str,
+    id: impl Into<iced::advanced::widget::Id>,
     logo: Element<'a, M>,
     title: &str,
     chip: &str,
@@ -316,7 +316,7 @@ where
             .width(Length::Fixed(18.0)),
         );
     coincube_ui::widget::action::Action::new(
-        iced::advanced::widget::Id::new(id),
+        id.into(),
         UiContainer::new(row)
             .padding([6, 10])
             .width(Length::Fill)

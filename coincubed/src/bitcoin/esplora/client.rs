@@ -158,6 +158,8 @@ impl std::fmt::Display for Error {
 /// closure so the request can be rebuilt for each attempt — BDK's
 /// `SyncRequest` is consumed by the call and isn't trivially clonable.
 pub struct Client {
+    #[cfg(feature = "native-recovery")]
+    scan_pacer: Option<Arc<ScanPacer>>,
     admission: Option<Arc<crate::connect::ConnectBackend>>,
     providers: Vec<Provider>,
     /// Set by `DaemonHandle::stop` so an in-flight scan stops walking the
@@ -321,7 +323,38 @@ fn admission_error(provider: &Provider, error: crate::connect::AdmissionError) -
     }
 }
 
+#[cfg(feature = "native-recovery")]
+struct ScanPacer {
+    interval: Duration,
+    next: Mutex<Instant>,
+}
+#[cfg(feature = "native-recovery")]
+impl ScanPacer {
+    fn wait(&self, abort: &AtomicBool) -> bool {
+        while !abort.load(Ordering::Relaxed) {
+            let delay = {
+                let mut next = self.next.lock().expect("scan pacing lock");
+                let now = Instant::now();
+                if now >= *next {
+                    *next = now + self.interval;
+                    return !abort.load(Ordering::Relaxed);
+                }
+                next.saturating_duration_since(now)
+            };
+            std::thread::sleep(delay.min(Duration::from_millis(20)));
+        }
+        false
+    }
+}
+
 impl Client {
+    #[cfg(feature = "native-recovery")]
+    pub(crate) fn set_native_recovery_pacing(&mut self, interval: Duration) {
+        self.scan_pacer = Some(Arc::new(ScanPacer {
+            interval,
+            next: Mutex::new(Instant::now()),
+        }));
+    }
     /// Build the client and the provider chain from `config`. Construction
     /// is now infallible (in the network sense): if every provider's
     /// startup connectivity check fails we still hand back a usable
@@ -351,6 +384,8 @@ impl Client {
         Ok(Self {
             providers: vec![provider],
             abort,
+            #[cfg(feature = "native-recovery")]
+            scan_pacer: None,
             admission: Some(Arc::new(backend)),
         })
     }
@@ -457,6 +492,8 @@ impl Client {
         Ok(Client {
             providers,
             abort,
+            #[cfg(feature = "native-recovery")]
+            scan_pacer: None,
             admission: None,
         })
     }
@@ -767,6 +804,12 @@ impl Client {
         K: Ord + Clone + std::fmt::Debug + Send,
         F: FnMut() -> FullScanRequest<K>,
     {
+        #[cfg(feature = "native-recovery")]
+        let parallel_requests = if self.scan_pacer.is_some() {
+            1
+        } else {
+            parallel_requests
+        };
         let result = self.try_in_order(|client| {
             let mut request = build_request();
             // BDK checks these iterators between address batches, but otherwise
@@ -776,7 +819,18 @@ impl Client {
             for spks in request.spks_by_keychain.values_mut() {
                 let abort = self.abort.clone();
                 let iter = std::mem::replace(spks, Box::new(std::iter::empty()));
-                *spks = Box::new(iter.take_while(move |_| !abort.load(Ordering::Relaxed)));
+                #[cfg(feature = "native-recovery")]
+                let pacer = self.scan_pacer.clone();
+                *spks = Box::new(iter.take_while(move |_| {
+                    if abort.load(Ordering::Relaxed) {
+                        return false;
+                    }
+                    #[cfg(feature = "native-recovery")]
+                    if let Some(pacer) = &pacer {
+                        return pacer.wait(&abort);
+                    }
+                    true
+                }));
             }
             client
                 .full_scan(request, stop_gap, parallel_requests)
@@ -956,6 +1010,8 @@ mod tests {
         assert_eq!(lagging.requests(), vec!["/block-height/900001"]);
         let client = Client {
             providers: vec![lagging.provider("Connect")],
+            #[cfg(feature = "native-recovery")]
+            scan_pacer: None,
             admission: Some(Arc::new(backend_fixture(&lagging, authority))),
             abort: Arc::new(AtomicBool::new(false)),
         };
@@ -998,6 +1054,8 @@ mod tests {
             )]));
             let client = Client {
                 providers: vec![server.provider("Connect")],
+                #[cfg(feature = "native-recovery")]
+                scan_pacer: None,
                 admission: Some(Arc::new(backend_fixture(&server, authority_fixture(hash)))),
                 abort: Arc::new(AtomicBool::new(false)),
             };
@@ -1186,6 +1244,8 @@ mod tests {
     /// hitting an actual Esplora server.
     fn client_with(providers: Vec<Provider>) -> Client {
         Client {
+            #[cfg(feature = "native-recovery")]
+            scan_pacer: None,
             admission: None,
             providers,
             abort: Arc::new(AtomicBool::new(false)),
@@ -1747,6 +1807,13 @@ mod tests {
 
     /// (status, body) per exact path; unknown paths answer 404.
     fn mock_esplora(routes: StdHashMap<&'static str, (u16, String)>) -> MockEsplora {
+        mock_esplora_with_pacing(routes, None)
+    }
+    type MockPacing = (Duration, Arc<Mutex<Vec<Instant>>>);
+    fn mock_esplora_with_pacing(
+        routes: StdHashMap<&'static str, (u16, String)>,
+        pacing: Option<MockPacing>,
+    ) -> MockEsplora {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock esplora");
         let addr = listener.local_addr().unwrap();
         let base = format!("http://{}", addr);
@@ -1784,10 +1851,27 @@ mod tests {
                     .to_string();
                 seen_heads.lock().unwrap().push(head);
                 seen.lock().unwrap().push(path.clone());
-                let (status, body) = routes
+                let paced_out = if path.starts_with("/scripthash/") {
+                    pacing.as_ref().is_some_and(|(minimum, times)| {
+                        let now = Instant::now();
+                        let mut times = times.lock().unwrap();
+                        let too_fast = times
+                            .last()
+                            .is_some_and(|last| now.duration_since(*last) < *minimum);
+                        times.push(now);
+                        too_fast
+                    })
+                } else {
+                    false
+                };
+                let (mut status, mut body) = routes
                     .get(path.as_str())
                     .cloned()
                     .unwrap_or((404, "not found".to_string()));
+                if paced_out {
+                    status = 429;
+                    body = "unit rate limit".into();
+                }
                 let reason = match status {
                     200 => "OK",
                     429 => "Too Many Requests",
@@ -1885,6 +1969,129 @@ mod tests {
         // request log rather than by a 404.
         m.insert("/blocks/tip/hash", (200, H2.to_string()));
         m
+    }
+
+    #[cfg(feature = "native-recovery")]
+    #[test]
+    fn native_full_scan_pacing_is_aggregate_and_survives_retry_builders() {
+        use bdk_electrum::bdk_chain::{local_chain::CheckPoint, BlockId};
+        use bitcoin::{
+            hashes::{sha256, Hash},
+            ScriptBuf,
+        };
+        let scripts = [
+            ScriptBuf::from_bytes(vec![0x6a]),
+            ScriptBuf::from_bytes(vec![0x6a, 0x00]),
+        ];
+        let mut paths = routes((200, blocks_json(&[bitcoin_summary(H1, 1, 1231006505, H0)])));
+        paths.insert("/block-height/0", (200, H0.into()));
+        for script in &scripts {
+            let key = format!("/scripthash/{}/txs", sha256::Hash::hash(script.as_bytes()));
+            paths.insert(Box::leak(key.into_boxed_str()), (200, "[]".into()));
+        }
+        let build = || {
+            let tip = CheckPoint::new(BlockId {
+                height: 0,
+                hash: H0.parse().unwrap(),
+            });
+            let mut request = FullScanRequest::from_chain_tip(tip);
+            for (branch, script) in scripts.iter().cloned().enumerate() {
+                request = request
+                    .set_spks_for_keychain(branch, (0..).map(move |index| (index, script.clone())));
+            }
+            request
+        };
+        let unpaced_times = Arc::new(Mutex::new(Vec::new()));
+        let unpaced = mock_esplora_with_pacing(
+            paths.clone(),
+            Some((Duration::from_millis(50), unpaced_times)),
+        );
+        let client = client_with(vec![unpaced.provider("unit")]);
+        assert!(client.full_scan(build, 4, 2).is_err());
+        let times = Arc::new(Mutex::new(Vec::new()));
+        let mut failed_paths = paths.clone();
+        for (path, response) in &mut failed_paths {
+            if path.starts_with("/scripthash/") {
+                *response = (500, "unit upstream failure".into());
+            }
+        }
+        let failing = mock_esplora_with_pacing(
+            failed_paths,
+            Some((Duration::from_millis(50), times.clone())),
+        );
+        let server =
+            mock_esplora_with_pacing(paths, Some((Duration::from_millis(50), times.clone())));
+        let mut client = client_with(vec![
+            failing.provider("failed unit"),
+            server.provider("unit"),
+        ]);
+        client.set_native_recovery_pacing(Duration::from_millis(75));
+        client.full_scan(build, 4, 8).unwrap();
+        // A new request builder/poll uses the SAME client pacing state.
+        client.full_scan(build, 4, 8).unwrap();
+        let observed = times.lock().unwrap();
+        assert_eq!(observed.len(), 18);
+        assert!(observed
+            .windows(2)
+            .all(|pair| pair[1].duration_since(pair[0]) >= Duration::from_millis(50)));
+        drop(observed);
+        client.abort.store(true, Ordering::Relaxed);
+        assert!(matches!(client.full_scan(build, 4, 8), Err(Error::Aborted)));
+        // An abort while waiting cannot be accepted as a partial BDK scan.
+        client.abort.store(false, Ordering::Relaxed);
+        *client.scan_pacer.as_ref().unwrap().next.lock().unwrap() =
+            Instant::now() + Duration::from_secs(2);
+        let signal = client.abort.clone();
+        let trigger = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            signal.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        assert!(matches!(client.full_scan(build, 4, 8), Err(Error::Aborted)));
+        assert!(started.elapsed() < Duration::from_millis(250));
+        trigger.join().unwrap();
+        assert_eq!(times.lock().unwrap().len(), 18);
+    }
+
+    #[test]
+    fn public_rate_limit_uses_authenticated_backstop_and_all_cooling_stays_unknown() {
+        let mut throttled = StdHashMap::new();
+        throttled.insert("/blocks/tip/height", (429, "capacity".into()));
+        throttled.insert("/blocks", (429, "capacity".into()));
+        let public = mock_esplora(throttled.clone());
+        let mut healthy = StdHashMap::new();
+        healthy.insert("/blocks/tip/height", (200, "2".into()));
+        healthy.insert(
+            "/blocks",
+            (200, blocks_json(&[bitcoin_summary(H2, 2, 1700000000, H1)])),
+        );
+        let backstop = mock_esplora(healthy);
+        let config = crate::config::EsploraConfig {
+            addr: public.base.clone(),
+            token: None,
+            fallback_addr: Some(backstop.base.clone()),
+            fallback_token: Some("localhost-unit-token".into()),
+            secondary_fallback_addr: None,
+            secondary_fallback_token: None,
+        };
+        let client = Client::new(&config, Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(client.tip_time().unwrap(), 1700000000);
+        assert!(public
+            .heads
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|head| !head.contains("localhost-unit-token")));
+        assert!(backstop.heads.lock().unwrap().iter().any(|head| head
+            .to_ascii_lowercase()
+            .contains("authorization: bearer localhost-unit-token")));
+        let unavailable = mock_esplora(throttled);
+        let failed_config = crate::config::EsploraConfig {
+            fallback_addr: Some(unavailable.base.clone()),
+            ..config
+        };
+        let failed = Client::new(&failed_config, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(matches!(failed.tip_time(), Err(Error::AllCooling)));
     }
 
     #[test]

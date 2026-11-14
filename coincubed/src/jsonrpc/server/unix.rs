@@ -229,6 +229,58 @@ fn peer_uid(stream: &net::UnixStream) -> io::Result<Option<u32>> {
     }
 }
 
+fn prepare_connection(
+    connection: &net::UnixStream,
+    socket_path: &path::Path,
+    idle_timeout: time::Duration,
+) -> bool {
+    // The listener is non-blocking so this loop can poll `shutdown`, and on
+    // macOS `accept(2)` hands back a socket that inherits that flag (Linux's
+    // `accept4` does not). Left inherited, the handler's first `read` returns
+    // `WouldBlock` for any client whose bytes have not landed yet, which
+    // `read_command` propagates and which closes the connection with the
+    // request unread. Each connection is served by its own blocking thread;
+    // only the accept loop needs to poll.
+    // A client can disconnect between accept and socket configuration.
+    // The socket belongs to that client, so its failure must not stop the
+    // listener or keep later clients from reaching the daemon.
+    if let Err(error) = connection.set_nonblocking(false) {
+        log::warn!(
+            "Discarding JSONRPC client: blocking setup failed: {}",
+            error
+        );
+        return false;
+    }
+    if let Err(error) = connection.set_read_timeout(Some(idle_timeout)) {
+        log::warn!(
+            "Discarding JSONRPC client: read timeout setup failed: {}",
+            error
+        );
+        return false;
+    }
+    if let Err(error) = ensure_peer_owns_socket(connection, socket_path) {
+        log::warn!("Discarding JSONRPC client: {}", error);
+        return false;
+    }
+    true
+}
+
+fn wait_for_capacity(
+    connections_counter: &atomic::AtomicU32,
+    shutdown: &atomic::AtomicBool,
+) -> bool {
+    while connections_counter.load(atomic::Ordering::Relaxed) >= MAX_CONNECTIONS {
+        if shutdown.load(atomic::Ordering::Relaxed) {
+            return false;
+        }
+        thread::sleep(time::Duration::from_millis(50));
+    }
+    if shutdown.load(atomic::Ordering::Relaxed) {
+        return false;
+    }
+    true
+}
+
 fn rpcserver_loop_with_timeout(
     listener: net::UnixListener,
     socket_path: &path::Path,
@@ -248,43 +300,12 @@ fn rpcserver_loop_with_timeout(
                 continue;
             }
         };
-        // The listener is non-blocking so this loop can poll `shutdown`, and on
-        // macOS `accept(2)` hands back a socket that inherits that flag (Linux's
-        // `accept4` does not). Left inherited, the handler's first `read` returns
-        // `WouldBlock` for any client whose bytes have not landed yet, which
-        // `read_command` propagates and which closes the connection with the
-        // request unread. Each connection is served by its own blocking thread;
-        // only the accept loop needs to poll.
-        // A client can disconnect between accept and socket configuration.
-        // The socket belongs to that client, so its failure must not stop the
-        // listener or keep later clients from reaching the daemon.
-        if let Err(error) = connection.set_nonblocking(false) {
-            log::warn!(
-                "Discarding JSONRPC client: blocking setup failed: {}",
-                error
-            );
-            continue;
-        }
-        if let Err(error) = connection.set_read_timeout(Some(idle_timeout)) {
-            log::warn!(
-                "Discarding JSONRPC client: read timeout setup failed: {}",
-                error
-            );
-            continue;
-        }
-        if let Err(error) = ensure_peer_owns_socket(&connection, socket_path) {
-            log::warn!("Discarding JSONRPC client: {}", error);
+        if !prepare_connection(&connection, socket_path, idle_timeout) {
             continue;
         }
         log::trace!("New JSONRPC connection");
 
-        while connections_counter.load(atomic::Ordering::Relaxed) >= MAX_CONNECTIONS {
-            if shutdown.load(atomic::Ordering::Relaxed) {
-                return Ok(());
-            }
-            thread::sleep(time::Duration::from_millis(50));
-        }
-        if shutdown.load(atomic::Ordering::Relaxed) {
+        if !wait_for_capacity(&connections_counter, &shutdown) {
             return Ok(());
         }
         connections_counter.fetch_add(1, atomic::Ordering::Relaxed);

@@ -75,8 +75,10 @@ try:
         run(["codesign", "-f", "-s", identity, "--options", "runtime", "--entitlements", release / "coincube.entitlements", test_bundle])
         run(["codesign", "--verify", "--strict", test_bundle])
         checked = subprocess.run([str(test_bundle / "Contents/MacOS/testnet4_provision"), "--ignored", "--test-threads=1"],
-                                 cwd=repo, env=environment, check=True, stdout=subprocess.PIPE, stderr=log, timeout=180)
+                                 cwd=repo, env=environment, stdout=subprocess.PIPE, stderr=log, timeout=180)
         log.write(checked.stdout)
+        log.flush()
+        checked.check_returncode()
         for name in (b"signed_keychain_roundtrip_and_compare_and_swap", b"run_owned_cube_uses_real_backup_and_reopens_on_resume"):
             if name + b" ... ok" not in checked.stdout:
                 raise ValueError("Required signed test did not pass")

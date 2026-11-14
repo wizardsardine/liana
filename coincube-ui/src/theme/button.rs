@@ -64,83 +64,26 @@ pub fn orange_outline(theme: &Theme, status: Status) -> Style {
 /// artboards keep pills only for wallet actions such as Send and Receive.
 fn button(p: &Button, status: Status) -> Style {
     match status {
-        Status::Active => Style {
-            background: Some(Background::Color(p.active.background)),
-            text_color: p.active.text,
-            border: if let Some(color) = p.active.border {
-                Border {
-                    radius: super::tenshu::radius::CONTROL.into(),
-                    width: 1.0,
-                    color,
-                }
-            } else {
-                Border {
-                    ..Default::default()
-                }
-            },
-            ..Default::default()
-        },
+        Status::Active => palette_style(&p.active, p.active.text),
         Status::Pressed => {
             if let Some(pressed) = p.pressed {
-                Style {
-                    background: Some(Background::Color(pressed.background)),
-                    text_color: pressed.text,
-                    border: if let Some(color) = pressed.border {
-                        Border {
-                            radius: super::tenshu::radius::CONTROL.into(),
-                            width: 1.0,
-                            color,
-                        }
-                    } else {
-                        Border {
-                            ..Default::default()
-                        }
-                    },
-                    ..Default::default()
-                }
+                palette_style(&pressed, pressed.text)
             } else {
                 button(p, Status::Active)
             }
         }
-        Status::Hovered => Style {
-            background: Some(Background::Color(p.hovered.background)),
-            text_color: p.hovered.text,
-            border: if let Some(color) = p.hovered.border {
-                Border {
-                    radius: super::tenshu::radius::CONTROL.into(),
-                    width: 1.0,
-                    color,
-                }
-            } else {
-                Border {
-                    ..Default::default()
-                }
-            },
-            ..Default::default()
-        },
+        Status::Hovered => palette_style(&p.hovered, p.hovered.text),
         Status::Disabled => {
             if let Some(disabled) = p.disabled {
-                Style {
-                    background: Some(Background::Color(disabled.background)),
-                    text_color: Color {
+                palette_style(
+                    &disabled,
+                    Color {
                         a: 0.2,
                         r: disabled.text.r,
                         g: disabled.text.g,
                         b: disabled.text.b,
                     },
-                    border: if let Some(color) = disabled.border {
-                        Border {
-                            radius: super::tenshu::radius::CONTROL.into(),
-                            width: 1.0,
-                            color,
-                        }
-                    } else {
-                        Border {
-                            ..Default::default()
-                        }
-                    },
-                    ..Default::default()
-                }
+                )
             } else {
                 let active: Style = button(p, Status::Active);
 
@@ -153,6 +96,25 @@ fn button(p: &Button, status: Status) -> Style {
                 }
             }
         }
+    }
+}
+
+fn palette_style(palette: &super::palette::ButtonPalette, text_color: Color) -> Style {
+    Style {
+        background: Some(Background::Color(palette.background)),
+        text_color,
+        border: if let Some(color) = palette.border {
+            Border {
+                radius: super::tenshu::radius::CONTROL.into(),
+                width: 1.0,
+                color,
+            }
+        } else {
+            Border {
+                ..Default::default()
+            }
+        },
+        ..Default::default()
     }
 }
 

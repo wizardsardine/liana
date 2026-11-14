@@ -110,8 +110,10 @@ def refused_missing_inputs(node, raw):
     assert not verdict["allowed"], verdict
     assert verdict["reject-reason"] == "missing-inputs", verdict
     tip = node.rpc.getbestblockhash()
+    generate_block = node.rpc.generateblock
+    block_address = node.rpc.getnewaddress()
     with pytest.raises(JSONRPCException) as rejected:
-        node.rpc.generateblock(node.rpc.getnewaddress(), [raw])
+        generate_block(block_address, [raw])
     assert rejected.value.error["code"] == -25, rejected.value.error
     assert "bad-txns-inputs-missingorspent" in rejected.value.error["message"], (
         rejected.value.error
@@ -252,8 +254,10 @@ def test_signature_split_is_one_sided_on_blake2b(two_chain, record_property):
     assert refused["reject-reason"].startswith("mempool-script-verify-flag-failed"), refused
     record_property("bitcoin_unified_mempool_reject", refused["reject-reason"])
     tip = a.rpc.getbestblockhash()
+    generate_block = a.rpc.generateblock
+    block_address = a.rpc.getnewaddress()
     with pytest.raises(JSONRPCException) as rejected:
-        a.rpc.generateblock(a.rpc.getnewaddress(), [raw])
+        generate_block(block_address, [raw])
     assert rejected.value.error["code"] == -25, rejected.value.error
     assert "mandatory-script-verify-flag-failed" in rejected.value.error["message"], (
         rejected.value.error

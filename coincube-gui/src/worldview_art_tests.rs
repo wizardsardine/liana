@@ -1,5 +1,7 @@
 use coincube_ui::component::{
-    amount::BitcoinDisplayUnit, quote_display, received_celebration_page, sent_celebration_page,
+    amount::BitcoinDisplayUnit,
+    payment_result::{payment_result, Outcome},
+    quote_display,
 };
 use coincube_ui::illustration::Slot;
 use coincube_ui::image;
@@ -95,30 +97,33 @@ fn check_worldview_art(artwork: ArtworkStyle, art_label: &str) {
             for (screen, view, heading) in [
                 (
                     "sent",
-                    sent_celebration_page(
-                        "bitcoin-send",
+                    payment_result(
+                        Outcome::Sent,
                         "50,000 sats",
+                        "bitcoin-send",
                         &sent_quote,
                         &sent_image,
-                        "sent",
-                        sent_line,
                         (),
-                    ),
-                    "Transaction complete!",
+                    )
+                    .voice(sent_line)
+                    .into(),
+                    "Payment sent",
                 ),
                 (
                     "received",
                     worldview_copy::render_in(mode, || {
-                        received_celebration_page(
-                            "spark-receive",
+                        payment_result(
+                            Outcome::Received,
                             "50,000 sats",
+                            "spark-receive",
                             &received_quote,
                             &received_image,
-                            "received",
                             (),
                         )
+                        .voice(received_line)
+                        .into()
                     }),
-                    "Payment received!",
+                    "Payment received",
                 ),
                 ("restored", done_art(appearance == "light"), ""),
                 (

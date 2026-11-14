@@ -338,7 +338,8 @@ def test_completed_strict_run_auto_enrolls_without_enabling_funding(flow, monkey
     with qa_funding.pool() as data:
         assert data['accounts'] == {}  # cleanup authorization does not enroll a funding source
         enrolled = next(iter(data['retirements'].values()))
-        assert enrolled['run_id'] == record['run_id'] and enrolled['key_id'] == 34
+        assert enrolled['run_id'] == record['run_id']
+        assert enrolled['key_id'] == 34
         assert enrolled['phase'] == 'enrolled'
     cleanup.register_completed(runner)
     with qa_funding.pool() as data:
@@ -419,7 +420,8 @@ def test_capacity_resume_finishes_cube_after_key_success_even_with_free_slot(flo
         return result
     monkeypatch.setattr(cleanup, 'api', api)
     with pytest.raises(Blocked): cleanup.ensure_capacity(runner)
-    assert cloud['key'] is None and cloud['cube'] is not None
+    assert cloud['key'] is None
+    assert cloud['cube'] is not None
     runner.account = {'tokens': {'access_token': 'synthetic'}}
     runner.keys = lambda: [{'id': 100 + i, 'name': 'other', 'network': 'testnet4'} for i in range(6)]
     runner.phone_key_label = lambda: 'QA new'
@@ -714,7 +716,8 @@ def test_owned_and_shared_discovery_scan_all_networks_before_deleting(flow, shar
     visible_other(cloud, shared=shared, network='bitcoin')
     cloud['other_keys'][99] = [{'id': 34}]
     with pytest.raises(Failed, match='SHARED_KEY'): cleanup.ensure_capacity(runner)
-    assert '/connect/cubes' in cloud['reads'] and '/connect/cubes/shared-with-me' in cloud['reads']
+    assert '/connect/cubes' in cloud['reads']
+    assert '/connect/cubes/shared-with-me' in cloud['reads']
     assert '/connect/cubes/99/keys' in cloud['reads']
     assert cloud['deletes'] == []
 
@@ -727,7 +730,8 @@ def test_unrelated_complete_inventories_allow_retirement_without_has_vault_asser
     if flag == 'missing': row.pop('hasVault')
     else: row['hasVault'] = flag
     cleanup.ensure_capacity(runner)
-    assert '/connect/cubes/99/keys' in cloud['reads'] and '/connect/cubes/99' in cloud['reads']
+    assert '/connect/cubes/99/keys' in cloud['reads']
+    assert '/connect/cubes/99' in cloud['reads']
     assert ('/connect/cubes/99/vault' in cloud['reads']) is (not shared)
     assert cloud['deletes'] == ['/connect/cubes/12/vault', '/keys/delete', '/connect/cubes/12']
 

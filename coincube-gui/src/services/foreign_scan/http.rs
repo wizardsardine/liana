@@ -65,24 +65,7 @@ impl HttpSource {
             return Err(ScanError::Http(response.status().as_u16()));
         }
         if fresh {
-            for (name, expected) in [("x-coincube-observation", "fresh"), ("x-cache", "BYPASS")] {
-                let mut values = response.headers().get_all(name).iter();
-                if values.next().and_then(|v| v.to_str().ok()) != Some(expected)
-                    || values.next().is_some()
-                {
-                    return Err(ScanError::Freshness);
-                }
-            }
-            if !response
-                .headers()
-                .get_all("cache-control")
-                .iter()
-                .filter_map(|v| v.to_str().ok())
-                .flat_map(|s| s.split(','))
-                .any(|s| s.trim().eq_ignore_ascii_case("no-store"))
-            {
-                return Err(ScanError::Freshness);
-            }
+            validate_fresh_headers(&response)?;
         }
         if response.content_length().is_some_and(|v| v > BODY as u64) {
             return Err(ScanError::BodyLimit);
@@ -201,4 +184,26 @@ impl Source for HttpSource {
         }
         Ok(transaction)
     }
+}
+
+fn validate_fresh_headers(response: &reqwest::Response) -> Result<(), ScanError> {
+    for (name, expected) in [("x-coincube-observation", "fresh"), ("x-cache", "BYPASS")] {
+        let mut values = response.headers().get_all(name).iter();
+        if values.next().and_then(|v| v.to_str().ok()) != Some(expected) || values.next().is_some()
+        {
+            return Err(ScanError::Freshness);
+        }
+    }
+    if !response
+        .headers()
+        .get_all("cache-control")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|s| s.split(','))
+        .any(|s| s.trim().eq_ignore_ascii_case("no-store"))
+    {
+        return Err(ScanError::Freshness);
+    }
+
+    Ok(())
 }

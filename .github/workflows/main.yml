@@ -265,20 +265,9 @@ jobs:
         # Cap test parallelism: the filesystem-heavy tests create files under
         # %TEMP% and immediately read them back, and running many at once
         # multiplies the odds that Defender is mid-scan on one of them. Test
-        # execution is only seconds of this build-dominated job, so the lower
-        # concurrency costs little and, with the in-code retries, removes the
-        # remaining Windows flakiness.
+        # execution includes an observed ~75-minute GUI run. Keep its existing
+        # two-thread budget, with the native feature suites in a separate job.
         run: |
-          # Exercise Windows MCP early, including the separately built STDIO
-          # companion, before the longer full workspace suite.
-          cargo build -p coincube-mcp --features adapter --locked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:TENSHU_MCP_TEST_ADAPTER = Join-Path $PWD 'target/debug/tenshu-mcp.exe'
-          cargo test -p coincube-gui --lib app::local_mcp::tests --no-default-features --locked -- --include-ignored --test-threads=2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test -p coincube-gui --lib stdio_acceptance_tests --no-default-features --features mcp-proposals,mcp-transactions --locked -- --ignored --test-threads=1
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Remove-Item Env:TENSHU_MCP_TEST_ADAPTER
           cargo test --no-default-features -- --test-threads=2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python contrib/check_windows_binary.py target/debug/coincube.exe
@@ -345,7 +334,7 @@ jobs:
           TENSHU_MCP_TEST_ADAPTER="$adapter" cargo test -p coincube-gui --lib stdio_client_reads_real_wallet_and_observes_revocation -- --ignored
           TENSHU_MCP_TEST_ADAPTER="$adapter" cargo test -p coincube-gui --lib stdio_acceptance_tests --locked -- --ignored --test-threads=1
       - name: Wallet proposals, transactions and native lock boundaries
-        if: matrix.toolchain == 'pinned'
+        if: matrix.toolchain == 'pinned' && matrix.os != 'windows-latest'
         env:
           BREEZ_API_KEY: DUMMY_REGTEST_ONLY
           TMPDIR: ${{ runner.temp }}
@@ -357,6 +346,7 @@ jobs:
       # above never reaches its unit tests. They are offline — no API, no
       # keystore — so run that one module with the feature on every leg.
       - name: Testnet4 seed-resume gate tests
+        if: matrix.os != 'windows-latest'
         env:
           TMPDIR: ${{ runner.temp }}
         run: cargo test -p coincube-gui ${{ matrix.os == 'windows-latest' && '--no-default-features' || '' }} --features integration-tests --lib installer::testnet4_seed_resume_tests
@@ -367,3 +357,82 @@ jobs:
           name: keyring-fixture-${{ matrix.toolchain }}
           path: test-logs/gnome-keyring.log
           if-no-files-found: ignore
+
+  windows_native_boundaries:
+    name: Windows native boundaries (pinned)
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.action != 'edited' || github.event.changes.base != null))) }}
+    needs: linter
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      BREEZ_API_KEY: ${{ github.event_name == 'workflow_dispatch' && 'DUMMY_BREEZ_API_KEY' || secrets.BREEZ_API_KEY }}
+      RUSTUP_TOOLCHAIN: ''
+    steps:
+      - name: Validate manual source SHA
+        if: github.event_name == 'workflow_dispatch' && inputs.source_sha != ''
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - name: Checkout source code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_sha || '' }}
+          persist-credentials: false
+      - name: Reduce Defender interference (Windows)
+        shell: pwsh
+        run: |
+          Add-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath $env:RUNNER_TEMP -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+      - name: Install Windows dependencies
+        run: choco install protoc --yes --no-progress
+      - name: Windows MCP adapter and STDIO boundaries
+        shell: pwsh
+        run: |
+          cargo build -p coincube-mcp --features adapter --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:TENSHU_MCP_TEST_ADAPTER = Join-Path $PWD 'target/debug/tenshu-mcp.exe'
+          cargo test -p coincube-gui --lib app::local_mcp::tests --no-default-features --locked -- --include-ignored --test-threads=2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p coincube-gui --lib stdio_acceptance_tests --no-default-features --features mcp-proposals,mcp-transactions --locked -- --ignored --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item Env:TENSHU_MCP_TEST_ADAPTER
+      - name: Wallet proposals, transactions and native lock boundaries
+        shell: pwsh
+        env:
+          BREEZ_API_KEY: DUMMY_REGTEST_ONLY
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          cargo test -p coincube-gui --lib --features mcp-proposals,mcp-transactions --locked proposal -- --test-threads=2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p coincube-gui --lib --features mcp-proposals,mcp-transactions --locked mcp_transaction -- --test-threads=2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Testnet4 seed-resume gate tests
+        shell: pwsh
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          cargo test -p coincube-gui --no-default-features --features integration-tests --lib installer::testnet4_seed_resume_tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p coincube-gui --no-default-features --features integration-tests --lib recovery_native::tests::oracle_diagnostic_
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test -p coincube-gui --no-default-features --features integration-tests --lib home::integration::tests::qa_initialization_never_overwrites_existing_off_or_unknown_profile_state -- --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  windows_ci_complete:
+    name: Windows CI complete
+    if: ${{ always() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.action != 'edited' || github.event.changes.base != null))) }}
+    needs: [unit_tests, windows_native_boundaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require both Windows workloads
+        shell: bash
+        env:
+          UNIT_TESTS_RESULT: ${{ needs.unit_tests.result }}
+          WINDOWS_NATIVE_RESULT: ${{ needs.windows_native_boundaries.result }}
+        run: |
+          printf 'unit_tests=%s\nwindows_native_boundaries=%s\n' "$UNIT_TESTS_RESULT" "$WINDOWS_NATIVE_RESULT"
+          [[ "$UNIT_TESTS_RESULT" == 'success' && "$WINDOWS_NATIVE_RESULT" == 'success' ]]

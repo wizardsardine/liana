@@ -2419,8 +2419,12 @@ impl State for LiquidSend {
                         {
                             format!("{} USDt", self.usdt_amount_input.value.trim())
                         } else {
-                            self.amount
-                                .to_formatted_string_with_unit(cache.bitcoin_unit)
+                            format!(
+                                "{} {}",
+                                self.amount
+                                    .to_formatted_string_with_unit(cache.bitcoin_unit),
+                                cache.bitcoin_unit.label()
+                            )
                         };
                     }
                     // Fresh quote for the success screen — pick the

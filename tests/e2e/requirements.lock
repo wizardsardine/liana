@@ -19,3 +19,12 @@ typing_extensions==4.16.0
 urllib3==2.8.0
 websocket-client==1.9.2
 wsproto==1.3.2
+
+# Independent public descriptor/PSBT verifier; same reviewed reference as tests/requirements.txt.
+asn1crypto==1.5.1
+base58==2.1.1
+bip32==3.4
+cffi==2.1.1
+coincurve==18.0.0
+pycparser==3.12
+https://github.com/darosior/python-bip380/archive/fb61971d9128e663f110ea2734c1d023e7e0266b.zip

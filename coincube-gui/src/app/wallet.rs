@@ -679,8 +679,8 @@ impl Wallet {
     /// # Cost
     ///
     /// The session cache is tried first, across every descriptor key, and costs
-    /// nothing — it covers the developer-mode case where the Vault key *is* the
-    /// Cube master seed already in hand. Only then does it touch disk, through
+    /// nothing — it covers a Cube-derived Vault key whose master seed is
+    /// already in hand. Only then does it touch disk, through
     /// [`crate::services::unlock::open_seed_for_any_of`]: **one** directory scan
     /// and one keystore read for the whole key set, then one Argon2id pass
     /// (~831 ms) per file whose name carries one of those keys. A Vault with no

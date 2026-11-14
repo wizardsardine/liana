@@ -763,14 +763,19 @@ pub fn liquid_swap_view<'a>(config: LiquidSwapConfig<'a>) -> Element<'a, LiquidS
     match config.phase {
         SwapPhase::Input => input_screen(&config),
         SwapPhase::Review => review_screen(&config),
-        SwapPhase::Sent => coincube_ui::component::received_celebration_page(
-            "liquid-send",
-            config.sent_amount_display,
-            config.sent_quote,
-            config.sent_image_handle,
-            CopyText::IsOnItsWay.get(),
-            LiquidSwapMessage::Done,
-        ),
+        SwapPhase::Sent => {
+            use coincube_ui::component::payment_result::{payment_result, Outcome};
+            payment_result(
+                Outcome::Confirming,
+                config.sent_amount_display,
+                "liquid-send",
+                config.sent_quote,
+                config.sent_image_handle,
+                LiquidSwapMessage::Done,
+            )
+            .headline(CopyText::SwapSent.get())
+            .into()
+        }
     }
 }
 

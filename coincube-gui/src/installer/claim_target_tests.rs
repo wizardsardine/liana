@@ -176,7 +176,7 @@ async fn a_claim_target_reuses_the_descriptor_and_takes_its_own_cube_identity() 
         "sharing the source Cube's id would collapse the two Cubes (I7)"
     );
     assert!(
-        !installer.context.fresh_fork_cube,
+        installer.context.claim_source.is_some(),
         "a claim target's seed comes from the source Cube, not from a fresh one"
     );
 }
@@ -389,7 +389,6 @@ async fn the_fork_chain_refuses_every_flow_but_creation_claim_and_cube_restore()
         // building it touches nothing on disk.
         assert!(installer.breez_client.is_none());
         assert!(installer.spark_backend.is_none());
-        assert!(!installer.context.fresh_fork_cube);
         assert!(!root.path().exists());
     }
 }
@@ -433,10 +432,6 @@ async fn the_claim_flow_never_asks_for_a_pin_a_descriptor_or_the_mnemonic_again(
     );
     assert!(installer.context.descriptor.is_some());
     assert!(installer.context.restore_pin.is_none());
-    assert!(
-        !installer.context.fresh_fork_seed_backed_up,
-        "no backup step runs, so nothing marks one as done"
-    );
     let _ = installer.view();
     let _ = installer.update(Message::Next);
     assert!(installer.current > 0, "Continue advances to target setup");

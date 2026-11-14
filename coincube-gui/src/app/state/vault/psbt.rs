@@ -1318,6 +1318,14 @@ impl PsbtState {
                                 "bitcoin-send",
                             ),
                         spend_amount_display: amount_display,
+                        fee_display: self.tx.fee_amount.map(|fee| {
+                            format!(
+                                "{} {}",
+                                fee.to_formatted_string_with_unit(cache.bitcoin_unit),
+                                cache.bitcoin_unit.label(),
+                            )
+                        }),
+                        txid: self.tx.psbt.unsigned_tx.compute_txid(),
                         is_self_transfer,
                         wallet: self.wallet.clone(),
                         recipient_identities: self.recipient_identities.clone().filter(|review| {
@@ -1500,6 +1508,10 @@ pub struct BroadcastModal {
     sent_image_handle: iced::widget::image::Handle,
     /// Formatted spend amount for the celebration display.
     spend_amount_display: String,
+    /// Network fee with its unit, for the receipt.
+    fee_display: Option<String>,
+    /// The broadcast transaction, for the receipt's Copy.
+    txid: Txid,
     /// True when every output of the tx returns to the wallet's own change
     /// addresses. Used by the celebration view to render the right phrasing.
     is_self_transfer: bool,
@@ -1637,6 +1649,10 @@ impl Modal for BroadcastModal {
                 &self.sent_image_handle,
                 self.is_self_transfer,
                 identity_review,
+                view::vault::psbt::BroadcastReceipt {
+                    fee: self.fee_display.as_deref(),
+                    txid: Some(self.txid),
+                },
             ),
         )
         .on_blur(on_blur)
@@ -2151,10 +2167,9 @@ impl SignModal {
     ///   on this machine". A Vault that reuses an earlier Vault's key can load a
     ///   seed that is *not* the one the wizard derived from, and BIP-85 off it
     ///   yields twelve confident, wrong words.
-    /// - **No words.** The wizard derives from the Cube's master seed in
-    ///   developer mode, and that seed is only a descriptor key if the user also
-    ///   added it as one. When they did not, `Wallet::signer` is `None` while
-    ///   the right seed sits unlocked in the session.
+    /// - **No words.** The wizard derives from the Cube's master seed,
+    ///   which need not be a descriptor key. `Wallet::signer` can be `None`
+    ///   while the exact source remains unlocked in the Cube session.
     ///
     /// Naming the seed at enrolment settles both: derive from *that*
     /// fingerprint, looking first at the loaded hot signer and then at the
@@ -2185,7 +2200,7 @@ impl SignModal {
     ///
     /// Two places it can be: loaded as the Vault's hot signer, or — for a
     /// master seed that is not a descriptor key, which is the passkey and
-    /// developer-mode shape — unlocked in the session. The session lookup is
+    /// Cube-master shape — unlocked in the session. The session lookup is
     /// fingerprint-checked by [`crate::app::session::unlocked_signer`] and
     /// scoped to the open Cube, so it cannot answer with another seed.
     fn grid_phrase_from_seed(&self, seed: Fingerprint) -> Option<GridRecoveryPhrase> {
@@ -3227,6 +3242,15 @@ pub fn merge_testnet4_integration_signatures(
 /// Sign with the Vault's hot key, keyed on the chain: `SIGHASH_ALL` into
 /// `partial_sigs` on the Bitcoin family (unchanged), unified signatures into
 /// the proprietary records on Bitcoin Blake2b.
+#[cfg(feature = "integration-tests")]
+pub(crate) fn sign_recovery_fixture_for_chain(
+    chain: ChainId,
+    signer: &crate::signer::Signer,
+    psbt: Psbt,
+) -> Result<Psbt, Error> {
+    sign_with_master_signer_for_chain(chain, signer, psbt)
+}
+
 fn sign_with_master_signer_for_chain(
     chain: ChainId,
     signer: &crate::signer::Signer,
@@ -3917,6 +3941,42 @@ mod tests {
         }
         assert!(state.phrase_words.iter().all(|w| w.value.is_empty()));
         assert!(!state.phrase_prefilled);
+    }
+
+    #[test]
+    fn a_grid_source_uses_only_its_recorded_cube_session_seed() {
+        use crate::app::{session, settings::GridSeedSource};
+        use coincube_core::{miniscript::bitcoin, signer::MasterSigner};
+        let _guard = session::test_guard();
+        session::close();
+        let cube_id = "synthetic-legacy-grid-761";
+        let secp = bitcoin::secp256k1::Secp256k1::new();
+        let source = MasterSigner::generate(Network::Signet).unwrap();
+        let source_fp = source.fingerprint(&secp);
+        let expected = GridRecoveryPhrase::from_master_signer(&source, &secp).unwrap();
+        let border_key = fingerprint("f714c228");
+        // An unrelated imported/historical hot key must never replace the
+        // recorded Cube master as the grid's BIP-85 source.
+        let hot = crate::signer::Signer::generate(Network::Signet).unwrap();
+        let mut wallet = wallet().with_signer(hot);
+        wallet.border_wallet_grid_seed.insert(
+            border_key,
+            GridSeedSource::MasterDerived {
+                fingerprint: source_fp,
+            },
+        );
+        let modal = sign_modal_for(wallet);
+        assert!(modal.border_wallet_grid_phrase(&border_key).is_none());
+        session::open_without_pin(cube_id);
+        session::store_unlocked_signer(cube_id, source_fp, source);
+        assert!(modal
+            .border_wallet_grid_phrase(&border_key)
+            .is_some_and(|phrase| phrase.as_str() == expected.as_str()));
+        let other = MasterSigner::generate(Network::Signet).unwrap();
+        session::store_unlocked_signer(cube_id, other.fingerprint(&secp), other);
+        assert!(modal.border_wallet_grid_phrase(&border_key).is_none());
+        session::close();
+        assert!(modal.border_wallet_grid_phrase(&border_key).is_none());
     }
 
     #[test]

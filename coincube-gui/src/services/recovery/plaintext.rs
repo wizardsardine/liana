@@ -55,8 +55,12 @@ impl std::fmt::Debug for SeedBlob {
 pub struct SeedBlobCube {
     pub uuid: String,
     pub name: String,
-    /// One of "bitcoin" | "testnet" | "signet" | "regtest". String rather
-    /// than an enum so a future network addition doesn't break older kits.
+    /// The Cube's chain as its Connect network string
+    /// (`ChainId::api_str`): "mainnet", "testnet", "testnet4", "signet",
+    /// "regtest", "bitcoin-blake2b" or "bitcoin-blake2b-testnet4". The seed
+    /// words are identical on every chain, so this is the only record of
+    /// which chain the kit restores to. String rather than an enum so a
+    /// future network addition doesn't break older kits.
     pub network: String,
     pub created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,6 +135,7 @@ impl std::fmt::Debug for DescriptorBlob {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DescriptorBlobCube {
     pub uuid: String,
+    /// Same Connect network string as [`SeedBlobCube::network`].
     pub network: String,
 }
 
