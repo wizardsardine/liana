@@ -125,8 +125,10 @@ fn setup_body(flow: &SparkSideshiftReceiveFlow) -> Element<'_, Msg> {
     let generate_btn = if flow.is_loading() {
         button::primary(None, localized_copy("Generating…")).width(Length::Fill)
     } else {
+        // Disabled until the refund address validates against the origin
+        // chain: a deposit address with nowhere valid to refund to is a trap.
         button::primary(None, localized_copy("Generate deposit address"))
-            .on_press(Msg::Generate)
+            .on_press_maybe(flow.can_generate().then_some(Msg::Generate))
             .width(Length::Fill)
     };
 

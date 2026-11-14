@@ -252,6 +252,13 @@ impl SparkSideshiftReceiveFlow {
     pub fn refund_error(&self) -> Option<&str> {
         self.refund_error.as_deref()
     }
+    /// Whether "Generate deposit address" is live: the refund address must
+    /// validate against the origin chain first. The view disables the button
+    /// otherwise; `Msg::Generate` re-checks, so this is UX, not the gate.
+    pub fn can_generate(&self) -> bool {
+        !self.loading
+            && validate_refund_address(self.selected.network, &self.refund_address).is_ok()
+    }
     pub fn shift(&self) -> Option<&ShiftResponse> {
         self.shift.as_ref()
     }
@@ -1215,6 +1222,25 @@ mod tests {
         let mut record = PendingSparkShift::sample();
         record.deposit_option = "doge:dogecoin".to_string();
         assert!(SparkSideshiftReceiveFlow::restored(backend(), &record).is_none());
+    }
+
+    #[test]
+    fn generate_stays_disabled_until_the_refund_address_fits_the_origin_chain() {
+        let liquid_usdt = crate::services::sideshift::deposit_option_by_key("usdt:liquid")
+            .expect("USDt on Liquid is offered");
+        let mut flow = SparkSideshiftReceiveFlow::new_preselected(backend(), liquid_usdt);
+        assert!(!flow.can_generate(), "blank refund address");
+
+        // A Solana address for a Liquid deposit — the mistake that loses funds.
+        let _ = flow.update(&Msg::RefundAddressEdited(
+            "135GTBUiUTDFYLzvstzJq4CxAXDLwZiBmZr9k9f8KBQy".to_string(),
+        ));
+        assert!(flow.refund_error().is_some());
+        assert!(!flow.can_generate(), "wrong-chain refund address");
+
+        // And pressing Generate anyway (stale button) still creates nothing.
+        let _ = flow.update(&Msg::Generate);
+        assert_eq!(flow.phase(), &SparkShiftPhase::Setup);
     }
 
     #[test]
