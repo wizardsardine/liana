@@ -233,7 +233,10 @@ impl<'a> SparkSendView<'a> {
             } else {
                 ReceiptRow::new(localized_copy("To"), short_id(recipient))
                     .mono()
-                    .on_copy(Message::Clipboard(recipient.to_string()))
+                    .on_copy(Message::CopyWithToast(
+                        recipient.to_string(),
+                        recipient_copied_notice(recipient).to_string(),
+                    ))
             };
             let mut rows = Vec::new();
             if !recipient.is_empty() {
@@ -254,7 +257,10 @@ impl<'a> SparkSendView<'a> {
                 rows.push(
                     ReceiptRow::new(localized_copy("Payment ID"), short_id(&ok.payment_id))
                         .mono()
-                        .on_copy(Message::Clipboard(ok.payment_id.clone())),
+                        .on_copy(Message::CopyWithToast(
+                            ok.payment_id.clone(),
+                            "Payment ID copied to clipboard".to_string(),
+                        )),
                 );
             }
             return payment_result(
@@ -762,6 +768,18 @@ fn method_label(method: &str) -> &str {
         "SparkInvoice" => "Spark invoice",
         "BitcoinAddress" => "Bitcoin address · on-chain",
         other => other,
+    }
+}
+
+/// The toast after copying the receipt's recipient: a BOLT11 invoice reads
+/// as an invoice, anything else (Bitcoin or Spark address) as an address.
+fn recipient_copied_notice(recipient: &str) -> &'static str {
+    let lower = recipient.trim().to_ascii_lowercase();
+    let bare = lower.strip_prefix("lightning:").unwrap_or(&lower);
+    if bare.starts_with("ln") {
+        "Invoice copied to clipboard"
+    } else {
+        "Address copied to clipboard"
     }
 }
 
@@ -2326,6 +2344,26 @@ pub fn send_target_picker_menu<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recipient_copy_toast_names_invoices_and_addresses() {
+        assert_eq!(
+            recipient_copied_notice("lnbc15u1pnxyz"),
+            "Invoice copied to clipboard"
+        );
+        assert_eq!(
+            recipient_copied_notice("LIGHTNING:LNBC15U1PNXYZ"),
+            "Invoice copied to clipboard"
+        );
+        assert_eq!(
+            recipient_copied_notice("135GTBUiWvLpZk9f8KBQy"),
+            "Address copied to clipboard"
+        );
+        assert_eq!(
+            recipient_copied_notice("bc1qexampleaddress"),
+            "Address copied to clipboard"
+        );
+    }
 
     #[test]
     fn conversion_fee_shows_a_sats_estimate_when_a_price_is_known() {

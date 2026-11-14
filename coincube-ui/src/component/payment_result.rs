@@ -21,7 +21,8 @@ use super::{button, separation};
 use crate::font;
 use crate::icon;
 use crate::locale::{copy as localized_copy, Text as CopyText};
-use crate::theme::{self, tenshu::text as tone_text, tenshu::Tone};
+use crate::theme::tenshu::button::{self as tenshu_button, ActionKind, ActionShape};
+use crate::theme::tenshu::{text as tone_text, type_size, Tone};
 use crate::widget::{Button, Column, Container, Element, Row, Text};
 
 /// The artwork's side in the two-column layout.
@@ -249,11 +250,19 @@ fn receipt_row<'a, M: Clone + 'a>(row: ReceiptRow<'a, M>) -> Element<'a, M> {
         )
         .push(value_col);
     if let Some(copy) = row.copy {
+        // The quiet text action (`.rlink`) the rest of Tenshu uses for an
+        // inline row action; the owner confirms the copy with a toast.
         line = line.push(
-            Button::new(icon::clipboard_icon().size(14))
-                .padding([2, 6])
-                .style(theme::button::transparent_border)
-                .on_press(copy),
+            Button::new(
+                iced::widget::text(localized_copy("Copy"))
+                    .font(font::MEDIUM)
+                    .size(type_size::BODY),
+            )
+            .padding(0)
+            .style(|t, status| {
+                tenshu_button::action(t, status, ActionKind::Quiet, ActionShape::Compact)
+            })
+            .on_press(copy),
         );
     }
     Container::new(line)

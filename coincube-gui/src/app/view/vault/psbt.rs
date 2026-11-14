@@ -562,7 +562,10 @@ pub fn broadcast_action_with_identity_review<'a>(
             page = page.row(
                 ReceiptRow::new(localized_copy("Transaction ID"), short_id(&txid))
                     .mono()
-                    .on_copy(Message::Clipboard(txid)),
+                    .on_copy(Message::CopyWithToast(
+                        txid,
+                        "Transaction ID copied to clipboard".to_string(),
+                    )),
             );
         }
         // The modal draws no surface of its own.
