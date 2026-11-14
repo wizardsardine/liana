@@ -77,23 +77,40 @@
 
         libdmg-hfsplus = pkgs.callPackage ./nix/libdmg-hfsplus.nix { };
 
+        # PKCS#11 module for the Certum card holding the Windows code signing key (contrib/release/sign.sh)
+        certumPkcs11 = pkgs.callPackage ./nix/certum-pkcs11.nix { };
+
         releaseShell = pkgs.mkShell {
+          # Trust bundle for `osslsigncode verify` (contrib/release/sign.sh)
+          LIANA_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
           buildInputs = [
             pkgs.unzip
             pkgs.gnutar
             pkgs.dpkg
             pkgs.rcodesign
+            # Windows installer Authenticode signing (contrib/release/sign.sh, contrib/release/windows/)
+            pkgs.osslsigncode
+            pkgs.pkcs11-provider
+            pkgs.opensc
+            pkgs.openssl
+            pkgs.curl
+            pkgs._7zz
             # macOS .dmg creation (contrib/release/macos/create-dmg.sh)
             pkgs.xorriso
             libdmg-hfsplus
             (pkgs.python3.withPackages (ps: [ ps.ds-store ]))
           ] ++ [ toolchain ];
+
+          # Where `osslsigncode -provider pkcs11` finds the pkcs11-provider module.
+          OPENSSL_MODULES = "${pkgs.pkcs11-provider}/lib/ossl-modules";
         };
 
       in {
         packages = {
           liana = lianaPackages;
           liana-business = lianaBusinessPackages;
+        } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          certum-pkcs11 = certumPkcs11;
         };
 
         devShells = {
