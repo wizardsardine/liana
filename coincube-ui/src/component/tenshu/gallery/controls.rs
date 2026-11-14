@@ -168,50 +168,7 @@ fn toggle_draws_its_state_in_the_thumb_position_and_fill() {
     for (name, theme) in themes() {
         let shell = theme.colors.shell;
         for is_on in [false, true] {
-            let mut mounted = Mounted::new(
-                Container::new(
-                    toggle("sw", is_on, Msg::Focus)
-                        .switch()
-                        .on_toggle(toggled("sw")),
-                )
-                .padding(8),
-                Size::new(120.0, 40.0),
-            );
-            let bounds = bounds_of(&mut mounted, "sw");
-            assert!(
-                mounted
-                    .texts()
-                    .contains(&if is_on { "On" } else { "Off" }.to_string()),
-                "{name}: the switch names its state in words"
-            );
-            let pixels = mounted.pixels(&theme, mouse::Cursor::Unavailable);
-            let left = sample(&pixels, 120, bounds.x + 12.0, bounds.center_y());
-            let right = sample(
-                &pixels,
-                120,
-                bounds.x + bounds.width - 12.0,
-                bounds.center_y(),
-            );
-            let thumb = if is_on { right } else { left };
-            let track = if is_on { left } else { right };
-            let expected_thumb = if is_on {
-                tokens::ON_ACCENT
-            } else {
-                shell.muted
-            };
-            let expected_track = if is_on {
-                shell.accent
-            } else {
-                shell.background
-            };
-            assert!(
-                near(thumb, expected_thumb),
-                "{name} on={is_on}: thumb {thumb:?}"
-            );
-            assert!(
-                near(track, expected_track),
-                "{name} on={is_on}: track {track:?}"
-            );
+            assert_toggle_render(name, &theme, shell, is_on);
         }
     }
 }
@@ -680,30 +637,7 @@ fn control_geometry_matches_the_v113_artboards() {
 fn control_text_and_state_colours_meet_wcag() {
     for (name, theme) in themes() {
         let shell = theme.colors.shell;
-        for surface in [shell.background, shell.panel] {
-            let on = |style: iced::widget::button::Style| match style.background {
-                Some(Background::Color(color)) => tokens::over(surface, color),
-                _ => surface,
-            };
-            for status in [Status::Active, Status::Hovered, Status::Pressed] {
-                let pill = control_style::toggle_pill(&theme, status);
-                let ratio = tokens::contrast(pill.text_color, on(pill));
-                assert!(ratio >= 4.5, "{name}: toggle word {status:?} {ratio:.2}:1");
-                for is_selected in [false, true] {
-                    let style = control_style::segment(&theme, status, is_selected, 6.0);
-                    // Segments sit on the window background inside their frame.
-                    let fill = match style.background {
-                        Some(Background::Color(color)) => tokens::over(shell.background, color),
-                        _ => shell.background,
-                    };
-                    let ratio = tokens::contrast(style.text_color, fill);
-                    assert!(
-                        ratio >= 4.5,
-                        "{name}: segment selected={is_selected} {status:?} {ratio:.2}:1"
-                    );
-                }
-            }
-        }
+        assert_control_text_contrast(name, &theme, shell);
 
         // Thumbs against their tracks (non-text contrast, 3:1).
         for (track, thumb, what) in [
@@ -860,69 +794,156 @@ fn control_state_matrix_shows_distinct_states() {
     let width = LABEL_WIDTH + CONTROL_CELL.0 * STATES.len() as u32;
     let height = HEADER_HEIGHT + CONTROL_CELL.1 * CONTROL_VARIANTS.len() as u32;
     for (name, theme) in themes() {
-        let shell = theme.colors.shell;
-        let header = STATES.iter().fold(
-            Row::new().push(iced::widget::Space::new().width(Length::Fixed(LABEL_WIDTH as f32))),
-            |row, (_, label)| {
-                row.push(
-                    Container::new(caption(*label))
-                        .width(Length::Fixed(CONTROL_CELL.0 as f32))
-                        .align_x(alignment::Horizontal::Center),
-                )
-            },
-        );
-        let frame = CONTROL_VARIANTS.iter().fold(
-            Column::new().push(Container::new(header).height(Length::Fixed(HEADER_HEIGHT as f32))),
-            |column, (label, _)| {
-                column.push(
-                    Container::new(body(*label))
-                        .padding([0.0, 16.0])
-                        .height(Length::Fixed(CONTROL_CELL.1 as f32))
-                        .align_y(alignment::Vertical::Center),
-                )
-            },
-        );
-        let mut mosaic = Mounted::new(frame, Size::new(width as f32, height as f32))
-            .pixels(&theme, mouse::Cursor::Unavailable);
+        render_control_theme_matrix(name, &theme, width, height);
+    }
+}
 
-        for (row, (label, variant)) in CONTROL_VARIANTS.iter().enumerate() {
-            let mut hashes = HashSet::new();
-            for (column, (state, _)) in STATES.iter().enumerate() {
-                let (pixels, bounds) = render_control(*variant, *state, &theme);
-                // A pressed field is a focused field: the press focuses it.
-                let is_text = matches!(variant, ControlVariant::Field | ControlVariant::Search);
-                if !(is_text && *state == CellState::Pressed) {
-                    assert!(
-                        hashes.insert(pixels.clone()),
-                        "{name}: {label} {state:?} looks identical to another state"
-                    );
-                }
-                if *state == CellState::Focused {
-                    let (x, y) = if is_text {
-                        (bounds.center_x(), bounds.y + 1.0)
-                    } else {
-                        (bounds.center_x(), bounds.y - 3.0)
-                    };
-                    let ring = sample(&pixels, CONTROL_CELL.0, x, y);
-                    assert!(near(ring, shell.focus), "{name}: {label} focus {ring:?}");
-                }
-                blit(
-                    &mut mosaic,
-                    width,
-                    &pixels,
-                    CONTROL_CELL,
-                    LABEL_WIDTH + column as u32 * CONTROL_CELL.0,
-                    HEADER_HEIGHT + row as u32 * CONTROL_CELL.1,
+fn assert_toggle_render(
+    name: &str,
+    theme: &Theme,
+    shell: crate::theme::palette::ShellPalette,
+    is_on: bool,
+) {
+    let mut mounted = Mounted::new(
+        Container::new(
+            toggle("sw", is_on, Msg::Focus)
+                .switch()
+                .on_toggle(toggled("sw")),
+        )
+        .padding(8),
+        Size::new(120.0, 40.0),
+    );
+    let bounds = bounds_of(&mut mounted, "sw");
+    assert!(
+        mounted
+            .texts()
+            .contains(&if is_on { "On" } else { "Off" }.to_string()),
+        "{name}: the switch names its state in words"
+    );
+    let pixels = mounted.pixels(theme, mouse::Cursor::Unavailable);
+    let left = sample(&pixels, 120, bounds.x + 12.0, bounds.center_y());
+    let right = sample(
+        &pixels,
+        120,
+        bounds.x + bounds.width - 12.0,
+        bounds.center_y(),
+    );
+    let thumb = if is_on { right } else { left };
+    let track = if is_on { left } else { right };
+    let expected_thumb = if is_on {
+        tokens::ON_ACCENT
+    } else {
+        shell.muted
+    };
+    let expected_track = if is_on {
+        shell.accent
+    } else {
+        shell.background
+    };
+    assert!(
+        near(thumb, expected_thumb),
+        "{name} on={is_on}: thumb {thumb:?}"
+    );
+    assert!(
+        near(track, expected_track),
+        "{name} on={is_on}: track {track:?}"
+    );
+}
+
+fn assert_control_text_contrast(
+    name: &str,
+    theme: &Theme,
+    shell: crate::theme::palette::ShellPalette,
+) {
+    for surface in [shell.background, shell.panel] {
+        let on = |style: iced::widget::button::Style| match style.background {
+            Some(Background::Color(color)) => tokens::over(surface, color),
+            _ => surface,
+        };
+        for status in [Status::Active, Status::Hovered, Status::Pressed] {
+            let pill = control_style::toggle_pill(theme, status);
+            let ratio = tokens::contrast(pill.text_color, on(pill));
+            assert!(ratio >= 4.5, "{name}: toggle word {status:?} {ratio:.2}:1");
+            for is_selected in [false, true] {
+                let style = control_style::segment(theme, status, is_selected, 6.0);
+                // Segments sit on the window background inside their frame.
+                let fill = match style.background {
+                    Some(Background::Color(color)) => tokens::over(shell.background, color),
+                    _ => shell.background,
+                };
+                let ratio = tokens::contrast(style.text_color, fill);
+                assert!(
+                    ratio >= 4.5,
+                    "{name}: segment selected={is_selected} {status:?} {ratio:.2}:1"
                 );
             }
         }
-        save(
-            &format!("tenshu-control-states-{name}"),
-            &mosaic,
-            width,
-            height,
-        );
     }
+}
+
+fn render_control_theme_matrix(name: &str, theme: &Theme, width: u32, height: u32) {
+    let shell = theme.colors.shell;
+    let header = STATES.iter().fold(
+        Row::new().push(iced::widget::Space::new().width(Length::Fixed(LABEL_WIDTH as f32))),
+        |row, (_, label)| {
+            row.push(
+                Container::new(caption(*label))
+                    .width(Length::Fixed(CONTROL_CELL.0 as f32))
+                    .align_x(alignment::Horizontal::Center),
+            )
+        },
+    );
+    let frame = CONTROL_VARIANTS.iter().fold(
+        Column::new().push(Container::new(header).height(Length::Fixed(HEADER_HEIGHT as f32))),
+        |column, (label, _)| {
+            column.push(
+                Container::new(body(*label))
+                    .padding([0.0, 16.0])
+                    .height(Length::Fixed(CONTROL_CELL.1 as f32))
+                    .align_y(alignment::Vertical::Center),
+            )
+        },
+    );
+    let mut mosaic = Mounted::new(frame, Size::new(width as f32, height as f32))
+        .pixels(theme, mouse::Cursor::Unavailable);
+
+    for (row, (label, variant)) in CONTROL_VARIANTS.iter().enumerate() {
+        let mut hashes = HashSet::new();
+        for (column, (state, _)) in STATES.iter().enumerate() {
+            let (pixels, bounds) = render_control(*variant, *state, theme);
+            // A pressed field is a focused field: the press focuses it.
+            let is_text = matches!(variant, ControlVariant::Field | ControlVariant::Search);
+            if !(is_text && *state == CellState::Pressed) {
+                assert!(
+                    hashes.insert(pixels.clone()),
+                    "{name}: {label} {state:?} looks identical to another state"
+                );
+            }
+            if *state == CellState::Focused {
+                let (x, y) = if is_text {
+                    (bounds.center_x(), bounds.y + 1.0)
+                } else {
+                    (bounds.center_x(), bounds.y - 3.0)
+                };
+                let ring = sample(&pixels, CONTROL_CELL.0, x, y);
+                assert!(near(ring, shell.focus), "{name}: {label} focus {ring:?}");
+            }
+            blit(
+                &mut mosaic,
+                width,
+                &pixels,
+                CONTROL_CELL,
+                LABEL_WIDTH + column as u32 * CONTROL_CELL.0,
+                HEADER_HEIGHT + row as u32 * CONTROL_CELL.1,
+            );
+        }
+    }
+    save(
+        &format!("tenshu-control-states-{name}"),
+        &mosaic,
+        width,
+        height,
+    );
 }
 
 // ----- Composition -----------------------------------------------------------
