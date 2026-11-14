@@ -178,7 +178,22 @@ pub enum CheckoutPhase {
     },
     /// The change request got no clear answer (lost response, 5xx or an
     /// unknown status): it may or may not have been applied and charged.
-    ChangeUnconfirmed(String),
+    ChangeUnconfirmed {
+        message: String,
+        refresh: PlanRefresh,
+    },
+}
+
+/// The plan refresh that follows an unconfirmed change: the screen says
+/// whether Plan & billing has the latest plan yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanRefresh {
+    /// Waiting for the reload with this sequence number.
+    Pending(u64),
+    /// `/connect/plan` answered.
+    Updated,
+    /// The reload failed; Plan & billing may be stale.
+    Failed,
 }
 
 impl CheckoutPhase {
@@ -198,7 +213,7 @@ impl CheckoutPhase {
                 | CheckoutPhase::ChangePreviewing
                 | CheckoutPhase::ChangeReview
                 | CheckoutPhase::ChangeFailed { .. }
-                | CheckoutPhase::ChangeUnconfirmed(_)
+                | CheckoutPhase::ChangeUnconfirmed { .. }
                 | CheckoutPhase::ChangeDone { .. }
         )
     }
@@ -2391,6 +2406,22 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::PlanReloaded(plan, gen, seq) => {
+                // An unconfirmed change shows whether its refresh landed.
+                if gen == self.session_generation {
+                    if let Some(CheckoutPhase::ChangeUnconfirmed { refresh, .. }) =
+                        self.checkout.as_mut().map(|cs| &mut cs.phase)
+                    {
+                        if let PlanRefresh::Pending(waiting) = *refresh {
+                            if seq >= waiting {
+                                *refresh = if plan.is_some() {
+                                    PlanRefresh::Updated
+                                } else {
+                                    PlanRefresh::Failed
+                                };
+                            }
+                        }
+                    }
+                }
                 // Only the newest billing reload may set the plan: one sent
                 // before a payment must not land over one sent after it.
                 if gen == self.session_generation && seq == self.plan_seq && plan.is_some() {
@@ -3423,11 +3454,11 @@ impl ConnectAccountPanel {
                         }
                         other => {
                             log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
-                            cs.phase = CheckoutPhase::ChangeUnconfirmed(format!(
+                            let message = format!(
                                 "Connect returned \"{other}\", which this version of Tenshu \
                                  doesn't know"
-                            ));
-                            return self.reload_plan_billing();
+                            );
+                            return self.enter_change_unconfirmed(message);
                         }
                     },
                     // A refusal changed nothing. Anything else (no answer, a
@@ -3440,9 +3471,16 @@ impl ConnectAccountPanel {
                         };
                     }
                     Err((message, false)) => {
-                        cs.phase = CheckoutPhase::ChangeUnconfirmed(message);
-                        return self.reload_plan_billing();
+                        return self.enter_change_unconfirmed(message);
                     }
+                }
+            }
+
+            ConnectAccountMessage::RetryPlanRefresh => {
+                if let Some(CheckoutPhase::ChangeUnconfirmed { message, .. }) =
+                    self.checkout.as_ref().map(|cs| cs.phase.clone())
+                {
+                    return self.enter_change_unconfirmed(message);
                 }
             }
 
@@ -5972,6 +6010,20 @@ impl ConnectAccountPanel {
                 ))
             },
         )
+    }
+
+    /// An unconfirmed plan change: reload the plan and track the reload, so
+    /// the screen never claims Plan & billing is current before it is.
+    fn enter_change_unconfirmed(&mut self, message: String) -> iced::Task<Message> {
+        let task = self.reload_plan_billing();
+        let seq = self.plan_seq;
+        if let Some(cs) = self.checkout.as_mut() {
+            cs.phase = CheckoutPhase::ChangeUnconfirmed {
+                message,
+                refresh: PlanRefresh::Pending(seq),
+            };
+        }
+        task
     }
 
     /// Billing history for Plan & billing when it's the open section:
@@ -10056,7 +10108,7 @@ mod plan_lifecycle_tests {
         let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(Ok(odd), gen, 5));
         assert!(matches!(
             panel.checkout.as_ref().unwrap().phase,
-            CheckoutPhase::ChangeUnconfirmed(_)
+            CheckoutPhase::ChangeUnconfirmed { .. }
         ));
         // No answer / 5xx: the change may have applied, so it's unconfirmed;
         // a refusal changed nothing.
@@ -10068,7 +10120,7 @@ mod plan_lifecycle_tests {
         ));
         assert!(matches!(
             panel.checkout.as_ref().unwrap().phase,
-            CheckoutPhase::ChangeUnconfirmed(_)
+            CheckoutPhase::ChangeUnconfirmed { .. }
         ));
         panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
         let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
@@ -10080,6 +10132,54 @@ mod plan_lifecycle_tests {
             panel.checkout.as_ref().unwrap().phase,
             CheckoutPhase::ChangeFailed { refused: true, .. }
         ));
+    }
+
+    #[test]
+    fn an_unconfirmed_change_tracks_its_plan_refresh() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        let gen = panel.session_generation;
+        let mut cs = CheckoutState::new(
+            5,
+            PlanTier::Estate,
+            BillingCycle::Annual,
+            panel.plan.clone(),
+        );
+        cs.phase = CheckoutPhase::ChangeApplying;
+        panel.checkout = Some(cs);
+        let task = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+            Err(("connection reset".into(), false)),
+            gen,
+            5,
+        ));
+        assert!(task.units() > 0, "the plan reload is requested");
+        let seq = panel.plan_seq;
+        let refresh = |p: &ConnectAccountPanel| match &p.checkout.as_ref().unwrap().phase {
+            CheckoutPhase::ChangeUnconfirmed { refresh, .. } => *refresh,
+            other => panic!("unexpected {:?}", other),
+        };
+        assert_eq!(refresh(&panel), PlanRefresh::Pending(seq));
+        // The reload fails: say so, and offer a retry.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(None, gen, seq));
+        assert_eq!(refresh(&panel), PlanRefresh::Failed);
+        let _ = panel.update_message(ConnectAccountMessage::RetryPlanRefresh);
+        let retry = panel.plan_seq;
+        assert!(retry > seq);
+        assert_eq!(refresh(&panel), PlanRefresh::Pending(retry));
+        // An older response doesn't settle the newer refresh.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(card_plan("pro", true, "")),
+            gen,
+            seq,
+        ));
+        assert_eq!(refresh(&panel), PlanRefresh::Pending(retry));
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(card_plan("estate", true, "")),
+            gen,
+            retry,
+        ));
+        assert_eq!(refresh(&panel), PlanRefresh::Updated);
+        assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Estate);
     }
 
     #[test]

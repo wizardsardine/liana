@@ -33,7 +33,7 @@ use crate::{
     app::{
         settings::global::AccountTier,
         state::connect::{
-            account::{PayWith, PaymentNetwork},
+            account::{PayWith, PaymentNetwork, PlanRefresh},
             CheckoutPhase, CheckoutState, ConnectAccountPanel, PlanLifecycle,
         },
         view::ConnectAccountMessage,
@@ -269,7 +269,7 @@ pub(super) fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a,
             | CheckoutPhase::ChangeInBrowser
             | CheckoutPhase::ChangeDone { .. }
             | CheckoutPhase::ChangeFailed { .. }
-            | CheckoutPhase::ChangeUnconfirmed(_) => card_phase_ux(state, checkout_state),
+            | CheckoutPhase::ChangeUnconfirmed { .. } => card_phase_ux(state, checkout_state),
             CheckoutPhase::PollFailed(_)
                 if checkout_state.card_session.is_some() || checkout_state.action_url.is_some() =>
             {
@@ -2164,6 +2164,17 @@ fn card_choice<'a>(
 
 // ── Card (boards C1–C13) ─────────────────────────────────────────────────────
 
+/// Whether Plan & billing has caught up after an unconfirmed change.
+pub(super) fn unconfirmed_refresh_line(refresh: &PlanRefresh) -> &'static str {
+    match refresh {
+        PlanRefresh::Pending(_) => "Refreshing Plan & billing…",
+        PlanRefresh::Updated => "Plan & billing now shows the latest plan from Connect.",
+        PlanRefresh::Failed => {
+            "Plan & billing couldn’t be refreshed, so it may be out of date. Refresh it again."
+        }
+    }
+}
+
 /// A card checkout or 3-D Secure confirmation whose plan polling stopped.
 fn card_poll_failed_ux<'a>(checkout: &'a CheckoutState) -> Element<'a, Msg> {
     Column::new()
@@ -2265,6 +2276,20 @@ fn card_phase_ux<'a>(
         .and_then(|p| p.card_label())
         .unwrap_or_else(|| "Card".to_string());
     let (amount_main, amount_sub, covers) = match (&checkout.phase, preview) {
+        // A change that got no clear answer: say what was asked for, never
+        // that it was (or wasn't) charged.
+        (CheckoutPhase::ChangeUnconfirmed { .. }, _) => (
+            "Not confirmed".to_string(),
+            match preview {
+                Some(p) if p.is_upgrade() => format!(
+                    "${} was due today if the change went through",
+                    format_usd(p.amount_due_today)
+                ),
+                Some(_) => "Nothing was due today for this change".to_string(),
+                None => "Check Plan & billing for what was charged".to_string(),
+            },
+            "Unknown until Plan & billing shows the result".to_string(),
+        ),
         (
             CheckoutPhase::ChangePreviewing
             | CheckoutPhase::ChangeReview
@@ -2670,16 +2695,24 @@ fn card_phase_ux<'a>(
                     .into(),
             ),
         ),
-        CheckoutPhase::ChangeUnconfirmed(message) => billing_notice(
+        CheckoutPhase::ChangeUnconfirmed { message, refresh } => billing_notice(
             exclamation_circle_icon(),
             Tone::Warn,
             localized_copy("We couldn’t confirm the plan change"),
             format!(
                 "{message}. The change may or may not have gone through, and your card may have \
-                 been charged. Check Plan & billing (it has just been refreshed) before trying \
-                 again."
+                 been charged. {} Check Plan & billing before trying again.",
+                unconfirmed_refresh_line(refresh)
             ),
-            Some(back_to_billing()),
+            Some(match refresh {
+                PlanRefresh::Failed => actions_row(vec![
+                    sheet_button(localized_copy("Refresh plan"), ActionKind::Primary, true)
+                        .on_press(Msg::RetryPlanRefresh)
+                        .into(),
+                    back_to_billing(),
+                ]),
+                _ => back_to_billing(),
+            }),
         ),
         CheckoutPhase::ChangeFailed { message, refused } => billing_notice(
             exclamation_circle_icon(),
@@ -2767,7 +2800,7 @@ pub(super) fn checkout_status(checkout: &CheckoutState) -> (String, Tone) {
             ("Paid · auto-renews".to_string(), Tone::Good)
         }
         CheckoutPhase::ChangeFailed { .. } => ("Not charged".to_string(), Tone::Bad),
-        CheckoutPhase::ChangeUnconfirmed(_) => ("Not confirmed".to_string(), Tone::Warn),
+        CheckoutPhase::ChangeUnconfirmed { .. } => ("Not confirmed".to_string(), Tone::Warn),
     }
 }
 
@@ -3303,7 +3336,7 @@ fn checkout_phase_ux<'a>(
         | CheckoutPhase::ChangeInBrowser
         | CheckoutPhase::ChangeDone { .. }
         | CheckoutPhase::ChangeFailed { .. }
-        | CheckoutPhase::ChangeUnconfirmed(_) => iced::widget::Space::new().into(),
+        | CheckoutPhase::ChangeUnconfirmed { .. } => iced::widget::Space::new().into(),
         CheckoutPhase::PollFailed(_) => billing_notice(
             exclamation_circle_icon(),
             Tone::Warn,

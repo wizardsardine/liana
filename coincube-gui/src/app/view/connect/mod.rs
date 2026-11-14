@@ -5020,6 +5020,66 @@ mod renewal_banner_tests {
         assert!(ok, "the same tier by bitcoin is still allowed");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unconfirmed_change_copy_admits_the_uncertainty() {
+        use crate::app::state::connect::account::PlanRefresh;
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        let mut f = billing_v2_features();
+        f.card_payments_enabled = Some(true);
+        account.features = Some(f);
+        // Bitcoin-paid snapshot with no renewal: card_start is None, which
+        // used to fall through to "Charged to your card today".
+        let free = plan(PlanTier::Free, PlanStatus::Active, None);
+        for (refresh, line) in [
+            (PlanRefresh::Pending(3), "Refreshing Plan & billing…"),
+            (PlanRefresh::Failed, "couldn’t be refreshed"),
+            (PlanRefresh::Updated, "now shows the latest plan"),
+        ] {
+            let mut cs = CheckoutState::new(
+                1,
+                PlanTier::Estate,
+                BillingCycle::Annual,
+                Some(free.clone()),
+            );
+            cs.phase = CheckoutPhase::ChangeUnconfirmed {
+                message: "connection reset".into(),
+                refresh,
+            };
+            account.checkout = Some(cs);
+            let labels = visible_labels(plan_billing_ux(&account), &renderer);
+            assert!(labels
+                .iter()
+                .any(|l| l == "We couldn’t confirm the plan change"));
+            assert!(
+                labels.iter().any(|l| l.contains(line)),
+                "{:?}: {:?}",
+                refresh,
+                labels
+            );
+            assert!(!labels.iter().any(|l| l.contains("has just been refreshed")));
+            assert!(
+                !labels
+                    .iter()
+                    .any(|l| l.contains("Charged to your card today")),
+                "{:?}",
+                labels
+            );
+            assert!(labels.iter().any(|l| l == "Not confirmed"));
+            assert_eq!(
+                labels.iter().any(|l| l == "Refresh plan"),
+                refresh == PlanRefresh::Failed
+            );
+        }
+    }
+
     #[test]
     fn change_plan_cta_for_a_card_subscriber() {
         let mut account = dashboard_panel();

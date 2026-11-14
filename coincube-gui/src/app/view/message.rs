@@ -1903,6 +1903,8 @@ pub enum ConnectAccountMessage {
         u64,
         u64,
     ),
+    /// An unconfirmed plan change: refresh the plan again.
+    RetryPlanRefresh,
     /// Plan & billing: show or hide "Turn off auto-renewal?" (C8).
     ShowAutoRenewOff(bool),
     /// PUT /connect/plan/auto-renew.
