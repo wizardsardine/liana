@@ -21,8 +21,8 @@ use crate::{
         text::{caption, new, P1_SIZE},
         tooltip,
     },
-    icon, theme,
-    widget::{Column, Container, Element, SpaceExt, Stack},
+    icon, priority_row, theme,
+    widget::{priority, Column, Container, Element, SpaceExt, Stack},
 };
 
 const COIN_LIST_MAX_HEIGHT: f32 = 300.0;
@@ -392,18 +392,6 @@ pub fn coin_selection<'a, M: 'a>(rows: Vec<Element<'a, M>>, tall: bool) -> Eleme
 }
 
 const COMPACT_PILL_WIDTH: f32 = 1400.0;
-const DASHBOARD_PADDING: f32 = 380.0;
-const MIN_LABEL_LEN: usize = 20;
-const MAX_LABEL_LEN: usize = 75;
-const LABEL_SCALE_MIN_WIDTH: f32 = 1000.0;
-const LABEL_SCALE_MAX_WIDTH: f32 = 1600.0;
-
-fn label_len(available_width: f32) -> usize {
-    let width = available_width - DASHBOARD_PADDING;
-    let t = ((width - LABEL_SCALE_MIN_WIDTH) / (LABEL_SCALE_MAX_WIDTH - LABEL_SCALE_MIN_WIDTH))
-        .clamp(0.0, 1.0);
-    MIN_LABEL_LEN + (t * (MAX_LABEL_LEN - MIN_LABEL_LEN) as f32).round() as usize
-}
 
 pub fn coin_row<'a, M: Clone + 'static>(
     label: &Label,
@@ -413,7 +401,7 @@ pub fn coin_row<'a, M: Clone + 'static>(
     toggle: M,
     available_width: f32,
 ) -> Element<'a, M> {
-    let coin_label = display_label(label, new::B3_MEDIUM_SPEC, Some(label_len(available_width)));
+    let coin_label = display_label(label, new::B3_MEDIUM_SPEC);
 
     let timelock_pill: Container<M> = match status {
         CoinStatus::Spent => pill::spent(),
@@ -426,8 +414,8 @@ pub fn coin_row<'a, M: Clone + 'static>(
 
     let select = labelled_checkbox(coin_label, selected, move |_| toggle.clone());
 
-    row![
-        select,
+    priority_row![
+        priority::truncate(1, select),
         Space::fill_width(),
         timelock_pill,
         amount::amount_with_font(amount, new::B3_MEDIUM_SPEC)
