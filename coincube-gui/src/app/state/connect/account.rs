@@ -2206,15 +2206,7 @@ impl ConnectAccountPanel {
                     self.campaign_redeem.code = code.clone();
                     tasks.push(self.redeem_campaign_task(code));
                 } else {
-                    let c1 = self.client.clone();
-                    tasks.push(iced::Task::perform(
-                        async move { (c1.get_connect_plan().await.ok(), gen) },
-                        |(plan, g)| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::PlanLoaded(plan, g),
-                            ))
-                        },
-                    ));
+                    tasks.push(self.plan_fetch_task());
                 }
                 return iced::Task::batch(tasks);
             }
@@ -3287,16 +3279,7 @@ impl ConnectAccountPanel {
                 // plan fetch to here, so the real plan (including any
                 // server-side auto-applied grant) still loads. This is the only
                 // plan fetch on that path, so there's no racing PlanLoaded.
-                let g = self.session_generation;
-                let c = self.client.clone();
-                return iced::Task::perform(
-                    async move { (c.get_connect_plan().await.ok(), g) },
-                    |(plan, g)| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PlanLoaded(plan, g),
-                        ))
-                    },
-                );
+                return self.plan_fetch_task();
             }
             ConnectAccountMessage::DuressStateChecked(outcome, gen, attempt) => {
                 // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
@@ -3332,6 +3315,10 @@ impl ConnectAccountPanel {
                         self.step = ConnectFlowStep::Dashboard;
                         self.signed_out_by = None;
                         self.unverified = None;
+                        // Plan & billing opened while the session was still
+                        // being checked loaded nothing; load its history now,
+                        // on every return path below.
+                        let billing = self.billing_history_if_open();
                         // Cache the fetched state before any early return, so the
                         // Duress tab reflects the enabled state on its first paint
                         // rather than briefly showing enrollment CTAs.
@@ -3346,10 +3333,10 @@ impl ConnectAccountPanel {
                         // device already holds a code).
                         if needs_device_register {
                             if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                                return register_device_duress_task(
-                                    self.client.clone(),
-                                    account_id,
-                                );
+                                return iced::Task::batch([
+                                    billing,
+                                    register_device_duress_task(self.client.clone(), account_id),
+                                ]);
                             }
                         }
                         // Launch reconcile (Issue 2, PR 4): bring this device's
@@ -3394,9 +3381,10 @@ impl ConnectAccountPanel {
                                         },
                                     )
                                 };
-                                return task;
+                                return iced::Task::batch([billing, task]);
                             }
                         }
+                        return billing;
                     }
                     // Transient (network / 5xx / rate-limit) — retry with
                     // backoff while attempts remain.
@@ -3999,6 +3987,7 @@ impl ConnectAccountPanel {
                 self.signed_out_by = None;
                 self.unverified = None;
                 self.error = None;
+                return self.billing_history_if_open();
             }
 
             // ── Enrollment wizard (Phases 2 & 8) ──
@@ -5350,21 +5339,35 @@ impl ConnectAccountPanel {
     /// What opening Plan & billing loads: the plan (a payment confirmed after
     /// the user left the pay screen shows here) and billing history.
     pub fn reload_plan_billing(&mut self) -> iced::Task<Message> {
+        iced::Task::batch([self.plan_fetch_task(), self.reload_billing_history()])
+    }
+
+    /// Fetch `/connect/plan` under a new sequence number. Every plan fetch
+    /// (sign-in, after a redeem, Plan & billing, after a payment) goes
+    /// through here, so only the newest response applies (`PlanReloaded`).
+    pub fn plan_fetch_task(&mut self) -> iced::Task<Message> {
         let gen = self.session_generation;
         self.plan_seq = self.plan_seq.wrapping_add(1);
         let seq = self.plan_seq;
         let client = self.client.clone();
-        iced::Task::batch([
-            iced::Task::perform(
-                async move { client.get_connect_plan().await.ok() },
-                move |plan| {
-                    Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::PlanReloaded(plan, gen, seq),
-                    ))
-                },
-            ),
-            self.reload_billing_history(),
-        ])
+        iced::Task::perform(
+            async move { client.get_connect_plan().await.ok() },
+            move |plan| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PlanReloaded(plan, gen, seq),
+                ))
+            },
+        )
+    }
+
+    /// Billing history for Plan & billing when it's the open section:
+    /// opening it before the session was confirmed requested nothing.
+    fn billing_history_if_open(&self) -> iced::Task<Message> {
+        if matches!(self.active_sub, ConnectSubMenu::PlanBilling) {
+            self.reload_billing_history()
+        } else {
+            iced::Task::none()
+        }
     }
 
     fn apply_loaded_plan(&mut self, plan: Option<ConnectPlan>) {
@@ -9115,6 +9118,96 @@ mod plan_lifecycle_tests {
         panel.show_plan_comparison = false;
         let _ = panel.update_message(ConnectAccountMessage::PlanLoaded(Some(annual()), gen));
         assert_eq!(panel.selected_billing_cycle, BillingCycle::Annual);
+    }
+
+    #[test]
+    fn reaching_the_dashboard_with_plan_billing_open_loads_its_history() {
+        use crate::services::coincube::{DuressCheckOutcome, DuressState};
+        let state = |enrolled: bool, registered: bool| DuressState {
+            active: false,
+            unlock_at: None,
+            enrolled,
+            this_device_registered: registered,
+        };
+        // Units of the task returned on reaching the Dashboard, with the
+        // section open or not, for each return path (plain, device
+        // registration, reconcile).
+        let units = |sub: ConnectSubMenu, with_user: bool, s: DuressState| {
+            let mut panel = panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, None));
+            panel.step = ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Checking,
+            };
+            panel.active_sub = sub;
+            panel.user = with_user.then(|| crate::services::coincube::User {
+                id: 7,
+                email: "founder@example.com".into(),
+                email_verified: Some(true),
+            });
+            let gen = panel.session_generation;
+            let task = panel.update_message(ConnectAccountMessage::DuressStateChecked(
+                DuressCheckOutcome::Ok(s),
+                gen,
+                0,
+            ));
+            assert!(matches!(panel.step, ConnectFlowStep::Dashboard));
+            task.units()
+        };
+        for (with_user, enrolled, registered) in [
+            (false, false, true),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let open = units(
+                ConnectSubMenu::PlanBilling,
+                with_user,
+                state(enrolled, registered),
+            );
+            let other = units(
+                ConnectSubMenu::Overview,
+                with_user,
+                state(enrolled, registered),
+            );
+            assert_eq!(
+                open,
+                other + 1,
+                "billing history requested on the path user={} enrolled={} registered={}",
+                with_user,
+                enrolled,
+                registered
+            );
+        }
+    }
+
+    #[test]
+    fn every_plan_fetch_is_sequenced_so_a_late_one_cannot_win() {
+        let mut panel = panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, None));
+        let gen = panel.session_generation;
+        // The sign-in fetch goes out first ...
+        let _signin = panel.plan_fetch_task();
+        let signin_seq = panel.plan_seq;
+        // ... then a redeem refreshes the plan (also sequenced) ...
+        let before = panel.plan_seq;
+        let _ = panel.update_message(ConnectAccountMessage::CampaignRedeemed(
+            Ok("Estate unlocked".into()),
+            gen,
+        ));
+        assert!(
+            panel.plan_seq > before,
+            "the redeem's plan fetch is sequenced"
+        );
+        let redeem_seq = panel.plan_seq;
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Estate, PlanStatus::Active, None, None)),
+            gen,
+            redeem_seq,
+        ));
+        // ... and the slow sign-in response arrives last: dropped.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Free, PlanStatus::Active, None, None)),
+            gen,
+            signin_seq,
+        ));
+        assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Estate);
     }
 
     #[test]
