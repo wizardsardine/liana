@@ -1845,23 +1845,25 @@ pub mod global {
     #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
     #[serde(rename_all = "lowercase")]
     pub enum AccountTier {
-        /// No Connect account or free tier — 2 Cubes per network.
+        /// No Connect account or free tier — 1 Cube per network.
         #[default]
         Free,
-        /// Pro Connect account — 4 Cubes per network (with Lightning address & avatar).
+        /// Pro Connect account — 3 Cubes per network (with Lightning address & avatar).
         Pro,
-        /// Estate Connect account — 7 Cubes per network (with Lightning address & avatar).
+        /// Estate Connect account — 10 Cubes per network (with Lightning address & avatar).
         #[serde(alias = "legacy")]
         Estate,
     }
 
     impl AccountTier {
         /// Maximum number of Cubes allowed per network for this tier.
+        /// Offline fallback only (billing v2 decision 8: Free 1, Pro 3,
+        /// Estate 10): Connect's `cubeLimit` always wins when it is known.
         pub fn cube_limit(self) -> usize {
             match self {
-                Self::Free => 2,
-                Self::Pro => 4,
-                Self::Estate => 7,
+                Self::Free => 1,
+                Self::Pro => 3,
+                Self::Estate => 10,
             }
         }
 

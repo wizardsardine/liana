@@ -951,11 +951,21 @@ impl Home {
                  {tier}; no se pudieron contar los Cubes de este dispositivo en esa red."
             );
         };
-        let mut summary = localized_format!(
-            "{name}: {}/{limit} Cubes on the {tier} plan",
-            "{name}: {}/{limit} Cubes en el plan {tier}",
-            local + remote
-        );
+        let total = local + remote;
+        let mut summary = if total > limit {
+            // Already over (the limit dropped, or the plan changed): say how
+            // many the plan includes rather than an impossible ratio.
+            localized_format!(
+                "{name}: you have {total} Cubes; the {tier} plan includes {limit}",
+                "{name}: tienes {total} Cubes; el plan {tier} incluye {limit}"
+            )
+        } else {
+            localized_format!(
+                "{name}: {}/{limit} Cubes on the {tier} plan",
+                "{name}: {}/{limit} Cubes en el plan {tier}",
+                total
+            )
+        };
         if remote > 0 {
             summary.push_str(&localized_format!(
                 ", {} of them registered in Connect but not on this device",
@@ -970,11 +980,15 @@ impl Home {
     /// The Create Cube refusal at the limit, stored from `update()` in the
     /// window's language.
     fn cube_limit_error(&self) -> String {
+        // Over the limit after a plan change or the 1/3/10 limits: every
+        // existing Cube keeps working (billing v2 decision 8, I8); only new
+        // Cubes are blocked.
         localized_format!(
-            "Cube limit reached. {} Upgrade your Connect account \
-             or delete a Cube on this network to create more.",
-            "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect \
-             o elimina un Cube de esta red para crear más.",
+            "Cube limit reached. {} Existing Cubes keep working. Upgrade your \
+             Connect account or delete a Cube on this network to create more.",
+            "Alcanzaste el límite de Cubes. {} Los Cubes existentes siguen \
+             funcionando. Mejora tu plan de Connect o elimina un Cube de esta \
+             red para crear más.",
             self.cube_limit_summary(self.network),
         )
     }
@@ -6144,13 +6158,24 @@ impl Home {
             .push(paths.push(rule()));
         if projection.at_limit() {
             content = content.push(
-                p2_regular(localized_format!(
-                    "{}: {} of {} Cubes on the {} plan. Upgrade, or delete a Cube on this network, to bring one in.", "{}: {} de {} Cubes en el plan {}. Actualizar, o eliminar un Cube en esta red, para traer uno en.",
-                    launcher_chrome::network_name(self.network),
-                    projection.total_count,
-                    projection.cube_limit,
-                    projection.tier
-                ))
+                p2_regular(if projection.total_count > projection.cube_limit {
+                    localized_format!(
+                        "{}: {} Cubes; the {} plan includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
+                        "{}: {} Cubes; el plan {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
+                        launcher_chrome::network_name(self.network),
+                        projection.total_count,
+                        projection.tier,
+                        projection.cube_limit
+                    )
+                } else {
+                    localized_format!(
+                        "{}: {} of {} Cubes on the {} plan. Upgrade, or delete a Cube on this network, to bring one in.", "{}: {} de {} Cubes en el plan {}. Actualizar, o eliminar un Cube en esta red, para traer uno en.",
+                        launcher_chrome::network_name(self.network),
+                        projection.total_count,
+                        projection.cube_limit,
+                        projection.tier
+                    )
+                })
                 .style(theme::text::warning),
             );
         }
@@ -10809,7 +10834,7 @@ mod tests {
     fn cube_limit_prefers_server_limit_and_counts_remote_cubes_on_current_network() {
         let mut home = home();
         home.account_tier = AccountTier::Free;
-        assert_eq!(home.cube_limit(), 2);
+        assert_eq!(home.cube_limit(), 1);
 
         home.server_cube_limit = Some(5);
         assert_eq!(home.cube_limit(), 5);
@@ -11066,9 +11091,33 @@ mod tests {
         home.server_cube_limit = None;
 
         let _ = home.update(Message::View(ViewMessage::CreateCube));
-        assert!(home.error.as_deref().is_some_and(|error| error
-            .contains("Cube limit reached. Bitcoin mainnet: 2/2 Cubes on the Free plan.")));
+        // Two Cubes on Free's one (billing v2 limits): over the limit, the
+        // copy says what the plan includes and that existing Cubes keep working.
+        let error = home.error.clone().unwrap_or_default();
+        assert!(
+            error.contains(
+                "Cube limit reached. Bitcoin mainnet: you have 2 Cubes; the Free plan includes 1."
+            ),
+            "{}",
+            error
+        );
+        assert!(error.contains("Existing Cubes keep working."), "{}", error);
         assert!(!home.creating_cube);
+
+        // Exactly at the limit keeps the ratio.
+        home.error = None;
+        home.state = State::Cubes {
+            cubes: vec![cube("local-a", "Local A", Network::Bitcoin)],
+            create_cube: true,
+            source: crate::chain::ChainId::Bitcoin,
+        };
+        let _ = home.update(Message::View(ViewMessage::CreateCube));
+        let error = home.error.clone().unwrap_or_default();
+        assert!(
+            error.contains("Bitcoin mainnet: 1/1 Cubes on the Free plan."),
+            "{}",
+            error
+        );
     }
 
     #[test]

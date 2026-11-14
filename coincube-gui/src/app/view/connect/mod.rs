@@ -1634,105 +1634,6 @@ fn launch_feature_copy(feature: &str) -> Option<(String, billing::FeatureValue)>
     Some((trimmed.to_string(), FeatureValue::Included))
 }
 
-// ── Billing history view ────────────────────────────────────────────────────
-
-fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    let back_button = iced::widget::button(
-        Row::new()
-            .push(previous_icon().style(theme::text::primary))
-            .push(iced::widget::Space::new().width(Length::Fixed(5.0)))
-            .push(text::p1_medium(localized_copy("Back")).style(theme::text::secondary))
-            .spacing(5)
-            .align_y(Alignment::Center),
-    )
-    .style(theme::button::transparent)
-    // No horizontal padding, so the arrow lines up with the heading below.
-    .padding([5, 0])
-    .on_press(ConnectAccountMessage::ToggleBillingHistory);
-
-    let mut col = Column::new()
-        .push(back_button)
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(sheet_title(localized_copy("Billing history")))
-        .push(iced::widget::Space::new().height(Length::Fixed(15.0)));
-
-    match &state.billing_history {
-        None => {
-            col = col.push(text::p1_regular(localized_copy("Loading…")).color(color::GREY_3));
-        }
-        Some(entries) if entries.is_empty() => {
-            col = col.push(
-                text::p1_regular(localized_copy("No billing history yet.")).color(color::GREY_3),
-            );
-        }
-        Some(entries) => {
-            for entry in entries {
-                let status_color = match entry.status {
-                    crate::services::coincube::ChargeStatus::Paid => color::ORANGE,
-                    crate::services::coincube::ChargeStatus::Expired => color::RED,
-                    _ => color::GREY_3,
-                };
-                let status_label = match entry.status {
-                    crate::services::coincube::ChargeStatus::Unpaid => "Unpaid",
-                    crate::services::coincube::ChargeStatus::Processing => "Processing",
-                    crate::services::coincube::ChargeStatus::Paid => "Paid",
-                    crate::services::coincube::ChargeStatus::Expired => "Expired",
-                    crate::services::coincube::ChargeStatus::Unknown => "Pending",
-                };
-                let amount_label = format!(
-                    "{} {} ({} sats)",
-                    entry.amount_fiat, entry.fiat_currency, entry.amount_sats
-                );
-                let date = entry
-                    .paid_at
-                    .as_deref()
-                    .unwrap_or(entry.created_at.as_str());
-                // Truncate ISO date to just the date portion
-                let date_short = if date.len() >= 10 { &date[..10] } else { date };
-
-                col = col.push(
-                    container(
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .push(
-                                        text::p2_bold(format!(
-                                            "{} ({})",
-                                            entry.plan, entry.billing_cycle
-                                        ))
-                                        .style(theme::text::primary),
-                                    )
-                                    .push(text::p2_regular(amount_label).color(color::GREY_3))
-                                    .width(Length::Fill),
-                            )
-                            .push(
-                                Column::new()
-                                    .push(text::p2_regular(date_short).color(color::GREY_3))
-                                    .push(text::p2_bold(status_label).color(status_color))
-                                    .align_x(Alignment::End),
-                            )
-                            .align_y(Alignment::Center)
-                            .padding(12),
-                    )
-                    .style(|t| container::Style {
-                        background: Some(iced::Background::Color(t.colors.cards.simple.background)),
-                        border: iced::Border {
-                            color: t.colors.cards.simple.border.unwrap_or(color::GREY_5),
-                            width: 0.2,
-                            radius: 12.0.into(),
-                        },
-                        ..Default::default()
-                    })
-                    .width(Length::Fill),
-                );
-                col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-            }
-        }
-    }
-
-    col.spacing(0).width(Length::Fill).into()
-}
-
 fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let devices_section: Element<ConnectAccountMessage> = match &state.verified_devices {
         None => lead(localized_copy("Loading devices…")).into(),
@@ -4666,6 +4567,104 @@ mod renewal_banner_tests {
             }
             capture_billing_sheet(&account, name, (1040, 1000)).await;
         }
+    }
+
+    /// D4: the history page lists every charge with its billing v2 status,
+    /// and support-relevant rows carry the invoice id (chargeId fallback).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn billing_history_page_shows_each_status_and_invoice_ids() {
+        use crate::services::coincube::ChargeState;
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let row = |status: ChargeStatus, state: Option<ChargeState>, id: &str| {
+            let mut e = billing_entry(status);
+            e.charge_id = id.to_string();
+            e.state = state;
+            e
+        };
+        let mut support = row(
+            ChargeStatus::Expired,
+            Some(ChargeState::NeedsSupport),
+            "chg-support",
+        );
+        support.amount_received_sats = 40_000;
+        let mut partial = row(
+            ChargeStatus::Unpaid,
+            Some(ChargeState::PartiallyPaid),
+            "chg-partial",
+        );
+        partial.invoice_id = Some("INV-PARTIAL".into());
+        partial.amount_received_sats = 21_000;
+        let mut over = row(ChargeStatus::Paid, Some(ChargeState::Paid), "chg-over");
+        over.overpaid_sats = 1_500;
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        account.show_billing_history = true;
+        account.billing_history = Some(vec![
+            row(ChargeStatus::Paid, None, ""),
+            over,
+            partial,
+            support,
+            row(ChargeStatus::Expired, Some(ChargeState::Expired), "chg-exp"),
+            row(ChargeStatus::Processing, None, "chg-proc"),
+        ]);
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        for text in [
+            "Billing history",
+            "Plan & billing",
+            "Paid",
+            "Partly paid",
+            "Needs support",
+            "Expired",
+            "Confirming",
+            "Invoice chg-support · 40,000 sats received",
+            "Invoice INV-PARTIAL · 21,000 sats received",
+            "Invoice chg-over · overpaid by 1,500 sats",
+        ] {
+            assert!(
+                labels.iter().any(|l| l == text),
+                "missing {:?} in {:?}",
+                text,
+                labels
+            );
+        }
+        capture_billing_sheet(&account, "4-history", (1040, 860)).await;
+
+        account.billing_history = Some(Vec::new());
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(labels
+            .iter()
+            .any(|l| l == "No payments yet. Invoices you create appear here."));
+        account.billing_history = None;
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(labels.iter().any(|l| l == "Loading billing history…"));
+    }
+
+    /// D5: the offline Cube limits are 1 / 3 / 10 and the comparison falls
+    /// back to them when Connect sends no entitlements.
+    #[test]
+    fn offline_cube_limits_follow_billing_v2() {
+        use crate::app::settings::global::AccountTier;
+        assert_eq!(AccountTier::Free.cube_limit(), 1);
+        assert_eq!(AccountTier::Pro.cube_limit(), 3);
+        assert_eq!(AccountTier::Estate.cube_limit(), 10);
+        let mut account = dashboard_panel();
+        account.features = Some(priced_features(None, Some(true)));
+        let rows = billing::comparison_rows(&account);
+        assert_eq!(
+            rows[1].1,
+            [
+                billing::FeatureValue::Value("1".into()),
+                billing::FeatureValue::Value("3".into()),
+                billing::FeatureValue::Value("10".into())
+            ]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

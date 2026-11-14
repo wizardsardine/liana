@@ -262,7 +262,7 @@ pub(super) fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a,
         };
     }
     if state.show_billing_history {
-        return super::billing_history_ux(state);
+        return billing_history_ux(state);
     }
     if state.show_plan_comparison {
         return change_plan_ux(state);
@@ -677,17 +677,83 @@ pub(super) fn history_row_parts(
 
 pub(super) fn history_row<'a>(entry: &BillingHistoryEntry) -> Element<'a, Msg> {
     let (date, item, amount, status, tone) = history_row_parts(entry);
+    let mut main = Column::new().push(tenshu_text::label(item));
+    if let Some(detail) = history_detail(entry) {
+        main = main.push(
+            tenshu_text::mono(detail)
+                .size(12)
+                .style(theme::tenshu::text::muted),
+        );
+    }
     Row::new()
         .spacing(16)
         .align_y(Alignment::Center)
         .push(lead(date).width(Length::Fixed(120.0)))
-        .push(tenshu_text::label(item).width(Length::Fill))
+        .push(main.width(Length::Fill))
         .push(tenshu_text::body(amount).size(13))
         .push(
             container(status_line(status_icon(tone), status, tone))
-                .width(Length::Fixed(110.0))
-                .align_right(Length::Fixed(110.0)),
+                .width(Length::Fixed(132.0))
+                .align_right(Length::Fixed(132.0)),
         )
+        .into()
+}
+
+/// The invoice line under a history row that needs it: support needs the
+/// invoice id for Needs support, and a partly paid or overpaid row says how
+/// much arrived. Keyed by the API's `chargeId` (billing v2 A1), with
+/// `invoiceId` preferred when sent.
+pub(super) fn history_detail(entry: &BillingHistoryEntry) -> Option<String> {
+    let id = entry
+        .invoice_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .unwrap_or(entry.charge_id.as_str());
+    match entry.charge_state() {
+        ChargeState::NeedsSupport | ChargeState::PartiallyPaid if !id.is_empty() => {
+            Some(if entry.amount_received_sats > 0 {
+                format!(
+                    "Invoice {id} · {} sats received",
+                    group_sats(entry.amount_received_sats)
+                )
+            } else {
+                format!("Invoice {id}")
+            })
+        }
+        ChargeState::Paid if entry.overpaid_sats > 0 && !id.is_empty() => Some(format!(
+            "Invoice {id} · overpaid by {} sats",
+            group_sats(entry.overpaid_sats)
+        )),
+        _ => None,
+    }
+}
+
+/// The billing history page (D4): every charge as a ruled list.
+pub(super) fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg> {
+    let mut col = Column::new()
+        .width(Length::Fill)
+        .push(back_link(
+            localized_copy("Plan & billing"),
+            Msg::ToggleBillingHistory,
+        ))
+        .push(sheet_title(localized_copy("Billing history")))
+        .push(lead(localized_copy(
+            "Every bitcoin invoice on this account. Contact support with the invoice ID for any \
+             payment marked Needs support.",
+        )))
+        .push(space(20.0));
+    col = match &state.billing_history {
+        None => col.push(lead(localized_copy("Loading billing history…"))),
+        Some(entries) if entries.is_empty() => col.push(lead(localized_copy(
+            "No payments yet. Invoices you create appear here.",
+        ))),
+        Some(entries) => col.push(ruled_list(entries.iter().map(history_row))),
+    };
+    col.push(space(12.0))
+        .push(footnote(localized_copy(
+            "Payments use Lightning or on-chain bitcoin through BTCPay. Amounts in sats are fixed \
+             when the invoice is created.",
+        )))
         .into()
 }
 

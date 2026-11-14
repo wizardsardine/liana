@@ -616,13 +616,25 @@ fn dock_action<'a>(
 /// a bare ratio under "All networks" reads as a total across every network.
 pub(super) fn plan_full(projection: &Projection<'_>) -> Option<String> {
     projection.at_limit().then(|| {
-        format!(
-            "{}: {} of {} Cubes on the {} plan",
-            network_name(projection.network),
-            projection.total_count,
-            projection.cube_limit,
-            projection.tier
-        )
+        if projection.total_count > projection.cube_limit {
+            // Over the limit after a plan change or the billing v2 limits:
+            // existing Cubes keep working, only new ones are blocked.
+            format!(
+                "{}: {} Cubes; the {} plan includes {}. Existing Cubes keep working.",
+                network_name(projection.network),
+                projection.total_count,
+                projection.tier,
+                projection.cube_limit
+            )
+        } else {
+            format!(
+                "{}: {} of {} Cubes on the {} plan",
+                network_name(projection.network),
+                projection.total_count,
+                projection.cube_limit,
+                projection.tier
+            )
+        }
     })
 }
 
@@ -1105,7 +1117,11 @@ pub(super) fn plan_rows(projection: &Projection<'_>) -> Vec<PlanRow> {
             };
             PlanRow {
                 network,
-                used: format!("{total} of {limit}"),
+                used: if total > limit {
+                    format!("{total} · plan includes {limit}")
+                } else {
+                    format!("{total} of {limit}")
+                },
                 note: (usage.remote > 0).then(|| format!("{} only in Connect", usage.remote)),
                 full: total >= limit,
                 current: usage.chain == projection.network,
@@ -1117,10 +1133,18 @@ pub(super) fn plan_rows(projection: &Projection<'_>) -> Vec<PlanRow> {
 /// Why Create and Import are off, when the current network is full.
 fn plan_limit_note(projection: &Projection<'_>) -> Option<String> {
     projection.at_limit().then(|| {
-        format!(
-            "Upgrade, or delete a {} Cube, to add one.",
-            network_name(projection.network),
-        )
+        if projection.total_count > projection.cube_limit {
+            format!(
+                "Existing Cubes keep working. To add one, upgrade, or delete {} Cubes until \
+                 you're under the plan's limit.",
+                network_name(projection.network),
+            )
+        } else {
+            format!(
+                "Upgrade, or delete a {} Cube, to add one.",
+                network_name(projection.network),
+            )
+        }
     })
 }
 
