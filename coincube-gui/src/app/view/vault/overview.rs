@@ -698,8 +698,19 @@ mod balance_state_tests {
                 None
             );
         });
+        // Samurai, the default, has one chain-neutral line and the same gates.
+        for chain in [ChainId::Bitcoin, ChainId::BitcoinBlake2b] {
+            assert_eq!(
+                empty_vault_voice(chain, zero, &synced, visible),
+                Some("Empty and ready. Fill it with patience.")
+            );
+        }
         assert_eq!(
-            empty_vault_voice(ChainId::Bitcoin, zero, &synced, visible),
+            empty_vault_voice(ChainId::Bitcoin, zero, &synced, true),
+            None
+        );
+        assert_eq!(
+            empty_vault_voice(ChainId::Testnet4, zero, &synced, visible),
             None
         );
     }

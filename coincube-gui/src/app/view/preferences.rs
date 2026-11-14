@@ -227,62 +227,28 @@ fn worldview_row<'a>(saved: DevicePreferences, enabled: bool) -> Element<'a, Mes
                 .for_mode(selected)
                 .map(|line| muted(line.to_owned(), type_size::CHIP)),
         );
-    // Samurai has no voice lines, so it shows the wording those screens
-    // use in every mode instead of inventing any.
-    let amount = format!("[{}]", localized_copy("Amount"));
-    let examples: [(String, String); 4] = if selected == WorldviewMode::Samurai {
-        [
-            (
-                coincube_ui::localized_format!("Welcome", "Bienvenida"),
-                localized_copy("Click to get started").to_owned(),
-            ),
-            (
-                coincube_ui::localized_format!("Empty activity", "Actividad vacía"),
-                localized_copy("No transactions yet").to_owned(),
-            ),
-            (
-                coincube_ui::localized_format!("Payment sent", "Pago enviado"),
-                format!("{amount} {}", CopyText::HasBeenSentSuccessfully.get()),
-            ),
-            (
-                localized_copy("Syncing").to_owned(),
-                CopyText::ScanningTheBlockchain.get().to_owned(),
-            ),
-        ]
-    } else {
-        let line = |voice: VoiceLine| voice.for_mode(selected).unwrap_or_default().to_owned();
-        [
-            (
-                coincube_ui::localized_format!("Welcome", "Bienvenida"),
-                line(VoiceLine::Welcome),
-            ),
-            (
-                coincube_ui::localized_format!("Empty Vault", "Vault vacío"),
-                line(VoiceLine::EmptySha256Vault),
-            ),
-            (
-                coincube_ui::localized_format!("Payment sent", "Pago enviado"),
-                line(VoiceLine::PaymentSent),
-            ),
-            (
-                localized_copy("Syncing").to_owned(),
-                line(VoiceLine::Syncing),
-            ),
-        ]
-    };
+    let line = |voice: VoiceLine| voice.for_mode(selected).unwrap_or_default().to_owned();
+    let examples: [(String, String); 4] = [
+        (
+            coincube_ui::localized_format!("Welcome", "Bienvenida"),
+            line(VoiceLine::Welcome),
+        ),
+        (
+            coincube_ui::localized_format!("Empty Vault", "Vault vacío"),
+            line(VoiceLine::EmptySha256Vault),
+        ),
+        (
+            coincube_ui::localized_format!("Payment sent", "Pago enviado"),
+            line(VoiceLine::PaymentSent),
+        ),
+        (
+            localized_copy("Syncing").to_owned(),
+            line(VoiceLine::Syncing),
+        ),
+    ];
     wording = wording
         .push(Space::new().height(space::S))
         .push(horizontal_rule());
-    if selected == WorldviewMode::Samurai {
-        wording = wording.push(muted(
-            coincube_ui::localized_format!(
-                "Samurai adds no lines of its own. These screens show their standard wording:",
-                "Samurai no añade frases propias. Estas pantallas muestran su texto habitual:"
-            ),
-            type_size::CHIP,
-        ));
-    }
-    let samurai = selected == WorldviewMode::Samurai;
     let wording = IntoIterator::into_iter(examples).fold(
         wording.push(Space::new().height(space::XS)),
         |column, (place, text)| {
@@ -294,11 +260,7 @@ fn worldview_row<'a>(saved: DevicePreferences, enabled: bool) -> Element<'a, Mes
                         tenshu_text::body(text)
                             .size(type_size::CHIP)
                             .width(Length::Fill)
-                            .style(if samurai {
-                                theme::text::secondary
-                            } else {
-                                theme::text::primary
-                            }),
+                            .style(theme::text::primary),
                     ),
             )
         },
@@ -1991,10 +1953,10 @@ mod tests {
                 vec![
                     "Network names in Samurai",
                     "Tend to what is yours to control.",
-                    "Samurai adds no lines of its own.",
-                    "Click to get started",
-                    "No transactions yet",
-                    "Scanning the blockchain...",
+                    "Welcome. Begin when you are ready.",
+                    "Empty and ready. Fill it with patience.",
+                    "Sent with intention.",
+                    "Patience is part of the way.",
                     "Unchanged",
                 ],
                 "No ideological baggage",
@@ -2008,7 +1970,7 @@ mod tests {
                     "Time to stack some sats.",
                     "The free market thanks you.",
                 ],
-                "Samurai adds no lines of its own.",
+                "Sent with intention.",
             ),
             (
                 WorldviewMode::Luke,
