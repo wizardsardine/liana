@@ -1883,6 +1883,48 @@ def test_rbfpsbt_insufficient_funds(lianad, bitcoind):
     assert "missing" in lianad.rpc.rbfpsbt(spend_txid_2, True)
 
 
+def test_rbfpsbt_multi_input_fee(lianad, bitcoind):
+    """The fee of a replacement must not scale with the number of inputs of the replaced tx."""
+    # Get three confirmed coins.
+    destinations = {lianad.rpc.getnewaddress()["address"]: 0.01 for _ in range(3)}
+    txid = bitcoind.rpc.sendmany("", destinations)
+    bitcoind.generate_block(1, wait_for_mempool=txid)
+    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
+    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins(["confirmed"])["coins"]]
+
+    # Spend all three coins at a high feerate, so that the minimum fee of the
+    # replacement is set by the replaced fee rather than by the target feerate.
+    first_res = lianad.rpc.createspend(
+        {bitcoind.rpc.getnewaddress(): 2_000_000}, outpoints, 50
+    )
+    first_psbt = PSBT.from_base64(first_res["psbt"])
+    assert len(first_psbt.tx.vin) == 3
+    # Broadcast it and wait for lianad to see the coins as spent by it.
+    first_txid = sign_and_broadcast_psbt(lianad, first_psbt)
+    wait_for(
+        lambda: all(
+            c["spend_info"] is not None and c["spend_info"]["txid"] == first_txid
+            for c in lianad.rpc.listcoins([], outpoints)["coins"]
+        )
+    )
+    first_fee = bitcoind.rpc.getmempoolentry(first_txid)["fees"]["base"] * COIN
+
+    # Bump the fee by 1 sat/vb, keeping the same three inputs.
+    rbf_res = lianad.rpc.rbfpsbt(first_txid, False, 51)
+    rbf_psbt = PSBT.from_base64(rbf_res["psbt"])
+    assert len(rbf_psbt.tx.vin) == 3
+    # Broadcast the replacement and read its actual feerate from the mempool.
+    rbf_txid = sign_and_broadcast_psbt(lianad, rbf_psbt)
+    rbf_entry = bitcoind.rpc.getmempoolentry(rbf_txid)
+    rbf_fee = rbf_entry["fees"]["base"] * COIN
+    rbf_feerate = rbf_fee / rbf_entry["vsize"]
+    # The replaced fee must be counted once, not once per input: paying it three
+    # times would give a feerate around 151 sat/vb.
+    assert (
+        51 <= rbf_feerate < 52
+    ), f"replaced fee {first_fee}, replacement fee {rbf_fee} ({rbf_feerate} sat/vb)"
+
+
 def test_rbfpsbt_cancel(lianad, bitcoind):
     """Test the use of RBF to cancel a transaction."""
 
