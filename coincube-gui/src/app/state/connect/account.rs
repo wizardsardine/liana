@@ -1341,9 +1341,13 @@ pub struct ConnectAccountPanel {
     pub checkout: Option<CheckoutState>,
     /// Last checkout generation handed out (see [`CheckoutState::id`]).
     checkout_seq: u64,
-    /// Sequence of the latest billing plan reload; an older response that
-    /// lands after a newer one is dropped (`PlanReloaded`).
+    /// Sequence of the latest plan fetch handed out (`plan_fetch_task`).
     plan_seq: u64,
+    /// Sequence of the newest plan response applied. A response applies
+    /// only if it is newer than this, so a stale one never overwrites a
+    /// newer plan, yet a failed newer fetch doesn't discard an older
+    /// successful one.
+    applied_plan_seq: u64,
     /// Billing history entries.
     pub billing_history: Option<Vec<BillingHistoryEntry>>,
     /// Whether the billing history sub-view is shown.
@@ -1443,6 +1447,7 @@ impl ConnectAccountPanel {
             checkout: None,
             checkout_seq: 0,
             plan_seq: 0,
+            applied_plan_seq: 0,
             billing_history: None,
             show_billing_history: false,
             show_plan_comparison: false,
@@ -2422,9 +2427,12 @@ impl ConnectAccountPanel {
                         }
                     }
                 }
-                // Only the newest billing reload may set the plan: one sent
-                // before a payment must not land over one sent after it.
-                if gen == self.session_generation && seq == self.plan_seq && plan.is_some() {
+                // A response applies only if it is newer than the last one
+                // applied: one sent before a payment never lands over one
+                // sent after it, and a failed newer fetch doesn't throw away
+                // an older good answer.
+                if gen == self.session_generation && seq > self.applied_plan_seq && plan.is_some() {
+                    self.applied_plan_seq = seq;
                     self.apply_loaded_plan(plan);
                 }
             }
@@ -3313,6 +3321,7 @@ impl ConnectAccountPanel {
                                 self.plan = Some(plan);
                                 // Newer than any reload still in flight.
                                 self.plan_seq = self.plan_seq.wrapping_add(1);
+                                self.applied_plan_seq = self.plan_seq;
                                 self.billing_history = None;
                                 return self.reload_billing_history();
                             }
@@ -10408,6 +10417,28 @@ mod plan_lifecycle_tests {
             signin_seq,
         ));
         assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Estate);
+    }
+
+    #[test]
+    fn a_failed_newer_plan_fetch_keeps_an_older_good_answer() {
+        let mut panel = ConnectAccountPanel::new();
+        let gen = panel.session_generation;
+        // The sign-in fetch is in flight when Plan & billing opens.
+        let _signin = panel.plan_fetch_task();
+        let signin = panel.plan_seq;
+        let _open = panel.plan_fetch_task();
+        let open = panel.plan_seq;
+        // The newer one fails, the older one succeeds: keep the plan.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(None, gen, open));
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Pro, PlanStatus::Active, None, None)),
+            gen,
+            signin,
+        ));
+        assert_eq!(
+            panel.plan.as_ref().map(|p| p.plan.clone()),
+            Some(PlanTier::Pro)
+        );
     }
 
     #[test]
