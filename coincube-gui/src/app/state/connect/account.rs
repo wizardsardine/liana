@@ -10225,14 +10225,30 @@ mod plan_lifecycle_tests {
             panel.checkout.as_ref().unwrap().phase,
             CheckoutPhase::Review
         );
-        let _ = panel.update_message(ConnectAccountMessage::SetReviewCycle(BillingCycle::Annual));
+        // Staying on Monthly keeps the bitcoin route: SetReviewCycle returns
+        // no task.
+        let stay =
+            panel.update_message(ConnectAccountMessage::SetReviewCycle(BillingCycle::Monthly));
+        assert_eq!(stay.units(), 0, "no re-route while the route is unchanged");
+        // Annual makes it a card upgrade: the handler itself must return the
+        // re-dispatch (a missing dispatch fails here, not just a missing
+        // route check).
+        let task =
+            panel.update_message(ConnectAccountMessage::SetReviewCycle(BillingCycle::Annual));
+        assert_eq!(
+            task.units(),
+            1,
+            "SetReviewCycle returns the ReviewPlanChange dispatch"
+        );
         assert!(panel.card_change_route(&PlanTier::Pro, BillingCycle::Annual));
-        // The handler re-dispatches ReviewPlanChange; apply it as the runtime would.
-        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        assert_eq!(panel.checkout.as_ref().unwrap().cycle, BillingCycle::Annual);
+        // What that dispatch does when the runtime delivers it.
+        let preview = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
         assert_eq!(
             panel.checkout.as_ref().unwrap().phase,
             CheckoutPhase::ChangePreviewing
         );
+        assert!(preview.units() > 0, "the card preview request goes out");
     }
 
     #[test]
