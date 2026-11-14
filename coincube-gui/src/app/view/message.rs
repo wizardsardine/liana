@@ -2666,6 +2666,10 @@ pub enum HomeMessage {
     /// uses the actual claimed amount).
     SwapSettledAwaitingArrival {
         amount_sat: u64,
+        /// The deposit was just seen among the unclaimed ones (a restored
+        /// shift checks before registering), so it vanishing from that list
+        /// means it was claimed.
+        deposit_seen: bool,
     },
     /// Store (`Some`) or clear (`None`) the Cube's live Spark cross-network
     /// receive, so its page can come back after a lock or restart.

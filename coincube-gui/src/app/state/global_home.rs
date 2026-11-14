@@ -57,9 +57,6 @@ fn paid_to(psbt: &Psbt, script: &ScriptBuf) -> Amount {
         .fold(Amount::ZERO, |total, output| total + output.value)
 }
 
-/// Construct a `form::Value<String>` at the default Transfer feerate. Used on
-/// `GlobalHome::new`, and on every flow reset so a value (or stuck loading
-/// flag) from a prior transfer doesn't leak into the next flow.
 /// `settings` with this Cube's stored Spark conversion set to `record`. A Cube
 /// missing from the file leaves it unchanged: a settings updater that returns
 /// `None` would delete the file (see `settings::update_settings_file`).
@@ -74,6 +71,9 @@ fn with_pending_spark_shift(
     settings
 }
 
+/// Construct a `form::Value<String>` at the default Transfer feerate. Used on
+/// `GlobalHome::new`, and on every flow reset so a value (or stuck loading
+/// flag) from a prior transfer doesn't leak into the next flow.
 fn default_transfer_feerate() -> form::Value<String> {
     form::Value {
         value: DEFAULT_TRANSFER_FEERATE_SATS_VB.to_string(),
@@ -3181,7 +3181,10 @@ impl State for GlobalHome {
                     HomeMessage::StoreSparkShift(record) => {
                         self.store_pending_spark_shift(record.as_deref().cloned())
                     }
-                    HomeMessage::SwapSettledAwaitingArrival { amount_sat } => {
+                    HomeMessage::SwapSettledAwaitingArrival {
+                        amount_sat,
+                        deposit_seen,
+                    } => {
                         // A SideShift swap just settled: bitcoin is en route to the
                         // Spark wallet's static on-chain deposit address.
                         // Structurally that's identical to a Vault→Spark transfer
@@ -3205,7 +3208,10 @@ impl State for GlobalHome {
                         // No Breez swap id — swaps use the generic deposit-based
                         // path (same as Vault→Spark), not the peg-out correlation.
                         self.pending_spark_incoming_swap_id = None;
-                        self.pending_spark_deposit_seen = false;
+                        // A restored shift saw its deposit unclaimed just now; if
+                        // the SDK claims it before the list below is read, an
+                        // empty list must still read as claimed.
+                        self.pending_spark_deposit_seen = deposit_seen;
                         self.pending_spark_incoming_is_swap = true;
                         self.auto_claiming_spark_deposit = None;
                         // Reconcile immediately — the deposit may already be in the

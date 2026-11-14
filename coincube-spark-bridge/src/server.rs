@@ -1862,6 +1862,15 @@ fn sdk_route_to_protocol(route: &CrossChainRoutePair) -> coincube_spark_protocol
         contract_address: route.contract_address.clone(),
         decimals: route.decimals,
         btc_source_supported: route_accepts_btc(route),
+        btc_limits: route.limits_for(&SparkAsset::Bitcoin).map(|limits| {
+            coincube_spark_protocol::CrossChainRouteLimits {
+                // Sats fit in u64; anything larger is not a real bound.
+                min_sats: limits.min_amount.map(|v| v.min(u64::MAX as u128) as u64),
+                max_sats: limits.max_amount.map(|v| v.min(u64::MAX as u128) as u64),
+                min_usd_cents: limits.min_usd_cents,
+                max_usd_cents: limits.max_usd_cents,
+            }
+        }),
     }
 }
 
@@ -2170,7 +2179,9 @@ async fn handle_prepare_cross_chain(
     };
     let Some(route) = live_routes
         .into_iter()
-        .find(|r| sdk_route_to_protocol(r) == params.route)
+        // Identity only: the published limits may have moved since the
+        // gui looked the route up, and the bridge never trusts them anyway.
+        .find(|r| sdk_route_to_protocol(r).same_route_as(&params.route))
     else {
         return Response::err(
             id,

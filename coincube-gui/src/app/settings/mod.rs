@@ -6684,7 +6684,9 @@ impl PendingSparkShift {
                 deposit_amount: None,
                 settle_amount: None,
                 rate: None,
-                expires_at: Some("2026-11-20T00:00:00.000Z".to_string()),
+                // No expiry: tests that need one set it, so none of them
+                // start failing as the calendar passes a fixed date.
+                expires_at: None,
                 created_at: Some("2026-11-13T00:00:00.000Z".to_string()),
                 status: Some("waiting".to_string()),
                 affiliate_fee_percent: None,

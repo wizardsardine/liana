@@ -185,7 +185,17 @@ impl SparkSideshiftReceiveFlow {
         flow.refund_address = record.refund_address.clone();
         flow.qr_data = qr_code::Data::new(&record.shift.deposit_address).ok();
         flow.shift = Some(record.shift.clone());
-        flow.shift_status = Some(ShiftStatusKind::Waiting);
+        // A shift whose deposit address has expired by the clock starts as
+        // expired, so its address and QR are not offered while SideShift is
+        // unreachable. The first successful poll still has the last word (a
+        // deposit sent in time moves it on).
+        flow.shift_status = Some(
+            if deposit_window_closed(record.shift.expires_at.as_deref(), chrono::Utc::now()) {
+                ShiftStatusKind::Expired
+            } else {
+                ShiftStatusKind::Waiting
+            },
+        );
         flow.phase = SparkShiftPhase::Active;
         flow.restored = true;
         Some(flow)
@@ -217,6 +227,16 @@ impl SparkSideshiftReceiveFlow {
         flow
     }
 
+    /// A live shift whose bitcoin SideShift has sent, in settle tx `settle_hash`.
+    #[cfg(test)]
+    pub(crate) fn settled_for_test(spark: Arc<SparkBackend>, settle_hash: &str) -> Self {
+        let mut flow = Self::new(spark);
+        flow.phase = SparkShiftPhase::Active;
+        flow.shift_status = Some(ShiftStatusKind::Settled);
+        flow.settle_hash = Some(settle_hash.to_string());
+        flow
+    }
+
     pub fn phase(&self) -> &SparkShiftPhase {
         &self.phase
     }
@@ -231,6 +251,13 @@ impl SparkSideshiftReceiveFlow {
     }
     pub fn refund_error(&self) -> Option<&str> {
         self.refund_error.as_deref()
+    }
+    /// Whether "Generate deposit address" is live: the refund address must
+    /// validate against the origin chain first. The view disables the button
+    /// otherwise; `Msg::Generate` re-checks, so this is UX, not the gate.
+    pub fn can_generate(&self) -> bool {
+        !self.loading
+            && validate_refund_address(self.selected.network, &self.refund_address).is_ok()
     }
     pub fn shift(&self) -> Option<&ShiftResponse> {
         self.shift.as_ref()
@@ -287,7 +314,10 @@ impl SparkSideshiftReceiveFlow {
     /// shift: every button that resets one (Start over, Get a new address,
     /// Done) is on a finished shift's page.
     fn reset(&mut self) -> Task<Message> {
-        let had_shift = self.shift.is_some();
+        // A restored shift SideShift hasn't answered for yet may only look
+        // expired by the clock, with money in flight: keep its record (the
+        // next restore asks SideShift again) rather than lose its Shift ID.
+        let had_shift = self.shift.is_some() && !self.restored;
         // Keep `selected` / `asset_preselected`: inline, the asset is chosen via
         // the Spark Receive THEY SEND card, and "Start over" returns to the
         // refund step for the *same* asset, not a default.
@@ -435,7 +465,10 @@ impl SparkSideshiftReceiveFlow {
 
     /// What a settle does: refresh the panel's deposits, and register the
     /// arrival with Home so the deposit is auto-claimed and celebrated.
-    fn settled_tasks(&self) -> Task<Message> {
+    /// `deposit_seen`: the deposit was just seen among the unclaimed ones (a
+    /// restored shift), so Home may read it vanishing as claimed even if the
+    /// SDK claims it before Home looks.
+    fn settled_tasks(&self, deposit_seen: bool) -> Task<Message> {
         // The amount is the swap's settle estimate, used only for the pending
         // indicator; the celebration uses the actual claimed amount. Read the
         // cached figure rather than this poll's `settle_sat`: a settle response
@@ -448,6 +481,7 @@ impl SparkSideshiftReceiveFlow {
             Task::done(Message::View(view::Message::Home(
                 view::HomeMessage::SwapSettledAwaitingArrival {
                     amount_sat: self.settle_amount_sat.unwrap_or(0),
+                    deposit_seen,
                 },
             ))),
         ])
@@ -586,13 +620,25 @@ impl SparkSideshiftReceiveFlow {
             Msg::PollStatus => self.poll_shift_status(),
 
             Msg::StatusUpdated(result) => {
-                if let Ok(status) = result {
+                // An answer for another shift (one polled before "Get a new
+                // address" or "Start over" and answered after) must not touch
+                // this one: an old `expired` would mark the new shift expired
+                // and clear its stored record.
+                let current = self.shift.as_ref().map(|shift| shift.id.as_str());
+                if let Some(status) = result
+                    .as_ref()
+                    .ok()
+                    .filter(|s| Some(s.id.as_str()) == current)
+                {
                     let kind = ShiftStatusKind::from(status.status.as_str());
                     let settled = kind == ShiftStatusKind::Settled
                         && self.shift_status.as_ref() != Some(&ShiftStatusKind::Settled);
-                    let expired = kind == ShiftStatusKind::Expired
-                        && self.shift_status.as_ref() != Some(&ShiftStatusKind::Expired);
                     let first_after_restore = std::mem::take(&mut self.restored);
+                    // A restored shift may already show as expired by the
+                    // clock; SideShift confirming it is what clears the record.
+                    let expired = kind == ShiftStatusKind::Expired
+                        && (first_after_restore
+                            || self.shift_status.as_ref() != Some(&ShiftStatusKind::Expired));
                     self.shift_status = Some(kind);
                     // SideShift reports the settle output (BTC, as a decimal
                     // string) once a deposit is detected. Keep the latest so the
@@ -644,7 +690,7 @@ impl SparkSideshiftReceiveFlow {
                         if first_after_restore {
                             self.arrival_unconfirmed = true;
                         } else if !self.arrival_unconfirmed {
-                            return self.settled_tasks();
+                            return self.settled_tasks(false);
                         }
                     }
                     if self.arrival_unconfirmed {
@@ -675,7 +721,7 @@ impl SparkSideshiftReceiveFlow {
                     }
                     RestoredSettle::StillPending => {
                         self.arrival_unconfirmed = false;
-                        self.settled_tasks()
+                        self.settled_tasks(true)
                     }
                     // The recheck subscription tries again.
                     RestoredSettle::Unknown => Task::none(),
@@ -755,7 +801,7 @@ impl SparkSideshiftReceiveFlow {
         // `is_terminal` includes `Review` — a held shift will not advance on
         // its own, so polling it forever just burns requests and leaves the UI
         // implying progress. The status card shows a call to action instead.
-        let poll = if self.phase == SparkShiftPhase::Active && !is_terminal {
+        let poll = if polls_status(&self.phase, is_terminal, self.restored) {
             iced::time::every(Duration::from_secs(10))
                 .map(|_| Message::View(view::Message::SparkSideshiftReceive(Msg::PollStatus)))
         } else {
@@ -802,6 +848,23 @@ pub fn store_record(record: Option<PendingSparkShift>) -> Task<Message> {
     Task::done(Message::View(view::Message::Home(
         view::HomeMessage::StoreSparkShift(record.map(Box::new)),
     )))
+}
+
+/// Whether the status poll runs: while the shift is live and not terminal, and
+/// for a restored shift until SideShift has answered once — its status until
+/// then is a guess (an expiry by the clock looks terminal), and one failed poll
+/// at unlock must not leave it there.
+fn polls_status(phase: &SparkShiftPhase, is_terminal: bool, restored: bool) -> bool {
+    *phase == SparkShiftPhase::Active && (!is_terminal || restored)
+}
+
+/// Whether a shift's deposit window has closed by the clock: `expires_at` (as
+/// SideShift writes it, RFC 3339) is at or before `now`. Unknown or unreadable
+/// is not closed: SideShift's status decides then.
+fn deposit_window_closed(expires_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> bool {
+    expires_at
+        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at.trim()).ok())
+        .is_some_and(|at| at <= now)
 }
 
 /// The amount a claimed deposit paid by `settle_hash` brought in, if the
@@ -1162,6 +1225,25 @@ mod tests {
     }
 
     #[test]
+    fn generate_stays_disabled_until_the_refund_address_fits_the_origin_chain() {
+        let liquid_usdt = crate::services::sideshift::deposit_option_by_key("usdt:liquid")
+            .expect("USDt on Liquid is offered");
+        let mut flow = SparkSideshiftReceiveFlow::new_preselected(backend(), liquid_usdt);
+        assert!(!flow.can_generate(), "blank refund address");
+
+        // A Solana address for a Liquid deposit — the mistake that loses funds.
+        let _ = flow.update(&Msg::RefundAddressEdited(
+            "135GTBUiUTDFYLzvstzJq4CxAXDLwZiBmZr9k9f8KBQy".to_string(),
+        ));
+        assert!(flow.refund_error().is_some());
+        assert!(!flow.can_generate(), "wrong-chain refund address");
+
+        // And pressing Generate anyway (stale button) still creates nothing.
+        let _ = flow.update(&Msg::Generate);
+        assert_eq!(flow.phase(), &SparkShiftPhase::Setup);
+    }
+
+    #[test]
     fn no_record_before_a_shift_exists() {
         assert_eq!(SparkSideshiftReceiveFlow::new(backend()).record(), None);
     }
@@ -1251,5 +1333,89 @@ mod tests {
         let _ = flow.update(&status("settling", None));
         let _ = flow.update(&status("settled", Some("abc")));
         assert!(!flow.arrival_unconfirmed);
+    }
+
+    #[test]
+    fn a_deposit_window_closes_at_its_expiry_and_unknown_never_closes() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-13T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(deposit_window_closed(Some("2026-11-13T11:59:59.000Z"), now));
+        assert!(deposit_window_closed(Some("2026-11-13T12:00:00Z"), now));
+        assert!(!deposit_window_closed(Some("2026-11-13T12:00:01Z"), now));
+        assert!(!deposit_window_closed(Some("not a time"), now));
+        assert!(!deposit_window_closed(None, now));
+    }
+
+    /// An expired shift doesn't offer its deposit address while SideShift is
+    /// unreachable, and SideShift confirming the expiry clears the record.
+    #[test]
+    fn a_restored_shift_past_its_expiry_starts_expired() {
+        let mut record = PendingSparkShift::sample();
+        record.shift.expires_at = Some("2020-01-01T00:00:00.000Z".to_string());
+        let mut flow = SparkSideshiftReceiveFlow::restored(backend(), &record).unwrap();
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Expired));
+
+        let _ = flow.update(&status("expired", None));
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Expired));
+        assert!(!flow.restored);
+
+        // A deposit sent in time: SideShift's answer wins over the clock.
+        let mut late = SparkSideshiftReceiveFlow::restored(backend(), &record).unwrap();
+        let _ = late.update(&status("processing", None));
+        assert_eq!(late.shift_status(), Some(&ShiftStatusKind::Processing));
+    }
+
+    /// A restored shift keeps asking SideShift until it answers, even while
+    /// it looks expired by the clock; after that, terminal stops the poll.
+    #[test]
+    fn a_restored_shift_polls_until_sideshift_answers_once() {
+        assert!(polls_status(&SparkShiftPhase::Active, true, true));
+        assert!(!polls_status(&SparkShiftPhase::Active, true, false));
+        assert!(polls_status(&SparkShiftPhase::Active, false, false));
+        assert!(!polls_status(&SparkShiftPhase::Arrived, false, true));
+
+        let mut record = PendingSparkShift::sample();
+        record.shift.expires_at = Some("2020-01-01T00:00:00.000Z".to_string());
+        let mut flow = SparkSideshiftReceiveFlow::restored(backend(), &record).unwrap();
+        // A failed poll leaves it waiting for an answer, still polling.
+        let _ = flow.update(&Msg::StatusUpdated(Err("offline".to_string())));
+        assert!(flow.restored);
+        // "Get a new address" on the unconfirmed page keeps the shift's
+        // record for the next restore; it is only the on-screen page reset.
+        let _ = flow.update(&Msg::Reset);
+        assert_eq!(flow.phase(), &SparkShiftPhase::Setup);
+    }
+
+    /// A poll answered after the page was reset (or for any other shift)
+    /// leaves the current flow alone.
+    #[test]
+    fn a_status_for_another_shift_is_ignored() {
+        let mut record = PendingSparkShift::sample();
+        record.shift.expires_at = Some("2020-01-01T00:00:00.000Z".to_string());
+        let mut flow = SparkSideshiftReceiveFlow::restored(backend(), &record).unwrap();
+        let _ = flow.update(&Msg::Reset);
+        assert_eq!(flow.shift(), None);
+
+        // The old shift's poll lands after the reset.
+        let _ = flow.update(&status("expired", None));
+        assert_eq!(flow.shift_status(), None);
+        assert_eq!(flow.phase(), &SparkShiftPhase::Setup);
+
+        // On a live shift, an answer carrying another id changes nothing.
+        let mut live = restored_flow();
+        let _ = live.update(&Msg::StatusUpdated(Ok(
+            crate::services::sideshift::ShiftStatus {
+                id: "someone-else".to_string(),
+                status: "expired".to_string(),
+                deposit_address: None,
+                deposit_amount: None,
+                settle_amount: None,
+                expires_at: None,
+                settle_hash: None,
+            },
+        )));
+        assert_eq!(live.shift_status(), Some(&ShiftStatusKind::Waiting));
+        assert!(live.restored);
     }
 }

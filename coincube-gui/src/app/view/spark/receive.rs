@@ -1331,8 +1331,8 @@ pub(crate) fn conversion_notice<'a>(
         )
     } else {
         localized_format!(
-            "A {} conversion is still in progress.",
-            "Una conversión de {} sigue en curso.",
+            "You have a {} conversion open.",
+            "Tienes una conversión de {} abierta.",
             option.label
         )
     };

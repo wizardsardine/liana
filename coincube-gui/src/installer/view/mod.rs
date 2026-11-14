@@ -49,16 +49,11 @@ use crate::{
     },
 };
 
-pub fn import_descriptor<'a>(
-    progress: (usize, usize),
+fn descriptor_entry<'a>(
     imported_descriptor: &form::Value<String>,
-    imported_backup: bool,
     wrong_network: bool,
-    error: Option<&String>,
-) -> Element<'a, Message> {
-    let valid = !imported_descriptor.value.is_empty() && imported_descriptor.valid;
-
-    let col_descriptor = Column::new()
+) -> Column<'a, Message> {
+    Column::new()
         .push(text(localized_copy("Descriptor:")).bold())
         .push(Space::new().height(10))
         .push(
@@ -72,7 +67,19 @@ pub fn import_descriptor<'a>(
             })
             .size(text::P1_SIZE)
             .padding(10),
-        );
+        )
+}
+
+pub fn import_descriptor<'a>(
+    progress: (usize, usize),
+    imported_descriptor: &form::Value<String>,
+    imported_backup: bool,
+    wrong_network: bool,
+    error: Option<&String>,
+) -> Element<'a, Message> {
+    let valid = !imported_descriptor.value.is_empty() && imported_descriptor.valid;
+
+    let col_descriptor = descriptor_entry(imported_descriptor, wrong_network);
 
     let descriptor = if imported_backup {
         None
@@ -434,6 +441,94 @@ pub fn backup_descriptor<'a>(
     )
 }
 
+fn policy_signer_names<'a>(
+    signer_keys: &[Fingerprint],
+    keys: &HashMap<Fingerprint, settings::KeySetting>,
+) -> Row<'a, Message> {
+    signer_keys
+        .iter()
+        .enumerate()
+        .fold(Row::new().spacing(5), |row, (i, k)| {
+            let content = if let Some(key) = keys.get(k) {
+                Container::new(
+                    iced_tooltip::Tooltip::new(
+                        text(key.name.clone()).bold(),
+                        text(k.to_string()),
+                        iced_tooltip::Position::Bottom,
+                    )
+                    .style(theme::card::simple),
+                )
+            } else {
+                Container::new(text(format!("[{}]", k)).bold())
+            };
+            if signer_keys.len() == 1 || i == signer_keys.len() - 1 {
+                row.push(content)
+            } else if i <= signer_keys.len() - 2 {
+                row.push(content).push(text(localized_copy("and")))
+            } else {
+                row.push(content).push(text(","))
+            }
+        })
+}
+
+fn recovery_policy_clause<'a>(
+    threshold: usize,
+    recovery_keys: &[Fingerprint],
+    sequence: &u16,
+    i: usize,
+    keys: &HashMap<Fingerprint, settings::KeySetting>,
+) -> Row<'a, Message> {
+    Row::new()
+        .spacing(5)
+        .push(
+            text(localized_format!(
+                "{} signature{}",
+                "{} firma{}",
+                threshold,
+                if threshold > 1 { "s" } else { "" }
+            ))
+            .bold(),
+        )
+        .push(if recovery_keys.len() > 1 {
+            text(localized_format!(
+                "out of {} by",
+                "de {} por",
+                recovery_keys.len()
+            ))
+        } else {
+            text(localized_copy("by"))
+        })
+        .push(policy_signer_names(recovery_keys, keys))
+        .push(text(localized_copy(
+            "can spend coins after a relative timelock of",
+        )))
+        .push(
+            text(localized_format!(
+                "{} blocks (~{})",
+                "{} bloques (~{})",
+                sequence,
+                expire_message_units(*sequence as u32).join(",")
+            ))
+            .bold(),
+        )
+        .push(text(
+            // If max timelock and all keys are from provider, then it's a safety net path.
+            if *sequence == u16::MAX
+                && recovery_keys
+                    .iter()
+                    .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
+            {
+                localized_copy("(Safety Net path)").to_string()
+            } else {
+                localized_format!(
+                    "(Recovery path #{})",
+                    "(Ruta de recuperación n.º {})",
+                    i + 1
+                )
+            },
+        ))
+}
+
 fn display_policy(
     policy: CoincubePolicy,
     keys: &HashMap<Fingerprint, settings::KeySetting>,
@@ -464,32 +559,7 @@ fn display_policy(
             } else {
                 text(localized_copy("by"))
             })
-            .push(
-                primary_keys
-                    .iter()
-                    .enumerate()
-                    .fold(Row::new().spacing(5), |row, (i, k)| {
-                        let content = if let Some(key) = keys.get(k) {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(key.name.clone()).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
-                                )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{}]", k)).bold())
-                        };
-                        if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
-                            row.push(content)
-                        } else if i <= primary_keys.len() - 2 {
-                            row.push(content).push(text(localized_copy("and")))
-                        } else {
-                            row.push(content).push(text(","))
-                        }
-                    }),
-            )
+            .push(policy_signer_names(&primary_keys, keys))
             .push(text(localized_copy(
                 "can always spend this wallet's funds (Primary path)",
             ))),
@@ -499,80 +569,13 @@ fn display_policy(
         // The iteration over an HashMap keys can have a different order at each refresh
         let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
         recovery_keys.sort();
-        col = col.push(
-            Row::new()
-                .spacing(5)
-                .push(
-                    text(localized_format!(
-                        "{} signature{}",
-                        "{} firma{}",
-                        threshold,
-                        if threshold > 1 { "s" } else { "" }
-                    ))
-                    .bold(),
-                )
-                .push(if recovery_keys.len() > 1 {
-                    text(localized_format!(
-                        "out of {} by",
-                        "de {} por",
-                        recovery_keys.len()
-                    ))
-                } else {
-                    text(localized_copy("by"))
-                })
-                .push(recovery_keys.iter().enumerate().fold(
-                    Row::new().spacing(5),
-                    |row, (i, k)| {
-                        let content = if let Some(key) = keys.get(k) {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(key.name.clone()).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
-                                )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{}]", k)).bold())
-                        };
-                        if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
-                            row.push(content)
-                        } else if i <= recovery_keys.len() - 2 {
-                            row.push(content).push(text(localized_copy("and")))
-                        } else {
-                            row.push(content).push(text(","))
-                        }
-                    },
-                ))
-                .push(text(localized_copy(
-                    "can spend coins after a relative timelock of",
-                )))
-                .push(
-                    text(localized_format!(
-                        "{} blocks (~{})",
-                        "{} bloques (~{})",
-                        sequence,
-                        expire_message_units(*sequence as u32).join(",")
-                    ))
-                    .bold(),
-                )
-                .push(text(
-                    // If max timelock and all keys are from provider, then it's a safety net path.
-                    if *sequence == u16::MAX
-                        && recovery_keys
-                            .iter()
-                            .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
-                    {
-                        localized_copy("(Safety Net path)").to_string()
-                    } else {
-                        localized_format!(
-                            "(Recovery path #{})",
-                            "(Ruta de recuperación n.º {})",
-                            i + 1
-                        )
-                    },
-                )),
-        );
+        col = col.push(recovery_policy_clause(
+            threshold,
+            &recovery_keys,
+            sequence,
+            i,
+            keys,
+        ));
     }
     Column::new()
         .spacing(10)
@@ -627,6 +630,54 @@ pub fn help_backup<'a>() -> Element<'a, Message> {
         .into()
 }
 
+fn node_connection_feedback<'a>(
+    waiting_for_ping_result: bool,
+    is_running: Option<&Result<(), Error>>,
+) -> Option<Container<'a, Message>> {
+    if waiting_for_ping_result {
+        Some(Container::new(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text(localized_copy("Checking connection..."))),
+        ))
+    } else if is_running.is_some() {
+        is_running.map(|res| {
+            if res.is_ok() {
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(icon::square_check_icon().style(theme::text::success))
+                        .push(
+                            text(localized_copy("Connection checked")).style(theme::text::success),
+                        ),
+                )
+            } else {
+                let detail = match res {
+                    Ok(_) => String::new(),
+                    Err(e) => e.to_string(),
+                };
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(icon::square_cross_icon().style(theme::text::error))
+                        .push(
+                            text(localized_format!(
+                                "Connection failed: {detail}",
+                                "La conexión falló: {detail}"
+                            ))
+                            .style(theme::text::error),
+                        ),
+                )
+            }
+        })
+    } else {
+        Some(Container::new(Space::new().height(Length::Fixed(21.0))))
+    }
+}
+
 pub fn define_bitcoin_node<'a>(
     progress: (usize, usize),
     available_node_types: impl Iterator<Item = NodeType>,
@@ -663,49 +714,10 @@ pub fn define_bitcoin_node<'a>(
             ),
         )
         .push(node_view)
-        .push(if waiting_for_ping_result {
-            Some(Container::new(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(text(localized_copy("Checking connection..."))),
-            ))
-        } else if is_running.is_some() {
-            is_running.map(|res| {
-                if res.is_ok() {
-                    Container::new(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(icon::square_check_icon().style(theme::text::success))
-                            .push(
-                                text(localized_copy("Connection checked"))
-                                    .style(theme::text::success),
-                            ),
-                    )
-                } else {
-                    let detail = match res {
-                        Ok(_) => String::new(),
-                        Err(e) => e.to_string(),
-                    };
-                    Container::new(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(icon::square_cross_icon().style(theme::text::error))
-                            .push(
-                                text(localized_format!(
-                                    "Connection failed: {detail}",
-                                    "La conexión falló: {detail}"
-                                ))
-                                .style(theme::text::error),
-                            ),
-                    )
-                }
-            })
-        } else {
-            Some(Container::new(Space::new().height(Length::Fixed(21.0))))
-        })
+        .push(node_connection_feedback(
+            waiting_for_ping_result,
+            is_running,
+        ))
         .push(actions([
             button::secondary(None, localized_copy("Check connection"))
                 .on_press_maybe(if can_try_ping && !waiting_for_ping_result {
@@ -1352,6 +1364,170 @@ fn node_install_toggle<'a>(
     .into()
 }
 
+fn blake2b_node_choices<'a>(
+    progress: (usize, usize),
+    ui_instance: u64,
+    chain: crate::chain::ChainId,
+    install_node: bool,
+    connect_authenticated: bool,
+    local_available: bool,
+) -> Element<'a, Message> {
+    use crate::chain::ChainIdExt;
+
+    let chain_name = chain.label();
+    let mut choices = Column::new().spacing(20).max_width(620);
+    if connect_authenticated || !local_available {
+        choices = choices
+                    .push(text(localized_copy("Use COINCUBE | Connect")).bold())
+                    .push(text(localized_format!("Use the hosted {chain_name} node while a local node syncs, or use Connect alone.", "Usa el nodo alojado de {chain_name} mientras se sincroniza tu nodo local, o usa Connect por sí solo.")))
+                    .push(node_install_toggle(ui_instance, install_node, localized_copy("Also install a pruned node on my device")))
+                    .push(Action::new(format!("tenshu.installer.node.{}.blake2b-connect", ui_instance), p1_regular(localized_copy("Use Connect")), Message::FocusAction)
+                        .style(theme::button::primary)
+                        .on_press(Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::ContinueWithConnect)));
+    }
+    if local_available {
+        choices = choices
+                .push(text(localized_copy("Install a local pruned node")).bold())
+                .push(text(localized_format!("Run Bitcoin Knots for {chain_name} in an isolated data directory. No Connect account is required. Your node must finish syncing before the Vault can be created.", "Ejecuta Bitcoin Knots para {chain_name} en un directorio de datos aislado. No se requiere una cuenta Connect. Tu nodo debe terminar de sincronizarse antes de que puedas crear el Vault.")))
+                .push(Action::new(format!("tenshu.installer.node.{}.blake2b-local", ui_instance), p1_regular(localized_copy("Use a local node")), Message::FocusAction)
+                    .style(theme::button::secondary)
+                    .on_press(Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(false))));
+    }
+    let content = Container::new(choices).padding(30).center_x(Length::Fill);
+    layout(
+        progress,
+        if chain == crate::chain::ChainId::BitcoinBlake2b {
+            localized_copy("Bitcoin Blake2b node management")
+        } else {
+            localized_copy("Bitcoin Blake2b Testnet4 node management")
+        },
+        content,
+        true,
+        Some(Message::Previous),
+    )
+}
+
+fn connect_node_choices<'a>(
+    ui_instance: u64,
+    install_node: bool,
+    show_advanced: bool,
+    prune_default_mb: u32,
+    node_flavor: crate::node::bitcoind::NodeFlavor,
+    existing_flavor: Option<crate::node::bitcoind::NodeFlavor>,
+) -> Column<'a, Message> {
+    // Connect authenticated: opinionated default card (Connect + optional node)
+    // plus a collapsible Advanced section for power users.
+    let node_description = if install_node {
+        let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
+        localized_format!(
+                    "Tenshu will download and configure a pruned {} node \
+                    (~{} GB of disk space required). \
+                    Once synced, your Vault will automatically switch to your local node.",
+                    "Tenshu descargará y configurará un nodo {} podado \
+                    (se necesitan unos {} GB de espacio en disco). \
+                    Cuando termine de sincronizarse, tu Vault cambiará automáticamente a tu nodo local.",
+                    node_flavor.display_name(),
+                    disk_gb
+                )
+    } else {
+        localized_copy("Your Vault will use COINCUBE | Connect as its only Bitcoin backend.")
+            .to_string()
+    };
+
+    let default_col = Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .push(text(localized_copy("Start with COINCUBE | Connect")).bold())
+        .push(text(localized_copy(
+            "Your Vault will use our hosted Esplora server immediately \
+                        (backed by Bitcoin Knots). No setup required.",
+        )))
+        .push(node_install_toggle(
+            ui_instance,
+            install_node,
+            localized_copy("Also install a pruned Bitcoin node on my device"),
+        ));
+
+    let default_col = if install_node {
+        default_col.push(node_flavor_selector(
+            ui_instance,
+            node_flavor,
+            existing_flavor,
+            |flavor| {
+                Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::SelectFlavor(flavor))
+            },
+        ))
+    } else {
+        default_col
+    };
+
+    let default_card = Container::new(
+        default_col
+            .push(text(node_description))
+            .push(actions([Action::new(
+                format!("tenshu.installer.node.{}.continue", ui_instance),
+                Container::new(p1_regular(localized_copy("Continue"))).center_x(Length::Fill),
+                Message::FocusAction,
+            )
+            .style(theme::button::primary)
+            .width(Length::Fixed(200.0))
+            .on_press(Message::SelectBitcoindType(
+                message::SelectBitcoindTypeMsg::ContinueWithConnect,
+            ))
+            .into()])),
+    )
+    .padding(30);
+
+    let toggle_label = if show_advanced {
+        localized_copy("▾  Advanced options")
+    } else {
+        localized_copy("▸  Advanced options")
+    };
+    let advanced_toggle = Action::new(
+        format!("tenshu.installer.node.{}.advanced", ui_instance),
+        p1_regular(toggle_label),
+        Message::FocusAction,
+    )
+    .style(theme::button::transparent)
+    .on_press(Message::SelectBitcoindType(
+        message::SelectBitcoindTypeMsg::ToggleAdvanced,
+    ));
+
+    let mut col = Column::new()
+        .spacing(30)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .push(default_card)
+        .push(advanced_toggle);
+
+    if show_advanced {
+        col = col
+                        .push(node_option_card(
+                            ui_instance,
+                            "advanced-existing",
+                            localized_copy("I already have a node"),
+                            localized_copy("Connect Tenshu to a Bitcoin node already running locally or remotely."),
+                            message::SelectBitcoindTypeMsg::UseExternal(true),
+                        ))
+                        .push(node_option_card(
+                            ui_instance,
+                            "advanced-local",
+                            localized_copy("Install a node only"),
+                            localized_copy("Tenshu installs a pruned node on your computer without COINCUBE | Connect as a fallback."),
+                            message::SelectBitcoindTypeMsg::UseExternal(false),
+                        ))
+                        .push(node_option_card(
+                            ui_instance,
+                            "advanced-connect",
+                            localized_copy("COINCUBE | Connect only"),
+                            localized_copy("Use COINCUBE | Connect to access our Esplora. No local node required."),
+                            message::SelectBitcoindTypeMsg::UseConnect,
+                        ));
+    }
+
+    col
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn select_bitcoind_type<'a>(
     progress: (usize, usize),
@@ -1365,38 +1541,14 @@ pub fn select_bitcoind_type<'a>(
     existing_flavor: Option<crate::node::bitcoind::NodeFlavor>,
     local_available: bool,
 ) -> Element<'a, Message> {
-    use crate::chain::ChainIdExt;
     if chain.is_blake2b() {
-        let chain_name = chain.label();
-        let mut choices = Column::new().spacing(20).max_width(620);
-        if connect_authenticated || !local_available {
-            choices = choices
-                .push(text(localized_copy("Use COINCUBE | Connect")).bold())
-                .push(text(localized_format!("Use the hosted {chain_name} node while a local node syncs, or use Connect alone.", "Usa el nodo alojado de {chain_name} mientras se sincroniza tu nodo local, o usa Connect por sí solo.")))
-                .push(node_install_toggle(ui_instance, install_node, localized_copy("Also install a pruned node on my device")))
-                .push(Action::new(format!("tenshu.installer.node.{}.blake2b-connect", ui_instance), p1_regular(localized_copy("Use Connect")), Message::FocusAction)
-                    .style(theme::button::primary)
-                    .on_press(Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::ContinueWithConnect)));
-        }
-        if local_available {
-            choices = choices
-            .push(text(localized_copy("Install a local pruned node")).bold())
-            .push(text(localized_format!("Run Bitcoin Knots for {chain_name} in an isolated data directory. No Connect account is required. Your node must finish syncing before the Vault can be created.", "Ejecuta Bitcoin Knots para {chain_name} en un directorio de datos aislado. No se requiere una cuenta Connect. Tu nodo debe terminar de sincronizarse antes de que puedas crear el Vault.")))
-            .push(Action::new(format!("tenshu.installer.node.{}.blake2b-local", ui_instance), p1_regular(localized_copy("Use a local node")), Message::FocusAction)
-                .style(theme::button::secondary)
-                .on_press(Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::UseExternal(false))));
-        }
-        let content = Container::new(choices).padding(30).center_x(Length::Fill);
-        return layout(
+        return blake2b_node_choices(
             progress,
-            if chain == crate::chain::ChainId::BitcoinBlake2b {
-                localized_copy("Bitcoin Blake2b node management")
-            } else {
-                localized_copy("Bitcoin Blake2b Testnet4 node management")
-            },
-            content,
-            true,
-            Some(Message::Previous),
+            ui_instance,
+            chain,
+            install_node,
+            connect_authenticated,
+            local_available,
         );
     }
     let network = chain.bitcoin_network();
@@ -1438,119 +1590,14 @@ pub fn select_bitcoind_type<'a>(
                 message::SelectBitcoindTypeMsg::UseExternal(false),
             ))
     } else {
-        // Connect authenticated: opinionated default card (Connect + optional node)
-        // plus a collapsible Advanced section for power users.
-        let node_description = if install_node {
-            let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
-            localized_format!(
-                "Tenshu will download and configure a pruned {} node \
-                (~{} GB of disk space required). \
-                Once synced, your Vault will automatically switch to your local node.",
-                "Tenshu descargará y configurará un nodo {} podado \
-                (se necesitan unos {} GB de espacio en disco). \
-                Cuando termine de sincronizarse, tu Vault cambiará automáticamente a tu nodo local.",
-                node_flavor.display_name(),
-                disk_gb
-            )
-        } else {
-            localized_copy("Your Vault will use COINCUBE | Connect as its only Bitcoin backend.")
-                .to_string()
-        };
-
-        let default_col = Column::new()
-            .spacing(20)
-            .width(Length::Fill)
-            .push(text(localized_copy("Start with COINCUBE | Connect")).bold())
-            .push(text(localized_copy(
-                "Your Vault will use our hosted Esplora server immediately \
-                    (backed by Bitcoin Knots). No setup required.",
-            )))
-            .push(node_install_toggle(
-                ui_instance,
-                install_node,
-                localized_copy("Also install a pruned Bitcoin node on my device"),
-            ));
-
-        let default_col = if install_node {
-            default_col.push(node_flavor_selector(
-                ui_instance,
-                node_flavor,
-                existing_flavor,
-                |flavor| {
-                    Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::SelectFlavor(
-                        flavor,
-                    ))
-                },
-            ))
-        } else {
-            default_col
-        };
-
-        let default_card = Container::new(
-            default_col
-                .push(text(node_description))
-                .push(actions([Action::new(
-                    format!("tenshu.installer.node.{}.continue", ui_instance),
-                    Container::new(p1_regular(localized_copy("Continue"))).center_x(Length::Fill),
-                    Message::FocusAction,
-                )
-                .style(theme::button::primary)
-                .width(Length::Fixed(200.0))
-                .on_press(Message::SelectBitcoindType(
-                    message::SelectBitcoindTypeMsg::ContinueWithConnect,
-                ))
-                .into()])),
+        connect_node_choices(
+            ui_instance,
+            install_node,
+            show_advanced,
+            prune_default_mb,
+            node_flavor,
+            existing_flavor,
         )
-        .padding(30);
-
-        let toggle_label = if show_advanced {
-            localized_copy("▾  Advanced options")
-        } else {
-            localized_copy("▸  Advanced options")
-        };
-        let advanced_toggle = Action::new(
-            format!("tenshu.installer.node.{}.advanced", ui_instance),
-            p1_regular(toggle_label),
-            Message::FocusAction,
-        )
-        .style(theme::button::transparent)
-        .on_press(Message::SelectBitcoindType(
-            message::SelectBitcoindTypeMsg::ToggleAdvanced,
-        ));
-
-        let mut col = Column::new()
-            .spacing(30)
-            .width(Length::Fill)
-            .align_x(Alignment::Center)
-            .push(default_card)
-            .push(advanced_toggle);
-
-        if show_advanced {
-            col = col
-                    .push(node_option_card(
-                        ui_instance,
-                        "advanced-existing",
-                        localized_copy("I already have a node"),
-                        localized_copy("Connect Tenshu to a Bitcoin node already running locally or remotely."),
-                        message::SelectBitcoindTypeMsg::UseExternal(true),
-                    ))
-                    .push(node_option_card(
-                        ui_instance,
-                        "advanced-local",
-                        localized_copy("Install a node only"),
-                        localized_copy("Tenshu installs a pruned node on your computer without COINCUBE | Connect as a fallback."),
-                        message::SelectBitcoindTypeMsg::UseExternal(false),
-                    ))
-                    .push(node_option_card(
-                        ui_instance,
-                        "advanced-connect",
-                        localized_copy("COINCUBE | Connect only"),
-                        localized_copy("Use COINCUBE | Connect to access our Esplora. No local node required."),
-                        message::SelectBitcoindTypeMsg::UseConnect,
-                    ));
-        }
-
-        col
     };
 
     layout(
@@ -1560,6 +1607,95 @@ pub fn select_bitcoind_type<'a>(
         true,
         Some(Message::Previous),
     )
+}
+
+fn node_installation_feedback<'a>(
+    install_state: Option<&InstallState>,
+    exe_path: Option<&PathBuf>,
+    download_state: Option<&DownloadState>,
+) -> Row<'a, Message> {
+    if let Some(state) = install_state {
+        match state {
+            InstallState::InProgress => Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text(localized_copy("Installing bitcoind..."))),
+            InstallState::Finished => Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(icon::square_check_icon().style(theme::text::success))
+                .push(text(localized_copy("Installation complete")).style(theme::text::success)),
+            InstallState::Errored(e) => Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(icon::square_cross_icon().style(theme::text::error))
+                .push(
+                    text(localized_format!(
+                        "Installation failed: '{}'.",
+                        "La instalación falló: «{}».",
+                        coincube_ui::locale::notice(e.to_string())
+                    ))
+                    .style(theme::text::error),
+                ),
+        }
+    } else if exe_path.is_some() {
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(icon::square_check_icon().style(theme::text::success))
+            .push(
+                text(localized_copy("Tenshu-managed bitcoind already installed"))
+                    .style(theme::text::success),
+            )
+    } else if let Some(DownloadState::Downloading { progress, .. }) = download_state {
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(progress_bar(0.0..=100.0, *progress))
+    } else {
+        Row::new().spacing(10).align_y(Alignment::Center)
+    }
+}
+
+fn node_start_feedback<'a>(
+    started: Option<&Result<(), StartInternalBitcoindError>>,
+    install_state: Option<&InstallState>,
+    exe_path: Option<&PathBuf>,
+) -> Option<Container<'a, Message>> {
+    if started.is_some() {
+        started.map(|res| {
+            if res.is_ok() {
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(icon::square_check_icon().style(theme::text::success))
+                        .push(text(localized_copy("Started")).style(theme::text::success)),
+                )
+            } else {
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(icon::square_cross_icon().style(theme::text::error))
+                        .push(
+                            text(res.as_ref().err().unwrap().to_string()).style(theme::text::error),
+                        ),
+                )
+            }
+        })
+    } else {
+        match (install_state, exe_path) {
+            // We have either just installed bitcoind or it was already installed.
+            (Some(InstallState::Finished), _) | (None, Some(_)) => Some(Container::new(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(text(localized_copy("Starting..."))),
+            )),
+            _ => Some(Container::new(Space::new().height(Length::Fixed(25.0)))),
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1679,85 +1815,12 @@ pub fn start_internal_bitcoind<'a>(
                     _ => Row::new().spacing(10).align_y(Alignment::Center),
                 }
             }))
-            .push(Container::new(if let Some(state) = install_state {
-                match state {
-                    InstallState::InProgress => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(text(localized_copy("Installing bitcoind..."))),
-                    InstallState::Finished => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(icon::square_check_icon().style(theme::text::success))
-                        .push(
-                            text(localized_copy("Installation complete"))
-                                .style(theme::text::success),
-                        ),
-                    InstallState::Errored(e) => Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(icon::square_cross_icon().style(theme::text::error))
-                        .push(
-                            text(localized_format!(
-                                "Installation failed: '{}'.",
-                                "La instalación falló: «{}».",
-                                coincube_ui::locale::notice(e.to_string())
-                            ))
-                            .style(theme::text::error),
-                        ),
-                }
-            } else if exe_path.is_some() {
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(icon::square_check_icon().style(theme::text::success))
-                    .push(
-                        text(localized_copy("Tenshu-managed bitcoind already installed"))
-                            .style(theme::text::success),
-                    )
-            } else if let Some(DownloadState::Downloading { progress, .. }) = download_state {
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(progress_bar(0.0..=100.0, *progress))
-            } else {
-                Row::new().spacing(10).align_y(Alignment::Center)
-            }))
-            .push(if started.is_some() {
-                started.map(|res| {
-                    if res.is_ok() {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_y(Alignment::Center)
-                                .push(icon::square_check_icon().style(theme::text::success))
-                                .push(text(localized_copy("Started")).style(theme::text::success)),
-                        )
-                    } else {
-                        Container::new(
-                            Row::new()
-                                .spacing(10)
-                                .align_y(Alignment::Center)
-                                .push(icon::square_cross_icon().style(theme::text::error))
-                                .push(
-                                    text(res.as_ref().err().unwrap().to_string())
-                                        .style(theme::text::error),
-                                ),
-                        )
-                    }
-                })
-            } else {
-                match (install_state, exe_path) {
-                    // We have either just installed bitcoind or it was already installed.
-                    (Some(InstallState::Finished), _) | (None, Some(_)) => Some(Container::new(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(text(localized_copy("Starting..."))),
-                    )),
-                    _ => Some(Container::new(Space::new().height(Length::Fixed(25.0)))),
-                }
-            })
+            .push(Container::new(node_installation_feedback(
+                install_state,
+                exe_path,
+                download_state,
+            )))
+            .push(node_start_feedback(started, install_state, exe_path))
             .spacing(50)
             .push(error.map(|e| card::invalid(text(coincube_ui::locale::notice(e.clone())))))
             .push(actions([button::secondary(None, localized_copy("Next"))
@@ -1881,72 +1944,51 @@ pub fn install_titled<'a>(
     )
 }
 
+fn threshold_summary<'a>(
+    color: iced::Color,
+    threshold: (usize, usize),
+) -> Row<'a, message::DefinePath> {
+    Row::new()
+        .spacing(10)
+        .push((0..threshold.1).fold(Row::new(), |row, i| {
+            if i < threshold.0 {
+                row.push(icon::round_key_icon().style(theme::text::adaptive(color)))
+            } else {
+                row.push(icon::round_key_icon())
+            }
+        }))
+        .push(text(if threshold.1 > 1 {
+            localized_format!(
+                "{} out of {} keys",
+                "{} de {} claves",
+                threshold.0,
+                threshold.1
+            )
+        } else {
+            localized_format!(
+                "{} out of {} key",
+                "{} de {} clave",
+                threshold.0,
+                threshold.1
+            )
+        }))
+}
+
 pub fn defined_threshold<'a>(
     color: iced::Color,
     fixed: bool,
     threshold: (usize, usize),
 ) -> Element<'a, message::DefinePath> {
     if !fixed && threshold.1 > 1 {
-        Button::new(
-            Row::new()
-                .spacing(10)
-                .push((0..threshold.1).fold(Row::new(), |row, i| {
-                    if i < threshold.0 {
-                        row.push(icon::round_key_icon().style(theme::text::adaptive(color)))
-                    } else {
-                        row.push(icon::round_key_icon())
-                    }
-                }))
-                .push(text(if threshold.1 > 1 {
-                    localized_format!(
-                        "{} out of {} keys",
-                        "{} de {} claves",
-                        threshold.0,
-                        threshold.1
-                    )
-                } else {
-                    localized_format!(
-                        "{} out of {} key",
-                        "{} de {} clave",
-                        threshold.0,
-                        threshold.1
-                    )
-                }))
-                .push(icon::pencil_icon()),
-        )
-        .padding(10)
-        .on_press(message::DefinePath::EditThreshold)
-        .style(theme::button::secondary)
-        .into()
+        Button::new(threshold_summary(color, threshold).push(icon::pencil_icon()))
+            .padding(10)
+            .on_press(message::DefinePath::EditThreshold)
+            .style(theme::button::secondary)
+            .into()
     } else {
-        card::simple(
-            Row::new()
-                .spacing(10)
-                .push((0..threshold.1).fold(Row::new(), |row, i| {
-                    if i < threshold.0 {
-                        row.push(icon::round_key_icon().style(theme::text::adaptive(color)))
-                    } else {
-                        row.push(icon::round_key_icon())
-                    }
-                }))
-                .push(text(if threshold.1 > 1 {
-                    localized_format!(
-                        "{} out of {} keys",
-                        "{} de {} claves",
-                        threshold.0,
-                        threshold.1
-                    )
-                } else {
-                    localized_format!(
-                        "{} out of {} key",
-                        "{} de {} clave",
-                        threshold.0,
-                        threshold.1
-                    )
-                })),
-        )
-        .padding(10)
-        .into()
+        card::simple(threshold_summary(color, threshold))
+            .padding(10)
+            .into()
     }
 }
 
@@ -2033,6 +2075,62 @@ pub fn defined_sequence<'a>(
     .into()
 }
 
+fn selected_picker_device<'a>(
+    kind: &async_hwi::DeviceKind,
+    version: &Option<async_hwi::Version>,
+    fingerprint: &Fingerprint,
+    alias: &'a Option<String>,
+    not_tapminiscript: bool,
+    accounts: Option<&HashMap<Fingerprint, ChildNumber>>,
+    display_account: bool,
+) -> Container<'a, Message> {
+    let acc = accounts
+        .as_ref()
+        .and_then(|map| map.get(fingerprint).cloned());
+    hw::selected_hardware_wallet(
+        kind,
+        version.as_ref(),
+        fingerprint,
+        alias.as_ref(),
+        {
+            if not_tapminiscript {
+                Some(localized_copy(
+                    "Device firmware version does not support taproot miniscript",
+                ))
+            } else {
+                None
+            }
+        },
+        acc,
+        display_account,
+    )
+}
+
+fn unsupported_picker_device<'a>(
+    kind: &async_hwi::DeviceKind,
+    version: &Option<async_hwi::Version>,
+    reason: &UnsupportedReason,
+) -> Container<'a, Message> {
+    match reason {
+        UnsupportedReason::NotPartOfWallet(fg) => {
+            hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
+        }
+        UnsupportedReason::WrongNetwork => {
+            hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
+        }
+        UnsupportedReason::Version {
+            minimal_supported_version,
+            note,
+        } => hw::unsupported_version_hardware_wallet(
+            kind.to_string(),
+            version.as_ref(),
+            minimal_supported_version,
+            *note,
+        ),
+        _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn hw_list_view<'a>(
     i: usize,
@@ -2065,24 +2163,13 @@ pub fn hw_list_view<'a>(
             } else if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if selected {
-                let acc = accounts
-                    .as_ref()
-                    .and_then(|map| map.get(fingerprint).cloned());
-                hw::selected_hardware_wallet(
+                selected_picker_device(
                     kind,
-                    version.as_ref(),
+                    version,
                     fingerprint,
-                    alias.as_ref(),
-                    {
-                        if not_tapminiscript {
-                            Some(localized_copy(
-                                "Device firmware version does not support taproot miniscript",
-                            ))
-                        } else {
-                            None
-                        }
-                    },
-                    acc,
+                    alias,
+                    not_tapminiscript,
+                    accounts,
                     display_account,
                 )
             } else if not_tapminiscript {
@@ -2111,24 +2198,7 @@ pub fn hw_list_view<'a>(
             kind,
             reason,
             ..
-        } => match reason {
-            UnsupportedReason::NotPartOfWallet(fg) => {
-                hw::unrelated_hardware_wallet(kind.to_string(), version.as_ref(), fg)
-            }
-            UnsupportedReason::WrongNetwork => {
-                hw::wrong_network_hardware_wallet(kind.to_string(), version.as_ref())
-            }
-            UnsupportedReason::Version {
-                minimal_supported_version,
-                note,
-            } => hw::unsupported_version_hardware_wallet(
-                kind.to_string(),
-                version.as_ref(),
-                minimal_supported_version,
-                *note,
-            ),
-            _ => hw::unsupported_hardware_wallet(kind.to_string(), version.as_ref()),
-        },
+        } => unsupported_picker_device(kind, version, reason),
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
@@ -2594,6 +2664,317 @@ pub(super) fn actions<'a>(
     .into()
 }
 
+fn restore_phase_heading(
+    scope: crate::installer::step::RestoreScope,
+    phase: &crate::installer::step::recovery_kit_restore::RestorePhase,
+) -> (&'static str, &'static str, String) {
+    use crate::installer::step::recovery_kit_restore::RestorePhase;
+    match phase {
+            RestorePhase::Email | RestorePhase::OtpEntry => (
+                "STEP 1 OF 3",
+                "Sign in to Connect",
+                localized_copy("Verify the account that holds this Cube's Recovery Kit.").to_string(),
+            ),
+            RestorePhase::LoadingCubes | RestorePhase::CubePicker { .. } => (
+                "STEP 2 OF 3",
+                "Choose a Cube",
+                match scope {
+                    crate::installer::step::RestoreScope::Full => localized_copy("Cubes on this network are listed. Only kits with a Master Seed can be selected for Cube recovery."),
+                    crate::installer::step::RestoreScope::DescriptorOnly => localized_copy("Cubes on this network are listed. Only those with a wallet descriptor in their Recovery Kit can be selected."),
+                }.to_string(),
+            ),
+            RestorePhase::PasswordEntry { .. } | RestorePhase::Decrypting { .. } => (
+                "STEP 3 OF 3",
+                "Open the Recovery Kit",
+                localized_copy("The recovery password decrypts the backup on this device.").to_string(),
+            ),
+            RestorePhase::Ready { selected, .. } => (
+                "READY",
+                "Continue restoring",
+                localized_format!(
+                    "Recovery Kit for \"{}\" is open.",
+                    "El Kit de recuperación de \"{}\" está abierto.",
+                    selected.name
+                ),
+            ),
+            RestorePhase::Error { .. } => (
+                "NEEDS ATTENTION",
+                "Recovery needs attention",
+                localized_copy("Review the error below, then try again.").to_string(),
+            ),
+        }
+}
+
+fn restore_stepper<'a>(
+    phase: &crate::installer::step::recovery_kit_restore::RestorePhase,
+) -> Row<'a, Message> {
+    use crate::installer::step::recovery_kit_restore::RestorePhase;
+    let active_stage = match phase {
+        RestorePhase::Email | RestorePhase::OtpEntry => 1,
+        RestorePhase::LoadingCubes | RestorePhase::CubePicker { .. } => 2,
+        RestorePhase::PasswordEntry { .. }
+        | RestorePhase::Decrypting { .. }
+        | RestorePhase::Ready { .. } => 3,
+        RestorePhase::Error { .. } => 0,
+    };
+    let stages = ["1  Sign in", "2  Choose Cube", "3  Open Kit"];
+    let mut stepper = Row::new().spacing(12).width(Length::Fill);
+    for (index, label) in stages.iter().enumerate() {
+        let stage = index + 1;
+        let style = if stage == active_stage {
+            theme::text::primary
+        } else {
+            theme::text::secondary
+        };
+        stepper = stepper.push(
+            Container::new(p2_regular(localized_copy(label)).style(style))
+                .padding([8, 12])
+                .width(Length::FillPortion(1)),
+        );
+    }
+
+    stepper
+}
+
+fn restore_cube_availability(
+    scope: crate::installer::step::RestoreScope,
+    status: &crate::services::coincube::RecoveryKitStatus,
+) -> (bool, &'static str) {
+    // Scope-aware availability: a descriptor-only
+    // kit can't satisfy a Full restore, and a
+    // seed-only kit can't satisfy DescriptorOnly.
+    // Disable the row (and say why) rather than
+    // let the user click through to a post-decrypt
+    // "missing half" error.
+    let available = status.has_recovery_kit
+        && match scope {
+            crate::installer::step::RestoreScope::Full => status.has_encrypted_seed,
+            crate::installer::step::RestoreScope::DescriptorOnly => {
+                status.has_encrypted_wallet_descriptor
+            }
+        };
+    let availability = if available {
+        match scope {
+            crate::installer::step::RestoreScope::Full => "Recovery Kit available",
+            crate::installer::step::RestoreScope::DescriptorOnly => "Wallet descriptor available",
+        }
+    } else if !status.has_recovery_kit {
+        "No Recovery Kit"
+    } else {
+        match scope {
+            crate::installer::step::RestoreScope::Full => "No Master Seed in kit",
+            crate::installer::step::RestoreScope::DescriptorOnly => "No descriptor in kit",
+        }
+    };
+    (available, availability)
+}
+
+fn restore_cube_choice<'a>(
+    ui_instance: u64,
+    scope: crate::installer::step::RestoreScope,
+    c: &crate::installer::step::recovery_kit_restore::RestoreCubeCandidate,
+    selected: &Option<u64>,
+) -> Action<'a, Message> {
+    use crate::installer::message::RecoveryKitRestoreMsg;
+    let (available, availability) = restore_cube_availability(scope, &c.status);
+    let id = c.id;
+    let chosen = *selected == Some(id);
+    let row_text = Column::new()
+        .spacing(4)
+        .push(
+            p2_regular(if chosen {
+                localized_format!("◉  Selected · {}", "◉  Seleccionado · {}", c.name)
+            } else {
+                format!("○  {}", c.name)
+            })
+            .style(if available {
+                theme::text::primary
+            } else {
+                theme::text::secondary
+            }),
+        )
+        .push(
+            p2_regular(localized_copy(availability)).style(if available {
+                theme::text::primary
+            } else {
+                theme::text::secondary
+            }),
+        );
+    Action::new(
+        format!("tenshu.installer.restore.{ui_instance}.cube.{id}"),
+        row_text,
+        Message::FocusAction,
+    )
+    .width(Length::Fill)
+    .padding([10, 18])
+    .style(if chosen {
+        theme::button::orange_outline
+    } else {
+        theme::button::secondary
+    })
+    .on_press_maybe(available.then_some(Message::RecoveryKitRestore(
+        RecoveryKitRestoreMsg::SelectCube(id),
+    )))
+}
+
+fn restore_cube_picker<'a>(
+    mut content: Column<'a, Message>,
+    ui_instance: u64,
+    scope: crate::installer::step::RestoreScope,
+    network: &str,
+    email: &form::Value<String>,
+    cubes: &[crate::installer::step::recovery_kit_restore::RestoreCubeCandidate],
+    selected: &Option<u64>,
+) -> Column<'a, Message> {
+    use crate::installer::message::RecoveryKitRestoreMsg;
+
+    use crate::chain::ChainId;
+    let network_name = match ChainId::from_api_str(network) {
+        Some(ChainId::Bitcoin) => "Bitcoin mainnet",
+        Some(ChainId::Testnet) => "Bitcoin Testnet",
+        Some(ChainId::Testnet4) => "Bitcoin Testnet4",
+        Some(ChainId::Signet) => "Bitcoin Signet",
+        Some(ChainId::Regtest) => "Bitcoin Regtest",
+        Some(ChainId::BitcoinBlake2b) => "Bitcoin Blake2b mainnet",
+        Some(ChainId::BitcoinBlake2bTestnet4) => "Bitcoin Blake2b Testnet4",
+        None => network,
+    };
+    content = content
+        .push(p2_regular(localized_format!(
+            "Cubes on {} · {}",
+            "Cubes en {} · {}",
+            email.value,
+            network_name
+        )))
+        .push(p2_regular(match scope {
+            crate::installer::step::RestoreScope::Full => {
+                localized_copy("Recovery Kit availability")
+            }
+            crate::installer::step::RestoreScope::DescriptorOnly => {
+                localized_copy("Wallet descriptor availability")
+            }
+        }));
+    let mut col = Column::new().spacing(8).width(Length::Fill);
+    if cubes.is_empty() {
+        col = col.push(text::text(localized_copy(
+            "No Cubes found on this Connect account for the current network.",
+        )));
+    } else {
+        for c in cubes {
+            let btn = restore_cube_choice(ui_instance, scope, c, selected);
+            col = col.push(btn);
+        }
+    }
+    content = content.push(col).push(
+        button::primary_action(
+            format!("tenshu.installer.restore.{ui_instance}.next"),
+            None,
+            localized_copy("Next"),
+            Message::FocusAction,
+        )
+        .on_press_maybe(
+            selected.map(|_| Message::RecoveryKitRestore(RecoveryKitRestoreMsg::ConfirmCube)),
+        )
+        .width(Length::Fixed(220.0)),
+    );
+
+    content
+}
+
+fn restore_email_panel<'a>(
+    mut content: Column<'a, Message>,
+    ui_instance: u64,
+    email: &'a form::Value<String>,
+    processing: bool,
+) -> Column<'a, Message> {
+    use crate::installer::message::RecoveryKitRestoreMsg;
+
+    content =
+        content
+            .push(text::text(localized_copy(
+                "Sign in to your Connect account to fetch your Cube Recovery Kit.",
+            )))
+            .push(
+                form::Form::new_trimmed("you@example.com", email, |v| {
+                    Message::RecoveryKitRestore(RecoveryKitRestoreMsg::EmailEdited(v))
+                })
+                .warning(localized_copy("Email is invalid"))
+                .size(16)
+                .padding(10),
+            )
+            .push({
+                let btn = button::primary_action(
+                    format!("tenshu.installer.restore.{ui_instance}.send-code"),
+                    None,
+                    localized_copy("Send code"),
+                    Message::FocusAction,
+                )
+                .width(Length::Fixed(220.0))
+                .padding([10, 20]);
+                btn.on_press_maybe((email.valid && !processing).then_some(
+                    Message::RecoveryKitRestore(RecoveryKitRestoreMsg::RequestOtp),
+                ))
+            });
+
+    content
+}
+
+fn restore_password_panel<'a>(
+    mut content: Column<'a, Message>,
+    ui_instance: u64,
+    selected: &crate::installer::step::recovery_kit_restore::RestoreCubeCandidate,
+    password: &'a str,
+    processing: bool,
+) -> Column<'a, Message> {
+    use crate::installer::message::RecoveryKitRestoreMsg;
+
+    content = content
+        .push(text::text(localized_format!(
+            "Enter the recovery password for \"{}\".",
+            "Ingresa la contraseña de recuperación de \"{}\".",
+            selected.name
+        )))
+        .push(
+            TextInput::new(CopyText::RecoveryPassword.get(), password)
+                .id(format!(
+                    "tenshu.installer.restore.{ui_instance}.password-input"
+                ))
+                .on_input(|v| {
+                    // Wrap the password in `Zeroizing` before
+                    // it enters the message queue — see
+                    // `RecoveryKitRestoreMsg` doc. The `String`
+                    // from iced's callback is the last plain
+                    // copy; every subsequent clone is
+                    // auto-zeroed on drop.
+                    Message::RecoveryKitRestore(RecoveryKitRestoreMsg::PasswordEdited(
+                        zeroize::Zeroizing::new(v),
+                    ))
+                })
+                .secure(true)
+                .on_submit_maybe((!password.is_empty() && !processing).then_some(
+                    Message::RecoveryKitRestore(RecoveryKitRestoreMsg::SubmitPassword),
+                ))
+                .size(16)
+                .padding(12)
+                .width(Length::Fixed(400.0)),
+        )
+        .push({
+            let btn = button::primary_action(
+                format!("tenshu.installer.restore.{ui_instance}.restore"),
+                None,
+                localized_copy("Restore"),
+                Message::FocusAction,
+            )
+            .width(Length::Fixed(220.0))
+            .padding([10, 20]);
+            btn.on_press_maybe((!password.is_empty() && !processing).then_some(
+                Message::RecoveryKitRestore(RecoveryKitRestoreMsg::SubmitPassword),
+            ))
+        });
+
+    content
+}
+
 /// The Recovery Kit journey keeps each existing authentication, selection and
 /// decryption phase visible. The step's state machine remains authoritative.
 #[allow(clippy::too_many_arguments)]
@@ -2625,63 +3006,8 @@ pub fn recovery_kit_restore<'a>(
         crate::installer::step::RestoreScope::Full => "RECOVERY KIT",
         crate::installer::step::RestoreScope::DescriptorOnly => "DESCRIPTOR RESTORE",
     };
-    let (stage_label, step_title, step_detail) = match phase {
-        RestorePhase::Email | RestorePhase::OtpEntry => (
-            "STEP 1 OF 3",
-            "Sign in to Connect",
-            localized_copy("Verify the account that holds this Cube's Recovery Kit.").to_string(),
-        ),
-        RestorePhase::LoadingCubes | RestorePhase::CubePicker { .. } => (
-            "STEP 2 OF 3",
-            "Choose a Cube",
-            match scope {
-                crate::installer::step::RestoreScope::Full => localized_copy("Cubes on this network are listed. Only kits with a Master Seed can be selected for Cube recovery."),
-                crate::installer::step::RestoreScope::DescriptorOnly => localized_copy("Cubes on this network are listed. Only those with a wallet descriptor in their Recovery Kit can be selected."),
-            }.to_string(),
-        ),
-        RestorePhase::PasswordEntry { .. } | RestorePhase::Decrypting { .. } => (
-            "STEP 3 OF 3",
-            "Open the Recovery Kit",
-            localized_copy("The recovery password decrypts the backup on this device.").to_string(),
-        ),
-        RestorePhase::Ready { selected, .. } => (
-            "READY",
-            "Continue restoring",
-            localized_format!(
-                "Recovery Kit for \"{}\" is open.",
-                "El Kit de recuperación de \"{}\" está abierto.",
-                selected.name
-            ),
-        ),
-        RestorePhase::Error { .. } => (
-            "NEEDS ATTENTION",
-            "Recovery needs attention",
-            localized_copy("Review the error below, then try again.").to_string(),
-        ),
-    };
-    let active_stage = match phase {
-        RestorePhase::Email | RestorePhase::OtpEntry => 1,
-        RestorePhase::LoadingCubes | RestorePhase::CubePicker { .. } => 2,
-        RestorePhase::PasswordEntry { .. }
-        | RestorePhase::Decrypting { .. }
-        | RestorePhase::Ready { .. } => 3,
-        RestorePhase::Error { .. } => 0,
-    };
-    let stages = ["1  Sign in", "2  Choose Cube", "3  Open Kit"];
-    let mut stepper = Row::new().spacing(12).width(Length::Fill);
-    for (index, label) in stages.iter().enumerate() {
-        let stage = index + 1;
-        let style = if stage == active_stage {
-            theme::text::primary
-        } else {
-            theme::text::secondary
-        };
-        stepper = stepper.push(
-            Container::new(p2_regular(localized_copy(label)).style(style))
-                .padding([8, 12])
-                .width(Length::FillPortion(1)),
-        );
-    }
+    let (stage_label, step_title, step_detail) = restore_phase_heading(scope, phase);
+    let stepper = restore_stepper(phase);
     // Import or restore's own stepper replaces the eyebrow and sub-stepper.
     let framed = framed();
     let mut content: Column<'a, Message> = Column::new()
@@ -2708,31 +3034,7 @@ pub fn recovery_kit_restore<'a>(
 
     match phase {
         RestorePhase::Email => {
-            content = content
-                .push(text::text(localized_copy(
-                    "Sign in to your Connect account to fetch your Cube Recovery Kit.",
-                )))
-                .push(
-                    form::Form::new_trimmed("you@example.com", email, |v| {
-                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::EmailEdited(v))
-                    })
-                    .warning(localized_copy("Email is invalid"))
-                    .size(16)
-                    .padding(10),
-                )
-                .push({
-                    let btn = button::primary_action(
-                        format!("tenshu.installer.restore.{ui_instance}.send-code"),
-                        None,
-                        localized_copy("Send code"),
-                        Message::FocusAction,
-                    )
-                    .width(Length::Fixed(220.0))
-                    .padding([10, 20]);
-                    btn.on_press_maybe((email.valid && !processing).then_some(
-                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::RequestOtp),
-                    ))
-                });
+            content = restore_email_panel(content, ui_instance, email, processing);
         }
         RestorePhase::OtpEntry => {
             content = content
@@ -2762,174 +3064,11 @@ pub fn recovery_kit_restore<'a>(
             )));
         }
         RestorePhase::CubePicker { cubes, selected } => {
-            use crate::chain::ChainId;
-            let network_name = match ChainId::from_api_str(network) {
-                Some(ChainId::Bitcoin) => "Bitcoin mainnet",
-                Some(ChainId::Testnet) => "Bitcoin Testnet",
-                Some(ChainId::Testnet4) => "Bitcoin Testnet4",
-                Some(ChainId::Signet) => "Bitcoin Signet",
-                Some(ChainId::Regtest) => "Bitcoin Regtest",
-                Some(ChainId::BitcoinBlake2b) => "Bitcoin Blake2b mainnet",
-                Some(ChainId::BitcoinBlake2bTestnet4) => "Bitcoin Blake2b Testnet4",
-                None => network,
-            };
-            content = content
-                .push(p2_regular(localized_format!(
-                    "Cubes on {} · {}",
-                    "Cubes en {} · {}",
-                    email.value,
-                    network_name
-                )))
-                .push(p2_regular(match scope {
-                    crate::installer::step::RestoreScope::Full => {
-                        localized_copy("Recovery Kit availability")
-                    }
-                    crate::installer::step::RestoreScope::DescriptorOnly => {
-                        localized_copy("Wallet descriptor availability")
-                    }
-                }));
-            let mut col = Column::new().spacing(8).width(Length::Fill);
-            if cubes.is_empty() {
-                col = col.push(text::text(localized_copy(
-                    "No Cubes found on this Connect account for the current network.",
-                )));
-            } else {
-                for c in cubes {
-                    // Scope-aware availability: a descriptor-only
-                    // kit can't satisfy a Full restore, and a
-                    // seed-only kit can't satisfy DescriptorOnly.
-                    // Disable the row (and say why) rather than
-                    // let the user click through to a post-decrypt
-                    // "missing half" error.
-                    let available = c.status.has_recovery_kit
-                        && match scope {
-                            crate::installer::step::RestoreScope::Full => {
-                                c.status.has_encrypted_seed
-                            }
-                            crate::installer::step::RestoreScope::DescriptorOnly => {
-                                c.status.has_encrypted_wallet_descriptor
-                            }
-                        };
-                    let availability = if available {
-                        match scope {
-                            crate::installer::step::RestoreScope::Full => "Recovery Kit available",
-                            crate::installer::step::RestoreScope::DescriptorOnly => {
-                                "Wallet descriptor available"
-                            }
-                        }
-                    } else if !c.status.has_recovery_kit {
-                        "No Recovery Kit"
-                    } else {
-                        match scope {
-                            crate::installer::step::RestoreScope::Full => "No Master Seed in kit",
-                            crate::installer::step::RestoreScope::DescriptorOnly => {
-                                "No descriptor in kit"
-                            }
-                        }
-                    };
-                    let id = c.id;
-                    let chosen = *selected == Some(id);
-                    let row_text = Column::new()
-                        .spacing(4)
-                        .push(
-                            p2_regular(if chosen {
-                                localized_format!(
-                                    "◉  Selected · {}",
-                                    "◉  Seleccionado · {}",
-                                    c.name
-                                )
-                            } else {
-                                format!("○  {}", c.name)
-                            })
-                            .style(if available {
-                                theme::text::primary
-                            } else {
-                                theme::text::secondary
-                            }),
-                        )
-                        .push(
-                            p2_regular(localized_copy(availability)).style(if available {
-                                theme::text::primary
-                            } else {
-                                theme::text::secondary
-                            }),
-                        );
-                    let btn = Action::new(
-                        format!("tenshu.installer.restore.{ui_instance}.cube.{id}"),
-                        row_text,
-                        Message::FocusAction,
-                    )
-                    .width(Length::Fill)
-                    .padding([10, 18])
-                    .style(if chosen {
-                        theme::button::orange_outline
-                    } else {
-                        theme::button::secondary
-                    })
-                    .on_press_maybe(available.then_some(
-                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::SelectCube(id)),
-                    ));
-                    col = col.push(btn);
-                }
-            }
-            content = content.push(col).push(
-                button::primary_action(
-                    format!("tenshu.installer.restore.{ui_instance}.next"),
-                    None,
-                    localized_copy("Next"),
-                    Message::FocusAction,
-                )
-                .on_press_maybe(
-                    selected
-                        .map(|_| Message::RecoveryKitRestore(RecoveryKitRestoreMsg::ConfirmCube)),
-                )
-                .width(Length::Fixed(220.0)),
-            );
+            content =
+                restore_cube_picker(content, ui_instance, scope, network, email, cubes, selected);
         }
         RestorePhase::PasswordEntry { selected, .. } => {
-            content = content
-                .push(text::text(localized_format!(
-                    "Enter the recovery password for \"{}\".",
-                    "Ingresa la contraseña de recuperación de \"{}\".",
-                    selected.name
-                )))
-                .push(
-                    TextInput::new(CopyText::RecoveryPassword.get(), password)
-                        .id(format!(
-                            "tenshu.installer.restore.{ui_instance}.password-input"
-                        ))
-                        .on_input(|v| {
-                            // Wrap the password in `Zeroizing` before
-                            // it enters the message queue — see
-                            // `RecoveryKitRestoreMsg` doc. The `String`
-                            // from iced's callback is the last plain
-                            // copy; every subsequent clone is
-                            // auto-zeroed on drop.
-                            Message::RecoveryKitRestore(RecoveryKitRestoreMsg::PasswordEdited(
-                                zeroize::Zeroizing::new(v),
-                            ))
-                        })
-                        .secure(true)
-                        .on_submit_maybe((!password.is_empty() && !processing).then_some(
-                            Message::RecoveryKitRestore(RecoveryKitRestoreMsg::SubmitPassword),
-                        ))
-                        .size(16)
-                        .padding(12)
-                        .width(Length::Fixed(400.0)),
-                )
-                .push({
-                    let btn = button::primary_action(
-                        format!("tenshu.installer.restore.{ui_instance}.restore"),
-                        None,
-                        localized_copy("Restore"),
-                        Message::FocusAction,
-                    )
-                    .width(Length::Fixed(220.0))
-                    .padding([10, 20]);
-                    btn.on_press_maybe((!password.is_empty() && !processing).then_some(
-                        Message::RecoveryKitRestore(RecoveryKitRestoreMsg::SubmitPassword),
-                    ))
-                });
+            content = restore_password_panel(content, ui_instance, selected, password, processing);
         }
         RestorePhase::Decrypting { .. } => {
             content = content.push(card::simple(
@@ -3580,6 +3719,450 @@ mod policy_layout_tests {
         (descriptor, keys)
     }
 
+    fn inspect_entry(
+        mut element: Element<'_, Message>,
+        target: &str,
+        mounted: &mut MountedPolicy,
+    ) -> Vec<Message> {
+        for bytes in coincube_ui::font::load() {
+            iced::advanced::graphics::text::font_system()
+                .write()
+                .unwrap()
+                .load_font(bytes);
+        }
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("software renderer");
+        let size = iced::Size::new(1440.0, 2400.0);
+        let mut tree = Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, mounted);
+        let bounds = mounted
+            .labels
+            .iter()
+            .find(|(text, _)| text == target)
+            .expect("mounted action label")
+            .1;
+        let cursor = iced::mouse::Cursor::Available(bounds.center());
+        let mut messages = Vec::new();
+        for event in [
+            iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),
+            iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left),
+        ] {
+            element.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Mouse(event),
+                Layout::new(&node),
+                cursor,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut iced::advanced::Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        messages
+    }
+
+    #[test]
+    fn import_entry_keeps_visibility_and_next_validation() {
+        let (descriptor, _) = policy_fixture();
+        let empty = form::Value::<String>::default();
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            import_descriptor((0, 2), &empty, false, false, None),
+            "Next",
+            &mut mounted,
+        );
+        assert!(messages.is_empty());
+        assert!(mounted.labels.iter().any(|(text, _)| text == "Descriptor:"));
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Import backup"));
+        let valid = form::Value {
+            value: descriptor.to_string(),
+            valid: true,
+            warning: None,
+        };
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            import_descriptor((0, 2), &valid, false, false, None),
+            "Next",
+            &mut mounted,
+        );
+        assert!(matches!(messages.as_slice(), [Message::Next]));
+        assert!(!mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Import backup"));
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            import_descriptor((0, 2), &valid, true, false, None),
+            "Next",
+            &mut mounted,
+        );
+        assert!(matches!(messages.as_slice(), [Message::Next]));
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Backup successfully imported!"));
+        assert!(!mounted.labels.iter().any(|(text, _)| text == "Descriptor:"));
+    }
+
+    #[test]
+    fn threshold_entry_keeps_editable_and_fixed_contracts() {
+        let mut mounted = MountedPolicy::default();
+        let editable = defined_threshold(iced::Color::BLACK, false, (1, 2))
+            .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
+        let messages = inspect_entry(editable, "1 out of 2 keys", &mut mounted);
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::DefineDescriptor(message::DefineDescriptor::Path(
+                0,
+                message::DefinePath::EditThreshold
+            ))]
+        ));
+        let mut mounted = MountedPolicy::default();
+        let fixed = defined_threshold(iced::Color::BLACK, true, (1, 2))
+            .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(0, msg)));
+        let messages = inspect_entry(fixed, "1 out of 2 keys", &mut mounted);
+        assert!(messages.is_empty());
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "1 out of 2 keys"));
+    }
+
+    #[test]
+    fn node_feedback_keeps_stored_success_and_status_precedence() {
+        use crate::node::bitcoind::NodeFlavor;
+        let success = Ok(());
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            define_bitcoin_node(
+                (0, 2),
+                IntoIterator::into_iter([NodeType::Bitcoind]),
+                NodeType::Bitcoind,
+                Row::new().into(),
+                Some(&success),
+                true,
+                true,
+            ),
+            "Next",
+            &mut mounted,
+        );
+        assert!(matches!(messages.as_slice(), [Message::Next]));
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Checking connection..."));
+        assert!(!mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Connection checked"));
+        let prune = form::Value {
+            value: "15000".to_owned(),
+            valid: true,
+            warning: None,
+        };
+        let mempool = form::Value::default();
+        let exe = PathBuf::from("/synthetic/bitcoind");
+        // An empty task supplies an owned abort handle; it is dropped here, never run or polled.
+        let (_, handle) = iced::Task::<()>::none().abortable();
+        let download = DownloadState::Downloading {
+            progress: 42.0,
+            _handle: handle,
+        };
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            start_internal_bitcoind(
+                (1, 2),
+                91,
+                NodeFlavor::Core,
+                None,
+                true,
+                false,
+                &prune,
+                &mempool,
+                Some(&exe),
+                None,
+                None,
+                Some(&download),
+                Some(&InstallState::InProgress),
+            ),
+            "Next",
+            &mut mounted,
+        );
+        assert!(messages.is_empty());
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Installing bitcoind..."));
+        assert!(!mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Tenshu-managed bitcoind already installed"));
+        let failure = Err(StartInternalBitcoindError::ExecutableNotFound);
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            start_internal_bitcoind(
+                (1, 2),
+                91,
+                NodeFlavor::Core,
+                None,
+                true,
+                false,
+                &prune,
+                &mempool,
+                Some(&exe),
+                Some(&failure),
+                None,
+                None,
+                Some(&InstallState::Finished),
+            ),
+            "Next",
+            &mut mounted,
+        );
+        assert!(messages.is_empty());
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "bitcoind executable not found."));
+        assert!(!mounted.labels.iter().any(|(text, _)| text == "Starting..."));
+    }
+
+    #[derive(Debug)]
+    struct InertPickerDevice(std::sync::atomic::AtomicUsize);
+
+    impl InertPickerDevice {
+        fn unexpected_io<T>(&self) -> Result<T, async_hwi::Error> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            panic!("presentation-only HWI fixture must never perform I/O")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl async_hwi::HWI for InertPickerDevice {
+        fn device_kind(&self) -> async_hwi::DeviceKind {
+            async_hwi::DeviceKind::Coldcard
+        }
+        async fn get_version(&self) -> Result<async_hwi::Version, async_hwi::Error> {
+            self.unexpected_io()
+        }
+        async fn get_master_fingerprint(&self) -> Result<Fingerprint, async_hwi::Error> {
+            self.unexpected_io()
+        }
+        async fn get_extended_pubkey(
+            &self,
+            _: &bitcoin::bip32::DerivationPath,
+        ) -> Result<Xpub, async_hwi::Error> {
+            self.unexpected_io()
+        }
+        async fn register_wallet(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<[u8; 32]>, async_hwi::Error> {
+            self.unexpected_io()
+        }
+        async fn is_wallet_registered(&self, _: &str, _: &str) -> Result<bool, async_hwi::Error> {
+            self.unexpected_io()
+        }
+        async fn display_address(
+            &self,
+            _: &async_hwi::AddressScript,
+        ) -> Result<(), async_hwi::Error> {
+            self.unexpected_io()
+        }
+        async fn sign_tx(&self, _: &mut bitcoin::Psbt) -> Result<(), async_hwi::Error> {
+            self.unexpected_io()
+        }
+    }
+
+    #[test]
+    fn hardware_entry_keeps_membership_processing_and_advisory_selection() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let (descriptor, _) = policy_fixture();
+        let inert = Arc::new(InertPickerDevice(AtomicUsize::new(0)));
+        let mut device = HardwareWallet::Supported {
+            id: "synthetic-coldcard".to_owned(),
+            device: inert.clone(),
+            kind: async_hwi::DeviceKind::Coldcard,
+            fingerprint: Fingerprint::from([99, 98, 97, 96]),
+            version: Some(async_hwi::Version {
+                major: 5,
+                minor: 2,
+                patch: 0,
+                prerelease: None,
+            }),
+            alias: Some("Synthetic picker".to_owned()),
+            registered: Some(false),
+        };
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            hw_list_view(
+                7,
+                &device,
+                false,
+                false,
+                false,
+                Some(&descriptor),
+                false,
+                None,
+                false,
+            ),
+            "#63626160",
+            &mut mounted,
+        );
+        assert!(messages.is_empty());
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "This signing device is not related to this Vault wallet."));
+        // Mutate only stored public metadata, never discovery or the device trait.
+        let HardwareWallet::Supported { fingerprint, .. } = &mut device else {
+            unreachable!()
+        };
+        *fingerprint = Fingerprint::from([1, 2, 3, 4]);
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            hw_list_view(
+                7,
+                &device,
+                false,
+                false,
+                false,
+                Some(&descriptor),
+                false,
+                None,
+                false,
+            ),
+            "Synthetic picker",
+            &mut mounted,
+        );
+        assert!(matches!(messages.as_slice(), [Message::Select(7)]));
+        assert!(mounted
+            .labels
+            .iter()
+            .any(|(text, _)| text == "Firmware advisory"));
+        let mut mounted = MountedPolicy::default();
+        let messages = inspect_entry(
+            hw_list_view(
+                7,
+                &device,
+                true,
+                true,
+                false,
+                Some(&descriptor),
+                false,
+                None,
+                false,
+            ),
+            "Synthetic picker",
+            &mut mounted,
+        );
+        assert!(messages.is_empty());
+        assert_eq!(inert.0.load(Ordering::SeqCst), 0);
+    }
+
+    fn assert_policy_geometry(mounted: &MountedPolicy, width: u32, theme_name: &str) {
+        let heading = mounted
+            .labels
+            .iter()
+            .find(|(text, _)| text == "The wallet policy:")
+            .expect("mounted policy heading")
+            .1;
+        let primary_clause = mounted
+            .labels
+            .iter()
+            .find(|(text, _)| text == "can always spend this wallet's funds (Primary path)")
+            .expect("mounted primary policy clause")
+            .1;
+        let (viewport, content) = mounted
+            .scrolls
+            .iter()
+            .filter(|(_, content)| {
+                primary_clause.x >= content.x
+                    && primary_clause.x < content.x + content.width
+                    && primary_clause.y >= content.y
+                    && primary_clause.y < content.y + content.height
+            })
+            .min_by(|(left, _), (right, _)| left.width.total_cmp(&right.width))
+            .expect("mounted horizontal policy scroll viewport");
+        assert!(
+            viewport.x >= -1.0 && viewport.x + viewport.width <= width as f32 + 1.0,
+            "{}px {}: policy viewport escapes window: {:?}",
+            width,
+            theme_name,
+            viewport
+        );
+        assert!(
+            viewport.x > width as f32 * 0.1 && viewport.x + viewport.width < width as f32 * 0.9,
+            "{}px {}: policy viewport did not follow the installer shell width: {:?}",
+            width,
+            theme_name,
+            viewport
+        );
+        let card = mounted
+            .containers
+            .iter()
+            .filter(|card| {
+                heading.x >= card.x - 1.0
+                    && heading.x + heading.width <= card.x + card.width + 1.0
+                    && heading.y >= card.y - 1.0
+                    && heading.y + heading.height <= card.y + card.height + 1.0
+                    && viewport.x >= card.x - 1.0
+                    && viewport.x + viewport.width <= card.x + card.width + 1.0
+                    && viewport.y >= card.y - 1.0
+                    && viewport.y + viewport.height <= card.y + card.height + 1.0
+            })
+            .min_by(|left, right| {
+                (left.width * left.height).total_cmp(&(right.width * right.height))
+            })
+            .expect("smallest card containing policy heading and scroll viewport");
+        assert!(
+            card.width <= width as f32 * 0.8,
+            "{}px {}: policy card escapes installer content column: {:?}",
+            width,
+            theme_name,
+            card
+        );
+        let start = mounted
+            .labels
+            .iter()
+            .position(|(text, _)| text == "can always spend this wallet's funds (Primary path)")
+            .unwrap();
+        let end = mounted
+            .labels
+            .iter()
+            .position(|(text, _)| text == "I have backed up my descriptor")
+            .unwrap();
+        for (text, bounds) in &mounted.labels[start..end] {
+            assert!(
+                bounds.x >= content.x - 1.0
+                    && bounds.x + bounds.width <= content.x + content.width + 1.0,
+                "{}px {}: policy text escapes scroll content: {} {:?} {:?}",
+                width,
+                theme_name,
+                text,
+                bounds,
+                content
+            );
+        }
+    }
+
     #[tokio::test]
     async fn mounted_installer_backup_shell_keeps_recovery_copy_inside_card() {
         for bytes in coincube_ui::font::load() {
@@ -3658,92 +4241,7 @@ mod policy_layout_tests {
                         sequence
                     );
                 }
-                let heading = mounted
-                    .labels
-                    .iter()
-                    .find(|(text, _)| text == "The wallet policy:")
-                    .expect("mounted policy heading")
-                    .1;
-                let primary_clause = mounted
-                    .labels
-                    .iter()
-                    .find(|(text, _)| text == "can always spend this wallet's funds (Primary path)")
-                    .expect("mounted primary policy clause")
-                    .1;
-                let (viewport, content) = mounted
-                    .scrolls
-                    .iter()
-                    .filter(|(_, content)| {
-                        primary_clause.x >= content.x
-                            && primary_clause.x < content.x + content.width
-                            && primary_clause.y >= content.y
-                            && primary_clause.y < content.y + content.height
-                    })
-                    .min_by(|(left, _), (right, _)| left.width.total_cmp(&right.width))
-                    .expect("mounted horizontal policy scroll viewport");
-                assert!(
-                    viewport.x >= -1.0 && viewport.x + viewport.width <= width as f32 + 1.0,
-                    "{}px {}: policy viewport escapes window: {:?}",
-                    width,
-                    theme_name,
-                    viewport
-                );
-                assert!(
-                    viewport.x > width as f32 * 0.1
-                        && viewport.x + viewport.width < width as f32 * 0.9,
-                    "{}px {}: policy viewport did not follow the installer shell width: {:?}",
-                    width,
-                    theme_name,
-                    viewport
-                );
-                let card = mounted
-                    .containers
-                    .iter()
-                    .filter(|card| {
-                        heading.x >= card.x - 1.0
-                            && heading.x + heading.width <= card.x + card.width + 1.0
-                            && heading.y >= card.y - 1.0
-                            && heading.y + heading.height <= card.y + card.height + 1.0
-                            && viewport.x >= card.x - 1.0
-                            && viewport.x + viewport.width <= card.x + card.width + 1.0
-                            && viewport.y >= card.y - 1.0
-                            && viewport.y + viewport.height <= card.y + card.height + 1.0
-                    })
-                    .min_by(|left, right| {
-                        (left.width * left.height).total_cmp(&(right.width * right.height))
-                    })
-                    .expect("smallest card containing policy heading and scroll viewport");
-                assert!(
-                    card.width <= width as f32 * 0.8,
-                    "{}px {}: policy card escapes installer content column: {:?}",
-                    width,
-                    theme_name,
-                    card
-                );
-                let start = mounted
-                    .labels
-                    .iter()
-                    .position(|(text, _)| {
-                        text == "can always spend this wallet's funds (Primary path)"
-                    })
-                    .unwrap();
-                let end = mounted
-                    .labels
-                    .iter()
-                    .position(|(text, _)| text == "I have backed up my descriptor")
-                    .unwrap();
-                for (text, bounds) in &mounted.labels[start..end] {
-                    assert!(
-                        bounds.x >= content.x - 1.0
-                            && bounds.x + bounds.width <= content.x + content.width + 1.0,
-                        "{}px {}: policy text escapes scroll content: {} {:?} {:?}",
-                        width,
-                        theme_name,
-                        text,
-                        bounds,
-                        content
-                    );
-                }
+                assert_policy_geometry(&mounted, width, theme_name);
                 let screen = iced::Rectangle::with_size(size);
                 element.as_widget().draw(
                     &tree,
@@ -4109,6 +4607,55 @@ mod node_management_chain_tests {
                 )]
             ));
         }
+
+        let mut unavailable = candidate;
+        unavailable.status.has_encrypted_seed = false;
+        let phase = RestorePhase::CubePicker {
+            cubes: vec![unavailable],
+            selected: None,
+        };
+        let messages = activate_node_action(
+            recovery_kit_restore(
+                (1, 8),
+                42,
+                RestoreScope::Full,
+                "mainnet",
+                &phase,
+                &email,
+                &otp,
+                "",
+                false,
+                None,
+            ),
+            "tenshu.installer.restore.42.cube.7",
+            keyboard::Key::Named(keyboard::key::Named::Enter),
+            false,
+        );
+        assert!(
+            messages.is_empty(),
+            "an unavailable recovery row must not select a Cube"
+        );
+        let messages = activate_node_action(
+            recovery_kit_restore(
+                (1, 8),
+                42,
+                RestoreScope::Full,
+                "mainnet",
+                &phase,
+                &email,
+                &otp,
+                "",
+                false,
+                None,
+            ),
+            "tenshu.installer.restore.42.next",
+            keyboard::Key::Named(keyboard::key::Named::Space),
+            false,
+        );
+        assert!(
+            messages.is_empty(),
+            "Next must not confirm without a selection"
+        );
     }
 
     #[test]

@@ -481,22 +481,33 @@ pub enum SparkSendMessage {
     History,
 
     // ── Cross-chain stablecoin send ─────────────────────────────────────
-    /// The destination parsed as a cross-chain address and the bridge
-    /// returned the routes that can reach it. Moves the panel into
-    /// `CrossChainRoutes`, where the user confirms the chain and asset.
+    /// Prepare looked the destination up because Details hadn't yet. With
+    /// one network to send on (or one already chosen), the quote follows at
+    /// once; an EVM address several networks reach goes back to Details to
+    /// choose.
     CrossChainRoutesLoaded(
         u64,
         Result<coincube_spark_protocol::CrossChainRoutesOk, String>,
     ),
-    /// User picked one of the offered routes (index into the phase's list).
-    CrossChainRouteSelected(usize),
-    /// User edited the slippage field (basis points).
-    SlippageChanged(String),
-    /// User toggled the advanced disclosure that hides the slippage field.
-    ToggleAdvanced,
-    /// User accepted the chain/asset confirmation — fetch a quote for the
-    /// selected route.
-    CrossChainQuoteRequested,
+    /// The destination stopped changing long enough to look up which network
+    /// it belongs to (stablecoin targets only). Carries the lookup sequence;
+    /// a stale one is ignored.
+    DetectDestinationNetwork(u64),
+    /// The bridge answered that lookup.
+    DestinationNetworkDetected(
+        u64,
+        Result<coincube_spark_protocol::CrossChainRoutesOk, String>,
+    ),
+    /// User chose the network an EVM address should be paid on (display
+    /// name, as [`crate::app::state::spark::cross_chain::chain_name`] gives it).
+    ChooseNetwork(String),
+    /// User asked for the route's minimum in the Amount field.
+    UseMinimum,
+    /// User ticked (or cleared) Review's "they use this network" box, asked
+    /// for only when they chose the network themselves.
+    AcknowledgeNetwork(bool),
+    /// User picked how far the price may move (basis points). Re-quotes.
+    SlippagePreset(u32),
     /// The countdown ticked. Recomputes the quote's remaining life and, at
     /// zero, blocks Confirm until the user re-quotes.
     QuoteTick,
@@ -640,6 +651,16 @@ pub enum SparkReceiveMessage {
     /// event (the SDK only re-emits at mature/refund-status boundaries,
     /// not on every new confirmation).
     RefreshConfirmations,
+    /// An Esplora fetch of a cross-network swap's settle transaction, by the
+    /// txid SideShift reported, came back. Feeds the swap's "X of 3" count
+    /// while the wallet's pending deposits don't list that transaction yet.
+    /// `None` when the fetch failed.
+    SettleConfirmationsUpdated {
+        txid: String,
+        confirmations: Option<u32>,
+    },
+    /// Re-read only the swap's settle confirmations by txid (panel reload).
+    RefreshSettleConfirmations,
     Reset,
     /// The received receipt's View in Activity: [`Self::Reset`], then Activity.
     ViewActivity,

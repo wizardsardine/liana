@@ -429,11 +429,20 @@ mod tests {
                     .unwrap();
                 }
                 _ => {
+                    #[cfg(unix)]
                     std::os::unix::fs::symlink(
                         root.path(),
                         root.network_directory(ChainId::Bitcoin).path(),
                     )
                     .unwrap();
+                    #[cfg(windows)]
+                    std::os::windows::fs::symlink_dir(
+                        root.path(),
+                        root.network_directory(ChainId::Bitcoin).path(),
+                    )
+                    .unwrap();
+                    #[cfg(not(any(unix, windows)))]
+                    panic!("network-symlink fixture unsupported on this platform");
                 }
             }
             let before = std::fs::read(&path).ok();

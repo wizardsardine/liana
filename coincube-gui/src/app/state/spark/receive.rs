@@ -316,8 +316,9 @@ impl SparkReceive {
 
     /// A shift read back from the Cube's settings at unlock. Ignored when this
     /// session already has a live one (the record is that same shift). It goes
-    /// on screen unless another flow is there, in which case it is set aside
-    /// behind the notice.
+    /// on screen, replacing a flow that has no shift yet (one the user opened
+    /// before the read finished): flow messages reach the on-screen flow first,
+    /// so a restored shift parked behind it would never hear its own.
     fn restore_shift(&mut self, record: &crate::app::settings::PendingSparkShift) -> Task<Message> {
         if self.live_shift().is_some() || self.parked_shift.is_some() {
             return Task::none();
@@ -330,11 +331,7 @@ impl SparkReceive {
             return super::sideshift_receive::store_record(None);
         };
         let poll = flow.poll_now();
-        if self.sideshift_flow.is_none() {
-            self.sideshift_flow = Some(flow);
-        } else {
-            self.parked_shift = Some(flow);
-        }
+        self.sideshift_flow = Some(flow);
         poll
     }
 }
@@ -462,6 +459,10 @@ impl State for SparkReceive {
             // A static address left on screen from before, or picked before
             // the panel was ever shown, is (re)fetched without a button.
             self.fetch_static_address_if_due(),
+            self.settle_refresh_on_reload()
+                .map_or_else(Task::none, |msg| {
+                    Task::done(Message::View(crate::app::view::Message::SparkReceive(msg)))
+                }),
         ])
     }
 
@@ -473,7 +474,12 @@ impl State for SparkReceive {
         // updating between blocks (the SDK only re-emits `DepositsChanged` at
         // maturity / refund-status transitions, not on every new confirmation).
         let mut subs = vec![self.sideshift_poll_subscription()];
-        if self.pending_deposits.iter().any(|d| !d.is_mature) {
+        // The swap's settle transaction gets the same tick even before the
+        // wallet lists it as a pending deposit: the SDK may not list it until
+        // it confirms, and nothing else would move the count off zero.
+        if self.pending_deposits.iter().any(|d| !d.is_mature)
+            || self.swap_settle_txid_to_poll().is_some()
+        {
             subs.push(
                 iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
                     Message::View(crate::app::view::Message::SparkReceive(
@@ -496,6 +502,9 @@ impl State for SparkReceive {
             if let crate::app::view::SparkSideshiftReceiveMessage::Restore(record) = msg {
                 return self.restore_shift(record);
             }
+            // Read before the flow is borrowed: whether the swap was already
+            // polling its settle txid when this message arrived.
+            let was_polling = self.swap_settle_txid_to_poll().is_some();
             // A set-aside conversion still hears its polls and its arrival;
             // only one flow exists to answer them when it is on screen.
             let Some(flow) = self.sideshift_flow.as_mut().or(self.parked_shift.as_mut()) else {
@@ -520,7 +529,13 @@ impl State for SparkReceive {
                 self.sideshift_flow = None;
                 return Task::none();
             }
-            return flow.update(msg);
+            let task = flow.update(msg);
+            // The status poll that reports the settle txid is the moment to
+            // read its confirmations, rather than one tick later.
+            if was_polling {
+                return task;
+            }
+            return Task::batch([task, self.settle_confirmations_task(cache.network)]);
         }
 
         let Message::View(crate::app::view::Message::SparkReceive(msg)) = message else {
@@ -550,6 +565,8 @@ impl State for SparkReceive {
                     | SparkReceiveMessage::SelectSenderCrossNetwork(_)
                     | SparkReceiveMessage::ClaimDepositRequested { .. }
                     | SparkReceiveMessage::RefreshConfirmations
+                    | SparkReceiveMessage::SettleConfirmationsUpdated { .. }
+                    | SparkReceiveMessage::RefreshSettleConfirmations
                     | SparkReceiveMessage::DepositConfirmationsUpdated(_)
                     | SparkReceiveMessage::PendingDepositsLoaded(_)
                     | SparkReceiveMessage::PendingDepositsFailed(_)
@@ -1017,8 +1034,42 @@ impl State for SparkReceive {
                 self.remember_swap_confirmations();
                 Task::none()
             }
-            SparkReceiveMessage::RefreshConfirmations => {
-                refresh_confirmations_task(cache.network, &self.pending_deposits)
+            SparkReceiveMessage::RefreshSettleConfirmations => {
+                self.settle_confirmations_task(cache.network)
+            }
+            SparkReceiveMessage::RefreshConfirmations => Task::batch([
+                refresh_confirmations_task(cache.network, &self.pending_deposits),
+                self.settle_confirmations_task(cache.network),
+            ]),
+            SparkReceiveMessage::SettleConfirmationsUpdated {
+                txid,
+                confirmations,
+            } => {
+                let Some(confirmations) = confirmations else {
+                    return Task::none();
+                };
+                // Only while the swap still polls this txid: a late answer for
+                // a swap that has moved on (arrived, reset, another shift), or
+                // one landing after the wallet listed the deposit (whose own
+                // count then rules), is not this swap's count.
+                let ours = self
+                    .swap_settle_txid_to_poll()
+                    .is_some_and(|hash| hash.eq_ignore_ascii_case(&txid));
+                if !ours {
+                    return Task::none();
+                }
+                let Some(flow) = self.sideshift_flow.as_mut() else {
+                    return Task::none();
+                };
+                let previous = flow.last_settle_confirmations().unwrap_or(0);
+                flow.note_settle_confirmations(Some(confirmations));
+                // A new block may be what makes the SDK list the deposit (or
+                // mature it), so re-read the pending deposits when it lands.
+                if confirmations > previous {
+                    fetch_deposits_task(self.backend.clone())
+                } else {
+                    Task::none()
+                }
             }
             SparkReceiveMessage::ClaimDepositRequested { txid, vout } => {
                 let Some(backend) = self.backend.clone() else {
@@ -1346,27 +1397,98 @@ impl SparkReceive {
         )
     }
 
-    /// The swap's settle confirmations: live from the pending deposits, else
-    /// the last count seen (the deposit leaves that list once claimed).
+    /// The swap's settle confirmations: the count fetched for its pending
+    /// deposit, else the last count seen (by txid before the wallet listed
+    /// the deposit, or before it left that list once claimed), else zero for
+    /// a deposit listed before any count is known.
+    ///
+    /// A deposit the wallet has just listed has no fetched count yet; it must
+    /// not read as zero over a count already seen by txid.
     fn swap_settle_confirmations(&self) -> Option<u32> {
         let flow = self.sideshift_flow.as_ref()?;
         if !flow.settle_output_live() {
             return None;
         }
-        settle_confirmations(
-            flow.settle_hash(),
-            flow.settle_amount_sat(),
+        let (hash, sats) = (flow.settle_hash(), flow.settle_amount_sat());
+        known_settle_confirmations(
+            hash,
+            sats,
             &self.pending_deposits,
             &self.pending_deposit_confirmations,
         )
         .or(flow.last_settle_confirmations())
+        .or_else(|| {
+            settle_confirmations(
+                hash,
+                sats,
+                &self.pending_deposits,
+                &self.pending_deposit_confirmations,
+            )
+        })
+    }
+
+    /// The swap's settle txid, when its confirmations must be read straight
+    /// from Esplora: SideShift has sent the bitcoin and reported the txid, the
+    /// wallet's pending deposits don't list that transaction (those are
+    /// already polled), and it hasn't reached maturity yet.
+    fn swap_settle_txid_to_poll(&self) -> Option<&str> {
+        let flow = self.sideshift_flow.as_ref()?;
+        if !flow.settle_output_live() || self.swap_settle_deposit().is_some() {
+            return None;
+        }
+        if flow.last_settle_confirmations().unwrap_or(0) >= DEPOSIT_MATURITY_CONFIRMATIONS {
+            return None;
+        }
+        // The hash goes into an Esplora URL path: only a txid's shape.
+        flow.settle_hash()
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+    }
+
+    /// What reloading the panel asks for, so a swap's settle count is fresh on
+    /// return rather than up to one 30s tick late: a fetch started while the
+    /// panel was off-screen answers to no one (its reply only reaches the
+    /// current panel), and the status poll fetches only when polling starts.
+    /// `reload` has no network to fetch with, so it sends
+    /// `RefreshSettleConfirmations`, which does; the pending deposits are
+    /// re-read by reload itself.
+    fn settle_refresh_on_reload(&self) -> Option<crate::app::view::SparkReceiveMessage> {
+        self.swap_settle_txid_to_poll()
+            .map(|_| crate::app::view::SparkReceiveMessage::RefreshSettleConfirmations)
+    }
+
+    /// Read the swap's settle transaction's confirmations from Esplora, when
+    /// [`Self::swap_settle_txid_to_poll`] says it's needed.
+    fn settle_confirmations_task(
+        &self,
+        network: coincube_core::miniscript::bitcoin::Network,
+    ) -> Task<Message> {
+        let Some(txid) = self.swap_settle_txid_to_poll() else {
+            return Task::none();
+        };
+        if !super::esplora::is_supported(network) {
+            return Task::none();
+        }
+        // Confirmations belong to the transaction; the vout is only a map key.
+        let key = (txid.to_string(), 0);
+        let txid = key.0.clone();
+        Task::perform(
+            super::esplora::fetch_confirmations(network, vec![key.clone()]),
+            move |map| {
+                Message::View(crate::app::view::Message::SparkReceive(
+                    crate::app::view::SparkReceiveMessage::SettleConfirmationsUpdated {
+                        txid,
+                        confirmations: map.get(&key).copied(),
+                    },
+                ))
+            },
+        )
     }
 
     fn remember_swap_confirmations(&mut self) {
         let live = self.sideshift_flow.as_ref().and_then(|flow| {
             flow.settle_output_live()
                 .then(|| {
-                    settle_confirmations(
+                    known_settle_confirmations(
                         flow.settle_hash(),
                         flow.settle_amount_sat(),
                         &self.pending_deposits,
@@ -1429,6 +1551,26 @@ fn settle_confirmations(
         Some(fetched.unwrap_or(0).max(DEPOSIT_MATURITY_CONFIRMATIONS))
     } else {
         Some(fetched.unwrap_or(0))
+    }
+}
+
+/// [`settle_confirmations`], but only when a count is actually known: a
+/// fetched count, or maturity. A deposit listed with no fetched count yet is
+/// `None` here rather than zero, so it can't overwrite a count already seen.
+fn known_settle_confirmations(
+    settle_hash: Option<&str>,
+    settle_amount_sat: Option<u64>,
+    deposits: &[DepositInfo],
+    confirmations: &HashMap<(String, u32), u32>,
+) -> Option<u32> {
+    let deposit = settle_deposit(settle_hash, settle_amount_sat, deposits)?;
+    let fetched = confirmations
+        .get(&(deposit.txid.clone(), deposit.vout))
+        .copied();
+    if deposit.is_mature {
+        Some(fetched.unwrap_or(0).max(DEPOSIT_MATURITY_CONFIRMATIONS))
+    } else {
+        fetched
     }
 }
 
@@ -2174,6 +2316,269 @@ mod tests {
         assert!(panel.pending_deposit_confirmations.is_empty());
     }
 
+    fn panel_with_settled_swap(settle_hash: &str) -> SparkReceive {
+        let backend = Arc::new(SparkBackend::new(Arc::new(
+            crate::app::breez_spark::SparkClient::disconnected_for_test(),
+        )));
+        let mut panel = SparkReceive::new(Some(backend.clone()));
+        panel.sideshift_flow = Some(SparkSideshiftReceiveFlow::settled_for_test(
+            backend,
+            settle_hash,
+        ));
+        panel
+    }
+
+    /// The SDK may not list a settle transaction as a pending deposit until
+    /// it confirms. The swap still reads its confirmations by txid, so the
+    /// count can't sit at zero waiting on the deposit list.
+    #[test]
+    fn a_settled_swap_polls_its_settle_txid_until_the_wallet_lists_it() {
+        let mut panel = panel_with_settled_swap(
+            "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19",
+        );
+        assert_eq!(
+            panel.swap_settle_txid_to_poll(),
+            Some("4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19")
+        );
+
+        // Listed as a pending deposit: the deposit poll covers it instead.
+        panel.pending_deposits = vec![deposit(
+            "4E0CA17B9C2D6F1A8B3E5D7C9F0A1B2C3D4E5F60718293A4B5C6D7E866D20F19",
+            0,
+            false,
+        )];
+        assert_eq!(panel.swap_settle_txid_to_poll(), None);
+
+        // Not listed, but already mature: nothing left to count.
+        panel.pending_deposits.clear();
+        panel
+            .sideshift_flow
+            .as_mut()
+            .unwrap()
+            .note_settle_confirmations(Some(DEPOSIT_MATURITY_CONFIRMATIONS));
+        assert_eq!(panel.swap_settle_txid_to_poll(), None);
+    }
+
+    #[test]
+    fn settle_txid_confirmations_feed_the_swap_count() {
+        let mut panel = panel_with_settled_swap(
+            "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19",
+        );
+        assert_eq!(panel.swap_settle_confirmations(), None);
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::SettleConfirmationsUpdated {
+                txid: "4E0CA17B9C2D6F1A8B3E5D7C9F0A1B2C3D4E5F60718293A4B5C6D7E866D20F19"
+                    .to_string(),
+                confirmations: Some(1),
+            },
+        );
+        assert_eq!(panel.swap_settle_confirmations(), Some(1));
+
+        // A failed fetch, or one for another transaction, changes nothing.
+        for (txid, confirmations) in [
+            (
+                "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19",
+                None,
+            ),
+            ("other", Some(2)),
+        ] {
+            update(
+                &mut panel,
+                SparkReceiveMessage::SettleConfirmationsUpdated {
+                    txid: txid.to_string(),
+                    confirmations,
+                },
+            );
+            assert_eq!(panel.swap_settle_confirmations(), Some(1));
+        }
+
+        // An empty deposit list keeps the count rather than resetting it.
+        update(
+            &mut panel,
+            SparkReceiveMessage::PendingDepositsLoaded(vec![]),
+        );
+        assert_eq!(panel.swap_settle_confirmations(), Some(1));
+    }
+
+    /// Bugbot on #1229: once the wallet lists the settle deposit, its count
+    /// hasn't been fetched yet. That must not reset a count already read by
+    /// txid, nor store zero over it; a count fetched for the deposit then
+    /// takes over, even a lower one (a reorg).
+    #[test]
+    fn a_newly_listed_settle_deposit_keeps_the_count_read_by_txid() {
+        let mut panel = panel_with_settled_swap(
+            "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19",
+        );
+        update(
+            &mut panel,
+            SparkReceiveMessage::SettleConfirmationsUpdated {
+                txid: "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19"
+                    .to_string(),
+                confirmations: Some(2),
+            },
+        );
+        assert_eq!(panel.swap_settle_confirmations(), Some(2));
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::PendingDepositsLoaded(vec![deposit(
+                "4E0CA17B9C2D6F1A8B3E5D7C9F0A1B2C3D4E5F60718293A4B5C6D7E866D20F19",
+                0,
+                false,
+            )]),
+        );
+        assert_eq!(panel.swap_settle_confirmations(), Some(2));
+        assert_eq!(
+            panel
+                .sideshift_flow
+                .as_ref()
+                .unwrap()
+                .last_settle_confirmations(),
+            Some(2)
+        );
+
+        update(
+            &mut panel,
+            SparkReceiveMessage::DepositConfirmationsUpdated(HashMap::from([(
+                (
+                    "4E0CA17B9C2D6F1A8B3E5D7C9F0A1B2C3D4E5F60718293A4B5C6D7E866D20F19".to_string(),
+                    0,
+                ),
+                1,
+            )])),
+        );
+        assert_eq!(panel.swap_settle_confirmations(), Some(1));
+    }
+
+    /// Returning to the panel re-reads a waiting settle count at once; with
+    /// nothing to poll, reload asks for nothing extra.
+    #[test]
+    fn reload_refreshes_a_waiting_settle_count() {
+        let mut panel = panel_with_settled_swap(
+            "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19",
+        );
+        assert!(matches!(
+            panel.settle_refresh_on_reload(),
+            Some(SparkReceiveMessage::RefreshSettleConfirmations)
+        ));
+
+        panel.pending_deposits = vec![deposit(
+            "4E0CA17B9C2D6F1A8B3E5D7C9F0A1B2C3D4E5F60718293A4B5C6D7E866D20F19",
+            0,
+            false,
+        )];
+        assert!(panel.settle_refresh_on_reload().is_none());
+        assert!(SparkReceive::new(None).settle_refresh_on_reload().is_none());
+    }
+
+    const SETTLE_TXID: &str = "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19";
+
+    /// #1230's rule survives this change: a set-aside conversion still hears
+    /// its own messages (here its arrival) while another rail is on screen.
+    #[test]
+    fn a_set_aside_shift_still_hears_its_arrival() {
+        let mut panel = panel_with_settled_swap(SETTLE_TXID);
+        panel.set_aside_sideshift_flow();
+        assert!(panel.sideshift_flow.is_none());
+        assert!(panel.parked_shift.is_some());
+
+        let _task = State::update(
+            &mut panel,
+            None,
+            &Cache::default(),
+            AppMessage::View(ViewMessage::SparkSideshiftReceive(
+                crate::app::view::SparkSideshiftReceiveMessage::Arrived { amount_sat: 21_000 },
+            )),
+        );
+        let parked = panel.parked_shift.as_ref().expect("still set aside");
+        assert_eq!(parked.arrived_amount_sat(), Some(21_000));
+    }
+
+    /// A txid answer counts only while the swap still polls that txid: not
+    /// once the wallet lists the deposit (its own count rules), not for a
+    /// swap that has arrived, and never for another transaction.
+    #[test]
+    fn late_txid_answers_are_ignored_once_the_swap_moved_on() {
+        let reply = |panel: &mut SparkReceive, confirmations| {
+            update(
+                panel,
+                SparkReceiveMessage::SettleConfirmationsUpdated {
+                    txid: SETTLE_TXID.to_string(),
+                    confirmations: Some(confirmations),
+                },
+            )
+        };
+
+        let mut listed = panel_with_settled_swap(SETTLE_TXID);
+        update(
+            &mut listed,
+            SparkReceiveMessage::PendingDepositsLoaded(vec![deposit(SETTLE_TXID, 0, true)]),
+        );
+        assert_eq!(
+            listed.swap_settle_confirmations(),
+            Some(DEPOSIT_MATURITY_CONFIRMATIONS)
+        );
+        reply(&mut listed, 2);
+        assert_eq!(
+            listed
+                .sideshift_flow
+                .as_ref()
+                .unwrap()
+                .last_settle_confirmations(),
+            Some(DEPOSIT_MATURITY_CONFIRMATIONS)
+        );
+
+        let mut arrived = panel_with_settled_swap(SETTLE_TXID);
+        let _task = State::update(
+            &mut arrived,
+            None,
+            &Cache::default(),
+            AppMessage::View(ViewMessage::SparkSideshiftReceive(
+                crate::app::view::SparkSideshiftReceiveMessage::Arrived { amount_sat: 21_000 },
+            )),
+        );
+        reply(&mut arrived, 1);
+        assert_eq!(
+            arrived
+                .sideshift_flow
+                .as_ref()
+                .unwrap()
+                .last_settle_confirmations(),
+            None
+        );
+    }
+
+    /// A settle hash that isn't a txid is never put into an Esplora URL.
+    #[test]
+    fn a_malformed_settle_hash_is_not_polled() {
+        for hash in ["abc123", "../../api/blocks", &"g".repeat(64)] {
+            assert_eq!(
+                panel_with_settled_swap(hash).swap_settle_txid_to_poll(),
+                None
+            );
+        }
+        assert_eq!(
+            panel_with_settled_swap(SETTLE_TXID).swap_settle_txid_to_poll(),
+            Some(SETTLE_TXID)
+        );
+    }
+
+    /// A deposit listed before any count is known still reads "0 of 3".
+    #[test]
+    fn a_listed_settle_deposit_with_no_count_reads_zero() {
+        let mut panel = panel_with_settled_swap(
+            "4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19",
+        );
+        panel.pending_deposits = vec![deposit(
+            "4E0CA17B9C2D6F1A8B3E5D7C9F0A1B2C3D4E5F60718293A4B5C6D7E866D20F19",
+            0,
+            false,
+        )];
+        assert_eq!(panel.swap_settle_confirmations(), Some(0));
+    }
+
     #[test]
     fn confirmation_updates_merge_and_can_move_backward() {
         let mut panel = SparkReceive::new(None);
@@ -2737,5 +3142,25 @@ mod tests {
         assert!(panel.sideshift_flow.is_none());
         assert!(panel.parked_shift.is_none());
         assert_eq!(panel.conversion_summary(), None);
+    }
+
+    /// The settings read behind a restore can finish after the user opened a
+    /// conversion of their own; one with no shift yet gives way to the
+    /// restored shift, which must hear its own polls.
+    #[test]
+    fn a_restore_replaces_a_conversion_that_has_no_shift_yet() {
+        let record = crate::app::settings::PendingSparkShift::sample();
+        let mut panel = backed_panel();
+        let key = crate::services::sideshift::deposit_options()[0].key();
+        update_with_cache(
+            &mut panel,
+            &mainnet(),
+            SparkReceiveMessage::SelectSenderCrossNetwork(key),
+        );
+        assert!(shown_shift_id(&panel).is_none());
+
+        restore(&mut panel, record.clone());
+        assert_eq!(shown_shift_id(&panel), Some(record.shift.id.as_str()));
+        assert!(panel.parked_shift.is_none());
     }
 }

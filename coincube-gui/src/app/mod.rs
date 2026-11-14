@@ -4695,51 +4695,6 @@ impl App {
         )
     }
 
-    /// Show the one-time recovery-alerts consent prompt (PR 3) when this device
-    /// holds the Vault and that Vault has keyholders, a Connect session, and no
-    /// monitoring yet — and the prompt hasn't already been answered for this
-    /// Cube. A walletless instance (`App::new_without_wallet`) can still have a
-    /// Connect cube with keyholders, so gate on the local wallet or it would
-    /// consent on behalf of a Vault it doesn't hold. Idempotent within a
-    /// session (the overlay flag guards re-entry); the durable answer lives in
-    /// `CubeSettings::recovery_alerts_prompt_answered`.
-    ///
-    /// Only ever called off the back of a monitoring-status load, because that
-    /// load is what resolves the recipient list this gates on. Calling it any
-    /// earlier reads an empty list and silently declines to prompt — which is
-    /// exactly how the prompt used to be unreachable in every build.
-    ///
-    /// The returned task clears keyboard focus when the prompt opens: the
-    /// content beneath it stays mounted (so it keeps its scroll offsets and
-    /// other widget state), and a control focused before the prompt appeared
-    /// must not go on taking Enter or Space behind it.
-    fn maybe_show_recovery_alerts_prompt(&mut self) -> Task<Message> {
-        if should_show_recovery_alerts_prompt(
-            self.show_recovery_alerts_prompt,
-            self.cube_settings.recovery_alerts_prompt_answered,
-            self.panels.connect.account.is_authenticated(),
-            self.panels.connect.cube.server_cube_id.is_some(),
-            self.panels.connect.account.is_recovery_alerts_entitled(),
-            !self
-                .panels
-                .global_settings
-                .recovery_alerts
-                .recipients
-                .notified
-                .is_empty(),
-            self.panels.global_settings.recovery_alerts.alerts_on(),
-            self.wallet
-                .as_ref()
-                .is_some_and(|wallet| wallet.supports_inheritance()),
-        ) {
-            self.show_recovery_alerts_prompt = true;
-            return iced_runtime::task::widget(
-                iced::advanced::widget::operation::focusable::unfocus(),
-            );
-        }
-        Task::none()
-    }
-
     /// Backfill this Cube's Vault identity
     /// (`plans/PLAN-vault-identity-unification.md` D4).
     ///
@@ -4830,42 +4785,6 @@ impl App {
             },
         );
         Task::batch([persist_task, assert_task, reconcile_task])
-    }
-
-    /// Persist this Cube's "answered the consent prompt" flag to the settings
-    /// file (PR 3). The in-memory `cube_settings` copy is set by the caller; this
-    /// just makes it durable so the prompt never re-fires across restarts.
-    fn persist_recovery_alerts_answered(&self) -> Task<Message> {
-        let network_dir = self
-            .cache
-            .datadir_path
-            .network_directory(self.cache.chain());
-        let cube_id = self.cube_settings.id.clone();
-        Task::perform(
-            async move {
-                settings::update_settings_file(&network_dir, |mut s| {
-                    if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                        cube.recovery_alerts_prompt_answered = true;
-                    }
-                    Some(s)
-                })
-                .await
-                .map_err(|e| {
-                    crate::user_error::UserError::logged(
-                        "Couldn't save that preference",
-                        "Try again. If it keeps failing, contact support and quote the reference below.",
-                        crate::user_error::CC_CONFIG,
-                        true,
-                        e,
-                    )
-                    .toast()
-                })
-            },
-            |res: Result<(), String>| match res {
-                Ok(()) => Message::SettingsSaved,
-                Err(e) => Message::View(view::Message::ShowError(e)),
-            },
-        )
     }
 
     /// Record the user's Stable Balance decision for this Cube — in memory,
@@ -8221,56 +8140,7 @@ impl App {
                 return Task::none();
             }
             Message::View(view::Message::RecoveryAlertsConsent(accept)) => {
-                // Answer the one-time consent prompt (PR 3). Dismiss the overlay
-                // either way.
-                self.show_recovery_alerts_prompt = false;
-                if !accept {
-                    // Decline: record durably and move on — never re-prompt.
-                    self.cube_settings.recovery_alerts_prompt_answered = true;
-                    return self.persist_recovery_alerts_answered();
-                }
-                // Accept: turn alerts on now (cube-scoped POST). Route the result
-                // through the settings card's `ChangeResult`, which reflects
-                // alerts-on on the card AND — on `Ok` — marks + persists the prompt
-                // answered (the shared `is_ok_change` handler below). So the answer
-                // is recorded only after the enable actually succeeds: a
-                // post-dispatch API failure surfaces there and leaves the prompt
-                // un-answered, so it re-fires later. `enable_alerts` is idempotent,
-                // so a redundant accept is safe.
-                //
-                // If the Connect session dropped while the overlay was up (token
-                // expiry / account switch) there's nothing to dispatch: leave the
-                // prompt un-answered (it re-fires once Connect is back) and surface
-                // a visible error rather than failing silently.
-                let gen = self.panels.connect.account.session_generation();
-                match (
-                    self.authenticated_coincube_client(),
-                    self.panels.connect.cube.server_cube_id,
-                ) {
-                    (Some(client), Some(cube_id)) => {
-                        return Task::perform(
-                            async move {
-                                crate::services::inheritance::enable_alerts(&client, cube_id)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            },
-                            move |res| {
-                                Message::View(view::Message::Settings(
-                                    view::SettingsMessage::RecoveryAlerts(
-                                        view::RecoveryAlertsMessage::ChangeResult(res, gen, None),
-                                    ),
-                                ))
-                            },
-                        );
-                    }
-                    _ => {
-                        return Task::done(Message::View(view::Message::ShowError(
-                            "Couldn't reach your Connect account — recovery alerts weren't turned \
-                             on. We'll ask again."
-                                .to_string(),
-                        )));
-                    }
-                }
+                return self.handle_recovery_alerts_consent(accept);
             }
             Message::RescanObligationRetired(result) => {
                 self.rescan_obligation_retire_in_flight = false;
@@ -19570,6 +19440,48 @@ mod recovery_settings_routing_tests {
             assert!(!card.status_stale);
             assert!(!card.status.as_ref().unwrap().has_recovery_kit);
             assert_eq!(app.panels.current, route);
+        });
+    }
+    #[test]
+    fn declining_consent_dismisses_and_marks_answered_without_changing_route() {
+        with_app(|app| {
+            let route = app.panels.current.clone();
+            app.show_recovery_alerts_prompt = true;
+            let task = app.update(Message::View(view::Message::RecoveryAlertsConsent(false)));
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(app.cube_settings.recovery_alerts_prompt_answered);
+            assert_eq!(app.panels.current, route);
+            assert!(iced_runtime::task::into_stream(task).is_some());
+        });
+    }
+
+    #[test]
+    fn accepting_without_connect_dismisses_but_does_not_record_success() {
+        with_app(|app| {
+            app.show_recovery_alerts_prompt = true;
+            let task = app.update(Message::View(view::Message::RecoveryAlertsConsent(true)));
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+            use iced::futures::StreamExt;
+            let output = iced::futures::executor::block_on(
+                iced_runtime::task::into_stream(task).unwrap().next(),
+            )
+            .unwrap();
+            assert!(
+                matches!(output, iced_runtime::Action::Output(Message::View(view::Message::ShowError(error))) if error.contains("recovery alerts weren't turned on"))
+            );
+        });
+    }
+
+    #[test]
+    fn ineligible_status_does_not_open_consent_or_clear_focus() {
+        with_app(|app| {
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(
+                iced_runtime::task::into_stream(app.maybe_show_recovery_alerts_prompt()).is_none()
+            );
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
         });
     }
 }
