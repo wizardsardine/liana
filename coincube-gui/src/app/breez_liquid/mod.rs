@@ -244,6 +244,58 @@ pub async fn load_breez_client(
     )))
 }
 
+/// One sunset-gate probe. Failure is not "empty": the gate keeps the wallet
+/// unless it has positively seen no funds and no history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Probe<T> {
+    Known(T),
+    Failed,
+}
+
+/// The balance fields the sunset gate reads. `balance_sat` is L-BTC;
+/// `any_asset_balance` is L-USDt or any other issued asset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BalanceSnapshot {
+    balance_sat: u64,
+    pending_receive_sat: u64,
+    pending_send_sat: u64,
+    any_asset_balance: bool,
+}
+
+fn any_positive_sat(balances: impl IntoIterator<Item = u64>) -> bool {
+    balances.into_iter().any(|sat| sat > 0)
+}
+
+fn balance_snapshot_shows_activity(snapshot: &BalanceSnapshot) -> bool {
+    snapshot.balance_sat > 0
+        || snapshot.pending_receive_sat > 0
+        || snapshot.pending_send_sat > 0
+        || snapshot.any_asset_balance
+}
+
+/// Whether the two probes are enough to keep Liquid visible.
+///
+/// `history_nonempty` is `None` when the balance probe already decided, and a
+/// history result only when that balance was a known zero. A missing or failed
+/// history answer keeps the wallet: discarding is allowed only for an explicit
+/// empty history.
+fn seed_activity_worth_keeping(
+    balance: Probe<BalanceSnapshot>,
+    history_nonempty: Option<Probe<bool>>,
+) -> bool {
+    let balance_is_clear = match balance {
+        Probe::Failed => return true,
+        Probe::Known(snapshot) => !balance_snapshot_shows_activity(&snapshot),
+    };
+    if !balance_is_clear {
+        return true;
+    }
+    match history_nonempty {
+        Some(Probe::Known(nonempty)) => nonempty,
+        Some(Probe::Failed) | None => true,
+    }
+}
+
 /// Whether this seed has anything worth surfacing on Liquid — any balance, or
 /// any payment in its history. Used by the sunset gate to decide whether a
 /// fresh wallet is a restore with real funds (keep it) or just an empty
@@ -254,34 +306,43 @@ pub async fn load_breez_client(
 /// keeping an empty wallet shows a spurious nav entry, while wrongly
 /// discarding a funded one hides the user's money.
 async fn seed_has_liquid_activity(client: &BreezClient) -> bool {
-    match client.info().await {
+    let balance = match client.info().await {
         // `balance_sat` covers L-BTC; `asset_balances` covers L-USDt and any
         // other issued asset, which a pure L-BTC check would miss.
         Ok(info) => {
             let wallet = &info.wallet_info;
-            if wallet.balance_sat > 0
-                || wallet.pending_receive_sat > 0
-                || wallet.pending_send_sat > 0
-                || wallet.asset_balances.iter().any(|a| a.balance_sat > 0)
-            {
-                return true;
-            }
+            Probe::Known(BalanceSnapshot {
+                balance_sat: wallet.balance_sat,
+                pending_receive_sat: wallet.pending_receive_sat,
+                pending_send_sat: wallet.pending_send_sat,
+                any_asset_balance: any_positive_sat(
+                    wallet.asset_balances.iter().map(|a| a.balance_sat),
+                ),
+            })
         }
         Err(e) => {
             log::warn!("Liquid balance probe failed ({e}) — keeping the wallet to be safe");
-            return true;
+            Probe::Failed
         }
-    }
-
+    };
     // A zero balance isn't proof of an unused wallet: a user who swept their
     // L-BTC out still has history worth reaching. One payment is enough.
-    match client.list_payments(Some(1), None, None).await {
-        Ok(payments) => !payments.is_empty(),
-        Err(e) => {
-            log::warn!("Liquid history probe failed ({e}) — keeping the wallet to be safe");
-            true
-        }
-    }
+    // History is skipped when the balance probe already decided.
+    let history = if matches!(
+        &balance,
+        Probe::Known(snapshot) if !balance_snapshot_shows_activity(snapshot)
+    ) {
+        Some(match client.list_payments(Some(1), None, None).await {
+            Ok(payments) => Probe::Known(!payments.is_empty()),
+            Err(e) => {
+                log::warn!("Liquid history probe failed ({e}) — keeping the wallet to be safe");
+                Probe::Failed
+            }
+        })
+    } else {
+        None
+    };
+    seed_activity_worth_keeping(balance, history)
 }
 
 #[cfg(test)]
@@ -537,5 +598,195 @@ mod seed_source_tests {
         assert!(client.liquid_signer().is_some());
 
         let _ = std::fs::remove_dir_all(&datadir);
+    }
+}
+
+#[cfg(test)]
+mod sunset_gate_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn zero_balance() -> BalanceSnapshot {
+        BalanceSnapshot {
+            balance_sat: 0,
+            pending_receive_sat: 0,
+            pending_send_sat: 0,
+            any_asset_balance: false,
+        }
+    }
+
+    fn with_activity(mutate: impl FnOnce(&mut BalanceSnapshot)) -> Probe<BalanceSnapshot> {
+        let mut snapshot = zero_balance();
+        mutate(&mut snapshot);
+        Probe::Known(snapshot)
+    }
+
+    /// Each funded field, on its own, keeps the wallet. History is not an input.
+    #[test]
+    fn funded_balances_keep_the_wallet_without_a_history_probe() {
+        assert!(!any_positive_sat([0, 0]));
+        assert!(any_positive_sat([0, 1]));
+
+        let funded = [
+            with_activity(|s| s.balance_sat = 1),
+            with_activity(|s| s.pending_receive_sat = 1),
+            with_activity(|s| s.pending_send_sat = 1),
+            with_activity(|s| s.any_asset_balance = true),
+        ];
+        for balance in funded {
+            assert!(
+                seed_activity_worth_keeping(balance, None),
+                "a funded probe must keep Liquid even with no history answer"
+            );
+            assert!(
+                seed_activity_worth_keeping(balance, Some(Probe::Known(false))),
+                "a funded probe must not be overturned by an empty history"
+            );
+        }
+    }
+
+    #[test]
+    fn a_swept_wallet_stays_when_one_payment_remains() {
+        assert!(seed_activity_worth_keeping(
+            Probe::Known(zero_balance()),
+            Some(Probe::Known(true))
+        ));
+    }
+
+    /// Discarding is the exception. Every "we don't know" answer keeps the wallet,
+    /// including a failed balance probe that also carries an empty history.
+    #[test]
+    fn only_a_known_empty_history_discards_the_wallet() {
+        let clear = Probe::Known(zero_balance());
+        assert!(!seed_activity_worth_keeping(
+            clear,
+            Some(Probe::Known(false))
+        ));
+        assert!(seed_activity_worth_keeping(clear, Some(Probe::Failed)));
+        assert!(seed_activity_worth_keeping(clear, None));
+        assert!(seed_activity_worth_keeping(
+            Probe::Failed,
+            Some(Probe::Known(false))
+        ));
+    }
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "coincube-liquid-gate-{tag}-{}-{:?}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_wallet(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("storage.sql"), b"wallet").unwrap();
+    }
+
+    fn sorted(mut dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+        dirs.sort();
+        dirs
+    }
+
+    #[test]
+    fn only_a_storage_sql_file_marks_liquid_state_and_networks_stay_apart() {
+        let scratch = Scratch::new("state");
+        let root = scratch.path();
+        assert!(liquid_state_dirs(root, Network::Bitcoin).is_empty());
+        assert!(!local_state_exists(root, Network::Bitcoin));
+        assert!(!local_state_exists(&root.join("missing"), Network::Testnet));
+
+        let bare = root.join("breez/mainnet/bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        let sql_dir = root.join("breez/mainnet/sql-is-a-directory");
+        std::fs::create_dir_all(sql_dir.join("storage.sql")).unwrap();
+        let nested = root.join("breez/mainnet/nested/extra");
+        write_wallet(&nested);
+        assert!(
+            liquid_state_dirs(root, Network::Bitcoin).is_empty(),
+            "a bare directory, a storage.sql directory, or a nested file is not a wallet"
+        );
+
+        let mainnet = root.join("breez/mainnet/signer-a");
+        write_wallet(&mainnet);
+        assert_eq!(
+            sorted(liquid_state_dirs(root, Network::Bitcoin)),
+            vec![mainnet]
+        );
+        assert!(local_state_exists(root, Network::Bitcoin));
+        assert!(
+            liquid_state_dirs(root, Network::Testnet).is_empty(),
+            "a mainnet wallet must not satisfy the testnet gate"
+        );
+        assert!(liquid_state_dirs(root, Network::Regtest).is_empty());
+
+        let testnet = root.join("breez/testnet/signer-b");
+        write_wallet(&testnet);
+        assert_eq!(
+            sorted(liquid_state_dirs(root, Network::Testnet)),
+            vec![testnet.clone()]
+        );
+        assert_eq!(
+            sorted(liquid_state_dirs(root, Network::Signet)),
+            vec![testnet],
+            "every non-mainnet network shares the SDK testnet directory"
+        );
+        assert!(local_state_exists(root, Network::Bitcoin));
+    }
+
+    #[test]
+    fn discarding_scratch_state_leaves_every_other_wallet() {
+        let scratch = Scratch::new("discard");
+        let root = scratch.path();
+        let grandfathered = root.join("breez/mainnet/grandfathered");
+        let fresh = root.join("breez/mainnet/fresh");
+        let testnet = root.join("breez/testnet/other");
+        write_wallet(&grandfathered);
+        write_wallet(&fresh);
+        write_wallet(&testnet);
+
+        discard_empty_liquid_state(std::slice::from_ref(&fresh));
+        assert!(!fresh.exists());
+        assert_eq!(
+            std::fs::read(grandfathered.join("storage.sql")).unwrap(),
+            b"wallet"
+        );
+        assert_eq!(
+            std::fs::read(testnet.join("storage.sql")).unwrap(),
+            b"wallet"
+        );
+        assert_eq!(
+            sorted(liquid_state_dirs(root, Network::Bitcoin)),
+            vec![grandfathered.clone()]
+        );
+        assert_eq!(
+            sorted(liquid_state_dirs(root, Network::Testnet)),
+            vec![testnet]
+        );
+
+        let stray_file = root.join("breez/mainnet/not-a-dir");
+        std::fs::write(&stray_file, b"keep").unwrap();
+        discard_empty_liquid_state(&[stray_file.clone(), root.join("breez/mainnet/missing")]);
+        assert_eq!(std::fs::read(&stray_file).unwrap(), b"keep");
+        assert!(grandfathered.join("storage.sql").is_file());
     }
 }
