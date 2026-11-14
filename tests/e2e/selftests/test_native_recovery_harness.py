@@ -561,3 +561,47 @@ def test_refresh_failure_preserves_real_pending_retirement(config,tmp_path,monke
         suite.execute(account,1)
         assert 'pending_native_action' not in suite.journal.data['artifacts']
     finally:suite.close()
+
+
+@pytest.mark.parametrize('failure',[False,True])
+def test_owned_awake_guard_is_finite_parent_bound_and_reaped(tmp_path,monkeypatch,failure):
+    monkeypatch.setattr(native.sys,'platform','darwin')
+    calls=[]
+    class Guard:
+        def poll(self):return None
+        def terminate(self):calls.append('terminate')
+        def wait(self,timeout=None):calls.append(('wait',timeout))
+    def launch(argv,**kwargs):
+        calls.append((argv,kwargs));return Guard()
+    monkeypatch.setattr(native.subprocess,'Popen',launch)
+    try:
+        with native.keep_awake():
+            if failure:raise ValueError('unit suite failure')
+    except ValueError:
+        assert failure
+    assert calls[0][0]==['/usr/bin/caffeinate','-diu','-t','7200','-w',str(native.os.getpid())]
+    assert calls[0][1]==dict(stdin=native.subprocess.DEVNULL,stdout=native.subprocess.DEVNULL,stderr=native.subprocess.DEVNULL,start_new_session=True)
+    assert calls[1:]==['terminate',('wait',5)]
+
+
+def test_owned_awake_startup_failure_blocks_before_suite(monkeypatch):
+    monkeypatch.setattr(native.sys,'platform','darwin')
+    def unavailable(*args,**kwargs):raise OSError('unit failure')
+    monkeypatch.setattr(native.subprocess,'Popen',unavailable)
+    with pytest.raises(Blocked):
+        with native.keep_awake():pytest.fail('must not enter suite')
+
+
+@pytest.mark.parametrize('action,expected',[('wipe_original',1380),('retire_remote',1380),('retire_orphan_215',1380),('restore',660),('reopen_sign',660)])
+def test_extended_timeout_is_limited_to_oracle_actions(tmp_path,monkeypatch,action,expected):
+    observed=[]
+    class Child:
+        pid=777
+        returncode=0
+        def communicate(self,payload,timeout):
+            observed.append(timeout)
+            return json.dumps({'ok':True,'provenance':'native_product_integration','funded':False,'broadcast':False}).encode(),None
+    monkeypatch.setattr(native.subprocess,'Popen',lambda *args,**kwargs:Child())
+    monkeypatch.setattr(native.subprocess,'check_output',lambda *args,**kwargs:b'unit-kernel-start')
+    native.process(tmp_path/'offline',{'action':action,'config':{}},tmp_path)
+    assert observed==[expected]

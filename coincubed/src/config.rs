@@ -373,6 +373,9 @@ impl From<BitcoinConfig> for BitcoinConfigWire {
 /// Static informations we require to operate
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    #[cfg(feature = "native-recovery")]
+    #[serde(skip)]
+    native_recovery_pacing: Option<std::time::Duration>,
     /// legacy: An optional custom data directory
     data_dir: Option<PathBuf>,
     /// Current: A direct point to the current datadir
@@ -440,6 +443,10 @@ impl Config {
     /// authentication are runtime-only. Legacy Vault persistence is unchanged.
     pub fn for_persistence(&self) -> Self {
         let mut config = self.clone();
+        #[cfg(feature = "native-recovery")]
+        {
+            config.native_recovery_pacing = None;
+        }
         if config.bitcoin_config.chain.is_blake2b()
             || config.main_descriptor.as_imported().is_some()
         {
@@ -465,6 +472,8 @@ impl Config {
         data_directory: DataDirectory,
     ) -> Self {
         Self {
+            #[cfg(feature = "native-recovery")]
+            native_recovery_pacing: None,
             bitcoin_config,
             bitcoin_backend,
             log_level,
@@ -478,6 +487,25 @@ impl Config {
             pending_managed_node_install: None,
             auto_switch_to_pending: None,
         }
+    }
+
+    #[cfg(feature = "native-recovery")]
+    pub fn set_native_recovery_pacing(
+        &mut self,
+        interval: std::time::Duration,
+    ) -> Result<(), &'static str> {
+        if self.bitcoin_config.chain != coincube_core::chain::ChainId::Testnet4
+            || interval.is_zero()
+            || interval > std::time::Duration::from_secs(2)
+        {
+            return Err("native_recovery_pacing_scope");
+        }
+        self.native_recovery_pacing = Some(interval);
+        Ok(())
+    }
+    #[cfg(feature = "native-recovery")]
+    pub(crate) fn native_recovery_pacing(&self) -> Option<std::time::Duration> {
+        self.native_recovery_pacing
     }
 
     pub fn data_directory(&self) -> Option<DataDirectory> {

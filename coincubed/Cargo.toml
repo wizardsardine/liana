@@ -28,6 +28,8 @@ path = "src/bin/cli.rs"
 nonblocking_shutdown = []
 # Synthetic backend identity for GUI unit fixtures; never enabled by normal builds.
 test-utils = []
+# Runtime-only native recovery oracle pacing; no persisted or environment knob.
+native-recovery = []
 
 [dependencies]
 coincube-core = { path = "../coincube-core" }

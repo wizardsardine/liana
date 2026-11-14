@@ -1051,6 +1051,14 @@ fn setup_esplora(
         None => crate::bitcoin::esplora::client::Client::new(esplora_config, scan_abort)
             .map_err(|e| StartupError::Esplora(EsploraError::Client(e)))?,
     };
+    #[cfg(feature = "native-recovery")]
+    let client = {
+        let mut client = client;
+        if let Some(interval) = config.native_recovery_pacing() {
+            client.set_native_recovery_pacing(interval);
+        }
+        client
+    };
     let mut db_conn = db.connection();
     let tip = db_conn.chain_tip();
     let coins: Vec<_> = db_conn

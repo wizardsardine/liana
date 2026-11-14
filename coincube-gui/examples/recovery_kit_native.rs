@@ -42,6 +42,65 @@ mod native {
             Err(code)
         }
     }
+    const PROVIDER_LOG_TARGET: &str = "coincubed::bitcoin::esplora::client";
+    struct ProviderWarningLogger;
+    static PROVIDER_WARNING_LOGGER: ProviderWarningLogger = ProviderWarningLogger;
+    static PROVIDER_WARNING_COUNT: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+    fn provider_warning_slot(counter: &std::sync::atomic::AtomicUsize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        counter
+            .fetch_update(Relaxed, Relaxed, |count| (count < 64).then_some(count + 1))
+            .is_ok()
+    }
+
+    fn provider_warning(record: &log::Record<'_>) -> Option<serde_json::Value> {
+        if record.target() != PROVIDER_LOG_TARGET || record.level() != log::Level::Warn {
+            return None;
+        }
+        let message = Zeroizing::new(record.args().to_string());
+        if ![
+            " throttled at startup ",
+            " unreachable at startup: ",
+            " throttled (",
+            " unreachable (",
+            " failed (",
+        ]
+        .iter()
+        .any(|template| message.contains(template))
+        {
+            return None;
+        }
+        let role = [
+            ("Esplora primary ", "primary"),
+            ("Esplora fallback ", "fallback"),
+            ("Esplora secondary-fallback ", "secondary_fallback"),
+            ("Esplora authenticated Connect ", "authenticated_connect"),
+        ]
+        .iter()
+        .find_map(|&(prefix, role)| message.starts_with(prefix).then_some(role))?;
+        let category = if message.contains(" throttled ") {
+            "http_rate_limit"
+        } else {
+            recovery_native::oracle_failure_category(&message)
+        };
+        Some(
+            serde_json::json!({"event":"native_esplora_provider_warning","role":role,"category":category}),
+        )
+    }
+    impl log::Log for ProviderWarningLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.target() == PROVIDER_LOG_TARGET && metadata.level() == log::Level::Warn
+        }
+        fn log(&self, record: &log::Record<'_>) {
+            if let Some(event) = provider_warning(record) {
+                if provider_warning_slot(&PROVIDER_WARNING_COUNT) {
+                    let _ = writeln!(std::io::stderr().lock(), "{}", event);
+                }
+            }
+        }
+        fn flush(&self) {}
+    }
     fn hash(bytes: &[u8]) -> String {
         sha256::Hash::hash(bytes).to_string()
     }
@@ -1828,6 +1887,8 @@ mod native {
         Ok(())
     }
     pub fn main() -> Result<()> {
+        log::set_logger(&PROVIDER_WARNING_LOGGER).map_err(|_| "native_diagnostic_logger")?;
+        log::set_max_level(log::LevelFilter::Warn);
         unsafe {
             libc::umask(0o077);
         }
@@ -2019,6 +2080,83 @@ mod native {
                 phase: "delete_started".into(),
                 oracle: None,
             }
+        }
+        #[test]
+        fn provider_warning_logger_emits_only_static_role_and_category() {
+            let counter = std::sync::atomic::AtomicUsize::new(0);
+            for _ in 0..64 {
+                assert!(provider_warning_slot(&counter));
+            }
+            assert!(!provider_warning_slot(&counter));
+            assert!(!provider_warning_slot(&counter));
+            for (prefix, role) in [
+                ("primary", "primary"),
+                ("fallback", "fallback"),
+                ("secondary-fallback", "secondary_fallback"),
+                ("authenticated Connect", "authenticated_connect"),
+            ] {
+                let message = format!("Esplora {} https://secret.invalid/scripthash/private-address failed (Minreq(SerdeJsonError(secret-jwt))); trying next provider",prefix);
+                let event = provider_warning(
+                    &log::Record::builder()
+                        .target(PROVIDER_LOG_TARGET)
+                        .level(log::Level::Warn)
+                        .args(format_args!("{}", message))
+                        .build(),
+                )
+                .unwrap();
+                assert_eq!(
+                    event,
+                    serde_json::json!({"event":"native_esplora_provider_warning","role":role,"category":"json_schema"})
+                );
+                let output = serde_json::to_string(&event).unwrap();
+                assert!(
+                    !output.contains("secret")
+                        && !output.contains("private-address")
+                        && !output.contains("scripthash")
+                );
+            }
+            for (target, level, message) in [
+                (
+                    "coincubed::bitcoin::esplora::client_extra",
+                    log::Level::Warn,
+                    "Esplora primary secret failed",
+                ),
+                (
+                    PROVIDER_LOG_TARGET,
+                    log::Level::Error,
+                    "Esplora primary secret failed",
+                ),
+                (
+                    PROVIDER_LOG_TARGET,
+                    log::Level::Info,
+                    "Esplora primary secret failed",
+                ),
+                (
+                    PROVIDER_LOG_TARGET,
+                    log::Level::Warn,
+                    "unexpected secret body",
+                ),
+            ] {
+                assert!(provider_warning(
+                    &log::Record::builder()
+                        .target(target)
+                        .level(level)
+                        .args(format_args!("{}", message))
+                        .build()
+                )
+                .is_none());
+            }
+            let event = provider_warning(
+                &log::Record::builder()
+                    .target(PROVIDER_LOG_TARGET)
+                    .level(log::Level::Warn)
+                    .args(format_args!(
+                        "Esplora primary secret throttled at startup (status 429): secret-body"
+                    ))
+                    .build(),
+            )
+            .unwrap();
+            assert_eq!(event["category"], "http_rate_limit");
         }
         #[test]
         fn interrupted_orphan_staging_never_blocks_private_atomic_retry() {

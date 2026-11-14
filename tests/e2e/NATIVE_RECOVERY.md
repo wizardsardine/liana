@@ -70,9 +70,19 @@ coverage. A fresh startup full scan may satisfy the baseline; a synced database
 requests a new full scan from the actual admitted chain's genesis time through
 the normal rescan guard. No projected Bitcoin genesis or epoch-zero date is used.
 The scan keeps the product gap of 200, with an in-memory one-second integration
-poll interval and a bounded 540-second wait (660-second child timeout). Sanitized
+poll interval and a bounded 1200-second wait (1380-second oracle child timeout). Sanitized
 private progress records show chain/sync/scan generations/failure presence, not
-keys or backend error bodies. Unknown/funded state remains BLOCKED.
+keys or backend error bodies. Ordinary Testnet4 additionally paces SPK starts at
+1200ms in memory, with one shared rate gate across branches and retries and BDK
+parallelism one, enabled only by a private runtime option in the dedicated
+`native-recovery` feature. No serialized or environment pacing knob exists. The
+gap remains 200; pagination and metadata are not claimed to
+have a universal provider quota guarantee. B2 stays unpaced and Connect-only.
+Unknown/funded state remains BLOCKED. The standalone Darwin launcher owns one
+parent-bound awake assertion capped at two hours and releases it on exit; it
+never unlocks an intentionally locked host or changes lock settings. Initially
+locked Data Protection access remains BLOCKED. Non-oracle actions retain the
+660-second child timeout; cooldowns are never reset and partial scans never pass.
 
 Before wiping, the original process must have exited (PID plus kernel start
 identity), the sealed creation provenance/tree must still match, and the real

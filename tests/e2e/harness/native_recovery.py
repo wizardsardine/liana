@@ -3,6 +3,8 @@
 Every action is a new owned process. No external receipt or arbitrary executable
 can satisfy this gate. Preflight runs before credential, cloud or fixture access.
 """
+from contextlib import contextmanager
+import sys
 import hashlib
 import json
 import os
@@ -15,6 +17,32 @@ import uuid
 
 from .state import Blocked, Failed, Journal, atomic_write, digest, private_read
 from .native_recovery_verify import CHAINS, dependencies, verify
+
+@contextmanager
+def keep_awake():
+    """Own one finite, parent-bound Darwin assertion; never unlock the host."""
+    if sys.platform != 'darwin':
+        yield
+        return
+    try:
+        guard = subprocess.Popen(['/usr/bin/caffeinate', '-diu', '-t', '7200', '-w', str(os.getpid())],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+    except OSError:
+        raise Blocked('NATIVE_RECOVERY_AWAKE', 'Could not start the owned bounded awake assertion.') from None
+    try:
+        if guard.poll() is not None:
+            raise Blocked('NATIVE_RECOVERY_AWAKE', 'The owned awake assertion exited before the native suite.')
+        yield
+    finally:
+        if guard.poll() is None:
+            guard.terminate()
+        try:
+            guard.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            guard.kill()
+            guard.wait()
+
 
 PREREQUISITE = '9e9a1f25995b4be9a6ab188240a2bf92d5f3209b'
 IDENTITY = 'Developer ID Application: COINCUBE TECHNOLOGY LLC (8UVR249AD5)'
@@ -184,7 +212,7 @@ def process(executable, request, directory, *, access_token=None):
                         payload['old_state_sha256'] = request['old_state_sha256']
                 identity['payload_sent'] = True
                 atomic_write(record_path, json.dumps(identity).encode())
-                output, _ = child.communicate(json.dumps(payload).encode(), timeout=660)
+                output, _ = child.communicate(json.dumps(payload).encode(), timeout=1380 if request['action'] in ('wipe_original', 'retire_remote', 'retire_orphan_215') else 660)
                 identity.update(exited=True, returncode=child.returncode)
                 atomic_write(record_path, json.dumps(identity).encode())
             except BaseException:

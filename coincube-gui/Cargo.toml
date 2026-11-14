@@ -270,7 +270,7 @@ regtest-harness = []
 # `COINCUBE_INTEGRATION_TOKEN`) at run time. Always off in the default
 # `cargo test` matrix so PR CI stays hermetic; enabled by the
 # connect-integration workflow when it is switched on.
-integration-tests = []
+integration-tests = ["coincubed/native-recovery"]
 # Debug-only signed macOS fault probe. Release builds reject its entry point.
 native-anchor-probe = []
 

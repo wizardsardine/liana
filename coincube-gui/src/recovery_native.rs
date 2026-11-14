@@ -479,6 +479,81 @@ pub struct UnfundedProof {
     pub addresses_checked: u64,
     pub known_coin_count: u64,
 }
+pub fn oracle_failure_category(message: &str) -> &'static str {
+    // Match only known error variants/markers and emit static labels. Never
+    // copy upstream bodies, URLs, addresses, credentials or numeric payloads.
+    if message.contains("All Esplora providers are temporarily backing off") {
+        return "all_providers_cooling";
+    }
+    if message.contains("Esplora scan aborted") {
+        return "scan_aborted";
+    }
+    if let Some(status) = message
+        .split("HttpResponse { status: ")
+        .nth(1)
+        .and_then(|tail| tail.split(',').next())
+        .and_then(|status| status.parse::<u16>().ok())
+    {
+        return match status {
+            401 | 403 => "http_authorization",
+            404 => "http_not_found",
+            402 => "http_payment_required",
+            429 => "http_rate_limit",
+            400..=499 => "http_4xx",
+            500..=599 => "http_5xx",
+            _ => "unknown",
+        };
+    }
+    for (marker, category) in [
+        ("SerdeJsonError(", "json_schema"),
+        ("IoError(", "transport_io"),
+        ("RustlsCreateConnection(", "transport_tls"),
+        ("MalformedChunkLength", "http_framing"),
+        ("MalformedChunkEnd", "http_framing"),
+        ("MalformedContentLength", "http_framing"),
+        ("HeadersOverflow", "http_framing"),
+        ("StatusLineOverflow", "http_framing"),
+        ("InvalidUtf8InResponse", "http_framing"),
+        ("InvalidUtf8InBody(", "response_encoding"),
+        ("Parsing(", "response_parsing"),
+        ("BitcoinEncoding(", "bitcoin_encoding"),
+        ("HexToArray(", "hex_encoding"),
+        ("HexToBytes(", "hex_encoding"),
+        ("HeaderHeightNotFound(", "header_height_missing"),
+        ("HeaderHashNotFound(", "header_hash_missing"),
+        ("GenesisHashMismatch(", "genesis_mismatch"),
+        ("Genesis hash mismatch.", "genesis_mismatch"),
+        ("GenesisMetadata(", "genesis_metadata"),
+        ("TipMetadata(", "tip_metadata"),
+        ("CannotConnect(", "chain_update"),
+        ("chain update did not connect", "chain_update"),
+    ] {
+        if message.contains(marker) {
+            return category;
+        }
+    }
+    "unknown"
+}
+
+fn oracle_runtime_config(
+    persisted: &coincubed::config::Config,
+    chain: ChainId,
+    token: Option<&str>,
+) -> Result<coincubed::config::Config> {
+    let mut runtime = persisted.clone();
+    check(runtime.bitcoin_config.chain == chain, "native_oracle_chain")?;
+    if chain == ChainId::Testnet4 {
+        let token = token
+            .filter(|token| !token.is_empty())
+            .ok_or("native_auth_blocked")?;
+        runtime.set_native_recovery_pacing(std::time::Duration::from_millis(1200))?;
+        runtime.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
+            installer::connect_esplora_config(ChainId::Testnet4, token),
+        ));
+    }
+    Ok(runtime)
+}
+
 #[cfg(unix)]
 fn oracle_diagnostic(
     path: &std::path::Path,
@@ -512,7 +587,11 @@ fn oracle_diagnostic(
         "full_scan_completed_generation":info.history_sync.full_scan_completed_generation,
         "last_poll_timestamp":info.last_poll_timestamp,"failure_present":info.history_sync.last_failure.is_some(),
         "rescan_progress":info.rescan_progress,"chain_divergence":info.chain_divergence,
-        "refused_reorg_depth":info.refused_reorg_depth});
+        "refused_reorg_depth":info.refused_reorg_depth,
+        "failure_category":info.history_sync.last_failure.as_ref().map(|failure| oracle_failure_category(&failure.message)),
+        "failure_since":info.history_sync.last_failure.as_ref().map(|failure| failure.since),
+        "failure_last_at":info.history_sync.last_failure.as_ref().map(|failure| failure.last_at),
+        "failure_consecutive":info.history_sync.last_failure.as_ref().map(|failure| failure.consecutive)});
     writeln!(file, "{}", row).map_err(|_| "native_oracle_diagnostic")?;
     file.sync_all().map_err(|_| "native_oracle_diagnostic")
 }
@@ -685,6 +764,18 @@ async fn require_unfunded_config(
 ) -> Result<UnfundedProof> {
     use crate::daemon::{embedded::EmbeddedDaemon, Daemon};
     let chain = identity.cube.network;
+    check(
+        client
+            .get_user()
+            .await
+            .map_err(|_| "native_auth_blocked")?
+            .id
+            == identity.owner_id,
+        "native_account_changed",
+    )?;
+    // Runtime-only credentials: never serialize/debug this clone or replace
+    // the retained public-only daemon configuration.
+    let cfg = oracle_runtime_config(&cfg, chain, client.token())?;
     let started = chrono::Utc::now().timestamp() as u32;
     let daemon = if chain.is_blake2b() {
         EmbeddedDaemon::start_authenticated(cfg, client)
@@ -697,7 +788,7 @@ async fn require_unfunded_config(
             .map_err(|_| "native_unfunded_backend_blocked")?
     };
     let result = async {
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(540);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1200);
         let mut requested = None;
         let mut after_generation = None;
         loop {
@@ -1234,6 +1325,29 @@ mod tests {
         info.history_sync = cache.snapshot();
         assert_eq!(info.history_sync.addresses_checked, 0);
         assert!(oracle_ready(&info, &identity, 100).unwrap());
+        let diagnostic = tempfile::tempdir().unwrap();
+        let path = diagnostic.path().join("oracle.jsonl");
+        let mut failed = info.clone();
+        failed.history_sync.last_failure = serde_json::from_value(serde_json::json!({
+            "message":"All Esplora providers are temporarily backing off secret-jwt scripthash/private-address",
+            "since":101,"last_at":103,"consecutive":3})).unwrap();
+        oracle_diagnostic(&path, &failed, None).unwrap();
+        assert!(!oracle_ready(&failed, &identity, 100).unwrap());
+        let row = std::fs::read_to_string(path).unwrap();
+        assert!(
+            !row.contains("secret-jwt")
+                && !row.contains("private-address")
+                && !row.contains("scripthash")
+        );
+        let row: serde_json::Value = serde_json::from_str(&row).unwrap();
+        assert_eq!(row["failure_category"], "all_providers_cooling");
+        assert_eq!(row["failure_since"], 101);
+        assert_eq!(row["failure_last_at"], 103);
+        assert_eq!(row["failure_consecutive"], 3);
+        assert_eq!(
+            oracle_failure_category("secret-jwt private-address 429"),
+            "unknown"
+        );
         for case in 0..8 {
             let mut bad = info.clone();
             match case {
@@ -1278,6 +1392,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(flag.hits(), 1);
+    }
+    #[test]
+    fn oracle_diagnostic_categories_never_serialize_tainted_error_payloads() {
+        let taint = "secret-jwt https://private.invalid/scripthash/private-address";
+        for (error, expected) in [
+            ("HttpResponse { status: 404, message: ", "http_not_found"),
+            (
+                "HttpResponse { status: 401, message: ",
+                "http_authorization",
+            ),
+            ("HttpResponse { status: 429, message: ", "http_rate_limit"),
+            ("HttpResponse { status: 400, message: ", "http_4xx"),
+            ("HttpResponse { status: 503, message: ", "http_5xx"),
+            ("Minreq(SerdeJsonError(", "json_schema"),
+            ("Minreq(IoError(", "transport_io"),
+            ("Minreq(RustlsCreateConnection(", "transport_tls"),
+            ("MalformedChunkEnd", "http_framing"),
+            ("InvalidUtf8InBody(", "response_encoding"),
+            ("Parsing(", "response_parsing"),
+            ("BitcoinEncoding(", "bitcoin_encoding"),
+            ("HexToArray(", "hex_encoding"),
+            ("HexToBytes(", "hex_encoding"),
+            ("HeaderHeightNotFound(", "header_height_missing"),
+            ("HeaderHashNotFound(", "header_hash_missing"),
+            ("GenesisHashMismatch(", "genesis_mismatch"),
+            ("GenesisMetadata(", "genesis_metadata"),
+            ("TipMetadata(", "tip_metadata"),
+            ("CannotConnect(", "chain_update"),
+            ("UnknownVariant(", "unknown"),
+        ] {
+            let message = format!("{}{}", error, taint);
+            let category = oracle_failure_category(&message);
+            assert_eq!(category, expected);
+            let serialized = serde_json::to_string(&category).unwrap();
+            assert!(
+                !serialized.contains("secret-jwt")
+                    && !serialized.contains("private-address")
+                    && !serialized.contains("private.invalid")
+            );
+        }
+        assert_eq!(
+            oracle_failure_category("HttpResponse { status: not-a-code, message: secret"),
+            "unknown"
+        );
+        assert_eq!(
+            oracle_failure_category("HttpResponse { status: 200, message: secret"),
+            "unknown"
+        );
     }
     #[test]
     fn saved_wallet_config_uses_actual_restored_id_and_refuses_corruption() {
@@ -1328,6 +1490,45 @@ mod tests {
         let path = directory.join("daemon.toml");
         let serialized = toml::to_string_pretty(&cfg.for_persistence()).unwrap();
         assert!(!serialized.contains("never_persist_this_token"));
+        let runtime =
+            oracle_runtime_config(&cfg, ChainId::Testnet4, Some("runtime-only-token")).unwrap();
+        assert_eq!(
+            toml::to_string_pretty(&cfg.for_persistence()).unwrap(),
+            serialized
+        );
+        assert!(!toml::to_string_pretty(&cfg)
+            .unwrap()
+            .contains("runtime-only-token"));
+        assert!(!toml::to_string(&runtime).unwrap().contains("pacing"));
+        let mut invalid = cfg.clone();
+        assert!(invalid
+            .set_native_recovery_pacing(std::time::Duration::ZERO)
+            .is_err());
+        assert!(invalid
+            .set_native_recovery_pacing(std::time::Duration::from_secs(3))
+            .is_err());
+        let expected = installer::connect_esplora_config(ChainId::Testnet4, "runtime-only-token");
+        assert_eq!(
+            runtime.bitcoin_backend,
+            Some(coincubed::config::BitcoinBackend::Esplora(expected))
+        );
+        assert!(oracle_runtime_config(&cfg, ChainId::Testnet4, None).is_err());
+        let mut fork = cfg.clone();
+        fork.bitcoin_config.chain = ChainId::BitcoinBlake2bTestnet4;
+        fork.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
+            installer::connect_esplora_config(ChainId::BitcoinBlake2bTestnet4, "fork-token"),
+        ));
+        assert!(fork
+            .set_native_recovery_pacing(std::time::Duration::from_millis(75))
+            .is_err());
+        let fork_before = toml::to_string(&fork).unwrap();
+        let fork_runtime = oracle_runtime_config(
+            &fork,
+            ChainId::BitcoinBlake2bTestnet4,
+            Some("different-token"),
+        )
+        .unwrap();
+        assert_eq!(toml::to_string(&fork_runtime).unwrap(), fork_before);
         std::fs::write(&path, serialized).unwrap();
         assert!(saved_vault_config(&root, &identity).is_ok());
         assert!(!network.coincubed_data_directory(&original).path().exists());
