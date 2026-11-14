@@ -1,8 +1,16 @@
 use std::convert::From;
 
-use iced::Length;
+use iced::{widget::column, Length};
 
-use liana_ui::{component::notification, widget::*};
+use liana_ui::{
+    component::{
+        modal::{modal_view, ModalWidth},
+        notification,
+        text::new,
+    },
+    spacing::VSpacing,
+    widget::*,
+};
 
 use crate::{
     app::error::Error,
@@ -72,4 +80,26 @@ pub fn warn<'a, T: 'a + Clone>(error: Option<&Error>) -> Container<'a, T> {
     } else {
         Container::new(Column::new()).width(Length::Fill)
     }
+}
+
+/// The content of the modal warning shown when the Bitcoin backend was detected serving a
+/// spend of our coins with invalid signatures: the user must know the wallet is not updated
+/// anymore.
+pub fn backend_failure_modal<'a, T: 'a + Clone>(reason: &str, close: T) -> Element<'a, T> {
+    let content = column![
+        new::b4(
+            "The backend served a spend of your coins with invalid signatures. Liana \
+            stopped polling it: the wallet state is frozen and spending is disabled until \
+            Liana is restarted with a trusted backend."
+        ),
+        new::caption(reason),
+    ]
+    .spacing(VSpacing::S);
+    modal_view(
+        Some("Malicious Bitcoin backend detected"),
+        None,
+        Some(close),
+        ModalWidth::M,
+        content,
+    )
 }
