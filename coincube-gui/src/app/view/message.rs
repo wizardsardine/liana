@@ -1880,8 +1880,11 @@ pub enum ConnectAccountMessage {
     /// Poll `/connect/plan` for checkout generation `u64` (card checkout or
     /// 3-D Secure confirmation in the browser).
     PollCardPlan(u64),
+    /// Result, session generation, checkout generation, and the plan
+    /// sequence number taken when the poll was sent.
     CardPlanPolled(
         Result<crate::services::coincube::ConnectPlan, String>,
+        u64,
         u64,
         u64,
     ),

@@ -3280,6 +3280,10 @@ impl ConnectAccountPanel {
                     return iced::Task::none();
                 }
                 let gen = self.session_generation;
+                // Sequenced when sent, like every other plan fetch, so it
+                // never outranks a reload sent after it.
+                self.plan_seq = self.plan_seq.wrapping_add(1);
+                let seq = self.plan_seq;
                 let client = self.client.clone();
                 return iced::Task::perform(
                     async move {
@@ -3288,13 +3292,13 @@ impl ConnectAccountPanel {
                     },
                     move |result| {
                         Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardPlanPolled(result, gen, id),
+                            ConnectAccountMessage::CardPlanPolled(result, gen, id, seq),
                         ))
                     },
                 );
             }
 
-            ConnectAccountMessage::CardPlanPolled(result, gen, id) => {
+            ConnectAccountMessage::CardPlanPolled(result, gen, id, seq) => {
                 if gen != self.session_generation || !self.is_current_checkout(id) {
                     return iced::Task::none();
                 }
@@ -3318,12 +3322,21 @@ impl ConnectAccountPanel {
                                 cs.phase,
                                 CheckoutPhase::CardActive | CheckoutPhase::ChangeDone { .. }
                             ) {
-                                self.plan = Some(plan);
-                                // Newer than any reload still in flight.
-                                self.plan_seq = self.plan_seq.wrapping_add(1);
-                                self.applied_plan_seq = self.plan_seq;
                                 self.billing_history = None;
-                                return self.reload_billing_history();
+                                let history = self.reload_billing_history();
+                                // Same ordering rule as `PlanReloaded`: a
+                                // newer answer already shown wins. The poll
+                                // waits before it fetches, so a reload sent
+                                // meanwhile may have read the server first;
+                                // fetch once more so the screen settles on
+                                // the current plan either way.
+                                if seq > self.applied_plan_seq {
+                                    self.applied_plan_seq = seq;
+                                    self.apply_loaded_plan(Some(plan));
+                                    return history;
+                                }
+                                let fresh = self.plan_fetch_task();
+                                return iced::Task::batch([history, fresh]);
                             }
                             return iced::Task::none();
                         }
@@ -3446,13 +3459,14 @@ impl ConnectAccountPanel {
                                     ))),
                                 ]);
                             }
+                            // Nothing says whether the change took effect:
+                            // never claim it failed with nothing charged.
                             None => {
-                                cs.phase = CheckoutPhase::ChangeFailed {
-                                    message: "Your bank asked to confirm the payment, but \
-                                              Connect sent no page to confirm it on"
+                                return self.enter_change_unconfirmed(
+                                    "Your bank asked to confirm the payment, but Connect \
+                                     sent no page to confirm it on"
                                         .to_string(),
-                                    refused: false,
-                                };
+                                );
                             }
                         },
                         "paid" | "scheduled" => {
@@ -9870,19 +9884,23 @@ mod plan_lifecycle_tests {
             CheckoutPhase::CardInBrowser
         );
         // Still Free: keep waiting.
+        panel.plan_seq += 1;
         let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
             Ok(plan(PlanTier::Free, PlanStatus::Active, None, None)),
             gen,
             id,
+            panel.plan_seq,
         ));
         assert_eq!(
             panel.checkout.as_ref().unwrap().phase,
             CheckoutPhase::CardInBrowser
         );
+        panel.plan_seq += 1;
         let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
             Ok(card_plan("pro", true, "")),
             gen,
             id,
+            panel.plan_seq,
         ));
         assert_eq!(
             panel.checkout.as_ref().unwrap().phase,
@@ -9913,6 +9931,141 @@ mod plan_lifecycle_tests {
         let cs = panel.checkout.as_ref().unwrap();
         assert_eq!(cs.phase, CheckoutPhase::Review);
         assert_eq!(cs.pay_with, PayWith::Bitcoin);
+    }
+
+    /// Opens a Free → Pro card checkout and leaves it in the browser.
+    fn card_checkout_in_browser() -> (ConnectAccountPanel, u64, u64) {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(card_features(true));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let _ = panel.update_message(ConnectAccountMessage::SelectPayWith(PayWith::Card));
+        let _ = panel.update_message(ConnectAccountMessage::StartCardCheckout);
+        let (id, gen) = (
+            panel.checkout.as_ref().unwrap().id,
+            panel.session_generation,
+        );
+        let _ = panel.update_message(ConnectAccountMessage::CardCheckoutCreated(
+            Ok(CardCheckoutSession {
+                url: "https://checkout.stripe.example/c/1".into(),
+                session_id: "cs_1".into(),
+                expires_at: Some("2099-01-01T00:00:00Z".into()),
+                starts_at: None,
+            }),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::CardInBrowser
+        );
+        (panel, id, gen)
+    }
+
+    #[test]
+    fn a_card_poll_is_sequenced_when_sent_not_when_it_returns() {
+        // The poll is sent, then a reload; each response order must leave
+        // the newer answer (auto-renewal off) on screen.
+        for reload_first in [true, false] {
+            let (mut panel, id, gen) = card_checkout_in_browser();
+            let before = panel.plan_seq;
+            let poll = panel.update_message(ConnectAccountMessage::PollCardPlan(id));
+            assert!(poll.units() > 0);
+            let poll_seq = panel.plan_seq;
+            assert!(poll_seq > before, "the poll takes its number when sent");
+            let _ = panel.plan_fetch_task();
+            let reload_seq = panel.plan_seq;
+            assert!(reload_seq > poll_seq);
+            let polled = ConnectAccountMessage::CardPlanPolled(
+                Ok(card_plan("pro", true, "")),
+                gen,
+                id,
+                poll_seq,
+            );
+            let reloaded = ConnectAccountMessage::PlanReloaded(
+                Some(card_plan("pro", false, "")),
+                gen,
+                reload_seq,
+            );
+            if reload_first {
+                let _ = panel.update_message(reloaded);
+                let task = panel.update_message(polled);
+                // The older poll still finishes the checkout, but leaves the
+                // newer plan alone and fetches once more.
+                assert_eq!(
+                    panel.checkout.as_ref().unwrap().phase,
+                    CheckoutPhase::CardActive
+                );
+                assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(false));
+                assert_eq!(panel.applied_plan_seq, reload_seq);
+                assert_eq!(task.units(), 2, "billing history plus a fresh plan fetch");
+                assert!(panel.plan_seq > reload_seq);
+            } else {
+                let task = panel.update_message(polled);
+                assert_eq!(
+                    panel.checkout.as_ref().unwrap().phase,
+                    CheckoutPhase::CardActive
+                );
+                assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(true));
+                assert_eq!(panel.applied_plan_seq, poll_seq);
+                assert_eq!(task.units(), 1, "billing history only");
+                // The reload sent after the poll still lands.
+                let _ = panel.update_message(reloaded);
+                assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(false));
+                assert_eq!(panel.applied_plan_seq, reload_seq);
+            }
+        }
+    }
+
+    #[test]
+    fn three_d_secure_without_a_page_is_unconfirmed_not_failed() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        panel.selected_billing_cycle = BillingCycle::Annual;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let (id, gen) = (
+            panel.checkout.as_ref().unwrap().id,
+            panel.session_generation,
+        );
+        let preview: PlanChangePreview = serde_json::from_str(
+            r#"{"kind":"upgrade","amountDueToday":33.15,"credit":33.15,"currency":"usd",
+                "renewalAt":"2099-03-14T00:00:00Z","effectiveAt":"2026-11-14T00:00:00Z",
+                "nextChargeAmount":200,"prorationDate":"2026-11-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let _ = panel.update_message(ConnectAccountMessage::ChangePreviewLoaded(
+            Ok(preview),
+            gen,
+            id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ConfirmPlanChange);
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeApplying
+        );
+        for url in [r#"null"#, r#""""#] {
+            panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
+            let result: crate::services::coincube::PlanChangeResult = serde_json::from_str(
+                &format!(r#"{{"status":"requires_action","url":{url},"effectiveAt":null}}"#),
+            )
+            .unwrap();
+            let task = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+                Ok(result),
+                gen,
+                id,
+            ));
+            assert!(task.units() > 0, "the plan is reloaded");
+            assert!(
+                matches!(
+                    panel.checkout.as_ref().unwrap().phase,
+                    CheckoutPhase::ChangeUnconfirmed {
+                        refresh: PlanRefresh::Pending(_),
+                        ..
+                    }
+                ),
+                "{url}: {:?}",
+                panel.checkout.as_ref().unwrap().phase
+            );
+        }
     }
 
     #[test]
@@ -9957,10 +10110,12 @@ mod plan_lifecycle_tests {
         let cs = panel.checkout.as_ref().unwrap();
         assert_eq!(cs.phase, CheckoutPhase::ChangeInBrowser);
         assert_eq!(cs.action_url.as_deref(), Some("https://bank.example/3ds"));
+        panel.plan_seq += 1;
         let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
             Ok(card_plan("estate", true, "")),
             gen,
             id,
+            panel.plan_seq,
         ));
         assert_eq!(
             panel.checkout.as_ref().unwrap().phase,
@@ -10097,10 +10252,12 @@ mod plan_lifecycle_tests {
         cs.action_url = Some("https://bank.example/3ds".into());
         cs.browser_polls = MAX_BROWSER_POLLS - 1;
         panel.checkout = Some(cs);
+        panel.plan_seq += 1;
         let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
             Ok(card_plan("pro", true, "")),
             gen,
             5,
+            panel.plan_seq,
         ));
         assert!(matches!(
             panel.checkout.as_ref().unwrap().phase,

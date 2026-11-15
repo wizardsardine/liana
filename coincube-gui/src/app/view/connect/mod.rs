@@ -5078,6 +5078,45 @@ mod renewal_banner_tests {
                 refresh == PlanRefresh::Failed
             );
         }
+        // A downgrade (or an upgrade) that got no clear answer never says
+        // nothing was charged or refunded.
+        for kind in ["downgrade", "upgrade"] {
+            let mut cs = CheckoutState::new(
+                1,
+                PlanTier::Pro,
+                BillingCycle::Annual,
+                Some(card_plan_fixture("estate", true, "")),
+            );
+            cs.preview = Some(
+                serde_json::from_str(&format!(
+                    r#"{{"kind":"{kind}","amountDueToday":0,"credit":0,"currency":"usd",
+                        "renewalAt":"2099-03-14T00:00:00Z","effectiveAt":"2099-03-14T00:00:00Z",
+                        "nextChargeAmount":100}}"#
+                ))
+                .expect("preview parses"),
+            );
+            cs.phase = CheckoutPhase::ChangeUnconfirmed {
+                message: "connection reset".into(),
+                refresh: PlanRefresh::Pending(3),
+            };
+            account.checkout = Some(cs);
+            let labels = visible_labels(plan_billing_ux(&account), &renderer);
+            assert!(
+                labels
+                    .iter()
+                    .any(|l| l.contains("couldn’t confirm whether the change to Pro went through")),
+                "{kind}: {:?}",
+                labels
+            );
+            assert!(
+                !labels
+                    .iter()
+                    .any(|l| l.contains("Nothing is charged or refunded today")
+                        || l.contains("starts as soon as you confirm")),
+                "{kind}: {:?}",
+                labels
+            );
+        }
     }
 
     #[test]

@@ -2254,6 +2254,17 @@ fn card_phase_ux<'a>(
                 None => format!("{tier} is active now."),
             },
         ),
+        CheckoutPhase::ChangeUnconfirmed { .. } => (
+            if upgrade {
+                format!("Upgrade to {tier}")
+            } else {
+                format!("Change to {tier}")
+            },
+            format!(
+                "Tenshu couldn’t confirm whether the change to {tier} went through. Check Plan \
+                 & billing before you try again."
+            ),
+        ),
         _ if upgrade => (
             format!("Upgrade to {tier}"),
             format!(
