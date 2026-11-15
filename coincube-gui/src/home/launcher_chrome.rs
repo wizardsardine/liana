@@ -1942,12 +1942,12 @@ pub(crate) struct ChromeSnapshot {
 }
 
 pub(super) fn snapshot(home: &Home, projection: &Projection<'_>) -> ChromeSnapshot {
-    use crate::app::view::shared::connect_control::ConnectDetail;
+    use crate::app::view::shared::connect_control::{chip_account, ConnectDetail};
     let account = &home.connect_account;
     let mut connect = vec![("Connect".to_string(), Ink::Muted, 13.0, false)];
     connect.push(("·".to_string(), Ink::Muted, 13.0, false));
     connect.push(match launcher_connect_state(home).0 {
-        ConnectDetail::Account(email) => (email.to_string(), Ink::Muted, 13.0, false),
+        ConnectDetail::Account(email) => (chip_account(email), Ink::Muted, 13.0, false),
         ConnectDetail::Offline => ("Offline".to_string(), Ink::Muted, 13.0, false),
         ConnectDetail::Checking => ("Checking…".to_string(), Ink::Muted, 13.0, false),
         ConnectDetail::SignIn => ("Sign in".to_string(), Ink::Accent, 13.0, true),
