@@ -946,8 +946,8 @@ mod tests {
         assert!(!u.retryable, "invalid input needs new input, not a retry");
     }
 
-    /// Anything local is Tenshu; anything that failed over the network to the
-    /// account service is COINCUBE | Connect. Naming the wrong one sends the
+    /// Anything local is COINCUBE Desktop; anything that failed over the
+    /// network to the account service is COINCUBE | Connect. Naming the wrong one sends the
     /// user somewhere they cannot act.
     #[test]
     fn local_failures_name_tenshu_not_the_backend() {
@@ -963,7 +963,8 @@ mod tests {
             let u: UserError = e.into();
             let copy = format!("{} {}", u.title, u.guidance);
             assert!(
-                !copy.contains("COINCUBE") && !copy.contains("Coincube"),
+                !copy.contains("Connect")
+                    && copy.matches("COINCUBE").count() == copy.matches("COINCUBE Desktop").count(),
                 "a local failure must not name the backend: {:?}",
                 copy
             );
