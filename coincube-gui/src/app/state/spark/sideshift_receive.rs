@@ -465,6 +465,11 @@ impl SparkSideshiftReceiveFlow {
     /// arrival is registered and not yet seen. Without the settle hash yet,
     /// ask SideShift again: its status carries the hash once it has sent.
     fn check_settle_claim(&self) -> Task<Message> {
+        // A restored shift still learning where its bitcoin is answers the
+        // same nudge with its own lookup, rather than waiting for its timer.
+        if self.arrival_unconfirmed {
+            return self.recheck_restored_arrival();
+        }
         if !self.awaiting_claim || self.phase != SparkShiftPhase::Active {
             return Task::none();
         }
@@ -473,10 +478,16 @@ impl SparkSideshiftReceiveFlow {
         };
         let spark = self.spark.clone();
         Task::perform(
-            async move { find_claimed_settle(&spark, &settle_hash).await },
-            |claimed| {
+            async move {
+                let claimed = find_claimed_settle(&spark, &settle_hash).await;
+                (settle_hash, claimed)
+            },
+            |(settle_hash, claimed)| {
                 Message::View(view::Message::SparkSideshiftReceive(
-                    Msg::SettleClaimChecked(claimed),
+                    Msg::SettleClaimChecked {
+                        settle_hash,
+                        claimed,
+                    },
                 ))
             },
         )
@@ -752,19 +763,37 @@ impl SparkSideshiftReceiveFlow {
 
             Msg::CheckSettleClaim => self.check_settle_claim(),
 
-            Msg::SettleClaimChecked(claimed) => {
+            Msg::SettleClaimChecked {
+                settle_hash,
+                claimed,
+            } => {
                 let Some(amount_sat) = claimed else {
                     // Not claimed yet (or the lookup failed): the timer, or
                     // the next Spark payment, looks again.
                     return Task::none();
                 };
-                if !self.awaiting_claim || self.phase != SparkShiftPhase::Active {
+                // An answer for another shift's settle tx (asked before this
+                // flow was reset and reused) is not this one's arrival.
+                let ours = self
+                    .settle_hash
+                    .as_deref()
+                    .is_some_and(|h| h.eq_ignore_ascii_case(settle_hash));
+                if !ours || !self.awaiting_claim || self.phase != SparkShiftPhase::Active {
                     return Task::none();
                 }
                 self.awaiting_claim = false;
                 self.arrived_amount_sat = Some(*amount_sat);
                 self.phase = SparkShiftPhase::Arrived;
-                store_record(None)
+                // Home registered this arrival and may never have seen the
+                // claim itself: let it retire its tracker and celebrate.
+                Task::batch([
+                    store_record(None),
+                    Task::done(Message::View(view::Message::Home(
+                        view::HomeMessage::SwapClaimObserved {
+                            amount_sat: *amount_sat,
+                        },
+                    ))),
+                ])
             }
 
             Msg::Arrived { amount_sat } => {
@@ -944,6 +973,9 @@ fn claimed_settle_amount(
         .iter()
         .find(|p| {
             p.method == "deposit"
+                // A claim still settling (or one that failed) hasn't brought
+                // the bitcoin in; the bridge writes the SDK status `{:?}`.
+                && p.status.eq_ignore_ascii_case("Completed")
                 && p.details
                     .tx_id
                     .as_deref()
@@ -1402,6 +1434,39 @@ mod tests {
         assert!(!flow.arrival_unconfirmed);
     }
 
+    fn claim_checked(settle_hash: &str, claimed: Option<u64>) -> Msg {
+        Msg::SettleClaimChecked {
+            settle_hash: settle_hash.to_string(),
+            claimed,
+        }
+    }
+
+    /// A claim found for another settle tx is not this shift's arrival.
+    #[test]
+    fn a_settle_claim_answer_for_another_tx_is_ignored() {
+        let mut flow = restored_flow();
+        let _ = flow.update(&status("settling", None));
+        let _ = flow.update(&status("settled", Some("abc")));
+        let _ = flow.update(&claim_checked("other", Some(5)));
+        assert_eq!(flow.phase(), &SparkShiftPhase::Active);
+        assert!(flow.awaiting_claim);
+        // The hash matches case-insensitively, as txids do.
+        let _ = flow.update(&claim_checked("ABC", Some(5)));
+        assert_eq!(flow.phase(), &SparkShiftPhase::Arrived);
+    }
+
+    /// Only a completed claim counts: one still settling hasn't landed.
+    #[test]
+    fn only_a_completed_deposit_claim_is_the_settle_arrival() {
+        let mut pending = deposit_payment("deposit", Some("abc"), 27_961);
+        pending.status = "Pending".to_string();
+        assert_eq!(claimed_settle_amount(&[pending.clone()], "abc"), None);
+        pending.status = "Failed".to_string();
+        assert_eq!(claimed_settle_amount(&[pending.clone()], "abc"), None);
+        pending.status = "Completed".to_string();
+        assert_eq!(claimed_settle_amount(&[pending], "abc"), Some(27_961));
+    }
+
     /// A shift that settles while watched registers with Home *and* watches
     /// for its own claim, so a background claim Home misses still finishes it.
     #[test]
@@ -1413,11 +1478,11 @@ mod tests {
         assert!(!flow.arrival_unconfirmed);
 
         // Not claimed yet: still arriving.
-        let _ = flow.update(&Msg::SettleClaimChecked(None));
+        let _ = flow.update(&claim_checked("abc", None));
         assert_eq!(flow.phase(), &SparkShiftPhase::Active);
         assert!(flow.awaiting_claim);
 
-        let _ = flow.update(&Msg::SettleClaimChecked(Some(28_253)));
+        let _ = flow.update(&claim_checked("abc", Some(28_253)));
         assert_eq!(flow.phase(), &SparkShiftPhase::Arrived);
         assert_eq!(flow.arrived_amount_sat(), Some(28_253));
         assert!(!flow.awaiting_claim);
@@ -1432,7 +1497,7 @@ mod tests {
         assert!(!flow.awaiting_claim);
         let _ = flow.update(&Msg::RestoredSettleChecked(RestoredSettle::StillPending));
         assert!(flow.awaiting_claim);
-        let _ = flow.update(&Msg::SettleClaimChecked(Some(27_961)));
+        let _ = flow.update(&claim_checked("abc", Some(27_961)));
         assert_eq!(flow.phase(), &SparkShiftPhase::Arrived);
     }
 
@@ -1441,7 +1506,7 @@ mod tests {
     #[test]
     fn a_settle_claim_answer_is_ignored_unless_awaited() {
         let mut idle = restored_flow();
-        let _ = idle.update(&Msg::SettleClaimChecked(Some(1)));
+        let _ = idle.update(&claim_checked("abc", Some(1)));
         assert_eq!(idle.phase(), &SparkShiftPhase::Active);
         assert_eq!(idle.arrived_amount_sat(), None);
 
@@ -1450,7 +1515,7 @@ mod tests {
         let _ = flow.update(&status("settled", Some("abc")));
         let _ = flow.update(&Msg::Arrived { amount_sat: 28_000 });
         assert!(!flow.awaiting_claim);
-        let _ = flow.update(&Msg::SettleClaimChecked(Some(1)));
+        let _ = flow.update(&claim_checked("abc", Some(1)));
         assert_eq!(flow.arrived_amount_sat(), Some(28_000));
     }
 

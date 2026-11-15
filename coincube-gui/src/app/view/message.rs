@@ -963,9 +963,13 @@ pub enum SparkSideshiftReceiveMessage {
     /// Look for the claimed deposit paid by a settled shift's settle
     /// transaction (a timer, and every Spark payment, while it is awaited).
     CheckSettleClaim,
-    /// What that lookup found: the claimed amount in sats, or `None` when the
-    /// claim isn't in the wallet yet.
-    SettleClaimChecked(Option<u64>),
+    /// What that lookup found for `settle_hash`: the claimed amount in sats,
+    /// or `None` when the claim isn't in the wallet yet. The hash ties the
+    /// answer to the shift it was asked for.
+    SettleClaimChecked {
+        settle_hash: String,
+        claimed: Option<u64>,
+    },
     Back,
     Reset,
 }
@@ -2752,6 +2756,15 @@ pub enum HomeMessage {
         /// shift checks before registering), so it vanishing from that list
         /// means it was claimed.
         deposit_seen: bool,
+    },
+    /// The cross-network Receive flow found its swap's deposit claimed into
+    /// the wallet (by settle tx) before Home's own watcher noticed. Home
+    /// retires its swap tracker, so the pending indicator clears and later
+    /// swaps aren't skipped behind it, and fires the "received" celebration
+    /// it would otherwise never have fired. `amount_sat` is the claimed
+    /// amount.
+    SwapClaimObserved {
+        amount_sat: u64,
     },
     /// Store (`Some`) or clear (`None`) the Cube's live Spark cross-network
     /// receive, so its page can come back after a lock or restart.
