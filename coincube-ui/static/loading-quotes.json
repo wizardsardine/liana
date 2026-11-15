@@ -511,7 +511,7 @@
       "source": "NKJV",
       "category": "scripture",
       "length": "short",
-      "contexts": ["loading", "syncing", "transaction-confirm"]
+      "contexts": ["loading", "syncing", "transaction-confirm", "transaction-sent"]
     },
     {
       "id": "scripture-04",
@@ -565,7 +565,7 @@
       "source": "NKJV",
       "category": "scripture",
       "length": "short",
-      "contexts": ["empty-wallet", "idle", "first-launch"]
+      "contexts": ["empty-wallet", "idle", "first-launch", "transaction-received"]
     },
     {
       "id": "scripture-10",
@@ -574,7 +574,7 @@
       "source": "NKJV",
       "category": "scripture",
       "length": "short",
-      "contexts": ["backup-reminder", "idle", "balance-update"]
+      "contexts": ["backup-reminder", "idle", "balance-update", "transaction-received"]
     },
     {
       "id": "scripture-11",
@@ -592,7 +592,7 @@
       "source": "NKJV",
       "category": "scripture",
       "length": "short",
-      "contexts": ["idle", "balance-update", "backup-reminder"]
+      "contexts": ["idle", "balance-update", "backup-reminder", "transaction-received"]
     },
     {
       "id": "scripture-13",
@@ -601,7 +601,7 @@
       "source": "NKJV",
       "category": "scripture",
       "length": "short",
-      "contexts": ["transaction-received", "balance-update"]
+      "contexts": ["balance-update"]
     },
     {
       "id": "scripture-14",
@@ -619,7 +619,7 @@
       "source": "NKJV",
       "category": "scripture",
       "length": "short",
-      "contexts": ["empty-wallet", "idle"]
+      "contexts": ["empty-wallet", "idle", "transaction-received"]
     },
     {
       "id": "scripture-16",

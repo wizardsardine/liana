@@ -178,21 +178,12 @@ impl<'a, T> TransactionListItem<'a, T> {
             info_column = info_column.push(status_row);
         }
 
-        let mut left_side = Row::new().spacing(10).align_y(Alignment::Center);
-
-        if let Some(custom_icon) = self.custom_icon {
-            left_side = left_side.push(custom_icon);
-        }
-        if self.show_direction_badge {
-            let direction_badge = match self.direction {
-                TransactionDirection::Incoming => badge::receive(),
-                TransactionDirection::Outgoing => badge::spend(),
-                TransactionDirection::SelfTransfer => badge::cycle(),
-            };
-            left_side = left_side.push(direction_badge);
-        }
-
-        left_side = left_side.push(info_column).width(Length::Fill);
+        let left_side = transaction_leading_row(
+            self.direction,
+            self.custom_icon,
+            self.show_direction_badge,
+            info_column,
+        );
 
         let mut content_row = Row::new()
             .align_y(Alignment::Center)
@@ -210,32 +201,13 @@ impl<'a, T> TransactionListItem<'a, T> {
             content_row = content_row.push(badge_elem);
         }
 
-        let mut amount_column = Column::new().align_x(Alignment::End).spacing(5);
-
-        // A self-transfer moves value without gaining or losing any, so it
-        // carries no sign — just the amount that was moved.
-        let (amount_sign, sign_style): (&str, fn(&theme::Theme) -> iced::widget::text::Style) =
-            match self.direction {
-                TransactionDirection::Incoming => ("+", theme::text::incoming),
-                TransactionDirection::Outgoing => ("-", theme::text::outgoing),
-                TransactionDirection::SelfTransfer => ("", theme::text::default),
-            };
-
-        let mut amount_row = Row::new().spacing(5).align_y(Alignment::Center);
-        if !amount_sign.is_empty() {
-            // Only color the sign (+/-), not the amount text — consistent with BTC rendering
-            amount_row = amount_row.push(text::p1_regular(amount_sign).style(sign_style));
-        }
-        amount_column = amount_column.push(if let Some(ref override_str) = self.amount_override {
-            amount_row.push(text::p1_bold(override_str.clone()))
-        } else {
-            amount_row.push(amount::amount_with_unit(self.amount, self.bitcoin_unit))
-        });
-
-        if let Some(fiat) = self.fiat_amount {
-            amount_column =
-                amount_column.push(text::p2_regular(fiat).style(theme::text::secondary));
-        }
+        let amount_column = transaction_amount(
+            self.direction,
+            self.bitcoin_unit,
+            self.amount,
+            &self.amount_override,
+            self.fiat_amount,
+        );
 
         content_row = content_row.push(amount_column);
 
@@ -250,4 +222,63 @@ impl<'a, T> TransactionListItem<'a, T> {
             Container::new(content_row.padding(10)).style(theme::card::simple)
         }
     }
+}
+
+fn transaction_leading_row<T: Clone + 'static>(
+    direction: TransactionDirection,
+    custom_icon: Option<Element<'static, T>>,
+    show_direction_badge: bool,
+    info_column: Column<'static, T>,
+) -> Row<'static, T> {
+    let mut left_side = Row::new().spacing(10).align_y(Alignment::Center);
+
+    if let Some(custom_icon) = custom_icon {
+        left_side = left_side.push(custom_icon);
+    }
+    if show_direction_badge {
+        let direction_badge = match direction {
+            TransactionDirection::Incoming => badge::receive(),
+            TransactionDirection::Outgoing => badge::spend(),
+            TransactionDirection::SelfTransfer => badge::cycle(),
+        };
+        left_side = left_side.push(direction_badge);
+    }
+
+    left_side = left_side.push(info_column).width(Length::Fill);
+    left_side
+}
+
+fn transaction_amount<T: Clone + 'static>(
+    direction: TransactionDirection,
+    bitcoin_unit: BitcoinDisplayUnit,
+    amount: &Amount,
+    amount_override: &Option<String>,
+    fiat_amount: Option<String>,
+) -> Column<'static, T> {
+    let mut amount_column = Column::new().align_x(Alignment::End).spacing(5);
+
+    // A self-transfer moves value without gaining or losing any, so it
+    // carries no sign — just the amount that was moved.
+    let (amount_sign, sign_style): (&str, fn(&theme::Theme) -> iced::widget::text::Style) =
+        match direction {
+            TransactionDirection::Incoming => ("+", theme::text::incoming),
+            TransactionDirection::Outgoing => ("-", theme::text::outgoing),
+            TransactionDirection::SelfTransfer => ("", theme::text::default),
+        };
+
+    let mut amount_row = Row::new().spacing(5).align_y(Alignment::Center);
+    if !amount_sign.is_empty() {
+        // Only color the sign (+/-), not the amount text — consistent with BTC rendering
+        amount_row = amount_row.push(text::p1_regular(amount_sign).style(sign_style));
+    }
+    amount_column = amount_column.push(if let Some(ref override_str) = *amount_override {
+        amount_row.push(text::p1_bold(override_str.clone()))
+    } else {
+        amount_row.push(amount::amount_with_unit(amount, bitcoin_unit))
+    });
+
+    if let Some(fiat) = fiat_amount {
+        amount_column = amount_column.push(text::p2_regular(fiat).style(theme::text::secondary));
+    }
+    amount_column
 }

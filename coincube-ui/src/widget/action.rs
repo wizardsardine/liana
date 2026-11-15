@@ -294,6 +294,36 @@ impl Focusable for State {
     }
 }
 
+impl<Message: Clone + 'static> Action<'_, Message> {
+    fn update_keyboard(&self, state: &mut State, event: &Event, shell: &mut Shell<'_, Message>) {
+        match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                repeat,
+                ..
+            }) if state.focused && !*repeat && !modifiers.command() && !modifiers.alt() => {
+                if let Some(activation) = ActivationKey::from_key(key) {
+                    if state.held.is_none() {
+                        state.held = Some(activation);
+                        if state.pointer_active {
+                            state.pointer_suppressed = true;
+                        }
+                        shell.publish(self.on_press.as_ref().unwrap().clone());
+                        shell.capture_event();
+                    }
+                }
+            }
+            Event::Keyboard(keyboard::Event::KeyReleased { key, .. })
+                if state.held == ActivationKey::from_key(key) =>
+            {
+                state.held = None;
+            }
+            _ => {}
+        }
+    }
+}
+
 impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for Action<'_, Message> {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<State>()
@@ -448,31 +478,7 @@ impl<Message: Clone + 'static> Widget<Message, Theme, Renderer> for Action<'_, M
         }
 
         let state = tree.state.downcast_mut::<State>();
-        match event {
-            Event::Keyboard(keyboard::Event::KeyPressed {
-                key,
-                modifiers,
-                repeat,
-                ..
-            }) if state.focused && !*repeat && !modifiers.command() && !modifiers.alt() => {
-                if let Some(activation) = ActivationKey::from_key(key) {
-                    if state.held.is_none() {
-                        state.held = Some(activation);
-                        if state.pointer_active {
-                            state.pointer_suppressed = true;
-                        }
-                        shell.publish(self.on_press.as_ref().unwrap().clone());
-                        shell.capture_event();
-                    }
-                }
-            }
-            Event::Keyboard(keyboard::Event::KeyReleased { key, .. })
-                if state.held == ActivationKey::from_key(key) =>
-            {
-                state.held = None;
-            }
-            _ => {}
-        }
+        self.update_keyboard(state, event, shell);
     }
 
     fn draw(

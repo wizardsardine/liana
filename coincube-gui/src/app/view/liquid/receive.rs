@@ -3,7 +3,6 @@ use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::localized_format;
 
 use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
-use coincube_ui::locale::Text as CopyText;
 
 use coincube_ui::{
     color,
@@ -1412,14 +1411,18 @@ pub fn received_celebration_page<'a>(
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, LiquidReceiveMessage> {
-    coincube_ui::component::received_celebration_page(
-        context,
+    use coincube_ui::component::payment_result::{payment_result, Outcome};
+    payment_result(
+        Outcome::Received,
         amount_display,
+        context,
         quote,
         image_handle,
-        CopyText::HasArrived.get(),
         LiquidReceiveMessage::DismissCelebration,
     )
+    .detail(localized_copy("Into Liquid"))
+    .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
+    .into()
 }
 
 /// QR code modal overlay (matches Vault receive pattern).

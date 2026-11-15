@@ -14,6 +14,7 @@ use iced::{Alignment, Length};
 use super::page;
 use crate::app::state::settings::general::BackupSeedState;
 use crate::app::view::message::{BackupWalletMessage, Message, SettingsMessage};
+use crate::chain::{canonical_network_name, ChainId};
 use crate::pin_input::PinInput;
 
 fn wrap(msg: BackupWalletMessage) -> Message {
@@ -139,9 +140,21 @@ pub fn intro_view<M: Clone + 'static>(
     .into()
 }
 
+/// The line that names the Cube's network beside its words. A BIP39 phrase is
+/// identical on every chain, so a paper backup that omits the network cannot
+/// say which chain to restore it to.
+pub fn network_note(chain: ChainId) -> String {
+    CopyText::WriteTheNetworkWithYourWords.get().replacen(
+        "{network}",
+        canonical_network_name(chain),
+        1,
+    )
+}
+
 /// Twelve numbered words, with flexible columns and theme-aware separators.
 pub fn recovery_phrase_view<'a, M: Clone + 'a>(
     mnemonic: &'a [String],
+    chain: ChainId,
     on: fn(BackupWalletMessage) -> M,
 ) -> Element<'a, M> {
     let mut grid = Column::new()
@@ -171,6 +184,7 @@ pub fn recovery_phrase_view<'a, M: Clone + 'a>(
         CopyText::WriteDownYourSeedPhrase.get(),
         CopyText::WriteEachWordNextToItsNumberThenCheck.get(),
     )
+    .push(tenshu::label(network_note(chain)).style(|t| theme::tenshu::text::tone(t, Tone::Warn)))
     .push(grid)
     .push(actions(
         CopyText::Back.get(),
@@ -287,12 +301,13 @@ pub fn dispatch<'a>(
     state: &'a BackupSeedState,
     pin: &'a PinInput,
     mnemonic: Option<&'a [String]>,
+    chain: ChainId,
 ) -> Option<Element<'a, Message>> {
     match state {
         BackupSeedState::None => None,
         BackupSeedState::PinEntry { error } => Some(pin_entry_view(pin, error.as_deref())),
         BackupSeedState::Intro(checked) => Some(intro_view(*checked, None, wrap)),
-        BackupSeedState::RecoveryPhrase => Some(recovery_phrase_view(mnemonic?, wrap)),
+        BackupSeedState::RecoveryPhrase => Some(recovery_phrase_view(mnemonic?, chain, wrap)),
         BackupSeedState::Verification {
             word_indices,
             word_inputs,
@@ -381,7 +396,10 @@ mod tests {
                 for (name, state) in &states {
                     let inspection = capture::inspect(
                         &format!("seed-flow-{name}"),
-                        dispatch(state, &pin, Some(&words)).unwrap(),
+                        // One of the longest canonical names, so the network line is
+                        // measured at its widest.
+                        dispatch(state, &pin, Some(&words), ChainId::BitcoinBlake2bTestnet4)
+                            .unwrap(),
                         size,
                         appearance,
                         palette,
@@ -407,9 +425,28 @@ mod tests {
                                 "every numbered word must be visible"
                             );
                         }
+                        assert!(
+                            inspection.contains("Bitcoin BLAKE2b · Testnet4"),
+                            "the words screen must name the Cube's network"
+                        );
                     }
                 }
             }
         }
+    }
+
+    /// The seed words are the same on every chain, so the paper copy must
+    /// carry the network. Each chain gets its stable technical name.
+    #[test]
+    fn network_note_names_each_chain() {
+        for chain in ChainId::ALL {
+            let note = network_note(chain);
+            assert!(note.contains(canonical_network_name(chain)), "{}", note);
+            assert!(!note.contains("{network}"), "{}", note);
+        }
+        assert_ne!(
+            network_note(ChainId::Bitcoin),
+            network_note(ChainId::BitcoinBlake2b)
+        );
     }
 }

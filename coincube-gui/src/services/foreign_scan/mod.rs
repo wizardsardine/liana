@@ -104,14 +104,7 @@ pub async fn address_funds(
 fn summarize_address_funds(utxos: &[Utxo], height: Option<u32>) -> Result<AddressFunds, ScanError> {
     let mut funds = AddressFunds::default();
     for coin in utxos {
-        if coin.value > bitcoin::Amount::MAX_MONEY.to_sat()
-            || (coin.status.confirmed
-                && (coin.status.block_hash.is_none() || coin.status.block_height.is_none()))
-            || (!coin.status.confirmed
-                && (coin.status.block_hash.is_some() || coin.status.block_height.is_some()))
-        {
-            return Err(ScanError::Malformed);
-        }
+        validate_deposit(coin)?;
         let total = if coin.status.confirmed {
             &mut funds.confirmed_sats
         } else {
@@ -119,26 +112,7 @@ fn summarize_address_funds(utxos: &[Utxo], height: Option<u32>) -> Result<Addres
         };
         *total = total.checked_add(coin.value).ok_or(ScanError::BodyLimit)?;
         if coin.status.confirmed {
-            let block_height = coin.status.block_height.ok_or(ScanError::Malformed)?;
-            let depth = u64::from(
-                height
-                    .ok_or(ScanError::Malformed)?
-                    .checked_sub(block_height)
-                    .ok_or(ScanError::Changed(ChangedReason::HeightBehindUtxo))?,
-            ) + 1;
-            funds.largest_confirmed_sats = funds.largest_confirmed_sats.max(coin.value);
-            funds.min_confirmations = if funds.min_confirmations == 0 {
-                depth
-            } else {
-                funds.min_confirmations.min(depth)
-            };
-            if depth >= coincube_core::claim::MIN_CONFIRMATIONS {
-                funds.mature_sats = funds
-                    .mature_sats
-                    .checked_add(coin.value)
-                    .ok_or(ScanError::BodyLimit)?;
-                funds.largest_mature_sats = funds.largest_mature_sats.max(coin.value);
-            }
+            add_confirmed_funds(&mut funds, coin, height)?;
         }
     }
     Ok(funds)
@@ -596,171 +570,16 @@ async fn collect_mode(
     let mut outpoints = BTreeSet::new();
     let mut scripts = BTreeSet::new();
     for range in &plan.branches {
-        let mut gap = 0;
-        let mut last_used = None;
-        let mut finished = false;
-        let mut next = range.start;
-        while next < range.end_exclusive {
-            let address_limit = if mode == ScanMode::FullImported {
-                MAX_IMPORTED_ADDRESSES
-            } else {
-                MAX_ADDRESSES
-            };
-            if report.addresses >= address_limit {
-                return Err(ScanError::AddressLimit);
-            }
-            // Never read beyond the current gap boundary or the address cap
-            // merely to fill a batch. A used address resets the gap when its
-            // result is admitted below, exactly as in the sequential scan.
-            let gap_budget = if mode == ScanMode::Gap {
-                plan.gap.saturating_sub(gap)
-            } else {
-                ADDRESS_BATCH
-            };
-            let count = ADDRESS_BATCH
-                .min(gap_budget)
-                .min(range.end_exclusive - next)
-                .min(address_limit - report.addresses);
-            let addresses = (next..next + count)
-                .map(|index| {
-                    let script = range.descriptor.script(index)?;
-                    if !scripts.insert(script.clone()) {
-                        return Err(ScanError::Descriptor);
-                    }
-                    let address = bitcoin::Address::from_script(&script, bitcoin::Network::Bitcoin)
-                        .map_err(|_| ScanError::Descriptor)?
-                        .to_string();
-                    Ok((index, script, address))
-                })
-                .collect::<Result<Vec<_>, ScanError>>()?;
-            let observations = join_all(addresses.iter().map(|(_, _, address)| async move {
-                let (stats, utxos) = tokio::try_join!(
-                    source.stats(plan.chain, address),
-                    source.utxos(plan.chain, address),
-                )?;
-                if utxos.len() > MAX_UTXOS {
-                    return Err(ScanError::BodyLimit);
-                }
-                if !stats.used() && !utxos.is_empty() {
-                    return Err(ScanError::Malformed);
-                }
-                if utxos.iter().any(|coin| {
-                    let outpoint = OutPoint {
-                        txid: coin.txid,
-                        vout: coin.vout,
-                    };
-                    outpoint.is_null()
-                        || coin.value > bitcoin::Amount::MAX_MONEY.to_sat()
-                        || (coin.status.confirmed
-                            && (coin.status.block_hash.is_none()
-                                || coin.status.block_height.is_none()))
-                        || (!coin.status.confirmed
-                            && (coin.status.block_hash.is_some()
-                                || coin.status.block_height.is_some()))
-                }) {
-                    return Err(ScanError::Malformed);
-                }
-                let mut previous = Vec::with_capacity(utxos.len());
-                for coin in &utxos {
-                    previous.push(source.transaction(plan.chain, coin.txid).await?);
-                }
-                // A same-tip mempool change must not turn an empty UTXO list
-                // into an "unused" address. Re-read after fetching prevouts.
-                let (stats_again, utxos_again) = tokio::try_join!(
-                    source.stats(plan.chain, address),
-                    source.utxos(plan.chain, address),
-                )?;
-                Ok::<_, ScanError>((stats, utxos, previous, stats_again, utxos_again))
-            }))
-            .await;
-            for ((index, script, _), observed) in addresses.into_iter().zip(observations) {
-                let (stats, utxos, previous, stats_again, utxos_again) = observed?;
-                if utxos.len() > MAX_UTXOS.saturating_sub(report.coins.len()) {
-                    return Err(ScanError::BodyLimit);
-                }
-                if !stats.used() && !utxos.is_empty() {
-                    return Err(ScanError::Malformed);
-                }
-                for (coin, previous) in utxos.iter().zip(previous) {
-                    let outpoint = OutPoint {
-                        txid: coin.txid,
-                        vout: coin.vout,
-                    };
-                    if outpoint.is_null()
-                        || !outpoints.insert(outpoint)
-                        || coin.value > bitcoin::Amount::MAX_MONEY.to_sat()
-                        || (coin.status.confirmed
-                            && (coin.status.block_hash.is_none()
-                                || coin.status.block_height.is_none()))
-                        || (!coin.status.confirmed
-                            && (coin.status.block_hash.is_some()
-                                || coin.status.block_height.is_some()))
-                    {
-                        return Err(ScanError::Malformed);
-                    }
-                    let output = coincube_core::spend::authenticate_previous_output(
-                        &outpoint,
-                        Some(&previous),
-                        None,
-                    )
-                    .map_err(|_| ScanError::Prevout)?;
-                    if output.value.to_sat() != coin.value || output.script_pubkey != script {
-                        return Err(ScanError::Prevout);
-                    }
-                    report.coins.push(DiscoveredCoin {
-                        branch: range.descriptor.branch,
-                        index,
-                        outpoint,
-                        output,
-                        previous,
-                        confirmed: coin.status.confirmed,
-                        block_height: coin.status.block_height,
-                        block_hash: coin.status.block_hash,
-                    });
-                }
-                let utxos_same = same_utxos(&utxos, &utxos_again)?;
-                if stats != stats_again || !utxos_same {
-                    return Err(ScanError::Changed(ChangedReason::AddressState));
-                }
-                report.addresses += 1;
-                if stats.used() {
-                    last_used = Some(index);
-                } else {
-                    report
-                        .unused_addresses
-                        .insert((range.descriptor.branch, index));
-                }
-                gap = if stats.used() { 0 } else { gap + 1 };
-                if mode == ScanMode::Gap
-                    && (gap >= plan.gap || !range.descriptor.descriptor.has_wildcard())
-                {
-                    report.coverage.push(BranchCoverage {
-                        branch: range.descriptor.branch,
-                        start: range.start,
-                        end_exclusive: index + 1,
-                        last_used,
-                    });
-                    finished = true;
-                    break;
-                }
-            }
-            if finished {
-                break;
-            }
-            next += count;
-        }
-        if mode == ScanMode::FullImported && next == range.end_exclusive {
-            report.coverage.push(BranchCoverage {
-                branch: range.descriptor.branch,
-                start: range.start,
-                end_exclusive: range.end_exclusive,
-                last_used,
-            });
-            finished = true;
-        }
-        if !finished {
-            return Err(ScanError::RangeLimit);
-        }
+        collect_branch(
+            source,
+            plan,
+            range,
+            mode,
+            &mut report,
+            &mut outpoints,
+            &mut scripts,
+        )
+        .await?;
     }
     if before != source.tip(plan.chain).await? {
         return Err(ScanError::Changed(ChangedReason::TipMoved));
@@ -775,4 +594,282 @@ async fn collect_mode(
         }
     }
     Ok(report)
+}
+
+fn validate_deposit(coin: &Utxo) -> Result<(), ScanError> {
+    if coin.value > bitcoin::Amount::MAX_MONEY.to_sat()
+        || (coin.status.confirmed
+            && (coin.status.block_hash.is_none() || coin.status.block_height.is_none()))
+        || (!coin.status.confirmed
+            && (coin.status.block_hash.is_some() || coin.status.block_height.is_some()))
+    {
+        return Err(ScanError::Malformed);
+    }
+
+    Ok(())
+}
+
+fn add_confirmed_funds(
+    funds: &mut AddressFunds,
+    coin: &Utxo,
+    height: Option<u32>,
+) -> Result<(), ScanError> {
+    let block_height = coin.status.block_height.ok_or(ScanError::Malformed)?;
+    let depth = u64::from(
+        height
+            .ok_or(ScanError::Malformed)?
+            .checked_sub(block_height)
+            .ok_or(ScanError::Changed(ChangedReason::HeightBehindUtxo))?,
+    ) + 1;
+    funds.largest_confirmed_sats = funds.largest_confirmed_sats.max(coin.value);
+    funds.min_confirmations = if funds.min_confirmations == 0 {
+        depth
+    } else {
+        funds.min_confirmations.min(depth)
+    };
+    if depth >= coincube_core::claim::MIN_CONFIRMATIONS {
+        funds.mature_sats = funds
+            .mature_sats
+            .checked_add(coin.value)
+            .ok_or(ScanError::BodyLimit)?;
+        funds.largest_mature_sats = funds.largest_mature_sats.max(coin.value);
+    }
+
+    Ok(())
+}
+
+type Address = (u32, ScriptBuf, String);
+fn derive_address_batch(
+    range: &BranchRange,
+    next: u32,
+    count: u32,
+    scripts: &mut BTreeSet<ScriptBuf>,
+) -> Result<Vec<Address>, ScanError> {
+    (next..next + count)
+        .map(|index| {
+            let script = range.descriptor.script(index)?;
+            if !scripts.insert(script.clone()) {
+                return Err(ScanError::Descriptor);
+            }
+            let address = bitcoin::Address::from_script(&script, bitcoin::Network::Bitcoin)
+                .map_err(|_| ScanError::Descriptor)?
+                .to_string();
+            Ok((index, script, address))
+        })
+        .collect::<Result<Vec<_>, ScanError>>()
+}
+
+type AddressObservation = (Stats, Vec<Utxo>, Vec<Transaction>, Stats, Vec<Utxo>);
+async fn observe_address(
+    source: &impl Source,
+    chain: ChainId,
+    address: &str,
+) -> Result<AddressObservation, ScanError> {
+    let (stats, utxos) =
+        tokio::try_join!(source.stats(chain, address), source.utxos(chain, address),)?;
+    if utxos.len() > MAX_UTXOS {
+        return Err(ScanError::BodyLimit);
+    }
+    if !stats.used() && !utxos.is_empty() {
+        return Err(ScanError::Malformed);
+    }
+    if utxos.iter().any(|coin| {
+        let outpoint = OutPoint {
+            txid: coin.txid,
+            vout: coin.vout,
+        };
+        outpoint.is_null() || invalid_coin_metadata(coin)
+    }) {
+        return Err(ScanError::Malformed);
+    }
+    let mut previous = Vec::with_capacity(utxos.len());
+    for coin in &utxos {
+        previous.push(source.transaction(chain, coin.txid).await?);
+    }
+    // A same-tip mempool change must not turn an empty UTXO list
+    // into an "unused" address. Re-read after fetching prevouts.
+    let (stats_again, utxos_again) =
+        tokio::try_join!(source.stats(chain, address), source.utxos(chain, address),)?;
+    Ok((stats, utxos, previous, stats_again, utxos_again))
+}
+
+fn invalid_coin_metadata(coin: &Utxo) -> bool {
+    coin.value > bitcoin::Amount::MAX_MONEY.to_sat()
+        || (coin.status.confirmed
+            && (coin.status.block_hash.is_none() || coin.status.block_height.is_none()))
+        || (!coin.status.confirmed
+            && (coin.status.block_hash.is_some() || coin.status.block_height.is_some()))
+}
+
+fn admit_address(
+    report: &mut ScanReport,
+    outpoints: &mut BTreeSet<OutPoint>,
+    range: &BranchRange,
+    index: u32,
+    script: ScriptBuf,
+    observed: AddressObservation,
+) -> Result<bool, ScanError> {
+    let (stats, utxos, previous, stats_again, utxos_again) = observed;
+    if utxos.len() > MAX_UTXOS.saturating_sub(report.coins.len()) {
+        return Err(ScanError::BodyLimit);
+    }
+    if !stats.used() && !utxos.is_empty() {
+        return Err(ScanError::Malformed);
+    }
+    for (coin, previous) in utxos.iter().zip(previous) {
+        let outpoint = OutPoint {
+            txid: coin.txid,
+            vout: coin.vout,
+        };
+        if outpoint.is_null() || !outpoints.insert(outpoint) || invalid_coin_metadata(coin) {
+            return Err(ScanError::Malformed);
+        }
+        let output =
+            coincube_core::spend::authenticate_previous_output(&outpoint, Some(&previous), None)
+                .map_err(|_| ScanError::Prevout)?;
+        if output.value.to_sat() != coin.value || output.script_pubkey != script {
+            return Err(ScanError::Prevout);
+        }
+        report.coins.push(DiscoveredCoin {
+            branch: range.descriptor.branch,
+            index,
+            outpoint,
+            output,
+            previous,
+            confirmed: coin.status.confirmed,
+            block_height: coin.status.block_height,
+            block_hash: coin.status.block_hash,
+        });
+    }
+    let utxos_same = same_utxos(&utxos, &utxos_again)?;
+    if stats != stats_again || !utxos_same {
+        return Err(ScanError::Changed(ChangedReason::AddressState));
+    }
+
+    Ok(stats.used())
+}
+
+#[derive(Default)]
+struct BranchProgress {
+    gap: u32,
+    last_used: Option<u32>,
+}
+impl BranchProgress {
+    fn admit(
+        &mut self,
+        report: &mut ScanReport,
+        range: &BranchRange,
+        index: u32,
+        used: bool,
+        mode: ScanMode,
+        gap_limit: u32,
+    ) -> bool {
+        report.addresses += 1;
+        if used {
+            self.last_used = Some(index);
+        } else {
+            report
+                .unused_addresses
+                .insert((range.descriptor.branch, index));
+        }
+        self.gap = if used { 0 } else { self.gap + 1 };
+        if mode == ScanMode::Gap
+            && (self.gap >= gap_limit || !range.descriptor.descriptor.has_wildcard())
+        {
+            report.coverage.push(BranchCoverage {
+                branch: range.descriptor.branch,
+                start: range.start,
+                end_exclusive: index + 1,
+                last_used: self.last_used,
+            });
+            return true;
+        }
+        false
+    }
+}
+
+fn batch_count(
+    mode: ScanMode,
+    gap_limit: u32,
+    gap: u32,
+    next: u32,
+    end_exclusive: u32,
+    addresses: u32,
+) -> Result<u32, ScanError> {
+    let address_limit = if mode == ScanMode::FullImported {
+        MAX_IMPORTED_ADDRESSES
+    } else {
+        MAX_ADDRESSES
+    };
+    if addresses >= address_limit {
+        return Err(ScanError::AddressLimit);
+    }
+    // Never read beyond the current gap boundary or the address cap
+    // merely to fill a batch. A used address resets the gap when its
+    // result is admitted below, exactly as in the sequential scan.
+    let gap_budget = if mode == ScanMode::Gap {
+        gap_limit.saturating_sub(gap)
+    } else {
+        ADDRESS_BATCH
+    };
+    Ok(ADDRESS_BATCH
+        .min(gap_budget)
+        .min(end_exclusive - next)
+        .min(address_limit - addresses))
+}
+
+async fn collect_branch(
+    source: &impl Source,
+    plan: &ScanPlan,
+    range: &BranchRange,
+    mode: ScanMode,
+    report: &mut ScanReport,
+    outpoints: &mut BTreeSet<OutPoint>,
+    scripts: &mut BTreeSet<ScriptBuf>,
+) -> Result<(), ScanError> {
+    let mut progress = BranchProgress::default();
+    let mut finished = false;
+    let mut next = range.start;
+    while next < range.end_exclusive {
+        let count = batch_count(
+            mode,
+            plan.gap,
+            progress.gap,
+            next,
+            range.end_exclusive,
+            report.addresses,
+        )?;
+        let addresses = derive_address_batch(range, next, count, scripts)?;
+        let observations = join_all(
+            addresses
+                .iter()
+                .map(|(_, _, address)| observe_address(source, plan.chain, address)),
+        )
+        .await;
+        for ((index, script, _), observed) in addresses.into_iter().zip(observations) {
+            let used = admit_address(report, outpoints, range, index, script, observed?)?;
+            if progress.admit(report, range, index, used, mode, plan.gap) {
+                finished = true;
+                break;
+            }
+        }
+        if finished {
+            break;
+        }
+        next += count;
+    }
+    if mode == ScanMode::FullImported && next == range.end_exclusive {
+        report.coverage.push(BranchCoverage {
+            branch: range.descriptor.branch,
+            start: range.start,
+            end_exclusive: range.end_exclusive,
+            last_used: progress.last_used,
+        });
+        finished = true;
+    }
+    if !finished {
+        return Err(ScanError::RangeLimit);
+    }
+
+    Ok(())
 }

@@ -258,14 +258,23 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
             view::dashboard(config.menu, config.cache, content)
         }
         LiquidSendFlowState::Sent => {
-            let content = coincube_ui::component::sent_celebration_page(
-                config.sent_celebration_context,
-                config.sent_amount_display,
-                config.sent_quote,
-                config.sent_image_handle,
-                CopyText::HasBeenSentSuccessfully.get(),
-                coincube_ui::worldview_copy::VoiceLine::PaymentSent.get(),
-                LiquidSendMessage::BackToHome,
+            use coincube_ui::component::payment_result::{payment_result, Outcome};
+            let content = Element::from(
+                payment_result(
+                    // A Liquid→bitcoin swap is not final until it confirms.
+                    if config.sent_celebration_context == "bitcoin-send" {
+                        Outcome::Confirming
+                    } else {
+                        Outcome::Sent
+                    },
+                    config.sent_amount_display,
+                    config.sent_celebration_context,
+                    config.sent_quote,
+                    config.sent_image_handle,
+                    LiquidSendMessage::BackToHome,
+                )
+                .detail(localized_copy("Paid from Liquid"))
+                .voice(coincube_ui::worldview_copy::VoiceLine::PaymentSent.get()),
             )
             .map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)

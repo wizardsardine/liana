@@ -13,7 +13,9 @@
 //!    [`QuoteCountdown`].
 //! 3. **Paying twice on a retry.** See [`RetryPolicy`].
 
-use coincube_spark_protocol::{CrossChainAddress, CrossChainQuote, CrossChainRoute};
+use coincube_spark_protocol::{
+    CrossChainAddress, CrossChainQuote, CrossChainRoute, CrossChainRoutesOk,
+};
 
 /// SDK-enforced slippage bounds, in basis points. Mirrors
 /// `MIN/MAX_CROSS_CHAIN_SLIPPAGE_BPS` in `breez-sdk-spark`; the bridge
@@ -90,6 +92,350 @@ pub fn chain_confirmation(address: &CrossChainAddress, route: &CrossChainRoute) 
         route.chain,
         family_label(&address.family),
     )
+}
+
+/// Display name for a route's destination chain. The SDK reports lowercase
+/// slugs (`"base"`, `"bsc"`) from one provider and display names
+/// (`"Arbitrum One"`) from another; both should read as the network's name.
+pub fn chain_name(chain: &str) -> String {
+    let known = match chain.trim().to_ascii_lowercase().as_str() {
+        "ethereum" | "eth" | "mainnet" => "Ethereum",
+        "base" => "Base",
+        "arbitrum" | "arbitrum one" => "Arbitrum",
+        "optimism" | "op" => "Optimism",
+        "polygon" | "matic" => "Polygon",
+        "bsc" | "bnb" | "binance" => "BNB Smart Chain",
+        "avalanche" | "avax" => "Avalanche",
+        "solana" => "Solana",
+        "tron" => "Tron",
+        "plasma" => "Plasma",
+        _ => "",
+    };
+    if !known.is_empty() {
+        return known.to_string();
+    }
+    let mut chars = chain.trim().chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// What a typed destination turned out to be, for the Details step of a
+/// stablecoin send — before Prepare, so the user sees which network the
+/// address belongs to while they can still change it.
+///
+/// Detection asks the bridge (the same `get_cross_chain_routes` Prepare uses),
+/// so it can never disagree with what Prepare will do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DetectedNetwork {
+    /// The bridge doesn't read this as a cross-chain address.
+    NotCrossChain,
+    /// A cross-chain address, but no route delivers the picked coin there.
+    Unreachable { family: String },
+    /// The networks the picked coin can be delivered on, by display name,
+    /// deduplicated and in the bridge's order.
+    Chains { family: String, chains: Vec<String> },
+}
+
+/// Classify a routes lookup for the coin picked in THEY RECEIVE (`asset` is
+/// `"USDT"` / `"USDC"`, compared case-insensitively).
+pub fn detect_network(found: &CrossChainRoutesOk, asset: &str) -> DetectedNetwork {
+    let Some(address) = &found.address else {
+        return DetectedNetwork::NotCrossChain;
+    };
+    let mut chains: Vec<String> = Vec::new();
+    for route in found
+        .routes
+        .iter()
+        .filter(|r| r.asset.eq_ignore_ascii_case(asset))
+    {
+        let name = chain_name(&route.chain);
+        if !chains.contains(&name) {
+            chains.push(name);
+        }
+    }
+    if chains.is_empty() {
+        DetectedNetwork::Unreachable {
+            family: address.family.clone(),
+        }
+    } else {
+        DetectedNetwork::Chains {
+            family: address.family.clone(),
+            chains,
+        }
+    }
+}
+
+/// Join names as prose: "A", "A and B", "A, B and C".
+fn join_names(names: &[String]) -> String {
+    let and = coincube_ui::locale::copy(" and ");
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{}{and}{last}", init.join(", ")),
+    }
+}
+
+/// The address family as a noun phrase for the detection line.
+fn detected_family_label(family: &str) -> &str {
+    match family {
+        "evm" => coincube_ui::locale::copy("An EVM address"),
+        "solana" => coincube_ui::locale::copy("A Solana address"),
+        "tron" => coincube_ui::locale::copy("A Tron address"),
+        _ => coincube_ui::locale::copy("A cross-chain address"),
+    }
+}
+
+impl DetectedNetwork {
+    /// What follows the coin on the THEY RECEIVE tile ("USDt on Tron").
+    /// `None` keeps the generic "cross-chain" wording.
+    pub fn tile_place(&self) -> Option<String> {
+        match self {
+            DetectedNetwork::Chains { chains, .. } if chains.len() <= 2 => Some(
+                coincube_ui::localized_format!("on {}", "en {}", join_names(chains)),
+            ),
+            DetectedNetwork::Chains { chains, .. } => Some(coincube_ui::localized_format!(
+                "on {} networks",
+                "en {} redes",
+                chains.len()
+            )),
+            _ => None,
+        }
+    }
+
+    /// The line under the Destination field. `coin` is the picked coin's
+    /// display label ("USDt").
+    pub fn note(&self, coin: &str) -> String {
+        match self {
+            DetectedNetwork::NotCrossChain => coincube_ui::localized_format!(
+                "This isn't a {coin} address on a supported network: Ethereum or another EVM \
+                 chain, Tron, or Solana.",
+                "Esta no es una dirección de {coin} en una red compatible: Ethereum u otra red \
+                 EVM, Tron o Solana.",
+            ),
+            DetectedNetwork::Unreachable { family } => coincube_ui::localized_format!(
+                "{} — no route can deliver {coin} there right now.",
+                "{}: ahora mismo ninguna ruta puede entregar {coin} ahí.",
+                detected_family_label(family),
+            ),
+            DetectedNetwork::Chains { family, chains } if chains.len() == 1 => {
+                coincube_ui::localized_format!(
+                    "{} — {coin} will be sent on {}.",
+                    "{}: se enviarán {coin} en {}.",
+                    detected_family_label(family),
+                    chains[0],
+                )
+            }
+            DetectedNetwork::Chains { family, chains } => coincube_ui::localized_format!(
+                "{} — it works on {}. Choose the network the recipient uses for {coin}.",
+                "{}: funciona en {}. Elige la red que usa el destinatario para {coin}.",
+                detected_family_label(family),
+                join_names(chains),
+            ),
+        }
+    }
+
+    /// Whether this is a definite "can't send here" — styled as a warning.
+    pub fn is_problem(&self) -> bool {
+        !matches!(self, DetectedNetwork::Chains { .. })
+    }
+}
+
+/// A stablecoin destination as Details knows it: what the bridge said about
+/// the typed address, and — once there is one — the network the user is
+/// sending on.
+///
+/// Prepare quotes the route this names directly, so the network is settled on
+/// Details, where it can still be changed, rather than on a separate
+/// confirmation step after it.
+#[derive(Debug, Clone)]
+pub struct DetectedDestination {
+    /// The trimmed destination this was looked up for. A lookup only counts
+    /// while the field still holds exactly this.
+    pub input: String,
+    /// The parsed address, when the bridge read one.
+    pub address: Option<CrossChainAddress>,
+    /// The routes that deliver the picked coin, in the bridge's order.
+    pub routes: Vec<CrossChainRoute>,
+    pub network: DetectedNetwork,
+    /// The chosen network's display name. Set on its own when only one
+    /// network is possible; an EVM address that several reach waits for the
+    /// user, because guessing the chain is how funds are lost.
+    pub chosen: Option<String>,
+}
+
+impl DetectedDestination {
+    /// Build from a routes lookup for `input`, keeping only routes for `asset`.
+    pub fn new(input: String, found: CrossChainRoutesOk, asset: &str) -> Self {
+        let network = detect_network(&found, asset);
+        let routes: Vec<CrossChainRoute> = found
+            .routes
+            .into_iter()
+            .filter(|r| r.asset.eq_ignore_ascii_case(asset))
+            .collect();
+        let chosen = match &network {
+            DetectedNetwork::Chains { chains, .. } if chains.len() == 1 => Some(chains[0].clone()),
+            _ => None,
+        };
+        Self {
+            input,
+            address: found.address,
+            routes,
+            network,
+            chosen,
+        }
+    }
+
+    /// The networks to choose between (display names), empty unless there
+    /// are several.
+    pub fn choices(&self) -> &[String] {
+        match &self.network {
+            DetectedNetwork::Chains { chains, .. } if chains.len() > 1 => chains,
+            _ => &[],
+        }
+    }
+
+    /// Choose a network by display name. Ignored for one this address can't
+    /// use.
+    pub fn choose(&mut self, chain: &str) {
+        if self.choices().iter().any(|c| c == chain) {
+            self.chosen = Some(chain.to_string());
+        }
+    }
+
+    /// The route Prepare quotes: the bridge's first route on the chosen
+    /// network.
+    pub fn route(&self) -> Option<&CrossChainRoute> {
+        let chosen = self.chosen.as_deref()?;
+        self.routes.iter().find(|r| chain_name(&r.chain) == chosen)
+    }
+
+    /// Whether the user picked the network from several (an EVM address).
+    /// Only then does Review ask them to confirm it: an address that belongs
+    /// to one network already says where it goes.
+    pub fn network_was_chosen(&self) -> bool {
+        !self.choices().is_empty()
+    }
+
+    /// What follows the coin on the THEY RECEIVE tile.
+    pub fn tile_place(&self) -> Option<String> {
+        match &self.chosen {
+            Some(chain) => Some(coincube_ui::localized_format!("on {}", "en {}", chain)),
+            None => self.network.tile_place(),
+        }
+    }
+}
+
+/// How much more than a route's published minimum Details asks for.
+///
+/// The published bound is a floor, not a promise: the SDK documents that a
+/// route can enforce a tighter one, the provider's fee comes out of the
+/// amount, and a USD floor moves with the price between Details and the
+/// quote. Sending the bare minimum was seen to fail (1,200 sats published,
+/// 1,500 accepted), so Details asks for a quarter more and rounds up.
+const MINIMUM_BUFFER_PERCENT: u64 = 25;
+
+/// Sats for `cents` US cents at `btc_usd`, rounded up.
+fn usd_cents_as_sats(cents: u64, btc_usd: f64) -> Option<u64> {
+    if !btc_usd.is_finite() || btc_usd <= 0.0 {
+        return None;
+    }
+    let sats = (cents as f64 / 100.0) / btc_usd * 100_000_000.0;
+    sats.is_finite().then(|| sats.ceil() as u64)
+}
+
+/// The smallest amount Details lets through on `route`, in sats: the larger of
+/// its published sats and USD floors, plus [`MINIMUM_BUFFER_PERCENT`], rounded
+/// up to the next hundred. `None` when the route publishes no floor we can
+/// price (a USD floor needs a BTC/USD price).
+pub fn effective_min_sats(route: &CrossChainRoute, btc_usd: Option<f64>) -> Option<u64> {
+    let limits = route.btc_limits?;
+    let usd = limits
+        .min_usd_cents
+        .zip(btc_usd)
+        .and_then(|(cents, price)| usd_cents_as_sats(cents, price));
+    let floor = limits.min_sats.into_iter().chain(usd).max()?;
+    let buffered = floor.saturating_add(floor.saturating_mul(MINIMUM_BUFFER_PERCENT).div_ceil(100));
+    Some(buffered.div_ceil(100).saturating_mul(100))
+}
+
+/// The largest amount `route` publishes it accepts, in sats — no buffer, the
+/// smaller of its sats and USD ceilings.
+pub fn max_sats(route: &CrossChainRoute, btc_usd: Option<f64>) -> Option<u64> {
+    let limits = route.btc_limits?;
+    let usd = limits
+        .max_usd_cents
+        .zip(btc_usd)
+        .and_then(|(cents, price)| {
+            if !price.is_finite() || price <= 0.0 {
+                return None;
+            }
+            let sats = (cents as f64 / 100.0) / price * 100_000_000.0;
+            sats.is_finite().then(|| sats.floor() as u64)
+        });
+    limits.max_sats.into_iter().chain(usd).min()
+}
+
+/// Why an amount can't go on a route, before anything is quoted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmountIssue {
+    BelowMinimum { min_sats: u64 },
+    AboveMaximum { max_sats: u64 },
+}
+
+/// Check `amount_sat` against `route`'s bounds.
+pub fn amount_issue(
+    route: &CrossChainRoute,
+    amount_sat: u64,
+    btc_usd: Option<f64>,
+) -> Option<AmountIssue> {
+    if let Some(min_sats) = effective_min_sats(route, btc_usd) {
+        if amount_sat < min_sats {
+            return Some(AmountIssue::BelowMinimum { min_sats });
+        }
+    }
+    if let Some(max_sats) = max_sats(route, btc_usd) {
+        if amount_sat > max_sats {
+            return Some(AmountIssue::AboveMaximum { max_sats });
+        }
+    }
+    None
+}
+
+impl AmountIssue {
+    /// The line under the Amount field. `network` is the chosen network's
+    /// display name.
+    pub fn message(&self, network: &str) -> String {
+        match self {
+            AmountIssue::BelowMinimum { min_sats } => coincube_ui::localized_format!(
+                "Too small for {network}. Send at least {} sats: that covers the route's \
+                 minimum, the fee taken from the amount, and the price moving before the quote.",
+                "Es muy poco para {network}. Envía al menos {} sats: así se cubren el mínimo \
+                 de la ruta, la comisión que se descuenta del importe y la variación del precio \
+                 antes de la cotización.",
+                format_sats(*min_sats),
+            ),
+            AmountIssue::AboveMaximum { max_sats } => coincube_ui::localized_format!(
+                "Too large for {network}. This route takes at most {} sats.",
+                "Es demasiado para {network}. Esta ruta acepta como máximo {} sats.",
+                format_sats(*max_sats),
+            ),
+        }
+    }
+}
+
+fn format_sats(sats: u64) -> String {
+    coincube_ui::component::amount::format_u64_as_string(sats, ",")
+}
+
+/// Whether a prepare error is the provider refusing the amount as too small
+/// (`SdkError::CrossChainAmountOutOfRange` below its floor). The bridge passes
+/// the SDK's message through as text, which leads with the provider's reason
+/// and ends "(published minimum: …)".
+pub fn is_amount_too_small_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("amount too small") || lower.contains("published minimum")
 }
 
 /// How the quote's expiry should be presented, and whether sending is still
@@ -245,6 +591,7 @@ mod tests {
             contract_address: None,
             decimals,
             btc_source_supported: true,
+            btc_limits: None,
         }
     }
 
@@ -416,5 +763,204 @@ mod tests {
         assert_eq!(format_asset_amount(1_000_000, 18), "0.000000000001");
         assert_eq!(format_asset_amount(0, 6), "0.00");
         assert_eq!(format_asset_amount(1_234_567, 6), "1.234567");
+    }
+
+    // ── Network detection on Details ────────────────────────────────────
+
+    fn found(family: Option<&str>, routes: Vec<CrossChainRoute>) -> CrossChainRoutesOk {
+        CrossChainRoutesOk {
+            address: family.map(|family| CrossChainAddress {
+                address: "addr".to_string(),
+                family: family.to_string(),
+                contract_address: None,
+                chain_id: None,
+                amount: None,
+            }),
+            routes,
+        }
+    }
+
+    #[test]
+    fn chain_names_read_as_network_names_whatever_the_provider_reports() {
+        assert_eq!(chain_name("base"), "Base");
+        assert_eq!(chain_name("Arbitrum One"), "Arbitrum");
+        assert_eq!(chain_name("bsc"), "BNB Smart Chain");
+        assert_eq!(chain_name("tron"), "Tron");
+        assert_eq!(chain_name("somechain"), "Somechain");
+        assert_eq!(chain_name(""), "");
+    }
+
+    #[test]
+    fn a_tron_address_names_tron_on_the_tile_and_under_the_field() {
+        let detected = detect_network(&found(Some("tron"), vec![route("USDT", "tron", 6)]), "USDT");
+        assert_eq!(
+            detected,
+            DetectedNetwork::Chains {
+                family: "tron".into(),
+                chains: vec!["Tron".into()],
+            }
+        );
+        assert_eq!(detected.tile_place().as_deref(), Some("on Tron"));
+        let note = detected.note("USDt");
+        assert!(note.contains("Tron address") && note.contains("USDt will be sent on Tron"));
+        assert!(!detected.is_problem());
+    }
+
+    #[test]
+    fn an_evm_address_lists_only_the_picked_coins_chains_once_each() {
+        let detected = detect_network(
+            &found(
+                Some("evm"),
+                vec![
+                    route("USDT", "ethereum", 6),
+                    route("USDC", "base", 6),
+                    route("USDT", "arbitrum", 6),
+                    route("USDT", "Arbitrum One", 6),
+                    route("usdt", "bsc", 18),
+                ],
+            ),
+            "USDT",
+        );
+        let DetectedNetwork::Chains { chains, .. } = &detected else {
+            panic!("expected chains, got {:?}", detected);
+        };
+        assert_eq!(chains, &["Ethereum", "Arbitrum", "BNB Smart Chain"]);
+        // Too many for the tile: it gives a count and the note lists them.
+        assert_eq!(detected.tile_place().as_deref(), Some("on 3 networks"));
+        let note = detected.note("USDt");
+        assert!(note.contains("Ethereum, Arbitrum and BNB Smart Chain"));
+        assert!(note.contains("Choose the network the recipient uses"));
+    }
+
+    #[test]
+    fn two_chains_fit_on_the_tile() {
+        let detected = detect_network(
+            &found(
+                Some("evm"),
+                vec![route("USDC", "ethereum", 6), route("USDC", "base", 6)],
+            ),
+            "USDC",
+        );
+        assert_eq!(
+            detected.tile_place().as_deref(),
+            Some("on Ethereum and Base")
+        );
+    }
+
+    #[test]
+    fn an_address_no_route_reaches_is_a_problem_with_no_network_on_the_tile() {
+        let detected = detect_network(
+            &found(Some("solana"), vec![route("USDC", "solana", 6)]),
+            "USDT",
+        );
+        assert_eq!(
+            detected,
+            DetectedNetwork::Unreachable {
+                family: "solana".into()
+            }
+        );
+        assert!(detected.is_problem());
+        assert_eq!(detected.tile_place(), None);
+        assert!(detected.note("USDt").contains("no route can deliver USDt"));
+    }
+
+    #[test]
+    fn a_non_cross_chain_destination_lists_the_supported_networks() {
+        let detected = detect_network(&found(None, vec![]), "USDT");
+        assert_eq!(detected, DetectedNetwork::NotCrossChain);
+        assert!(detected.is_problem());
+        assert_eq!(detected.tile_place(), None);
+        let note = detected.note("USDt");
+        assert!(note.contains("Ethereum") && note.contains("Tron") && note.contains("Solana"));
+    }
+
+    // ── Route minimums on Details ───────────────────────────────────────
+
+    fn limited(min_sats: Option<u64>, min_usd_cents: Option<u64>) -> CrossChainRoute {
+        CrossChainRoute {
+            btc_limits: Some(coincube_spark_protocol::CrossChainRouteLimits {
+                min_sats,
+                min_usd_cents,
+                ..Default::default()
+            }),
+            ..route("USDT", "solana", 6)
+        }
+    }
+
+    #[test]
+    fn the_minimum_asked_for_carries_a_quarter_more_rounded_up() {
+        // The case seen in use: 1,200 published, 1,200 refused, 1,500 sent.
+        assert_eq!(
+            effective_min_sats(&limited(Some(1_200), None), None),
+            Some(1_500)
+        );
+        assert_eq!(
+            effective_min_sats(&limited(Some(1_000), None), None),
+            Some(1_300)
+        );
+        // The larger floor wins: 0.80 USD at 50,000 is 1,600 sats → 2,000.
+        assert_eq!(
+            effective_min_sats(&limited(Some(1_200), Some(80)), Some(50_000.0)),
+            Some(2_000)
+        );
+        // A USD floor needs a price; without one only the sats floor counts.
+        assert_eq!(effective_min_sats(&limited(None, Some(80)), None), None);
+        assert_eq!(effective_min_sats(&route("USDT", "solana", 6), None), None);
+    }
+
+    #[test]
+    fn amounts_are_checked_against_both_ends() {
+        let mut capped = limited(Some(1_200), None);
+        capped.btc_limits.as_mut().unwrap().max_sats = Some(100_000);
+        assert_eq!(
+            amount_issue(&capped, 1_499, None),
+            Some(AmountIssue::BelowMinimum { min_sats: 1_500 })
+        );
+        assert_eq!(amount_issue(&capped, 1_500, None), None);
+        assert_eq!(
+            amount_issue(&capped, 100_001, None),
+            Some(AmountIssue::AboveMaximum { max_sats: 100_000 })
+        );
+        assert!(AmountIssue::BelowMinimum { min_sats: 1_500 }
+            .message("Solana")
+            .contains("at least 1,500 sats"));
+    }
+
+    #[test]
+    fn the_providers_too_small_refusal_is_recognised() {
+        assert!(is_amount_too_small_error(
+            "Spark bridge error (sdk): Amount too small (published minimum: 1200 base units or \
+             0.80 USD)"
+        ));
+        assert!(!is_amount_too_small_error(
+            "Amount too large (published maximum: 9.00 USD)"
+        ));
+    }
+
+    #[test]
+    fn one_network_is_chosen_for_you_several_are_not() {
+        let single = DetectedDestination::new(
+            "T".into(),
+            found(Some("tron"), vec![route("USDT", "tron", 6)]),
+            "USDT",
+        );
+        assert_eq!(single.chosen.as_deref(), Some("Tron"));
+        assert!(!single.network_was_chosen());
+        assert_eq!(single.route().map(|r| r.chain.as_str()), Some("tron"));
+
+        let mut evm = DetectedDestination::new(
+            "0x".into(),
+            found(
+                Some("evm"),
+                vec![route("USDT", "ethereum", 6), route("USDT", "base", 6)],
+            ),
+            "USDT",
+        );
+        assert_eq!(evm.chosen, None);
+        assert!(evm.route().is_none());
+        assert!(evm.network_was_chosen());
+        evm.choose("Base");
+        assert_eq!(evm.route().map(|r| r.chain.as_str()), Some("base"));
+        assert_eq!(evm.tile_place().as_deref(), Some("on Base"));
     }
 }

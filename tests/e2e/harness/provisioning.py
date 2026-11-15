@@ -20,7 +20,7 @@ from .runner import Runner
 from .secrets import SecretStore
 from .strict import StrictPolicy, validate_mode
 from .qa_build import validate_build_config
-from . import qa_funding, qa_cleanup
+from . import qa_funding, qa_cleanup, native_recovery
 from .state import Blocked, Failed, Journal, atomic_write, digest, private_read
 
 STAGES = ("environment", "authentication", "phone_setup", "cube_creation", "phone_key", "vault_creation",
@@ -35,7 +35,7 @@ def phone_state_root(config):
 
 def validate_config(config):
     required = {"version", "account_email", "profile_dir", "connect_rest", "connect_grpc", "ios", "amount_sats", "fee_sats"}
-    optional = {"native_binary", "signing_binary", "phone_state_dir", "desktop_session_namespace", "strict_acceptance", "qa_funding", "qa_cleanup"}
+    optional = {"native_binary", "signing_binary", "phone_state_dir", "desktop_session_namespace", "strict_acceptance", "qa_funding", "qa_cleanup", "native_recovery"}
     if not required <= set(config) or set(config) - required - optional or config["version"] != 2:
         raise Failed("CONFIG_SCHEMA", "Fresh-run configuration must use schema version 2 without vault or PSBT fixtures.")
     if config["connect_rest"] != REST or config["connect_grpc"] != GRPC:
@@ -56,6 +56,10 @@ def validate_config(config):
     if type(ios["minimum_build"]) is not int or ios["minimum_build"] < 35:
         raise Failed("IOS_BUILD", "A Keychain build containing #194 is required.")
     validate_mode(config)
+    if "native_recovery" in config:
+        native_recovery.options(config["native_recovery"])
+        if not config.get("strict_acceptance"):
+            raise Failed("NATIVE_RECOVERY_MODE", "Native recovery full-flow gate requires strict mobile acceptance.")
     if "qa_cleanup" in config:
         qa_cleanup.options(config["qa_cleanup"])
         if not config.get("strict_acceptance") or "qa_build" not in config.get("ios", {}):
@@ -254,6 +258,8 @@ class FreshRunner(Runner):
         self.journal.artifact(name, value)
 
     def stage_environment(self):
+        if "native_recovery" in self.config:
+            native_recovery.preflight(self.config["native_recovery"])
         self.core.chain()
         repo = Path(__file__).resolve().parents[3]
         binary = self.config.get("native_binary")
@@ -802,6 +808,9 @@ class FreshRunner(Runner):
             raise Blocked("SIGNER_LIMIT", "The disposable QA account has no capacity for a fresh signer.")
 
     def stage_cube_creation(self):
+        # Native temporary Cubes are retired before consuming the mobile slot.
+        # phone_setup has already established the real mobile admission.
+        native_recovery.gate(self)
         result = self.provision.call("cube")
         if result.get("backup_verified") is not True:
             raise Failed("CUBE_BACKUP", "The newly created Cube's backup was not verified.")
@@ -932,6 +941,7 @@ class FreshRunner(Runner):
             self.phone.check_fixture(self.artifacts["cube_name"], self.deadline)
 
     def stage_funding(self):
+        native_recovery.gate(self)  # Before ANY faucet/sponsor/reservation branch.
         if self.artifacts.get("funding_outpoint"):
             return  # Native prepare revalidates the exact saved raw transaction.
         if "qa_funding" in self.config:

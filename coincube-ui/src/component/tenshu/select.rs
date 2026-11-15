@@ -301,6 +301,63 @@ fn label_text(content: &str, size: f32, bounds: Size, font: Font) -> text::Text<
     }
 }
 
+impl<M: Clone + 'static> SelectField<'_, M> {
+    fn update_keyboard(
+        &self,
+        state: &mut State,
+        key: &keyboard::Key,
+        repeat: &bool,
+        messages: &[M],
+        shell: &mut Shell<'_, M>,
+    ) -> bool {
+        let last = messages.len().saturating_sub(1);
+        match key {
+            keyboard::Key::Named(key::Named::Escape) if state.open => {
+                state.open = false;
+                true
+            }
+            keyboard::Key::Named(key::Named::Tab) => {
+                state.open = false;
+                false
+            }
+            keyboard::Key::Named(key::Named::Enter | key::Named::Space) if !repeat => {
+                if state.open {
+                    state.open = false;
+                    shell.publish(messages[state.highlighted.min(last)].clone());
+                } else {
+                    self.open_on_current(state);
+                }
+                true
+            }
+            keyboard::Key::Named(key::Named::ArrowDown) => {
+                if state.open {
+                    state.highlighted = (state.highlighted + 1).min(last);
+                } else {
+                    self.open_on_current(state);
+                }
+                true
+            }
+            keyboard::Key::Named(key::Named::ArrowUp) => {
+                if state.open {
+                    state.highlighted = state.highlighted.saturating_sub(1);
+                } else {
+                    self.open_on_current(state);
+                }
+                true
+            }
+            keyboard::Key::Named(key::Named::Home) if state.open => {
+                state.highlighted = 0;
+                true
+            }
+            keyboard::Key::Named(key::Named::End) if state.open => {
+                state.highlighted = last;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 impl<M: Clone + 'static> Widget<M, Theme, Renderer> for SelectField<'_, M> {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<State>()
@@ -398,51 +455,7 @@ impl<M: Clone + 'static> Widget<M, Theme, Renderer> for SelectField<'_, M> {
                 repeat,
                 ..
             }) if state.focused && !modifiers.command() && !modifiers.alt() => {
-                let last = messages.len().saturating_sub(1);
-                let handled = match key {
-                    keyboard::Key::Named(key::Named::Escape) if state.open => {
-                        state.open = false;
-                        true
-                    }
-                    keyboard::Key::Named(key::Named::Tab) => {
-                        state.open = false;
-                        false
-                    }
-                    keyboard::Key::Named(key::Named::Enter | key::Named::Space) if !repeat => {
-                        if state.open {
-                            state.open = false;
-                            shell.publish(messages[state.highlighted.min(last)].clone());
-                        } else {
-                            self.open_on_current(state);
-                        }
-                        true
-                    }
-                    keyboard::Key::Named(key::Named::ArrowDown) => {
-                        if state.open {
-                            state.highlighted = (state.highlighted + 1).min(last);
-                        } else {
-                            self.open_on_current(state);
-                        }
-                        true
-                    }
-                    keyboard::Key::Named(key::Named::ArrowUp) => {
-                        if state.open {
-                            state.highlighted = state.highlighted.saturating_sub(1);
-                        } else {
-                            self.open_on_current(state);
-                        }
-                        true
-                    }
-                    keyboard::Key::Named(key::Named::Home) if state.open => {
-                        state.highlighted = 0;
-                        true
-                    }
-                    keyboard::Key::Named(key::Named::End) if state.open => {
-                        state.highlighted = last;
-                        true
-                    }
-                    _ => false,
-                };
+                let handled = self.update_keyboard(state, key, repeat, messages, shell);
                 if handled {
                     shell.capture_event();
                     shell.request_redraw();

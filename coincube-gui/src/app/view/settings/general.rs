@@ -403,7 +403,9 @@ fn recovery_section<'a>(
     // When the local backup flow is active, take over the entire settings page
     // with the wizard view. This keeps the multi-step PIN → reveal flow focused.
     if !matches!(backup_state, BackupSeedState::None) {
-        if let Some(wizard) = super::backup::dispatch(backup_state, backup_pin, backup_mnemonic) {
+        if let Some(wizard) =
+            super::backup::dispatch(backup_state, backup_pin, backup_mnemonic, cache.chain())
+        {
             return dashboard(menu, cache, Column::new().spacing(20).push(wizard));
         }
     }

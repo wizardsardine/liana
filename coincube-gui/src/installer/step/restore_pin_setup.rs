@@ -20,7 +20,7 @@
 //!
 //! # Scope note
 //!
-//! This step runs when a recovered seed or fresh fork Cube needs a new PIN.
+//! This step runs when a recovered seed needs a new PIN.
 //! `RestoreVaultFromRecoveryKit` restores only a descriptor into an existing
 //! Cube and skips this prompt, preserving its existing unlock credentials.
 
@@ -78,9 +78,9 @@ impl Step for RestorePinSetupStep {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        // New recovered seeds and fresh fork Cubes need a PIN. Descriptor-only
-        // restores into an existing Cube retain its existing credentials.
-        ctx.recovered_signer.is_none() && !ctx.fresh_fork_cube
+        // New recovered seeds need a PIN. Descriptor-only restores into an
+        // existing Cube retain its existing credentials.
+        ctx.recovered_signer.is_none()
     }
 
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {

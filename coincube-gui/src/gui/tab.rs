@@ -1657,9 +1657,14 @@ impl Tab {
                 }
                 Ok(())
             }
-            home::Message::Install(root, chain, _, _) => {
+            home::Message::Install(root, chain, flow, _) => {
                 if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
                     return Err("The installation belongs to another data directory.".into());
+                }
+                // Home has no Cube master to supply to Vault creation on any
+                // chain. Refuse before GUI retires the unrelated open Cube/session.
+                if matches!(flow, UserFlow::CreateWallet) {
+                    return Err("Create or unlock a Cube before creating its Vault".into());
                 }
                 home.chain_availability(*chain)
                     .reason()
@@ -2881,7 +2886,8 @@ impl Tab {
                             wallet_settings: settings_opt.map(|s| *s),
                             connect_client: i.context.coincube_client.clone(),
                         };
-                        // Fresh fork creation still opens the target's own PIN screen.
+                        // A Cube this installer minted (a claim target or a
+                        // restore) opens its own PIN screen.
                         self.state =
                             unlock_state(cube, i.datadir.path().to_path_buf(), on_success, None);
                         return Task::none();
@@ -3130,6 +3136,14 @@ impl Tab {
                     command.map(Message::Launch)
                 }
                 loader::Message::View(loader::ViewMessage::SetupVault) => {
+                    // A cached PIN outlives Loader auth revocation. Refuse the
+                    // stale intent before the installer can read the fork seed.
+                    if loader.cube_settings.network.is_blake2b() && loader.fork_revoked() {
+                        loader.fail(loader::Error::Unexpected(
+                            "Connect session changed; reopen this Cube".into(),
+                        ));
+                        return Task::none();
+                    }
                     if loader.cube_settings.bitcoin_import.is_some() {
                         loader.fail(loader::Error::Unexpected(
                             "This Cube is reserved for an imported Bitcoin wallet. Resume its import from the Cube overview."
@@ -5251,11 +5265,7 @@ pub(crate) fn installer_exit_identity(i: &Installer) -> Option<RestoreCubeIdenti
     i.context
         .cube_id
         .clone()
-        .zip(i.context.cube_name.clone().or_else(|| {
-            i.context
-                .fresh_fork_cube
-                .then(|| i.context.wallet_alias.clone())
-        }))
+        .zip(i.context.cube_name.clone())
         .map(|(uuid, name)| RestoreCubeIdentity { uuid, name })
 }
 
@@ -5310,11 +5320,11 @@ fn reopen_claim_source(
 /// its seed file belongs to, the PIN that file was written under, and whether
 /// that seed is backed up.
 ///
-/// Three flows reach this seam and each answers from a different place — a
-/// Recovery-Kit restore from `restore_pin` + `recovered_signer`, a fresh fork
-/// Cube from the installer's own signer, and a Bitcoin Blake2b **claim** from
-/// the source Cube it reuses. A flow missing here mints a Cube with no master
-/// signer recorded.
+/// Two flows reach this seam and each answers from a different place — a
+/// Recovery-Kit restore from `restore_pin` + `recovered_signer`, and a Bitcoin
+/// Blake2b **claim** from the source Cube it reuses. Vault creation never
+/// mints a Cube here: it runs inside an existing one. A flow missing here
+/// mints a Cube with no master signer recorded.
 pub(crate) fn installer_exit_seed(i: &Installer) -> Option<RestoreCubeSeed> {
     if let Some(source) = &i.context.claim_source {
         // The claim target's seed file is the source Cube's mnemonic, written
@@ -5342,20 +5352,12 @@ pub(crate) fn installer_exit_seed(i: &Installer) -> Option<RestoreCubeSeed> {
     }
     match (
         i.context.restore_pin.clone(),
-        i.context
-            .recovered_signer
-            .as_ref()
-            .map(|s| s.fingerprint())
-            .or_else(|| {
-                i.context
-                    .fresh_fork_cube
-                    .then(|| i.master_signer_fingerprint())
-            }),
+        i.context.recovered_signer.as_ref().map(|s| s.fingerprint()),
     ) {
         (Some(pin), Some(fp)) => Some(RestoreCubeSeed {
             pin,
             master_signer_fingerprint: fp,
-            seed_backed_up: i.context.fresh_fork_seed_backed_up,
+            seed_backed_up: false,
             passkey: None,
         }),
         _ => None,
@@ -7612,6 +7614,48 @@ mod unlock_routing_tests {
     }
 
     #[test]
+    fn revoked_fork_loader_cannot_create_a_vault_with_a_leftover_session_pin() {
+        use crate::dir::CoincubeDirectory;
+        use coincube_core::miniscript::bitcoin;
+        let _guard = crate::app::session::test_guard();
+        let root =
+            std::env::temp_dir().join(format!("revoked-installer-761-{}", uuid::Uuid::new_v4()));
+        let master = crate::signer::Signer::generate(bitcoin::Network::Bitcoin).unwrap();
+        master
+            .store_encrypted_seed_only_for_chain(
+                &CoincubeDirectory::new(root.clone()),
+                crate::chain::ChainId::BitcoinBlake2b,
+                "2468",
+                "split-loader",
+                None,
+            )
+            .unwrap();
+        crate::app::session::open("split-loader", zeroize::Zeroizing::new("2468".into()));
+        let mut tab = super::Tab::new(1, blake2b_error_loader());
+        let State::Loader(loader) = &mut tab.state else {
+            unreachable!()
+        };
+        loader.datadir_path = CoincubeDirectory::new(root.clone());
+        loader.cube_settings.master_signer_fingerprint = Some(master.fingerprint());
+        loader.invalidate_fork_session();
+        // Even a stale auth completion must not reopen this revoked generation.
+        let mut client = crate::services::coincube::CoincubeClient::new();
+        client.set_token("synthetic-stale-token");
+        loader.connect_client = Some(client);
+        assert!(crate::app::session::pin_for("split-loader").is_some());
+        drop(
+            tab.update(super::Message::Load(crate::loader::Message::View(
+                crate::loader::ViewMessage::SetupVault,
+            ))),
+        );
+        let State::Loader(loader) = &tab.state else {
+            panic!("a revoked Loader must never release a root to an installer");
+        };
+        assert!(loader.fork_revoked());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn global_beta_off_invalidates_a_fork_loader_and_rejects_late_results() {
         let _guard = crate::app::session::test_guard();
         let root_path =
@@ -7805,7 +7849,7 @@ mod fork_completion_tests {
         let (mut installer, _) = Installer::new(
             root.clone(),
             bitcoin::Network::Bitcoin,
-            installer::UserFlow::CreateWallet,
+            installer::UserFlow::RestoreFromRecoveryKit { cube_uuid: None },
             false,
             None,
             None,
@@ -7815,10 +7859,14 @@ mod fork_completion_tests {
         )
         .expect("a Bitcoin fixture installer");
         installer.context.bitcoin_config.chain = ChainId::BitcoinBlake2b;
-        installer.context.fresh_fork_cube = true;
         installer.context.use_coincube_connect = !local_capability;
-        installer.context.fresh_fork_seed_backed_up = true;
+        // A restored fork Cube: the exit seam mints it from the recovered
+        // signer and its chosen PIN, under the original identity.
+        installer.context.recovered_signer = Some(std::sync::Arc::new(
+            crate::signer::Signer::generate(bitcoin::Network::Bitcoin).unwrap(),
+        ));
         installer.context.cube_id = Some("synthetic-save-cube".into());
+        installer.context.cube_name = Some("fork-vault".into());
         installer.context.restore_pin = Some(zeroize::Zeroizing::new("2468".to_string()));
         let mut tab = Box::new(Tab::new(1, State::Installer(Box::new(installer))));
         let mut save = Some(tab.update(Message::Install(installer::Message::Exit(
@@ -8001,7 +8049,8 @@ mod mcp_proposal_routing_tests {
         root: &std::path::Path,
         chain: crate::chain::ChainId,
     ) -> (Tab, std::sync::Arc<crate::installer::proposal::Session>) {
-        let (ctx, proposal) = crate::installer::proposal::tests::fixture_for_chain(root, chain);
+        let (ctx, proposal) =
+            crate::installer::proposal::tests::authenticated_fixture_for_chain(root, chain);
         let cube = crate::app::settings::Settings::from_file(
             &ctx.coincube_directory.network_directory(chain),
         )

@@ -814,6 +814,29 @@ fn plex_digits_keep_amount_widths_stable() {
     assert!((width("111,111") - width("888,888")).abs() < 0.5);
 }
 
+fn assert_action_state_contrast(
+    name: &str,
+    theme: &Theme,
+    shell: crate::theme::palette::ShellPalette,
+    shape: ActionShape,
+    kind: ActionKind,
+) {
+    for status in [Status::Active, Status::Hovered, Status::Pressed] {
+        let style = button_style::action(theme, status, kind, shape);
+        for surface in [shell.background, shell.panel] {
+            let fill = match style.background {
+                Some(Background::Color(color)) => tokens::over(surface, color),
+                _ => surface,
+            };
+            let ratio = tokens::contrast(style.text_color, fill);
+            assert!(
+                ratio >= 4.5,
+                "{name}: {shape:?} {kind:?} {status:?} label is {ratio:.2}:1"
+            );
+        }
+    }
+}
+
 #[test]
 fn text_and_focus_colours_meet_wcag_aa() {
     use ActionKind::*;
@@ -843,20 +866,7 @@ fn text_and_focus_colours_meet_wcag_aa() {
             ActionShape::Icon,
         ] {
             for kind in [Primary, Secondary, Quiet, Destructive] {
-                for status in [Status::Active, Status::Hovered, Status::Pressed] {
-                    let style = button_style::action(&theme, status, kind, shape);
-                    for surface in [shell.background, shell.panel] {
-                        let fill = match style.background {
-                            Some(Background::Color(color)) => tokens::over(surface, color),
-                            _ => surface,
-                        };
-                        let ratio = tokens::contrast(style.text_color, fill);
-                        assert!(
-                            ratio >= 4.5,
-                            "{name}: {shape:?} {kind:?} {status:?} label is {ratio:.2}:1"
-                        );
-                    }
-                }
+                assert_action_state_contrast(name, &theme, shell, shape, kind);
             }
         }
     }
@@ -1005,79 +1015,83 @@ fn blit(
     }
 }
 
+fn assert_theme_state_matrix(name: &str, theme: &Theme, width: u32, height: u32) {
+    let shell = theme.colors.shell;
+    // Labels first, then each rendered cell is copied into its slot.
+    let header = STATES.iter().fold(
+        Row::new().push(iced::widget::Space::new().width(Length::Fixed(LABEL_WIDTH as f32))),
+        |row, (_, label)| {
+            row.push(
+                Container::new(caption(*label))
+                    .width(Length::Fixed(CELL.0 as f32))
+                    .align_x(alignment::Horizontal::Center),
+            )
+        },
+    );
+    let frame = VARIANTS.iter().fold(
+        Column::new().push(Container::new(header).height(Length::Fixed(HEADER_HEIGHT as f32))),
+        |column, (label, _)| {
+            column.push(
+                Container::new(body(*label))
+                    .padding([0.0, 16.0])
+                    .height(Length::Fixed(CELL.1 as f32))
+                    .align_y(alignment::Vertical::Center),
+            )
+        },
+    );
+    let mut mosaic = Mounted::new(frame, Size::new(width as f32, height as f32))
+        .pixels(theme, mouse::Cursor::Unavailable);
+
+    for (row, (label, variant)) in VARIANTS.iter().enumerate() {
+        let mut hashes = HashSet::new();
+        for (column, (state, _)) in STATES.iter().enumerate() {
+            let (pixels, bounds) = render_cell(*variant, *state, theme);
+            assert!(
+                hashes.insert(pixels.clone()),
+                "{name}: {label} {state:?} looks identical to another state"
+            );
+            if matches!(variant, Variant::Pill(ActionKind::Primary, _)) {
+                let fill = sample(&pixels, CELL.0, bounds.x + 6.0, bounds.center_y());
+                let expected = match state {
+                    CellState::Active | CellState::Focused => shell.accent,
+                    CellState::Hover => tokens::ACCENT_HOVER,
+                    CellState::Pressed => tokens::accent_pressed(theme),
+                    CellState::Disabled => tokens::over(
+                        shell.background,
+                        tokens::faded(shell.accent, tokens::DISABLED_ALPHA),
+                    ),
+                };
+                assert!(
+                    near(fill, expected),
+                    "{name}: Primary {state:?} fill {fill:?}"
+                );
+            }
+            if *state == CellState::Focused {
+                let ring = sample(&pixels, CELL.0, bounds.center_x(), bounds.y - 3.0);
+                assert!(
+                    near(ring, shell.focus),
+                    "{name}: {label} focus ring {ring:?}"
+                );
+            }
+            blit(
+                &mut mosaic,
+                width,
+                &pixels,
+                CELL,
+                LABEL_WIDTH + column as u32 * CELL.0,
+                HEADER_HEIGHT + row as u32 * CELL.1,
+            );
+        }
+    }
+    save(&format!("tenshu-states-{name}"), &mosaic, width, height);
+}
+
 #[test]
 fn state_matrix_shows_distinct_pointer_disabled_and_focus_states() {
     let width = LABEL_WIDTH + CELL.0 * STATES.len() as u32;
     let height = HEADER_HEIGHT + CELL.1 * VARIANTS.len() as u32;
     for (name, theme) in themes() {
-        let shell = theme.colors.shell;
-        // Labels first, then each rendered cell is copied into its slot.
-        let header = STATES.iter().fold(
-            Row::new().push(iced::widget::Space::new().width(Length::Fixed(LABEL_WIDTH as f32))),
-            |row, (_, label)| {
-                row.push(
-                    Container::new(caption(*label))
-                        .width(Length::Fixed(CELL.0 as f32))
-                        .align_x(alignment::Horizontal::Center),
-                )
-            },
-        );
-        let frame = VARIANTS.iter().fold(
-            Column::new().push(Container::new(header).height(Length::Fixed(HEADER_HEIGHT as f32))),
-            |column, (label, _)| {
-                column.push(
-                    Container::new(body(*label))
-                        .padding([0.0, 16.0])
-                        .height(Length::Fixed(CELL.1 as f32))
-                        .align_y(alignment::Vertical::Center),
-                )
-            },
-        );
-        let mut mosaic = Mounted::new(frame, Size::new(width as f32, height as f32))
-            .pixels(&theme, mouse::Cursor::Unavailable);
-
-        for (row, (label, variant)) in VARIANTS.iter().enumerate() {
-            let mut hashes = HashSet::new();
-            for (column, (state, _)) in STATES.iter().enumerate() {
-                let (pixels, bounds) = render_cell(*variant, *state, &theme);
-                assert!(
-                    hashes.insert(pixels.clone()),
-                    "{name}: {label} {state:?} looks identical to another state"
-                );
-                if matches!(variant, Variant::Pill(ActionKind::Primary, _)) {
-                    let fill = sample(&pixels, CELL.0, bounds.x + 6.0, bounds.center_y());
-                    let expected = match state {
-                        CellState::Active | CellState::Focused => shell.accent,
-                        CellState::Hover => tokens::ACCENT_HOVER,
-                        CellState::Pressed => tokens::accent_pressed(&theme),
-                        CellState::Disabled => tokens::over(
-                            shell.background,
-                            tokens::faded(shell.accent, tokens::DISABLED_ALPHA),
-                        ),
-                    };
-                    assert!(
-                        near(fill, expected),
-                        "{name}: Primary {state:?} fill {fill:?}"
-                    );
-                }
-                if *state == CellState::Focused {
-                    let ring = sample(&pixels, CELL.0, bounds.center_x(), bounds.y - 3.0);
-                    assert!(
-                        near(ring, shell.focus),
-                        "{name}: {label} focus ring {ring:?}"
-                    );
-                }
-                blit(
-                    &mut mosaic,
-                    width,
-                    &pixels,
-                    CELL,
-                    LABEL_WIDTH + column as u32 * CELL.0,
-                    HEADER_HEIGHT + row as u32 * CELL.1,
-                );
-            }
-        }
-        save(&format!("tenshu-states-{name}"), &mosaic, width, height);
+        assert_theme_state_matrix(name, &theme, width, height);
     }
 }
 
@@ -1497,115 +1511,118 @@ fn sheet() -> Element<'static, Msg> {
         .into()
 }
 
+fn assert_window_gallery(name: &str, theme: &Theme, width: u32, height: u32) {
+    let window = Size::new(width as f32, height as f32);
+
+    let mut mounted = Mounted::new(overview(AmountVisibility::Shown), window);
+    let collected = mounted.collect();
+    for expected in [
+        "Total Balance",
+        "$41.70",
+        "Spark · Daily spending",
+        "L-BTC",
+        "USDt",
+        "Recovery path",
+    ] {
+        assert!(
+            collected.texts.iter().any(|(_, text)| text == expected),
+            "{name} {width}x{height}: overview is missing {expected:?}"
+        );
+    }
+    for (bounds, text) in &collected.texts {
+        assert!(
+            bounds.x + bounds.width <= window.width + 0.5,
+            "{name} {width}x{height}: {text:?} overflows the window"
+        );
+    }
+    if (width, height) == (1024, 768) {
+        mounted.run(scrollable::snap_to::<()>(
+            Id::new("gallery-overview"),
+            scrollable::RelativeOffset::END.into(),
+        ));
+        let scrolled = mounted.collect();
+        let (_, viewport, content, offset) = scrolled
+            .scrollables
+            .iter()
+            .find(|(id, _, _, _)| *id == Id::new("gallery-overview"))
+            .expect("Overview must expose a mounted scrollable");
+        assert!(content.height > viewport.height && offset.y > 0.0);
+        for expected in ["Vault · Family savings", "Transfer"] {
+            let bounds = scrolled
+                .texts
+                .iter()
+                .find(|(_, text)| text == expected)
+                .unwrap_or_else(|| panic!("missing {expected:?}"))
+                .0;
+            assert!(
+                bounds.y - offset.y >= viewport.y - 0.5
+                    && bounds.y + bounds.height - offset.y <= viewport.y + viewport.height + 0.5,
+                "{name}: {expected:?} cannot be brought into the viewport"
+            );
+        }
+        mounted.run(scrollable::snap_to::<()>(
+            Id::new("gallery-overview"),
+            scrollable::RelativeOffset::START.into(),
+        ));
+    }
+    mounted.keyboard_focus("spark-send");
+    let send = collected
+        .focusables
+        .iter()
+        .find(|(id, _)| *id == Id::new("spark-send"))
+        .unwrap()
+        .1;
+    let pixels = mounted.pixels(theme, mouse::Cursor::Unavailable);
+    let ring = sample(&pixels, width, send.center_x(), send.y - 3.0);
+    assert!(
+        near(ring, theme.colors.shell.focus),
+        "{name}: Send focus ring {ring:?}"
+    );
+    save(
+        &format!("tenshu-overview-{name}-{width}x{height}"),
+        &pixels,
+        width,
+        height,
+    );
+
+    let mut hidden = Mounted::new(overview(AmountVisibility::Hidden), window);
+    let texts = hidden.texts();
+    assert!(
+        texts
+            .iter()
+            .all(|text| !text.chars().any(|c| c.is_ascii_digit())),
+        "{name}: hidden overview leaked {texts:?}"
+    );
+    let pixels = hidden.pixels(theme, mouse::Cursor::Unavailable);
+    save(
+        &format!("tenshu-overview-hidden-{name}-{width}x{height}"),
+        &pixels,
+        width,
+        height,
+    );
+
+    let mut sheet = Mounted::new(sheet(), window);
+    let collected = sheet.collect();
+    for (bounds, text) in &collected.texts {
+        assert!(
+            bounds.x + bounds.width <= window.width + 0.5,
+            "{name} {width}x{height}: sheet text {text:?} overflows the window"
+        );
+    }
+    let pixels = sheet.pixels(theme, mouse::Cursor::Unavailable);
+    save(
+        &format!("tenshu-sheet-{name}-{width}x{height}"),
+        &pixels,
+        width,
+        height,
+    );
+}
+
 #[test]
 fn gallery_renders_overview_and_sheet_in_both_themes_and_window_sizes() {
     for (name, theme) in themes() {
         for (width, height) in WINDOWS {
-            let window = Size::new(width as f32, height as f32);
-
-            let mut mounted = Mounted::new(overview(AmountVisibility::Shown), window);
-            let collected = mounted.collect();
-            for expected in [
-                "Total Balance",
-                "$41.70",
-                "Spark · Daily spending",
-                "L-BTC",
-                "USDt",
-                "Recovery path",
-            ] {
-                assert!(
-                    collected.texts.iter().any(|(_, text)| text == expected),
-                    "{name} {width}x{height}: overview is missing {expected:?}"
-                );
-            }
-            for (bounds, text) in &collected.texts {
-                assert!(
-                    bounds.x + bounds.width <= window.width + 0.5,
-                    "{name} {width}x{height}: {text:?} overflows the window"
-                );
-            }
-            if (width, height) == (1024, 768) {
-                mounted.run(scrollable::snap_to::<()>(
-                    Id::new("gallery-overview"),
-                    scrollable::RelativeOffset::END.into(),
-                ));
-                let scrolled = mounted.collect();
-                let (_, viewport, content, offset) = scrolled
-                    .scrollables
-                    .iter()
-                    .find(|(id, _, _, _)| *id == Id::new("gallery-overview"))
-                    .expect("Overview must expose a mounted scrollable");
-                assert!(content.height > viewport.height && offset.y > 0.0);
-                for expected in ["Vault · Family savings", "Transfer"] {
-                    let bounds = scrolled
-                        .texts
-                        .iter()
-                        .find(|(_, text)| text == expected)
-                        .unwrap_or_else(|| panic!("missing {expected:?}"))
-                        .0;
-                    assert!(
-                        bounds.y - offset.y >= viewport.y - 0.5
-                            && bounds.y + bounds.height - offset.y
-                                <= viewport.y + viewport.height + 0.5,
-                        "{name}: {expected:?} cannot be brought into the viewport"
-                    );
-                }
-                mounted.run(scrollable::snap_to::<()>(
-                    Id::new("gallery-overview"),
-                    scrollable::RelativeOffset::START.into(),
-                ));
-            }
-            mounted.keyboard_focus("spark-send");
-            let send = collected
-                .focusables
-                .iter()
-                .find(|(id, _)| *id == Id::new("spark-send"))
-                .unwrap()
-                .1;
-            let pixels = mounted.pixels(&theme, mouse::Cursor::Unavailable);
-            let ring = sample(&pixels, width, send.center_x(), send.y - 3.0);
-            assert!(
-                near(ring, theme.colors.shell.focus),
-                "{name}: Send focus ring {ring:?}"
-            );
-            save(
-                &format!("tenshu-overview-{name}-{width}x{height}"),
-                &pixels,
-                width,
-                height,
-            );
-
-            let mut hidden = Mounted::new(overview(AmountVisibility::Hidden), window);
-            let texts = hidden.texts();
-            assert!(
-                texts
-                    .iter()
-                    .all(|text| !text.chars().any(|c| c.is_ascii_digit())),
-                "{name}: hidden overview leaked {texts:?}"
-            );
-            let pixels = hidden.pixels(&theme, mouse::Cursor::Unavailable);
-            save(
-                &format!("tenshu-overview-hidden-{name}-{width}x{height}"),
-                &pixels,
-                width,
-                height,
-            );
-
-            let mut sheet = Mounted::new(sheet(), window);
-            let collected = sheet.collect();
-            for (bounds, text) in &collected.texts {
-                assert!(
-                    bounds.x + bounds.width <= window.width + 0.5,
-                    "{name} {width}x{height}: sheet text {text:?} overflows the window"
-                );
-            }
-            let pixels = sheet.pixels(&theme, mouse::Cursor::Unavailable);
-            save(
-                &format!("tenshu-sheet-{name}-{width}x{height}"),
-                &pixels,
-                width,
-                height,
-            );
+            assert_window_gallery(name, &theme, width, height);
         }
     }
 }

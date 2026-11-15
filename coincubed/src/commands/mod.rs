@@ -5,6 +5,9 @@
 mod utils;
 
 pub use crate::bitcoin::{HistorySync, PollFailure};
+// Real cache transitions are used by opt-in native integration guards/tests.
+#[doc(hidden)]
+pub use crate::bitcoin::HistorySyncCache;
 
 use crate::{
     bitcoin::BitcoinInterface,
@@ -661,6 +664,14 @@ fn coin_to_candidate(
         sequence,
         ancestor_info,
     }
+}
+
+/// Read-only metadata from the daemon's actual admitted chain/backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RescanTimeBounds {
+    pub chain: coincube_core::chain::ChainId,
+    pub genesis_timestamp: u32,
+    pub tip_timestamp: u32,
 }
 
 impl DaemonControl {
@@ -2385,6 +2396,36 @@ impl DaemonControl {
         }
     }
 
+    /// Read-only bounds from this daemon's already admitted backend. Callers
+    /// must still use start_rescan, which independently revalidates its date.
+    pub fn rescan_time_bounds(&self) -> Result<RescanTimeBounds, CommandError> {
+        if self.reorg_alert_cache.load() != crate::bitcoin::ChainAlert::None {
+            return Err(CommandError::RescanTrigger(
+                "Chain alert prevents a safe rescan".into(),
+            ));
+        }
+        let genesis = self
+            .bitcoin
+            .genesis_block_timestamp()
+            .map_err(|error| CommandError::RescanGenesis(error.to_string()))?;
+        let tip = self.bitcoin.tip_time().ok_or_else(|| {
+            CommandError::RescanTrigger(
+                "Cannot determine current tip timestamp; retry when the backend is available"
+                    .into(),
+            )
+        })?;
+        if genesis == 0 || tip <= genesis {
+            return Err(CommandError::RescanTrigger(
+                "Invalid admitted backend rescan bounds".into(),
+            ));
+        }
+        Ok(RescanTimeBounds {
+            chain: self.config.bitcoin_config.chain,
+            genesis_timestamp: genesis,
+            tip_timestamp: tip,
+        })
+    }
+
     /// Trigger a rescan of the block chain for transactions involving our main descriptor between
     /// the given date and the current tip.
     /// The date must be after the genesis block time and before the current tip blocktime.
@@ -3025,6 +3066,45 @@ mod tests {
 
         fn connection(&self) -> Box<dyn DatabaseConnection> {
             self.inner.connection()
+        }
+    }
+
+    #[test]
+    fn rescan_bounds_are_actual_backend_metadata_and_zero_is_never_admitted() {
+        for chain in [
+            coincube_core::chain::ChainId::Testnet4,
+            coincube_core::chain::ChainId::BitcoinBlake2bTestnet4,
+        ] {
+            let backend = std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new()));
+            let interface: std::sync::Arc<std::sync::Mutex<dyn crate::bitcoin::BitcoinInterface>> =
+                backend.clone();
+            let daemon = DummyCoincube::new(interface, DummyDatabase::new());
+            let mut control = daemon.control().clone();
+            daemon.shutdown();
+            control.config.bitcoin_config =
+                crate::config::BitcoinConfig::new(chain, std::time::Duration::from_secs(1));
+            let synthetic_genesis = if chain == coincube_core::chain::ChainId::Testnet4 {
+                1_600_000_001
+            } else {
+                1_650_000_002
+            };
+            backend.lock().unwrap().genesis_timestamp_override = Some(synthetic_genesis);
+            backend.lock().unwrap().tip_timestamp = Some(synthetic_genesis + 1000);
+            let bounds = control.rescan_time_bounds().unwrap();
+            assert_eq!(bounds.chain, chain);
+            let actual_genesis = bounds.genesis_timestamp;
+            assert_eq!(actual_genesis, synthetic_genesis);
+            assert!(bounds.tip_timestamp > actual_genesis);
+            assert!(matches!(
+                control.start_rescan(0),
+                Err(CommandError::InsaneRescanTimestamp(0))
+            ));
+            assert!(backend.lock().unwrap().rescan_requests.is_empty());
+            control.start_rescan(actual_genesis).unwrap();
+            assert_eq!(
+                backend.lock().unwrap().rescan_requests,
+                vec![actual_genesis]
+            );
         }
     }
 

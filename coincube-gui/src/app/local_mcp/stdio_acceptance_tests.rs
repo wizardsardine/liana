@@ -1,6 +1,7 @@
 //! Actual companion -> native pairing/IPC -> wallet preparation -> native review.
-//! Synthetic native consent and public-only chain fixtures; no external node,
-//! wallet installation, signing, broadcasting, OS keystore or packaged host.
+//! Synthetic native consent, a disposable Cube root and public chain fixtures;
+//! no external node, wallet installation, signing, broadcasting, OS keystore
+//! or packaged host.
 use super::*;
 use crate::{
     app::{session, settings::CubeSettings},
@@ -223,6 +224,7 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
         step::{descriptor::editor::DefineDescriptor, Step},
         Installer, UserFlow,
     };
+    use coincube_core::{miniscript::bitcoin::secp256k1::Secp256k1, signer::MasterSigner};
     let _guard = session::test_guard();
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         for network in wire::Chain::ALL {
@@ -232,7 +234,10 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
             );
             let chain: ChainId = network.as_str().parse().unwrap();
             let root = installer::proposal::tests::TestDir::new();
-            let cube = CubeSettings::new_with_raw_id(CUBE.into(), "Disposable".into(), chain);
+            let master = MasterSigner::generate(chain.bitcoin_network()).unwrap();
+            let fingerprint = master.fingerprint(&Secp256k1::new());
+            let cube = CubeSettings::new_with_raw_id(CUBE.into(), "Disposable".into(), chain)
+                .with_master_signer(fingerprint);
             let mut settings = settings(root.path(), chain, true);
             std::fs::write(
                 root.path().join(chain.dir_name()).join("settings.json"),
@@ -365,6 +370,12 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
             let proposal = settings
                 .paired_proposal_session(CUBE, &replacement_id)
                 .unwrap();
+            // Model native unlock without reopening the session: the actual
+            // STDIO proposal must keep its original authorization generation.
+            let generation = session::generation_for(CUBE).unwrap();
+            session::store_unlocked_signer(CUBE, fingerprint, master.try_clone().unwrap());
+            assert_eq!(session::generation_for(CUBE), Some(generation));
+            assert!(proposal.active());
             let (mut installer, startup) = Installer::try_new_for_chain(
                 CoincubeDirectory::new(root.path().to_owned()),
                 chain,
@@ -378,12 +389,12 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
             )
             .unwrap();
             drop(startup);
+            assert_eq!(session::generation_for(CUBE), Some(generation));
+            assert!(proposal.active());
             drop(installer.use_mcp_proposal(settings, proposal).unwrap());
             let proposal = installer.context.mcp_proposal.clone().unwrap();
             assert_eq!(proposal.chain(), chain);
-            let signer = Arc::new(std::sync::Mutex::new(
-                crate::signer::Signer::generate(chain.bitcoin_network()).unwrap(),
-            ));
+            let signer = Arc::new(std::sync::Mutex::new(crate::signer::Signer::new(master)));
             let mut builder = DefineDescriptor::new(chain.bitcoin_network(), signer);
             builder.load_context(&installer.context);
             assert!(builder.apply(&mut installer.context));

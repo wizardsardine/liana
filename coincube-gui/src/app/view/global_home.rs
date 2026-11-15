@@ -10,10 +10,9 @@ use coincube_ui::{
     component::{amount::*, button, form, spinner, text::*},
     font::MEDIUM,
     icon::{
-        arrow_right, check_circle_icon, clipboard_icon, clock_icon, cross_icon, cube_outline_icon,
-        dash_circle_icon, droplet_fill_icon, exclamation_circle_icon, eye_icon, eye_slash_icon,
-        key_icon, lock_icon, question_circle_icon, spark_icon, usd_icon, vault_icon, warning_icon,
-        x_circle_icon,
+        arrow_right, check_circle_icon, clipboard_icon, clock_icon, dash_circle_icon,
+        droplet_fill_icon, exclamation_circle_icon, eye_icon, eye_slash_icon, key_icon, lock_icon,
+        spark_icon, usd_icon, vault_icon, warning_icon,
     },
     theme,
     widget::{action::Action, *},
@@ -572,25 +571,9 @@ fn openable_card<'a>(card: impl Into<Element<'a, Message>>, open: Message) -> El
         .into()
 }
 
-fn wallet_kind_icon<'a, M>(kind: WalletKind, size: f32) -> Element<'a, M>
-where
-    M: 'a,
-{
-    match kind {
-        WalletKind::Liquid => droplet_fill_icon()
-            .size(size)
-            .style(theme::text::secondary)
-            .into(),
-        WalletKind::Spark => spark_icon().size(size).style(theme::text::secondary).into(),
-        WalletKind::Vault => vault_icon().size(size).style(theme::text::secondary).into(),
-    }
-}
-
 /// Steps of a transfer within this Cube (P-Transfer `pathSteps`).
-const SAME_CUBE_STEPS: [&str; 3] = ["Wallets", "Amount", "Review"];
-/// Steps of a transfer to another Cube: its choice and unlock come between
-/// Wallets and Amount.
-const OTHER_CUBE_STEPS: [&str; 5] = ["Wallets", "Other Cube", "Unlock", "Amount", "Review"];
+/// Steps of every transfer: one Details card, then Review, then Sent.
+const TRANSFER_STEPS: [&str; 3] = ["Details", "Review", "Sent"];
 
 /// Which page `HomeView` step 1 shows. Review and Done stay steps 2 and 3.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -657,7 +640,6 @@ struct TransferCtx<'a> {
     cube_id: &'a str,
     cube_name: &'a str,
     chain: ChainId,
-    light: bool,
     direction: TransferDirection,
     has_vault: bool,
     has_spark: bool,
@@ -670,6 +652,10 @@ struct TransferCtx<'a> {
     max: bool,
     balance_masked: bool,
     other: OtherCubeView<'a>,
+    /// The route tile whose menu is open.
+    menu: Option<PickerSide>,
+    /// The wallet page leaving returns to; `None` for the Overview.
+    origin: Option<WalletKind>,
 }
 
 impl TransferCtx<'_> {
@@ -682,26 +668,11 @@ impl TransferCtx<'_> {
     }
 
     fn steps(&self) -> &'static [&'static str] {
-        if self.direction.is_other_cube() {
-            &OTHER_CUBE_STEPS
-        } else {
-            &SAME_CUBE_STEPS
-        }
-    }
-
-    /// Index of `page` in [`Self::steps`]; Review and Done follow the pages.
-    fn index(&self, page: TransferPage) -> usize {
-        match (self.direction.is_other_cube(), page) {
-            (_, TransferPage::Wallets) => 0,
-            (true, TransferPage::OtherCube) => 1,
-            (true, TransferPage::Unlock) => 2,
-            (true, TransferPage::Amount) => 3,
-            (false, _) => 1,
-        }
+        &TRANSFER_STEPS
     }
 
     fn review_index(&self) -> usize {
-        self.steps().len() - 1
+        1
     }
 }
 
@@ -725,38 +696,8 @@ fn bitcoin_text(amount: Amount, unit: BitcoinDisplayUnit, masked: bool) -> Strin
     }
 }
 
-/// P-Transfer's balance column: "20.74 USD · 25,053 SATS".
-fn balance_text(
-    amount: Amount,
-    fiat_converter: Option<FiatAmountConverter>,
-    unit: BitcoinDisplayUnit,
-    masked: bool,
-) -> String {
-    if masked {
-        return "••••••".to_string();
-    }
-    match fiat_converter.map(|converter| converter.convert(amount)) {
-        Some(fiat) => format!(
-            "{} {} · {}",
-            fiat.to_formatted_string(),
-            fiat.currency(),
-            bitcoin_text(amount, unit, false)
-        ),
-        None => bitcoin_text(amount, unit, false),
-    }
-}
-
 fn muted<'a>(content: impl iced::widget::text::IntoFragment<'a>) -> coincube_ui::widget::Text<'a> {
     text(content).size(13).style(theme::text::secondary)
-}
-
-/// P-Transfer's `.form h2` and `.lede`.
-fn page_heading<'a>(title: String, lede: Option<String>) -> Element<'a, Message> {
-    Column::new()
-        .spacing(4)
-        .push(text(title).size(18).bold())
-        .push_maybe(lede.map(muted))
-        .into()
 }
 
 /// P-Transfer's `.grp`: a group after the first gets a rule above it.
@@ -768,12 +709,6 @@ fn group<'a>(
         .spacing(8)
         .push_maybe(legend.map(|legend| text(legend).size(14).bold()))
         .push(body)
-        .into()
-}
-
-fn group_rule<'a>() -> Element<'a, Message> {
-    Container::new(iced::widget::rule::horizontal(1))
-        .padding([4, 0])
         .into()
 }
 
@@ -848,16 +783,6 @@ enum StatusTone {
     Muted,
 }
 
-/// The network coin shown beside a Cube's name.
-fn network_coin<'a>(chain: ChainId, light: bool) -> Element<'a, Message> {
-    iced::widget::Svg::new(iced::widget::svg::Handle::from_memory(
-        crate::home::launcher_coin::widget_source(chain, 16.0, 1.0, light).into_bytes(),
-    ))
-    .width(Length::Fixed(16.0))
-    .height(Length::Fixed(16.0))
-    .into()
-}
-
 fn network_name(chain: ChainId) -> &'static str {
     crate::app::view::nav::shell::network_label(chain)
 }
@@ -911,23 +836,6 @@ fn overview_eye<'a>(
     .into()
 }
 
-/// P-Transfer's steps on the head rule (`.phead .stepper`): the shared
-/// [`steps`](coincube_ui::component::tenshu::steps) row, its underline on the
-/// rule that closes the dialog's head. Finished steps take the "good"
-/// colour; `active == labels.len()` marks every step finished.
-fn transfer_steps<'a>(labels: &[&'static str], active: usize) -> Element<'a, Message> {
-    Column::new()
-        .push(coincube_ui::component::tenshu::steps(labels, active))
-        .push(iced::widget::rule::horizontal(1).style(|t: &theme::Theme| {
-            iced::widget::rule::Style {
-                color: t.colors.shell.line,
-                ..theme::rule::default(t)
-            }
-        }))
-        .width(Length::Fill)
-        .into()
-}
-
 /// Outlined panel for the review address.
 fn review_panel_style(t: &theme::Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
@@ -940,30 +848,13 @@ fn review_panel_style(t: &theme::Theme) -> iced::widget::container::Style {
     }
 }
 
-/// P-Transfer's `.form` card.
-fn form_style(t: &theme::Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(iced::Background::Color(t.colors.shell.panel)),
-        border: iced::Border {
-            color: t.colors.shell.line,
-            width: 1.0,
-            radius: 12.0.into(),
-        },
-        ..Default::default()
-    }
-}
-
-/// The dialog's own surface: the page background of P-Transfer's `.pg`.
-fn dialog_style(t: &theme::Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(iced::Background::Color(t.colors.shell.background)),
-        border: iced::Border {
-            color: t.colors.shell.line,
-            width: 1.0,
-            radius: 16.0.into(),
-        },
-        ..Default::default()
-    }
+/// Review and Sent's card: the form on the panel surface.
+fn legacy_form<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    Container::new(content)
+        .padding(24)
+        .width(Length::Fill)
+        .style(crate::app::view::shared::payment_columns::rail_card_style)
+        .into()
 }
 
 /// The other Cube's state above the form: open while the transfer runs,
@@ -1001,433 +892,65 @@ fn other_cube_context<'a>(
     })
 }
 
-/// The transfer flow as a dialog over the Overview: P-Transfer's title, Cube
-/// line and stepper, then the step's form card, which scrolls when the window
-/// is short. `close` is `None` while a send is in flight.
+/// A transfer step as a page of its own (Send's layout): the body under
+/// a page head the state layer builds from `step` and `can_leave`.
+pub struct TransferScreen<'a> {
+    /// The active step on [`TRANSFER_STEPS`]; `TRANSFER_STEPS.len()` once
+    /// sent (every step done).
+    pub step: usize,
+    /// Back is offered; `false` while a send is in flight.
+    pub can_leave: bool,
+    /// Where Back goes: the wallet page the transfer opened from, or the
+    /// Overview.
+    pub back_to: &'static str,
+    pub body: Element<'a, Message>,
+}
+
+/// The transfer as a page: the other Cube's state, then the step's card
+/// and rail. The title, Cube line, steps and Back to Overview are the page
+/// head's ([`transfer_page_head`]).
 fn transfer_dialog<'a>(
     ctx: &TransferCtx<'a>,
     active: usize,
     context: Option<Element<'a, Message>>,
     close: Option<Message>,
     form: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    let header = Row::new()
-        .spacing(12)
-        .align_y(Alignment::Start)
-        .push(
-            Column::new()
-                .spacing(4)
-                .width(Length::Fill)
-                .push(text(localized_copy("Transfer")).size(22).bold())
-                .push(
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(network_coin(ctx.chain, ctx.light))
-                        .push(muted(format!(
-                            "{} · {}",
-                            ctx.cube_name,
-                            network_name(ctx.chain)
-                        ))),
-                ),
-        )
-        .push(
-            Button::new(cross_icon().size(16).style(theme::text::secondary))
-                .padding(8)
-                .style(theme::button::transparent)
-                .on_press_maybe(close),
-        );
-    Container::new(
-        Container::new(
-            Column::new()
-                .spacing(16)
-                .push(header)
-                .push(transfer_steps(ctx.steps(), active))
-                .push_maybe(context)
-                .push(iced::widget::scrollable(
-                    Container::new(
-                        Container::new(form)
-                            .padding(24)
-                            .width(Length::Fill)
-                            .style(form_style),
-                    )
-                    .padding(iced::Padding {
-                        right: 12.0,
-                        ..Default::default()
-                    }),
-                )),
-        )
-        .padding(28)
-        .width(Length::Fill)
-        .max_width(820)
-        .style(dialog_style),
-    )
-    // The card's Fill width makes this wrapper fill the modal too, so the
-    // modal's own centering has nothing to move: center the card here.
-    .center_x(Length::Fill)
-    .padding(24)
-    .into()
-}
-
-/// A drawn radio mark: an accent ring and dot when selected, a muted ring
-/// otherwise. The row around it is the control.
-fn radio_mark<'a>(selected: bool, enabled: bool) -> Element<'a, Message> {
-    let dot = Container::new(Space::new())
-        .width(Length::Fixed(8.0))
-        .height(Length::Fixed(8.0))
-        .style(move |t: &theme::Theme| iced::widget::container::Style {
-            background: selected.then_some(iced::Background::Color(t.colors.shell.accent)),
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-    Container::new(dot)
-        .center_x(Length::Fixed(16.0))
-        .center_y(Length::Fixed(16.0))
-        .style(move |t: &theme::Theme| iced::widget::container::Style {
-            border: iced::Border {
-                color: if selected {
-                    t.colors.shell.accent
-                } else if enabled {
-                    t.colors.shell.ink
-                } else {
-                    t.colors.shell.line
-                },
-                width: 1.5,
-                radius: 8.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
-}
-
-/// P-Transfer's `.opt`: radio, icon, name with an optional sub line, and a
-/// trailing value. A disabled row is drawn muted and never activates.
-#[allow(clippy::too_many_arguments)]
-fn option_row<'a>(
-    id: iced::advanced::widget::Id,
-    icon: Element<'a, Message>,
-    name: Element<'a, Message>,
-    sub: Option<Element<'a, Message>>,
-    trailing: Option<Element<'a, Message>>,
-    selected: bool,
-    on_press: Option<Message>,
-) -> Element<'a, Message> {
-    let enabled = on_press.is_some() || selected;
-    let content = Row::new()
-        .spacing(12)
-        .align_y(Alignment::Center)
-        .push(radio_mark(selected, enabled))
-        .push(icon)
-        .push(
-            Column::new()
-                .spacing(1)
-                .width(Length::Fill)
-                .push(name)
-                .push_maybe(sub),
-        )
-        .push_maybe(trailing);
-    let row = Container::new(content)
-        .padding([12, 12])
-        .width(Length::Fill)
-        .style(move |t| iced::widget::container::Style {
-            background: selected.then_some(iced::Background::Color(t.colors.shell.selected)),
-            border: iced::Border {
-                radius: 8.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-    Action::new(id, row, Message::FocusAction)
-        .padding(0)
-        .width(Length::Fill)
-        .style(theme::button::transparent)
-        .on_press_maybe(on_press)
-        .into()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn transfer_wallet_row<'a>(
-    cube_id: &str,
-    side: PickerSide,
-    kind: WalletKind,
-    selected: bool,
-    balance: Amount,
-    fiat_converter: Option<FiatAmountConverter>,
-    bitcoin_unit: BitcoinDisplayUnit,
-    balance_masked: bool,
-) -> Element<'a, Message> {
-    let empty = balance == Amount::ZERO;
-    option_row(
-        landing_control_id(
-            cube_id,
-            kind.label(),
-            match side {
-                PickerSide::From => "transfer-from",
-                PickerSide::To => "transfer-to",
-            },
-        ),
-        wallet_kind_icon::<Message>(kind, 18.0),
-        text(kind.label()).size(P1_SIZE).bold().into(),
-        (side == PickerSide::From && empty && !balance_masked)
-            .then(|| muted(localized_copy("Empty")).into()),
-        Some(
-            text(balance_text(
-                balance,
-                fiat_converter,
-                bitcoin_unit,
-                balance_masked,
-            ))
-            .size(13)
+) -> TransferScreen<'a> {
+    TransferScreen {
+        step: active,
+        can_leave: close.is_some(),
+        back_to: back_to(ctx.origin),
+        body: Column::new()
+            .spacing(16)
+            .push_maybe(context)
+            .push(form)
             .into(),
-        ),
-        selected,
-        Some(Message::Home(HomeMessage::SelectTransferWallet(side, kind))),
-    )
-}
-
-/// The selected source remains in the From list; To excludes that wallet so
-/// the user cannot choose a same-wallet transfer. Selecting a source that was
-/// previously the destination swaps the pair in the state layer.
-#[allow(clippy::too_many_arguments)]
-fn transfer_wallet_section<'a>(
-    cube_id: &str,
-    side: PickerSide,
-    direction: TransferDirection,
-    has_vault: bool,
-    has_spark: bool,
-    has_liquid: bool,
-    liquid_balance: Amount,
-    spark_balance: Amount,
-    vault_balance: Amount,
-    fiat_converter: Option<FiatAmountConverter>,
-    bitcoin_unit: BitcoinDisplayUnit,
-    balance_masked: bool,
-) -> Element<'a, Message> {
-    let selected = match side {
-        PickerSide::From => Some(direction.from_kind()),
-        PickerSide::To => (!direction.is_other_cube()).then(|| direction.to_kind()),
-    };
-    let mut col = Column::new().spacing(2).push(
-        Container::new(
-            text(match side {
-                PickerSide::From => localized_copy("From"),
-                PickerSide::To => localized_copy("To"),
-            })
-            .size(14)
-            .bold(),
-        )
-        .padding(iced::Padding {
-            bottom: 6.0,
-            ..Default::default()
-        }),
-    );
-    for (kind, balance, available) in [
-        (WalletKind::Spark, spark_balance, has_spark),
-        (WalletKind::Vault, vault_balance, has_vault),
-        (WalletKind::Liquid, liquid_balance, has_liquid),
-    ] {
-        if available && (side == PickerSide::From || kind != direction.from_kind()) {
-            col = col.push(transfer_wallet_row(
-                cube_id,
-                side,
-                kind,
-                Some(kind) == selected,
-                balance,
-                fiat_converter,
-                bitcoin_unit,
-                balance_masked,
-            ));
-        }
     }
-    col.into()
 }
 
-/// Step 1: From and To, with "Another Cube…" last in To.
-fn wallets_page<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
-    let source = ctx.direction.from_kind();
-    let source_empty = ctx.balance(source) == Amount::ZERO;
-    let another_enabled = TransferDirection::to_other_cube(source, ctx.chain).is_some();
-    let another = option_row(
-        landing_control_id(ctx.cube_id, "another-cube", "transfer-to"),
-        cube_outline_icon()
-            .size(18)
-            .style(theme::text::secondary)
-            .into(),
-        text(localized_copy("Another Cube…"))
-            .size(P1_SIZE)
-            .bold()
-            .into(),
-        Some(
-            muted(if another_enabled {
-                localized_copy("Unlocks for this transfer only")
-            } else {
-                localized_copy("From Spark or Vault on Bitcoin mainnet")
-            })
-            .into(),
-        ),
-        None,
-        ctx.direction.is_other_cube(),
-        another_enabled.then_some(Message::Home(HomeMessage::SelectAnotherCube)),
-    );
-    let section = |side| {
-        transfer_wallet_section(
-            ctx.cube_id,
-            side,
-            ctx.direction,
-            ctx.has_vault,
-            ctx.has_spark,
-            ctx.has_liquid,
-            ctx.liquid_balance,
-            ctx.spark_balance,
-            ctx.vault_balance,
-            ctx.fiat_converter,
-            ctx.unit,
-            ctx.balance_masked,
-        )
-    };
-    let continue_note =
-        source_empty.then(|| format!("{} has nothing to transfer.", source.label()));
-    transfer_dialog(
-        ctx,
-        ctx.index(TransferPage::Wallets),
-        None,
-        Some(Message::Home(HomeMessage::BackToHome)),
-        Column::new()
-            .spacing(20)
-            .push(page_heading("Transfer between wallets".into(), None))
-            .push(section(PickerSide::From))
-            .push(group_rule())
-            .push(
-                Column::new()
-                    .spacing(2)
-                    .push(section(PickerSide::To))
-                    .push(another),
-            )
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(dialog_button(
-                        coincube_ui::locale::copy("Continue"),
-                        None,
-                        true,
-                        (!source_empty).then_some(Message::Home(HomeMessage::ContinueFromWallets)),
-                    ))
-                    .push_maybe(continue_note.map(muted)),
-            ),
-    )
+/// The page Back returns to, named as the side menu names it.
+pub fn back_to(origin: Option<WalletKind>) -> &'static str {
+    origin.map_or("Overview", |wallet| wallet.label())
 }
 
-/// Other Cube: the local catalog, every Cube locked and without balances.
-fn other_cube_page<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
-    let mut rows = Column::new().spacing(2);
-    for choice in ctx.other.choices {
-        let selected = ctx.other.selected == Some(choice.cube_id.as_str());
-        let sub =
-            Column::new()
-                .spacing(2)
-                .push(muted(format!(
-                    "{} · {}",
-                    network_name(choice.chain),
-                    localized_copy(match (choice.has_vault, choice.has_spark) {
-                        (true, true) => "Spark and Vault",
-                        (true, false) => "Vault",
-                        (false, true) => "Spark",
-                        (false, false) => "No receiving wallet",
-                    })
-                )))
-                .push_maybe(choice.refusal.map(|reason| {
-                    status_line(x_circle_icon(), StatusTone::Muted, reason.to_string())
-                }));
-        rows = rows.push(option_row(
-            landing_control_id(ctx.cube_id, &choice.cube_id, "transfer-cube"),
-            network_coin(choice.chain, ctx.light),
-            text(choice.name.clone()).size(P1_SIZE).bold().into(),
-            Some(sub.into()),
-            Some(
-                Row::new()
-                    .spacing(4)
-                    .align_y(Alignment::Center)
-                    .push(lock_icon().size(13).style(theme::text::secondary))
-                    .push(muted(localized_copy("Locked")))
-                    .into(),
-            ),
-            selected,
-            choice
-                .refusal
-                .is_none()
-                .then(|| Message::Home(HomeMessage::SelectOtherCube(choice.cube_id.clone()))),
-        ));
+/// The steps every transfer takes, for the page head's rule.
+pub fn transfer_steps_row<'a>(step: usize) -> Element<'a, Message> {
+    coincube_ui::component::tenshu::steps(&TRANSFER_STEPS, step)
+}
+
+/// The Transfer page's head: title and Cube line, the steps on its rule,
+/// and Back to Overview unless a send is in flight.
+pub fn transfer_page_head<'a>(
+    cache: &crate::app::cache::Cache,
+    screen: &TransferScreen<'a>,
+) -> coincube_ui::component::tenshu::PageHead<'a, Message> {
+    let head = crate::app::view::page_head(cache, localized_copy("Transfer"))
+        .rule(transfer_steps_row(screen.step));
+    if screen.can_leave {
+        head.back(screen.back_to, Message::Home(HomeMessage::LeaveTransfer))
+    } else {
+        head
     }
-    if ctx.other.choices.is_empty() {
-        rows = rows.push(muted(localized_copy("No other Cubes on this device.")));
-    }
-    let selected = ctx.other.choice().filter(|choice| choice.refusal.is_none());
-    let wallets = selected.map(|choice| {
-        let mut rows = Column::new().spacing(2);
-        for kind in [WalletKind::Spark, WalletKind::Vault] {
-            if choice.can_receive(kind) {
-                rows = rows.push(option_row(
-                    landing_control_id(ctx.cube_id, kind.label(), "other-cube-wallet"),
-                    wallet_kind_icon::<Message>(kind, 18.0),
-                    text(kind.label()).size(P1_SIZE).bold().into(),
-                    None,
-                    None,
-                    kind == ctx.direction.to_kind(),
-                    Some(Message::Home(HomeMessage::SelectOtherCubeWallet(kind))),
-                ));
-            }
-        }
-        group(Some(localized_copy("Receiving wallet").into()), rows)
-    });
-    let continue_label = selected.map_or("Continue".to_string(), |choice| {
-        format!("Continue with {}", choice.name)
-    });
-    transfer_dialog(
-        ctx,
-        ctx.index(TransferPage::OtherCube),
-        None,
-        Some(Message::Home(HomeMessage::BackToHome)),
-        Column::new()
-            .spacing(20)
-            .push(page_heading(
-                "Choose the other Cube".into(),
-                Some(localized_format!(
-                    "{} Cubes only.",
-                    "{} Cubes sólo.",
-                    network_name(ctx.chain)
-                )),
-            ))
-            .push(group(Some("Other Cubes".into()), rows))
-            .push_maybe(wallets)
-            .push_maybe(ctx.other.error.map(|error| {
-                status_line(
-                    exclamation_circle_icon(),
-                    StatusTone::Bad,
-                    error.to_string(),
-                )
-            }))
-            .push(status_line(
-                question_circle_icon(),
-                StatusTone::Muted,
-                "Locked Cubes show no balances.".into(),
-            ))
-            .push(page_actions(
-                Some(back_button(
-                    CopyText::Back.get(),
-                    Some(Message::Home(HomeMessage::PreviousStep)),
-                )),
-                dialog_button(
-                    continue_label,
-                    None,
-                    true,
-                    selected.map(|_| Message::Home(HomeMessage::ContinueWithCube)),
-                ),
-            )),
-    )
 }
 
 /// One row of the unlock checks: done, running or waiting.
@@ -1469,12 +992,325 @@ fn check_row<'a>(label: String, state: std::cmp::Ordering) -> Element<'a, Messag
         .into()
 }
 
-/// Unlock: the other Cube's own PIN or passkey, then its checks.
-fn unlock_page<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
+fn parse_amount(value: &form::Value<String>, unit: BitcoinDisplayUnit) -> Option<Amount> {
+    let denomination = match unit {
+        BitcoinDisplayUnit::BTC => Denomination::Bitcoin,
+        BitcoinDisplayUnit::Sats => Denomination::Satoshi,
+    };
+    (!value.value.is_empty())
+        .then(|| Amount::from_str_in(&value.value, denomination).ok())
+        .flatten()
+}
+
+fn fiat_estimate(amount: Amount, fiat_converter: Option<FiatAmountConverter>) -> Option<String> {
+    fiat_converter.map(|converter| {
+        let fiat = converter.convert(amount);
+        format!("≈ {} {}", fiat.to_formatted_string(), fiat.currency())
+    })
+}
+
+/// Under the amount while Max is on.
+const MAX_NOTE: &str = "Sends the whole balance. Fees come out of this amount.";
+
+/// The route tiles' focus ids.
+const TRANSFER_FROM_TILE_ID: &str = "transfer-from-tile";
+const TRANSFER_TO_TILE_ID: &str = "transfer-to-tile";
+
+/// The wallets this Cube offers, in menu order. Liquid only where the Cube
+/// still has a usable Liquid wallet.
+fn cube_wallets(ctx: &TransferCtx<'_>) -> Vec<WalletKind> {
+    [
+        (WalletKind::Spark, ctx.has_spark),
+        (WalletKind::Vault, ctx.has_vault),
+        (WalletKind::Liquid, ctx.has_liquid),
+    ]
+    .iter()
+    .filter_map(|&(kind, available)| available.then_some(kind))
+    .collect()
+}
+
+/// A wallet's logo: bitcoin, badged with where it lives.
+fn wallet_logo<'a>(kind: WalletKind, size: f32) -> Element<'a, Message> {
+    coincube_ui::image::asset_network_logo(
+        "btc",
+        match kind {
+            WalletKind::Spark => "spark",
+            WalletKind::Vault => "bitcoin",
+            WalletKind::Liquid => "liquid",
+        },
+        size,
+    )
+}
+
+fn from_option_id(kind: WalletKind) -> &'static str {
+    match kind {
+        WalletKind::Spark => "transfer-from-spark",
+        WalletKind::Vault => "transfer-from-vault",
+        WalletKind::Liquid => "transfer-from-liquid",
+    }
+}
+
+fn to_option_id(kind: WalletKind) -> &'static str {
+    match kind {
+        WalletKind::Spark => "transfer-to-spark",
+        WalletKind::Vault => "transfer-to-vault",
+        WalletKind::Liquid => "transfer-to-liquid",
+    }
+}
+
+/// The From menu: this Cube's wallets with what each can send. An empty
+/// wallet can't be picked.
+fn from_menu<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
+    use crate::app::view::shared::picker::{
+        dropdown_heading, dropdown_menu, dropdown_option, DROPDOWN_LOGO,
+    };
+    let source = ctx.direction.from_kind();
+    let mut list = coincube_ui::widget::Column::new().push(dropdown_heading(&localized_format!(
+        "Wallets in {}",
+        "Billeteras en {}",
+        ctx.cube_name
+    )));
+    for kind in cube_wallets(ctx) {
+        let balance = ctx.balance(kind);
+        let empty = balance == Amount::ZERO && !ctx.balance_masked;
+        list = list.push(dropdown_option(
+            from_option_id(kind),
+            wallet_logo(kind, DROPDOWN_LOGO),
+            kind.label(),
+            "BTC",
+            Some(if empty {
+                localized_copy("Empty · nothing to transfer").to_string()
+            } else {
+                localized_format!(
+                    "Available {}",
+                    "{} disponible",
+                    bitcoin_text(balance, ctx.unit, ctx.balance_masked)
+                )
+            }),
+            kind == source,
+            (!empty).then_some(Message::Home(HomeMessage::SelectTransferWallet(
+                PickerSide::From,
+                kind,
+            ))),
+            Message::FocusAction,
+        ));
+    }
+    dropdown_menu(list)
+}
+
+/// The To menu: this Cube's other wallets, then each wallet another local
+/// Cube on this network can receive into. Locked Cubes show no balances;
+/// one that can't receive says why.
+fn to_menu<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
+    use crate::app::view::shared::picker::{
+        dropdown_heading, dropdown_menu, dropdown_note, dropdown_option, DROPDOWN_LOGO,
+    };
+    let source = ctx.direction.from_kind();
+    let other = ctx.direction.is_other_cube();
+    let mut list = coincube_ui::widget::Column::new().push(dropdown_heading(&localized_format!(
+        "This Cube · {}",
+        "Este Cubo · {}",
+        ctx.cube_name
+    )));
+    for kind in cube_wallets(ctx).into_iter().filter(|kind| *kind != source) {
+        list = list.push(dropdown_option(
+            to_option_id(kind),
+            wallet_logo(kind, DROPDOWN_LOGO),
+            kind.label(),
+            "BTC",
+            Some(localized_format!(
+                "Balance {}",
+                "Saldo {}",
+                bitcoin_text(ctx.balance(kind), ctx.unit, ctx.balance_masked)
+            )),
+            !other && ctx.direction.to_kind() == kind,
+            Some(Message::Home(HomeMessage::SelectTransferWallet(
+                PickerSide::To,
+                kind,
+            ))),
+            Message::FocusAction,
+        ));
+    }
+    if TransferDirection::to_other_cube(source, ctx.chain).is_some() {
+        list = list.push(dropdown_heading(localized_copy("Other Cubes")));
+        if ctx.other.choices.is_empty() {
+            list = list.push(dropdown_note(localized_copy(
+                "No other Cubes on this device.",
+            )));
+        }
+        for choice in ctx.other.choices {
+            let kinds: Vec<WalletKind> = [WalletKind::Spark, WalletKind::Vault]
+                .iter()
+                .copied()
+                .filter(|kind| choice.can_receive(*kind))
+                .collect();
+            if kinds.is_empty() {
+                // One row that says why this Cube can't receive.
+                list = list.push(dropdown_option(
+                    format!("transfer-to-cube-{}", choice.cube_id),
+                    wallet_logo(WalletKind::Spark, DROPDOWN_LOGO),
+                    &choice.name,
+                    "Can't receive",
+                    Some(
+                        choice
+                            .refusal
+                            .map(|reason| reason.to_string())
+                            .unwrap_or_else(|| {
+                                localized_copy("No wallet that can receive").to_string()
+                            }),
+                    ),
+                    false,
+                    None,
+                    Message::FocusAction,
+                ));
+                continue;
+            }
+            for kind in kinds {
+                let selected = other
+                    && ctx.other.selected == Some(choice.cube_id.as_str())
+                    && ctx.direction.to_kind() == kind;
+                list = list.push(dropdown_option(
+                    format!("transfer-to-{}-{}", choice.cube_id, kind.label()),
+                    wallet_logo(kind, DROPDOWN_LOGO),
+                    &localized_format!("{} in {}", "{} en {}", kind.label(), choice.name),
+                    if choice.passkey { "Passkey" } else { "PIN" },
+                    Some(localized_copy("Locked · unlocks for this transfer").to_string()),
+                    selected,
+                    Some(Message::Home(HomeMessage::PickOtherCubeWallet(
+                        choice.cube_id.clone(),
+                        kind,
+                    ))),
+                    Message::FocusAction,
+                ));
+            }
+        }
+        list = list.push(dropdown_note(localized_copy(
+            "Locked Cubes show no balances.",
+        )));
+    }
+    dropdown_menu(list)
+}
+
+/// A route tile that opens its menu: the Send tile's surface, the accent
+/// line while open.
+fn route_tile<'a>(
+    id: &'static str,
+    body: Element<'a, Message>,
+    open: bool,
+    side: PickerSide,
+) -> Element<'a, Message> {
+    Action::new(id, body, Message::FocusAction)
+        .style(if open {
+            crate::app::view::spark::send::open_tile_button_style
+        } else {
+            crate::app::view::spark::send::receive_tile_button_style
+        })
+        .padding(0)
+        .width(Length::Fill)
+        .focus_radius(8.0)
+        .on_press(Message::Home(HomeMessage::OpenWalletPicker(side)))
+        .into()
+}
+
+/// From → To, as Send's YOU SEND → THEY RECEIVE pair: each tile opens its
+/// menu under it.
+fn transfer_route_tiles<'a>(ctx: &TransferCtx<'a>, page: TransferPage) -> Element<'a, Message> {
+    use crate::app::view::shared::picker::anchored_dropdown;
+    use crate::app::view::spark::route_tile_body_with_detail;
+    let direction = ctx.direction;
+    let source = direction.from_kind();
+    let from_open = ctx.menu == Some(PickerSide::From);
+    let to_open = ctx.menu == Some(PickerSide::To);
+    let from = route_tile(
+        TRANSFER_FROM_TILE_ID,
+        route_tile_body_with_detail(
+            wallet_logo(source, 36.0),
+            "From",
+            None,
+            source.label().to_string(),
+            localized_format!("in {}", "en {}", ctx.cube_name),
+            Some(localized_format!(
+                "Available {}",
+                "{} disponible",
+                bitcoin_text(ctx.balance(source), ctx.unit, ctx.balance_masked)
+            )),
+            Some(from_open),
+        ),
+        from_open,
+        PickerSide::From,
+    );
+    let to_body = if !direction.is_other_cube() {
+        let kind = direction.to_kind();
+        route_tile_body_with_detail(
+            wallet_logo(kind, 36.0),
+            "To",
+            None,
+            kind.label().to_string(),
+            localized_format!("in {}", "en {}", ctx.cube_name),
+            Some(localized_format!(
+                "Balance {}",
+                "Saldo {}",
+                bitcoin_text(ctx.balance(kind), ctx.unit, ctx.balance_masked)
+            )),
+            Some(to_open),
+        )
+    } else if let Some(choice) = ctx.other.choice().filter(|_| page != TransferPage::Wallets) {
+        let unlocked = page == TransferPage::Amount;
+        route_tile_body_with_detail(
+            wallet_logo(direction.to_kind(), 36.0),
+            "To",
+            Some(if unlocked { "Unlocked" } else { "Locked" }),
+            direction.to_wallet().to_string(),
+            localized_format!("in {}", "en {}", choice.name),
+            Some(if unlocked {
+                localized_copy("Unlocked for this transfer").to_string()
+            } else {
+                localized_copy("Unlock it below to continue").to_string()
+            }),
+            Some(to_open),
+        )
+    } else {
+        route_tile_body_with_detail(
+            wallet_logo(direction.to_kind(), 36.0),
+            "To",
+            None,
+            localized_copy("Another Cube").to_string(),
+            String::new(),
+            Some(localized_copy("Choose where it goes").to_string()),
+            Some(to_open),
+        )
+    };
+    let to = route_tile(TRANSFER_TO_TILE_ID, to_body, to_open, PickerSide::To);
+    Row::new()
+        .spacing(12)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .push(
+            Container::new(anchored_dropdown(
+                from,
+                from_open.then(|| from_menu(ctx)),
+                Message::Home(HomeMessage::CloseWalletPicker),
+            ))
+            .width(Length::FillPortion(1)),
+        )
+        .push(text("→").size(P1_SIZE + 2).style(theme::text::secondary))
+        .push(
+            Container::new(anchored_dropdown(
+                to,
+                to_open.then(|| to_menu(ctx)),
+                Message::Home(HomeMessage::CloseWalletPicker),
+            ))
+            .width(Length::FillPortion(1)),
+        )
+        .into()
+}
+
+/// The other Cube's unlock, inside the card: only the method that Cube
+/// uses (its PIN boxes, or its passkey), then its checks.
+fn unlock_section<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
     let name = ctx.other.name();
     let wallet = ctx.direction.to_wallet();
     let passkey = ctx.other.choice().is_some_and(|choice| choice.passkey);
-    let pin_complete = ctx.other.pin.is_some_and(|pin| pin.is_complete());
     let error = ctx.other.error.map(|error| {
         status_line(
             exclamation_circle_icon(),
@@ -1482,59 +1318,80 @@ fn unlock_page<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
             error.to_string(),
         )
     });
-    let body: Element<'a, Message> = match ctx.other.phase {
+    let heading = |label: String| {
+        Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(
+                lock_icon()
+                    .size(14)
+                    .style(|t: &theme::Theme| iced::widget::text::Style {
+                        color: Some(t.colors.shell.warn),
+                    }),
+            )
+            .push(text(label).bold())
+    };
+    match ctx.other.phase {
+        UnlockPhase::Credential { busy } if passkey => Column::new()
+            .spacing(12)
+            .push(heading(localized_format!(
+                "Unlock {} with its passkey to transfer into it",
+                "Desbloquea {} con su llave de acceso para transferir",
+                name
+            )))
+            .push(dialog_button(
+                coincube_ui::locale::copy("Unlock with passkey"),
+                Some(key_icon()),
+                true,
+                (!busy).then_some(Message::Home(HomeMessage::UnlockOtherCubePasskey)),
+            ))
+            .push(muted(localized_format!(
+                "macOS asks you to confirm. {} locks again when this transfer ends.",
+                "macOS te pide confirmar. {} se bloquea otra vez al terminar.",
+                name
+            )))
+            .push_maybe(error)
+            .into(),
         UnlockPhase::Credential { busy } => {
-            let unlock: Element<'a, Message> = if passkey {
-                dialog_button(
-                    coincube_ui::locale::copy("Use passkey"),
-                    Some(key_icon()),
-                    true,
-                    (!busy).then_some(Message::Home(HomeMessage::UnlockOtherCubePasskey)),
-                )
-            } else {
-                button::primary_loading(
-                    None,
-                    CopyText::Unlock.get(),
-                    busy,
-                    (pin_complete && !busy).then_some(Message::Home(HomeMessage::UnlockOtherCube)),
-                )
-                .width(Length::Fixed(120.0))
-                .into()
-            };
+            let pin_complete = ctx.other.pin.is_some_and(|pin| pin.is_complete());
             Column::new()
-                .spacing(16)
-                .push_maybe((!passkey).then(|| {
-                    Column::new()
-                        .spacing(6)
-                        .push(text(format!("{name} PIN")).bold())
+                .spacing(12)
+                .push(heading(localized_format!(
+                    "Enter {}'s PIN to transfer into it",
+                    "Introduce la PIN de {} para transferir",
+                    name
+                )))
+                .push(
+                    Row::new()
+                        .spacing(16)
+                        .align_y(Alignment::Center)
                         .push_maybe(ctx.other.pin.map(|pin| {
                             pin.face_view()
                                 .map(|message| Message::Home(HomeMessage::OtherCubePin(message)))
                         }))
-                        .push(muted(localized_format!(
-                            "Not {}'s PIN.",
-                            "No la PIN de {}.",
-                            ctx.cube_name
-                        )))
-                }))
-                .push_maybe(error)
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(unlock)
-                        .push(Space::new().width(Length::Fill))
-                        .push(back_button(
-                            CopyText::Cancel.get(),
-                            Some(Message::Home(HomeMessage::PreviousStep)),
-                        )),
+                        .push(
+                            button::primary_loading(
+                                None,
+                                CopyText::Unlock.get(),
+                                busy,
+                                (pin_complete && !busy)
+                                    .then_some(Message::Home(HomeMessage::UnlockOtherCube)),
+                            )
+                            .width(Length::Fixed(120.0)),
+                        ),
                 )
+                .push(muted(localized_format!(
+                    "Not {}'s PIN. {} locks again when this transfer ends.",
+                    "No la PIN de {}. {} se bloquea otra vez al terminar.",
+                    ctx.cube_name,
+                    name
+                )))
+                .push_maybe(error)
                 .into()
         }
         UnlockPhase::Checks(done) => {
             let state = |row: u8| done.cmp(&row).reverse();
-            let rows = Column::new()
-                .push(iced::widget::rule::horizontal(1))
+            Column::new()
                 .push(check_row(
                     if passkey {
                         "Passkey accepted"
@@ -1565,91 +1422,250 @@ fn unlock_page<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
                         "Getting a receive address…".to_string()
                     },
                     state(2),
-                ));
-            Column::new()
-                .spacing(16)
-                .push(rows)
-                .push_maybe(error)
-                .push(page_actions(
-                    Some(back_button(
-                        "Cancel and lock",
-                        Some(Message::Home(HomeMessage::PreviousStep)),
-                    )),
-                    dialog_button(
-                        coincube_ui::locale::copy("Continue"),
-                        None,
-                        true,
-                        (done >= UNLOCK_CHECKS)
-                            .then_some(Message::Home(HomeMessage::ContinueFromUnlock)),
-                    ),
                 ))
+                .push_maybe(error.map(|error| Container::new(error).padding([12, 0])))
                 .into()
         }
+    }
+}
+
+/// The fee a direction's quote reported, if there is one yet.
+fn quoted_fees(
+    direction: TransferDirection,
+    prepare_onchain_send_response: Option<&PreparePayOnchainResponse>,
+    vault_fees: Option<Amount>,
+    spark_send_fee_sat: Option<u64>,
+) -> Option<Amount> {
+    match direction {
+        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
+            prepare_onchain_send_response.map(|response| Amount::from_sat(response.total_fees_sat))
+        }
+        TransferDirection::VaultToLiquid
+        | TransferDirection::VaultToSpark
+        | TransferDirection::VaultToOtherSpark
+        | TransferDirection::VaultToOtherCube => vault_fees,
+        // Spark-sourced: `spark.prepare_send` quoted a `fee_sat` at step
+        // 1→2 and the state layer stashed it on `spark_send_fee_sat`.
+        TransferDirection::SparkToLiquid
+        | TransferDirection::SparkToVault
+        | TransferDirection::SparkToOtherSpark
+        | TransferDirection::SparkToOtherCube => spark_send_fee_sat.map(Amount::from_sat),
+    }
+}
+
+/// A fee for display: "None" when the rail charges nothing.
+fn fee_text(fee: Amount, unit: BitcoinDisplayUnit, masked: bool) -> String {
+    if fee == Amount::ZERO {
+        localized_copy("None").to_string()
+    } else {
+        bitcoin_text(fee, unit, masked)
+    }
+}
+
+/// Before a quote: what the fee will be. Spark to Spark moves inside Spark
+/// and charges nothing; every other route is quoted by Prepare.
+fn expected_fee_text(direction: TransferDirection) -> Option<&'static str> {
+    (direction == TransferDirection::SparkToOtherSpark).then_some("None · Spark to Spark")
+}
+
+/// One label/value row of a card or the rail.
+fn kv_row<'a>(
+    label: impl Into<String>,
+    value: impl Into<String>,
+    value_muted: bool,
+) -> Element<'a, Message> {
+    let value = text(value.into()).size(14);
+    Row::new()
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .push(
+            text(label.into())
+                .size(14)
+                .style(theme::text::secondary)
+                .width(Length::Fill),
+        )
+        .push(if value_muted {
+            value.style(theme::text::secondary)
+        } else {
+            value
+        })
+        .into()
+}
+
+/// A section of the Details or Review card.
+fn card_section<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    Container::new(content)
+        .padding([20, 24])
+        .width(Length::Fill)
+        .into()
+}
+
+/// The Details or Review card: sections divided by hairlines, on the rail's
+/// surface.
+fn transfer_card<'a>(sections: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    let mut column = Column::new();
+    for (index, section) in sections.into_iter().enumerate() {
+        if index > 0 {
+            column = column.push(iced::widget::rule::horizontal(1));
+        }
+        column = column.push(section);
+    }
+    Container::new(column)
+        .width(Length::Fill)
+        .style(crate::app::view::shared::payment_columns::rail_card_style)
+        .into()
+}
+
+/// The rail beside the card, as on Send and Swap: what this Cube holds,
+/// then this transfer and what it leaves.
+fn transfer_rail<'a>(
+    ctx: &TransferCtx<'a>,
+    amount: Option<Amount>,
+    fees: Option<Amount>,
+) -> Element<'a, Message> {
+    let direction = ctx.direction;
+    let mut holdings = Column::new().spacing(12).push(
+        text(localized_format!(
+            "Available in {}",
+            "Disponible en {}",
+            ctx.cube_name
+        ))
+        .size(13)
+        .style(theme::text::secondary),
+    );
+    let mut total = Amount::ZERO;
+    for kind in cube_wallets(ctx) {
+        total += ctx.balance(kind);
+        holdings = holdings.push(
+            Row::new()
+                .spacing(16)
+                .push(text(kind.label()).size(15).width(Length::Fill))
+                .push(
+                    text(bitcoin_text(
+                        ctx.balance(kind),
+                        ctx.unit,
+                        ctx.balance_masked,
+                    ))
+                    .size(15),
+                ),
+        );
+    }
+    let total_text = match fiat_estimate(total, ctx.fiat_converter) {
+        _ if ctx.balance_masked => "••••••".to_string(),
+        Some(fiat) => fiat.trim_start_matches("≈ ").to_string(),
+        None => bitcoin_text(total, ctx.unit, false),
     };
-    transfer_dialog(
-        ctx,
-        ctx.index(TransferPage::Unlock),
-        None,
-        Some(Message::Home(HomeMessage::BackToHome)),
-        Column::new()
+    holdings = holdings.push(iced::widget::rule::horizontal(1)).push(
+        Row::new()
             .spacing(16)
-            .push(page_heading(
-                format!("Unlock {name} for this transfer only"),
-                Some("Locks again when the transfer ends.".into()),
-            ))
+            .align_y(Alignment::Center)
             .push(
-                Row::new()
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .push(network_coin(ctx.chain, ctx.light))
-                    .push(muted(format!(
-                        "{name} · {} · {wallet}",
-                        network_name(ctx.chain)
-                    ))),
+                text(localized_copy("Total"))
+                    .size(15)
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
             )
+            .push(text(total_text).size(24).bold()),
+    );
+
+    let source = direction.from_kind();
+    let spent = amount.map(|amount| amount + fees.unwrap_or(Amount::ZERO));
+    let fee_value = match fees {
+        Some(fee) => (fee_text(fee, ctx.unit, ctx.balance_masked), false),
+        None => match expected_fee_text(direction) {
+            Some(fee) => (localized_copy(fee).to_string(), false),
+            None => (localized_copy("Quoted at Prepare").to_string(), true),
+        },
+    };
+    let source_after = spent.map_or_else(
+        || bitcoin_text(ctx.balance(source), ctx.unit, ctx.balance_masked),
+        |spent| {
+            bitcoin_text(
+                ctx.balance(source)
+                    .checked_sub(spent)
+                    .unwrap_or(Amount::ZERO),
+                ctx.unit,
+                ctx.balance_masked,
+            )
+        },
+    );
+    let (to_label, to_after, to_muted) = if direction.is_other_cube() {
+        (
+            localized_format!(
+                "{} in {} after",
+                "{} en {} después",
+                direction.to_wallet(),
+                ctx.other.name()
+            ),
+            match amount {
+                Some(amount) if ctx.other.unlocked => {
+                    format!("+{}", bitcoin_text(amount, ctx.unit, ctx.balance_masked))
+                }
+                _ => localized_copy("Locked").to_string(),
+            },
+            !(ctx.other.unlocked && amount.is_some()),
+        )
+    } else {
+        let to = direction.to_kind();
+        (
+            localized_format!("{} after", "{} después", to.label()),
+            bitcoin_text(
+                ctx.balance(to) + amount.unwrap_or(Amount::ZERO),
+                ctx.unit,
+                ctx.balance_masked,
+            ),
+            false,
+        )
+    };
+    let this_transfer = Column::new()
+        .spacing(10)
+        .push(text(localized_copy("This transfer")).size(15).bold())
+        .push(kv_row(
+            localized_copy("Route"),
+            route_text(direction),
+            false,
+        ))
+        .push(match amount {
+            Some(amount) => kv_row(
+                localized_copy("Amount"),
+                bitcoin_text(amount, ctx.unit, ctx.balance_masked),
+                false,
+            ),
+            None => kv_row(localized_copy("Amount"), localized_copy("Not set"), true),
+        })
+        .push(kv_row(localized_copy("Fee"), fee_value.0, fee_value.1))
+        .push(kv_row(
+            localized_format!("{} after", "{} después", source.label()),
+            source_after,
+            false,
+        ))
+        .push(kv_row(to_label, to_after, to_muted));
+    crate::app::view::shared::payment_columns::rail_card(
+        Column::new()
+            .spacing(20)
+            .push(holdings)
             .push(iced::widget::rule::horizontal(1))
-            .push(body),
+            .push(this_transfer),
     )
 }
 
-fn parse_amount(value: &form::Value<String>, unit: BitcoinDisplayUnit) -> Option<Amount> {
-    let denomination = match unit {
-        BitcoinDisplayUnit::BTC => Denomination::Bitcoin,
-        BitcoinDisplayUnit::Sats => Denomination::Satoshi,
-    };
-    (!value.value.is_empty())
-        .then(|| Amount::from_str_in(&value.value, denomination).ok())
-        .flatten()
-}
-
-fn fiat_estimate(amount: Amount, fiat_converter: Option<FiatAmountConverter>) -> Option<String> {
-    fiat_converter.map(|converter| {
-        let fiat = converter.convert(amount);
-        format!("≈ {} {}", fiat.to_formatted_string(), fiat.currency())
-    })
-}
-
-/// Under the amount while Max is on.
-const MAX_NOTE: &str = "Sends the whole balance. Fees come out of this amount.";
-
-/// Amount: the destination, then the amount in the wallet's display unit, fiat estimate
-/// and the rails' limits; Prepare fetches the destination and the quote.
-fn amount_page<'a>(
+/// Details: one card, as on Send and Swap. From → To tiles open menus of
+/// this Cube's wallets and other local Cubes; another Cube unlocks inside
+/// the card; then the amount, and Prepare.
+fn details_page<'a>(
     ctx: &TransferCtx<'a>,
+    page: TransferPage,
     amount: &'a form::Value<String>,
     onchain_send_limit: Option<(u64, u64)>,
     onchain_receive_limit: Option<(u64, u64)>,
-) -> Element<'a, Message> {
+) -> TransferScreen<'a> {
     let direction = ctx.direction;
     let source = direction.from_kind();
-    let parsed = parse_amount(amount, ctx.unit).filter(|_| amount.valid);
-    let estimate = match parsed {
-        Some(parsed) if !ctx.balance_masked => fiat_estimate(parsed, ctx.fiat_converter),
-        Some(_) => None,
-        None => Some("Enter an amount".to_string()),
-    };
-    // Helper text reflects the per-direction effective minimum (§Design
-    // section 4) composed with Breez's SDK limits on swap-involving legs.
+    let source_empty = ctx.balance(source) == Amount::ZERO;
+    let other = direction.is_other_cube();
+    let amount_open = page == TransferPage::Amount || !other;
+    let parsed = parse_amount(amount, ctx.unit).filter(|_| amount.valid && amount_open);
+
     let effective_min = crate::app::state::effective_transfer_min_sat(
         direction,
         onchain_send_limit,
@@ -1666,91 +1682,155 @@ fn amount_page<'a>(
         (Some(min), None) => format!("Minimum {}", limit(min)),
         _ => "Loading limits…".to_string(),
     };
-    let destination: Element<'a, Message> = if direction.is_other_cube() {
-        group(
-            Some(format!("Wallet in {}", ctx.other.name())),
-            option_row(
-                landing_control_id(ctx.cube_id, "other-cube-wallet", "transfer-dest"),
-                wallet_kind_icon::<Message>(direction.to_kind(), 18.0),
-                text(direction.to_wallet()).size(P1_SIZE).bold().into(),
-                None,
-                None,
-                true,
-                None,
-            ),
-        )
-    } else {
-        group(
-            Some("To".into()),
-            Row::new()
-                .spacing(4)
-                .push(text(direction.to_wallet()))
-                .push(muted(localized_copy("· this Cube"))),
-        )
+    let estimate = match parsed {
+        Some(parsed) if !ctx.balance_masked => fiat_estimate(parsed, ctx.fiat_converter),
+        _ => None,
     };
-    let input = match ctx.unit {
-        BitcoinDisplayUnit::BTC => form::Form::new_amount_btc("0", amount, |msg| {
-            Message::Home(HomeMessage::AmountEdited(msg))
-        }),
-        BitcoinDisplayUnit::Sats => form::Form::new_amount_sats("0", amount, |msg| {
-            Message::Home(HomeMessage::AmountEdited(msg))
-        }),
+
+    let amount_body: Element<'a, Message> = if amount_open {
+        let input = match ctx.unit {
+            BitcoinDisplayUnit::BTC => form::Form::new_amount_btc("0", amount, |msg| {
+                Message::Home(HomeMessage::AmountEdited(msg))
+            }),
+            BitcoinDisplayUnit::Sats => form::Form::new_amount_sats("0", amount, |msg| {
+                Message::Home(HomeMessage::AmountEdited(msg))
+            }),
+        }
+        .size(18)
+        .padding(12);
+        Column::new()
+            .spacing(8)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(Container::new(input).width(Length::Fill))
+                    .push(muted(unit_label(ctx.unit)))
+                    .push(
+                        button::secondary_compact(None, localized_copy("Max"))
+                            .padding([10, 16])
+                            .on_press_maybe(
+                                (!ctx.max && ctx.balance(source) > Amount::ZERO)
+                                    .then_some(Message::Home(HomeMessage::TransferMax)),
+                            ),
+                    ),
+            )
+            .push_maybe(ctx.max.then(|| muted(localized_copy(MAX_NOTE))))
+            .push(muted(match estimate {
+                Some(estimate) => format!("{estimate} · {limits}"),
+                None => limits,
+            }))
+            .into()
+    } else {
+        muted(if other && page != TransferPage::Wallets {
+            localized_format!(
+                "Unlock {} to enter an amount.",
+                "Desbloquea {} para introducir un importe.",
+                ctx.other.name()
+            )
+        } else {
+            localized_copy("Choose where it goes to enter an amount.").to_string()
+        })
+        .into()
+    };
+
+    let fee = match expected_fee_text(direction) {
+        Some(fee) => (localized_copy(fee).to_string(), false),
+        None => (localized_copy("Shown when you prepare").to_string(), true),
+    };
+    let summary = Column::new()
+        .spacing(10)
+        .push(match parsed {
+            Some(parsed) => kv_row(
+                localized_copy("They receive about"),
+                bitcoin_text(parsed, ctx.unit, ctx.balance_masked),
+                false,
+            ),
+            None => kv_row(localized_copy("They receive about"), "—", true),
+        })
+        .push(kv_row(
+            localized_copy("Route"),
+            route_text(direction),
+            false,
+        ))
+        .push(kv_row(localized_copy("Fee"), fee.0, fee.1));
+
+    let status = if source_empty && !ctx.balance_masked {
+        localized_format!(
+            "{} has nothing to transfer.",
+            "{} no tiene nada que transferir.",
+            source.label()
+        )
+    } else if other && page == TransferPage::Wallets {
+        localized_copy("Choose another Cube in To.").to_string()
+    } else if !amount_open {
+        localized_format!(
+            "Unlock {} to continue.",
+            "Desbloquea {} para continuar.",
+            ctx.other.name()
+        )
+    } else if parsed.is_none() {
+        localized_copy("Enter an amount.").to_string()
+    } else {
+        localized_copy("Prepare gets the route and fee. Nothing moves yet.").to_string()
+    };
+    let footer = Row::new()
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .push(muted(status).width(Length::Fill))
+        .push(dialog_button(
+            coincube_ui::locale::copy("Prepare"),
+            None,
+            true,
+            parsed.map(|_| Message::Home(HomeMessage::NextStep)),
+        ));
+
+    let mut sections = vec![card_section(
+        Column::new()
+            .spacing(16)
+            .push(text(localized_copy("Transfer details")).size(18).bold())
+            .push(transfer_route_tiles(ctx, page)),
+    )];
+    if other && page == TransferPage::Unlock {
+        sections.push(card_section(unlock_section(ctx)));
+    } else if other && page == TransferPage::OtherCube {
+        // The pick didn't start an unlock: no PIN or passkey control could
+        // do anything here, so say why and how to try again.
+        sections.push(card_section(
+            Column::new()
+                .spacing(8)
+                .push_maybe(ctx.other.error.map(|error| {
+                    status_line(
+                        exclamation_circle_icon(),
+                        StatusTone::Bad,
+                        error.to_string(),
+                    )
+                }))
+                .push(muted(localized_format!(
+                    "{} can't be unlocked here. Choose it again in To, or pick another wallet.",
+                    "{} no se puede desbloquear aquí. Elígelo de nuevo en Para, o elige otra billetera.",
+                    ctx.other.name()
+                ))),
+        ));
     }
-    .size(18)
-    .padding(10);
+    sections.push(card_section(
+        Column::new()
+            .spacing(10)
+            .push(text(localized_copy("Amount")).bold())
+            .push(amount_body),
+    ));
+    sections.push(card_section(summary));
+    sections.push(card_section(footer));
+
     transfer_dialog(
         ctx,
-        ctx.index(TransferPage::Amount),
-        other_cube_context(ctx, true, false),
-        Some(Message::Home(HomeMessage::BackToHome)),
-        Column::new()
-            .spacing(20)
-            .push(page_heading(
-                "Destination and amount".into(),
-                Some(localized_format!(
-                    "From {} · Available {}",
-                    "{} · {} disponible",
-                    source.label(),
-                    bitcoin_text(ctx.balance(source), ctx.unit, ctx.balance_masked)
-                )),
-            ))
-            .push(destination)
-            .push(group_rule())
-            .push(
-                Column::new()
-                    .spacing(6)
-                    .push(text(localized_copy("Amount")).bold())
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(Container::new(input).width(Length::Fixed(260.0)))
-                            .push(muted(unit_label(ctx.unit)))
-                            .push(
-                                button::secondary_compact(None, localized_copy("Max"))
-                                    .padding([8, 14])
-                                    .on_press_maybe(
-                                        (!ctx.max && ctx.balance(source) > Amount::ZERO)
-                                            .then_some(Message::Home(HomeMessage::TransferMax)),
-                                    ),
-                            ),
-                    )
-                    .push_maybe(ctx.max.then(|| muted(localized_copy(MAX_NOTE))))
-                    .push_maybe(estimate.map(muted))
-                    .push(muted(limits)),
-            )
-            .push(page_actions(
-                Some(back_button(
-                    CopyText::Back.get(),
-                    Some(Message::Home(HomeMessage::PreviousStep)),
-                )),
-                dialog_button(
-                    coincube_ui::locale::copy("Prepare"),
-                    None,
-                    true,
-                    (parsed.is_some()).then_some(Message::Home(HomeMessage::NextStep)),
-                ),
-            )),
+        0,
+        None,
+        Some(Message::Home(HomeMessage::LeaveTransfer)),
+        crate::app::view::shared::payment_columns::payment_columns(
+            transfer_card(sections),
+            transfer_rail(ctx, parsed, None),
+        ),
     )
 }
 
@@ -1768,7 +1848,7 @@ fn route_text(direction: TransferDirection) -> &'static str {
         | TransferDirection::VaultToOtherCube
         | TransferDirection::SparkToOtherCube
         | TransferDirection::VaultToOtherSpark => "Bitcoin on-chain",
-        TransferDirection::SparkToOtherSpark => "Spark",
+        TransferDirection::SparkToOtherSpark => "Spark → Spark",
     }
 }
 
@@ -1898,25 +1978,16 @@ fn review_page<'a>(
     transfer_feerate: &'a form::Value<String>,
     transfer_feerate_loading: Option<crate::app::view::shared::feerate_picker::FeeratePreset>,
     spark_send_fee_sat: Option<u64>,
-) -> Element<'a, Message> {
+) -> TransferScreen<'a> {
     let direction = ctx.direction;
     let unit = ctx.unit;
     let parsed = parse_amount(amount, unit);
-    let fees = match direction {
-        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-            prepare_onchain_send_response.map(|response| Amount::from_sat(response.total_fees_sat))
-        }
-        TransferDirection::VaultToLiquid
-        | TransferDirection::VaultToSpark
-        | TransferDirection::VaultToOtherSpark
-        | TransferDirection::VaultToOtherCube => vault_fees,
-        // Spark-sourced: `spark.prepare_send` quoted a `fee_sat` at step
-        // 1→2 and the state layer stashed it on `spark_send_fee_sat`.
-        TransferDirection::SparkToLiquid
-        | TransferDirection::SparkToVault
-        | TransferDirection::SparkToOtherSpark
-        | TransferDirection::SparkToOtherCube => spark_send_fee_sat.map(Amount::from_sat),
-    };
+    let fees = quoted_fees(
+        direction,
+        prepare_onchain_send_response,
+        vault_fees,
+        spark_send_fee_sat,
+    );
     let with_fiat = |value: Amount| -> String {
         let bitcoin = bitcoin_text(value, unit, ctx.balance_masked);
         match fiat_estimate(value, ctx.fiat_converter).filter(|_| !ctx.balance_masked) {
@@ -1958,7 +2029,7 @@ fn review_page<'a>(
     rows.push(dl_row(
         localized_copy("Fees"),
         match fees {
-            Some(fees) => text(bitcoin_text(fees, unit, ctx.balance_masked)),
+            Some(fees) => text(fee_text(fees, unit, ctx.balance_masked)),
             None => muted(localized_copy("Calculating…")),
         },
         false,
@@ -2061,44 +2132,101 @@ fn review_page<'a>(
         ),
     };
 
+    // You transfer → They receive, as Swap's Review opens.
+    let side = |caption: &'static str, value: Option<Amount>, place: String| {
+        Column::new()
+            .spacing(4)
+            .width(Length::Fill)
+            .push(
+                text(localized_copy(caption))
+                    .size(13)
+                    .style(theme::text::secondary),
+            )
+            .push(
+                text(value.map_or_else(
+                    || "—".to_string(),
+                    |value| bitcoin_text(value, unit, ctx.balance_masked),
+                ))
+                .size(22)
+                .bold(),
+            )
+            .push_maybe(
+                value
+                    .and_then(|value| fiat_estimate(value, ctx.fiat_converter))
+                    .filter(|_| !ctx.balance_masked)
+                    .map(muted),
+            )
+            .push(muted(place))
+    };
+    let summary = Row::new()
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .push(side(
+            "You transfer",
+            parsed.map(|parsed| parsed + fees.unwrap_or(Amount::ZERO)),
+            localized_format!(
+                "from {} in {}",
+                "desde {} en {}",
+                direction.from_wallet(),
+                ctx.cube_name
+            ),
+        ))
+        .push(arrow_right().size(16).style(theme::text::secondary))
+        .push(side(
+            "They receive",
+            parsed,
+            localized_format!(
+                "in {} · {}",
+                "en {} · {}",
+                direction.to_wallet(),
+                if direction.is_other_cube() {
+                    ctx.other.name()
+                } else {
+                    ctx.cube_name
+                }
+            ),
+        ));
+    let rail = transfer_rail(ctx, parsed, fees);
     transfer_dialog(
         ctx,
         ctx.review_index(),
         other_cube_context(ctx, true, false),
-        (!is_sending).then_some(Message::Home(HomeMessage::BackToHome)),
-        Column::new()
-            .spacing(20)
-            .push(page_heading(
-                "Review and confirm".into(),
-                Some("Nothing moves until you confirm.".into()),
-            ))
-            .push(description_list(rows))
-            .push(destination)
-            .push_maybe(feerate)
-            .push_maybe(direction.is_other_cube().then(|| {
-                status_line(
-                    lock_icon(),
-                    StatusTone::Muted,
-                    localized_format!(
-                        "{} locks again once sent, or if you leave.",
-                        "{} cierra otra vez una vez enviado, o si te vas.",
-                        ctx.other.name()
-                    ),
-                )
-            }))
-            .push(page_actions(
-                Some(back_button(
-                    CopyText::Back.get(),
-                    (!is_sending).then_some(Message::Home(HomeMessage::PreviousStep)),
-                )),
-                primary.width(Length::Fixed(200.0)).into(),
-            )),
+        (!is_sending).then_some(Message::Home(HomeMessage::LeaveTransfer)),
+        crate::app::view::shared::payment_columns::payment_columns(
+            legacy_form(
+                Column::new()
+                    .spacing(20)
+                    .push(summary)
+                    .push(description_list(rows))
+                    .push(destination)
+                    .push_maybe(feerate)
+                    .push_maybe(direction.is_other_cube().then(|| {
+                        status_line(
+                            lock_icon(),
+                            StatusTone::Muted,
+                            localized_format!(
+                                "{} locks again once sent, or if you leave.",
+                                "{} cierra otra vez una vez enviado, o si te vas.",
+                                ctx.other.name()
+                            ),
+                        )
+                    }))
+                    .push(page_actions(
+                        Some(back_button(
+                            "Edit",
+                            (!is_sending).then_some(Message::Home(HomeMessage::PreviousStep)),
+                        )),
+                        primary.width(Length::Fixed(200.0)).into(),
+                    )),
+            ),
+            rail,
+        ),
     )
 }
 
 /// Done: the sender has submitted the payment. On-chain deposits can still
 /// be awaiting confirmations or a Spark claim.
-fn done_page<'a>(ctx: &TransferCtx<'a>, amount: &'a form::Value<String>) -> Element<'a, Message> {
+fn done_page<'a>(ctx: &TransferCtx<'a>, amount: &'a form::Value<String>) -> TransferScreen<'a> {
     let direction = ctx.direction;
     let to = if direction.is_other_cube() {
         format!("{} · {}", direction.to_wallet(), ctx.other.name())
@@ -2131,54 +2259,61 @@ fn done_page<'a>(ctx: &TransferCtx<'a>, amount: &'a form::Value<String>) -> Elem
         ctx,
         ctx.steps().len(),
         other_cube_context(ctx, false, true),
-        Some(Message::Home(HomeMessage::BackToHome)),
-        Column::new()
-            .spacing(20)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(check_circle_icon().size(28).style(|t: &theme::Theme| {
-                        iced::widget::text::Style {
-                            color: Some(t.colors.shell.good),
-                        }
-                    }))
-                    .push(text(localized_copy("Transfer sent")).size(18).bold()),
-            )
-            .push(description_list(rows))
-            .push_maybe(
-                (direction == TransferDirection::VaultToOtherSpark).then(|| {
-                    muted(localized_format!(
+        Some(Message::Home(HomeMessage::LeaveTransfer)),
+        legacy_form(
+            Column::new()
+                .spacing(20)
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(check_circle_icon().size(28).style(|t: &theme::Theme| {
+                            iced::widget::text::Style {
+                                color: Some(t.colors.shell.good),
+                            }
+                        }))
+                        .push(text(localized_copy("Transfer sent")).size(18).bold()),
+                )
+                .push(description_list(rows))
+                .push_maybe(
+                    (direction == TransferDirection::VaultToOtherSpark).then(|| {
+                        muted(localized_format!(
                     "Spark credits the deposit after it is claimed. Open {} to check its status.",
                     "Spark acredita el depósito después de reclamarlo. Abre {} para ver su estado.",
                     ctx.other.name()
                 ))
-                }),
-            )
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(dialog_button(
-                        coincube_ui::locale::copy("See it in Activity"),
-                        None,
-                        true,
-                        Some(Message::Home(HomeMessage::OpenTransferActivity)),
-                    ))
-                    .push(dialog_button(
-                        coincube_ui::locale::copy("Back to Overview"),
-                        None,
-                        false,
-                        Some(Message::Home(HomeMessage::BackToHome)),
-                    ))
-                    .push(Space::new().width(Length::Fill))
-                    .push(dialog_button(
-                        coincube_ui::locale::copy("New transfer"),
-                        None,
-                        false,
-                        Some(Message::Home(HomeMessage::RestartTransfer)),
-                    )),
-            ),
+                    }),
+                )
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(dialog_button(
+                            coincube_ui::locale::copy("See it in Activity"),
+                            None,
+                            true,
+                            Some(Message::Home(HomeMessage::OpenTransferActivity)),
+                        ))
+                        .push(dialog_button(
+                            coincube_ui::locale::copy(match ctx.origin {
+                                Some(WalletKind::Spark) => "Back to Spark",
+                                Some(WalletKind::Vault) => "Back to Vault",
+                                Some(WalletKind::Liquid) => "Back to Liquid",
+                                None => "Back to Overview",
+                            }),
+                            None,
+                            false,
+                            Some(Message::Home(HomeMessage::LeaveTransfer)),
+                        ))
+                        .push(Space::new().width(Length::Fill))
+                        .push(dialog_button(
+                            coincube_ui::locale::copy("New transfer"),
+                            None,
+                            false,
+                            Some(Message::Home(HomeMessage::RestartTransfer)),
+                        )),
+                ),
+        ),
     )
 }
 
@@ -2546,6 +2681,9 @@ pub struct GlobalViewConfig<'a> {
     /// Max is on: the transfer sends the source's whole balance, fees included.
     pub transfer_max: bool,
     pub other_cube: OtherCubeView<'a>,
+    /// The wallet page this transfer was opened from, which leaving returns
+    /// to; `None` for the Overview.
+    pub transfer_origin: Option<WalletKind>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -2569,11 +2707,11 @@ impl HomeView {
     }
 }
 
-/// The Overview, and the transfer dialog to lay over it while a transfer step
-/// (1–3) is active.
+/// The Overview, and the Transfer page that replaces it while a transfer
+/// step (1–3) is active.
 pub fn global_home_view<'a>(
     config: GlobalViewConfig<'a>,
-) -> (Element<'a, Message>, Option<Element<'a, Message>>) {
+) -> (Element<'a, Message>, Option<TransferScreen<'a>>) {
     let GlobalViewConfig {
         cube_id,
         liquid_balance,
@@ -2613,7 +2751,7 @@ pub fn global_home_view<'a>(
         transfer_direction,
         transfer_from: _,
         transfer_to: _,
-        wallet_picker: _,
+        wallet_picker,
         entered_amount,
         receive_address,
         destination_ready,
@@ -2638,11 +2776,12 @@ pub fn global_home_view<'a>(
         cube_name,
         vault_alias,
         chain,
-        light_theme,
+        light_theme: _,
         transfer_page,
         transfer_unit,
         transfer_max,
         other_cube,
+        transfer_origin,
     } = config;
 
     let overview_masks = OverviewMasks::new(
@@ -2666,7 +2805,6 @@ pub fn global_home_view<'a>(
             cube_id,
             cube_name,
             chain,
-            light: light_theme,
             direction,
             has_vault,
             has_spark,
@@ -2679,19 +2817,17 @@ pub fn global_home_view<'a>(
             max: transfer_max,
             balance_masked,
             other: other_cube,
+            menu: wallet_picker,
+            origin: transfer_origin,
         };
         match current_view.step {
-            1 => Some(match transfer_page {
-                TransferPage::Wallets => wallets_page(&ctx),
-                TransferPage::OtherCube => other_cube_page(&ctx),
-                TransferPage::Unlock => unlock_page(&ctx),
-                TransferPage::Amount => amount_page(
-                    &ctx,
-                    entered_amount,
-                    onchain_send_limit,
-                    onchain_receive_limit,
-                ),
-            }),
+            1 => Some(details_page(
+                &ctx,
+                transfer_page,
+                entered_amount,
+                onchain_send_limit,
+                onchain_receive_limit,
+            )),
             2 => Some(review_page(
                 &ctx,
                 entered_amount,
@@ -3376,18 +3512,33 @@ pub fn global_home_view<'a>(
         .into()
     };
 
+    // `.hero`: the balance on the left and, at the far right on the same
+    // baseline, the worldview's voice line and art, over a hairline. The
+    // art is decorative and stays while balances are hidden.
+    let total_balance_row = coincube_ui::component::tenshu::worldview_hero(
+        Column::new()
+            .spacing(6)
+            .push(total_balance_label_row)
+            .push(total_balance_value),
+        coincube_ui::worldview_copy::VoiceLine::Overview.get(),
+    );
+    let total_balance_block = Column::new().spacing(6).push(total_balance_row).push_maybe(
+        (total_partial && !total_balance_loading && !total_balance_masked).then(|| {
+            text(localized_copy(
+                "Partial total · one or more wallet amounts or USD valuations are unavailable",
+            ))
+            .size(P2_SIZE)
+            .style(theme::text::warning)
+        }),
+    );
     let total_balance_block = Column::new()
-        .spacing(6)
-        .push(total_balance_label_row)
-        .push(total_balance_value)
-        .push_maybe(
-            (total_partial && !total_balance_loading && !total_balance_masked).then(|| {
-                text(localized_copy(
-                    "Partial total · one or more wallet amounts or USD valuations are unavailable",
-                ))
-                .size(P2_SIZE)
-                .style(theme::text::warning)
-            }),
+        .push(total_balance_block)
+        .push(Space::new().height(Length::Fixed(28.0)))
+        .push(
+            Container::new(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(1.0))
+                .style(theme::tenshu::control::divider),
         );
 
     // A Cube with no wallet yet has nothing to total; the Wallets cards
@@ -3398,7 +3549,7 @@ pub fn global_home_view<'a>(
         Column::new()
             .spacing(12)
             .push_maybe(has_any_wallet.then_some(total_balance_block))
-            .push_maybe(has_any_wallet.then(|| Space::new().height(Length::Fixed(20.0))))
+            .push_maybe(has_any_wallet.then(|| Space::new().height(Length::Fixed(8.0))))
             .push(
                 Row::new()
                     .spacing(8)
@@ -3441,11 +3592,6 @@ pub fn overview_page<'a>(
     }
     let body = Column::new()
         .spacing(36)
-        .push_maybe(
-            coincube_ui::worldview_copy::VoiceLine::Overview
-                .get()
-                .map(|line| p2_regular(line).style(theme::text::secondary)),
-        )
         .push(overview)
         .push_maybe(recent_activity);
     crate::app::view::dashboard_headed(menu, cache, head, body)
@@ -3483,6 +3629,49 @@ pub fn transfer_head_action<'a>(config: &GlobalViewConfig<'_>) -> Option<Element
     })
 }
 
+/// Whether a wallet page's Transfer can start (see
+/// `GlobalHome::wallet_transfer_entry`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalletTransferEntry {
+    /// The flow can open from this wallet.
+    Ready,
+    /// The balances the form caps against are still loading.
+    Loading,
+    /// No other wallet in this Cube and no other Cube can receive.
+    NoDestination,
+}
+
+/// Why a wallet page's Transfer is disabled when there is nowhere to send.
+pub const NO_TRANSFER_DESTINATION: &str =
+    "Add another wallet to this Cube, or create another Cube, to transfer between them.";
+
+/// A wallet page's Transfer: the Overview's action, opening the flow with
+/// this wallet as the source. With nowhere to send it stays disabled and
+/// says, on hover, what would give it a destination.
+pub fn wallet_transfer_action<'a>(
+    cube_id: &str,
+    wallet: WalletKind,
+    entry: WalletTransferEntry,
+) -> Element<'a, Message> {
+    let action: Element<'a, Message> = coincube_ui::component::tenshu::transfer_action(
+        landing_control_id(cube_id, wallet.label(), "transfer"),
+        Message::FocusAction,
+        (entry == WalletTransferEntry::Ready)
+            .then_some(Message::Home(HomeMessage::TransferFromWallet(wallet))),
+    )
+    .compact()
+    .into();
+    match entry {
+        WalletTransferEntry::NoDestination => coincube_ui::component::tooltip::tooltip_custom(
+            localized_copy(NO_TRANSFER_DESTINATION),
+            action,
+            iced::widget::tooltip::Position::Bottom,
+        )
+        .into(),
+        WalletTransferEntry::Ready | WalletTransferEntry::Loading => action,
+    }
+}
+
 /// Aggregate failure may end loading for display while an installed Spark
 /// wallet still has no authoritative funds for the transfer picker or cap.
 pub(crate) fn transfer_balance_ready(
@@ -3497,6 +3686,60 @@ pub(crate) fn transfer_balance_ready(
 mod tests {
     use super::*;
     use crate::app::view::shared::landing::capture;
+
+    /// A wallet page's Transfer opens the flow from that wallet when ready,
+    /// and does nothing while loading or with nowhere to send.
+    #[test]
+    fn a_wallet_page_transfer_button_opens_from_its_wallet_only_when_ready() {
+        for wallet in [WalletKind::Spark, WalletKind::Vault] {
+            let id = landing_control_id("cube", wallet.label(), "transfer");
+            for pointer in [false, true] {
+                let emitted = capture::activate(
+                    wallet_transfer_action("cube", wallet, WalletTransferEntry::Ready),
+                    id.clone(),
+                    (1024, 768),
+                    pointer,
+                );
+                assert!(emitted.iter().any(|message| matches!(
+                    message,
+                    Message::Home(HomeMessage::TransferFromWallet(from)) if *from == wallet
+                )));
+            }
+            let ready = capture::inspect(
+                "wallet-transfer-ready",
+                wallet_transfer_action("cube", wallet, WalletTransferEntry::Ready),
+                (1024, 768),
+                "dark",
+                theme::Theme::dark(),
+            );
+            assert!(ready.has_focus(id.clone()), "{:?}", wallet);
+            // Loading, or nowhere to send: shown, but disabled.
+            for entry in [
+                WalletTransferEntry::Loading,
+                WalletTransferEntry::NoDestination,
+            ] {
+                let probe = capture::inspect(
+                    "wallet-transfer-disabled",
+                    wallet_transfer_action("cube", wallet, entry),
+                    (1024, 768),
+                    "dark",
+                    theme::Theme::dark(),
+                );
+                assert!(probe.contains("Transfer"), "{:?} {:?}", wallet, entry);
+                assert!(!probe.has_focus(id.clone()), "{:?} {:?}", wallet, entry);
+            }
+        }
+        assert_eq!(back_to(None), "Overview");
+        assert_eq!(back_to(Some(WalletKind::Spark)), "Spark");
+        assert_eq!(back_to(Some(WalletKind::Vault)), "Vault");
+        // The disabled button's hover copy is translated.
+        assert_ne!(
+            coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+                localized_copy(NO_TRANSFER_DESTINATION).to_owned()
+            }),
+            NO_TRANSFER_DESTINATION
+        );
+    }
 
     /// The Overview a step renders beneath any transfer dialog.
     fn overview(config: GlobalViewConfig<'_>) -> Element<'_, Message> {
@@ -3514,10 +3757,32 @@ mod tests {
     }
 
     /// The dialog a transfer step (1–3) lays over the Overview.
+    /// A transfer step as the shell shows it: the page head (as
+    /// [`transfer_page_head`] builds it from the Cube) above the body.
     fn transfer_dialog_for(config: GlobalViewConfig<'_>) -> Element<'_, Message> {
-        global_home_view(config)
+        let context = format!("{} · {}", config.cube_name, network_name(config.chain));
+        let screen = global_home_view(config)
             .1
-            .expect("a transfer step renders its dialog")
+            .expect("a transfer step renders its page");
+        let head = coincube_ui::component::tenshu::page_head("Transfer", Message::FocusAction)
+            .context(Space::new(), context)
+            .rule(transfer_steps_row(screen.step));
+        let head = if screen.can_leave {
+            head.back(screen.back_to, Message::Home(HomeMessage::LeaveTransfer))
+        } else {
+            head
+        };
+        // The shell's page column pads the body to the head's gutter.
+        let gutter = crate::app::view::page_gutter(1192.0);
+        Column::new()
+            .push(head.view(crate::app::view::page_gutter))
+            .push(Container::new(screen.body).padding(iced::Padding {
+                top: 24.0,
+                bottom: 24.0,
+                left: gutter,
+                right: gutter,
+            }))
+            .into()
     }
     use crate::{
         app::{
@@ -3686,6 +3951,7 @@ mod tests {
                 transfer_page: TransferPage::Wallets,
                 transfer_unit: BitcoinDisplayUnit::Sats,
                 transfer_max: false,
+                transfer_origin: None,
                 other_cube: OtherCubeView::default(),
             }
         }
@@ -4331,28 +4597,10 @@ mod tests {
             theme::Theme::dark(),
         );
         assert!(entered.contains("12,000"));
-        // The inline source list keeps the corroborated Spark amount visible.
-        let selected = capture::inspect(
-            "hub-transfer-trusted-source",
-            transfer_wallet_section(
-                "test-cube",
-                PickerSide::From,
-                TransferDirection::SparkToVault,
-                true,
-                true,
-                false,
-                Amount::from_sat(0),
-                trusted.spark_balance,
-                Amount::from_sat(375_000),
-                None,
-                BitcoinDisplayUnit::Sats,
-                false,
-            ),
-            (1440, 900),
-            "dark",
-            theme::Theme::dark(),
-        );
-        assert!(selected.contains("From"));
+        // The From menu keeps the corroborated Spark amount visible.
+        let mut from = fixture.config(1, Some(TransferDirection::SparkToVault), None);
+        from.spark_balance = trusted.spark_balance;
+        let selected = inspect_menu("hub-transfer-trusted-source", from_menu(&menu_ctx(&from)));
         assert!(selected.contains("Spark"));
         assert!(selected.contains("12,000"));
     }
@@ -4383,26 +4631,10 @@ mod tests {
         assert!(shown.contains("250,000"));
 
         let render_source_rows = |masked| {
-            capture::inspect(
-                "hub-transfer-privacy-source",
-                transfer_wallet_section(
-                    "test-cube",
-                    PickerSide::From,
-                    TransferDirection::LiquidToSpark,
-                    true,
-                    true,
-                    true,
-                    Amount::from_sat(125_000),
-                    Amount::from_sat(250_000),
-                    Amount::from_sat(375_000),
-                    None,
-                    BitcoinDisplayUnit::Sats,
-                    masked,
-                ),
-                (1440, 900),
-                "dark",
-                theme::Theme::dark(),
-            )
+            let mut config = fixture.config(1, direction, None);
+            config.balance_masked = masked;
+            config.vault_balance = Amount::from_sat(375_000);
+            inspect_menu("hub-transfer-privacy-source", from_menu(&menu_ctx(&config)))
         };
         let hidden_picker = render_source_rows(true);
         assert!(hidden_picker.contains("••••••"));
@@ -4423,33 +4655,30 @@ mod tests {
         }
     }
 
+    /// Transfer is a page, as Send is: Back to Overview in its head
+    /// cancels it, except while a send is in flight.
     #[test]
-    fn transfer_dialog_is_centered_horizontally() {
+    fn transfer_is_a_page_with_back_to_overview() {
         let fixture = ViewFixture::new();
-        // The dialog is a modal over the whole window, not the page column.
-        for (width, height) in [(1024, 768), (1440, 900)] {
-            let inspection = capture::inspect_full_window(
-                "transfer-dialog-centered",
-                transfer_dialog_for(fixture.config(1, Some(TransferDirection::SparkToVault), None)),
-                (width, height),
-                "dark",
-                theme::Theme::dark(),
+        // Details, Review, then Sent with every step done.
+        for (step, active) in [(1, 0), (2, 1), (3, TRANSFER_STEPS.len())] {
+            let screen =
+                global_home_view(fixture.config(step, Some(TransferDirection::SparkToVault), None))
+                    .1
+                    .expect("a transfer step renders its page");
+            assert!(screen.can_leave, "step {}", step);
+            assert_eq!(screen.step, active);
+            let page = inspect_dialog(
+                "transfer-page",
+                fixture.config(step, Some(TransferDirection::SparkToVault), None),
             );
-            let title = inspection
-                .text
-                .iter()
-                .find_map(|(value, bounds)| (value == "Transfer").then_some(*bounds))
-                .expect("rendered dialog title");
-            // The 820-wide card sits mid-window; its title starts 28 inside it.
-            let expected = (width as f32 - 820.0) / 2.0 + 28.0;
-            assert!(
-                (title.x - expected).abs() < 1.0,
-                "{}: title at x={}, expected {}",
-                width,
-                title.x,
-                expected
-            );
+            assert!(page.contains("Back to Overview"), "step {}", step);
         }
+        let mut sending = fixture.config(2, Some(TransferDirection::SparkToVault), None);
+        sending.is_sending = true;
+        let screen = global_home_view(sending).1.expect("review");
+        assert!(!screen.can_leave, "no way out while a send is in flight");
+        assert!(global_home_view(fixture.config(0, None, None)).1.is_none());
     }
 
     #[test]
@@ -4471,7 +4700,7 @@ mod tests {
                     appearance,
                     theme,
                 );
-                for label in ["Transfer between wallets", "From", "To", "Another Cube…"] {
+                for label in ["Transfer details", "From", "To", "Prepare"] {
                     assert!(
                         snapshot.contains(label),
                         "{} {}: {}",
@@ -4482,7 +4711,7 @@ mod tests {
                 }
                 assert!(snapshot.contains("250,000"));
                 assert!(snapshot.contains("375,000"));
-                assert!(snapshot.contains("25.00 USD"));
+                assert!(snapshot.contains("Available in Everyday"));
             }
         }
     }
@@ -4493,11 +4722,11 @@ mod tests {
 
         let fixture = ViewFixture::new();
         for key in [Named::Enter, Named::Space] {
-            let content =
-                transfer_dialog_for(fixture.config(1, Some(TransferDirection::SparkToVault), None));
+            let config = fixture.config(1, Some(TransferDirection::SparkToVault), None);
+            let content = from_menu(&menu_ctx(&config));
             let messages = capture::activate_with_key(
                 content,
-                landing_control_id("test-cube", "Vault", "transfer-from"),
+                iced::advanced::widget::Id::new(from_option_id(WalletKind::Vault)),
                 (1024, 768),
                 false,
                 key,
@@ -5030,6 +5259,189 @@ mod tests {
         }
     }
 
+    const WORLDVIEWS: [(coincube_ui::theme::WorldviewMode, &str); 3] = [
+        (coincube_ui::theme::WorldviewMode::Samurai, "samurai"),
+        (coincube_ui::theme::WorldviewMode::Suitcoiner, "suitcoiner"),
+        (coincube_ui::theme::WorldviewMode::Luke, "luke"),
+    ];
+    const ARTWORK: [(coincube_ui::theme::ArtworkStyle, &str); 2] = [
+        (coincube_ui::theme::ArtworkStyle::Scene, "scene"),
+        (coincube_ui::theme::ArtworkStyle::Existing, "existing"),
+    ];
+
+    /// The Overview's worldview hero in every mode, artwork style and
+    /// appearance: the voice line (where the mode has one) at the far right
+    /// of the Total balance row and level with its SATS line, never above the
+    /// balance; under the balance once the column is too narrow for the row;
+    /// still there while balances are hidden.
+    #[test]
+    fn overview_worldview_hero_sets_the_voice_line_beside_the_balance() {
+        use coincube_ui::worldview_copy::{self, VoiceLine};
+
+        let fixture = ViewFixture::new();
+        let find = |probe: &capture::Inspection, needle: &str| {
+            probe
+                .text
+                .iter()
+                .find(|(value, _)| value == needle)
+                .map(|(_, bounds)| *bounds)
+        };
+        for (mode, name) in WORLDVIEWS {
+            let line = VoiceLine::Overview.for_mode(mode);
+            for (artwork, art) in ARTWORK {
+                for (appearance, base) in [
+                    ("dark", theme::Theme::dark()),
+                    ("light", theme::Theme::light()),
+                ] {
+                    let theme = base.with_worldview(mode).with_artwork(artwork);
+                    let render = |masked: bool| {
+                        let mut config = fixture.config(0, None, None);
+                        config.light_theme = appearance == "light";
+                        config.balance_masked = masked;
+                        worldview_copy::render_in(mode, || overview(config))
+                    };
+                    for masked in [false, true] {
+                        let scenario = format!("overview-hero-{name}-{art}");
+                        let wide = capture::inspect(
+                            &scenario,
+                            render(masked),
+                            (1440, 900),
+                            appearance,
+                            theme,
+                        );
+                        let title = find(&wide, "Total balance").expect("the Total balance title");
+                        let Some(line) = line else {
+                            continue;
+                        };
+                        let said =
+                            find(&wide, line).unwrap_or_else(|| panic!("{}: {}", scenario, line));
+                        assert!(
+                            said.x > title.x + title.width,
+                            "{}: the line sits right of the balance, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                        assert!(
+                            said.y > title.y + title.height,
+                            "{}: the line stands on the row's baseline, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                        assert!(
+                            said.width <= 190.0 + 1.0,
+                            "{}: the line wraps at 190px, {:?}",
+                            scenario,
+                            said
+                        );
+
+                        let narrow = capture::inspect_wide_content(
+                            &format!("{scenario}-stacked"),
+                            render(masked),
+                            (1024, 768),
+                            appearance,
+                            theme,
+                            480,
+                        );
+                        let title =
+                            find(&narrow, "Total balance").expect("the Total balance title");
+                        let said =
+                            find(&narrow, line).unwrap_or_else(|| panic!("{}: {}", scenario, line));
+                        assert!(
+                            (said.x - title.x).abs() <= 1.0,
+                            "{}: stacked under the balance, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                        assert!(
+                            said.y > title.y + 40.0,
+                            "{}: under the SATS line, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                    }
+                }
+            }
+        }
+        // The line no longer heads the page above the balance.
+        let page = capture::inspect(
+            "overview-hero-page",
+            worldview_copy::render_in(coincube_ui::theme::WorldviewMode::Suitcoiner, || {
+                overview(fixture.config(0, None, None))
+            }),
+            (1440, 900),
+            "dark",
+            theme::Theme::dark().with_worldview(coincube_ui::theme::WorldviewMode::Suitcoiner),
+        );
+        if let (Some(line), Some(title)) = (
+            VoiceLine::Overview.for_mode(coincube_ui::theme::WorldviewMode::Suitcoiner),
+            find(&page, "Total balance"),
+        ) {
+            let said = find(&page, line).expect("Suitcoiner's Overview line");
+            assert!(said.y >= title.y);
+        }
+    }
+
+    /// The Overview in each worldview, artwork style and appearance under the
+    /// app shell, for before/after review of the worldview hero. Opt-in:
+    /// `TOP_BAR_CAPTURE_DIR=<dir> cargo test -p coincube-gui --lib
+    /// overview_worldview_hero_capture -- --ignored`.
+    #[test]
+    #[ignore = "writes PNG frames; needs a GPU adapter"]
+    fn overview_worldview_hero_capture() {
+        use crate::app::state::preferences::BalancePrivacy;
+        use crate::app::view::activity::{recent_activity, RecentScope};
+        use crate::app::view::nav::shell::capture_tests;
+        let Some(directory) = capture_tests::directory() else {
+            return;
+        };
+        let mut renderer = capture_tests::renderer();
+        let fixture = ViewFixture::new();
+        let activity = overview_activity();
+        let menu = Menu::Cube(crate::app::menu::CubeSubMenu::Overview);
+        for (mode, name) in WORLDVIEWS {
+            for (artwork, art) in ARTWORK {
+                for (appearance, palette) in capture_tests::themes() {
+                    let light = appearance == "light";
+                    let palette = palette.with_worldview(mode).with_artwork(artwork);
+                    let cache = capture_tests::cache(light, BalancePrivacy::Shown);
+                    capture_tests::save_page_head_frames(
+                        &mut renderer,
+                        &directory,
+                        &format!("overview-{name}-{art}"),
+                        appearance,
+                        &palette,
+                        || {
+                            coincube_ui::worldview_copy::render_in(mode, || {
+                                let mut config = fixture.config(0, None, None);
+                                config.light_theme = light;
+                                config.has_liquid = false;
+                                config.pending_spark_incoming = None;
+                                config.pending_vault_incoming = None;
+                                let transfer = transfer_head_action(&config);
+                                overview_page(
+                                    &menu,
+                                    &cache,
+                                    transfer,
+                                    overview(config),
+                                    Some(recent_activity(
+                                        &activity,
+                                        &cache,
+                                        RecentScope::Cube,
+                                        None,
+                                    )),
+                                )
+                            })
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn global_home_overview_builds_loaded_masked_loading_and_absent_wallet_states() {
         let fixture = ViewFixture::new();
@@ -5145,6 +5557,34 @@ mod tests {
         )
     }
 
+    /// The Transfer context `global_home_view` builds, for rendering a
+    /// route tile's menu on its own (the capture doesn't draw overlays).
+    fn menu_ctx<'a>(config: &GlobalViewConfig<'a>) -> TransferCtx<'a> {
+        TransferCtx {
+            cube_id: config.cube_id,
+            cube_name: config.cube_name,
+            chain: config.chain,
+            direction: config.transfer_direction.expect("a direction"),
+            has_vault: config.has_vault,
+            has_spark: config.has_spark,
+            has_liquid: config.has_liquid,
+            liquid_balance: config.liquid_balance,
+            spark_balance: config.spark_balance,
+            vault_balance: config.vault_balance,
+            fiat_converter: config.fiat_converter,
+            unit: config.transfer_unit,
+            max: config.transfer_max,
+            balance_masked: config.balance_masked,
+            other: config.other_cube,
+            menu: config.wallet_picker,
+            origin: config.transfer_origin,
+        }
+    }
+
+    fn inspect_menu(scenario: &str, menu: Element<'_, Message>) -> capture::Inspection {
+        capture::inspect(scenario, menu, (1440, 900), "dark", theme::Theme::dark())
+    }
+
     fn cube_choice(name: &str, chain: ChainId, refusal: Option<&'static str>) -> CubeChoice {
         CubeChoice {
             cube_id: format!("{name}-id"),
@@ -5158,40 +5598,45 @@ mod tests {
         }
     }
 
-    /// P-Transfer: Wallets, Amount, Review within this Cube; Wallets, Other
-    /// Cube, Unlock, Amount, Review to another. Each page keeps its stepper.
+    /// Every route has the same steps: Details, Review, Sent. Another Cube
+    /// is chosen and unlocked on the Details card.
     #[test]
     fn transfer_steps_follow_the_route() {
         let fixture = ViewFixture::new();
-        let same = TransferDirection::SparkToVault;
-        for (step, page) in [
-            (1, TransferPage::Wallets),
-            (1, TransferPage::Amount),
-            (2, TransferPage::Wallets),
-            (3, TransferPage::Wallets),
-        ] {
-            let mut config = fixture.config(step, Some(same), None);
-            config.transfer_page = page;
-            let snapshot = inspect_dialog("transfer-steps-same", config);
-            for label in SAME_CUBE_STEPS {
-                assert!(snapshot.contains(label), "{:?} {}: {}", page, step, label);
-            }
-            assert!(!snapshot.contains("Other Cube"), "{:?} {}", page, step);
-        }
         let choices = [cube_choice("Archive", ChainId::Bitcoin, None)];
-        for page in [
-            TransferPage::Wallets,
-            TransferPage::OtherCube,
-            TransferPage::Unlock,
-            TransferPage::Amount,
+        for direction in [
+            TransferDirection::SparkToVault,
+            TransferDirection::VaultToOtherCube,
         ] {
-            let mut config = fixture.config(1, Some(TransferDirection::VaultToOtherCube), None);
-            config.transfer_page = page;
-            config.other_cube.choices = &choices;
-            config.other_cube.selected = Some("Archive-id");
-            let snapshot = inspect_dialog("transfer-steps-other", config);
-            for label in OTHER_CUBE_STEPS {
-                assert!(snapshot.contains(label), "{:?}: {}", page, label);
+            for (step, page) in [
+                (1, TransferPage::Wallets),
+                (1, TransferPage::Unlock),
+                (1, TransferPage::Amount),
+                (2, TransferPage::Amount),
+                (3, TransferPage::Amount),
+            ] {
+                let mut config = fixture.config(step, Some(direction), None);
+                config.transfer_page = page;
+                config.other_cube.choices = &choices;
+                config.other_cube.selected = Some("Archive-id");
+                let snapshot = inspect_dialog("transfer-steps", config);
+                for label in TRANSFER_STEPS {
+                    assert!(
+                        snapshot.contains(label),
+                        "{:?} {:?} {}: {}",
+                        direction,
+                        page,
+                        step,
+                        label
+                    );
+                }
+                assert!(
+                    !snapshot.contains("Other Cube"),
+                    "{:?} {:?} {}",
+                    direction,
+                    page,
+                    step
+                );
             }
         }
     }
@@ -5199,35 +5644,34 @@ mod tests {
     #[test]
     fn transfer_pages_match_the_prototype() {
         let fixture = ViewFixture::new();
-        let wallets = inspect_dialog(
-            "transfer-wallets",
-            fixture.config(1, Some(TransferDirection::SparkToVault), None),
-        );
+        let mut amount = fixture.config(1, Some(TransferDirection::SparkToVault), None);
+        amount.transfer_page = TransferPage::Amount;
+        let amount = inspect_dialog("transfer-details", amount);
         for label in [
             "Transfer",
             "Everyday · Bitcoin mainnet",
-            "Another Cube…",
-            "Continue",
-        ] {
-            assert!(wallets.contains(label), "wallets: {}", label);
-        }
-        assert!(wallets.contains("Unlocks for this transfer only"));
-        assert!(!wallets.contains("◉") && !wallets.contains("Amount in sats"));
-
-        let mut amount = fixture.config(1, Some(TransferDirection::SparkToVault), None);
-        amount.transfer_page = TransferPage::Amount;
-        let amount = inspect_dialog("transfer-amount", amount);
-        for label in [
-            "Destination and amount",
-            "From Spark · Available 250,000 SATS",
-            "· this Cube",
+            "Transfer details",
+            "From",
+            "Available 250,000 SATS",
+            "in Everyday",
+            "To",
+            "Balance 375,000 SATS",
             "SATS",
             "Minimum",
+            "They receive about",
+            "Bitcoin on-chain",
+            "Shown when you prepare",
             "Prepare",
-            "Back",
+            "Available in Everyday",
+            "This transfer",
+            "Quoted at Prepare",
         ] {
-            assert!(amount.contains(label), "amount: {}", label);
+            assert!(amount.contains(label), "details: {}", label);
         }
+        // The old page buttons are gone: Back to Overview is the head's.
+        assert!(!amount.contains("Continue"));
+        assert!(!amount.text.iter().any(|(value, _)| value == "Back"));
+        assert!(amount.contains("Back to Overview"));
         assert!(
             !amount.contains("BTC"),
             "the unit follows the wallet setting"
@@ -5238,8 +5682,10 @@ mod tests {
             fixture.config(2, Some(TransferDirection::SparkToVault), None),
         );
         for label in [
-            "Review and confirm",
-            "Nothing moves until you confirm.",
+            "You transfer",
+            "They receive",
+            "Edit",
+            "This transfer",
             "Bitcoin SHA-256 · Mainnet",
             "Sending from",
             "Spark · Everyday",
@@ -5294,31 +5740,59 @@ mod tests {
             config
         };
 
-        let catalog = inspect_dialog("transfer-other-cube", other(TransferPage::OtherCube, 1));
+        let mut config = other(TransferPage::Amount, 1);
+        config.wallet_picker = Some(PickerSide::To);
+        let menu = inspect_menu("transfer-to-menu", to_menu(&menu_ctx(&config)));
         for label in [
-            "Choose the other Cube",
-            "Bitcoin mainnet Cubes only.",
-            "Archive",
+            "THIS CUBE · EVERYDAY",
+            "Spark",
+            "OTHER CUBES",
+            "Vault in Archive",
+            "Locked · unlocks for this transfer",
             "Lab",
             "No Vault to receive this transfer",
-            "Locked",
             "Locked Cubes show no balances.",
-            "Continue with Archive",
         ] {
-            assert!(catalog.contains(label), "catalog: {}", label);
+            assert!(menu.contains(label), "to menu: {}", label);
         }
 
         let unlock = inspect_dialog("transfer-unlock", other(TransferPage::Unlock, 1));
         for label in [
-            "Unlock Archive for this transfer only",
-            "Locks again when the transfer ends.",
-            "Archive PIN",
-            "Not Everyday's PIN.",
+            "Enter Archive's PIN to transfer into it",
+            "Not Everyday's PIN. Archive locks again when this transfer ends.",
             "Unlock",
-            "Cancel",
+            "Vault",
+            "in Archive",
+            "Locked",
+            "Unlock Archive to enter an amount.",
         ] {
             assert!(unlock.contains(label), "unlock: {}", label);
         }
+        assert!(
+            !unlock.contains("Unlock with passkey"),
+            "a PIN Cube shows its PIN only"
+        );
+        let mut passkey_choices = choices.clone();
+        passkey_choices[0].passkey = true;
+        let mut passkey = other(TransferPage::Unlock, 1);
+        passkey.other_cube.choices = &passkey_choices;
+        let passkey = inspect_dialog("transfer-unlock-passkey", passkey);
+        assert!(passkey.contains("Unlock with passkey"));
+        assert!(
+            !passkey.contains("PIN"),
+            "a passkey Cube shows its passkey only"
+        );
+
+        // A pick whose unlock couldn't start offers no PIN or passkey control.
+        let mut refused = other(TransferPage::OtherCube, 1);
+        refused.other_cube.error = Some("This Cube changed. Choose it again.");
+        let refused = inspect_dialog("transfer-unlock-refused", refused);
+        assert!(refused.contains("This Cube changed. Choose it again."));
+        assert!(refused.contains("Choose it again in To"));
+        assert!(
+            !refused.contains("Unlock with passkey") && !refused.contains("Enter Archive's PIN")
+        );
+
         let mut checking = other(TransferPage::Unlock, 1);
         checking.other_cube.phase = UnlockPhase::Checks(2);
         let checking = inspect_dialog("transfer-unlock-checks", checking);
@@ -5327,7 +5801,6 @@ mod tests {
             "Archive's Vault checked",
             "Getting a receive address…",
             "In progress",
-            "Cancel and lock",
         ] {
             assert!(checking.contains(label), "checks: {}", label);
         }
@@ -5335,8 +5808,8 @@ mod tests {
         let mut amount = other(TransferPage::Amount, 1);
         amount.other_cube.unlocked = true;
         let amount = inspect_dialog("transfer-other-amount", amount);
-        assert!(amount.contains("Wallet in Archive"));
-        assert!(amount.contains("Archive · Bitcoin mainnet · unlocked for this transfer"));
+        assert!(amount.contains("Unlocked for this transfer"));
+        assert!(amount.contains("Vault in Archive after"));
 
         let mut review = other(TransferPage::Amount, 2);
         review.other_cube.unlocked = true;
@@ -5354,6 +5827,213 @@ mod tests {
         assert!(done.contains("Vault · Archive"));
     }
 
+    /// Draws `content` with its overlays (an open route menu) on the
+    /// software renderer and saves it under `directory`.
+    fn save_with_overlays(
+        directory: &str,
+        name: &str,
+        mut element: Element<'_, Message>,
+        (width, height): (u32, u32),
+        theme: &theme::Theme,
+    ) {
+        use iced::advanced::{
+            layout::{self, Layout},
+            overlay,
+            renderer::Headless,
+            widget::Tree,
+        };
+        use iced::{mouse, Rectangle, Size, Vector};
+        for bytes in coincube_ui::font::load() {
+            iced::advanced::graphics::text::font_system()
+                .write()
+                .unwrap()
+                .load_font(bytes);
+        }
+        let size = Size::new(width as f32, height as f32);
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("software renderer");
+        let mut tree = Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        let viewport = Rectangle::with_size(size);
+        element.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut iced::advanced::Shell::new(&mut Vec::new()),
+            &viewport,
+        );
+        let style = iced::advanced::renderer::Style {
+            text_color: theme.colors.text.primary,
+        };
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            theme,
+            &style,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        if let Some(mut overlay) = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .map(overlay::Nested::new)
+        {
+            let node = overlay.layout(&renderer, size);
+            overlay.draw(
+                &mut renderer,
+                theme,
+                &style,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+            );
+        }
+        let pixels = renderer.screenshot(
+            size_u32(width, height),
+            1.0,
+            theme.colors.general.background,
+        );
+        std::fs::create_dir_all(directory).unwrap();
+        image::save_buffer(
+            std::path::Path::new(directory).join(format!("{name}.png")),
+            &pixels,
+            width,
+            height,
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+    }
+
+    fn size_u32(width: u32, height: u32) -> iced::Size<u32> {
+        iced::Size::new(width, height)
+    }
+
+    /// Review evidence: set `TRANSFER_CAPTURE_DIR` to save the Details card
+    /// (each menu open, another Cube's PIN or passkey unlock), Review and
+    /// Sent, dark and light.
+    #[test]
+    #[ignore = "writes PNGs; set TRANSFER_CAPTURE_DIR"]
+    fn transfer_route_cards_capture() {
+        let Ok(directory) = std::env::var("TRANSFER_CAPTURE_DIR") else {
+            return;
+        };
+        let fixture = ViewFixture::new();
+        let mut archive = cube_choice("Archive", ChainId::Bitcoin, None);
+        archive.has_spark = true;
+        let mut passkey = archive.clone();
+        passkey.passkey = true;
+        let choices = [
+            archive,
+            cube_choice(
+                "Lab",
+                ChainId::Bitcoin,
+                Some("No Vault to receive this transfer"),
+            ),
+        ];
+        let passkey_choices = [passkey];
+        let pin = crate::pin_input::PinInput::new();
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            let shots: Vec<(&str, GlobalViewConfig<'_>)> = vec![
+                ("1-details", {
+                    let mut c = fixture.config(1, Some(TransferDirection::SparkToVault), None);
+                    c.transfer_page = TransferPage::Amount;
+                    c
+                }),
+                ("2-from-menu", {
+                    let mut c = fixture.config(
+                        1,
+                        Some(TransferDirection::SparkToVault),
+                        Some(PickerSide::From),
+                    );
+                    c.transfer_page = TransferPage::Amount;
+                    c
+                }),
+                ("3-to-menu", {
+                    let mut c = fixture.config(
+                        1,
+                        Some(TransferDirection::SparkToVault),
+                        Some(PickerSide::To),
+                    );
+                    c.transfer_page = TransferPage::Amount;
+                    c.other_cube.choices = &choices;
+                    c
+                }),
+                ("4-unlock-pin", {
+                    let mut c = fixture.config(1, Some(TransferDirection::SparkToOtherSpark), None);
+                    c.transfer_page = TransferPage::Unlock;
+                    c.other_cube.choices = &choices;
+                    c.other_cube.selected = Some("Archive-id");
+                    c.other_cube.pin = Some(&pin);
+                    c
+                }),
+                ("5-unlock-passkey", {
+                    let mut c = fixture.config(1, Some(TransferDirection::SparkToOtherSpark), None);
+                    c.transfer_page = TransferPage::Unlock;
+                    c.other_cube.choices = &passkey_choices;
+                    c.other_cube.selected = Some("Archive-id");
+                    c
+                }),
+                ("6-unlocked", {
+                    let mut c = fixture.config(1, Some(TransferDirection::SparkToOtherSpark), None);
+                    c.transfer_page = TransferPage::Amount;
+                    c.other_cube.choices = &choices;
+                    c.other_cube.selected = Some("Archive-id");
+                    c.other_cube.unlocked = true;
+                    c
+                }),
+                (
+                    "7-review",
+                    fixture.config(2, Some(TransferDirection::SparkToVault), None),
+                ),
+                ("8-review-spark-to-spark", {
+                    let mut c = fixture.config(2, Some(TransferDirection::SparkToOtherSpark), None);
+                    c.other_cube.choices = &choices;
+                    c.other_cube.selected = Some("Archive-id");
+                    c.other_cube.unlocked = true;
+                    c.other_cube.spark_address = Some("sp1test-address");
+                    c.spark_send_fee_sat = Some(0);
+                    c
+                }),
+                (
+                    "9-sent",
+                    fixture.config(3, Some(TransferDirection::SparkToVault), None),
+                ),
+            ];
+            for (name, mut config) in shots {
+                config.light_theme = appearance == "light";
+                save_with_overlays(
+                    &directory,
+                    &format!("transfer-{name}-{appearance}"),
+                    transfer_dialog_for(config),
+                    (1440, 900),
+                    &theme,
+                );
+            }
+        }
+    }
+
     #[test]
     fn spark_only_mainnet_cube_can_open_cross_cube_transfer() {
         let fixture = ViewFixture::new();
@@ -5366,8 +6046,8 @@ mod tests {
         config.chain = ChainId::Bitcoin;
 
         let wallets = inspect_dialog("spark-only-transfer-wallets", config);
-        assert!(wallets.contains("Another Cube…"));
-        assert!(wallets.contains("Unlocks for this transfer only"));
+        assert!(wallets.contains("Another Cube"));
+        assert!(wallets.contains("Choose another Cube in To."));
     }
 
     #[test]

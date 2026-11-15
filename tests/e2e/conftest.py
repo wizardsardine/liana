@@ -15,6 +15,8 @@ from harness import qa_cleanup
 
 def pytest_addoption(parser):
     group = parser.getgroup("testnet4")
+    group.addoption("--qa-gui-config", help="Private desktop GUI recovery configuration; does not select the mobile flow.")
+    group.addoption("--qa-gui-run-dir", help="Separate persistent private desktop GUI run directory.")
     group.addoption("--qa-config", help="Private JSON fixture configuration (mode 600).")
     group.addoption("--qa-run-dir", help="Persistent private checkpoints (mode 700).")
     group.addoption("--qa-preflight", action="store_true", help="Prepare the QA app, verify account/PIN setup/network/capacity, then stop before Cube creation or funding.")
@@ -28,6 +30,8 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     config.addinivalue_line("markers", "testnet4_live: real USB iPhone and production Connect using disposable Testnet4 fixtures")
     config._testnet4_blocked = False
+    config._gui_recovery_blocked = False
+    config.addinivalue_line("markers", "gui_recovery_live: real desktop GUI full-kit restore/hot-sign export, never broadcast")
 
 
 @pytest.fixture(scope="session")
@@ -70,11 +74,35 @@ def acceptance(request):
         runner.close()
 
 
+@pytest.fixture(scope="session")
+def gui_recovery(request):
+    from harness.gui_recovery import GuiRecovery
+    path = request.config.getoption("--qa-gui-config")
+    directory = request.config.getoption("--qa-gui-run-dir")
+    if not path:
+        pytest.skip("Desktop GUI recovery is opt-in; supply its separate config and run directory.")
+    if not directory or getattr(request.config.option, "numprocesses", None):
+        pytest.fail("The desktop GUI recovery suite needs a private run directory and one serial worker.", pytrace=False)
+    try:
+        runner = GuiRecovery(json.loads(private_read(path)), directory)
+    except Failed as error:
+        pytest.fail(error.code + ": " + str(error), pytrace=False)
+    except Blocked as error:
+        request.config._gui_recovery_blocked = True
+        pytest.skip(error.code + ": " + str(error))
+    try:
+        yield runner
+    finally:
+        runner.close()
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     # pytest normally treats skips as success. A selected live run with a
     # missing prerequisite must instead be non-green to unattended callers.
     if session.config._testnet4_blocked and exitstatus == 0:
+        session.exitstatus = 2
+    if session.config._gui_recovery_blocked and exitstatus == 0:
         session.exitstatus = 2
     runner = getattr(session.config, "_testnet4_runner", None)
     if (session.exitstatus == 0 and runner is not None and not runner.stop
@@ -92,6 +120,8 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if config._gui_recovery_blocked:
+        terminalreporter.write_line("GUI RECOVERY BLOCKED — no real GUI acceptance or broadcast authority was established.")
     if getattr(config, "_testnet4_cleanup_code", None):
         terminalreporter.write_line(config._testnet4_cleanup_code + ": completed retirement enrollment was not sealed; evidence remains private.")
     if config._testnet4_blocked:

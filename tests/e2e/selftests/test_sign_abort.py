@@ -62,7 +62,8 @@ def test_replay_leaves_newer_attempt_untouched():
     store.value['pending_attempt'] = 'sign:newer'
     before = deepcopy(store.value)
     assert abort.quarantine(store, intent, receipt) == 'already_quarantined'
-    assert store.value == before and store.writes == 1
+    assert store.value == before
+    assert store.writes == 1
 
 
 @pytest.mark.parametrize('change', ['revision', 'pending', 'identity', 'verified', 'reservation', 'race'])
@@ -75,7 +76,8 @@ def test_changed_credentials_never_cleared(change):
     if change == 'reservation': store.value['key_generation_reservation'] = {'status': 'pending'}
     if change == 'race': store.race = True
     with pytest.raises(Failed): abort.quarantine(store, intent, receipt)
-    assert store.writes == 0 and store.value['pending_attempt'].startswith('sign:')
+    assert store.writes == 0
+    assert store.value['pending_attempt'].startswith('sign:')
 
 
 @pytest.mark.parametrize('field,value', [('status', 3), ('status', 7), ('status', 9), ('status', 10),
@@ -165,14 +167,16 @@ def test_durable_terminal_precedes_cas_and_original_run_unchanged(scenario):
     def checked_save(value):
         from pathlib import Path
         receipt = json.loads(private_read(Path(args.output_dir) / 'abort-terminal.json'))
-        assert receipt['phase'] == 'terminal_verified' and receipt['terminal']['status'] == 8
+        assert receipt['phase'] == 'terminal_verified'
+        assert receipt['terminal']['status'] == 8
         save(value)
     store.save = checked_save
     assert abort.execute(args)['phase'] == 'quarantined'
     assert {p.name: private_read(p) for p in run.iterdir()} == before
     store.value['pending_attempt'] = 'sign:newer'
     assert abort.execute(args)['phase'] == 'already_quarantined'
-    assert store.value['pending_attempt'] == 'sign:newer' and store.writes == 1
+    assert store.value['pending_attempt'] == 'sign:newer'
+    assert store.writes == 1
     assert len(calls) == 2
 
 
@@ -181,7 +185,8 @@ def test_output_cannot_overlap_source_through_parent_alias(scenario):
     args.output_dir = str(run.resolve() / 'abort')
     with pytest.raises(Failed, match='OUTPUT_ISOLATION'):
         abort.execute(args)
-    assert not calls and store.writes == 0
+    assert not calls
+    assert store.writes == 0
     assert not (run / 'abort').exists()
 
 
@@ -195,7 +200,8 @@ def test_source_change_blocks_before_cancel(scenario, file):
         atomic_write(run / file, json.dumps(value).encode())
     else: atomic_write(run / file, b'changed')
     with pytest.raises(Failed): abort.execute(args)
-    assert not calls and store.writes == 0
+    assert not calls
+    assert store.writes == 0
 
 
 @pytest.mark.parametrize('field,value', [('status', 3), ('submitted_signature_count', 1)])
@@ -209,11 +215,13 @@ def test_rpc_success_with_nonterminal_or_signature_race_never_cas(scenario, monk
             return result
     monkeypatch.setattr(abort, 'Native', Native)
     with pytest.raises(Failed): abort.execute(args)
-    assert len(calls) == 1 and store.writes == 0
+    assert len(calls) == 1
+    assert store.writes == 0
 
 
 def test_binary_replacement_after_rpc_prevents_cas(scenario, monkeypatch):
     args, run, config, store, calls = scenario
     monkeypatch.setattr(abort, 'binary_digest', lambda path: digest(path) if not calls else 'changed')
     with pytest.raises(Failed): abort.execute(args)
-    assert len(calls) == 1 and store.writes == 0
+    assert len(calls) == 1
+    assert store.writes == 0

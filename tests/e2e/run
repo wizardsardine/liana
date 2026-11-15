@@ -30,7 +30,39 @@ if not stamp.exists() or stamp.read_text() != digest:
     stamp.write_text(digest)
 
 args = sys.argv[1:]
+gui = "--qa-gui-recovery" in args
+aggregate = "--qa-flow" in args
+if gui and aggregate:
+    raise SystemExit("Select either --qa-gui-recovery or --qa-flow.")
+if aggregate:
+    if "--qa-compatibility" in args or "--qa-preflight" in args or "--self-test" in args:
+        raise SystemExit("--qa-flow requires full strict acceptance; no compatibility, preflight-only or self-test substitution.")
+    args.remove("--qa-flow")
+    gui_args = []
+    for flag in ("--qa-gui-config", "--qa-gui-run-dir"):
+        if flag not in args or args.index(flag) + 1 >= len(args):
+            raise SystemExit("--qa-flow requires separate --qa-gui-config and --qa-gui-run-dir.")
+        index = args.index(flag)
+        gui_args += args[index:index+2]
+        del args[index:index+2]
+    if "--qa-config" not in args or "--qa-run-dir" not in args:
+        raise SystemExit("--qa-flow also requires the existing strict mobile config and run directory.")
+    gui_directory = Path(gui_args[gui_args.index("--qa-gui-run-dir") + 1]).absolute()
+    mobile_directory = Path(args[args.index("--qa-run-dir") + 1]).absolute()
+    if gui_directory == mobile_directory or gui_directory in mobile_directory.parents or mobile_directory in gui_directory.parents:
+        raise SystemExit("GUI and mobile run directories must be separate and not nested.")
+    result = subprocess.run([str(python), str(Path(__file__).resolve()), "--qa-gui-recovery", *gui_args])
+    if result.returncode:
+        raise SystemExit(result.returncode)  # No mobile signing/broadcast after GUI BLOCKED/FAIL.
+    args = [arg for arg in args if arg != "--qa-fresh"]
+    os.execv(str(python), [str(python), str(Path(__file__).resolve()), "--qa-fresh", *args])
+if gui:
+    if "--self-test" in args:
+        raise SystemExit("Offline self-tests cannot be selected as GUI acceptance.")
+    args.remove("--qa-gui-recovery")
 fresh = "--qa-fresh" in args
+if gui and fresh:
+    raise SystemExit("GUI recovery and strict mobile acceptance are distinct suites.")
 if fresh:
     args.remove("--qa-fresh")
     if "--qa-config" not in args:
@@ -39,10 +71,11 @@ if args == ["--self-test"]:
     target = root / "selftests"
     args = []
 else:
-    target = root / ("test_full_flow.py" if fresh else "test_acceptance.py")
-    if "--qa-config" not in args or "--qa-run-dir" not in args:
+    target = root / ("test_gui_recovery.py" if gui else ("test_full_flow.py" if fresh else "test_acceptance.py"))
+    config_flag, directory_flag = ("--qa-gui-config", "--qa-gui-run-dir") if gui else ("--qa-config", "--qa-run-dir")
+    if config_flag not in args or directory_flag not in args:
         raise SystemExit("Usage: tests/e2e/run --qa-config /private/config.json --qa-run-dir /private/run [--qa-preflight] [--qa-confirm]\n       tests/e2e/run --self-test")
-    directory = Path(args[args.index("--qa-run-dir") + 1]).absolute()
+    directory = Path(args[args.index(directory_flag) + 1]).absolute()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if directory.is_symlink() or directory.stat().st_mode & 0o077:
         raise SystemExit("The run directory must be private (mode 700) and not a symlink.")

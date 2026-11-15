@@ -10,7 +10,7 @@
 //!
 //! [`SeedSource`] makes the choice explicit instead of implicit:
 //!
-//! - [`SeedSource::EncryptedFile`] is today's behaviour, unchanged, down to the
+//! - [`SeedSource::EncryptedFile`] retains the
 //!   session-cache fast path that keeps an unlock from paying Argon2id at
 //!   256 MiB three times (~831 ms each). Every PIN Cube takes this arm.
 //! - [`SeedSource::InMemory`] is a signer the caller already holds — a passkey
@@ -34,7 +34,7 @@ use coincube_core::signer::{MasterSigner, SignerError};
 /// How a wallet loader should obtain the Cube's master signer.
 #[derive(Clone)]
 pub enum SeedSource<'a> {
-    /// Decrypt the on-disk seed file. Today's behaviour, unchanged.
+    /// Decrypt the on-disk seed file, including its OS-keystore device secret.
     EncryptedFile {
         fingerprint: Fingerprint,
         password: &'a str,
@@ -87,9 +87,9 @@ impl<'a> SeedSource<'a> {
     /// On the [`SeedSource::EncryptedFile`] arm it prefers the signer the
     /// unlock already decrypted ([`crate::app::session::unlocked_signer`]) and
     /// falls back to reading the seed file. That ordering is load-bearing
-    /// twice over: it keeps one unlock from paying ~831 ms three times, and it
-    /// is the *only* way a v3 seed resolves at all — a v3 file needs the
-    /// OS-keystore device secret, which `coincube-core` cannot reach.
+    /// because it keeps one unlock from paying ~831 ms three times. A restored
+    /// Cube can have a PIN-only session with no cached signer; its disk fallback
+    /// must use the GUI's keystore-aware loader to open a v3 seed.
     pub fn resolve(
         &self,
         datadir: &Path,
@@ -103,11 +103,11 @@ impl<'a> SeedSource<'a> {
                 password,
             } => match crate::app::session::unlocked_signer(cube_id, *fingerprint) {
                 Some(signer) => Ok(signer),
-                None => MasterSigner::from_datadir_by_fingerprint(
+                None => crate::services::unlock::open_seed_by_fingerprint(
                     datadir,
                     network,
                     *fingerprint,
-                    Some(password),
+                    password,
                     cube_id,
                 ),
             },

@@ -20,7 +20,7 @@ use coincube_ui::{
     icon,
     image::{asset_logo, asset_network_logo},
     theme,
-    widget::{action::Action, Column, ColumnExt, Container, Element, Row},
+    widget::{action::Action, Column, ColumnExt, Container, Element, Row, RowExt},
 };
 use iced::{
     widget::{container, text_input, Space},
@@ -55,6 +55,12 @@ pub struct SparkSendView<'a> {
     pub theme_mode: theme::palette::ThemeMode,
     pub sent_amount_display: &'a str,
     pub sent_celebration_context: &'a str,
+    /// Who the sent payment went to, as typed (receipt's To row).
+    pub sent_recipient: &'a str,
+    /// Fee and amount plus fee, in the unit the payment was made in
+    /// (receipt's Fee and Total rows).
+    pub sent_fee_display: &'a str,
+    pub sent_total_display: &'a str,
     pub sent_quote: &'a coincube_ui::component::quote_display::Quote,
     pub sent_image_handle: &'a iced::widget::image::Handle,
     pub recent_transactions: &'a [SparkRecentTransaction],
@@ -95,11 +101,18 @@ pub struct SparkSendView<'a> {
     /// one. Lives on the panel rather than in the phase because it must survive
     /// a failed send — a retry re-prepares from it.
     pub cross_chain_ctx: Option<&'a CrossChainContext>,
+    /// What the typed stablecoin destination is, once looked up: its network
+    /// (named on the THEY RECEIVE tile and under Destination), and the one
+    /// chosen when the address works on several.
+    pub detected: Option<&'a cross_chain::DetectedDestination>,
+    /// Why the typed amount can't go on the chosen network, if it can't.
+    pub amount_issue: Option<cross_chain::AmountIssue>,
+    /// Review waits for "they use this network" (a network the user chose).
+    pub awaiting_network_ack: bool,
+    pub network_acknowledged: bool,
     /// Cross-chain slippage tolerance, in basis points, as typed. Empty means
     /// the SDK default. Only rendered behind the advanced disclosure.
     pub slippage_input: &'a str,
-    /// Whether the advanced (slippage) disclosure is open.
-    pub advanced_open: bool,
     /// Life left on the live cross-chain quote. `None` means there is no quote
     /// on screen — *not* "expired", which is its own variant. Anything other
     /// than `Valid` replaces Confirm with a re-quote.
@@ -124,6 +137,71 @@ impl<'a> SparkSendView<'a> {
         self.pay_from == coincube_spark_protocol::WalletAsset::Usdb
     }
 
+    /// "Send at least 1,500 sats on Solana", beside the Amount label, once
+    /// the network is settled and its route publishes a floor.
+    fn route_minimum_line(&self) -> Option<String> {
+        let detected = self.detected?;
+        let network = detected.chosen.as_deref()?;
+        let min = cross_chain::effective_min_sats(detected.route()?, self.reference_btc_usd_price)?;
+        Some(localized_format!(
+            "Send at least {} sats on {}",
+            "Envía al menos {} sats en {}",
+            coincube_ui::component::amount::format_u64_as_string(min, ","),
+            network
+        ))
+    }
+
+    /// The amount's problem on the chosen network, with "Use the minimum"
+    /// when it is too small.
+    fn amount_issue_note(&self) -> Option<Element<'a, Message>> {
+        let issue = self.amount_issue?;
+        let network = self
+            .detected
+            .and_then(|d| d.chosen.clone())
+            .unwrap_or_default();
+        Some(
+            Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(issue.message(&network))
+                        .style(theme::text::warning)
+                        .width(Length::Fill),
+                )
+                .push_maybe(
+                    matches!(issue, cross_chain::AmountIssue::BelowMinimum { .. }).then(|| {
+                        iced::widget::button(
+                            text(localized_copy("Use the minimum"))
+                                .size(P2_SIZE)
+                                .style(coincube_ui::theme::tenshu::text::accent),
+                        )
+                        .padding([2, 0])
+                        .style(theme::button::transparent)
+                        .on_press(Message::SparkSend(SparkSendMessage::UseMinimum))
+                    }),
+                )
+                .into(),
+        )
+    }
+
+    /// Why Prepare can't go yet on a stablecoin send, said in its footer.
+    /// `None` when it can.
+    fn stablecoin_blocker(&self) -> Option<&'static str> {
+        if !self.receive_target.is_stablecoin() {
+            return None;
+        }
+        let detected = self.detected?;
+        if detected.network.is_problem() {
+            Some("Paste an address on a supported network to continue.")
+        } else if detected.chosen.is_none() {
+            Some("Choose the network to continue.")
+        } else if self.amount_issue.is_some() {
+            Some("Change the amount to continue.")
+        } else {
+            None
+        }
+    }
+
     pub fn render(self) -> Element<'a, Message> {
         if !self.backend_available {
             return Column::new()
@@ -135,17 +213,70 @@ impl<'a> SparkSendView<'a> {
                 .into();
         }
 
-        // ── Full-screen celebration for successful sends ─────────────
-        if matches!(self.phase, SparkSendPhase::Sent(_)) {
-            return coincube_ui::component::sent_celebration_page(
-                self.sent_celebration_context,
+        // ── Payment result: the receipt first, the worldview art beside it ──
+        if let SparkSendPhase::Sent(ok) = self.phase {
+            use coincube_ui::component::payment_result::{
+                payment_result, short_id, Outcome, ReceiptRow,
+            };
+            // An on-chain exit is broadcast, not settled: Activity carries
+            // the confirmation.
+            let outcome = if self.sent_celebration_context == "bitcoin-send" {
+                Outcome::Confirming
+            } else {
+                Outcome::Sent
+            };
+            let recipient = self.sent_recipient;
+            // A Lightning address reads in full; an invoice or address is cut
+            // to its ends, with Copy for the whole value.
+            let to = if recipient.contains('@') {
+                ReceiptRow::new(localized_copy("To"), recipient)
+            } else {
+                ReceiptRow::new(localized_copy("To"), short_id(recipient))
+                    .mono()
+                    .on_copy(Message::CopyWithToast(
+                        recipient.to_string(),
+                        recipient_copied_notice(recipient).to_string(),
+                    ))
+            };
+            let mut rows = Vec::new();
+            if !recipient.is_empty() {
+                rows.push(to);
+            }
+            rows.push(ReceiptRow::new(localized_copy("Paid from"), "Spark"));
+            if !self.sent_fee_display.is_empty() {
+                rows.push(ReceiptRow::new(
+                    localized_copy("Fee"),
+                    self.sent_fee_display,
+                ));
+                rows.push(ReceiptRow::new(
+                    localized_copy("Total"),
+                    self.sent_total_display,
+                ));
+            }
+            if !ok.payment_id.is_empty() {
+                rows.push(
+                    ReceiptRow::new(localized_copy("Payment ID"), short_id(&ok.payment_id))
+                        .mono()
+                        .on_copy(Message::CopyWithToast(
+                            ok.payment_id.clone(),
+                            "Payment ID copied to clipboard".to_string(),
+                        )),
+                );
+            }
+            return payment_result(
+                outcome,
                 self.sent_amount_display,
+                self.sent_celebration_context,
                 self.sent_quote,
                 self.sent_image_handle,
-                CopyText::HasBeenSentSuccessfully.get(),
-                coincube_ui::worldview_copy::VoiceLine::PaymentSent.get(),
                 Message::SparkSend(crate::app::view::SparkSendMessage::Reset),
-            );
+            )
+            .rows(rows)
+            .voice(coincube_ui::worldview_copy::VoiceLine::PaymentSent.get())
+            .on_activity(Message::SparkSend(
+                crate::app::view::SparkSendMessage::ViewActivity,
+            ))
+            .into();
         }
 
         // ── Payment details card ──────────────────────────────────────
@@ -216,7 +347,8 @@ impl<'a> SparkSendView<'a> {
             )
             .push_maybe(
                 usd_send.then(|| p2_regular(US_DOLLAR_SEND_NOTE).style(theme::text::secondary)),
-            );
+            )
+            .push_maybe(self.amount_issue_note());
 
         // Unified balance (BTC + Stable Balance), as the YOU SEND card showed
         // it; a US Dollar send can spend only the US Dollar balance.
@@ -288,6 +420,7 @@ impl<'a> SparkSendView<'a> {
                     .push(iced::widget::rule::horizontal(1))
                     .push(card_section(spark_send_cards(
                         self.receive_target,
+                        self.detected,
                         self.pay_from,
                         SendMenus {
                             open: self.open_menu,
@@ -301,13 +434,24 @@ impl<'a> SparkSendView<'a> {
                         Column::new()
                             .spacing(10)
                             .push(p1_bold(localized_copy("Destination")))
-                            .push(destination),
+                            .push(destination)
+                            .push(Column::new().push_maybe(self.detected.map(|detected| {
+                                detected_destination(detected, self.receive_target.label())
+                            }))),
                     ))
                     .push(iced::widget::rule::horizontal(1))
                     .push(card_section(
                         Column::new()
                             .spacing(10)
-                            .push(p1_bold(amount_label))
+                            .push(
+                                Row::new()
+                                    .spacing(12)
+                                    .align_y(Alignment::Center)
+                                    .push(p1_bold(amount_label).width(Length::Fill))
+                                    .push_maybe(self.route_minimum_line().map(|line| {
+                                        p2_regular(line).style(theme::text::secondary)
+                                    })),
+                            )
                             .push(amount)
                             .push(amount_notes)
                             .push(available),
@@ -370,25 +514,14 @@ pub fn send_step(phase: &SparkSendPhase) -> usize {
         | SparkSendPhase::CrossChainFailed { .. }
         | SparkSendPhase::OutcomeUnknown { .. } => 1,
         SparkSendPhase::Sent(_) => 2,
-        SparkSendPhase::Idle
-        | SparkSendPhase::Preparing
-        | SparkSendPhase::CrossChainRoutes
-        | SparkSendPhase::Error(_) => 0,
+        SparkSendPhase::Idle | SparkSendPhase::Preparing | SparkSendPhase::Error(_) => 0,
     }
 }
 
 fn phase_body<'a>(view: &SparkSendView<'a>) -> Element<'a, Message> {
     let phase = view.phase;
-    let bitcoin_network = crate::chain::canonical_network_name(view.chain);
-    let cross_chain_ctx = view.cross_chain_ctx;
-    let slippage_input = view.slippage_input;
-    let advanced_open = &view.advanced_open;
-    let quote_countdown = view.quote_countdown.clone();
-    let reference_btc_usd_price = view.reference_btc_usd_price;
-    let bitcoin_unit = view.bitcoin_unit;
     let recipient_mismatch = view.recipient_mismatch;
     use crate::app::view::SparkSendMessage;
-    use coincube_ui::component::amount::format_u64_as_string;
 
     // Review shows the mismatch in its own card, in place of the quote.
     if recipient_mismatch && !is_review(phase) {
@@ -411,10 +544,13 @@ fn phase_body<'a>(view: &SparkSendView<'a>) -> Element<'a, Message> {
         // `render`). Prepare stays available whatever is typed: the state
         // parses the input and reports what is wrong, so the view does not
         // second-guess it with a validator of its own.
-        SparkSendPhase::Idle => compose_footer(
-            "Prepare gets a fee quote. Nothing is sent yet.",
-            Some(Message::SparkSend(SparkSendMessage::PrepareRequested)),
-        ),
+        SparkSendPhase::Idle => match view.stablecoin_blocker() {
+            Some(blocker) => compose_footer(blocker, None),
+            None => compose_footer(
+                "Prepare gets a fee quote. Nothing is sent yet.",
+                Some(Message::SparkSend(SparkSendMessage::PrepareRequested)),
+            ),
+        },
 
         // Same slot, same Prepare — without a press, so a held key or a
         // pointer release cannot reach it while the quote is being fetched.
@@ -423,228 +559,7 @@ fn phase_body<'a>(view: &SparkSendView<'a>) -> Element<'a, Message> {
             None,
         ),
 
-        // The chain/asset confirmation stop. A cross-chain address does not
-        // announce its network, and USDT exists on all of them — so the
-        // detected chain and asset are spelled out in words, and the user has
-        // to choose a route before anything is quoted.
-        SparkSendPhase::CrossChainRoutes => {
-            let Some(ctx) = cross_chain_ctx else {
-                // The phase can't be reached without a context — but render an
-                // honest message rather than a blank card if it ever is.
-                return Container::new(p1_regular(localized_copy(
-                    "No cross-chain destination selected.",
-                )))
-                .padding(16)
-                .style(theme::card::simple)
-                .into();
-            };
-            let (address, routes, selected) = (&ctx.address, &ctx.routes, &ctx.selected);
-
-            let mut col = Column::new()
-                .spacing(12)
-                .push(h4_bold(localized_copy("Confirm the network")))
-                .push(kv_row(CopyText::Address.get(), address.address.clone()));
-
-            if let Some(route) = routes.get(*selected) {
-                col = col.push(p1_regular(cross_chain::chain_confirmation(address, route)));
-            }
-
-            // One row per route. Kept as explicit rows rather than a dropdown:
-            // the provider and destination chain are the whole decision here,
-            // and a collapsed picker is the kind of thing users click past.
-            // The shared `button::*` helpers take `&'static str`, and a route
-            // label is built at render time — so these are hand-rolled with the
-            // same theme styles rather than leaking the strings.
-            let mut route_rows = Column::new().spacing(6);
-            for (idx, route) in routes.iter().enumerate() {
-                let label = iced::widget::text(format!(
-                    "{} on {} — via {}",
-                    route.asset, route.chain, route.provider
-                ))
-                .align_y(iced::Alignment::Center);
-                let style = if idx == *selected {
-                    theme::button::primary
-                } else {
-                    theme::button::container_border
-                };
-                route_rows = route_rows.push(
-                    iced::widget::button(label)
-                        .style(style)
-                        .padding(10)
-                        .width(Length::Fill)
-                        .on_press(Message::SparkSend(
-                            SparkSendMessage::CrossChainRouteSelected(idx),
-                        )),
-                );
-            }
-            col = col.push(route_rows);
-
-            // Slippage lives behind a disclosure. A normal user should never
-            // have to reason in basis points; the SDK default (1%) is right for
-            // them, and surfacing the control by default just invites someone
-            // to type a number they don't understand into a money path.
-            col = col.push(
-                button::transparent_border(
-                    None,
-                    if *advanced_open {
-                        localized_copy("Hide advanced")
-                    } else {
-                        localized_copy("Advanced")
-                    },
-                )
-                .on_press(Message::SparkSend(SparkSendMessage::ToggleAdvanced))
-                .width(Length::Fixed(160.0)),
-            );
-            if *advanced_open {
-                col = col
-                    .push(p2_regular(localized_format!(
-                        "Max slippage, in basis points ({}–{}). Leave blank for the default of \
-                         {} ({}%).", "Deslizamiento máximo, en puntos básicos ({}–{}). Deja el campo vacío para usar el valor predeterminado de {} ({}%).",
-                        cross_chain::MIN_SLIPPAGE_BPS,
-                        cross_chain::MAX_SLIPPAGE_BPS,
-                        cross_chain::DEFAULT_SLIPPAGE_BPS,
-                        cross_chain::DEFAULT_SLIPPAGE_BPS as f64 / 100.0,
-                    )))
-                    .push(
-                        text_input("100", slippage_input)
-                            .on_input(|v| Message::SparkSend(SparkSendMessage::SlippageChanged(v)))
-                            .padding(10),
-                    );
-            }
-
-            col = col.push(Space::new().height(Length::Fixed(8.0))).push(
-                Row::new()
-                    .spacing(10)
-                    .push(
-                        button::primary(None, localized_copy("Get quote"))
-                            .on_press(Message::SparkSend(
-                                SparkSendMessage::CrossChainQuoteRequested,
-                            ))
-                            .width(Length::Fixed(160.0)),
-                    )
-                    .push(
-                        button::transparent_border(None, CopyText::Cancel.get())
-                            .on_press(Message::SparkSend(SparkSendMessage::Reset))
-                            .width(Length::Fixed(120.0)),
-                    ),
-            );
-
-            Container::new(col)
-                .padding(16)
-                .style(theme::card::simple)
-                .into()
-        }
-
-        SparkSendPhase::Prepared(ok) => {
-            // Cross-chain quotes are denominated in the destination asset and
-            // they expire, so they get their own preview rather than being
-            // squeezed into the sats-shaped one.
-            if let Some(quote) = &ok.cross_chain {
-                // A quote whose expiry we couldn't parse counts as expired: an
-                // unreadable expiry is not evidence the quote is *good*, and
-                // re-quoting costs a second where sending against an
-                // unknown-age rate costs money. `None` here means there is no
-                // quote at all, which can't happen inside this branch — the
-                // state sets the countdown the moment a quote lands.
-                let expired = !matches!(
-                    quote_countdown,
-                    Some(cross_chain::QuoteCountdown::Valid { .. })
-                );
-                let mut col = Column::new()
-                    .spacing(14)
-                    .push(h4_bold(CopyText::Preview.get()))
-                    .push(kv_row(
-                        CopyText::SourceBitcoinNetwork.get(),
-                        bitcoin_network.to_owned(),
-                    ))
-                    .push(kv_row(
-                        localized_copy("They receive"),
-                        format!(
-                            "≈ {} {}",
-                            cross_chain::format_asset_amount(
-                                quote.estimated_out,
-                                quote.route.decimals
-                            ),
-                            quote.route.asset,
-                        ),
-                    ))
-                    .push(kv_row(
-                        CopyText::Network.get(),
-                        format!("{} — via {}", quote.route.chain, quote.route.provider),
-                    ))
-                    // The old single mixed-unit "Fee" line hid how much each part
-                    // cost. Split it: a sats network fee (moving BTC to the
-                    // provider) and a destination-asset conversion fee (provider
-                    // spread + gas, already netted out of "They receive").
-                    .push(kv_row(
-                        localized_copy("Network fee"),
-                        format!(
-                            "{} sats",
-                            format_u64_as_string(quote.source_transfer_fee_sats, ",")
-                        ),
-                    ))
-                    .push(kv_row(
-                        localized_copy("Conversion fee"),
-                        conversion_fee_display(
-                            quote.fee_amount,
-                            quote.route.decimals,
-                            &quote.route.asset,
-                            reference_btc_usd_price,
-                            bitcoin_unit,
-                        ),
-                    ))
-                    // Headline: the full sats debit from the wallet, fees
-                    // included. Set apart at the bottom so the user sees exactly
-                    // what they'll pay — and it matches the amount the post-send
-                    // celebration reports as sent.
-                    .push(Space::new().height(Length::Fixed(4.0)))
-                    .push(total_row(
-                        "Total you send",
-                        format!("{} sats", format_u64_as_string(ok.amount_sat, ",")),
-                    ));
-
-                // The countdown. Sending against a dead quote means sending
-                // against a rate the provider no longer honours, so Confirm is
-                // replaced — not merely disabled — once it runs out.
-                col = col.push(match quote_countdown {
-                    Some(cross_chain::QuoteCountdown::Valid { seconds_left }) => {
-                        p2_regular(localized_format!(
-                            "Quote valid for {}s.",
-                            "Cotización válida durante {} s.",
-                            seconds_left
-                        ))
-                    }
-                    _ => p1_regular(localized_copy(
-                        "This quote has expired. Get a fresh one to continue.",
-                    )),
-                });
-
-                let action = if expired {
-                    button::primary(None, localized_copy("Get a fresh quote"))
-                        .on_press(Message::SparkSend(SparkSendMessage::ReQuoteRequested))
-                        .width(Length::Fixed(200.0))
-                } else {
-                    button::primary(None, localized_copy("Confirm and send"))
-                        .on_press(Message::SparkSend(SparkSendMessage::ConfirmRequested))
-                        .width(Length::Fixed(200.0))
-                };
-
-                col = col.push(Space::new().height(Length::Fixed(8.0))).push(
-                    Row::new().spacing(10).push(action).push(
-                        button::transparent_border(None, CopyText::Cancel.get())
-                            .on_press(Message::SparkSend(SparkSendMessage::Reset))
-                            .width(Length::Fixed(120.0)),
-                    ),
-                );
-
-                return Container::new(col)
-                    .padding(16)
-                    .style(theme::card::simple)
-                    .into();
-            }
-
-            review_card(view, ok)
-        }
+        SparkSendPhase::Prepared(ok) => review_card(view, ok),
 
         // A failed cross-chain send. What we offer here depends entirely on
         // whether a retry can double-pay — see `RetryPolicy`. When it can, the
@@ -832,40 +747,6 @@ fn conversion_fee_display(
     )
 }
 
-fn kv_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
-    Row::new()
-        .spacing(20)
-        .push(
-            Column::new()
-                .width(Length::FillPortion(1))
-                .push(h4_bold(label)),
-        )
-        .push(
-            Column::new()
-                .width(Length::FillPortion(3))
-                .push(p1_regular(value)),
-        )
-        .into()
-}
-
-/// Like [`kv_row`] but with an emphasised (bold) value — for the headline
-/// "total" line the eye should land on.
-fn total_row<'a>(label: &'a str, value: String) -> Element<'a, Message> {
-    Row::new()
-        .spacing(20)
-        .push(
-            Column::new()
-                .width(Length::FillPortion(1))
-                .push(h4_bold(label)),
-        )
-        .push(
-            Column::new()
-                .width(Length::FillPortion(3))
-                .push(h4_bold(value)),
-        )
-        .into()
-}
-
 // ── Review (P-Send prepared) ─────────────────────────────────────────────────
 
 const REVIEW_BACK_ID: &str = "spark-send-review-back";
@@ -873,10 +754,9 @@ const REVIEW_CONFIRM_ID: &str = "spark-send-review-confirm";
 const REVIEW_REPLACE_ID: &str = "spark-send-review-replace";
 const RECIPIENT_IDENTITY_ID: &str = "spark-send-recipient-identity";
 
-/// Whether `phase` is Review: a prepared quote that isn't cross-chain (those
-/// keep their own countdown preview below the form).
+/// Whether `phase` is Review: any prepared quote, bitcoin or cross-chain.
 fn is_review(phase: &SparkSendPhase) -> bool {
-    matches!(phase, SparkSendPhase::Prepared(ok) if ok.cross_chain.is_none())
+    matches!(phase, SparkSendPhase::Prepared(_))
 }
 
 /// What a prepare method is, in words. Unknown tags show as they come.
@@ -888,6 +768,18 @@ fn method_label(method: &str) -> &str {
         "SparkInvoice" => "Spark invoice",
         "BitcoinAddress" => "Bitcoin address · on-chain",
         other => other,
+    }
+}
+
+/// The toast after copying the receipt's recipient: a BOLT11 invoice reads
+/// as an invoice, anything else (Bitcoin or Spark address) as an address.
+fn recipient_copied_notice(recipient: &str) -> &'static str {
+    let lower = recipient.trim().to_ascii_lowercase();
+    let bare = lower.strip_prefix("lightning:").unwrap_or(&lower);
+    if bare.starts_with("ln") {
+        "Invoice copied to clipboard"
+    } else {
+        "Address copied to clipboard"
     }
 }
 
@@ -947,7 +839,7 @@ struct ReviewTile<'a> {
     figure: String,
     unit: &'static str,
     note: Option<String>,
-    rail: &'static str,
+    rail: String,
 }
 
 fn review_tile(tile: ReviewTile<'_>) -> Element<'_, Message> {
@@ -985,7 +877,7 @@ fn review_tile(tile: ReviewTile<'_>) -> Element<'_, Message> {
                     // Always a line, so both tiles keep one height.
                     .push(caption(tile.note.unwrap_or_default()).size(13)),
             )
-            .push(orange_badge(tile.rail)),
+            .push(orange_badge(&tile.rail)),
     )
     .padding([14, 16])
     .width(Length::Fill)
@@ -1021,7 +913,7 @@ fn review_route<'a>(
             ),
             unit: "USDB",
             note: None,
-            rail: "USDB",
+            rail: "USDB".into(),
         },
         (None, WalletAsset::Usdb, Some(quote)) => ReviewTile {
             caption: "You send",
@@ -1034,7 +926,7 @@ fn review_route<'a>(
                 "Se convierte en {}",
                 btc_line(clamp_sats(quote.amount_out.amount), unit)
             )),
-            rail: "USDB",
+            rail: "USDB".into(),
         },
         _ => {
             let (figure, unit) = btc_figure(total_sats, unit);
@@ -1045,7 +937,7 @@ fn review_route<'a>(
                 figure,
                 unit,
                 note: usd_estimate(total_sats, price),
-                rail: "SPARK",
+                rail: "SPARK".into(),
             }
         }
     };
@@ -1057,7 +949,7 @@ fn review_route<'a>(
             figure: usdb_figure(payment.amount.amount, usdb_decimals),
             unit: "USDB",
             note: None,
-            rail: view.receive_target.badge(),
+            rail: view.receive_target.badge().into(),
         },
         None => {
             let (figure, unit) = btc_figure(ok.amount_sat, unit);
@@ -1068,7 +960,7 @@ fn review_route<'a>(
                 figure,
                 unit,
                 note: usd_estimate(ok.amount_sat, price),
-                rail: view.receive_target.badge(),
+                rail: view.receive_target.badge().into(),
             }
         }
     };
@@ -1632,6 +1524,10 @@ fn review_card<'a>(
     .padding([16, 24])
     .width(Length::Fill);
 
+    if let Some(quote) = ok.cross_chain.as_deref() {
+        return cross_chain_review_card(view, ok, quote, head);
+    }
+
     let mut card = Column::new()
         .push(head)
         .push(iced::widget::rule::horizontal(1))
@@ -1709,6 +1605,307 @@ fn review_card<'a>(
             ],
         )));
     card.into()
+}
+
+// ── Review, cross-chain ──────────────────────────────────────────────────────
+
+const REVIEW_REQUOTE_ID: &str = "spark-send-review-requote";
+
+/// What "price may move up to" offers, in basis points. The SDK's default
+/// (1%) is the middle one, so leaving it alone is the usual answer.
+const SLIPPAGE_PRESETS_BPS: [u32; 3] = [50, 100, 300];
+
+/// Review for a stablecoin send: the same card as a bitcoin send's, with the
+/// quote a cross-chain route needs — what they receive in the destination
+/// asset and on which network, both fees, how far the price may move, and
+/// how long the quote lasts.
+///
+/// The network is settled on Details. Review only asks the user to confirm it
+/// when they chose it among several (an EVM address valid on many chains):
+/// an address that belongs to one network already says where it goes.
+fn cross_chain_review_card<'a>(
+    view: &SparkSendView<'a>,
+    ok: &'a coincube_spark_protocol::PrepareSendOk,
+    quote: &'a coincube_spark_protocol::CrossChainQuote,
+    head: Container<'a, Message>,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::{body, label, mono};
+    let unit = view.bitcoin_unit;
+    let price = view.reference_btc_usd_price;
+    let network = cross_chain::chain_name(&quote.route.chain);
+    let coin = view.receive_target.label();
+    let total_sats = ok.amount_sat.saturating_add(ok.fee_sat);
+    let value = |value: String| -> Element<'a, Message> { body(value).into() };
+
+    let (figure, figure_unit) = btc_figure(total_sats, unit);
+    let you_send = ReviewTile {
+        caption: "You send",
+        logo: asset_network_logo("btc", "spark", 40.0),
+        asset: "Bitcoin",
+        figure,
+        unit: figure_unit,
+        note: usd_estimate(total_sats, price),
+        rail: "SPARK".into(),
+    };
+    let they_receive = ReviewTile {
+        caption: "They receive",
+        logo: target_logo(view.receive_target, 40.0),
+        asset: coin,
+        figure: cross_chain::format_asset_amount(quote.estimated_out, quote.route.decimals),
+        unit: if view.receive_target == SparkSendTarget::Usdc {
+            "USDC"
+        } else {
+            "USDT"
+        },
+        note: Some(localized_format!("on {}", "en {}", network)),
+        rail: network.to_uppercase(),
+    };
+    let route = Row::new()
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .push(Container::new(review_tile(you_send)).width(Length::FillPortion(1)))
+        .push(text("→").size(H5_SIZE).style(theme::text::secondary))
+        .push(Container::new(review_tile(they_receive)).width(Length::FillPortion(1)));
+
+    let countdown = view.quote_countdown.clone();
+    let live = matches!(countdown, Some(cross_chain::QuoteCountdown::Valid { .. }));
+    let quote_value: Element<'a, Message> = match countdown {
+        Some(cross_chain::QuoteCountdown::Valid { seconds_left }) => value(localized_format!(
+            "Valid for {}:{:02}",
+            "Válida durante {}:{:02}",
+            seconds_left / 60,
+            seconds_left % 60
+        )),
+        _ => text(localized_copy("Expired. Get a new quote to send."))
+            .size(P1_SIZE)
+            .style(theme::text::warning)
+            .into(),
+    };
+
+    let current_bps = view
+        .slippage_input
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(cross_chain::DEFAULT_SLIPPAGE_BPS);
+    let mut presets = Row::new().spacing(6);
+    for bps in SLIPPAGE_PRESETS_BPS {
+        let selected = bps == current_bps;
+        presets = presets.push(
+            iced::widget::button(text(format!("{}%", bps as f64 / 100.0)).size(P2_SIZE))
+                .padding([4, 10])
+                .style(if selected {
+                    theme::button::primary
+                } else {
+                    theme::button::container_border
+                })
+                .on_press_maybe(
+                    (!selected)
+                        .then_some(Message::SparkSend(SparkSendMessage::SlippagePreset(bps))),
+                ),
+        );
+    }
+
+    let rows = vec![
+        quote_row(
+            localized_copy("To"),
+            mono(shorten_middle(view.destination_input, 14, 8)).into(),
+            Some(localized_format!("{} on {}", "{} en {}", coin, network)),
+            false,
+        ),
+        quote_row(
+            localized_copy("Amount"),
+            value(btc_line(ok.amount_sat, unit)),
+            usd_estimate(ok.amount_sat, price),
+            false,
+        ),
+        quote_row(
+            localized_copy("Network fee"),
+            value(btc_line(quote.source_transfer_fee_sats, unit)),
+            None,
+            false,
+        ),
+        quote_row(
+            localized_copy("Conversion fee"),
+            value(conversion_fee_display(
+                quote.fee_amount,
+                quote.route.decimals,
+                &quote.route.asset,
+                price,
+                unit,
+            )),
+            Some(localized_copy("Already taken from what they receive").to_owned()),
+            false,
+        ),
+        quote_row(
+            localized_copy("Price may move up to"),
+            presets.into(),
+            None,
+            false,
+        ),
+        quote_row(localized_copy("Quote"), quote_value, None, false),
+        quote_row(
+            localized_copy("Total you send"),
+            label(btc_line(total_sats, unit)).size(16).into(),
+            usd_estimate(total_sats, price),
+            true,
+        ),
+    ];
+
+    // Asked only when the user picked the network themselves.
+    let chose_network = view
+        .detected
+        .is_some_and(cross_chain::DetectedDestination::network_was_chosen);
+    let acknowledgement = chose_network.then(|| {
+        Container::new(
+            Column::new()
+                .spacing(10)
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Start)
+                        .push(icon::warning_icon().size(14).style(|theme: &theme::Theme| {
+                            iced::widget::text::Style {
+                                color: Some(theme.colors.shell.warn),
+                            }
+                        }))
+                        .push(
+                            coincube_ui::component::tenshu::caption(localized_format!(
+                                "This address works on several networks. {} sent on the wrong \
+                                 one can't be recovered.",
+                                "Esta dirección funciona en varias redes. Los {} enviados a la \
+                                 red equivocada no se pueden recuperar.",
+                                coin
+                            ))
+                            .size(13)
+                            .width(Length::Fill),
+                        ),
+                )
+                .push(
+                    coincube_ui::widget::CheckBox::new(view.network_acknowledged)
+                        .label(localized_format!(
+                            "The recipient uses {} for {}",
+                            "El destinatario usa {} para {}",
+                            network,
+                            coin
+                        ))
+                        .style(theme::checkbox::primary)
+                        .size(18)
+                        .on_toggle(|checked| {
+                            Message::SparkSend(SparkSendMessage::AcknowledgeNetwork(checked))
+                        }),
+                ),
+        )
+        .padding([10, 12])
+        .width(Length::Fill)
+        .style(notice_style)
+    });
+
+    let action = |id: &'static str, label: &'static str, kind, message: Option<Message>| {
+        Element::from(
+            ActionButton::new(
+                iced::advanced::widget::Id::new(id),
+                label,
+                kind,
+                Message::FocusAction,
+            )
+            .on_press_maybe(message),
+        )
+    };
+    let primary = if live {
+        action(
+            REVIEW_CONFIRM_ID,
+            localized_copy("Confirm and send"),
+            ActionKind::Primary,
+            (!view.awaiting_network_ack)
+                .then_some(Message::SparkSend(SparkSendMessage::ConfirmRequested)),
+        )
+    } else {
+        action(
+            REVIEW_REQUOTE_ID,
+            localized_copy("Get a new quote"),
+            ActionKind::Primary,
+            Some(Message::SparkSend(SparkSendMessage::ReQuoteRequested)),
+        )
+    };
+    let status = if !live {
+        "This quote has expired. Nothing has been sent."
+    } else if view.awaiting_network_ack {
+        "Confirm the network to send."
+    } else {
+        "Nothing moves until you confirm."
+    };
+
+    Column::new()
+        .push(head)
+        .push(iced::widget::rule::horizontal(1))
+        .push(card_section(route))
+        .push(iced::widget::rule::horizontal(1))
+        .push(card_section(
+            Column::new()
+                .spacing(16)
+                .push(ruled(rows))
+                .push_maybe(acknowledgement),
+        ))
+        .push(iced::widget::rule::horizontal(1))
+        .push(card_section(review_footer(
+            status,
+            vec![
+                action(
+                    REVIEW_BACK_ID,
+                    CopyText::Back.get(),
+                    ActionKind::Secondary,
+                    Some(Message::SparkSend(SparkSendMessage::EditDetails)),
+                ),
+                primary,
+            ],
+        )))
+        .into()
+}
+
+/// Under Destination, once the address is looked up: what it is, and — for
+/// an address several networks reach — the choice between them. Nothing is
+/// pre-chosen there: guessing the chain is how funds are lost.
+fn detected_destination<'a>(
+    detected: &'a cross_chain::DetectedDestination,
+    coin: &str,
+) -> Element<'a, Message> {
+    let mut column = Column::new()
+        .spacing(10)
+        .push(
+            p2_regular(detected.network.note(coin)).style(if detected.network.is_problem() {
+                theme::text::warning
+            } else {
+                theme::text::secondary
+            }),
+        );
+    let choices = detected.choices();
+    if !choices.is_empty() {
+        let mut row = Row::new().spacing(8).width(Length::Fill);
+        for chain in choices {
+            let selected = detected.chosen.as_deref() == Some(chain.as_str());
+            row = row.push(
+                iced::widget::button(
+                    text(chain.clone())
+                        .size(P1_SIZE)
+                        .align_x(Alignment::Center)
+                        .width(Length::Fill),
+                )
+                .padding([10, 12])
+                .width(Length::FillPortion(1))
+                .style(if selected {
+                    theme::button::primary
+                } else {
+                    theme::button::container_border
+                })
+                .on_press(Message::SparkSend(SparkSendMessage::ChooseNetwork(
+                    chain.clone(),
+                ))),
+            );
+        }
+        column = column.push(row);
+    }
+    column.into()
 }
 
 // ── Two-card "YOU SEND → THEY RECEIVE" selector + picker ─────────────────────
@@ -1910,7 +2107,7 @@ pub(crate) fn fixed_tile_style(theme: &theme::Theme) -> container::Style {
 
 /// The tappable THEY RECEIVE tile: the button draws the tile itself, so the
 /// hover outline is not hidden under an inner card.
-fn receive_tile_button_style(
+pub(crate) fn receive_tile_button_style(
     theme: &theme::Theme,
     status: iced::widget::button::Status,
 ) -> iced::widget::button::Style {
@@ -1969,6 +2166,7 @@ fn target_place(target: SparkSendTarget) -> &'static str {
 /// under its tile; a chevron and the hover outline mark each tappable tile.
 fn spark_send_cards<'a>(
     target: SparkSendTarget,
+    detected: Option<&cross_chain::DetectedDestination>,
     pay_from: coincube_spark_protocol::WalletAsset,
     menus: SendMenus<'a>,
 ) -> Element<'a, Message> {
@@ -2025,7 +2223,10 @@ fn spark_send_cards<'a>(
                 "They receive",
                 None,
                 localized_copy(target.label()).to_string(),
-                localized_copy(target_place(target)).to_string(),
+                detected
+                    .filter(|_| target.is_stablecoin())
+                    .and_then(cross_chain::DetectedDestination::tile_place)
+                    .unwrap_or_else(|| localized_copy(target_place(target)).to_string()),
                 Some(receive_open),
             ),
             Message::FocusAction,
@@ -2073,7 +2274,7 @@ pub struct SendMenus<'a> {
 
 /// A route tile while its menu is open: the hovered tile's surface with the
 /// accent line, so the tile reads as the menu's owner.
-fn open_tile_button_style(
+pub(crate) fn open_tile_button_style(
     theme: &theme::Theme,
     _: iced::widget::button::Status,
 ) -> iced::widget::button::Style {
@@ -2143,6 +2344,26 @@ pub fn send_target_picker_menu<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recipient_copy_toast_names_invoices_and_addresses() {
+        assert_eq!(
+            recipient_copied_notice("lnbc15u1pnxyz"),
+            "Invoice copied to clipboard"
+        );
+        assert_eq!(
+            recipient_copied_notice("LIGHTNING:LNBC15U1PNXYZ"),
+            "Invoice copied to clipboard"
+        );
+        assert_eq!(
+            recipient_copied_notice("135GTBUiWvLpZk9f8KBQy"),
+            "Address copied to clipboard"
+        );
+        assert_eq!(
+            recipient_copied_notice("bc1qexampleaddress"),
+            "Address copied to clipboard"
+        );
+    }
 
     #[test]
     fn conversion_fee_shows_a_sats_estimate_when_a_price_is_known() {
@@ -2406,6 +2627,9 @@ mod tests {
                 theme_mode: self.mode,
                 sent_amount_display: "",
                 sent_celebration_context: "",
+                sent_recipient: "",
+                sent_fee_display: "",
+                sent_total_display: "",
                 sent_quote: &self.quote,
                 sent_image_handle: &self.image,
                 recent_transactions: &[],
@@ -2433,8 +2657,11 @@ mod tests {
                 network: self.network,
                 chain: self.network.into(),
                 cross_chain_ctx: None,
+                detected: None,
+                amount_issue: None,
+                awaiting_network_ack: false,
+                network_acknowledged: false,
                 slippage_input: "",
-                advanced_open: false,
                 quote_countdown: self.countdown.clone(),
             }
         }
@@ -3001,7 +3228,6 @@ mod tests {
     fn the_steps_sit_on_the_head_and_follow_the_phase() {
         assert_eq!(super::send_step(&SparkSendPhase::Idle), 0);
         assert_eq!(super::send_step(&SparkSendPhase::Preparing), 0);
-        assert_eq!(super::send_step(&SparkSendPhase::CrossChainRoutes), 0);
         assert_eq!(super::send_step(&SparkSendPhase::Error("no".into())), 0);
         assert_eq!(super::send_step(&ordinary_prepared()), 1);
         assert_eq!(super::send_step(&SparkSendPhase::Sending), 1);
@@ -3836,6 +4062,7 @@ mod tests {
                     contract_address: None,
                     decimals: 6,
                     btc_source_supported: true,
+                    btc_limits: None,
                 },
                 estimated_out: 19_000_000,
                 fee_amount: 97_921,
@@ -3927,7 +4154,7 @@ mod tests {
                     "Back",
                 ],
                 absent: &[
-                    "Get a fresh quote",
+                    "Get a new quote",
                     "Bolt11Invoice",
                     "Payment details",
                     "Cancel",
@@ -3952,15 +4179,30 @@ mod tests {
                 fixture: with(Fixture::cross_chain_prepared(), |f| {
                     f.countdown = Some(cross_chain::QuoteCountdown::Valid { seconds_left: 42 })
                 }),
-                present: &["Quote valid for 42s.", "Confirm and send", "Total you send"],
-                absent: &["Get a fresh quote"],
+                present: &[
+                    "Review and confirm",
+                    "Valid for 0:42",
+                    "Price may move up to",
+                    "Confirm and send",
+                    "Total you send",
+                    "Back",
+                ],
+                // One network, so nothing to acknowledge; and no Branta row
+                // or old preview labels on a cross-chain quote.
+                absent: &[
+                    "Get a new quote",
+                    "Source Bitcoin network",
+                    "Recipient checks",
+                    "The recipient uses",
+                    "Payment details",
+                ],
             },
             Case {
                 scenario: "quote-expired",
                 fixture: with(Fixture::cross_chain_prepared(), |f| {
                     f.countdown = Some(cross_chain::QuoteCountdown::Expired)
                 }),
-                present: &["This quote has expired.", "Get a fresh quote"],
+                present: &["This quote has expired.", "Get a new quote"],
                 absent: &["Confirm and send"],
             },
             Case {
@@ -3968,7 +4210,7 @@ mod tests {
                 fixture: with(Fixture::cross_chain_prepared(), |f| {
                     f.countdown = Some(cross_chain::QuoteCountdown::Unknown)
                 }),
-                present: &["Get a fresh quote"],
+                present: &["Get a new quote"],
                 absent: &["Confirm and send"],
             },
             Case {

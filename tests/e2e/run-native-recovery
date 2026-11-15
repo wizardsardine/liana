@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Native full Recovery Kit suite; no GUI or broadcast acceptance."""
+from contextlib import ExitStack
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import hashlib
+import shutil
+import subprocess
+
+root = Path(__file__).resolve().parent
+if sys.version_info < (3, 11, 4):
+    for name in ('python3.12', 'python3.13', 'python3.11'):
+        candidate = shutil.which(name)
+        if candidate and subprocess.run([candidate, '-c', 'import sys;sys.exit(sys.version_info<(3,11,4))'], capture_output=True).returncode == 0:
+            os.execv(candidate, [candidate, str(Path(__file__).resolve()), *sys.argv[1:]])
+    raise SystemExit('NATIVE_RECOVERY_PYTHON: supported Python interpreter unavailable')
+os.umask(0o077)
+venv = root / '.venv-native-recovery'
+python = venv / 'bin/python'
+lock = root / 'native-recovery.requirements.lock'
+stamp = venv / 'requirements.sha256'
+expected = hashlib.sha256(lock.read_bytes()).hexdigest()
+if venv.is_symlink() or (venv.exists() and (venv.stat().st_uid != os.getuid() or venv.stat().st_mode & 0o077)):
+    raise SystemExit('NATIVE_RECOVERY_VENV: expected owned private directory')
+if Path(sys.prefix) != venv:
+    if not python.exists():
+        subprocess.run([sys.executable, '-m', 'venv', str(venv)], check=True, capture_output=True)
+    local = root / '.local'; local.mkdir(mode=0o700, exist_ok=True)
+    with (local / 'native-recovery-bootstrap.log').open('ab') as log:
+        if not stamp.exists() or stamp.read_text() != expected:
+            result = subprocess.run([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-r', str(lock)], stdout=log, stderr=log)
+            if result.returncode:
+                raise SystemExit('NATIVE_RECOVERY_DEPENDENCIES: private bootstrap diagnostics retained')
+            stamp.write_text(expected)
+    os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+os.umask(0o077)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from harness.native_recovery import NativeRecovery, keep_awake
+from harness.state import Blocked, private_read
+from harness.clients import http, REST
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--config', required=True)
+parser.add_argument('--run-dir', required=True)
+parser.add_argument('--abandon-capacity-from')
+parser.add_argument('--legacy-capacity-helper')
+parser.add_argument('--retire-orphan-215-from')
+parser.add_argument('--orphan-215-helper')
+args = parser.parse_args()
+suite = None
+resources = ExitStack()
+try:
+    resources.enter_context(keep_awake())
+    if args.retire_orphan_215_from:
+        old_scope=Path(args.retire_orphan_215_from).resolve()
+        new_scope=Path(args.run_dir).resolve()
+        if new_scope.is_relative_to(old_scope) or old_scope.is_relative_to(new_scope):
+            raise Blocked('NATIVE_RECOVERY_ORPHAN_DIRECTORY','Use a separate new operation directory; no old run may be written.')
+    config = json.loads(private_read(args.config))
+    if not {'version', 'native_recovery', 'account_email', 'connect_cache'} <= set(config) or set(config) - {'version', 'native_recovery', 'account_email', 'connect_cache', 'cleanup_workstation'} or config['version'] != 1:
+        raise Blocked('NATIVE_RECOVERY_CONFIG', 'Use a private version1 native Recovery Kit configuration.')
+    # NativeRecovery verifies source BEFORE this credential cache is read.
+    suite = NativeRecovery(config['native_recovery'], args.run_dir, {'standalone': str(Path(args.run_dir).absolute())})
+    cache = json.loads(private_read(config['connect_cache']))
+    accounts = [a for a in cache['accounts'] if a['email'] == cache.get('active_email') == config['account_email']]
+    if len(accounts) != 1:
+        raise Blocked('NATIVE_RECOVERY_ACCOUNT', 'Exactly one explicitly bound disposable QA account is required.')
+    account = accounts[0]
+    user = json.loads(http(REST + '/api/v1/user', headers={'Authorization': 'Bearer ' + account['tokens']['access_token']}))
+    if user['email'].casefold() != config['account_email'].casefold():
+        raise Blocked('NATIVE_RECOVERY_ACCOUNT', 'Authenticated QA identity changed.')
+    if bool(args.abandon_capacity_from) != bool(args.legacy_capacity_helper):
+        raise Blocked('NATIVE_RECOVERY_ABANDON_ARGUMENTS', 'Both narrow capacity handoff paths are required together.')
+    if args.abandon_capacity_from:
+        suite.abandon_capacity(account, user['id'], args.abandon_capacity_from, args.legacy_capacity_helper)
+    if bool(args.retire_orphan_215_from) != bool(args.orphan_215_helper) or (args.retire_orphan_215_from and args.abandon_capacity_from):
+        raise Blocked('NATIVE_RECOVERY_ORPHAN_ARGUMENTS','Use the exact remote-only orphan operation separately from capacity abandonment.')
+    if args.retire_orphan_215_from:
+        suite.retire_orphan_215(account,user['id'],args.retire_orphan_215_from,args.orphan_215_helper,config.get('cleanup_workstation'))
+    suite.execute(account, user['id'], cleanup_workstation=config.get('cleanup_workstation'))
+except Blocked as error:
+    print(error.code + ': ' + str(error), file=sys.stderr)
+    raise SystemExit(2)
+finally:
+    try:
+        if suite:
+            suite.close()
+    finally:
+        resources.close()

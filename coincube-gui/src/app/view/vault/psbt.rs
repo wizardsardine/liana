@@ -486,21 +486,30 @@ pub fn broadcast_action<'a>(
         sent_image_handle,
         is_self_transfer,
         None,
+        BroadcastReceipt::default(),
     )
 }
 
-/// What the success screen says became of the amount it shows.
+/// The receipt's status line for a broadcast.
 ///
 /// A self-transfer that replaces a pending transaction is a cancel: the coins
 /// that transaction spent come back to the wallet, minus the new fee, so saying
-/// they were "transferred" reads as if they had left it. They only come back if
-/// the cancellation confirms, though: the original can still be mined first.
-fn broadcast_outcome(is_self_transfer: bool, replaces_pending: bool) -> &'static str {
+/// they were "sent" reads as if they had left it. They only come back if the
+/// cancellation confirms, though: the original can still be mined first.
+fn broadcast_headline(is_self_transfer: bool, replaces_pending: bool) -> Option<&'static str> {
     match (is_self_transfer, replaces_pending) {
-        (true, true) => CopyText::CancellationOutcome.get(),
-        (true, false) => CopyText::HasBeenTransferred.get(),
-        (false, _) => CopyText::HasBeenSentSuccessfully.get(),
+        (true, true) => Some(CopyText::CancellationSent.get()),
+        (true, false) => Some(CopyText::TransferSent.get()),
+        (false, _) => None,
     }
+}
+
+/// What the broadcast receipt lists beside the amount.
+#[derive(Debug, Default, Clone)]
+pub struct BroadcastReceipt<'a> {
+    /// Network fee with its unit, when the spend recorded one.
+    pub fee: Option<&'a str>,
+    pub txid: Option<Txid>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -515,21 +524,56 @@ pub fn broadcast_action_with_identity_review<'a>(
     sent_image_handle: &'a iced::widget::image::Handle,
     is_self_transfer: bool,
     identity_review: Option<Element<'a, Message>>,
+    receipt: BroadcastReceipt<'a>,
 ) -> Element<'a, Message> {
     if saved {
-        coincube_ui::component::sent_celebration_page(
-            "bitcoin-send",
+        use coincube_ui::component::payment_result::{
+            payment_result, short_id, Outcome, ReceiptRow,
+        };
+        let replaces_pending = !conflicting_txids.is_empty();
+        let detail = if is_self_transfer && replaces_pending {
+            localized_copy("The coins return to this wallet once the cancellation confirms.")
+        } else {
+            localized_copy("You can close this. Activity updates when it confirms.")
+        };
+        let mut page = payment_result(
+            Outcome::Confirming,
             spend_amount_display,
+            "bitcoin-send",
             sent_quote,
             sent_image_handle,
-            broadcast_outcome(is_self_transfer, !conflicting_txids.is_empty()),
-            if is_self_transfer {
-                None
-            } else {
-                coincube_ui::worldview_copy::VoiceLine::PaymentSent.get()
-            },
             Message::Spend(super::super::SpendTxMessage::Cancel),
         )
+        .detail(detail)
+        .row(ReceiptRow::new(localized_copy("Paid from"), "Vault"))
+        .voice(if is_self_transfer {
+            None
+        } else {
+            coincube_ui::worldview_copy::VoiceLine::PaymentSent.get()
+        });
+        if let Some(headline) = broadcast_headline(is_self_transfer, replaces_pending) {
+            page = page.headline(headline);
+        }
+        if let Some(fee) = receipt.fee {
+            page = page.row(ReceiptRow::new(localized_copy("Network fee"), fee));
+        }
+        if let Some(txid) = receipt.txid {
+            let txid = txid.to_string();
+            page = page.row(
+                ReceiptRow::new(localized_copy("Transaction ID"), short_id(&txid))
+                    .mono()
+                    .on_copy(Message::CopyWithToast(
+                        txid,
+                        "Transaction ID copied to clipboard".to_string(),
+                    )),
+            );
+        }
+        // The modal draws no surface of its own.
+        Container::new(page)
+            .padding(32)
+            .max_width(1000)
+            .style(theme::card::modal)
+            .into()
     } else {
         card::simple(
             Column::new()
@@ -3171,6 +3215,7 @@ mod tests {
                     &image,
                     false,
                     None,
+                    BroadcastReceipt::default(),
                 ),
             ] {
                 let mounted = capture::inspect(
@@ -3554,23 +3599,62 @@ mod tests {
         let _ = update_spend_success_view();
     }
 
-    /// A cancel shows the whole amount coming back, which must not read as if
-    /// it had left the wallet, nor as if it were back before the cancellation
-    /// confirms.
+    /// The broadcast receipt leads with status and amount, lists the fee and
+    /// the transaction a user may need later, and says it is safe to close.
     #[test]
-    fn a_cancel_says_the_coins_come_back_once_it_confirms() {
-        assert_eq!(
-            broadcast_outcome(true, true),
-            "will return to your wallet once the cancellation confirms."
+    fn broadcast_receipt_lists_fee_and_transaction() {
+        use crate::app::view::shared::landing::capture;
+        use std::str::FromStr;
+
+        let quote = quote();
+        let image = image_handle();
+        let txid =
+            Txid::from_str("4e0ca17b9c2d6f1a8b3e5d7c9f0a1b2c3d4e5f60718293a4b5c6d7e866d20f19")
+                .unwrap();
+        let mounted = capture::inspect(
+            "vault-broadcast-receipt",
+            broadcast_action_with_identity_review(
+                crate::chain::ChainId::Bitcoin,
+                &HashSet::new(),
+                true,
+                false,
+                None,
+                "150,000 SATS",
+                &quote,
+                &image,
+                false,
+                None,
+                BroadcastReceipt {
+                    fee: Some("1,240 SATS"),
+                    txid: Some(txid),
+                },
+            ),
+            (1440, 900),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
         );
-        assert_eq!(broadcast_outcome(true, false), "has been transferred.");
-        assert_eq!(
-            broadcast_outcome(false, true),
-            "has been sent successfully."
-        );
-        assert_eq!(
-            broadcast_outcome(false, false),
-            "has been sent successfully."
-        );
+        for text in [
+            "Sent · waiting for confirmation",
+            "150,000",
+            "You can close this. Activity updates when it confirms.",
+            "Paid from",
+            "Network fee",
+            "1,240 SATS",
+            "Transaction ID",
+            "4e0ca17b … 66d20f19",
+            "Done",
+        ] {
+            assert!(mounted.contains(text), "missing {}", text);
+        }
+    }
+
+    /// A cancel must not read as if the coins left the wallet, and a
+    /// self-transfer is not a payment to someone else.
+    #[test]
+    fn a_cancel_and_a_transfer_get_their_own_status_line() {
+        assert_eq!(broadcast_headline(true, true), Some("Cancellation sent"));
+        assert_eq!(broadcast_headline(true, false), Some("Transfer sent"));
+        assert_eq!(broadcast_headline(false, true), None);
+        assert_eq!(broadcast_headline(false, false), None);
     }
 }

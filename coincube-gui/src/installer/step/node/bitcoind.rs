@@ -2092,7 +2092,8 @@ mod tests {
             None,
             None,
         );
-        ctx.fresh_fork_cube = true;
+        // A Vault for an open fork Cube may run on a local node without Connect.
+        ctx.in_cube_fork_vault = true;
         let mut select = SelectBitcoindTypeStep::new();
         select.load_context(&ctx);
         let mut hws = HardwareWallets::new(root.clone(), ctx.network);

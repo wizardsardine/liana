@@ -765,17 +765,7 @@ fn identity<'a>(ctx: &NavContext<'a>) -> Element<'a, Message> {
     .width(Length::Fill)
     .style(theme::button::shell_nav)
     .on_press(Message::ToggleCubeSwitcher);
-    iced::widget::tooltip(
-        container(control).padding([4, 8]),
-        container(muted(ctx.cube_name, 12).wrapping(iced::widget::text::Wrapping::WordOrGlyph))
-            .max_width(240)
-            .max_height(120)
-            .clip(true)
-            .padding([6, 10])
-            .style(theme::container::shell_menu),
-        iced::widget::tooltip::Position::Right,
-    )
-    .into()
+    container(control).padding([4, 8]).into()
 }
 
 fn switcher_menu<'a>(ctx: &NavContext<'a>, state: ShellState) -> Element<'a, Message> {
@@ -1068,9 +1058,17 @@ pub fn sidebar<'a>(menu: &Menu, ctx: &NavContext<'a>, state: ShellState) -> Elem
         .height(Length::Fill);
     // The menu covers the rows below it rather than pushing them down.
     if state.switcher_open {
-        sidebar = sidebar.push(Floating::new(
-            container(switcher_menu(ctx, state)).padding([0, 8]),
-        ));
+        // Escape belongs to the menu while it is open, so a page underneath
+        // that also answers Escape (a payment result) keeps its screen.
+        sidebar = sidebar.push(
+            Floating::new(container(switcher_menu(ctx, state)).padding([0, 8])).on_escape(
+                if state.lock_confirmation {
+                    Message::CancelCubeLock
+                } else {
+                    Message::ToggleCubeSwitcher
+                },
+            ),
+        );
     }
     sidebar = sidebar
         .push(top)

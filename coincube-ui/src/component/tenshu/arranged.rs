@@ -38,6 +38,7 @@ pub fn arranged<'a, M>(
         size,
         arrange: Box::new(arrange),
         stop_on_capture: false,
+        skip_empty: false,
     }
 }
 
@@ -47,6 +48,7 @@ pub struct Arranged<'a, M> {
     size: Size<Length>,
     arrange: Arrange<'a, M>,
     stop_on_capture: bool,
+    skip_empty: bool,
 }
 
 impl<M> Arranged<'_, M> {
@@ -57,6 +59,21 @@ impl<M> Arranged<'_, M> {
         self.stop_on_capture = true;
         self
     }
+
+    /// Treat a child the layout gave no area as absent: it isn't drawn, sees
+    /// no events and reports no text or focus. A layout that picks between
+    /// alternatives (a wide and a narrow variant) gives the unused ones
+    /// `layout::Node::new(Size::ZERO)`.
+    pub fn skip_empty(mut self) -> Self {
+        self.skip_empty = true;
+        self
+    }
+}
+
+/// A child laid out with no area, which [`Arranged::skip_empty`] leaves out.
+fn empty(layout: &Layout<'_>) -> bool {
+    let size = layout.bounds().size();
+    size.width <= 0.0 || size.height <= 0.0
 }
 
 impl<'a, M> Widget<M, Theme, Renderer> for Arranged<'a, M> {
@@ -88,6 +105,7 @@ impl<'a, M> Widget<M, Theme, Renderer> for Arranged<'a, M> {
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
+        let skip_empty = self.skip_empty;
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
             for ((child, state), layout) in self
@@ -96,6 +114,9 @@ impl<'a, M> Widget<M, Theme, Renderer> for Arranged<'a, M> {
                 .zip(&mut tree.children)
                 .zip(layout.children())
             {
+                if skip_empty && empty(&layout) {
+                    continue;
+                }
                 child
                     .as_widget_mut()
                     .operate(state, layout, renderer, operation);
@@ -114,12 +135,16 @@ impl<'a, M> Widget<M, Theme, Renderer> for Arranged<'a, M> {
         shell: &mut Shell<'_, M>,
         viewport: &Rectangle,
     ) {
+        let skip_empty = self.skip_empty;
         for ((child, state), layout) in self
             .children
             .iter_mut()
             .zip(&mut tree.children)
             .zip(layout.children())
         {
+            if skip_empty && empty(&layout) {
+                continue;
+            }
             child.as_widget_mut().update(
                 state, event, layout, cursor, renderer, clipboard, shell, viewport,
             );
@@ -141,6 +166,7 @@ impl<'a, M> Widget<M, Theme, Renderer> for Arranged<'a, M> {
             .iter()
             .zip(&tree.children)
             .zip(layout.children())
+            .filter(|(_, layout)| !(self.skip_empty && empty(layout)))
             .map(|((child, state), layout)| {
                 child
                     .as_widget()
@@ -165,6 +191,7 @@ impl<'a, M> Widget<M, Theme, Renderer> for Arranged<'a, M> {
             .iter()
             .zip(&tree.children)
             .zip(layout.children())
+            .filter(|(_, layout)| !(self.skip_empty && empty(layout)))
         {
             child
                 .as_widget()

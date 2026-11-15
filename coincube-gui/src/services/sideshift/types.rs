@@ -197,7 +197,11 @@ pub struct VariableShiftRequest {
 }
 
 /// Response returned by both fixed and variable shift creation endpoints.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// Also `Serialize`, because a live Spark cross-network receive keeps its shift
+/// in the Cube's settings ([`crate::app::settings::PendingSparkShift`]) so the
+/// page can be restored after a lock or restart.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShiftResponse {
     pub id: String,

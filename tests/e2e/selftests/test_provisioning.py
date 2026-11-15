@@ -150,24 +150,27 @@ def explorer_responses(monkeypatch, *, left=None, right=None, wrong_genesis=Fals
 
 def test_both_explorers_must_confirm_testnet4_genesis(monkeypatch):
     explorer_responses(monkeypatch, wrong_genesis=True)
+    explorer_under_test = provision.Explorer()
     with pytest.raises(Failed) as caught:
-        provision.Explorer().chain()
+        explorer_under_test.chain()
     assert caught.value.code == "EXPLORER_CHAIN"
 
 
 def test_disagreeing_funding_observations_are_not_selected(monkeypatch):
     entry = {"txid": FUNDING_TXID, "vout": 0, "value": 100000}
     explorer_responses(monkeypatch, left=[entry], right=[])
+    explorer_under_test = provision.Explorer()
     with pytest.raises(Blocked) as caught:
-        provision.Explorer().utxos(ADDRESS)
+        explorer_under_test.utxos(ADDRESS)
     assert caught.value.code == "FUNDING_PROPAGATION"
 
 
 @pytest.mark.parametrize("right", ["00bb", "a", "not hex"])
 def test_raw_funding_requires_identical_valid_bytes(monkeypatch, right):
     explorer_responses(monkeypatch, left="00aa", right=right)
+    explorer_under_test = provision.Explorer()
     with pytest.raises(Failed) as caught:
-        provision.Explorer().raw(FUNDING_TXID)
+        explorer_under_test.raw(FUNDING_TXID)
     assert caught.value.code == "FUNDING_RAW"
 
 
@@ -661,7 +664,8 @@ def test_attachment_runs_phone_reseal_once_and_reconciles_after_lost_reply(runne
     calls = []
 
     def attach(name, cube, journal):
-        assert name == 'QA ' + runner.run_id and cube == 'QA synthetic cube'
+        assert name == 'QA ' + runner.run_id
+        assert cube == 'QA synthetic cube'
         journal.artifact('phone_key_attachment_started', True)
         calls.append(True)
         key['cubeId'] = 17
@@ -779,7 +783,8 @@ def test_upgrade_archives_original_evidence_before_stage_overwrite_and_rechecks(
     original = deepcopy(runner.artifacts["approval_original_attempt"])
     assert original["origin"] == ("approval-context" if modern else "legacy-stage-evidence")
     if not modern:
-        assert "process" not in original and "context" not in original
+        assert "process" not in original
+        assert "context" not in original
         assert original["sign_stage"]["code"] == "PHONE_AUTH"
     runner.journal.outcome("phone", "passed")
     runner.journal.outcome("sign", "passed")
@@ -914,7 +919,8 @@ def test_first_approval_keeps_review_and_remote_callbacks_mandatory(runner):
     def approve(*args, **kwargs):
         assert kwargs["reapproval"] is False
         assert kwargs["session_id"] == runner.artifacts["session_id"]
-        assert kwargs["before_approve"]() and kwargs["before_pin"]()
+        assert kwargs["before_approve"]()
+        assert kwargs["before_pin"]()
         calls.append("first-review")
     runner.phone.approve = approve
     runner.stage_sign()
@@ -1308,7 +1314,8 @@ def test_uncertain_resumed_first_pin_is_never_dispatched_twice(runner, tmp_path,
     with pytest.raises(Blocked) as error: runner.stage_phone_key()
     assert error.value.code == "KEY_REGISTRATION"
     assert calls == ["first-pin-only"]
-    assert receipt["creation_started"] is True and receipt["pin_entered"] is True
+    assert receipt["creation_started"] is True
+    assert receipt["pin_entered"] is True
     assert state["key_generation_reservation"]["status"] == "consumed"
 
 
@@ -1390,7 +1397,8 @@ def test_other_approval_failures_do_not_restart_discovery(runner, code):
     runner.approve_phone = failed
     with pytest.raises(Blocked) as error: runner.stage_sign()
     assert error.value.code == code
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 @pytest.mark.parametrize('marker', ['approval_started', 'approval_context', 'pin_resume_probe', 'pin_dispatch_started',
@@ -1405,7 +1413,8 @@ def test_discovery_restart_refuses_any_input_or_active_credential_evidence(runne
     else: runner.artifacts[marker] = False  # Presence alone is enough to refuse.
     with pytest.raises(Blocked) as error: runner.restart_request_discovery()
     assert error.value.code == 'REQUEST_DISCOVERY_INPUT'
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 @pytest.mark.parametrize('status,count', [(2, 0), (3, 0), (4, 0), (6, 0), (1, 1), (1, None), (True, 0), (1, False)])
@@ -1415,7 +1424,8 @@ def test_discovery_restart_requires_fresh_pending_zero_submission(runner, status
     runner.native_call = lambda *a, **k: {'ready': False, 'status': status, 'submitted_signature_count': count}
     with pytest.raises(Blocked) as error: runner.restart_request_discovery()
     assert error.value.code == 'REQUEST_DISCOVERY_ADVANCED'
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 def test_signature_arriving_at_discovery_boundary_prevents_restart(runner):
@@ -1423,7 +1433,8 @@ def test_signature_arriving_at_discovery_boundary_prevents_restart(runner):
     runner.archive_discovery_timeout(runner.journal.data['stages']['sign'])
     runner.native_call = lambda *a, **k: {'ready': True, 'status': 6, 'submitted_signature_count': 1, 'signature_count_min': 2}
     assert runner.restart_request_discovery() is False
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
     assert runner.artifacts['signature_count_min'] == 2
 
 
@@ -1545,7 +1556,8 @@ def test_archived_timeout_never_reviews_approved_terminal_unknown_or_submitted_s
     runner.native_call = lambda *a, **k: {'ready': False, 'status': status, 'submitted_signature_count': count}
     with pytest.raises(Blocked) as error: runner.stage_sign()
     assert error.value.code == 'REQUEST_DISCOVERY_ADVANCED'
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 def test_completed_discovery_receipt_also_uses_delivered_queue_without_second_restart(runner):
@@ -1607,7 +1619,8 @@ def test_known_incoming_cannot_bypass_new_input_or_credential_markers(runner, mu
     runner.phone.restart_for_request_discovery = incoming
     with pytest.raises(Blocked) as error: runner.stage_sign()
     assert error.value.code == 'REQUEST_DISCOVERY_INPUT'
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 @pytest.mark.parametrize('status,count', [(4, 0), (6, 0), (99, 0), (1, 1), (3, None)])
@@ -1620,7 +1633,8 @@ def test_known_incoming_cannot_bypass_fresh_session_state_guard(runner, status, 
     runner.phone.restart_for_request_discovery = incoming
     with pytest.raises(Blocked) as error: runner.stage_sign()
     assert error.value.code == 'REQUEST_DISCOVERY_ADVANCED'
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 def test_unknown_home_refusal_is_not_rerouted_to_review(runner):
@@ -1630,7 +1644,8 @@ def test_unknown_home_refusal_is_not_rerouted_to_review(runner):
     runner.phone.restart_for_request_discovery = unknown
     with pytest.raises(Blocked) as error: runner.stage_sign()
     assert error.value.code == 'REQUEST_DISCOVERY_HOME'
-    assert calls == [] and 'request_discovery_restart' not in runner.artifacts
+    assert calls == []
+    assert 'request_discovery_restart' not in runner.artifacts
 
 
 def test_signature_arrival_after_known_incoming_moves_to_collection(runner):
@@ -1641,7 +1656,8 @@ def test_signature_arrival_after_known_incoming_moves_to_collection(runner):
         raise Blocked('REQUEST_DISCOVERY_INCOMING', 'Synthetic exact notification')
     runner.phone.restart_for_request_discovery = incoming
     runner.stage_sign()
-    assert calls == [] and runner.artifacts['signature_count_min'] == 2
+    assert calls == []
+    assert runner.artifacts['signature_count_min'] == 2
     assert 'request_discovery_restart' not in runner.artifacts
 
 
@@ -1746,8 +1762,9 @@ def test_no_restart_decision_never_bypasses_input_or_credential_guard(runner, ma
     elif marker == 'foreign': state['identity'] = 'other'
     elif marker == 'unverified': state['verified'] = False
     else: runner.artifacts[marker] = False
+    operation_under_test = runner.continue_request_discovery if late else runner.prepare_discovery_no_restart
     with pytest.raises(Blocked) as error:
-        runner.continue_request_discovery() if late else runner.prepare_discovery_no_restart()
+        operation_under_test()
     assert error.value.code == 'REQUEST_DISCOVERY_INPUT'
     assert calls == []
     assert 'request_discovery_restart' not in runner.artifacts

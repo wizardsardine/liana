@@ -18,7 +18,7 @@ pub mod field;
 pub mod fit_row;
 pub mod page;
 pub mod page_head;
-mod scope;
+pub(crate) mod scope;
 pub mod segmented;
 pub mod select;
 pub mod setting_row;
@@ -27,6 +27,7 @@ pub mod surface;
 pub mod text;
 pub mod toggle;
 pub mod top_bar;
+pub mod worldview_hero;
 
 #[cfg(test)]
 mod gallery;
@@ -54,6 +55,7 @@ pub use surface::{card, panel};
 pub use text::{body, caption, heading, label, mono, section, title};
 pub use toggle::{toggle, Toggle, ToggleForm};
 pub use top_bar::{top_bar, TopBar};
+pub use worldview_hero::{worldview_hero, HeroLayout};
 
 pub use crate::theme::tenshu::button::ActionKind;
 pub use crate::theme::tenshu::Tone;

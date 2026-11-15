@@ -5608,6 +5608,7 @@ impl Home {
                         self.creation_kit_error.as_deref(),
                         self.can_create_recovery_kit(),
                         self.creation_backup_hub(),
+                        self.network,
                     )),
             )
             .max_width(760)
@@ -6467,6 +6468,7 @@ impl Home {
                                         self.creation_kit_error.as_deref(),
                                         self.can_create_recovery_kit(),
                                         self.creation_backup_hub(),
+                                        self.network,
                                     );
                                     // No sheet footer here, so the hub's
                                     // actions sit under it.
@@ -7345,6 +7347,7 @@ fn creation_backup_view<'a>(
     kit_error: Option<&'a str>,
     kit_available: bool,
     hub: CreationBackupHub,
+    chain: ChainId,
 ) -> Element<'a, ViewMessage> {
     use crate::app::view::settings::backup;
 
@@ -7355,7 +7358,7 @@ fn creation_backup_view<'a>(
             backup::intro_view(*checked, None, ViewMessage::CreationBackup)
         }
         CreationBackupStep::Phrase => match words {
-            Some(words) => backup::recovery_phrase_view(words, ViewMessage::CreationBackup),
+            Some(words) => backup::recovery_phrase_view(words, chain, ViewMessage::CreationBackup),
             // Only reachable if the seed was scrubbed underneath the view;
             // `update_creation_backup` turns the same condition into an error
             // and abandons. Render nothing rather than an empty word grid.
@@ -14274,50 +14277,61 @@ mod tests {
             CreationBackupStep::KitPassword,
             CreationBackupStep::KitUploading,
         ] {
-            for is_passkey in [false, true] {
-                for (pw, confirm, ack, err) in [
-                    (&empty, &empty, false, None),
-                    (&password, &password, true, None),
-                    (&password, &empty, false, Some("upload failed")),
-                ] {
-                    for kit_available in [false, true] {
-                        for saving in [false, true] {
-                            for (seed_confirmed, kit_saved) in
-                                [(false, false), (true, false), (false, true), (true, true)]
-                            {
-                                let hub = CreationBackupHub {
-                                    seed_confirmed,
-                                    kit_saved,
-                                };
-                                let _ = creation_backup_view(
-                                    &step,
-                                    Some(&words),
-                                    saving,
-                                    is_passkey,
-                                    pw,
-                                    confirm,
-                                    ack,
-                                    err,
-                                    kit_available,
-                                    hub,
-                                );
-                                let _ = creation_choice_footer(saving, hub);
-                            }
+            render_creation_backup_step(&step, &words, &password, &empty);
+        }
+    }
+
+    fn render_creation_backup_step(
+        step: &CreationBackupStep,
+        words: &[String],
+        password: &zeroize::Zeroizing<String>,
+        empty: &zeroize::Zeroizing<String>,
+    ) {
+        for is_passkey in [false, true] {
+            for (pw, confirm, ack, err) in [
+                (empty, empty, false, None),
+                (password, password, true, None),
+                (password, empty, false, Some("upload failed")),
+            ] {
+                for kit_available in [false, true] {
+                    for saving in [false, true] {
+                        for (seed_confirmed, kit_saved) in
+                            [(false, false), (true, false), (false, true), (true, true)]
+                        {
+                            let hub = CreationBackupHub {
+                                seed_confirmed,
+                                kit_saved,
+                            };
+                            let _ = creation_backup_view(
+                                step,
+                                Some(words),
+                                saving,
+                                is_passkey,
+                                pw,
+                                confirm,
+                                ack,
+                                err,
+                                kit_available,
+                                hub,
+                                ChainId::BitcoinBlake2b,
+                            );
+                            let _ = creation_choice_footer(saving, hub);
                         }
-                        // The seed being gone mid-render must not panic.
-                        let _ = creation_backup_view(
-                            &step,
-                            None,
-                            false,
-                            is_passkey,
-                            pw,
-                            confirm,
-                            ack,
-                            err,
-                            kit_available,
-                            CreationBackupHub::default(),
-                        );
                     }
+                    // The seed being gone mid-render must not panic.
+                    let _ = creation_backup_view(
+                        step,
+                        None,
+                        false,
+                        is_passkey,
+                        pw,
+                        confirm,
+                        ack,
+                        err,
+                        kit_available,
+                        CreationBackupHub::default(),
+                        ChainId::Bitcoin,
+                    );
                 }
             }
         }

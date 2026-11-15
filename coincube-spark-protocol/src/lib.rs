@@ -571,6 +571,49 @@ pub struct CrossChainRoute {
     /// Whether this route can be funded from the BTC balance. v1 only offers
     /// routes where this holds; token-funded routes are a follow-up.
     pub btc_source_supported: bool,
+    /// The amount bounds the provider publishes for funding this route from
+    /// bitcoin. `None` when it publishes none. A route can enforce a tighter
+    /// bound than it publishes, so these are a floor for the gui's own check,
+    /// not a promise that an amount inside them will quote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub btc_limits: Option<CrossChainRouteLimits>,
+}
+
+impl CrossChainRoute {
+    /// Whether `other` names the same route: provider, chain, asset and token.
+    ///
+    /// Leaves out [`Self::btc_limits`]. Those are what the provider publishes
+    /// right now — a USD floor moves with the bitcoin price — so a route looked
+    /// up on Details and re-resolved at prepare can carry different bounds and
+    /// still be the route the user chose. Matching on `==` would turn a price
+    /// tick into "no longer offered".
+    pub fn same_route_as(&self, other: &Self) -> bool {
+        self.provider == other.provider
+            && self.chain == other.chain
+            && self.chain_id == other.chain_id
+            && self.asset == other.asset
+            && self.contract_address == other.contract_address
+            && self.decimals == other.decimals
+            && self.btc_source_supported == other.btc_source_supported
+    }
+}
+
+/// Mirrors `breez_sdk_spark::CrossChainRouteLimits` for the bitcoin-funded
+/// side of a route. Either group may be absent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossChainRouteLimits {
+    /// Smallest amount accepted, in sats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_sats: Option<u64>,
+    /// Largest amount accepted, in sats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_sats: Option<u64>,
+    /// Smallest order value accepted, in USD cents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_usd_cents: Option<u64>,
+    /// Largest order value accepted, in USD cents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_usd_cents: Option<u64>,
 }
 
 /// Result of [`Method::GetCrossChainRoutes`].
@@ -1748,6 +1791,46 @@ pub enum Frame {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_route_is_the_same_route_when_only_its_limits_moved() {
+        let route = CrossChainRoute {
+            provider: "orchestra".to_string(),
+            chain: "base".to_string(),
+            chain_id: Some("8453".to_string()),
+            asset: "USDC".to_string(),
+            contract_address: Some("0xusdc".to_string()),
+            decimals: 6,
+            btc_source_supported: true,
+            btc_limits: Some(CrossChainRouteLimits {
+                min_usd_cents: Some(500),
+                min_sats: Some(4_500),
+                ..Default::default()
+            }),
+        };
+        let repriced = CrossChainRoute {
+            btc_limits: Some(CrossChainRouteLimits {
+                min_usd_cents: Some(500),
+                min_sats: Some(4_700),
+                ..Default::default()
+            }),
+            ..route.clone()
+        };
+        assert!(route.same_route_as(&repriced));
+        assert!(route.same_route_as(&CrossChainRoute {
+            btc_limits: None,
+            ..route.clone()
+        }));
+        assert!(!route.same_route_as(&CrossChainRoute {
+            chain: "arbitrum".to_string(),
+            chain_id: Some("42161".to_string()),
+            ..route.clone()
+        }));
+        assert!(!route.same_route_as(&CrossChainRoute {
+            asset: "USDT".to_string(),
+            ..route.clone()
+        }));
+    }
+
     use super::*;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -1807,6 +1890,7 @@ mod tests {
                         contract_address: None,
                         decimals: 6,
                         btc_source_supported: true,
+                        btc_limits: None,
                     },
                     estimated_out: big,
                     fee_amount: 102_531,

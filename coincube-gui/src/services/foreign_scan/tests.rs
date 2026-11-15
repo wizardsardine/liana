@@ -664,60 +664,7 @@ fn descriptor_matrix_covers_every_shape_with_and_without_origins() {
             assert_eq!(d.capabilities(), routes(psbt_file, false), "{}", name);
         }
 
-        // Refusals, each with and without origins.
-        for with_origin in [false, true] {
-            let origin_of = |i: usize| with_origin.then_some(origins[i]);
-            let refused = [
-                // Hardened public derivation (suffix step and wildcard).
-                ("hardened step", keys(count, with_origin, "/0h/*")),
-                ("hardened wildcard", keys(count, with_origin, "/0/*h")),
-                // Ambiguous multipath.
-                ("multipath", keys(count, with_origin, "/<0;1>/*")),
-                // Private key in the last position (a multisig admits it in
-                // any slot, so a single secret refuses the whole descriptor).
-                ("private xprv", {
-                    let mut k = keys(count, with_origin, "/0/*");
-                    let last = count - 1;
-                    k[last] = match origin_of(last) {
-                        Some(o) => format!("[{o}]{}/0/*", xpriv(60)),
-                        None => format!("{}/0/*", xpriv(60)),
-                    };
-                    k
-                }),
-                ("private wif", {
-                    let mut k = keys(count, with_origin, "/0/*");
-                    let wif =
-                        bitcoin::PrivateKey::new(xpriv(61).private_key, bitcoin::Network::Bitcoin)
-                            .to_wif();
-                    k[0] = match origin_of(0) {
-                        Some(o) => format!("[{o}]{wif}"),
-                        None => wif,
-                    };
-                    k
-                }),
-                // Non-mainnet extended key.
-                ("testnet xpub", {
-                    let mut k = keys(count, with_origin, "/0/*");
-                    let tpub = Xpub::from_priv(
-                        &secp,
-                        &Xpriv::new_master(bitcoin::Network::Testnet, &[62; 32]).unwrap(),
-                    );
-                    k[0] = match origin_of(0) {
-                        Some(o) => format!("[{o}]{tpub}/0/*"),
-                        None => format!("{tpub}/0/*"),
-                    };
-                    k
-                }),
-            ];
-            for (why, k) in refused {
-                let text = shape(&k);
-                assert_eq!(
-                    ScanDescriptor::parse(Branch::External, &text).unwrap_err(),
-                    ScanError::Descriptor,
-                    "{name} {why} origin={with_origin}: {text}"
-                );
-            }
-        }
+        check_refused_shapes(name, shape, count, &origins, keys, xpriv, &secp);
     }
 
     // Single (non-extended) public keys are fixed, one-address descriptors,
@@ -1132,4 +1079,69 @@ async fn rate_limit_cooldown_is_shared_across_sources_and_both_chains() {
     limited.assert_hits(1);
     // The blocked mirror-chain read must not reach the server either.
     mirror.assert_hits(0);
+}
+
+fn check_refused_shapes(
+    name: &str,
+    shape: fn(&[String]) -> String,
+    count: usize,
+    origins: &[&str; 3],
+    keys: impl Fn(usize, bool, &str) -> Vec<String>,
+    xpriv: impl Fn(u8) -> Xpriv,
+    secp: &Secp256k1<bitcoin::secp256k1::All>,
+) {
+    // Refusals, each with and without origins.
+    for with_origin in [false, true] {
+        let origin_of = |i: usize| with_origin.then_some(origins[i]);
+        let refused = [
+            // Hardened public derivation (suffix step and wildcard).
+            ("hardened step", keys(count, with_origin, "/0h/*")),
+            ("hardened wildcard", keys(count, with_origin, "/0/*h")),
+            // Ambiguous multipath.
+            ("multipath", keys(count, with_origin, "/<0;1>/*")),
+            // Private key in the last position (a multisig admits it in
+            // any slot, so a single secret refuses the whole descriptor).
+            ("private xprv", {
+                let mut k = keys(count, with_origin, "/0/*");
+                let last = count - 1;
+                k[last] = match origin_of(last) {
+                    Some(o) => format!("[{o}]{}/0/*", xpriv(60)),
+                    None => format!("{}/0/*", xpriv(60)),
+                };
+                k
+            }),
+            ("private wif", {
+                let mut k = keys(count, with_origin, "/0/*");
+                let wif =
+                    bitcoin::PrivateKey::new(xpriv(61).private_key, bitcoin::Network::Bitcoin)
+                        .to_wif();
+                k[0] = match origin_of(0) {
+                    Some(o) => format!("[{o}]{wif}"),
+                    None => wif,
+                };
+                k
+            }),
+            // Non-mainnet extended key.
+            ("testnet xpub", {
+                let mut k = keys(count, with_origin, "/0/*");
+                let tpub = Xpub::from_priv(
+                    secp,
+                    &Xpriv::new_master(bitcoin::Network::Testnet, &[62; 32]).unwrap(),
+                );
+                k[0] = match origin_of(0) {
+                    Some(o) => format!("[{o}]{tpub}/0/*"),
+                    None => format!("{tpub}/0/*"),
+                };
+                k
+            }),
+        ];
+        for (why, k) in refused {
+            let text = shape(&k);
+            assert_eq!(
+                ScanDescriptor::parse(Branch::External, &text).unwrap_err(),
+                ScanError::Descriptor,
+                "{name} {why} origin={with_origin}: {text}"
+            );
+        }
+    }
 }

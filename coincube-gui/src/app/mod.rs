@@ -1,5 +1,9 @@
+mod activity_routing;
 mod connect_auth;
 mod connect_stream;
+mod cube_name;
+mod fiat_updates;
+mod recovery_settings;
 
 pub mod breez_liquid;
 pub mod breez_spark;
@@ -29,7 +33,6 @@ pub mod view;
 pub mod wallet;
 pub mod wallets;
 
-use coincube_ui::locale::Text as CopyText;
 use std::collections::{HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -1004,6 +1007,8 @@ pub struct App {
     spark_nickname_queued: Option<Option<String>>,
     received_celebration_amount: String,
     received_celebration_context: String,
+    /// The receipt's "Into …" line for the payment shown, untranslated.
+    received_celebration_wallet: &'static str,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
     received_celebration_image: iced::widget::image::Handle,
     /// tx_ids of recent incoming payments we've already toasted for in
@@ -3899,6 +3904,7 @@ impl App {
             spark_nickname_queued: None,
             received_celebration_amount: String::new(),
             received_celebration_context: "transaction-received".to_string(),
+            received_celebration_wallet: "",
             received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                 "transaction-received",
             ),
@@ -4180,6 +4186,7 @@ impl App {
                 spark_nickname_queued: None,
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
+                received_celebration_wallet: "",
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                     "transaction-received",
                 ),
@@ -4689,51 +4696,6 @@ impl App {
         )
     }
 
-    /// Show the one-time recovery-alerts consent prompt (PR 3) when this device
-    /// holds the Vault and that Vault has keyholders, a Connect session, and no
-    /// monitoring yet — and the prompt hasn't already been answered for this
-    /// Cube. A walletless instance (`App::new_without_wallet`) can still have a
-    /// Connect cube with keyholders, so gate on the local wallet or it would
-    /// consent on behalf of a Vault it doesn't hold. Idempotent within a
-    /// session (the overlay flag guards re-entry); the durable answer lives in
-    /// `CubeSettings::recovery_alerts_prompt_answered`.
-    ///
-    /// Only ever called off the back of a monitoring-status load, because that
-    /// load is what resolves the recipient list this gates on. Calling it any
-    /// earlier reads an empty list and silently declines to prompt — which is
-    /// exactly how the prompt used to be unreachable in every build.
-    ///
-    /// The returned task clears keyboard focus when the prompt opens: the
-    /// content beneath it stays mounted (so it keeps its scroll offsets and
-    /// other widget state), and a control focused before the prompt appeared
-    /// must not go on taking Enter or Space behind it.
-    fn maybe_show_recovery_alerts_prompt(&mut self) -> Task<Message> {
-        if should_show_recovery_alerts_prompt(
-            self.show_recovery_alerts_prompt,
-            self.cube_settings.recovery_alerts_prompt_answered,
-            self.panels.connect.account.is_authenticated(),
-            self.panels.connect.cube.server_cube_id.is_some(),
-            self.panels.connect.account.is_recovery_alerts_entitled(),
-            !self
-                .panels
-                .global_settings
-                .recovery_alerts
-                .recipients
-                .notified
-                .is_empty(),
-            self.panels.global_settings.recovery_alerts.alerts_on(),
-            self.wallet
-                .as_ref()
-                .is_some_and(|wallet| wallet.supports_inheritance()),
-        ) {
-            self.show_recovery_alerts_prompt = true;
-            return iced_runtime::task::widget(
-                iced::advanced::widget::operation::focusable::unfocus(),
-            );
-        }
-        Task::none()
-    }
-
     /// Backfill this Cube's Vault identity
     /// (`plans/PLAN-vault-identity-unification.md` D4).
     ///
@@ -4824,42 +4786,6 @@ impl App {
             },
         );
         Task::batch([persist_task, assert_task, reconcile_task])
-    }
-
-    /// Persist this Cube's "answered the consent prompt" flag to the settings
-    /// file (PR 3). The in-memory `cube_settings` copy is set by the caller; this
-    /// just makes it durable so the prompt never re-fires across restarts.
-    fn persist_recovery_alerts_answered(&self) -> Task<Message> {
-        let network_dir = self
-            .cache
-            .datadir_path
-            .network_directory(self.cache.chain());
-        let cube_id = self.cube_settings.id.clone();
-        Task::perform(
-            async move {
-                settings::update_settings_file(&network_dir, |mut s| {
-                    if let Some(cube) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                        cube.recovery_alerts_prompt_answered = true;
-                    }
-                    Some(s)
-                })
-                .await
-                .map_err(|e| {
-                    crate::user_error::UserError::logged(
-                        "Couldn't save that preference",
-                        "Try again. If it keeps failing, contact support and quote the reference below.",
-                        crate::user_error::CC_CONFIG,
-                        true,
-                        e,
-                    )
-                    .toast()
-                })
-            },
-            |res: Result<(), String>| match res {
-                Ok(()) => Message::SettingsSaved,
-                Err(e) => Message::View(view::Message::ShowError(e)),
-            },
-        )
     }
 
     /// Record the user's Stable Balance decision for this Cube — in memory,
@@ -5299,6 +5225,11 @@ impl App {
                 .as_ref()
                 .is_some_and(|panel| panel.handles_route(&menu))
             {
+                // Leaving a panel for the imported wallet's route interrupts
+                // it like any other route change (Transfer locks another Cube).
+                if let Some(panel) = self.panels.current_mut() {
+                    panel.interrupt();
+                }
                 self.panels.current = menu.clone();
                 return self
                     .panels
@@ -5317,6 +5248,16 @@ impl App {
         }
         if let Some(panel) = self.panels.current_mut() {
             panel.interrupt();
+        }
+        if matches!(
+            menu,
+            Menu::Spark(menu::SparkSubMenu::Overview) | Menu::Vault(menu::VaultSubMenu::Overview)
+        ) {
+            // The page's Transfer needs to know whether another Cube can
+            // receive: one catalog read per visit, not per frame.
+            self.panels
+                .global_home
+                .refresh_other_cube_receivers(&self.cache);
         }
 
         match &menu {
@@ -7957,56 +7898,7 @@ impl App {
                 return Task::done(Message::CacheUpdated);
             }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if self.cube_settings.network.is_blake2b() {
-                    let relevant = self
-                        .cube_settings
-                        .fiat_price
-                        .as_ref()
-                        .is_some_and(|setting| {
-                            setting.is_enabled && setting.currency == fiat_price.currency()
-                        });
-                    if relevant && self.cache.accept_btcb2_price(fiat_price) {
-                        return Task::done(Message::CacheUpdated);
-                    }
-                    return Task::none();
-                }
-                // A scoped BTCB2 quote must never seed Bitcoin/USD conversion.
-                if fiat_price.request.origin.is_some() {
-                    return Task::none();
-                }
-                let mut updated = false;
-
-                // Always extract BTC/USD price for USDt→sats conversion,
-                // regardless of whether fiat display is enabled.
-                if fiat_price.currency() == crate::services::fiat::Currency::USD {
-                    if let Ok(price) = fiat_price.res.as_ref() {
-                        self.cache.btc_usd_price = Some(price.value);
-                        updated = true;
-                    }
-                }
-
-                // Store user's selected currency price (only when fiat display is enabled).
-                let is_relevant = self.cube_settings.fiat_price.as_ref().is_some_and(|sett| {
-                    sett.is_enabled
-                        && sett.source == fiat_price.source()
-                        && sett.currency == fiat_price.currency()
-                });
-
-                if is_relevant
-                    // make sure we only update if the price is newer than the cached one
-                    && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
-                        cached.source() == fiat_price.source()
-                            && cached.currency() == fiat_price.currency()
-                            && cached.requested_at() >= fiat_price.requested_at()
-                    })
-                {
-                    self.cache.fiat_price = Some(fiat_price);
-                    updated = true;
-                }
-
-                if updated {
-                    return Task::done(Message::CacheUpdated);
-                }
+                return self.handle_fiat_price(fiat_price);
             }
             Message::UpdateDaemonCache(res) => {
                 if self.cache.has_imported_bitcoin {
@@ -8200,56 +8092,7 @@ impl App {
                 return Task::none();
             }
             Message::View(view::Message::RecoveryAlertsConsent(accept)) => {
-                // Answer the one-time consent prompt (PR 3). Dismiss the overlay
-                // either way.
-                self.show_recovery_alerts_prompt = false;
-                if !accept {
-                    // Decline: record durably and move on — never re-prompt.
-                    self.cube_settings.recovery_alerts_prompt_answered = true;
-                    return self.persist_recovery_alerts_answered();
-                }
-                // Accept: turn alerts on now (cube-scoped POST). Route the result
-                // through the settings card's `ChangeResult`, which reflects
-                // alerts-on on the card AND — on `Ok` — marks + persists the prompt
-                // answered (the shared `is_ok_change` handler below). So the answer
-                // is recorded only after the enable actually succeeds: a
-                // post-dispatch API failure surfaces there and leaves the prompt
-                // un-answered, so it re-fires later. `enable_alerts` is idempotent,
-                // so a redundant accept is safe.
-                //
-                // If the Connect session dropped while the overlay was up (token
-                // expiry / account switch) there's nothing to dispatch: leave the
-                // prompt un-answered (it re-fires once Connect is back) and surface
-                // a visible error rather than failing silently.
-                let gen = self.panels.connect.account.session_generation();
-                match (
-                    self.authenticated_coincube_client(),
-                    self.panels.connect.cube.server_cube_id,
-                ) {
-                    (Some(client), Some(cube_id)) => {
-                        return Task::perform(
-                            async move {
-                                crate::services::inheritance::enable_alerts(&client, cube_id)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            },
-                            move |res| {
-                                Message::View(view::Message::Settings(
-                                    view::SettingsMessage::RecoveryAlerts(
-                                        view::RecoveryAlertsMessage::ChangeResult(res, gen, None),
-                                    ),
-                                ))
-                            },
-                        );
-                    }
-                    _ => {
-                        return Task::done(Message::View(view::Message::ShowError(
-                            "Couldn't reach your Connect account — recovery alerts weren't turned \
-                             on. We'll ask again."
-                                .to_string(),
-                        )));
-                    }
-                }
+                return self.handle_recovery_alerts_consent(accept);
             }
             Message::RescanObligationRetired(result) => {
                 self.rescan_obligation_retire_in_flight = false;
@@ -8687,58 +8530,18 @@ impl App {
             | Message::ActivityLiquidLoaded(..)
             | Message::ActivityRefundablesLoaded(..)
             | Message::ActivityLabelSaved(..)) => {
-                let task = self
-                    .panels
-                    .activity
-                    .update(self.daemon.clone(), &self.cache, msg);
-                self.settle_wallet_selection();
-                return task;
+                return self.route_activity_result(msg);
             }
             Message::View(view::Message::Activity(view::activity::ActivityMessage::ViewAll(
                 wallet,
             ))) => {
-                let filter = self.panels.activity.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::Activity(
-                        view::activity::ActivityMessage::ViewAll(wallet),
-                    )),
-                );
-                return Task::batch([
-                    filter,
-                    self.set_current_panel(Menu::Cube(menu::CubeSubMenu::Activity)),
-                ]);
+                return self.route_activity_view_all(wallet);
             }
             Message::View(view::Message::Activity(view::activity::ActivityMessage::Open(id))) => {
-                // An Overview row: Activity opens unfiltered on it. Selected
-                // after the switch, so leaving a page can't clear it. The row
-                // as the Overview listed it is read first: the switch's reload
-                // clears Activity's rows, and its pane shows that copy until
-                // (or unless) the read brings a fresh one.
-                let opened = self
-                    .panels
-                    .activity
-                    .recent_entries(view::activity::RecentScope::Cube)
-                    .into_iter()
-                    .find(|entry| entry.id == id);
-                let load = self.set_current_panel(Menu::Cube(menu::CubeSubMenu::Activity));
-                let select = self.panels.activity.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::Activity(
-                        view::activity::ActivityMessage::Open(id.clone()),
-                    )),
-                );
-                if self.panels.activity.selected_id.as_deref() == Some(id.as_str()) {
-                    self.panels.activity.opened = opened;
-                }
-                return Task::batch([load, select]);
+                return self.route_activity_open(id);
             }
             msg @ Message::View(view::Message::Activity(_)) => {
-                return self
-                    .panels
-                    .activity
-                    .update(self.daemon.clone(), &self.cache, msg);
+                return self.route_activity_view(msg);
             }
             msg @ Message::View(view::Message::SparkOverview(
                 view::SparkOverviewMessage::DataLoaded { .. },
@@ -8747,16 +8550,7 @@ impl App {
                 Menu::Spark(menu::SparkSubMenu::Overview)
             ) =>
             {
-                // Every Spark page reload (a payment event, a `Synced` tick,
-                // opening the page) re-reads payments for its balance; its
-                // "Recent activity" follows from Activity's copy.
-                let refresh = self.panels.activity.refresh_wallet(
-                    view::activity::WalletFilter::Spark,
-                    None,
-                    None,
-                );
-                let forwarded = self.panels.spark_overview.update(None, &self.cache, msg);
-                return Task::batch([forwarded, refresh]);
+                return self.route_activity_spark_overview(msg);
             }
             msg @ Message::Payments(Ok(_))
                 if matches!(
@@ -8764,88 +8558,10 @@ impl App {
                     Menu::Vault(menu::VaultSubMenu::Overview)
                 ) =>
             {
-                // The Vault page re-read its payments; its "Recent activity"
-                // follows from Activity's copy of the history.
-                let refresh = self.panels.activity.refresh_wallet(
-                    view::activity::WalletFilter::Vault,
-                    self.daemon.clone(),
-                    self.wallet.clone(),
-                );
-                let daemon = self.daemon.clone();
-                let forwarded = match self.panels.current_mut() {
-                    Some(panel) => panel.update(daemon, &self.cache, msg),
-                    None => Task::none(),
-                };
-                return Task::batch([forwarded, refresh]);
+                return self.route_activity_vault_overview(msg);
             }
             Message::ActivityOpenDetail(target) => {
-                // The hand-off leaves the wallet page: its selection ends.
-                if wallet_page(&self.panels.current).is_some() {
-                    self.panels.activity.clear_selection();
-                }
-                // Hand off the source record to its owning wallet panel. Those
-                // panels retain signing, refund and replacement safeguards.
-                match target {
-                    state::activity::ActivityTarget::Vault(tx) => {
-                        if self.panels.transactions.is_some() {
-                            let load = self.set_current_panel(Menu::Vault(
-                                menu::VaultSubMenu::Transactions(None),
-                            ));
-                            let panel = self.panels.transactions.as_mut().expect("checked above");
-                            panel.preselect(tx);
-                            return load;
-                        }
-                    }
-                    state::activity::ActivityTarget::Psbt(tx) => {
-                        if self.panels.psbts.is_some() {
-                            let load = self
-                                .set_current_panel(Menu::Vault(menu::VaultSubMenu::PSBTs(None)));
-                            let panel = self.panels.psbts.as_mut().expect("checked above");
-                            panel.preselect(tx);
-                            return load;
-                        }
-                    }
-                    state::activity::ActivityTarget::Spark(payment) => {
-                        let row =
-                            state::spark::overview::payment_summary_to_recent_tx(&payment, None);
-                        self.panels.current = Menu::Spark(menu::SparkSubMenu::Transactions(None));
-                        let load = self
-                            .panels
-                            .spark_transactions
-                            .reload(self.daemon.clone(), self.wallet.clone());
-                        let select = self.panels.spark_transactions.update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::View(view::Message::SparkTransactions(
-                                view::SparkTransactionsMessage::Preselect(row),
-                            )),
-                        );
-                        return Task::batch([load, select]);
-                    }
-                    state::activity::ActivityTarget::Liquid(payment) => {
-                        if let Some(panel) = self.panels.liquid_transactions.as_mut() {
-                            self.panels.current =
-                                Menu::Liquid(menu::LiquidSubMenu::Transactions(None));
-                            let load = panel.reload(self.daemon.clone(), self.wallet.clone());
-                            let select = panel.update(
-                                self.daemon.clone(),
-                                &self.cache,
-                                Message::View(view::Message::PreselectPayment(payment)),
-                            );
-                            return Task::batch([load, select]);
-                        }
-                    }
-                    state::activity::ActivityTarget::Refundable(refundable) => {
-                        if let Some(panel) = self.panels.liquid_transactions.as_mut() {
-                            let load = panel.reload(self.daemon.clone(), self.wallet.clone());
-                            panel.preselect_refundable(refundable);
-                            self.panels.current =
-                                Menu::Liquid(menu::LiquidSubMenu::Transactions(None));
-                            return load;
-                        }
-                    }
-                }
-                return Task::none();
+                return self.route_activity_detail(target);
             }
             msg @ Message::View(view::Message::ConnectAccount(_))
             | msg @ Message::View(view::Message::ConnectCube(_)) => {
@@ -9241,6 +8957,13 @@ impl App {
                 }
                 return Task::batch([task, auth_bootstrap, refresh_recovery_kit, persist_grant]);
             }
+            Message::View(view::Message::ReceivedCelebrationActivity) => {
+                return Task::done(Message::View(view::Message::DismissReceivedCelebration)).chain(
+                    Task::done(Message::View(view::Message::Menu(Menu::Cube(
+                        crate::app::menu::CubeSubMenu::Activity,
+                    )))),
+                );
+            }
             Message::View(view::Message::DismissReceivedCelebration) => {
                 self.show_received_celebration = false;
                 // Panels that render their own celebration overlay
@@ -9566,6 +9289,29 @@ impl App {
                     },
                 ));
             }
+            Message::View(view::Message::Home(view::HomeMessage::TransferFromWallet(wallet))) => {
+                // A wallet page's Transfer: the flow lives on the Overview
+                // route, so switch there (the side menu keeps the wallet
+                // selected), then open it from this wallet. A press that
+                // raced the button's state changing does nothing.
+                if self
+                    .panels
+                    .global_home
+                    .wallet_transfer_entry(&self.cache, wallet)
+                    != view::global_home::WalletTransferEntry::Ready
+                {
+                    return Task::none();
+                }
+                let switch = self.update(Message::View(view::Message::Menu(Menu::Cube(
+                    menu::CubeSubMenu::Overview,
+                ))));
+                let start = self.panels.global_home.start_transfer_from(
+                    self.daemon.clone(),
+                    &self.cache,
+                    wallet,
+                );
+                return Task::batch([switch, start]);
+            }
             msg @ Message::View(view::Message::Home(_)) => {
                 return self
                     .panels
@@ -9597,13 +9343,18 @@ impl App {
                 // claim — only `DepositsChanged` — so the celebration is fired
                 // explicitly from the auto-claim watcher in `GlobalHome`).
                 use coincube_ui::component::amount::DisplayAmount;
-                self.received_celebration_amount = bitcoin::Amount::from_sat(amount_sat)
-                    .to_formatted_string_with_unit(self.cache.bitcoin_unit);
+                self.received_celebration_amount = format!(
+                    "{} {}",
+                    bitcoin::Amount::from_sat(amount_sat)
+                        .to_formatted_string_with_unit(self.cache.bitcoin_unit),
+                    self.cache.bitcoin_unit.label()
+                );
                 self.received_celebration_quote =
                     coincube_ui::component::quote_display::random_quote(&context);
                 self.received_celebration_image =
                     coincube_ui::component::quote_display::image_handle_for_context(&context);
                 self.received_celebration_context = context.clone();
+                self.received_celebration_wallet = "Into Spark";
                 self.show_received_celebration = true;
                 // A Spark swap's bitcoin just landed. Forward the arrival to the
                 // cross-network Receive flow so it advances from "Bitcoin
@@ -9907,10 +9658,15 @@ impl App {
                                     crate::app::breez_liquid::assets::format_usdt_display(minor)
                                 )
                             } else {
-                                bitcoin::Amount::from_sat(details.amount_sat)
-                                    .to_formatted_string_with_unit(self.cache.bitcoin_unit)
+                                format!(
+                                    "{} {}",
+                                    bitcoin::Amount::from_sat(details.amount_sat)
+                                        .to_formatted_string_with_unit(self.cache.bitcoin_unit),
+                                    self.cache.bitcoin_unit.label()
+                                )
                             };
                             self.received_celebration_context = context.to_string();
+                            self.received_celebration_wallet = "Into Liquid";
                             self.received_celebration_quote =
                                 coincube_ui::component::quote_display::random_quote(context);
                             self.received_celebration_image =
@@ -10154,59 +9910,7 @@ impl App {
             // `cube_members::update(state, msg, client, cube_id)`
             // pattern at `state/connect/cube_members.rs:79`.
             Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(msg))) => {
-                let seed_source = if self.cube_settings.is_passkey_cube() {
-                    crate::app::state::settings::recovery_kit::SeedSource::Passkey
-                } else {
-                    crate::app::state::settings::recovery_kit::SeedSource::Mnemonic
-                };
-                let client = self.authenticated_coincube_client();
-                let server_cube_id = self.panels.connect.cube.server_cube_id;
-                let wallet = self
-                    .wallet
-                    .clone()
-                    .filter(|wallet| wallet.supports_inheritance());
-                let local_cube_id = self.cube_settings.id.clone();
-                let imported = self
-                    .cube_settings
-                    .bitcoin_import
-                    .as_deref()
-                    .and_then(|import| {
-                        let attachment = import.active_attachment()?;
-                        let daemon = self.panels.imported_bitcoin.as_ref()?.backup_daemon()?;
-                        Some(
-                            crate::app::state::settings::recovery_kit::ImportedBackupSource {
-                                import_operation_id: import.operation_id,
-                                imported_claim_source: self
-                                    .cube_settings
-                                    .imported_claim_source
-                                    .clone(),
-                                signer_metadata: Some(
-                                    crate::services::recovery::imported::encrypted_signer_metadata(
-                                        &self.datadir.network_directory(self.cube_settings.network),
-                                        &attachment.wallet_id,
-                                    )
-                                    .ok()?,
-                                ),
-                                descriptor: attachment.descriptor.clone(),
-                                name: self.cube_settings.name.clone(),
-                                birthday: attachment.birthday,
-                                initial_lookahead: attachment.initial_lookahead,
-                                chain: self.cube_settings.network,
-                                daemon,
-                            },
-                        )
-                    });
-                return crate::app::state::settings::recovery_kit::update_with_imported(
-                    &mut self.panels.global_settings.recovery_kit,
-                    msg,
-                    &self.cache,
-                    &local_cube_id,
-                    seed_source,
-                    client,
-                    server_cube_id,
-                    wallet,
-                    imported,
-                );
+                return self.route_recovery_kit(msg);
             }
 
             // Inline Cube rename on Settings → Display & appearance. Mirrors
@@ -10215,116 +9919,13 @@ impl App {
             Message::View(view::Message::Settings(view::SettingsMessage::CubeNameSubmitted(
                 name,
             ))) => {
-                let name = name.trim().to_owned();
-                if name.is_empty() || name == self.cube_settings.name {
-                    let daemon = self.daemon.clone();
-                    return self.panels.global_settings.update(
-                        daemon,
-                        &self.cache,
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::CubeNameSubmitted(name),
-                        )),
-                    );
-                }
-                let network_dir = self.datadir.network_directory(self.cube_settings.network);
-                let cube_id = self.cube_settings.id.clone();
-                return Task::perform(
-                    async move {
-                        let saved = name.clone();
-                        settings::update_settings_file(&network_dir, move |mut s| {
-                            if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                                c.name = saved;
-                                c.remote_synced = false;
-                            }
-                            Some(s)
-                        })
-                        .await
-                        .map(|_| name)
-                        .map_err(|e| e.to_string())
-                    },
-                    Message::CubeNameSaved,
-                );
+                return self.route_cube_name_submitted(name);
             }
             Message::CubeNameSaved(result) => {
-                let name = match result {
-                    Ok(name) => name,
-                    Err(e) => {
-                        return Task::done(Message::View(view::Message::ShowError(
-                            coincube_ui::localized_format!(
-                                "Couldn't save the Cube name: {}",
-                                "No se pudo guardar el nombre del Cube: {}",
-                                e
-                            ),
-                        )));
-                    }
-                };
-                self.cube_settings.name = name.clone();
-                self.cache.cube_name = name.clone();
-                // A later registration retry submits the panel's name.
-                self.panels.connect.cube.cube_name = name.clone();
-                let daemon = self.daemon.clone();
-                let settle = self.panels.global_settings.update(
-                    daemon,
-                    &self.cache,
-                    Message::View(view::Message::Settings(
-                        view::SettingsMessage::CubeNameSubmitted(name.clone()),
-                    )),
-                );
-                let (Some(client), Some(server_id)) = (
-                    self.authenticated_coincube_client(),
-                    self.panels.connect.cube.server_cube_id,
-                ) else {
-                    return settle;
-                };
-                let cube_id = self.cube_settings.id.clone();
-                let network_dir = self.datadir.network_directory(self.cube_settings.network);
-                let synced_name = name.clone();
-                let request = crate::services::coincube::UpdateCubeRequest {
-                    name: Some(name),
-                    status: None,
-                    // Name-only rename: leave server Vault presence and the
-                    // Spark Stable Balance record untouched.
-                    has_vault: None,
-                    spark_stable_balance: None,
-                };
-                let remote = Task::perform(
-                    {
-                        let cube_id = cube_id.clone();
-                        async move {
-                            client
-                                .update_cube(&server_id.to_string(), request)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            settings::update_settings_file(&network_dir, move |mut s| {
-                                // A newer rename may have been written while
-                                // this one was in flight; leave it unsynced.
-                                if let Some(c) = s
-                                    .cubes
-                                    .iter_mut()
-                                    .find(|c| c.id == cube_id && c.name == synced_name)
-                                {
-                                    c.remote_synced = true;
-                                }
-                                Some(s)
-                            })
-                            .await
-                            .map(|_| ())
-                            .map_err(|e| e.to_string())
-                        }
-                    },
-                    move |result| Message::CubeNameSynced {
-                        cube_id: cube_id.clone(),
-                        result,
-                    },
-                );
-                return Task::batch([settle, remote]);
+                return self.route_cube_name_saved(result);
             }
             Message::CubeNameSynced { cube_id, result } => {
-                // Left unsynced on failure; the Launcher's catch-up retries it.
-                if let Err(e) = result {
-                    warn!("Cube {} rename not yet synced to Connect: {}", cube_id, e);
-                }
-                return Task::none();
+                return self.route_cube_name_synced(cube_id, result);
             }
             // Vault Recovery Alerts dispatch (Estate Notifications — PR 2).
             // Like the Recovery Kit above, the handler needs the
@@ -10333,72 +9934,7 @@ impl App {
             // through `State::update`. The keyholder list is *not* injected:
             // it's derived from the vault the handler's own load fetches.
             Message::View(view::Message::Settings(view::SettingsMessage::RecoveryAlerts(msg))) => {
-                let client = self.authenticated_coincube_client();
-                let server_cube_id = self.panels.connect.cube.server_cube_id;
-                let wallet = self.wallet.clone();
-                let entitled = self.panels.connect.account.is_recovery_alerts_entitled();
-                let escrow_entitled = self.panels.connect.account.is_inheritance_escrow_entitled();
-                let session_generation = self.panels.connect.account.session_generation();
-                let local_cube_id = self.cube_settings.id.clone();
-                // A *successful, current-session* status load is the only message
-                // that reveals an eligible Vault for the one-time prompt; a
-                // *successful user change* means the owner has engaged with the
-                // alerts decision, so the prompt must never re-fire for this Cube
-                // (else turning alerts off would immediately re-nudge — the
-                // residual nudge is the banner, not the modal). Classify before
-                // `msg` is moved into `update`.
-                //
-                // Gate the load on `Ok` + a matching generation: a failed load
-                // leaves the monitoring state unknown (or resets it to no-vault),
-                // and `update` drops a stale-generation load without hydrating
-                // anything (see its guard), so neither reveals a fresh eligible
-                // state to prompt off.
-                let is_status_load = matches!(
-                    msg,
-                    view::RecoveryAlertsMessage::StatusLoaded(Ok(_), gen)
-                        if gen == session_generation
-                );
-                // Only an *accepted* change counts as engagement. `update` drops
-                // a `ChangeResult` whose captured generation no longer matches the
-                // active session (see its stale-result guard), so gate on the same
-                // match here — otherwise a stale success that never touched state
-                // would still permanently mark the prompt answered.
-                let is_ok_change = matches!(
-                    msg,
-                    view::RecoveryAlertsMessage::ChangeResult(Ok(_), gen, _)
-                        if gen == session_generation
-                );
-                let task = crate::app::state::settings::recovery_alerts::update(
-                    &mut self.panels.global_settings.recovery_alerts,
-                    msg,
-                    client,
-                    server_cube_id,
-                    wallet,
-                    entitled,
-                    escrow_entitled,
-                    session_generation,
-                    &self.cache,
-                    &local_cube_id,
-                );
-                // The owner engaged with the alerts decision via the card → mark
-                // the prompt answered (durably) so the modal never fires for this
-                // Cube again.
-                let engaged = if is_ok_change && !self.cube_settings.recovery_alerts_prompt_answered
-                {
-                    self.cube_settings.recovery_alerts_prompt_answered = true;
-                    self.persist_recovery_alerts_answered()
-                } else {
-                    Task::none()
-                };
-                // Existing-Vault trigger (PR 3): a just-resolved `StatusLoaded`
-                // may have revealed an eligible (keyholders, monitoring off,
-                // unanswered) Vault. Offer the one-time consent prompt now.
-                let prompt = if is_status_load {
-                    self.maybe_show_recovery_alerts_prompt()
-                } else {
-                    Task::none()
-                };
-                return Task::batch([task, engaged, prompt]);
+                return self.route_recovery_alerts(msg);
             }
 
             // Route refundables updates directly to LiquidTransactions so that
@@ -10905,14 +10441,21 @@ impl App {
         } else {
             &self.received_celebration_amount
         };
-        coincube_ui::component::received_celebration_page(
-            &self.received_celebration_context,
+        use coincube_ui::component::payment_result::{payment_result, Outcome};
+        let mut page = payment_result(
+            Outcome::Received,
             displayed_amount,
+            &self.received_celebration_context,
             &self.received_celebration_quote,
             &self.received_celebration_image,
-            CopyText::HasArrived.get(),
             view::Message::DismissReceivedCelebration,
         )
+        .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
+        .on_activity(view::Message::ReceivedCelebrationActivity);
+        if !self.received_celebration_wallet.is_empty() {
+            page = page.detail(coincube_ui::locale::copy(self.received_celebration_wallet));
+        }
+        page.into()
     }
 
     /// Starts the expiry clock of each toast that has just come on screen and
@@ -11021,17 +10564,40 @@ impl App {
                 &self.panels.connect.cube,
             );
             let (activity, cache) = (&self.panels.activity, &self.cache);
+            let transfer = self
+                .panels
+                .global_home
+                .wallet_transfer_entry(cache, view::global_home::WalletKind::Spark);
+            let conversion = self.panels.spark_receive.conversion_summary();
             self.panels.spark_overview.view_with_lightning_share(
                 &self.panels.current,
                 &self.cache,
                 lightning_address,
+                transfer,
                 move || {
-                    view::activity::recent_activity(
+                    let recent = view::activity::recent_activity(
                         activity,
                         cache,
                         view::activity::RecentScope::Wallet(view::activity::WalletFilter::Spark),
                         None,
-                    )
+                    );
+                    // A cross-network receive still running (or arrived and not
+                    // yet closed) isn't a payment yet, so Activity can't list it:
+                    // say so above it, with the way back to its page.
+                    match conversion {
+                        Some((option, arrived)) => iced::widget::Column::new()
+                            .spacing(16)
+                            .push(view::spark::receive::conversion_notice(
+                                option,
+                                arrived,
+                                view::Message::SparkOverview(
+                                    view::SparkOverviewMessage::ViewConversion,
+                                ),
+                            ))
+                            .push(recent)
+                            .into(),
+                        None => recent,
+                    }
                 },
                 move || {
                     view::activity::wallet_activity_detail(
@@ -11052,9 +10618,14 @@ impl App {
             // The Vault page's "Recent activity" and its detail pane are
             // Activity's rows and pane, filtered to the Vault.
             let (activity, cache) = (&self.panels.activity, &self.cache);
+            let transfer = self
+                .panels
+                .global_home
+                .wallet_transfer_entry(cache, view::global_home::WalletKind::Vault);
             panel.view_with_recent_activity(
                 &self.panels.current,
                 cache,
+                transfer,
                 move |unknown_history| {
                     view::activity::recent_activity(
                         activity,
@@ -16850,7 +16421,9 @@ mod received_celebration_privacy_tests {
             "dark",
             coincube_ui::theme::Theme::dark(),
         );
-        assert!(shown.contains("12,345 SATS"));
+        // The receipt sets the unit beside the figure as its own text.
+        assert!(shown.contains("+12,345"));
+        assert!(shown.contains("SATS"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
@@ -18514,6 +18087,69 @@ mod wallet_recent_activity_tests {
         )
     }
 
+    #[test]
+    fn late_activity_results_do_not_navigate_or_replace_current_rows() {
+        let _guard = crate::app::session::test_guard();
+        let root =
+            std::env::temp_dir().join(format!("activity-late-routing-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        let route = Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::About));
+        app.panels.current = route.clone();
+        let generation = app.panels.activity.generation_for_tests();
+        drop(app.update(Message::ActivitySparkLoaded(
+            generation,
+            Ok((vec![receipt("current")], false)),
+        )));
+        let current_ids = app
+            .panels
+            .activity
+            .wallet_entries(view::activity::WalletFilter::Spark)
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(current_ids.len(), 1);
+        let stale = generation.wrapping_add(1);
+        for message in [
+            Message::ActivitySparkLoaded(stale, Ok((vec![receipt("stale")], false))),
+            Message::ActivitySparkRefreshed(stale, Ok((Vec::new(), false))),
+            Message::ActivityVaultLoaded(stale, Err("late vault failure".into())),
+            Message::ActivityPsbtLoaded(stale, Err("late PSBT failure".into())),
+            Message::ActivityLiquidLoaded(stale, Err("late Liquid failure".into())),
+            Message::ActivityRefundablesLoaded(stale, Err("late refund failure".into())),
+            Message::ActivityLabelSaved(u64::MAX, Err("late label failure".into())),
+        ] {
+            drop(app.update(message));
+            assert_eq!(app.panels.current, route);
+            assert_eq!(
+                app.panels
+                    .activity
+                    .wallet_entries(view::activity::WalletFilter::Spark)
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect::<Vec<_>>(),
+                current_ids
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn activity_detail_without_a_vault_panel_keeps_the_current_route() {
+        let _guard = crate::app::session::test_guard();
+        let root =
+            std::env::temp_dir().join(format!("activity-missing-panel-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        let route = Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::About));
+        app.panels.current = route.clone();
+        app.panels.transactions = None;
+        let task = app.update(Message::ActivityOpenDetail(
+            state::activity::ActivityTarget::Vault(vault_payment()),
+        ));
+        assert_eq!(task.units(), 0);
+        assert_eq!(app.panels.current, route);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// The Vault page's own payment refresh re-reads Activity's Vault rows
     /// there and nowhere else; a request made while a read is in flight is
     /// served once that read lands; a wallet page's Retry keeps other rows.
@@ -19466,5 +19102,508 @@ mod toast_layer_tree_tests {
                 assert!(messages.is_empty());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cube_name_routing_tests {
+    use super::*;
+    use iced::futures::StreamExt;
+
+    fn with_session(test: impl std::future::Future<Output = ()>) {
+        let _guard = crate::app::session::test_guard();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(test);
+    }
+
+    #[test]
+    fn submitted_name_is_saved_unsynced_before_completion_changes_memory() {
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            let network_dir = app.datadir.network_directory(app.cube_settings.network);
+            let mut saved = app.cube_settings.clone();
+            saved.remote_synced = true;
+            let sibling =
+                settings::CubeSettings::new("Sibling".into(), crate::chain::ChainId::Bitcoin);
+            let sibling_id = sibling.id.clone();
+            settings::update_settings_file(&network_dir, move |mut settings| {
+                settings.cubes = vec![saved, sibling];
+                Some(settings)
+            })
+            .await
+            .unwrap();
+            let old_name = app.cube_settings.name.clone();
+            let task = app.update(Message::View(view::Message::Settings(
+                view::SettingsMessage::CubeNameSubmitted("  New name  ".into()),
+            )));
+            assert_eq!(app.cube_settings.name, old_name);
+            let output = iced_runtime::task::into_stream(task)
+                .unwrap()
+                .next()
+                .await
+                .unwrap();
+            assert!(
+                matches!(output, iced_runtime::Action::Output(Message::CubeNameSaved(Ok(name))) if name == "New name")
+            );
+            assert_eq!(app.cube_settings.name, old_name);
+            let persisted = settings::Settings::from_file(&network_dir).unwrap();
+            let own = persisted
+                .cubes
+                .iter()
+                .find(|cube| cube.id == app.cube_settings.id)
+                .unwrap();
+            assert_eq!(own.name, "New name");
+            assert!(!own.remote_synced);
+            assert_eq!(
+                persisted
+                    .cubes
+                    .iter()
+                    .find(|cube| cube.id == sibling_id)
+                    .unwrap()
+                    .name,
+                "Sibling"
+            );
+        });
+    }
+
+    #[test]
+    fn saved_cube_name_settles_all_local_owners_without_navigating() {
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            let route = Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::About));
+            app.panels.current = route.clone();
+            app.panels.connect.cube.server_cube_id = None;
+
+            drop(app.update(Message::CubeNameSaved(Ok("New name".into()))));
+
+            assert_eq!(app.cube_settings.name, "New name");
+            assert_eq!(app.cache.cube_name, "New name");
+            assert_eq!(app.panels.connect.cube.cube_name, "New name");
+            assert_eq!(app.panels.current, route);
+        });
+    }
+
+    #[test]
+    fn failed_cube_name_save_reports_error_without_mutating_names_or_route() {
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            let before = (
+                app.cube_settings.name.clone(),
+                app.cache.cube_name.clone(),
+                app.panels.connect.cube.cube_name.clone(),
+                app.panels.current.clone(),
+            );
+            let task = app.update(Message::CubeNameSaved(Err("synthetic disk failure".into())));
+            let output = iced_runtime::task::into_stream(task)
+                .unwrap()
+                .next()
+                .await
+                .unwrap();
+            assert!(matches!(output, iced_runtime::Action::Output(Message::View(
+            view::Message::ShowError(error)
+        )) if error.contains("synthetic disk failure")));
+            assert_eq!(
+                (
+                    app.cube_settings.name.clone(),
+                    app.cache.cube_name.clone(),
+                    app.panels.connect.cube.cube_name.clone(),
+                    app.panels.current.clone()
+                ),
+                before
+            );
+        });
+    }
+
+    #[test]
+    fn remote_name_completion_never_replaces_local_name_or_route() {
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            app.cube_settings.name = "Newer local name".into();
+            app.cache.cube_name = "Newer local name".into();
+            app.panels.connect.cube.cube_name = "Newer local name".into();
+            let route = app.panels.current.clone();
+            for result in [Ok(()), Err("synthetic remote failure".into())] {
+                let task = app.update(Message::CubeNameSynced {
+                    cube_id: "older-cube".into(),
+                    result,
+                });
+                assert!(iced_runtime::task::into_stream(task).is_none());
+                assert_eq!(app.cube_settings.name, "Newer local name");
+                assert_eq!(app.cache.cube_name, "Newer local name");
+                assert_eq!(app.panels.connect.cube.cube_name, "Newer local name");
+                assert_eq!(app.panels.current, route);
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod recovery_settings_routing_tests {
+    use super::*;
+    use crate::services::coincube::{RecoveryRecipients, VaultMonitoringStatus};
+
+    fn with_app(test: impl FnOnce(&mut App)) {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+        app.panels.current =
+            Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::About));
+        app.cube_settings.recovery_alerts_prompt_answered = false;
+        app.show_recovery_alerts_prompt = false;
+        test(&mut app);
+    }
+
+    fn alerts(message: view::RecoveryAlertsMessage) -> Message {
+        Message::View(view::Message::Settings(
+            view::SettingsMessage::RecoveryAlerts(message),
+        ))
+    }
+
+    #[test]
+    fn stale_recovery_results_cannot_answer_consent_hydrate_or_open_a_prompt() {
+        with_app(|app| {
+            let stale = app
+                .panels
+                .connect
+                .account
+                .session_generation()
+                .wrapping_add(1);
+            let route = app.panels.current.clone();
+            let messages = [
+                view::RecoveryAlertsMessage::StatusLoaded(
+                    Ok((
+                        77,
+                        RecoveryRecipients::default(),
+                        VaultMonitoringStatus::default(),
+                    )),
+                    stale,
+                ),
+                view::RecoveryAlertsMessage::ChangeResult(
+                    Ok(VaultMonitoringStatus::default()),
+                    stale,
+                    None,
+                ),
+            ];
+            for message in messages {
+                drop(app.update(alerts(message)));
+                assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+                assert!(!app.show_recovery_alerts_prompt);
+                assert!(app
+                    .panels
+                    .global_settings
+                    .recovery_alerts
+                    .vault_id
+                    .is_none());
+                assert!(app.panels.global_settings.recovery_alerts.status.is_none());
+                assert_eq!(app.panels.current, route);
+            }
+        });
+    }
+
+    #[test]
+    fn failed_recovery_status_routes_off_page_without_marking_consent_answered() {
+        with_app(|app| {
+            let generation = app.panels.connect.account.session_generation();
+            let route = app.panels.current.clone();
+            drop(app.update(alerts(view::RecoveryAlertsMessage::StatusLoaded(
+                Err("synthetic status failure".into()),
+                generation,
+            ))));
+            assert_eq!(
+                app.panels.global_settings.recovery_alerts.error.as_deref(),
+                Some("synthetic status failure")
+            );
+            assert!(app.panels.global_settings.recovery_alerts.loaded_once);
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+            assert!(!app.show_recovery_alerts_prompt);
+            assert_eq!(app.panels.current, route);
+        });
+    }
+
+    #[test]
+    fn current_status_hydrates_off_page_but_is_not_consent() {
+        with_app(|app| {
+            let generation = app.panels.connect.account.session_generation();
+            let route = app.panels.current.clone();
+            drop(app.update(alerts(view::RecoveryAlertsMessage::StatusLoaded(
+                Ok((
+                    77,
+                    RecoveryRecipients::default(),
+                    VaultMonitoringStatus::default(),
+                )),
+                generation,
+            ))));
+            assert_eq!(
+                app.panels.global_settings.recovery_alerts.vault_id,
+                Some(77)
+            );
+            assert!(app.panels.global_settings.recovery_alerts.status.is_some());
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+            assert_eq!(app.panels.current, route);
+        });
+    }
+
+    #[test]
+    fn only_current_successful_change_marks_recovery_consent_answered() {
+        with_app(|app| {
+            let generation = app.panels.connect.account.session_generation();
+            let route = app.panels.current.clone();
+            drop(app.update(alerts(view::RecoveryAlertsMessage::ChangeResult(
+                Err("synthetic change failure".into()),
+                generation,
+                None,
+            ))));
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+            drop(app.update(alerts(view::RecoveryAlertsMessage::ChangeResult(
+                Ok(VaultMonitoringStatus::default()),
+                generation,
+                None,
+            ))));
+            assert!(app.cube_settings.recovery_alerts_prompt_answered);
+            assert_eq!(app.panels.current, route);
+        });
+    }
+
+    #[test]
+    fn recovery_kit_completion_settles_its_card_while_another_page_is_active() {
+        with_app(|app| {
+            let route = app.panels.current.clone();
+            app.panels.global_settings.recovery_kit.status_loading = true;
+            app.panels.global_settings.recovery_kit.status_stale = true;
+            drop(app.update(Message::View(view::Message::Settings(
+                view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::StatusLoaded(Ok(
+                    None,
+                ))),
+            ))));
+            let card = &app.panels.global_settings.recovery_kit;
+            assert!(!card.status_loading);
+            assert!(!card.status_stale);
+            assert!(!card.status.as_ref().unwrap().has_recovery_kit);
+            assert_eq!(app.panels.current, route);
+        });
+    }
+    #[test]
+    fn declining_consent_dismisses_and_marks_answered_without_changing_route() {
+        with_app(|app| {
+            let route = app.panels.current.clone();
+            app.show_recovery_alerts_prompt = true;
+            let task = app.update(Message::View(view::Message::RecoveryAlertsConsent(false)));
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(app.cube_settings.recovery_alerts_prompt_answered);
+            assert_eq!(app.panels.current, route);
+            assert!(iced_runtime::task::into_stream(task).is_some());
+        });
+    }
+
+    #[test]
+    fn accepting_without_connect_dismisses_but_does_not_record_success() {
+        with_app(|app| {
+            app.show_recovery_alerts_prompt = true;
+            let task = app.update(Message::View(view::Message::RecoveryAlertsConsent(true)));
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+            use iced::futures::StreamExt;
+            let output = iced::futures::executor::block_on(
+                iced_runtime::task::into_stream(task).unwrap().next(),
+            )
+            .unwrap();
+            assert!(
+                matches!(output, iced_runtime::Action::Output(Message::View(view::Message::ShowError(error))) if error.contains("recovery alerts weren't turned on"))
+            );
+        });
+    }
+
+    #[test]
+    fn ineligible_status_does_not_open_consent_or_clear_focus() {
+        with_app(|app| {
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(
+                iced_runtime::task::into_stream(app.maybe_show_recovery_alerts_prompt()).is_none()
+            );
+            assert!(!app.show_recovery_alerts_prompt);
+            assert!(!app.cube_settings.recovery_alerts_prompt_answered);
+        });
+    }
+}
+
+#[cfg(test)]
+mod fiat_update_routing_tests {
+    use super::*;
+    use crate::services::fiat::{
+        api::{GetPriceResult, PriceApiError},
+        Currency, PriceSource,
+    };
+
+    fn with_app(test: impl FnOnce(&mut App)) {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+        app.cube_settings.fiat_price = Some(settings::fiat::PriceSetting {
+            source: PriceSource::Coincube,
+            currency: Currency::EUR,
+            is_enabled: true,
+        });
+        test(&mut app);
+    }
+
+    fn quote(source: PriceSource, currency: Currency, value: f64) -> cache::FiatPrice {
+        cache::FiatPrice {
+            res: Ok(GetPriceResult {
+                value,
+                updated_at: None,
+            }),
+            request: cache::FiatPriceRequest::new(source, currency),
+            btcb2_valid_until: None,
+        }
+    }
+
+    fn admits(app: &mut App, price: cache::FiatPrice) -> bool {
+        use iced::futures::StreamExt;
+        let task = app.update(Message::Fiat(FiatMessage::GetPriceResult(price)));
+        let Some(stream) = iced_runtime::task::into_stream(task) else {
+            return false;
+        };
+        let outputs = iced::futures::executor::block_on(stream.collect::<Vec<_>>());
+        assert!(outputs
+            .iter()
+            .all(|o| matches!(o, iced_runtime::Action::Output(Message::CacheUpdated))));
+        !outputs.is_empty()
+    }
+
+    #[test]
+    fn usd_conversion_updates_even_without_enabled_fiat_display() {
+        with_app(|app| {
+            for setting in [
+                None,
+                Some(settings::fiat::PriceSetting {
+                    is_enabled: false,
+                    ..Default::default()
+                }),
+            ] {
+                app.cube_settings.fiat_price = setting;
+                app.cache.fiat_price = None;
+                assert!(admits(
+                    app,
+                    quote(PriceSource::CoinGecko, Currency::USD, 42.0)
+                ));
+                assert_eq!(app.cache.btc_usd_price, Some(42.0));
+                assert!(app.cache.fiat_price.is_none());
+            }
+        });
+    }
+
+    #[test]
+    fn display_cache_requires_matching_source_currency_and_newer_request() {
+        with_app(|app| {
+            let current = quote(PriceSource::Coincube, Currency::EUR, 99.0);
+            let at = current.request.instant;
+            app.cache.fiat_price = Some(current);
+            for (source, currency) in [
+                (PriceSource::CoinGecko, Currency::EUR),
+                (PriceSource::Coincube, Currency::GBP),
+            ] {
+                assert!(!admits(app, quote(source, currency, 1.0)));
+                assert_eq!(
+                    app.cache
+                        .fiat_price
+                        .as_ref()
+                        .unwrap()
+                        .res
+                        .as_ref()
+                        .unwrap()
+                        .value,
+                    99.0
+                );
+            }
+            let mut stale = quote(PriceSource::Coincube, Currency::EUR, 1.0);
+            stale.request.instant = at;
+            assert!(!admits(app, stale));
+            let mut newer = quote(PriceSource::Coincube, Currency::EUR, 100.0);
+            newer.request.instant = at + std::time::Duration::from_secs(1);
+            assert!(admits(app, newer));
+            assert_eq!(
+                app.cache
+                    .fiat_price
+                    .as_ref()
+                    .unwrap()
+                    .res
+                    .as_ref()
+                    .unwrap()
+                    .value,
+                100.0
+            );
+        });
+    }
+
+    #[test]
+    fn stale_usd_still_updates_conversion_but_never_replaces_display() {
+        with_app(|app| {
+            app.cube_settings.fiat_price.as_mut().unwrap().currency = Currency::USD;
+            let current = quote(PriceSource::Coincube, Currency::USD, 99.0);
+            let at = current.request.instant;
+            app.cache.fiat_price = Some(current);
+            let mut stale = quote(PriceSource::Coincube, Currency::USD, 42.0);
+            stale.request.instant = at;
+            assert!(admits(app, stale));
+            assert_eq!(app.cache.btc_usd_price, Some(42.0));
+            assert_eq!(
+                app.cache
+                    .fiat_price
+                    .as_ref()
+                    .unwrap()
+                    .res
+                    .as_ref()
+                    .unwrap()
+                    .value,
+                99.0
+            );
+            assert!(admits(
+                app,
+                quote(PriceSource::CoinGecko, Currency::USD, 43.0)
+            ));
+            assert_eq!(app.cache.btc_usd_price, Some(43.0));
+            assert_eq!(
+                app.cache.fiat_price.as_ref().unwrap().source(),
+                PriceSource::Coincube
+            );
+        });
+    }
+
+    #[test]
+    fn scoped_quote_cannot_seed_bitcoin_caches_and_selected_errors_still_publish() {
+        with_app(|app| {
+            let mut scoped = quote(PriceSource::Coincube, Currency::USD, 42.0);
+            scoped.request.origin = Some(cache::LookupOrigin {
+                app: app.cache.app_generation,
+                chain: crate::chain::ChainId::BitcoinBlake2b,
+            });
+            assert!(!admits(app, scoped));
+            assert!(app.cache.btc_usd_price.is_none());
+            assert!(app.cache.fiat_price.is_none());
+            let mut failure = quote(PriceSource::Coincube, Currency::EUR, 1.0);
+            failure.res = Err(PriceApiError::CannotParseData(
+                "synthetic quote error".into(),
+            ));
+            assert!(admits(app, failure));
+            assert!(app.cache.fiat_price.as_ref().unwrap().res.is_err());
+            assert!(app.cache.btc_usd_price.is_none());
+        });
     }
 }

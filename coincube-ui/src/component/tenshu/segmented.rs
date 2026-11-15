@@ -337,6 +337,182 @@ fn with_icon<'a, M: 'a>(icon: Option<Text<'a>>, label: Text<'a>, gap: f32) -> El
     }
 }
 
+fn segment_item<'a, T: Copy + PartialEq + 'a, M: Clone + 'static>(
+    segment: Segment<'a, T>,
+    selected: Option<T>,
+    look: Look,
+    outlined: bool,
+    focus_intent: fn(Id) -> M,
+    on_select: &Option<Box<dyn Fn(T) -> M + 'a>>,
+) -> Element<'a, M> {
+    let Segment {
+        id,
+        value,
+        label,
+        icon,
+        description,
+        enabled,
+    } = segment;
+    let is_selected = selected == Some(value);
+    // A group without an on_select handler is inert even when its
+    // individual segments were not explicitly disabled.
+    let interactive = enabled && on_select.is_some();
+    let on_press = on_select
+        .as_ref()
+        .filter(|_| interactive)
+        .map(|on_select| on_select(value));
+    let action = match look {
+        Look::Segmented(size) => {
+            let content = framed_segment_content(label, icon, size, is_selected, interactive);
+            let segment_radius = size.segment_radius();
+            Action::new(id, content, focus_intent)
+                .style(move |theme, status| {
+                    let mut style = style::segment(theme, status, is_selected, segment_radius);
+                    if !outlined {
+                        style.border.width = 0.0;
+                    }
+                    style
+                })
+                .height(Length::Fixed(size.height()))
+                .padding([0.0, size.padding_x()])
+                .focus_radius(segment_radius)
+        }
+        Look::Chips => {
+            let label = label_text(label, type_size::CHIP, is_selected, font::REGULAR);
+            let color = if is_selected { accent_ink } else { muted };
+            let icon = icon.map(|icon| glyph(icon, size::ICON_SMALL, color, interactive));
+            let content = Container::new(with_icon(icon, label, 6.0))
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center);
+            Action::new(id, content, focus_intent)
+                .style(move |theme, status| style::choice_chip(theme, status, is_selected))
+                .height(Length::Fixed(size::CHIP_HEIGHT))
+                .padding([0.0, 12.0])
+                .focus_radius(radius::CHIP)
+        }
+        Look::Tabs => {
+            let label = label_text(label, type_size::BODY, is_selected, font::REGULAR).line_height(
+                iced::widget::text::LineHeight::Relative(type_size::LINE_HEIGHT),
+            );
+            // `.subnav button`: an optional glyph 8px before the
+            // label, ink on the current tab and muted otherwise.
+            let color = if is_selected { ink } else { muted };
+            let icon = icon.map(|icon| glyph(icon, size::ICON_SMALL, color, interactive));
+            let label = with_icon(icon, label, 8.0);
+            let underline = Container::new(iced::widget::Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(2.0))
+                .style(move |theme| style::tab_underline(theme, is_selected));
+            // The underline fills the tab's width; the width is set
+            // after the pushes because pushing a Fill child widens
+            // a column to Fill.
+            let content = Column::new()
+                .spacing(8)
+                .push(Container::new(label).padding([0.0, 12.0]))
+                .push(underline)
+                .width(Length::Shrink);
+            Action::new(id, content, focus_intent)
+                .style(move |theme, status| style::tab(theme, status, is_selected))
+                .padding(iced::Padding::default().top(10.0))
+                .focus_radius(radius::ROW)
+        }
+        Look::Nav => {
+            let label = label_text(label, type_size::BODY, is_selected, font::REGULAR);
+            let color = if is_selected { accent } else { muted };
+            let icon = icon.map(|icon| glyph(icon, size::ICON, color, interactive));
+            let content = Container::new(with_icon(icon, label, 10.0))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Center);
+            Action::new(id, content, focus_intent)
+                .style(move |theme, status| style::nav_item(theme, status, is_selected))
+                .width(Length::Fill)
+                .height(Length::Fixed(size::NAV_ITEM_HEIGHT))
+                .padding([0.0, 12.0])
+                .focus_radius(radius::CONTROL)
+        }
+        Look::Radio => {
+            let mark = Container::new(
+                Container::new(iced::widget::Space::new())
+                    .width(Length::Fixed(size::RADIO_DOT))
+                    .height(Length::Fixed(size::RADIO_DOT))
+                    .style(move |theme| style::radio_dot(theme, is_selected, interactive)),
+            )
+            .width(Length::Fixed(size::RADIO))
+            .height(Length::Fixed(size::RADIO))
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(move |theme| style::radio_ring(theme, is_selected, interactive));
+            let text = radio_segment_text(label, description);
+            let content = Row::new()
+                .spacing(10)
+                .align_y(Alignment::Start)
+                .width(Length::Fill)
+                .push(
+                    Container::new(mark)
+                        .width(Length::Fixed(20.0))
+                        .padding(iced::Padding::default().top(3.0)),
+                )
+                .push(text);
+            Action::new(id, content, focus_intent)
+                .style(style::radio_row)
+                .width(Length::Fill)
+                .padding([10.0, 0.0])
+                .focus_radius(radius::ROW)
+        }
+    };
+    action.on_press_maybe(on_press).into()
+}
+
+fn framed_segment_content<'a, M: 'a>(
+    label: Cow<'a, str>,
+    icon: Option<Text<'a>>,
+    size: SegmentSize,
+    is_selected: bool,
+    interactive: bool,
+) -> Container<'a, M> {
+    let label = label_text(label, size.text_size(), is_selected, font::MEDIUM);
+    let icon = icon.map(|icon| {
+        if interactive {
+            icon.size(size::ICON_SMALL)
+        } else {
+            glyph(
+                icon,
+                size::ICON_SMALL,
+                if is_selected { ink } else { muted },
+                false,
+            )
+        }
+    });
+    Container::new(with_icon(icon, label, 6.0))
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center)
+}
+
+fn radio_segment_text<'a, M: 'a>(
+    label: Cow<'a, str>,
+    description: Option<Cow<'a, str>>,
+) -> Column<'a, M> {
+    let mut text = Column::new().spacing(2).width(Length::Fill).push(
+        label_text(label, type_size::BODY, false, font::MEDIUM).line_height(
+            iced::widget::text::LineHeight::Relative(type_size::LINE_HEIGHT),
+        ),
+    );
+    if let Some(description) = description {
+        text = text.push(
+            iced::widget::text(description)
+                .shaping(Shaping::Advanced)
+                .size(type_size::CAPTION)
+                .line_height(iced::widget::text::LineHeight::Relative(
+                    type_size::LINE_HEIGHT,
+                ))
+                .style(move |theme| text_style::tone(theme, Tone::Muted)),
+        );
+    }
+    text
+}
+
 impl<'a, T, M> From<Segmented<'a, T, M>> for Element<'a, M>
 where
     T: Copy + PartialEq + 'a,
@@ -365,162 +541,7 @@ where
         let items: Vec<Element<'a, M>> = segments
             .into_iter()
             .map(|segment| {
-                let Segment {
-                    id,
-                    value,
-                    label,
-                    icon,
-                    description,
-                    enabled,
-                } = segment;
-                let is_selected = selected == Some(value);
-                // A group without an on_select handler is inert even when its
-                // individual segments were not explicitly disabled.
-                let interactive = enabled && on_select.is_some();
-                let on_press = on_select
-                    .as_ref()
-                    .filter(|_| interactive)
-                    .map(|on_select| on_select(value));
-                let action = match look {
-                    Look::Segmented(size) => {
-                        let label = label_text(label, size.text_size(), is_selected, font::MEDIUM);
-                        let icon = icon.map(|icon| {
-                            if interactive {
-                                icon.size(size::ICON_SMALL)
-                            } else {
-                                glyph(
-                                    icon,
-                                    size::ICON_SMALL,
-                                    if is_selected { ink } else { muted },
-                                    false,
-                                )
-                            }
-                        });
-                        let content = Container::new(with_icon(icon, label, 6.0))
-                            .height(Length::Fill)
-                            .align_x(alignment::Horizontal::Center)
-                            .align_y(alignment::Vertical::Center);
-                        let segment_radius = size.segment_radius();
-                        Action::new(id, content, focus_intent)
-                            .style(move |theme, status| {
-                                let mut style =
-                                    style::segment(theme, status, is_selected, segment_radius);
-                                if !outlined {
-                                    style.border.width = 0.0;
-                                }
-                                style
-                            })
-                            .height(Length::Fixed(size.height()))
-                            .padding([0.0, size.padding_x()])
-                            .focus_radius(segment_radius)
-                    }
-                    Look::Chips => {
-                        let label = label_text(label, type_size::CHIP, is_selected, font::REGULAR);
-                        let color = if is_selected { accent_ink } else { muted };
-                        let icon =
-                            icon.map(|icon| glyph(icon, size::ICON_SMALL, color, interactive));
-                        let content = Container::new(with_icon(icon, label, 6.0))
-                            .height(Length::Fill)
-                            .align_y(alignment::Vertical::Center);
-                        Action::new(id, content, focus_intent)
-                            .style(move |theme, status| {
-                                style::choice_chip(theme, status, is_selected)
-                            })
-                            .height(Length::Fixed(size::CHIP_HEIGHT))
-                            .padding([0.0, 12.0])
-                            .focus_radius(radius::CHIP)
-                    }
-                    Look::Tabs => {
-                        let label = label_text(label, type_size::BODY, is_selected, font::REGULAR)
-                            .line_height(iced::widget::text::LineHeight::Relative(
-                                type_size::LINE_HEIGHT,
-                            ));
-                        // `.subnav button`: an optional glyph 8px before the
-                        // label, ink on the current tab and muted otherwise.
-                        let color = if is_selected { ink } else { muted };
-                        let icon =
-                            icon.map(|icon| glyph(icon, size::ICON_SMALL, color, interactive));
-                        let label = with_icon(icon, label, 8.0);
-                        let underline = Container::new(iced::widget::Space::new())
-                            .width(Length::Fill)
-                            .height(Length::Fixed(2.0))
-                            .style(move |theme| style::tab_underline(theme, is_selected));
-                        // The underline fills the tab's width; the width is set
-                        // after the pushes because pushing a Fill child widens
-                        // a column to Fill.
-                        let content = Column::new()
-                            .spacing(8)
-                            .push(Container::new(label).padding([0.0, 12.0]))
-                            .push(underline)
-                            .width(Length::Shrink);
-                        Action::new(id, content, focus_intent)
-                            .style(move |theme, status| style::tab(theme, status, is_selected))
-                            .padding(iced::Padding::default().top(10.0))
-                            .focus_radius(radius::ROW)
-                    }
-                    Look::Nav => {
-                        let label = label_text(label, type_size::BODY, is_selected, font::REGULAR);
-                        let color = if is_selected { accent } else { muted };
-                        let icon = icon.map(|icon| glyph(icon, size::ICON, color, interactive));
-                        let content = Container::new(with_icon(icon, label, 10.0))
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .align_y(alignment::Vertical::Center);
-                        Action::new(id, content, focus_intent)
-                            .style(move |theme, status| style::nav_item(theme, status, is_selected))
-                            .width(Length::Fill)
-                            .height(Length::Fixed(size::NAV_ITEM_HEIGHT))
-                            .padding([0.0, 12.0])
-                            .focus_radius(radius::CONTROL)
-                    }
-                    Look::Radio => {
-                        let mark = Container::new(
-                            Container::new(iced::widget::Space::new())
-                                .width(Length::Fixed(size::RADIO_DOT))
-                                .height(Length::Fixed(size::RADIO_DOT))
-                                .style(move |theme| {
-                                    style::radio_dot(theme, is_selected, interactive)
-                                }),
-                        )
-                        .width(Length::Fixed(size::RADIO))
-                        .height(Length::Fixed(size::RADIO))
-                        .align_x(alignment::Horizontal::Center)
-                        .align_y(alignment::Vertical::Center)
-                        .style(move |theme| style::radio_ring(theme, is_selected, interactive));
-                        let mut text = Column::new().spacing(2).width(Length::Fill).push(
-                            label_text(label, type_size::BODY, false, font::MEDIUM).line_height(
-                                iced::widget::text::LineHeight::Relative(type_size::LINE_HEIGHT),
-                            ),
-                        );
-                        if let Some(description) = description {
-                            text = text.push(
-                                iced::widget::text(description)
-                                    .shaping(Shaping::Advanced)
-                                    .size(type_size::CAPTION)
-                                    .line_height(iced::widget::text::LineHeight::Relative(
-                                        type_size::LINE_HEIGHT,
-                                    ))
-                                    .style(move |theme| text_style::tone(theme, Tone::Muted)),
-                            );
-                        }
-                        let content = Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Start)
-                            .width(Length::Fill)
-                            .push(
-                                Container::new(mark)
-                                    .width(Length::Fixed(20.0))
-                                    .padding(iced::Padding::default().top(3.0)),
-                            )
-                            .push(text);
-                        Action::new(id, content, focus_intent)
-                            .style(style::radio_row)
-                            .width(Length::Fill)
-                            .padding([10.0, 0.0])
-                            .focus_radius(radius::ROW)
-                    }
-                };
-                action.on_press_maybe(on_press).into()
+                segment_item(segment, selected, look, outlined, focus_intent, &on_select)
             })
             .collect();
 

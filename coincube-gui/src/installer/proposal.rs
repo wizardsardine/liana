@@ -107,7 +107,6 @@ impl Session {
             || ctx.backup.is_some()
             || ctx.restored_imported_wallet.is_some()
             || ctx.claim_source.is_some()
-            || ctx.fresh_fork_cube
             || ctx.keys.values().any(|key| key.provider_key.is_some())
             || ctx.install_node_alongside_connect
             || ctx.pending_bitcoind_config.is_some()
@@ -599,6 +598,32 @@ pub(crate) mod tests {
     pub(crate) fn fixture(root: &std::path::Path) -> (Context, Arc<Session>) {
         fixture_for_chain(root, crate::chain::ChainId::Regtest)
     }
+    /// Native installer callers need an authenticated root as well as a proposal.
+    /// Keep the authless fixture for protocol-only authorization tests.
+    pub(crate) fn authenticated_fixture_for_chain(
+        root: &std::path::Path,
+        chain: crate::chain::ChainId,
+    ) -> (Context, Arc<Session>) {
+        let (ctx, session) = fixture_for_chain(root, chain);
+        let dir = ctx.coincube_directory.network_directory(chain);
+        let mut settings = crate::app::settings::Settings::from_file(&dir).unwrap();
+        let master =
+            coincube_core::signer::MasterSigner::generate(chain.bitcoin_network()).unwrap();
+        let fp = master.fingerprint(&Secp256k1::new());
+        let cube = &mut settings.cubes[0];
+        let generation = crate::app::session::generation_for(&cube.id);
+        cube.master_signer_fingerprint = Some(fp);
+        crate::app::session::store_unlocked_signer(&cube.id, fp, master);
+        assert_eq!(crate::app::session::generation_for(&cube.id), generation);
+        assert!(session.active());
+        std::fs::write(
+            dir.path().join("settings.json"),
+            serde_json::to_vec(&settings).unwrap(),
+        )
+        .unwrap();
+        (ctx, session)
+    }
+
     pub(crate) fn fixture_for_chain(
         root: &std::path::Path,
         chain: crate::chain::ChainId,

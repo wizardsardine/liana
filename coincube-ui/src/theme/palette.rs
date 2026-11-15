@@ -48,6 +48,15 @@ pub struct ShellPalette {
     pub teal: iced::Color,
     pub hover: iced::Color,
     pub shadow: iced::Color,
+    /// Suitcoiner's accent (antique gold), for the worldview's own marks such
+    /// as the rule over the Overview voice line. See [`Theme::worldview_accent`].
+    ///
+    /// [`Theme::worldview_accent`]: crate::theme::Theme::worldview_accent
+    pub suitcoiner: iced::Color,
+    /// Luke's accent (oxblood). See [`Theme::worldview_accent`].
+    ///
+    /// [`Theme::worldview_accent`]: crate::theme::Theme::worldview_accent
+    pub luke: iced::Color,
 }
 
 impl ShellPalette {
@@ -69,6 +78,8 @@ impl ShellPalette {
             teal: iced::color!(0x2a9d7f),
             hover: iced::color!(0xf5f0e8, 0.06),
             shadow: iced::color!(0x000000, 0.45),
+            suitcoiner: iced::color!(0xd9b968),
+            luke: iced::color!(0xe39a8f),
         }
     }
 
@@ -90,6 +101,8 @@ impl ShellPalette {
             teal: iced::color!(0x1f7a62),
             hover: iced::color!(0x202020, 0.05),
             shadow: iced::color!(0x3c280a, 0.18),
+            suitcoiner: iced::color!(0x7a5a12),
+            luke: iced::color!(0x8f2e1d),
         }
     }
 }

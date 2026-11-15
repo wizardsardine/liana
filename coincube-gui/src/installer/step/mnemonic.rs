@@ -14,17 +14,11 @@ use crate::{
 
 pub struct BackupMnemonic {
     signer: Arc<Mutex<Signer>>,
-    fresh_fork_cube: bool,
-    confirmed: bool,
 }
 
 impl BackupMnemonic {
     pub fn new(signer: Arc<Mutex<Signer>>) -> Self {
-        Self {
-            signer,
-            fresh_fork_cube: false,
-            confirmed: false,
-        }
+        Self { signer }
     }
 }
 
@@ -34,30 +28,13 @@ impl From<BackupMnemonic> for Box<dyn Step> {
     }
 }
 
+/// A reminder only. Vault creation reuses the open Cube's master seed, which
+/// was created with the Cube; backing it up is the Cube's own reminder.
 impl Step for BackupMnemonic {
     fn vault_stage(&self) -> Option<crate::installer::VaultStage> {
         Some(crate::installer::VaultStage::Backup)
     }
-    fn load_context(&mut self, ctx: &Context) {
-        self.fresh_fork_cube = ctx.fresh_fork_cube;
-    }
-    fn apply(&mut self, ctx: &mut Context) -> bool {
-        if ctx.fresh_fork_cube {
-            ctx.fresh_fork_seed_backed_up = self.confirmed;
-            return self.confirmed;
-        }
-        true
-    }
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::ConfirmFreshSeedBackup(confirmed) = message {
-            self.confirmed = confirmed;
-        }
-        Task::none()
-    }
     fn skip(&self, ctx: &Context) -> bool {
-        if ctx.fresh_fork_cube {
-            return false;
-        }
         if let Some(descriptor) = &ctx.descriptor {
             !descriptor
                 .to_string()
@@ -71,19 +48,6 @@ impl Step for BackupMnemonic {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
     ) -> Element<'a, Message> {
-        if self.fresh_fork_cube {
-            let words = self
-                .signer
-                .lock()
-                .unwrap()
-                .mnemonic()
-                .iter()
-                .enumerate()
-                .map(|(i, word)| format!("{}. {}", i + 1, word))
-                .collect::<Vec<_>>()
-                .join("   ");
-            return view::backup_fresh_fork_mnemonic(progress, words, self.confirmed);
-        }
         view::backup_mnemonic(progress)
     }
 }
@@ -208,31 +172,5 @@ impl Step for RecoverMnemonic {
             self.recover,
             self.error.as_ref(),
         )
-    }
-}
-
-#[cfg(test)]
-mod fork_backup_tests {
-    use super::*;
-    #[test]
-    fn fresh_fork_master_requires_explicit_backup_confirmation() {
-        let dir = crate::dir::CoincubeDirectory::new(Default::default());
-        let mut ctx = Context::new_for_chain(
-            crate::chain::ChainId::BitcoinBlake2b,
-            dir.clone(),
-            None,
-            None,
-        );
-        ctx.fresh_fork_cube = true;
-        let signer = Arc::new(Mutex::new(Signer::generate(ctx.network).unwrap()));
-        let mut step = BackupMnemonic::new(signer);
-        step.load_context(&ctx);
-        assert!(!step.skip(&ctx));
-        assert!(!step.apply(&mut ctx));
-        assert!(!ctx.fresh_fork_seed_backed_up);
-        let mut hws = HardwareWallets::new(dir, ctx.network);
-        let _ = step.update(&mut hws, Message::ConfirmFreshSeedBackup(true));
-        assert!(step.apply(&mut ctx));
-        assert!(ctx.fresh_fork_seed_backed_up);
     }
 }

@@ -975,27 +975,38 @@ pub(super) fn activity_layer<'a>(home: &Home) -> Option<Element<'a, ViewMessage>
                     .map_or("COINCUBE | Connect", |(via, _)| via.label()),
             ))
             .push(
+                // The link carries its own 6px inline padding (its hover
+                // border), so it skips the column's 6px left inset to keep its
+                // text on the same left edge as the note above (COIN-670).
                 Column::new()
                     .padding(Padding {
                         top: 6.0,
                         right: 6.0,
                         bottom: 4.0,
-                        left: 6.0,
+                        left: 0.0,
                     })
                     .spacing(8)
-                    .push(rule)
                     .push(
-                        text(localized_copy(
-                            "Follows the Network filter, or the network picked above. Automatic \
-                             reads a local node that is already running, else COINCUBE | Connect, \
-                             or mempool.space for the test networks Connect does not serve. The \
-                             Launcher never starts a node.",
-                        ))
-                        .size(12)
-                        .style(|theme: &theme::Theme| text::Style {
-                            color: Some(theme.colors.shell.muted),
-                        })
-                        .wrapping(text::Wrapping::WordOrGlyph),
+                        Column::new()
+                            .padding(Padding {
+                                left: 6.0,
+                                ..Padding::ZERO
+                            })
+                            .spacing(8)
+                            .push(rule)
+                            .push(
+                                text(localized_copy(
+                                    "Follows the Network filter, or the network picked above. \
+                                     Automatic reads a local node that is already running, else \
+                                     COINCUBE | Connect, or mempool.space for the test networks \
+                                     Connect does not serve. The Launcher never starts a node.",
+                                ))
+                                .size(12)
+                                .style(|theme: &theme::Theme| text::Style {
+                                    color: Some(theme.colors.shell.muted),
+                                })
+                                .wrapping(text::Wrapping::WordOrGlyph),
+                            ),
                     )
                     .push(small_link(
                         Id::new("tenshu.launcher.activity.preferences"),

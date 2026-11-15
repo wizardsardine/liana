@@ -451,40 +451,22 @@ pub fn export_subscription(
             let msg = state.receiver.try_recv();
             let disconnected = match msg {
                 Ok(m) => {
-                    if let Err(e) = output.send(m).await {
-                        tracing::error!("export_subscription() fail to send message: {}", e);
-                    }
+                    send_export_progress(&mut output, m).await;
                     continue;
                 }
-                Err(e) => match e {
-                    tokio::sync::mpsc::error::TryRecvError::Empty => false,
-                    tokio::sync::mpsc::error::TryRecvError::Disconnected => true,
-                },
+                Err(e) => export_channel_disconnected(e),
             };
 
             let handle = match state.handle.take() {
                 Some(h) => h,
                 None => {
-                    if let Err(e) = output.send(Progress::Error(Error::HandleLost)).await {
-                        tracing::error!("export_subscription() fail to send message: {}", e);
-                    }
+                    send_export_progress(&mut output, Progress::Error(Error::HandleLost)).await;
                     continue;
                 }
             };
-            let msg = {
-                let h = handle.lock().expect("should not fail");
-                if h.is_finished() {
-                    Some(Progress::Finished)
-                } else if disconnected {
-                    Some(Progress::Error(Error::ChannelLost))
-                } else {
-                    None
-                }
-            };
+            let msg = export_handle_progress(&handle, disconnected);
             if let Some(msg) = msg {
-                if let Err(e) = output.send(msg).await {
-                    tracing::error!("export_subscription() fail to send message: {}", e);
-                }
+                send_export_progress(&mut output, msg).await;
                 continue;
             }
             state.handle = Some(handle);
@@ -507,7 +489,7 @@ pub async fn export_transactions(
 
     // look 2 hour forward
     // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
-    let mut end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
+    let end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
     let total_txs = daemon
         .list_confirmed_txs(0, end, u32::MAX as u64)
         .await?
@@ -520,106 +502,13 @@ pub async fn export_transactions(
         send_progress!(sender, Progress(5.0));
     }
 
-    let max = u32::MAX as u64;
-
-    // store txs in a map to avoid duplicates
-    let mut map = HashMap::<Txid, HistoryTransaction>::new();
-    let mut limit = max;
-
-    loop {
-        let history_txs = daemon.list_history_txs(0, end, limit).await?;
-        let dl = map.len() + history_txs.len();
-        if dl > 0 {
-            let progress = (dl as f32) / (total_txs as f32) * 80.0;
-            send_progress!(sender, Progress(progress));
-        }
-        // all txs have been fetched
-        if history_txs.is_empty() {
-            break;
-        }
-        if history_txs.len() == limit as usize {
-            let first = if let Some(t) = history_txs.first().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-            let last = if let Some(t) = history_txs.last().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-            // limit too low, all tx are in the same timestamp
-            // we must increase limit and retry
-            if first == last {
-                limit += DEFAULT_LIMIT as u64;
-                continue;
-            } else {
-                // add txs to map
-                for tx in history_txs {
-                    let txid = tx.txid;
-                    map.insert(txid, tx);
-                }
-                limit = max;
-                end = first.min(last);
-                continue;
-            }
-        } else
-        /* history_txs.len() < limit */
-        {
-            // add txs to map
-            for tx in history_txs {
-                let txid = tx.txid;
-                map.insert(txid, tx);
-            }
-            break;
-        }
-    }
+    let map = collect_export_transactions(sender, daemon.as_ref(), total_txs, end).await?;
 
     let mut txs: Vec<_> = map.into_values().collect();
     txs.sort_by(|a, b| b.compare(a));
 
-    for mut tx in txs {
-        let date_time = tx
-            .time
-            .map(|t| {
-                let dt = DateTime::from_timestamp(t as i64, 0)
-                    .expect("bitcoin timestamp")
-                    .with_timezone(&chrono::Local);
-                dt.format("%Y-%m-%d %H:%M:%S").to_string()
-            })
-            .unwrap_or("".to_string());
-
-        let txid = tx.txid.clone().to_string();
-        let txid_label = tx.labels().get(&txid).cloned();
-        let mut label = if let Some(txid) = txid_label {
-            txid
-        } else {
-            "".to_string()
-        };
-        if !label.is_empty() {
-            label = format!("\"{}\"", label);
-        }
-        let txid = tx.txid.to_string();
-        let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
-        let mut inputs_amount = 0;
-        tx.coins.iter().for_each(|(_, coin)| {
-            inputs_amount += coin.amount.to_sat() as i128;
-        });
-        let value = tx.incoming_amount.to_sat() as i128 - inputs_amount;
-        let value = value as f64 / 100_000_000.0;
-        let fee = fee as f64 / 100_000_000.0;
-        let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());
-        let fee = if fee != 0.0 {
-            fee.to_string()
-        } else {
-            "".into()
-        };
-
-        let line = format!(
-            "{},{},{},{},{},{}\n",
-            date_time, label, value, fee, txid, block
-        );
-        file.write_all(line.as_bytes())?;
+    for tx in txs {
+        write_transaction_csv_row(&mut file, tx)?;
     }
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
@@ -742,10 +631,8 @@ pub async fn export_liquid_payments(
     breez_client: Arc<crate::app::breez_liquid::BreezClient>,
     path: PathBuf,
 ) -> Result<(), Error> {
-    use chrono::DateTime;
-
     use crate::app::breez_liquid::assets::usdt_asset_id;
-    use crate::app::wallets::{DomainPaymentDetails, LiquidBackend};
+    use crate::app::wallets::LiquidBackend;
 
     let usdt_id = usdt_asset_id(breez_client.network()).unwrap_or("");
 
@@ -765,70 +652,7 @@ pub async fn export_liquid_payments(
         .map_err(|e| Error::Daemon(e.to_string()))?;
 
     for payment in payments {
-        let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
-            .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
-            .map(|dt| {
-                dt.with_timezone(&chrono::Local)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            })
-            .unwrap_or_default();
-
-        let is_send = !payment.is_incoming();
-        let payment_type = if is_send { "SEND" } else { "RECEIVE" };
-
-        let address = payment
-            .destination
-            .as_ref()
-            .map(|d| format!("\"{}\"", d))
-            .unwrap_or_default();
-
-        let fees_btc = payment.fees_sat as f64 / 100_000_000.0;
-
-        // Detect USDt asset payments — real amount is carried in asset_info, not amount_sat.
-        let usdt_amount_float: Option<f64> = match &payment.details {
-            DomainPaymentDetails::LiquidAsset {
-                asset_id,
-                asset_info,
-                ..
-            } if asset_id == usdt_id => asset_info
-                .as_ref()
-                .map(|info| info.amount_minor as f64 / 10_f64.powi(info.precision as i32)),
-            _ => None,
-        };
-
-        let line = if usdt_amount_float.is_some()
-            || matches!(
-                &payment.details,
-                DomainPaymentDetails::LiquidAsset { asset_id, .. } if asset_id == usdt_id
-            ) {
-            let usdt_amount = usdt_amount_float.map(|v| v.to_string()).unwrap_or_default();
-            let net = match (usdt_amount_float, is_send) {
-                (Some(v), true) => format!("-{}", v),
-                (Some(v), false) => v.to_string(),
-                (None, _) => String::new(),
-            };
-            format!(
-                "{},{},USDt,{},{},{:.8},{}\n",
-                date_time, payment_type, address, usdt_amount, fees_btc, net
-            )
-        } else {
-            let amount_btc = if is_send {
-                payment.amount_sat as f64 / 100_000_000.0
-            } else {
-                (payment.amount_sat + payment.fees_sat) as f64 / 100_000_000.0
-            };
-            let total = if is_send {
-                -(amount_btc + fees_btc)
-            } else {
-                amount_btc - fees_btc
-            };
-            format!(
-                "{},{},L-BTC,{},{:.8},{:.8},{:.8}\n",
-                date_time, payment_type, address, amount_btc, fees_btc, total
-            )
-        };
-        file.write_all(line.as_bytes())?;
+        write_liquid_payment_csv_row(&mut file, payment, usdt_id)?;
     }
 
     send_progress!(sender, Ended);
@@ -1149,28 +973,8 @@ pub async fn import_backup(
 
     // check if descriptors matches
     let descriptor = info.descriptors.main;
-    let account = match backup.accounts.len() {
-        0 => {
-            return Err(Error::BackupImport(
-                "There is no account in the backup!".into(),
-            ));
-        }
-        1 => backup.accounts.first().expect("already checked"),
-        _ => {
-            return Err(Error::BackupImport(
-                "Tenshu does not support importing a backup that contains several accounts.".into(),
-            ));
-        }
-    };
-
-    let backup_descriptor = match CoincubeDescriptor::from_str(&account.descriptor) {
-        Ok(d) => d,
-        Err(_) => {
-            return Err(Error::BackupImport(
-                "The backup descriptor is not a valid Coincube descriptor!".into(),
-            ));
-        }
-    };
+    let account = import_backup_account(&backup)?;
+    let backup_descriptor = import_backup_descriptor(account)?;
 
     if descriptor.as_vault() != Some(&backup_descriptor) {
         return Err(Error::BackupImport(
@@ -1181,123 +985,24 @@ pub async fn import_backup(
     // TODO: check if timestamp matches?
 
     // check if labels can be imported w/o conflict
-    let mut write_labels = true;
-    let backup_labels = if let Some(labels) = account.labels.clone() {
-        let db_labels = match daemon.get_labels_bip329(0, u32::MAX).await {
-            Ok(l) => l,
-            Err(_) => {
-                return Err(Error::BackupImport("Failed to dump DB labels".into()));
-            }
-        };
-
-        let labels_map = db_labels.clone().into_map();
-        let backup_labels_map = labels.clone().into_map();
-
-        // if there is a conflict, we ask user to ACK before overwrite
-        let (ack_sender, mut ack_receiver) = channel(1);
-        let mut conflict = false;
-        for (k, l) in &backup_labels_map {
-            if let Some(lab) = labels_map.get(k) {
-                if lab != l {
-                    send_progress!(sender, LabelsConflict(ack_sender));
-                    conflict = true;
-                    break;
-                }
-            }
-        }
-        if conflict {
-            write_labels = match ack_receiver.recv().await {
-                Some(b) => b,
-                None => {
-                    return Err(Error::BackupImport("Failed to receive labels ACK".into()));
-                }
-            }
-        }
-
-        labels.into_vec()
-    } else {
-        Vec::new()
-    };
+    let (write_labels, backup_labels) =
+        backup_labels_for_import(account, daemon.as_ref(), sender).await?;
 
     // check if key aliases can be imported w/o conflict
-    let mut write_aliases = true;
-    let settings = if !account.keys.is_empty() {
-        let wallet_settings =
-            match WalletSettings::from_file(network_dir, |w| w.wallet_id() == wallet.id()) {
-                Ok(Some(s)) => s,
-                _ => {
-                    return Err(Error::BackupImport("Failed to get App Settings".into()));
-                }
-            };
-
-        let settings_aliases: HashMap<_, _> = wallet_settings
-            .keys
-            .clone()
-            .into_iter()
-            .map(|s| (s.master_fingerprint, s))
-            .collect();
-
-        let (ack_sender, mut ack_receiver) = channel(1);
-        let mut conflict = false;
-        for (fg, key) in &account.keys {
-            if let Some(k) = settings_aliases.get(fg) {
-                let ks = k.to_backup();
-                if ks != *key {
-                    send_progress!(sender, KeyAliasesConflict(ack_sender));
-                    conflict = true;
-                    break;
-                }
-            }
-        }
-        if conflict {
-            // wait for the user ACK/NACK
-            write_aliases = match ack_receiver.recv().await {
-                Some(a) => a,
-                None => {
-                    return Err(Error::BackupImport("Failed to receive aliases ACK".into()));
-                }
-            };
-        }
-
-        Some(settings_aliases)
-    } else {
-        None
-    };
+    let (write_aliases, settings) =
+        backup_aliases_for_import(account, network_dir, &wallet, sender).await?;
 
     // update receive & change index
-    let db_receive = info.receive_index;
-    let i = account.receive_index.unwrap_or(0);
-    let receive = if db_receive < i { Some(i) } else { None };
+    import_backup_indexes(
+        account,
+        info.receive_index,
+        info.change_index,
+        daemon.as_ref(),
+    )
+    .await?;
 
-    let db_change = info.change_index;
-    let i = account.change_index.unwrap_or(0);
-    let change = if db_change < i { Some(i) } else { None };
-
-    if daemon.update_deriv_indexes(receive, change).await.is_err() {
-        return Err(Error::BackupImport(
-            "Failed to update derivation indexes".into(),
-        ));
-    }
-
-    // parse PSBTs
-    let mut psbts = Vec::new();
-    for psbt_str in &account.psbts {
-        match Psbt::from_str(psbt_str) {
-            Ok(p) => {
-                psbts.push(p);
-            }
-            Err(_) => {
-                return Err(Error::BackupImport("Failed to parse PSBT".into()));
-            }
-        }
-    }
-
-    // import PSBTs
-    for psbt in psbts {
-        if daemon.update_spend_tx(&psbt).await.is_err() {
-            return Err(Error::BackupImport("Failed to store PSBT".into()));
-        }
-    }
+    // parse and import PSBTs
+    import_backup_psbts(account, daemon.as_ref()).await?;
 
     // import labels if no conflict or user ACK
     if write_labels {
@@ -1317,40 +1022,15 @@ pub async fn import_backup(
     }
 
     // update aliases if no conflict or user ACK
-    if let (true, Some(mut settings_aliases)) = (write_aliases, settings) {
-        for (k, v) in &account.keys {
-            if let Some(ks) = KeySetting::from_backup(
-                v.alias.clone().unwrap_or("".into()),
-                *k,
-                v.role,
-                v.key_type,
-                v.proprietary.clone(),
-            ) {
-                settings_aliases.insert(*k, ks);
-            }
-        }
-
-        if let Err(e) = update_settings_file(network_dir, |mut settings| {
-            if let Some(wallet) = settings
-                .wallets
-                .iter_mut()
-                .find(|w| w.wallet_id() == wallet.id())
-            {
-                wallet.keys = settings_aliases.clone().into_values().collect();
-            }
-            Some(settings)
-        })
-        .await
-        {
-            return Err(Error::BackupImport(format!(
-                "Failed to import keys aliases: {}",
-                e
-            )));
-        } else {
-            // Update wallet state
-            send_progress!(sender, UpdateAliases(settings_aliases));
-        }
-    }
+    import_backup_aliases(
+        account,
+        settings,
+        write_aliases,
+        network_dir,
+        &wallet,
+        sender,
+    )
+    .await?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
@@ -1426,29 +1106,7 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
     };
 
     // else we try to parse as plaintetxt descriptor or backup file
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
-    let backup = match backup {
-        Ok(b) => b,
-        Err(e) => {
-            // try to import as bare descriptor
-            let descr = CoincubeDescriptor::from_str(&backup_str);
-            match descr {
-                Ok(descr) => {
-                    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
-                        Network::Bitcoin
-                    } else {
-                        Network::Signet
-                    };
-                    Backup::from_descriptor(descr, network)
-                }
-                Err(e2) => {
-                    return Err(Error::BackupImport(format!(
-                        "A backup or descriptor file is expected: {e}, {e2}"
-                    )));
-                }
-            }
-        }
-    };
+    let backup = parse_backup_or_descriptor(&backup_str)?;
 
     let chain = backup.chain_identity().map_err(Error::Backup)?;
     if chain.is_blake2b() {
@@ -1463,28 +1121,8 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
         None
     };
 
-    let account = match backup.accounts.len() {
-        0 => {
-            return Err(Error::BackupImport(
-                "There is no account in the backup!".into(),
-            ));
-        }
-        1 => backup.accounts.first().expect("already checked"),
-        _ => {
-            return Err(Error::BackupImport(
-                "Tenshu does not support importing a backup that contains several accounts.".into(),
-            ));
-        }
-    };
-
-    let descriptor = match CoincubeDescriptor::from_str(&account.descriptor) {
-        Ok(d) => d,
-        Err(_) => {
-            return Err(Error::BackupImport(
-                "The backup descriptor is not a valid Coincube descriptor!".into(),
-            ));
-        }
-    };
+    let account = import_backup_account(&backup)?;
+    let descriptor = import_backup_descriptor(account)?;
 
     let mut aliases: HashMap<Fingerprint, settings::KeySetting> = HashMap::new();
     for (k, v) in &account.keys {
@@ -1581,10 +1219,7 @@ pub async fn import_backup_at_launch(
     }
 
     // parse PSBTs
-    let mut psbts = Vec::new();
-    for psbt_str in &account.psbts {
-        psbts.push(Psbt::from_str(psbt_str).map_err(|_| RestoreBackupError::InvalidPsbt)?);
-    }
+    let psbts = launch_backup_psbts(account)?;
 
     // update receive & change index
     let db_receive = info.receive_index;
@@ -1598,19 +1233,7 @@ pub async fn import_backup_at_launch(
     daemon.update_deriv_indexes(receive, change).await?;
 
     // import labels
-    if let Some(labels) = account.labels.clone().map(|l| l.into_vec()) {
-        let labels: HashMap<LabelItem, Option<String>> = labels
-            .into_iter()
-            .filter_map(|l| {
-                if let Some((item, label)) = LabelItem::from_bip329(&l, network) {
-                    Some((item, Some(label)))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        daemon.update_labels(&labels).await?;
-    }
+    restore_backup_labels(account, network, daemon.as_ref()).await?;
 
     // import PSBTs
     for psbt in psbts {
@@ -1693,6 +1316,499 @@ pub async fn app_backup_export(
         .await
         .map_err(Error::Backup)?;
     export_string(sender, path, backup).await
+}
+
+async fn send_export_progress(
+    output: &mut iced::futures::channel::mpsc::Sender<Progress>,
+    message: Progress,
+) {
+    if let Err(e) = output.send(message).await {
+        tracing::error!("export_subscription() fail to send message: {}", e);
+    }
+}
+
+fn export_handle_progress(
+    handle: &Arc<Mutex<JoinHandle<()>>>,
+    disconnected: bool,
+) -> Option<Progress> {
+    let h = handle.lock().expect("should not fail");
+    if h.is_finished() {
+        Some(Progress::Finished)
+    } else if disconnected {
+        Some(Progress::Error(Error::ChannelLost))
+    } else {
+        None
+    }
+}
+
+async fn collect_export_transactions(
+    sender: &UnboundedSender<Progress>,
+    daemon: &(dyn Daemon + Sync + Send),
+    total_txs: usize,
+    mut end: u32,
+) -> Result<HashMap<Txid, HistoryTransaction>, Error> {
+    let max = u32::MAX as u64;
+
+    // store txs in a map to avoid duplicates
+    let mut map = HashMap::<Txid, HistoryTransaction>::new();
+    let mut limit = max;
+
+    loop {
+        let history_txs = daemon.list_history_txs(0, end, limit).await?;
+        let dl = map.len() + history_txs.len();
+        if dl > 0 {
+            let progress = (dl as f32) / (total_txs as f32) * 80.0;
+            send_progress!(sender, Progress(progress));
+        }
+        // all txs have been fetched
+        if history_txs.is_empty() {
+            break;
+        }
+        if history_txs.len() == limit as usize {
+            let (first, last) = transaction_page_bounds(&history_txs)?;
+            // limit too low, all tx are in the same timestamp
+            // we must increase limit and retry
+            if first == last {
+                limit += DEFAULT_LIMIT as u64;
+                continue;
+            } else {
+                // add txs to map
+                insert_export_transactions(&mut map, history_txs);
+                limit = max;
+                end = first.min(last);
+                continue;
+            }
+        } else
+        /* history_txs.len() < limit */
+        {
+            // add txs to map
+            insert_export_transactions(&mut map, history_txs);
+            break;
+        }
+    }
+
+    Ok(map)
+}
+
+fn transaction_page_bounds(history_txs: &[HistoryTransaction]) -> Result<(u32, u32), Error> {
+    let first = if let Some(t) = history_txs.first().expect("checked").time {
+        t
+    } else {
+        return Err(Error::TxTimeMissing);
+    };
+    let last = if let Some(t) = history_txs.last().expect("checked").time {
+        t
+    } else {
+        return Err(Error::TxTimeMissing);
+    };
+    Ok((first, last))
+}
+
+fn insert_export_transactions(
+    map: &mut HashMap<Txid, HistoryTransaction>,
+    history_txs: Vec<HistoryTransaction>,
+) {
+    for tx in history_txs {
+        let txid = tx.txid;
+        map.insert(txid, tx);
+    }
+}
+
+fn write_transaction_csv_row(file: &mut File, mut tx: HistoryTransaction) -> Result<(), Error> {
+    let date_time = tx
+        .time
+        .map(|t| {
+            let dt = DateTime::from_timestamp(t as i64, 0)
+                .expect("bitcoin timestamp")
+                .with_timezone(&chrono::Local);
+            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+        })
+        .unwrap_or("".to_string());
+
+    let txid = tx.txid.clone().to_string();
+    let txid_label = tx.labels().get(&txid).cloned();
+    let mut label = if let Some(txid) = txid_label {
+        txid
+    } else {
+        "".to_string()
+    };
+    if !label.is_empty() {
+        label = format!("\"{}\"", label);
+    }
+    let txid = tx.txid.to_string();
+    let fee = tx.fee_amount.unwrap_or(Amount::ZERO).to_sat() as i128;
+    let mut inputs_amount = 0;
+    tx.coins.iter().for_each(|(_, coin)| {
+        inputs_amount += coin.amount.to_sat() as i128;
+    });
+    let value = tx.incoming_amount.to_sat() as i128 - inputs_amount;
+    let value = value as f64 / 100_000_000.0;
+    let fee = fee as f64 / 100_000_000.0;
+    let block = tx.height.map(|h| h.to_string()).unwrap_or("".to_string());
+    let fee = if fee != 0.0 {
+        fee.to_string()
+    } else {
+        "".into()
+    };
+
+    let line = format!(
+        "{},{},{},{},{},{}\n",
+        date_time, label, value, fee, txid, block
+    );
+    file.write_all(line.as_bytes())?;
+    Ok(())
+}
+
+fn write_liquid_payment_csv_row(
+    file: &mut File,
+    payment: crate::app::wallets::DomainPayment,
+    usdt_id: &str,
+) -> Result<(), Error> {
+    use crate::app::wallets::DomainPaymentDetails;
+
+    let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
+        .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_default();
+
+    let is_send = !payment.is_incoming();
+    let payment_type = if is_send { "SEND" } else { "RECEIVE" };
+
+    let address = payment
+        .destination
+        .as_ref()
+        .map(|d| format!("\"{}\"", d))
+        .unwrap_or_default();
+
+    let fees_btc = payment.fees_sat as f64 / 100_000_000.0;
+
+    // Detect USDt asset payments — real amount is carried in asset_info, not amount_sat.
+    let usdt_amount_float: Option<f64> = match &payment.details {
+        DomainPaymentDetails::LiquidAsset {
+            asset_id,
+            asset_info,
+            ..
+        } if asset_id == usdt_id => asset_info
+            .as_ref()
+            .map(|info| info.amount_minor as f64 / 10_f64.powi(info.precision as i32)),
+        _ => None,
+    };
+
+    let line = if usdt_amount_float.is_some()
+        || matches!(
+            &payment.details,
+            DomainPaymentDetails::LiquidAsset { asset_id, .. } if asset_id == usdt_id
+        ) {
+        let usdt_amount = usdt_amount_float.map(|v| v.to_string()).unwrap_or_default();
+        let net = match (usdt_amount_float, is_send) {
+            (Some(v), true) => format!("-{}", v),
+            (Some(v), false) => v.to_string(),
+            (None, _) => String::new(),
+        };
+        format!(
+            "{},{},USDt,{},{},{:.8},{}\n",
+            date_time, payment_type, address, usdt_amount, fees_btc, net
+        )
+    } else {
+        let amount_btc = if is_send {
+            payment.amount_sat as f64 / 100_000_000.0
+        } else {
+            (payment.amount_sat + payment.fees_sat) as f64 / 100_000_000.0
+        };
+        let total = if is_send {
+            -(amount_btc + fees_btc)
+        } else {
+            amount_btc - fees_btc
+        };
+        format!(
+            "{},{},L-BTC,{},{:.8},{:.8},{:.8}\n",
+            date_time, payment_type, address, amount_btc, fees_btc, total
+        )
+    };
+    file.write_all(line.as_bytes())?;
+    Ok(())
+}
+
+async fn backup_labels_for_import(
+    account: &backup::Account,
+    daemon: &(dyn Daemon + Sync + Send),
+    sender: &UnboundedSender<Progress>,
+) -> Result<(bool, Vec<coincubed::bip329::Label>), Error> {
+    let mut write_labels = true;
+    let Some(labels) = account.labels.clone() else {
+        return Ok((write_labels, Vec::new()));
+    };
+    let db_labels = match daemon.get_labels_bip329(0, u32::MAX).await {
+        Ok(l) => l,
+        Err(_) => {
+            return Err(Error::BackupImport("Failed to dump DB labels".into()));
+        }
+    };
+
+    let labels_map = db_labels.clone().into_map();
+    let backup_labels_map = labels.clone().into_map();
+
+    // if there is a conflict, we ask user to ACK before overwrite
+    let (ack_sender, mut ack_receiver) = channel(1);
+    let mut conflict = false;
+    for (k, l) in &backup_labels_map {
+        if let Some(lab) = labels_map.get(k) {
+            if lab != l {
+                send_progress!(sender, LabelsConflict(ack_sender));
+                conflict = true;
+                break;
+            }
+        }
+    }
+    if conflict {
+        write_labels = match ack_receiver.recv().await {
+            Some(b) => b,
+            None => {
+                return Err(Error::BackupImport("Failed to receive labels ACK".into()));
+            }
+        }
+    }
+
+    Ok((write_labels, labels.into_vec()))
+}
+
+async fn backup_aliases_for_import(
+    account: &backup::Account,
+    network_dir: &NetworkDirectory,
+    wallet: &Wallet,
+    sender: &UnboundedSender<Progress>,
+) -> Result<(bool, Option<HashMap<Fingerprint, KeySetting>>), Error> {
+    let mut write_aliases = true;
+    if account.keys.is_empty() {
+        return Ok((write_aliases, None));
+    }
+    let wallet_settings =
+        match WalletSettings::from_file(network_dir, |w| w.wallet_id() == wallet.id()) {
+            Ok(Some(s)) => s,
+            _ => {
+                return Err(Error::BackupImport("Failed to get App Settings".into()));
+            }
+        };
+
+    let settings_aliases: HashMap<_, _> = wallet_settings
+        .keys
+        .clone()
+        .into_iter()
+        .map(|s| (s.master_fingerprint, s))
+        .collect();
+
+    let (ack_sender, mut ack_receiver) = channel(1);
+    let mut conflict = false;
+    for (fg, key) in &account.keys {
+        if let Some(k) = settings_aliases.get(fg) {
+            let ks = k.to_backup();
+            if ks != *key {
+                send_progress!(sender, KeyAliasesConflict(ack_sender));
+                conflict = true;
+                break;
+            }
+        }
+    }
+    if conflict {
+        // wait for the user ACK/NACK
+        write_aliases = match ack_receiver.recv().await {
+            Some(a) => a,
+            None => {
+                return Err(Error::BackupImport("Failed to receive aliases ACK".into()));
+            }
+        };
+    }
+
+    Ok((write_aliases, Some(settings_aliases)))
+}
+
+async fn import_backup_indexes(
+    account: &backup::Account,
+    db_receive: u32,
+    db_change: u32,
+    daemon: &(dyn Daemon + Sync + Send),
+) -> Result<(), Error> {
+    // update receive & change index
+    let i = account.receive_index.unwrap_or(0);
+    let receive = if db_receive < i { Some(i) } else { None };
+
+    let i = account.change_index.unwrap_or(0);
+    let change = if db_change < i { Some(i) } else { None };
+
+    if daemon.update_deriv_indexes(receive, change).await.is_err() {
+        return Err(Error::BackupImport(
+            "Failed to update derivation indexes".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+async fn import_backup_psbts(
+    account: &backup::Account,
+    daemon: &(dyn Daemon + Sync + Send),
+) -> Result<(), Error> {
+    // parse PSBTs
+    let mut psbts = Vec::new();
+    for psbt_str in &account.psbts {
+        match Psbt::from_str(psbt_str) {
+            Ok(p) => {
+                psbts.push(p);
+            }
+            Err(_) => {
+                return Err(Error::BackupImport("Failed to parse PSBT".into()));
+            }
+        }
+    }
+
+    // import PSBTs
+    for psbt in psbts {
+        if daemon.update_spend_tx(&psbt).await.is_err() {
+            return Err(Error::BackupImport("Failed to store PSBT".into()));
+        }
+    }
+
+    Ok(())
+}
+
+async fn import_backup_aliases(
+    account: &backup::Account,
+    settings: Option<HashMap<Fingerprint, KeySetting>>,
+    write_aliases: bool,
+    network_dir: &NetworkDirectory,
+    wallet: &Wallet,
+    sender: &UnboundedSender<Progress>,
+) -> Result<(), Error> {
+    // update aliases if no conflict or user ACK
+    if let (true, Some(mut settings_aliases)) = (write_aliases, settings) {
+        for (k, v) in &account.keys {
+            if let Some(ks) = KeySetting::from_backup(
+                v.alias.clone().unwrap_or("".into()),
+                *k,
+                v.role,
+                v.key_type,
+                v.proprietary.clone(),
+            ) {
+                settings_aliases.insert(*k, ks);
+            }
+        }
+
+        if let Err(e) = update_settings_file(network_dir, |mut settings| {
+            if let Some(wallet) = settings
+                .wallets
+                .iter_mut()
+                .find(|w| w.wallet_id() == wallet.id())
+            {
+                wallet.keys = settings_aliases.clone().into_values().collect();
+            }
+            Some(settings)
+        })
+        .await
+        {
+            return Err(Error::BackupImport(format!(
+                "Failed to import keys aliases: {}",
+                e
+            )));
+        } else {
+            // Update wallet state
+            send_progress!(sender, UpdateAliases(settings_aliases));
+        }
+    }
+
+    Ok(())
+}
+
+fn import_backup_account(backup: &Backup) -> Result<&backup::Account, Error> {
+    match backup.accounts.len() {
+        0 => Err(Error::BackupImport(
+            "There is no account in the backup!".into(),
+        )),
+        1 => Ok(backup.accounts.first().expect("already checked")),
+        _ => Err(Error::BackupImport(
+            "Tenshu does not support importing a backup that contains several accounts.".into(),
+        )),
+    }
+}
+
+fn import_backup_descriptor(account: &backup::Account) -> Result<CoincubeDescriptor, Error> {
+    match CoincubeDescriptor::from_str(&account.descriptor) {
+        Ok(d) => Ok(d),
+        Err(_) => Err(Error::BackupImport(
+            "The backup descriptor is not a valid Coincube descriptor!".into(),
+        )),
+    }
+}
+
+fn parse_backup_or_descriptor(backup_str: &str) -> Result<Backup, Error> {
+    let backup: Result<Backup, _> = serde_json::from_str(backup_str);
+    let backup = match backup {
+        Ok(b) => b,
+        Err(e) => {
+            // try to import as bare descriptor
+            let descr = CoincubeDescriptor::from_str(backup_str);
+            match descr {
+                Ok(descr) => {
+                    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
+                        Network::Bitcoin
+                    } else {
+                        Network::Signet
+                    };
+                    Backup::from_descriptor(descr, network)
+                }
+                Err(e2) => {
+                    return Err(Error::BackupImport(format!(
+                        "A backup or descriptor file is expected: {e}, {e2}"
+                    )));
+                }
+            }
+        }
+    };
+
+    Ok(backup)
+}
+
+async fn restore_backup_labels(
+    account: &backup::Account,
+    network: Network,
+    daemon: &(dyn Daemon + Sync + Send),
+) -> Result<(), RestoreBackupError> {
+    // import labels
+    if let Some(labels) = account.labels.clone().map(|l| l.into_vec()) {
+        let labels: HashMap<LabelItem, Option<String>> = labels
+            .into_iter()
+            .filter_map(|l| {
+                if let Some((item, label)) = LabelItem::from_bip329(&l, network) {
+                    Some((item, Some(label)))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        daemon.update_labels(&labels).await?;
+    }
+
+    Ok(())
+}
+
+fn launch_backup_psbts(account: &backup::Account) -> Result<Vec<Psbt>, RestoreBackupError> {
+    // parse PSBTs
+    let mut psbts = Vec::new();
+    for psbt_str in &account.psbts {
+        psbts.push(Psbt::from_str(psbt_str).map_err(|_| RestoreBackupError::InvalidPsbt)?);
+    }
+
+    Ok(psbts)
+}
+
+fn export_channel_disconnected(error: tokio::sync::mpsc::error::TryRecvError) -> bool {
+    match error {
+        tokio::sync::mpsc::error::TryRecvError::Empty => false,
+        tokio::sync::mpsc::error::TryRecvError::Disconnected => true,
+    }
 }
 
 #[cfg(test)]

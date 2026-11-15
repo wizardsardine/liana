@@ -1862,6 +1862,15 @@ fn sdk_route_to_protocol(route: &CrossChainRoutePair) -> coincube_spark_protocol
         contract_address: route.contract_address.clone(),
         decimals: route.decimals,
         btc_source_supported: route_accepts_btc(route),
+        btc_limits: route.limits_for(&SparkAsset::Bitcoin).map(|limits| {
+            coincube_spark_protocol::CrossChainRouteLimits {
+                // Sats fit in u64; anything larger is not a real bound.
+                min_sats: limits.min_amount.map(|v| v.min(u64::MAX as u128) as u64),
+                max_sats: limits.max_amount.map(|v| v.min(u64::MAX as u128) as u64),
+                min_usd_cents: limits.min_usd_cents,
+                max_usd_cents: limits.max_usd_cents,
+            }
+        }),
     }
 }
 
@@ -2170,7 +2179,9 @@ async fn handle_prepare_cross_chain(
     };
     let Some(route) = live_routes
         .into_iter()
-        .find(|r| sdk_route_to_protocol(r) == params.route)
+        // Identity only: the published limits may have moved since the
+        // gui looked the route up, and the bridge never trusts them anyway.
+        .find(|r| sdk_route_to_protocol(r).same_route_as(&params.route))
     else {
         return Response::err(
             id,
@@ -5485,6 +5496,250 @@ mod auto_convert_handler_tests {
                 .unwrap();
         assert_eq!(json["enabled"], true);
         assert_eq!(json["pending_sats"], 0);
+    }
+}
+
+#[cfg(test)]
+mod payment_summary_tests {
+    use breez_sdk_spark::{
+        ConversionInfo, ConversionPurpose, ConversionStatus, Payment, PaymentDetails,
+        PaymentMethod, PaymentStatus, PaymentType, SparkHtlcDetails, SparkHtlcStatus,
+        TokenMetadata,
+    };
+
+    use super::payment_to_summary;
+
+    fn payment(
+        id: &str,
+        method: PaymentMethod,
+        payment_type: PaymentType,
+        amount: u128,
+        fees: u128,
+        details: Option<PaymentDetails>,
+    ) -> Payment {
+        Payment {
+            id: id.to_string(),
+            payment_type,
+            status: PaymentStatus::Completed,
+            amount,
+            fees,
+            timestamp: 1,
+            method,
+            details,
+            conversion_details: None,
+        }
+    }
+
+    fn token_metadata(ticker: &str, decimals: u32) -> TokenMetadata {
+        TokenMetadata {
+            identifier: format!("btkn1{ticker}"),
+            issuer_public_key: "02issuer".to_string(),
+            name: ticker.to_string(),
+            ticker: ticker.to_string(),
+            decimals,
+            max_supply: u128::MAX,
+            is_freezable: false,
+        }
+    }
+
+    fn htlc() -> SparkHtlcDetails {
+        SparkHtlcDetails {
+            payment_hash: "hash".to_string(),
+            preimage: None,
+            expiry_time: 0,
+            status: SparkHtlcStatus::PreimageShared,
+        }
+    }
+
+    fn lightning(memo: &str, amount: u128, conversion: Option<ConversionInfo>) -> Payment {
+        payment(
+            "ln",
+            PaymentMethod::Lightning,
+            PaymentType::Send,
+            amount,
+            21,
+            Some(PaymentDetails::Lightning {
+                description: Some(memo.to_string()),
+                invoice: "lnbc1hold".to_string(),
+                destination_pubkey: "02ab".to_string(),
+                htlc_details: htlc(),
+                lnurl_pay_info: None,
+                lnurl_withdraw_info: None,
+                lnurl_receive_metadata: None,
+                conversion_info: conversion,
+            }),
+        )
+    }
+
+    fn conversion(json: serde_json::Value) -> ConversionInfo {
+        serde_json::from_value(json).expect("conversion info")
+    }
+
+    /// History reads `amount_sat` as bitcoin. A token payment's SDK amount is
+    /// base units, so the summary has to move it onto `token_amount` and zero
+    /// the sat fields — including when the SDK omitted the token metadata, and
+    /// when the amount does not fit in a `u64` (saturate, don't truncate).
+    #[test]
+    fn a_token_payment_is_not_reported_as_satoshis() {
+        let metadata = token_metadata("USDT", 6);
+        let named = payment_to_summary(payment(
+            "usdt",
+            PaymentMethod::Token,
+            PaymentType::Receive,
+            1_580_000,
+            42,
+            Some(PaymentDetails::Token {
+                metadata: metadata.clone(),
+                tx_hash: "tx".to_string(),
+                tx_type: breez_sdk_spark::TokenTransactionType::Transfer,
+                invoice_details: None,
+                conversion_info: None,
+            }),
+        ));
+        assert_eq!(named.amount_sat, 0);
+        assert_eq!(named.fees_sat, 0);
+        assert_eq!(named.token_amount, Some(1_580_000));
+        assert_eq!(named.token_decimals, Some(6));
+        assert_eq!(named.token_ticker.as_deref(), Some("USDT"));
+        assert_eq!(named.method, "token");
+        assert!(named.description.is_none());
+
+        let bare = payment_to_summary(payment(
+            "bare",
+            PaymentMethod::Token,
+            PaymentType::Receive,
+            7_000_000,
+            9,
+            None,
+        ));
+        assert_eq!(bare.amount_sat, 0, "base units must not land in amount_sat");
+        assert_eq!(bare.fees_sat, 0);
+        assert_eq!(bare.token_amount, Some(7_000_000));
+        assert_eq!(bare.token_decimals, None);
+        assert_eq!(bare.token_ticker, None);
+
+        let zero = payment_to_summary(payment(
+            "zero",
+            PaymentMethod::Token,
+            PaymentType::Receive,
+            0,
+            0,
+            None,
+        ));
+        assert_eq!(zero.amount_sat, 0);
+        assert_eq!(zero.token_amount, Some(0));
+
+        let overflow = payment_to_summary(payment(
+            "overflow",
+            PaymentMethod::Token,
+            PaymentType::Receive,
+            u128::from(u64::MAX) + 1,
+            u128::from(u64::MAX) + 9,
+            Some(PaymentDetails::Token {
+                metadata,
+                tx_hash: "tx".to_string(),
+                tx_type: breez_sdk_spark::TokenTransactionType::Transfer,
+                invoice_details: None,
+                conversion_info: None,
+            }),
+        ));
+        assert_eq!(overflow.amount_sat, 0);
+        assert_eq!(overflow.fees_sat, 0);
+        assert_eq!(
+            overflow.token_amount,
+            Some(u64::MAX),
+            "a value past u64::MAX saturates instead of truncating to 1"
+        );
+    }
+
+    #[test]
+    fn a_bitcoin_payment_keeps_its_sats_and_fees() {
+        let summary = payment_to_summary(payment(
+            "btc",
+            PaymentMethod::Spark,
+            PaymentType::Receive,
+            4_000,
+            21,
+            None,
+        ));
+        assert_eq!(summary.amount_sat, 4_000);
+        assert_eq!(summary.fees_sat, 21);
+        assert_eq!(summary.token_amount, None);
+        assert_eq!(summary.token_decimals, None);
+        assert_eq!(summary.token_ticker, None);
+        assert_eq!(summary.method, "spark");
+        assert_eq!(summary.direction, "Receive");
+        assert_eq!(summary.status, "Completed");
+    }
+
+    /// A Boltz or Orchestra leg is a bitcoin Lightning payment that delivered
+    /// a stablecoin elsewhere. History should name that destination and still
+    /// count the Spark leg in sats. An AMM conversion has no external chain,
+    /// so it keeps the invoice memo.
+    #[test]
+    fn a_cross_chain_leg_names_its_destination_without_dropping_the_sats() {
+        let memo = "Send to TBTC address";
+        let boltz = payment_to_summary(lightning(
+            memo,
+            150_000,
+            Some(conversion(serde_json::json!({
+                "type": "boltz",
+                "swap_id": "swap-1",
+                "invoice": "lnbc1hold",
+                "invoice_amount_sats": 150_000,
+                "max_slippage_bps": 100,
+                "chain": "solana",
+                "asset": "USDT",
+                "recipient_address": "recipient",
+                "estimated_out": "99000000",
+                "status": "Completed",
+                "asset_decimals": 6
+            }))),
+        ));
+        assert_eq!(boltz.amount_sat, 150_000);
+        assert_eq!(boltz.fees_sat, 21);
+        assert_eq!(boltz.token_amount, None);
+        assert_eq!(boltz.description.as_deref(), Some("Sent USDT on Solana"));
+
+        let orchestra = payment_to_summary(lightning(
+            memo,
+            20_000,
+            Some(conversion(serde_json::json!({
+                "type": "orchestra",
+                "order_id": "order-1",
+                "quote_id": "quote-1",
+                "chain": "base",
+                "asset": "USDC",
+                "recipient_address": "0xrecipient",
+                "estimated_out": "1000000",
+                "status": "Completed",
+                "asset_decimals": 6
+            }))),
+        ));
+        assert_eq!(orchestra.amount_sat, 20_000);
+        assert_eq!(orchestra.token_amount, None);
+        assert_eq!(orchestra.description.as_deref(), Some("Sent USDC on Base"));
+
+        let amm = payment_to_summary(lightning(
+            memo,
+            4_000,
+            Some(ConversionInfo::Amm {
+                pool_id: "pool".to_string(),
+                conversion_id: "conv".to_string(),
+                status: ConversionStatus::Completed,
+                fee: None,
+                purpose: Some(ConversionPurpose::SelfTransfer),
+                amount_adjustment: None,
+                degradation: None,
+            }),
+        ));
+        assert_eq!(amm.amount_sat, 4_000);
+        assert_eq!(amm.description.as_deref(), Some(memo));
+
+        let plain = payment_to_summary(lightning(memo, 4_000, None));
+        assert_eq!(plain.amount_sat, 4_000);
+        assert_eq!(plain.description.as_deref(), Some(memo));
+        assert_eq!(plain.method, "lightning");
     }
 }
 

@@ -5250,6 +5250,56 @@ mod renewal_banner_tests {
         assert_eq!(facts.covers.as_deref(), Some("Nov 13, 2026 – Nov 13, 2027"));
     }
 
+    /// Cursor 4575889115 / 4575889122 on #1253.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn paid_renewal_and_omitted_cube_limit_follow_the_api() {
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        // A same-tier renewal stacks onto the paid period; Connect sends no
+        // startsAt for it. The Paid screen must not say the plan is new now.
+        let renewal = (chrono::Utc::now() + chrono::Duration::days(60)).to_rfc3339();
+        let mut pro = plan(PlanTier::Pro, PlanStatus::Active, Some(&renewal));
+        pro.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(pro.clone());
+        let mut cs = CheckoutState::new(1, PlanTier::Pro, BillingCycle::Annual, Some(pro));
+        let mut resp = checkout_response();
+        resp.starts_at = None;
+        cs.checkout = Some(resp);
+        cs.phase = CheckoutPhase::Paid { overpaid_sats: 0 };
+        account.checkout = Some(cs);
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(labels.iter().any(|l| l == "Plan renewed"), "{:?}", labels);
+        assert!(labels.iter().any(|l| l == "Pro renewed"));
+        assert!(!labels
+            .iter()
+            .any(|l| l == "Your new plan is active on this account."));
+        account.checkout = None;
+
+        // A catalog entitlement without cubeLimit never reads 0 per network.
+        let mut f = billing_v2_features();
+        for info in f.plans.iter_mut() {
+            info.entitlements.as_mut().unwrap().cube_limit = 0;
+        }
+        account.features = Some(f);
+        let rows = billing::comparison_rows(&account);
+        assert_eq!(
+            rows[1].1,
+            [
+                billing::FeatureValue::Value("1".into()),
+                billing::FeatureValue::Value("3".into()),
+                billing::FeatureValue::Value("10".into())
+            ]
+        );
+    }
+
     #[test]
     fn plan_billing_checkout_and_history_views_build_for_branch_states() {
         let mut account = dashboard_panel();
