@@ -881,6 +881,9 @@ pub(super) fn history_status(state: ChargeState) -> (&'static str, Tone) {
         ChargeState::NeedsSupport => ("Needs support", Tone::Bad),
         ChargeState::Unpaid => ("Unpaid", Tone::Muted),
         ChargeState::Expired => ("Expired", Tone::Muted),
+        ChargeState::Declined => ("Declined", Tone::Bad),
+        ChargeState::Refunded => ("Refunded", Tone::Muted),
+        ChargeState::ChargedBack => ("Charged back", Tone::Bad),
         ChargeState::Unknown => ("Pending", Tone::Muted),
     }
 }
@@ -893,16 +896,24 @@ pub(super) fn history_row_parts(
         .paid_at
         .as_deref()
         .unwrap_or(entry.created_at.as_str());
+    let card = entry.is_card();
     let item = format!(
-        "{} · {} · bitcoin",
+        "{} · {} · {}",
         entry.plan,
-        cycle_label(entry.billing_cycle)
+        cycle_label(entry.billing_cycle),
+        if card { "card" } else { "bitcoin" }
     );
-    let amount = format!(
-        "${} · {} sats",
-        format_usd(entry.amount_fiat),
-        group_sats(entry.amount_sats)
-    );
+    // A card charge is priced in fiat; it carries sats only when the API
+    // filled them in.
+    let amount = if card && entry.amount_sats == 0 {
+        format!("${}", format_usd(entry.amount_fiat))
+    } else {
+        format!(
+            "${} · {} sats",
+            format_usd(entry.amount_fiat),
+            group_sats(entry.amount_sats)
+        )
+    };
     let (status, tone) = history_status(entry.charge_state());
     (format_date(date), item, amount, status, tone)
 }

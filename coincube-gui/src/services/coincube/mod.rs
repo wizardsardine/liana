@@ -1113,6 +1113,12 @@ pub enum ChargeState {
     /// Money arrived but can't be applied automatically: paid late, partly
     /// paid then expired, or invalid. The plan is unchanged.
     NeedsSupport,
+    /// A card charge the issuer declined (Stripe). Nothing was charged.
+    Declined,
+    /// A charge that was paid and later refunded.
+    Refunded,
+    /// A card charge the cardholder disputed and the issuer reversed.
+    ChargedBack,
     #[serde(other)]
     Unknown,
 }
@@ -1177,6 +1183,10 @@ impl ChargeStatusResponse {
 pub struct BillingHistoryEntry {
     #[serde(default)]
     pub charge_id: String,
+    /// Who took the payment: `"btcpay"` (bitcoin) or `"stripe"` (card).
+    /// Empty on older APIs, which only sold bitcoin.
+    #[serde(default)]
+    pub provider: String,
     pub plan: PlanTier,
     pub billing_cycle: BillingCycle,
     pub amount_sats: u64,
@@ -1199,6 +1209,11 @@ pub struct BillingHistoryEntry {
 impl BillingHistoryEntry {
     pub fn charge_state(&self) -> ChargeState {
         ChargeState::resolve(self.state, &self.status)
+    }
+
+    /// Whether the row is a card (Stripe) charge rather than bitcoin.
+    pub fn is_card(&self) -> bool {
+        self.provider.eq_ignore_ascii_case("stripe")
     }
 }
 
@@ -1385,6 +1400,12 @@ pub struct CubeResponse {
     /// badge and the Keyholder-role gate.
     #[serde(default)]
     pub vault: Option<ConnectVaultResponse>,
+    /// Billing v2: the Cube is beyond the plan's per-network limit (after a
+    /// lapse or downgrade, only the oldest N per network keep Connect). The
+    /// Cube and its funds keep working; only Connect features are off.
+    /// Absent on older APIs, which never turned them off.
+    #[serde(default)]
+    pub connect_features_disabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -4304,6 +4325,20 @@ mod cube_has_vault_tests {
         });
         let resp: CubeResponse = serde_json::from_value(v).unwrap();
         assert_eq!(resp.has_vault, Some(true));
+    }
+
+    #[test]
+    fn response_connect_features_disabled_defaults_to_false() {
+        let cube = |extra: &str| -> CubeResponse {
+            serde_json::from_str(&format!(
+                r#"{{"id":1,"uuid":"u1","name":"Cube","network":"mainnet","status":"active"{extra}}}"#
+            ))
+            .unwrap()
+        };
+        // Older API without the field: Connect is on.
+        assert!(!cube("").connect_features_disabled);
+        assert!(!cube(r#","connectFeaturesDisabled":false"#).connect_features_disabled);
+        assert!(cube(r#","connectFeaturesDisabled":true"#).connect_features_disabled);
     }
 }
 

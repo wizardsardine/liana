@@ -413,6 +413,7 @@ mod tests {
             members,
             pending_invites,
             vault: None,
+            connect_features_disabled: false,
         }
     }
 

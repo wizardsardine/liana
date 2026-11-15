@@ -612,6 +612,11 @@ pub struct Home {
     pending_remote_rename: Option<PendingRemoteRename>,
     /// Cubes that exist on the Connect server but not locally on this machine.
     remote_cubes: Vec<RemoteCube>,
+    /// UUIDs of this account's Cubes, local or Connect-only, whose Connect
+    /// features are off because they are over the plan's Cube limit
+    /// (`connectFeaturesDisabled`). Display only: opening the Cube and every
+    /// wallet action stay available. Refreshed with `remote_cubes`.
+    connect_off_cubes: std::collections::HashSet<String>,
     /// Generation counter identifying the newest *valid* remote-cube fetch.
     ///
     /// `fetch_remote_cubes` has three independent triggers (sign-in, local
@@ -781,6 +786,7 @@ impl Home {
                 }),
                 pending_remote_rename: None,
                 remote_cubes: Vec::new(),
+                connect_off_cubes: std::collections::HashSet::new(),
                 remote_cubes_request: 0,
                 delete_remote_cube_modal: None,
                 recovery_method_modal: None,
@@ -955,10 +961,17 @@ impl Home {
         let mut summary = if total > limit {
             // Already over (the limit dropped, or the plan changed): say how
             // many the plan includes rather than an impossible ratio.
-            localized_format!(
-                "{name}: you have {total} Cubes; the {tier} plan includes {limit}",
-                "{name}: tienes {total} Cubes; el plan {tier} incluye {limit}"
-            )
+            if total == 1 {
+                localized_format!(
+                    "You have {total} Cube on {name}; {tier} includes {limit}",
+                    "Tienes {total} Cube en {name}; {tier} incluye {limit}"
+                )
+            } else {
+                localized_format!(
+                    "You have {total} Cubes on {name}; {tier} includes {limit}",
+                    "Tienes {total} Cubes en {name}; {tier} incluye {limit}"
+                )
+            }
         } else {
             localized_format!(
                 "{name}: {}/{limit} Cubes on the {tier} plan",
@@ -983,6 +996,16 @@ impl Home {
         // Over the limit after a plan change or the 1/3/10 limits: every
         // existing Cube keeps working (billing v2 decision 8, I8); only new
         // Cubes are blocked.
+        if self.account_tier == AccountTier::Estate {
+            // The top plan has nothing to upgrade to.
+            return localized_format!(
+                "Cube limit reached. {} Existing Cubes keep working. Delete a \
+                 Cube on this network to create more.",
+                "Alcanzaste el límite de Cubes. {} Los Cubes existentes siguen \
+                 funcionando. Elimina un Cube de esta red para crear más.",
+                self.cube_limit_summary(self.network),
+            );
+        }
         localized_format!(
             "Cube limit reached. {} Existing Cubes keep working. Upgrade your \
              Connect account or delete a Cube on this network to create more.",
@@ -2656,9 +2679,11 @@ impl Home {
                 }
                 Task::none()
             }
-            Message::RemoteCubesLoaded { request_id, result } => {
-                self.apply_remote_cubes(request_id, result)
-            }
+            Message::RemoteCubesLoaded {
+                request_id,
+                result,
+                connect_off,
+            } => self.apply_remote_cubes(request_id, result, connect_off),
             Message::CubeRemoteUpdated {
                 cube_id,
                 network,
@@ -4053,6 +4078,7 @@ impl Home {
                     // deliberately keeps what it already has.
                     self.cube_sync_errors.clear();
                     self.remote_cubes.clear();
+                    self.connect_off_cubes.clear();
                     // Clearing alone isn't enough: a fetch issued for the
                     // account we just left is still in flight and would
                     // repopulate the list. Bump the generation so its
@@ -6159,12 +6185,23 @@ impl Home {
             .push(paths.push(rule()));
         if projection.at_limit() {
             content = content.push(
-                p2_regular(if projection.total_count > projection.cube_limit {
+                p2_regular(if projection.total_count > projection.cube_limit
+                    && launcher_chrome::is_top_tier(projection.tier)
+                {
                     localized_format!(
-                        "{}: {} Cubes; the {} plan includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
-                        "{}: {} Cubes; el plan {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
-                        launcher_chrome::network_name(self.network),
+                        "You have {} Cubes on {}; {} includes {}. Existing Cubes keep working. Delete a Cube on this network to bring one in.",
+                        "Tienes {} Cubes en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Elimina un Cube en esta red para traer uno.",
                         projection.total_count,
+                        launcher_chrome::network_name(self.network),
+                        projection.tier,
+                        projection.cube_limit
+                    )
+                } else if projection.total_count > projection.cube_limit {
+                    localized_format!(
+                        "You have {} Cubes on {}; {} includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
+                        "Tienes {} Cubes en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
+                        projection.total_count,
+                        launcher_chrome::network_name(self.network),
                         projection.tier,
                         projection.cube_limit
                     )
@@ -8007,6 +8044,9 @@ pub enum Message {
     RemoteCubesLoaded {
         request_id: u64,
         result: Result<Vec<RemoteCube>, String>,
+        /// UUIDs of every listed Cube (local ones included) with Connect
+        /// features off. Applied only with an `Ok` result.
+        connect_off: Vec<String>,
     },
     /// Another network's Cubes, read without touching its directory.
     NetworkCatalogLoaded {
@@ -10988,6 +11028,7 @@ mod tests {
         let current = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
         });
 
@@ -11013,6 +11054,7 @@ mod tests {
         let current = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
         });
 
@@ -11099,7 +11141,7 @@ mod tests {
         let error = home.error.clone().unwrap_or_default();
         assert!(
             error.contains(
-                "Cube limit reached. Bitcoin mainnet: you have 2 Cubes; the Free plan includes 1."
+                "Cube limit reached. You have 2 Cubes on Bitcoin mainnet; Free includes 1."
             ),
             "{}",
             error
@@ -11269,12 +11311,14 @@ mod tests {
         let current = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Ok(vec![remote.clone()]),
         });
         assert_eq!(home.remote_cubes.len(), 1);
 
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Err("offline".to_string()),
         });
         assert_eq!(home.remote_cubes.len(), 1);
@@ -11311,6 +11355,7 @@ mod tests {
         // The newer fetch lands first and is applied.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: newer,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("newer", "Newer", Network::Bitcoin)]),
         });
         assert_eq!(home.remote_cubes.len(), 1);
@@ -11319,6 +11364,7 @@ mod tests {
         // The older one straggles in afterwards and must be dropped.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: older,
+            connect_off: Vec::new(),
             result: Ok(vec![
                 remote_cube("stale-a", "Stale A", Network::Bitcoin),
                 remote_cube("stale-b", "Stale B", Network::Bitcoin),
@@ -11373,6 +11419,7 @@ mod tests {
         // The pre-delete response straggles in, still listing the deleted Cube.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: inflight,
+            connect_off: Vec::new(),
             result: Ok(vec![
                 remote_cube("remote-a", "Remote A", Network::Bitcoin),
                 remote_cube("remote-b", "Remote B", Network::Bitcoin),
@@ -11391,6 +11438,7 @@ mod tests {
         let refreshed = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: refreshed,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("remote-b", "Remote B", Network::Bitcoin)]),
         });
         assert_eq!(
@@ -11424,6 +11472,7 @@ mod tests {
 
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: inflight,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube(
                 "prior-account",
                 "Prior Account Cube",
@@ -11957,6 +12006,7 @@ mod tests {
             members: Vec::new(),
             pending_invites: Vec::new(),
             vault: None,
+            connect_features_disabled: false,
         }
     }
 
