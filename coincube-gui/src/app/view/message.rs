@@ -1762,6 +1762,9 @@ pub enum ConnectAccountMessage {
         epoch: u64,
     },
     PlanLoaded(Option<crate::services::coincube::ConnectPlan>, u64),
+    /// A billing plan reload: session generation, then reload sequence
+    /// (only the newest applies).
+    PlanReloaded(Option<crate::services::coincube::ConnectPlan>, u64, u64),
     /// Lightweight Account Overview counts (contacts, cubes), fetched on
     /// entering the Overview tab. Each is `None` when its fetch failed —
     /// the row simply hides rather than surfacing an error. Carries
@@ -1850,18 +1853,91 @@ pub enum ConnectAccountMessage {
     /// The error card's "Try again" was pressed.
     Retry(RetryAction),
     // --- Plan & Billing ---
+    /// Focus a Tenshu control (segmented choice, plan row, Copy button)
+    /// after pointer activation, as `Action` requires.
+    FocusAction(iced::advanced::widget::Id),
     FeaturesLoaded(Option<crate::services::coincube::FeaturesResponse>, u64),
     BillingCycleSelected(crate::services::coincube::BillingCycle),
+    /// Change plan: a plan row was picked (not yet confirmed).
+    SelectPlanTier(crate::services::coincube::PlanTier),
+    /// Change plan → Review: open the Review step for this tier at the
+    /// selected billing cycle. Nothing is charged until "Create invoice".
+    ReviewPlanChange(crate::services::coincube::PlanTier),
     StartCheckout(crate::services::coincube::PlanTier),
+    /// Create result: session generation, then checkout generation.
+    /// The error carries the message and whether Connect refused it (4xx).
     CheckoutCreated(
-        Result<crate::services::coincube::CheckoutResponse, String>,
+        Result<crate::services::coincube::CheckoutResponse, (String, bool)>,
+        u64,
         u64,
     ),
-    PollChargeStatus,
+    /// Poll the charge of checkout generation `u64`.
+    PollChargeStatus(u64),
+    /// Poll result: session generation, then checkout generation.
     ChargeStatusUpdated(
         Result<crate::services::coincube::ChargeStatusResponse, (String, bool)>,
         u64,
+        u64,
     ),
+    /// Review: pay with bitcoin or a card (billing v2 Phase B).
+    SelectPayWith(crate::app::state::connect::account::PayWith),
+    /// Review with Card: open Stripe Checkout (C1 → C2).
+    StartCardCheckout,
+    CardCheckoutCreated(
+        Result<crate::services::coincube::CardCheckoutSession, (String, bool)>,
+        u64,
+        u64,
+    ),
+    /// Poll `/connect/plan` for checkout generation `u64` (card checkout or
+    /// 3-D Secure confirmation in the browser).
+    PollCardPlan(u64),
+    /// Result, session generation, checkout generation, and the plan
+    /// sequence number taken when the poll was sent.
+    CardPlanPolled(
+        Result<crate::services::coincube::ConnectPlan, String>,
+        u64,
+        u64,
+        u64,
+    ),
+    /// Reopen Stripe Checkout or the 3-D Secure page.
+    ReopenCardPage,
+    /// Back to Review from the card browser, cancelled or failed screens.
+    BackToReview {
+        pay_with: crate::app::state::connect::account::PayWith,
+    },
+    ChangePreviewLoaded(
+        Result<crate::services::coincube::PlanChangePreview, (String, bool)>,
+        u64,
+        u64,
+    ),
+    /// "Upgrade and pay $X" / "Schedule change to Pro".
+    ConfirmPlanChange,
+    PlanChangeApplied(
+        Result<crate::services::coincube::PlanChangeResult, (String, bool)>,
+        u64,
+        u64,
+    ),
+    /// An unconfirmed plan change: refresh the plan again.
+    RetryPlanRefresh,
+    /// Plan & billing: show or hide "Turn off auto-renewal?" (C8).
+    ShowAutoRenewOff(bool),
+    /// PUT /connect/plan/auto-renew.
+    SetAutoRenew(bool),
+    /// "Update card": Stripe's portal in the browser.
+    OpenCardPortal,
+    /// "Keep Estate": undo a scheduled card downgrade (C13).
+    KeepCurrentPlan,
+    /// A Plan & billing card request finished: `Some(url)` to open (the
+    /// portal), `None` to reload the plan.
+    CardRequestDone(Result<Option<String>, String>, u64),
+    /// Review: pick the billing period for this purchase.
+    SetReviewCycle(crate::services::coincube::BillingCycle),
+    /// Awaiting payment: show the Lightning invoice or the on-chain address.
+    SelectPaymentNetwork(crate::app::state::connect::account::PaymentNetwork),
+    /// Paying in browser → back to the QR code here.
+    ShowInvoiceHere,
+    /// Polling stopped after errors: check the same invoice again.
+    ResumeChargePolling,
     DismissCheckout,
     OpenCheckoutUrl(String),
     /// User dismissed the pre-expiry renewal banner for this session (D1).

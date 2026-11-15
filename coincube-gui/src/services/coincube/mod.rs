@@ -702,8 +702,9 @@ pub struct ConnectPlan {
     pub status: PlanStatus,
     pub renewal_at: Option<String>,
     pub entitlements: PlanEntitlements,
-    /// Billing cycle of the current plan. `None` for free tier (no charge).
-    #[serde(default)]
+    /// Billing cycle of the current plan. `None` for free tier (no charge)
+    /// and for APIs before billing v2 B4, which never sent it.
+    #[serde(default, deserialize_with = "lenient_option")]
     pub billing_cycle: Option<BillingCycle>,
     /// Server-authored display metadata for a campaign-granted plan (v2).
     /// `None`/absent for purchased/free plans and older backends — the
@@ -712,9 +713,116 @@ pub struct ConnectPlan {
     /// alias also accepts a snake_case `plan_provenance`.)
     #[serde(default, alias = "plan_provenance")]
     pub plan_provenance: Option<PlanProvenance>,
+    /// A lower tier already paid for, starting when the current period ends
+    /// (billing v2 A4). Absent on older backends. Parsed leniently: an empty
+    /// or unknown value reads as `None` instead of failing the whole plan
+    /// (which would show the account as Free).
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub pending_plan: Option<PlanTier>,
+    /// RFC-3339 instant the pending plan starts.
+    #[serde(default)]
+    pub pending_plan_at: Option<String>,
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub pending_billing_cycle: Option<BillingCycle>,
+    /// How the plan is paid (B4): bitcoin or a card (brand + last four, the
+    /// only card data Coincube keeps). Absent for Free, grants and old APIs.
+    #[serde(default, deserialize_with = "lenient_option")]
+    pub payment_method: Option<PaymentMethod>,
+    /// Whether the plan renews by itself (card only; bitcoin is always off).
+    #[serde(default)]
+    pub auto_renew: Option<bool>,
+    /// The next automatic card charge, when one is due.
+    #[serde(default)]
+    pub next_charge_at: Option<String>,
+    /// USD.
+    #[serde(default)]
+    pub next_charge_amount: Option<f64>,
+    /// While a card renewal is failing: `status` is `past_due` but the paid
+    /// tier stays on until this instant (14-day grace, decision 2).
+    #[serde(default)]
+    pub grace_ends_at: Option<String>,
+}
+
+/// `paymentMethod` on `/connect/plan` (billing v2 B4).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PaymentMethod {
+    #[serde(rename = "type")]
+    pub kind: PaymentMethodKind,
+    #[serde(default)]
+    pub brand: Option<String>,
+    #[serde(default)]
+    pub last4: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PaymentMethodKind {
+    Bitcoin,
+    Card,
+    #[serde(other)]
+    Unknown,
+}
+
+/// `Option<T>` that never fails its parent: a value that doesn't parse as
+/// `T` (an empty string, a future enum value) reads as `None`.
+fn lenient_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = <Option<serde_json::Value> as Deserialize>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| serde_json::from_value(v).ok()))
 }
 
 impl ConnectPlan {
+    /// Paid by a card subscription.
+    pub fn is_card(&self) -> bool {
+        self.payment_method
+            .as_ref()
+            .is_some_and(|m| m.kind == PaymentMethodKind::Card)
+    }
+
+    /// A card subscription that renews by itself: bitcoin purchases are
+    /// refused then (decision 15) and plan changes go through the card.
+    pub fn card_auto_renews(&self) -> bool {
+        self.is_card() && self.auto_renew == Some(true)
+    }
+
+    /// "Visa •••• 4242" for a card, else `None`.
+    pub fn card_label(&self) -> Option<String> {
+        let m = self
+            .payment_method
+            .as_ref()
+            .filter(|m| m.kind == PaymentMethodKind::Card)?;
+        let brand = m
+            .brand
+            .as_deref()
+            .filter(|b| !b.is_empty())
+            .map(|b| {
+                let mut c = b.chars();
+                match c.next() {
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    None => String::new(),
+                }
+            })
+            .unwrap_or_else(|| "Card".to_string());
+        Some(match m.last4.as_deref().filter(|l| !l.is_empty()) {
+            Some(last4) => format!("{brand} •••• {last4}"),
+            None => brand,
+        })
+    }
+
+    /// The card grace end, while it is still ahead of `now`.
+    pub fn grace_until(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        chrono::DateTime::parse_from_rfc3339(self.grace_ends_at.as_deref()?)
+            .ok()
+            .map(|g| g.with_timezone(&chrono::Utc))
+            .filter(|g| *g > now)
+    }
+
     /// Convenience accessor — returns `&self.plan` so existing call sites
     /// that used the old `tier` field can migrate with minimal churn.
     pub fn tier(&self) -> &PlanTier {
@@ -738,6 +846,12 @@ pub struct PlanFeatureInfo {
     pub features: Vec<String>,
     #[serde(default)]
     pub included_linked_participants: Option<u32>,
+    /// The tier's entitlements as `/connect/features` serves them (the same
+    /// shape as `/connect/plan`'s). The Change plan comparison and the
+    /// "Cubes per network" row read the server's values from here; absent on
+    /// older backends, when the desktop falls back to its offline defaults.
+    #[serde(default)]
+    pub entitlements: Option<PlanEntitlements>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -835,6 +949,15 @@ pub struct FeaturesResponse {
         alias = "bitcoin_blake2b_enabled"
     )]
     pub bitcoin_blake2b_enabled: Option<bool>,
+    /// Card payment through Stripe is available to this caller (B1,
+    /// `cardPaymentsEnabled`). Fails closed: absent reads as off, and Review
+    /// shows Card as "Coming soon".
+    #[serde(
+        default,
+        alias = "cardPaymentsEnabled",
+        alias = "card_payments_enabled"
+    )]
+    pub card_payments_enabled: Option<bool>,
 }
 
 // ── Checkout / Billing ──────────────────────────────────────────────────────
@@ -874,9 +997,96 @@ pub struct CheckoutResponse {
     pub plan: PlanTier,
     pub billing_cycle: BillingCycle,
     pub checkout_url: String,
-    pub expires_at: String,
+    /// When the BTCPay invoice expires (RFC 3339). Older APIs sent `null`
+    /// here, which the previous non-optional `String` failed to parse, so
+    /// checkout broke after the invoice was created.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// For a lower tier bought ahead (billing v2 A4): when the paid period
+    /// starts, the end of the current one. Absent for upgrades and renewals.
+    #[serde(default)]
+    pub starts_at: Option<String>,
 }
 
+/// Body of the card endpoints that name a plan (B3): checkout-session,
+/// change/preview and change.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanChangeRequest {
+    pub plan: PlanTier,
+    pub billing_cycle: BillingCycle,
+    /// The preview's proration instant, sent back on change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proration_date: Option<String>,
+}
+
+/// `POST /connect/card/checkout-session` (B3). Card entry happens on this
+/// Stripe page in the browser, never in the app (I1).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardCheckoutSession {
+    pub url: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// Set when the card is first charged later (a paid period runs first).
+    #[serde(default)]
+    pub starts_at: Option<String>,
+}
+
+/// `POST /connect/card/portal-session`: Stripe's portal (update card only).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CardPortalSession {
+    pub url: String,
+}
+
+/// `POST /connect/plan/change/preview` (B3). Amounts in USD.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanChangePreview {
+    /// "upgrade" (now, prorated) or "downgrade" (at the period end).
+    pub kind: String,
+    #[serde(default)]
+    pub amount_due_today: f64,
+    #[serde(default)]
+    pub credit: f64,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub renewal_at: Option<String>,
+    #[serde(default)]
+    pub effective_at: Option<String>,
+    #[serde(default)]
+    pub next_charge_amount: f64,
+    #[serde(default)]
+    pub proration_date: Option<String>,
+}
+
+impl PlanChangePreview {
+    pub fn is_upgrade(&self) -> bool {
+        self.kind.eq_ignore_ascii_case("upgrade")
+    }
+}
+
+/// `POST /connect/plan/change` (B3): "paid" (upgrade applied),
+/// "requires_action" (finish the payment at `url`, e.g. 3-D Secure) or
+/// "scheduled" (downgrade at `effective_at`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanChangeResult {
+    pub status: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub effective_at: Option<String>,
+    #[serde(default)]
+    pub dropped_scheduled_change: bool,
+}
+
+/// The legacy charge `status` every API version sends. Billing v2 keeps it
+/// to these four values and adds the detail in [`ChargeState`]; an unknown
+/// value parses as `Unknown` instead of failing the poll.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChargeStatus {
@@ -884,19 +1094,88 @@ pub enum ChargeStatus {
     Processing,
     Paid,
     Expired,
+    #[serde(other)]
+    Unknown,
 }
 
+/// The full billing v2 charge state (`state`, API A1). Absent on older APIs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChargeState {
+    Unpaid,
+    /// Some sats arrived; the rest is still due on the same invoice.
+    PartiallyPaid,
+    /// Seen, waiting for confirmation.
+    Processing,
+    Paid,
+    /// Expired with nothing received.
+    Expired,
+    /// Money arrived but can't be applied automatically: paid late, partly
+    /// paid then expired, or invalid. The plan is unchanged.
+    NeedsSupport,
+    #[serde(other)]
+    Unknown,
+}
+
+impl ChargeState {
+    /// The state a response describes: `state` when the API sends it, else
+    /// the legacy `status`.
+    pub fn resolve(state: Option<ChargeState>, status: &ChargeStatus) -> ChargeState {
+        match state {
+            Some(state) if state != ChargeState::Unknown => state,
+            _ => match status {
+                ChargeStatus::Unpaid => ChargeState::Unpaid,
+                ChargeStatus::Processing => ChargeState::Processing,
+                ChargeStatus::Paid => ChargeState::Paid,
+                ChargeStatus::Expired => ChargeState::Expired,
+                ChargeStatus::Unknown => ChargeState::Unknown,
+            },
+        }
+    }
+}
+
+/// `GET /connect/checkout/{chargeId}`. Every billing v2 field defaults, so
+/// an older API (status only) still parses.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChargeStatusResponse {
     pub charge_id: String,
     pub status: ChargeStatus,
     pub plan: PlanTier,
+    #[serde(default)]
+    pub state: Option<ChargeState>,
+    /// The BTCPay invoice id support needs.
+    #[serde(default)]
+    pub invoice_id: Option<String>,
+    #[serde(default)]
+    pub additional_status: Option<String>,
+    #[serde(default)]
+    pub amount_sats: Option<u64>,
+    #[serde(default)]
+    pub amount_received_sats: u64,
+    #[serde(default)]
+    pub amount_due_sats: u64,
+    #[serde(default)]
+    pub overpaid_sats: u64,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// A4: when a lower tier bought ahead starts.
+    #[serde(default)]
+    pub starts_at: Option<String>,
 }
 
+impl ChargeStatusResponse {
+    pub fn charge_state(&self) -> ChargeState {
+        ChargeState::resolve(self.state, &self.status)
+    }
+}
+
+/// One row of `GET /connect/billing/history`. `chargeId` and the billing v2
+/// fields default so older APIs (which sent neither) still parse.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BillingHistoryEntry {
+    #[serde(default)]
     pub charge_id: String,
     pub plan: PlanTier,
     pub billing_cycle: BillingCycle,
@@ -905,7 +1184,22 @@ pub struct BillingHistoryEntry {
     pub fiat_currency: String,
     pub status: ChargeStatus,
     pub created_at: String,
+    #[serde(default)]
     pub paid_at: Option<String>,
+    #[serde(default)]
+    pub state: Option<ChargeState>,
+    #[serde(default)]
+    pub invoice_id: Option<String>,
+    #[serde(default)]
+    pub amount_received_sats: u64,
+    #[serde(default)]
+    pub overpaid_sats: u64,
+}
+
+impl BillingHistoryEntry {
+    pub fn charge_state(&self) -> ChargeState {
+        ChargeState::resolve(self.state, &self.status)
+    }
 }
 
 // ── Campaign code redemption (v2 campaign engine) ───────────────────────────

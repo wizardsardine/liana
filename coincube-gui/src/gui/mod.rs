@@ -1966,7 +1966,7 @@ impl GUI {
                 ConnectSheetSection::Account | ConnectSheetSection::RecoveryServices => {
                     account.reload_overview()
                 }
-                ConnectSheetSection::PlanBilling => Task::none(),
+                ConnectSheetSection::PlanBilling => account.reload_plan_billing(),
                 ConnectSheetSection::Contacts => account.reload_contacts(),
                 ConnectSheetSection::DevicesSecurity => {
                     load_security_data(&account.client, account.session_generation())

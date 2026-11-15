@@ -73,6 +73,14 @@ fn set_duress_gate(gui: &mut GUI, pane_id: pane_grid::Pane, entitled: bool, enab
         },
         billing_cycle: Some(BillingCycle::Monthly),
         plan_provenance: None,
+        pending_plan: None,
+        pending_plan_at: None,
+        pending_billing_cycle: None,
+        payment_method: None,
+        auto_renew: None,
+        next_charge_at: None,
+        next_charge_amount: None,
+        grace_ends_at: None,
     });
     home.connect_account.features = Some(FeaturesResponse {
         plans: Vec::new(),
@@ -84,6 +92,7 @@ fn set_duress_gate(gui: &mut GUI, pane_id: pane_grid::Pane, entitled: bool, enab
         p2p_enabled: None,
         duress_enabled: Some(enabled),
         bitcoin_blake2b_enabled: None,
+        card_payments_enabled: None,
     });
 }
 

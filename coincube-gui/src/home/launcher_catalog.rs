@@ -3779,6 +3779,38 @@ mod tests {
         assert!(tree.has(&import_id()));
     }
 
+    /// Billing v2 D5: an account already over its plan's limit (Free's one
+    /// Cube with two on the network) is told what the plan includes and that
+    /// its Cubes keep working, never an impossible "2 of 1".
+    #[test]
+    fn over_the_limit_copy_says_existing_cubes_keep_working() {
+        let mut home = home_with(&[("a", "A"), ("b", "B")]);
+        home.server_cube_limit = Some(1);
+        let projection = project(&home);
+        assert!(projection.at_limit());
+        let full = super::super::launcher_chrome::plan_full(&projection).unwrap();
+        assert!(full.contains("2 Cubes; the"), "{}", full);
+        assert!(
+            full.contains("includes 1. Existing Cubes keep working."),
+            "{}",
+            full
+        );
+        assert!(!full.contains("2 of 1"), "{}", full);
+        // The longer dock line still renders at the minimum window size.
+        let compact = home_tree(
+            "plan-over-limit-compact",
+            &home,
+            COMPACT,
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(compact.contains(&full), "dock line at 1024x768");
+        home.catalog.plan_menu = true;
+        let tree = home_tree("plan-over-limit", &home, WIDE, "dark", theme::Theme::dark());
+        assert!(tree.contains("2 · plan includes 1"));
+        assert!(!tree.contains("2 of 1"));
+    }
+
     /// Switching network makes it current before its list is read (and keeps
     /// it so if the read fails), while the checked list is still the old
     /// network's. Those Cubes are not the new network's: the gate, the dock

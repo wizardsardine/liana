@@ -10,13 +10,14 @@ use crate::{
         },
     },
     services::coincube::{
-        BillingCycle, BillingHistoryEntry, ChargeStatus, CheckoutRequest, CheckoutResponse,
-        CoincubeClient, ConnectPlan, Contact, ContactCube, ContactRole,
-        CreateDuressAlertContactRequest, CreateInviteRequest, CubeResponse, DuressAlertContact,
-        DuressCheckOutcome, FeaturesResponse, Invite, LoginActivity, LoginResponse, OtpRequest,
-        OtpVerifyRequest, PlanStatus, PlanTier, ReceivedInvite, RecoveryKitStatus,
-        UpdateDuressAlertContactRequest, User, VerifiedDevice, DURESS_CHANNEL_EMAIL,
-        DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP, MAX_DURESS_ALERT_CONTACTS,
+        BillingCycle, BillingHistoryEntry, CardCheckoutSession, ChargeState, ChargeStatusResponse,
+        CheckoutRequest, CheckoutResponse, CoincubeClient, ConnectPlan, Contact, ContactCube,
+        ContactRole, CreateDuressAlertContactRequest, CreateInviteRequest, CubeResponse,
+        DuressAlertContact, DuressCheckOutcome, FeaturesResponse, Invite, LoginActivity,
+        LoginResponse, OtpRequest, OtpVerifyRequest, PlanChangePreview, PlanChangeRequest,
+        PlanStatus, PlanTier, ReceivedInvite, RecoveryKitStatus, UpdateDuressAlertContactRequest,
+        User, VerifiedDevice, DURESS_CHANNEL_EMAIL, DURESS_CHANNEL_SMS, DURESS_CHANNEL_WHATSAPP,
+        MAX_DURESS_ALERT_CONTACTS,
     },
     user_error::UserError,
 };
@@ -98,28 +99,355 @@ pub fn read_session_for_integration(namespace: &str) -> Result<LoginResponse, &'
 
 // ── Checkout state machine ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+/// Where a checkout is, one variant per BTCPay board (B1–B10).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutPhase {
-    /// Waiting for POST /checkout response.
+    /// Review step (board 3): plan, amount, dates covered and how to pay.
+    /// Nothing has been sent to Connect yet.
+    Review,
+    /// Waiting for POST /checkout response (B1).
     Creating,
-    /// Invoice received, awaiting payment.
+    /// Invoice received, awaiting payment (B2, B3). Lightning or on-chain is
+    /// [`CheckoutState::network`].
     AwaitingPayment,
-    /// Server reported "processing" (mempool confirmation pending).
+    /// The BTCPay page is open in the browser (B4). Polling keeps running.
+    PayingInBrowser,
+    /// Some sats arrived; the rest is due on the same address (B5).
+    PartlyPaid {
+        received_sats: u64,
+        due_sats: u64,
+    },
+    /// Payment seen, waiting for confirmation (B6).
     Processing,
-    /// Payment confirmed.
-    Paid,
-    /// Invoice expired before payment.
+    /// Paid (B7). An overpayment activates too, with a support note
+    /// (decision 14).
+    Paid {
+        overpaid_sats: u64,
+    },
+    /// Expired with nothing received (B8).
     Expired,
-    /// API error during checkout creation or polling.
-    Failed(String),
+    /// Money arrived but can't be applied automatically: paid late, partly
+    /// paid then expired, or invalid (B9, decision 13).
+    NeedsSupport {
+        invoice_id: String,
+        received_sats: u64,
+    },
+    /// The invoice couldn't be created (B10). No invoice exists. `refused`
+    /// is a 4xx from Connect (for example a plan change already scheduled):
+    /// retrying the same request would be refused again, so the view offers
+    /// Change plan instead of Try again.
+    Failed {
+        message: String,
+        refused: bool,
+    },
+    /// Polling stopped after errors. The invoice may still be paid; "Check
+    /// again" resumes polling the same invoice instead of creating another.
+    PollFailed(String),
+    // ── Card (billing v2 Phase B, boards C1–C13) ──
+    /// Asking Connect for a Stripe Checkout session.
+    CardOpening,
+    /// Stripe Checkout is open in the browser (C2); `/connect/plan` is
+    /// polled until the subscription shows up.
+    CardInBrowser,
+    /// Subscribed (C3). `starts_at` when the first charge comes later.
+    CardActive,
+    /// Checkout didn't finish before its session expired (C4).
+    CardCancelled,
+    /// Checkout couldn't be opened (C5).
+    CardFailed {
+        message: String,
+        refused: bool,
+    },
+    /// A card subscriber's plan change: fetching the preview.
+    ChangePreviewing,
+    /// The preview is in `CheckoutState::preview`: "Due today" for an
+    /// upgrade (C10), "What changes" for a downgrade (C12).
+    ChangeReview,
+    /// POST /connect/plan/change in flight.
+    ChangeApplying,
+    /// The bank asked to confirm the upgrade payment (3-D Secure): the
+    /// page is open in the browser and `/connect/plan` is polled (C10).
+    ChangeInBrowser,
+    /// Upgraded (C11), or a downgrade scheduled (C12 → C13).
+    ChangeDone {
+        scheduled: bool,
+    },
+    ChangeFailed {
+        message: String,
+        refused: bool,
+    },
+    /// The change request got no clear answer (lost response, 5xx or an
+    /// unknown status): it may or may not have been applied and charged.
+    ChangeUnconfirmed {
+        message: String,
+        refresh: PlanRefresh,
+    },
+}
+
+/// The plan refresh that follows an unconfirmed change: the screen says
+/// whether Plan & billing has the latest plan yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanRefresh {
+    /// Waiting for the reload with this sequence number.
+    Pending(u64),
+    /// `/connect/plan` answered.
+    Updated,
+    /// The reload failed; Plan & billing may be stale.
+    Failed,
+}
+
+impl CheckoutPhase {
+    /// Screens Change plan may leave: nothing is out for payment and no
+    /// request is in flight. An invoice awaiting payment, a card checkout or
+    /// 3-D Secure page open in the browser, and a change being applied are
+    /// never dropped this way.
+    pub fn leavable(&self) -> bool {
+        matches!(
+            self,
+            CheckoutPhase::Review
+                | CheckoutPhase::Expired
+                | CheckoutPhase::Failed { .. }
+                | CheckoutPhase::CardCancelled
+                | CheckoutPhase::CardFailed { .. }
+                | CheckoutPhase::CardActive
+                | CheckoutPhase::ChangePreviewing
+                | CheckoutPhase::ChangeReview
+                | CheckoutPhase::ChangeFailed { .. }
+                | CheckoutPhase::ChangeUnconfirmed { .. }
+                | CheckoutPhase::ChangeDone { .. }
+        )
+    }
+
+    /// Phases that poll `/connect/plan` (a card checkout or a 3-D Secure
+    /// confirmation in the browser).
+    pub fn polls_plan(&self) -> bool {
+        matches!(
+            self,
+            CheckoutPhase::CardInBrowser | CheckoutPhase::ChangeInBrowser
+        )
+    }
+
+    /// Phases in which the poll chain keeps running.
+    pub fn polls(&self) -> bool {
+        matches!(
+            self,
+            CheckoutPhase::AwaitingPayment
+                | CheckoutPhase::PayingInBrowser
+                | CheckoutPhase::PartlyPaid { .. }
+                | CheckoutPhase::Processing
+        )
+    }
+}
+
+/// How the Review step pays (board 3). Bitcoin is pre-selected and never
+/// second-class (I3); Card exists only while `cardPaymentsEnabled`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PayWith {
+    #[default]
+    Bitcoin,
+    Card,
+}
+
+/// Lightning or on-chain on the Awaiting payment board (view state).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaymentNetwork {
+    #[default]
+    Lightning,
+    OnChain,
+}
+
+/// `bitcoin:` URI for `sats` to `address` (BIP 21), for the on-chain QR.
+pub fn bip21_uri(address: &str, sats: u64) -> String {
+    let whole = sats / 100_000_000;
+    let frac = sats % 100_000_000;
+    if frac == 0 {
+        return format!("bitcoin:{address}?amount={whole}");
+    }
+    let frac = format!("{frac:08}");
+    format!(
+        "bitcoin:{address}?amount={whole}.{}",
+        frac.trim_end_matches('0')
+    )
+}
+
+/// The message and whether Connect refused the request (a 4xx other than
+/// auth, timeout and rate limit): retrying it unchanged would be refused
+/// again.
+fn refusal(e: crate::services::coincube::CoincubeError) -> (String, bool) {
+    use crate::services::coincube::CoincubeError;
+    let refused = matches!(
+        &e,
+        CoincubeError::Unsuccessful(info)
+            if (400..500).contains(&info.status_code)
+                && !matches!(info.status_code, 401 | 408 | 429)
+    );
+    (e.to_string(), refused)
+}
+
+/// Where a plan poll moves a card checkout (C2 → C3/C4) or a 3-D Secure
+/// confirmation (C10 → C11). Pure for tests.
+pub fn next_card_phase(
+    current: &CheckoutPhase,
+    checkout: &CheckoutState,
+    plan: &ConnectPlan,
+    now: chrono::DateTime<chrono::Utc>,
+) -> CheckoutPhase {
+    match current {
+        CheckoutPhase::CardInBrowser => {
+            // The subscription shows up as a card payment method; a card
+            // that starts after a paid period (trialing) counts too.
+            if plan.is_card() && (plan.tier() == &checkout.tier || plan.auto_renew == Some(true)) {
+                return CheckoutPhase::CardActive;
+            }
+            let expired = checkout
+                .card_session
+                .as_ref()
+                .and_then(|s| s.expires_at.as_deref())
+                .and_then(|e| chrono::DateTime::parse_from_rfc3339(e).ok())
+                .is_some_and(|e| e.with_timezone(&chrono::Utc) <= now);
+            if expired {
+                CheckoutPhase::CardCancelled
+            } else {
+                current.clone()
+            }
+        }
+        CheckoutPhase::ChangeInBrowser => {
+            if plan.tier() == &checkout.tier
+                && plan.billing_cycle.is_none_or(|c| c == checkout.cycle)
+            {
+                CheckoutPhase::ChangeDone { scheduled: false }
+            } else {
+                current.clone()
+            }
+        }
+        other => other.clone(),
+    }
+}
+
+/// The phase a charge-status poll moves a checkout to, whether the poll
+/// chain continues, and whether the plan was paid. Pure, so every BTCPay
+/// outcome is unit-testable.
+pub fn next_checkout_phase(
+    current: &CheckoutPhase,
+    status: &ChargeStatusResponse,
+) -> (CheckoutPhase, bool, bool) {
+    match status.charge_state() {
+        ChargeState::PartiallyPaid => (
+            CheckoutPhase::PartlyPaid {
+                received_sats: status.amount_received_sats,
+                due_sats: status.amount_due_sats,
+            },
+            true,
+            false,
+        ),
+        ChargeState::Processing => (CheckoutPhase::Processing, true, false),
+        ChargeState::Paid => (
+            CheckoutPhase::Paid {
+                overpaid_sats: status.overpaid_sats,
+            },
+            false,
+            true,
+        ),
+        ChargeState::Expired => (CheckoutPhase::Expired, false, false),
+        ChargeState::NeedsSupport => (
+            CheckoutPhase::NeedsSupport {
+                invoice_id: status
+                    .invoice_id
+                    .clone()
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or_else(|| status.charge_id.clone()),
+                received_sats: status.amount_received_sats,
+            },
+            false,
+            false,
+        ),
+        // Unpaid, or a state this build doesn't know: keep waiting, and
+        // keep the page the user is on (browser or QR).
+        ChargeState::Unpaid | ChargeState::Unknown => (
+            match current {
+                CheckoutPhase::PayingInBrowser
+                | CheckoutPhase::PartlyPaid { .. }
+                | CheckoutPhase::Processing => current.clone(),
+                _ => CheckoutPhase::AwaitingPayment,
+            },
+            true,
+            false,
+        ),
+    }
 }
 
 #[derive(Debug)]
 pub struct CheckoutState {
+    /// This checkout's generation. Every create and poll result carries it,
+    /// so a result from a dismissed or replaced checkout is dropped.
+    pub id: u64,
+    /// The tier being bought (or reviewed).
+    pub tier: PlanTier,
+    /// The billing cycle snapshotted when Review opened; every invoice for
+    /// this checkout (including "Create new invoice" after expiry) uses it.
+    pub cycle: BillingCycle,
+    /// `/connect/plan` as it was when Review opened. Review and the pay
+    /// screens describe the purchase against it, so the Paid screen still
+    /// says what was bought after the plan reloads with the new tier.
+    pub plan: Option<ConnectPlan>,
     pub phase: CheckoutPhase,
     pub checkout: Option<CheckoutResponse>,
     pub lightning_qr: Option<qr_code::Data>,
+    /// The on-chain QR: the full amount, or what is left once partly paid.
+    pub onchain_qr: Option<qr_code::Data>,
+    pub network: PaymentNetwork,
+    /// The last charge status Connect returned (amounts, invoice id).
+    pub last_status: Option<ChargeStatusResponse>,
     pub poll_errors: u8,
+    /// Bitcoin (default) or Card, chosen on Review.
+    pub pay_with: PayWith,
+    /// The Stripe Checkout session for a card purchase.
+    pub card_session: Option<CardCheckoutSession>,
+    /// The change preview for a card subscriber's plan change.
+    pub preview: Option<PlanChangePreview>,
+    /// Where to confirm an upgrade payment (3-D Secure), when asked.
+    pub action_url: Option<String>,
+    /// Plan polls in the current browser phase; bounded by
+    /// `MAX_BROWSER_POLLS`, then "Check again".
+    pub browser_polls: u16,
+    /// The polling phase a `PollFailed` interrupted (Awaiting, Paying in
+    /// browser, Partly paid or Processing). "Check again" restores it, so a
+    /// partly paid invoice keeps its remaining amount and a seen payment
+    /// isn't shown as unpaid again.
+    pub resume_phase: Option<CheckoutPhase>,
+    /// When Review opened. Covers dates for "starts now" purchases are
+    /// computed from it, so they don't move while the invoice stays open.
+    pub opened_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Polls (5 s apart) while a card checkout or 3-D Secure page is open in
+/// the browser before the screen stops and offers "Check again": 30 min.
+pub const MAX_BROWSER_POLLS: u16 = 360;
+
+impl CheckoutState {
+    /// A checkout at the Review step.
+    pub fn new(id: u64, tier: PlanTier, cycle: BillingCycle, plan: Option<ConnectPlan>) -> Self {
+        Self {
+            id,
+            tier,
+            cycle,
+            plan,
+            phase: CheckoutPhase::Review,
+            checkout: None,
+            lightning_qr: None,
+            onchain_qr: None,
+            network: PaymentNetwork::Lightning,
+            last_status: None,
+            poll_errors: 0,
+            pay_with: PayWith::Bitcoin,
+            card_session: None,
+            preview: None,
+            action_url: None,
+            browser_polls: 0,
+            resume_phase: None,
+            opened_at: chrono::Utc::now(),
+        }
+    }
 }
 
 // ── Campaign code redemption (v2 campaign engine) ───────────────────────────
@@ -172,6 +500,11 @@ pub enum PlanLifecycle {
     /// A paid plan that lapsed — the backend demoted it (reported as
     /// `past_due`, typically alongside the Free tier).
     Expired,
+    /// A card renewal is failing: `past_due` with a future `graceEndsAt`.
+    /// The paid tier stays on until then while Stripe retries (decision 2).
+    PastDue {
+        grace_ends_at: chrono::DateTime<chrono::Utc>,
+    },
 }
 
 /// Which sub-view of the Contacts section is shown.
@@ -1001,8 +1334,20 @@ pub struct ConnectAccountPanel {
     pub features: Option<FeaturesResponse>,
     /// The currently selected billing cycle for the upgrade cards.
     pub selected_billing_cycle: BillingCycle,
+    /// The plan row picked on Change plan; `None` until the user picks one
+    /// (the view then pre-selects the current tier).
+    pub selected_plan_tier: Option<PlanTier>,
     /// Active checkout flow (None when no checkout in progress).
     pub checkout: Option<CheckoutState>,
+    /// Last checkout generation handed out (see [`CheckoutState::id`]).
+    checkout_seq: u64,
+    /// Sequence of the latest plan fetch handed out (`plan_fetch_task`).
+    plan_seq: u64,
+    /// Sequence of the newest plan response applied. A response applies
+    /// only if it is newer than this, so a stale one never overwrites a
+    /// newer plan, yet a failed newer fetch doesn't discard an older
+    /// successful one.
+    applied_plan_seq: u64,
     /// Billing history entries.
     pub billing_history: Option<Vec<BillingHistoryEntry>>,
     /// Whether the billing history sub-view is shown.
@@ -1010,6 +1355,13 @@ pub struct ConnectAccountPanel {
     /// Explicit secondary comparison and referral details within management.
     pub show_plan_comparison: bool,
     pub show_campaign_redeem: bool,
+    /// Plan & billing: the "Turn off auto-renewal?" confirmation (C8).
+    pub confirm_auto_renew_off: bool,
+    /// A card request from Plan & billing (portal, auto-renew, keep plan)
+    /// is in flight; its buttons are inert meanwhile.
+    pub card_request_busy: bool,
+    /// The last such request's failure, shown as a notice.
+    pub card_request_error: Option<String>,
     /// Active duress enrollment wizard (Phases 2 & 8); `None` when closed.
     pub duress_enroll: Option<DuressEnrollState>,
     /// A submitting wizard was hidden by leaving Duress. Retain its secrets
@@ -1091,11 +1443,18 @@ impl ConnectAccountPanel {
             otp_attempt_generation: 0,
             features: None,
             selected_billing_cycle: BillingCycle::Monthly,
+            selected_plan_tier: None,
             checkout: None,
+            checkout_seq: 0,
+            plan_seq: 0,
+            applied_plan_seq: 0,
             billing_history: None,
             show_billing_history: false,
             show_plan_comparison: false,
             show_campaign_redeem: false,
+            confirm_auto_renew_off: false,
+            card_request_busy: false,
+            card_request_error: None,
             duress_enroll: None,
             duress_enroll_abandoned: false,
             duress_disable: None,
@@ -2040,26 +2399,41 @@ impl ConnectAccountPanel {
                     self.campaign_redeem.code = code.clone();
                     tasks.push(self.redeem_campaign_task(code));
                 } else {
-                    let c1 = self.client.clone();
-                    tasks.push(iced::Task::perform(
-                        async move { (c1.get_connect_plan().await.ok(), gen) },
-                        |(plan, g)| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::PlanLoaded(plan, g),
-                            ))
-                        },
-                    ));
+                    tasks.push(self.plan_fetch_task());
                 }
                 return iced::Task::batch(tasks);
             }
 
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
                 if gen == self.session_generation && plan.is_some() {
-                    if let Some(cycle) = plan.as_ref().and_then(|p| p.billing_cycle) {
-                        self.selected_billing_cycle = cycle;
+                    self.apply_loaded_plan(plan);
+                }
+            }
+
+            ConnectAccountMessage::PlanReloaded(plan, gen, seq) => {
+                // An unconfirmed change shows whether its refresh landed.
+                if gen == self.session_generation {
+                    if let Some(CheckoutPhase::ChangeUnconfirmed { refresh, .. }) =
+                        self.checkout.as_mut().map(|cs| &mut cs.phase)
+                    {
+                        if let PlanRefresh::Pending(waiting) = *refresh {
+                            if seq >= waiting {
+                                *refresh = if plan.is_some() {
+                                    PlanRefresh::Updated
+                                } else {
+                                    PlanRefresh::Failed
+                                };
+                            }
+                        }
                     }
-                    self.plan = plan;
-                    self.leave_hidden_duress_route();
+                }
+                // A response applies only if it is newer than the last one
+                // applied: one sent before a payment never lands over one
+                // sent after it, and a failed newer fetch doesn't throw away
+                // an older good answer.
+                if gen == self.session_generation && seq > self.applied_plan_seq && plan.is_some() {
+                    self.applied_plan_seq = seq;
+                    self.apply_loaded_plan(plan);
                 }
             }
 
@@ -2503,8 +2877,75 @@ impl ConnectAccountPanel {
                 }
             }
 
+            ConnectAccountMessage::FocusAction(id) => {
+                return iced::widget::operation::focus(id);
+            }
+
             ConnectAccountMessage::BillingCycleSelected(cycle) => {
                 self.selected_billing_cycle = cycle;
+            }
+
+            ConnectAccountMessage::SelectPlanTier(tier) => {
+                self.selected_plan_tier = Some(tier);
+            }
+
+            ConnectAccountMessage::ReviewPlanChange(tier) => {
+                // Review is the step before any invoice exists. It is only
+                // reachable while purchasing is open, like StartCheckout, so
+                // a stale message never shows a "Create invoice" the API
+                // would reject.
+                // Switching to Free buys nothing, so its Review is shown
+                // even while purchasing is closed.
+                if tier != PlanTier::Free && !self.purchasing_enabled() {
+                    log::warn!("[CONNECT] ReviewPlanChange ignored — purchasing disabled");
+                    return iced::Task::none();
+                }
+                // Never replace an invoice that is already out for payment.
+                if self
+                    .checkout
+                    .as_ref()
+                    .is_some_and(|cs| !matches!(cs.phase, CheckoutPhase::Review))
+                {
+                    return iced::Task::none();
+                }
+                self.active_sub = ConnectSubMenu::PlanBilling;
+                self.show_billing_history = false;
+                self.show_plan_comparison = false;
+                // Back from Review lands on the same picked row.
+                self.selected_plan_tier = Some(tier.clone());
+                self.checkout_seq += 1;
+                let id = self.checkout_seq;
+                let card_change = self.card_change_route(&tier, self.selected_billing_cycle);
+                let mut checkout = CheckoutState::new(
+                    id,
+                    tier.clone(),
+                    self.selected_billing_cycle,
+                    self.plan.clone(),
+                );
+                if card_change {
+                    // A card that renews by itself changes plan through the
+                    // card (bitcoin is refused then, decision 15): fetch
+                    // Stripe's preview first.
+                    checkout.phase = CheckoutPhase::ChangePreviewing;
+                    checkout.pay_with = PayWith::Card;
+                    self.checkout = Some(checkout);
+                    let gen = self.session_generation;
+                    let client = self.client.clone();
+                    let req = PlanChangeRequest {
+                        plan: tier,
+                        billing_cycle: self.selected_billing_cycle,
+                        proration_date: None,
+                    };
+                    return iced::Task::perform(
+                        async move { client.preview_plan_change(req).await.map_err(refusal) },
+                        move |result| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::ChangePreviewLoaded(result, gen, id),
+                            ))
+                        },
+                    );
+                }
+                self.checkout = Some(checkout);
             }
 
             ConnectAccountMessage::StartCheckout(tier) => {
@@ -2517,64 +2958,114 @@ impl ConnectAccountPanel {
                     log::warn!("[CONNECT] StartCheckout ignored — purchasing disabled");
                     return iced::Task::none();
                 }
-                self.checkout = Some(CheckoutState {
-                    phase: CheckoutPhase::Creating,
-                    checkout: None,
-                    lightning_qr: None,
-                    poll_errors: 0,
-                });
+                // Never replace an invoice that is out for payment (a double
+                // press, or a stale message): only Review, Expired and Failed
+                // may start a new one.
+                if self.checkout.as_ref().is_some_and(|cs| {
+                    !matches!(
+                        cs.phase,
+                        CheckoutPhase::Review
+                            | CheckoutPhase::Expired
+                            | CheckoutPhase::Failed { .. }
+                    )
+                }) {
+                    log::warn!("[CONNECT] StartCheckout ignored — an invoice is in progress");
+                    return iced::Task::none();
+                }
+                // The cycle reviewed for this tier wins over the picker's
+                // current toggle, so a retry after expiry re-issues the same
+                // plan the user confirmed.
+                let cycle = self
+                    .checkout
+                    .as_ref()
+                    .filter(|cs| cs.tier == tier)
+                    .map(|cs| cs.cycle)
+                    .unwrap_or(self.selected_billing_cycle);
+                // A new generation: anything still in flight for the
+                // previous invoice (an expired one, a failed create) is
+                // dropped when it lands.
+                self.checkout_seq += 1;
+                let id = self.checkout_seq;
+                // Keep the plan snapshot taken when Review opened.
+                let snapshot = self
+                    .checkout
+                    .as_ref()
+                    .filter(|cs| cs.tier == tier)
+                    .and_then(|cs| cs.plan.clone())
+                    .or_else(|| self.plan.clone());
+                let opened_at = self
+                    .checkout
+                    .as_ref()
+                    .filter(|cs| cs.tier == tier)
+                    .map(|cs| cs.opened_at);
+                let mut checkout = CheckoutState::new(id, tier.clone(), cycle, snapshot);
+                if let Some(opened_at) = opened_at {
+                    checkout.opened_at = opened_at;
+                }
+                checkout.phase = CheckoutPhase::Creating;
+                self.checkout = Some(checkout);
                 let gen = self.session_generation;
                 let client = self.client.clone();
                 let req = CheckoutRequest {
                     plan: tier,
-                    billing_cycle: self.selected_billing_cycle,
+                    billing_cycle: cycle,
                 };
                 return iced::Task::perform(
-                    async move { client.create_checkout(req).await.map_err(|e| e.to_string()) },
+                    async move {
+                        client.create_checkout(req).await.map_err(|e| {
+                            use crate::services::coincube::CoincubeError;
+                            let refused = matches!(
+                                &e,
+                                CoincubeError::Unsuccessful(info)
+                                    if (400..500).contains(&info.status_code)
+                                        && info.status_code != 401
+                                        && info.status_code != 408
+                                        && info.status_code != 429
+                            );
+                            (e.to_string(), refused)
+                        })
+                    },
                     move |result| {
                         Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CheckoutCreated(result, gen),
+                            ConnectAccountMessage::CheckoutCreated(result, gen, id),
                         ))
                     },
                 );
             }
 
-            ConnectAccountMessage::CheckoutCreated(result, gen) => {
-                if gen != self.session_generation || self.checkout.is_none() {
+            ConnectAccountMessage::CheckoutCreated(result, gen, id) => {
+                if gen != self.session_generation || !self.is_current_checkout(id) {
                     return iced::Task::none();
                 }
                 match result {
                     Ok(resp) => {
                         let qr = qr_code::Data::new(&resp.lightning_invoice).ok();
-                        self.checkout = Some(CheckoutState {
-                            phase: CheckoutPhase::AwaitingPayment,
-                            checkout: Some(resp),
-                            lightning_qr: qr,
-                            poll_errors: 0,
-                        });
+                        let onchain =
+                            qr_code::Data::new(bip21_uri(&resp.on_chain_address, resp.amount_sats))
+                                .ok();
+                        let cs = self.checkout.as_mut().expect("checked above");
+                        cs.phase = CheckoutPhase::AwaitingPayment;
+                        cs.checkout = Some(resp);
+                        cs.lightning_qr = qr;
+                        cs.onchain_qr = onchain;
+                        cs.poll_errors = 0;
                         return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PollChargeStatus,
+                            ConnectAccountMessage::PollChargeStatus(id),
                         )));
                     }
-                    Err(e) => {
+                    Err((message, refused)) => {
                         if let Some(cs) = &mut self.checkout {
-                            cs.phase = CheckoutPhase::Failed(e);
+                            cs.phase = CheckoutPhase::Failed { message, refused };
                         }
                     }
                 }
             }
 
-            ConnectAccountMessage::PollChargeStatus => {
+            ConnectAccountMessage::PollChargeStatus(id) => {
                 let should_poll = self
                     .checkout
                     .as_ref()
-                    .map(|cs| {
-                        matches!(
-                            cs.phase,
-                            CheckoutPhase::AwaitingPayment | CheckoutPhase::Processing
-                        )
-                    })
-                    .unwrap_or(false);
+                    .is_some_and(|cs| cs.id == id && cs.phase.polls());
                 if !should_poll {
                     return iced::Task::none();
                 }
@@ -2604,63 +3095,57 @@ impl ConnectAccountPanel {
                     },
                     move |result| {
                         Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::ChargeStatusUpdated(result, gen),
+                            ConnectAccountMessage::ChargeStatusUpdated(result, gen, id),
                         ))
                     },
                 );
             }
 
-            ConnectAccountMessage::ChargeStatusUpdated(result, gen) => {
-                if gen != self.session_generation || self.checkout.is_none() {
+            ConnectAccountMessage::ChargeStatusUpdated(result, gen, id) => {
+                // Only the current checkout's poll chain may move it: a poll
+                // in flight from a dismissed or replaced invoice is dropped.
+                if gen != self.session_generation || !self.is_current_checkout(id) {
+                    return iced::Task::none();
+                }
+                let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PollChargeStatus(id),
+                )));
+                let cs = self.checkout.as_mut().expect("checked above");
+                if !cs.phase.polls() {
                     return iced::Task::none();
                 }
                 match result {
                     Ok(status) => {
-                        let cs = self.checkout.as_mut().unwrap();
                         cs.poll_errors = 0;
-                        match status.status {
-                            ChargeStatus::Unpaid => {
-                                // Keep polling
-                                return iced::Task::done(Message::View(
-                                    view::Message::ConnectAccount(
-                                        ConnectAccountMessage::PollChargeStatus,
-                                    ),
-                                ));
+                        let (phase, keep_polling, paid) = next_checkout_phase(&cs.phase, &status);
+                        if let CheckoutPhase::PartlyPaid { due_sats, .. } = &phase {
+                            // Same address, the remaining amount.
+                            if let Some(resp) = cs.checkout.as_ref() {
+                                cs.onchain_qr = qr_code::Data::new(bip21_uri(
+                                    &resp.on_chain_address,
+                                    *due_sats,
+                                ))
+                                .ok();
                             }
-                            ChargeStatus::Processing => {
-                                cs.phase = CheckoutPhase::Processing;
-                                return iced::Task::done(Message::View(
-                                    view::Message::ConnectAccount(
-                                        ConnectAccountMessage::PollChargeStatus,
-                                    ),
-                                ));
-                            }
-                            ChargeStatus::Paid => {
-                                cs.phase = CheckoutPhase::Paid;
-                                // Invalidate cached billing history so next view fetches fresh data
-                                self.billing_history = None;
-                                // Refresh plan
-                                let g = self.session_generation;
-                                let c = self.client.clone();
-                                return iced::Task::perform(
-                                    async move { (c.get_connect_plan().await.ok(), g) },
-                                    |(plan, g)| {
-                                        Message::View(view::Message::ConnectAccount(
-                                            ConnectAccountMessage::PlanLoaded(plan, g),
-                                        ))
-                                    },
-                                );
-                            }
-                            ChargeStatus::Expired => {
-                                cs.phase = CheckoutPhase::Expired;
-                            }
+                            cs.network = PaymentNetwork::OnChain;
+                        }
+                        cs.phase = phase;
+                        cs.last_status = Some(status);
+                        if paid {
+                            // Refresh the plan and the history the receipt
+                            // lands in.
+                            self.billing_history = None;
+                            return self.reload_plan_billing();
+                        }
+                        if keep_polling {
+                            return poll;
                         }
                     }
                     Err((e, terminal)) => {
-                        let cs = self.checkout.as_mut().unwrap();
                         if terminal {
                             log::error!("[CONNECT] Charge poll terminal error: {}", e);
-                            cs.phase = CheckoutPhase::Failed(e);
+                            cs.resume_phase = Some(cs.phase.clone());
+                            cs.phase = CheckoutPhase::PollFailed(e);
                         } else {
                             cs.poll_errors += 1;
                             if cs.poll_errors >= 3 {
@@ -2669,21 +3154,510 @@ impl ConnectAccountPanel {
                                     cs.poll_errors,
                                     e
                                 );
-                                cs.phase = CheckoutPhase::Failed(e);
+                                cs.resume_phase = Some(cs.phase.clone());
+                                cs.phase = CheckoutPhase::PollFailed(e);
                             } else {
                                 log::warn!(
                                     "[CONNECT] Charge poll error ({}/3): {}",
                                     cs.poll_errors,
                                     e
                                 );
-                                return iced::Task::done(Message::View(
-                                    view::Message::ConnectAccount(
-                                        ConnectAccountMessage::PollChargeStatus,
-                                    ),
-                                ));
+                                return poll;
                             }
                         }
                     }
+                }
+            }
+
+            ConnectAccountMessage::SetReviewCycle(cycle) => {
+                if let Some(cs) = self
+                    .checkout
+                    .as_mut()
+                    .filter(|cs| cs.phase == CheckoutPhase::Review)
+                {
+                    cs.cycle = cycle;
+                    self.selected_billing_cycle = cycle;
+                    // Monthly → annual on a card is a card upgrade even with
+                    // auto-renewal off: switch to the card change preview
+                    // instead of a bitcoin invoice the API would refuse.
+                    let tier = cs.tier.clone();
+                    if self.card_change_route(&tier, cycle) {
+                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::ReviewPlanChange(tier),
+                        )));
+                    }
+                }
+            }
+
+            ConnectAccountMessage::SelectPayWith(pay_with) => {
+                let card_ok = self.card_payments_enabled()
+                    && !self.plan.as_ref().is_some_and(|p| p.is_card());
+                if let Some(cs) = self
+                    .checkout
+                    .as_mut()
+                    .filter(|cs| cs.phase == CheckoutPhase::Review)
+                {
+                    cs.pay_with = if pay_with == PayWith::Card && !card_ok {
+                        PayWith::Bitcoin
+                    } else {
+                        pay_with
+                    };
+                }
+            }
+
+            ConnectAccountMessage::StartCardCheckout => {
+                if !self.purchasing_enabled() || !self.card_payments_enabled() {
+                    return iced::Task::none();
+                }
+                let Some(cs) = self.checkout.as_mut().filter(|cs| {
+                    matches!(
+                        cs.phase,
+                        CheckoutPhase::Review
+                            | CheckoutPhase::CardCancelled
+                            | CheckoutPhase::CardFailed { .. }
+                    ) && cs.tier != PlanTier::Free
+                }) else {
+                    return iced::Task::none();
+                };
+                self.checkout_seq += 1;
+                let id = self.checkout_seq;
+                cs.id = id;
+                cs.pay_with = PayWith::Card;
+                cs.phase = CheckoutPhase::CardOpening;
+                cs.card_session = None;
+                cs.browser_polls = 0;
+                cs.poll_errors = 0;
+                let req = PlanChangeRequest {
+                    plan: cs.tier.clone(),
+                    billing_cycle: cs.cycle,
+                    proration_date: None,
+                };
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.create_card_checkout(req).await.map_err(refusal) },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::CardCheckoutCreated(result, gen, id),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::CardCheckoutCreated(result, gen, id) => {
+                if gen != self.session_generation || !self.is_current_checkout(id) {
+                    return iced::Task::none();
+                }
+                let cs = self.checkout.as_mut().expect("checked above");
+                if cs.phase != CheckoutPhase::CardOpening {
+                    return iced::Task::none();
+                }
+                match result {
+                    Ok(session) => {
+                        let url = session.url.clone();
+                        cs.card_session = Some(session);
+                        cs.phase = CheckoutPhase::CardInBrowser;
+                        // Card details are entered on Stripe's page only (I1).
+                        return iced::Task::batch([
+                            iced::Task::done(Message::View(view::Message::OpenUrl(url))),
+                            iced::Task::done(Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::PollCardPlan(id),
+                            ))),
+                        ]);
+                    }
+                    Err((message, refused)) => {
+                        cs.phase = CheckoutPhase::CardFailed { message, refused };
+                    }
+                }
+            }
+
+            ConnectAccountMessage::PollCardPlan(id) => {
+                if !self
+                    .checkout
+                    .as_ref()
+                    .is_some_and(|cs| cs.id == id && cs.phase.polls_plan())
+                {
+                    return iced::Task::none();
+                }
+                let gen = self.session_generation;
+                // Sequenced when sent, like every other plan fetch, so it
+                // never outranks a reload sent after it.
+                self.plan_seq = self.plan_seq.wrapping_add(1);
+                let seq = self.plan_seq;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        client.get_connect_plan().await.map_err(|e| e.to_string())
+                    },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::CardPlanPolled(result, gen, id, seq),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::CardPlanPolled(result, gen, id, seq) => {
+                if gen != self.session_generation || !self.is_current_checkout(id) {
+                    return iced::Task::none();
+                }
+                let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PollCardPlan(id),
+                )));
+                let now = chrono::Utc::now();
+                let cs = self.checkout.as_mut().expect("checked above");
+                if !cs.phase.polls_plan() {
+                    return iced::Task::none();
+                }
+                match result {
+                    Ok(plan) => {
+                        cs.poll_errors = 0;
+                        cs.browser_polls = cs.browser_polls.saturating_add(1);
+                        let next = next_card_phase(&cs.phase, cs, &plan, now);
+                        let done = next != cs.phase;
+                        cs.phase = next;
+                        if done && !cs.phase.polls_plan() {
+                            if matches!(
+                                cs.phase,
+                                CheckoutPhase::CardActive | CheckoutPhase::ChangeDone { .. }
+                            ) {
+                                self.billing_history = None;
+                                let history = self.reload_billing_history();
+                                // Same ordering rule as `PlanReloaded`: a
+                                // newer answer already shown wins.
+                                if seq > self.applied_plan_seq {
+                                    self.applied_plan_seq = seq;
+                                    self.apply_loaded_plan(Some(plan));
+                                }
+                                // The poll waits before it reads, so a fetch
+                                // sent after it may have read the server
+                                // first, whichever response lands first.
+                                // Fetch once more so the screen settles on
+                                // the current plan.
+                                if self.plan_seq != seq {
+                                    let fresh = self.plan_fetch_task();
+                                    return iced::Task::batch([history, fresh]);
+                                }
+                                return history;
+                            }
+                            return iced::Task::none();
+                        }
+                        if cs.browser_polls >= MAX_BROWSER_POLLS {
+                            cs.phase = CheckoutPhase::PollFailed(
+                                "Still waiting after 30 minutes".to_string(),
+                            );
+                            return iced::Task::none();
+                        }
+                        return poll;
+                    }
+                    Err(e) => {
+                        cs.poll_errors += 1;
+                        if cs.poll_errors >= 3 {
+                            log::error!("[CONNECT] Card plan poll failed: {}", e);
+                            cs.phase = CheckoutPhase::PollFailed(e);
+                        } else {
+                            return poll;
+                        }
+                    }
+                }
+            }
+
+            ConnectAccountMessage::ReopenCardPage => {
+                if let Some(url) = self.checkout.as_ref().and_then(|cs| match cs.phase {
+                    CheckoutPhase::CardInBrowser => cs.card_session.as_ref().map(|s| s.url.clone()),
+                    CheckoutPhase::ChangeInBrowser => cs.action_url.clone(),
+                    _ => None,
+                }) {
+                    return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+                }
+            }
+
+            ConnectAccountMessage::BackToReview { pay_with } => {
+                // "Cancel" on the browser screen, "Try card again" and "Pay
+                // with bitcoin instead" (C2, C4, C5): back to Review with a
+                // new generation, so a late poll can't move it.
+                if let Some(cs) = self.checkout.as_mut().filter(|cs| {
+                    matches!(
+                        cs.phase,
+                        CheckoutPhase::CardInBrowser
+                            | CheckoutPhase::CardCancelled
+                            | CheckoutPhase::CardFailed { .. }
+                    )
+                }) {
+                    self.checkout_seq += 1;
+                    cs.id = self.checkout_seq;
+                    cs.phase = CheckoutPhase::Review;
+                    cs.pay_with = pay_with;
+                    cs.card_session = None;
+                    cs.browser_polls = 0;
+                    cs.poll_errors = 0;
+                }
+            }
+
+            ConnectAccountMessage::ChangePreviewLoaded(result, gen, id) => {
+                if gen != self.session_generation || !self.is_current_checkout(id) {
+                    return iced::Task::none();
+                }
+                let cs = self.checkout.as_mut().expect("checked above");
+                if cs.phase != CheckoutPhase::ChangePreviewing {
+                    return iced::Task::none();
+                }
+                match result {
+                    Ok(preview) => {
+                        cs.preview = Some(preview);
+                        cs.phase = CheckoutPhase::ChangeReview;
+                    }
+                    Err((message, refused)) => {
+                        cs.phase = CheckoutPhase::ChangeFailed { message, refused };
+                    }
+                }
+            }
+
+            ConnectAccountMessage::ConfirmPlanChange => {
+                let Some(cs) = self
+                    .checkout
+                    .as_mut()
+                    .filter(|cs| cs.phase == CheckoutPhase::ChangeReview)
+                else {
+                    return iced::Task::none();
+                };
+                cs.phase = CheckoutPhase::ChangeApplying;
+                let id = cs.id;
+                let req = PlanChangeRequest {
+                    plan: cs.tier.clone(),
+                    billing_cycle: cs.cycle,
+                    proration_date: cs.preview.as_ref().and_then(|p| p.proration_date.clone()),
+                };
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.change_plan(req).await.map_err(refusal) },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::PlanChangeApplied(result, gen, id),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::PlanChangeApplied(result, gen, id) => {
+                if gen != self.session_generation || !self.is_current_checkout(id) {
+                    return iced::Task::none();
+                }
+                let cs = self.checkout.as_mut().expect("checked above");
+                if cs.phase != CheckoutPhase::ChangeApplying {
+                    return iced::Task::none();
+                }
+                match result {
+                    Ok(change) => match change.status.as_str() {
+                        "requires_action" => match change.url.filter(|u| !u.is_empty()) {
+                            Some(url) => {
+                                cs.action_url = Some(url.clone());
+                                cs.phase = CheckoutPhase::ChangeInBrowser;
+                                return iced::Task::batch([
+                                    iced::Task::done(Message::View(view::Message::OpenUrl(url))),
+                                    iced::Task::done(Message::View(view::Message::ConnectAccount(
+                                        ConnectAccountMessage::PollCardPlan(id),
+                                    ))),
+                                ]);
+                            }
+                            // Nothing says whether the change took effect:
+                            // never claim it failed with nothing charged.
+                            None => {
+                                return self.enter_change_unconfirmed(
+                                    "Your bank asked to confirm the payment, but Connect \
+                                     sent no page to confirm it on"
+                                        .to_string(),
+                                );
+                            }
+                        },
+                        "paid" | "scheduled" => {
+                            cs.phase = CheckoutPhase::ChangeDone {
+                                scheduled: change.status == "scheduled",
+                            };
+                            return self.reload_plan_billing();
+                        }
+                        other => {
+                            log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
+                            let message = format!(
+                                "Connect returned \"{other}\", which this version of Tenshu \
+                                 doesn't know"
+                            );
+                            return self.enter_change_unconfirmed(message);
+                        }
+                    },
+                    // A refusal changed nothing. Anything else (no answer, a
+                    // 5xx) may have applied the change and charged the card:
+                    // say so and reload the plan.
+                    Err((message, true)) => {
+                        cs.phase = CheckoutPhase::ChangeFailed {
+                            message,
+                            refused: true,
+                        };
+                    }
+                    Err((message, false)) => {
+                        return self.enter_change_unconfirmed(message);
+                    }
+                }
+            }
+
+            ConnectAccountMessage::RetryPlanRefresh => {
+                if let Some(CheckoutPhase::ChangeUnconfirmed { message, .. }) =
+                    self.checkout.as_ref().map(|cs| cs.phase.clone())
+                {
+                    return self.enter_change_unconfirmed(message);
+                }
+            }
+
+            ConnectAccountMessage::ShowAutoRenewOff(show) => {
+                self.confirm_auto_renew_off = show;
+                self.card_request_error = None;
+                if show {
+                    // From the Free switch on Review: back to Plan & billing.
+                    if self
+                        .checkout
+                        .as_ref()
+                        .is_some_and(|cs| cs.phase == CheckoutPhase::Review)
+                    {
+                        self.checkout = None;
+                    }
+                    self.show_plan_comparison = false;
+                    self.show_billing_history = false;
+                }
+            }
+
+            ConnectAccountMessage::SetAutoRenew(enabled) => {
+                if self.card_request_busy {
+                    return iced::Task::none();
+                }
+                self.card_request_busy = true;
+                self.card_request_error = None;
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move {
+                        client
+                            .set_auto_renew(enabled)
+                            .await
+                            .map_err(|e| e.to_string())
+                    },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::CardRequestDone(result.map(|_| None), gen),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::OpenCardPortal => {
+                if self.card_request_busy {
+                    return iced::Task::none();
+                }
+                self.card_request_busy = true;
+                self.card_request_error = None;
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move {
+                        client
+                            .create_card_portal()
+                            .await
+                            .map(|p| Some(p.url))
+                            .map_err(|e| e.to_string())
+                    },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::CardRequestDone(result, gen),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::KeepCurrentPlan => {
+                if self.card_request_busy {
+                    return iced::Task::none();
+                }
+                self.card_request_busy = true;
+                self.card_request_error = None;
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.cancel_plan_change().await.map_err(|e| e.to_string()) },
+                    move |result| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::CardRequestDone(result.map(|_| None), gen),
+                        ))
+                    },
+                );
+            }
+
+            ConnectAccountMessage::CardRequestDone(result, gen) => {
+                if gen != self.session_generation {
+                    return iced::Task::none();
+                }
+                self.card_request_busy = false;
+                match result {
+                    // The portal: open Stripe's page (update card only, I1).
+                    Ok(Some(url)) => {
+                        return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+                    }
+                    Ok(None) => {
+                        self.confirm_auto_renew_off = false;
+                        return self.reload_plan_billing();
+                    }
+                    Err(e) => {
+                        self.card_request_error = Some(e);
+                    }
+                }
+            }
+
+            ConnectAccountMessage::SelectPaymentNetwork(network) => {
+                if let Some(cs) = self.checkout.as_mut() {
+                    cs.network = network;
+                }
+            }
+
+            ConnectAccountMessage::ShowInvoiceHere => {
+                if let Some(cs) = self
+                    .checkout
+                    .as_mut()
+                    .filter(|cs| cs.phase == CheckoutPhase::PayingInBrowser)
+                {
+                    cs.phase = CheckoutPhase::AwaitingPayment;
+                }
+            }
+
+            ConnectAccountMessage::ResumeChargePolling => {
+                if let Some(cs) = self
+                    .checkout
+                    .as_mut()
+                    .filter(|cs| matches!(cs.phase, CheckoutPhase::PollFailed(_)))
+                {
+                    cs.poll_errors = 0;
+                    cs.browser_polls = 0;
+                    let id = cs.id;
+                    // Resume whichever chain stopped: the card checkout or
+                    // 3-D Secure confirmation polls the plan; an invoice
+                    // polls its charge.
+                    let msg = if cs.action_url.is_some() {
+                        cs.phase = CheckoutPhase::ChangeInBrowser;
+                        ConnectAccountMessage::PollCardPlan(id)
+                    } else if cs.card_session.is_some() {
+                        cs.phase = CheckoutPhase::CardInBrowser;
+                        ConnectAccountMessage::PollCardPlan(id)
+                    } else {
+                        // Back to the phase polling stopped in (never a
+                        // fresh "send the full amount" after a partial
+                        // payment).
+                        cs.phase = cs
+                            .resume_phase
+                            .take()
+                            .filter(CheckoutPhase::polls)
+                            .unwrap_or(CheckoutPhase::AwaitingPayment);
+                        ConnectAccountMessage::PollChargeStatus(id)
+                    };
+                    return iced::Task::done(Message::View(view::Message::ConnectAccount(msg)));
                 }
             }
 
@@ -2692,6 +3666,15 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::OpenCheckoutUrl(url) => {
+                // B4: the BTCPay page is open. The poll chain keeps running
+                // (PayingInBrowser polls), so this screen still updates.
+                if let Some(cs) = self
+                    .checkout
+                    .as_mut()
+                    .filter(|cs| cs.phase == CheckoutPhase::AwaitingPayment)
+                {
+                    cs.phase = CheckoutPhase::PayingInBrowser;
+                }
                 return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
             }
 
@@ -2712,6 +3695,12 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::ComparePlans(show) => {
+                // Leaving Review (or a finished Expired / Failed checkout)
+                // returns to Change plan; an invoice that is still out for
+                // payment is never dropped this way.
+                if self.checkout.as_ref().is_some_and(|cs| cs.phase.leavable()) {
+                    self.checkout = None;
+                }
                 self.active_sub = ConnectSubMenu::PlanBilling;
                 self.show_billing_history = false;
                 self.show_plan_comparison = show;
@@ -2744,10 +3733,11 @@ impl ConnectAccountPanel {
                 if let Some(cycle) = cycle {
                     self.selected_billing_cycle = cycle;
                 }
-                // Reuse the existing StartCheckout path so the invoice
-                // creation + polling stay in one place.
+                // Renew goes through Review (board 1 "Renew Pro" → board 3)
+                // so the amount and covered dates are shown before an
+                // invoice is created.
                 return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::StartCheckout(tier),
+                    ConnectAccountMessage::ReviewPlanChange(tier),
                 )));
             }
 
@@ -2756,23 +3746,9 @@ impl ConnectAccountPanel {
                 if self.show_billing_history {
                     self.show_plan_comparison = false;
                     let gen = self.session_generation;
-                    let c1 = self.client.clone();
                     let c2 = self.client.clone();
                     return iced::Task::batch([
-                        iced::Task::perform(
-                            async move { c1.get_billing_history().await },
-                            move |res| match res {
-                                Ok(history) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::BillingHistoryLoaded(
-                                        Err((&e).into()),
-                                        gen,
-                                    ),
-                                )),
-                            },
-                        ),
+                        self.reload_billing_history(),
                         iced::Task::perform(
                             async move {
                                 match c2.get_user().await {
@@ -2978,16 +3954,7 @@ impl ConnectAccountPanel {
                 // plan fetch to here, so the real plan (including any
                 // server-side auto-applied grant) still loads. This is the only
                 // plan fetch on that path, so there's no racing PlanLoaded.
-                let g = self.session_generation;
-                let c = self.client.clone();
-                return iced::Task::perform(
-                    async move { (c.get_connect_plan().await.ok(), g) },
-                    |(plan, g)| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PlanLoaded(plan, g),
-                        ))
-                    },
-                );
+                return self.plan_fetch_task();
             }
             ConnectAccountMessage::DuressStateChecked(outcome, gen, attempt) => {
                 // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
@@ -3023,6 +3990,10 @@ impl ConnectAccountPanel {
                         self.step = ConnectFlowStep::Dashboard;
                         self.signed_out_by = None;
                         self.unverified = None;
+                        // Plan & billing opened while the session was still
+                        // being checked loaded nothing; load its history now,
+                        // on every return path below.
+                        let billing = self.billing_history_if_open();
                         // Cache the fetched state before any early return, so the
                         // Duress tab reflects the enabled state on its first paint
                         // rather than briefly showing enrollment CTAs.
@@ -3037,10 +4008,10 @@ impl ConnectAccountPanel {
                         // device already holds a code).
                         if needs_device_register {
                             if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                                return register_device_duress_task(
-                                    self.client.clone(),
-                                    account_id,
-                                );
+                                return iced::Task::batch([
+                                    billing,
+                                    register_device_duress_task(self.client.clone(), account_id),
+                                ]);
                             }
                         }
                         // Launch reconcile (Issue 2, PR 4): bring this device's
@@ -3085,9 +4056,10 @@ impl ConnectAccountPanel {
                                         },
                                     )
                                 };
-                                return task;
+                                return iced::Task::batch([billing, task]);
                             }
                         }
+                        return billing;
                     }
                     // Transient (network / 5xx / rate-limit) — retry with
                     // backoff while attempts remain.
@@ -3232,6 +4204,10 @@ impl ConnectAccountPanel {
         self.register_campaign_code = String::new();
         self.pending_campaign_code = None;
         self.selected_billing_cycle = BillingCycle::Monthly;
+        self.selected_plan_tier = None;
+        self.confirm_auto_renew_off = false;
+        self.card_request_busy = false;
+        self.card_request_error = None;
         self.contacts_state.clear();
         self.duress_contacts.clear();
         self.duress_cubes = None;
@@ -3689,6 +4665,7 @@ impl ConnectAccountPanel {
                 self.signed_out_by = None;
                 self.unverified = None;
                 self.error = None;
+                return self.billing_history_if_open();
             }
 
             // ── Enrollment wizard (Phases 2 & 8) ──
@@ -5032,20 +6009,110 @@ impl Default for ConnectAccountPanel {
 
 // ── Plan lifecycle / pricing-schema helpers (D1 / D3 / D4) ──────────────────
 impl ConnectAccountPanel {
+    /// Whether checkout generation `id` is the one on screen.
+    fn is_current_checkout(&self, id: u64) -> bool {
+        self.checkout.as_ref().is_some_and(|cs| cs.id == id)
+    }
+
+    /// What opening Plan & billing loads: the plan (a payment confirmed after
+    /// the user left the pay screen shows here) and billing history.
+    pub fn reload_plan_billing(&mut self) -> iced::Task<Message> {
+        iced::Task::batch([self.plan_fetch_task(), self.reload_billing_history()])
+    }
+
+    /// Fetch `/connect/plan` under a new sequence number. Every plan fetch
+    /// (sign-in, after a redeem, Plan & billing, after a payment) goes
+    /// through here, so only the newest response applies (`PlanReloaded`).
+    pub fn plan_fetch_task(&mut self) -> iced::Task<Message> {
+        let gen = self.session_generation;
+        self.plan_seq = self.plan_seq.wrapping_add(1);
+        let seq = self.plan_seq;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.get_connect_plan().await.ok() },
+            move |plan| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PlanReloaded(plan, gen, seq),
+                ))
+            },
+        )
+    }
+
+    /// An unconfirmed plan change: reload the plan and track the reload, so
+    /// the screen never claims Plan & billing is current before it is.
+    fn enter_change_unconfirmed(&mut self, message: String) -> iced::Task<Message> {
+        let task = self.reload_plan_billing();
+        let seq = self.plan_seq;
+        if let Some(cs) = self.checkout.as_mut() {
+            cs.phase = CheckoutPhase::ChangeUnconfirmed {
+                message,
+                refresh: PlanRefresh::Pending(seq),
+            };
+        }
+        task
+    }
+
+    /// Billing history for Plan & billing when it's the open section:
+    /// opening it before the session was confirmed requested nothing.
+    fn billing_history_if_open(&self) -> iced::Task<Message> {
+        if matches!(self.active_sub, ConnectSubMenu::PlanBilling) {
+            self.reload_billing_history()
+        } else {
+            iced::Task::none()
+        }
+    }
+
+    fn apply_loaded_plan(&mut self, plan: Option<ConnectPlan>) {
+        // Seed the picker's period from the plan, but never move it under
+        // someone choosing a plan.
+        if self.checkout.is_none() && !self.show_plan_comparison {
+            if let Some(cycle) = plan.as_ref().and_then(|p| p.billing_cycle) {
+                self.selected_billing_cycle = cycle;
+            }
+        }
+        self.plan = plan;
+        self.leave_hidden_duress_route();
+    }
+
+    /// Fetch `GET /connect/billing/history` for Plan & billing's inline
+    /// list and the full history page. Tagged with the session generation.
+    pub fn reload_billing_history(&self) -> iced::Task<Message> {
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.get_billing_history().await },
+            move |res| match res {
+                Ok(history) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::BillingHistoryLoaded(Err((&e).into()), gen),
+                )),
+            },
+        )
+    }
+
     /// Classify the current plan against `now`. Pure (takes the clock as
     /// an argument) so the banner/expired-state branching is unit-testable.
     pub fn plan_lifecycle_at(&self, now: chrono::DateTime<chrono::Utc>) -> PlanLifecycle {
         let Some(plan) = self.plan.as_ref() else {
             return PlanLifecycle::Free;
         };
-        // The backend demotes a lapsed paid plan and reports it as
-        // `past_due` — surface that as Expired regardless of the tier it
-        // was reset to.
+        // `past_due` with a future grace end is a failing card renewal: the
+        // tier is still on (billing v2 B4). Otherwise the backend has
+        // demoted a lapsed plan: Expired, whatever tier it reports.
         if matches!(plan.status, PlanStatus::PastDue) {
-            return PlanLifecycle::Expired;
+            return match plan.grace_until(now) {
+                Some(grace_ends_at) => PlanLifecycle::PastDue { grace_ends_at },
+                None => PlanLifecycle::Expired,
+            };
         }
         if matches!(plan.plan, PlanTier::Free) {
             return PlanLifecycle::Free;
+        }
+        // A card that renews by itself needs no renewal reminder.
+        if plan.card_auto_renews() {
+            return PlanLifecycle::Active;
         }
         // Paid + active: decide on the renewal window.
         let Some(renewal_raw) = plan.renewal_at.as_deref() else {
@@ -5080,6 +6147,46 @@ impl ConnectAccountPanel {
     /// backends that don't send it (and for fall GA once a campaign closes).
     /// A campaign that disables purchasing sets it `false`, hiding every
     /// purchase surface (PLAN-estate-promo PR2).
+    /// Whether buying `tier` at `cycle` goes through the card subscription
+    /// (preview + change) rather than a bitcoin invoice or a new checkout:
+    /// cards are on, the plan is an active, started card (not past due, not
+    /// trialing while a paid period runs first), and either it renews by
+    /// itself (bitcoin is refused then, decision 15) or this is an upgrade
+    /// (with auto-renewal off, bitcoin is refused for a higher tier and the
+    /// card subscription takes upgrades).
+    pub fn card_change_route(&self, tier: &PlanTier, cycle: BillingCycle) -> bool {
+        let Some(plan) = self.plan.as_ref() else {
+            return false;
+        };
+        if *tier == PlanTier::Free
+            || !self.card_payments_enabled()
+            || !plan.is_card()
+            || plan.billing_cycle.is_none()
+            || matches!(self.plan_lifecycle(), PlanLifecycle::PastDue { .. })
+        {
+            return false;
+        }
+        let rank = |t: &PlanTier| match t {
+            PlanTier::Free => 0,
+            PlanTier::Pro => 1,
+            PlanTier::Estate => 2,
+        };
+        let upgrade = rank(tier) > rank(plan.tier())
+            || (tier == plan.tier()
+                && cycle == BillingCycle::Annual
+                && plan.billing_cycle == Some(BillingCycle::Monthly));
+        plan.auto_renew == Some(true) || upgrade
+    }
+
+    /// Card payment is offered (B1 `cardPaymentsEnabled`). Fails closed:
+    /// unknown features or an absent flag mean Card is "Coming soon".
+    pub fn card_payments_enabled(&self) -> bool {
+        self.features
+            .as_ref()
+            .and_then(|f| f.card_payments_enabled)
+            .unwrap_or(false)
+    }
+
     pub fn purchasing_enabled(&self) -> bool {
         match &self.features {
             None => false,
@@ -7327,6 +8434,14 @@ mod plan_lifecycle_tests {
             entitlements: PlanEntitlements::default(),
             billing_cycle: cycle,
             plan_provenance: None,
+            pending_plan: None,
+            pending_plan_at: None,
+            pending_billing_cycle: None,
+            payment_method: None,
+            auto_renew: None,
+            next_charge_at: None,
+            next_charge_amount: None,
+            grace_ends_at: None,
         }
     }
 
@@ -7500,6 +8615,7 @@ mod plan_lifecycle_tests {
                 price: None,
                 features: Vec::new(),
                 included_linked_participants: None,
+                entitlements: None,
             }],
             pricing_schema_version: version,
             purchasing_enabled,
@@ -7509,6 +8625,7 @@ mod plan_lifecycle_tests {
             p2p_enabled: None,
             duress_enabled: None,
             bitcoin_blake2b_enabled: None,
+            card_payments_enabled: None,
         }
     }
 
@@ -8195,6 +9312,1375 @@ mod plan_lifecycle_tests {
     }
 
     #[test]
+    fn review_plan_change_opens_review_with_tier_and_cycle() {
+        let mut panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-01-01T00:00:00Z"),
+            Some(BillingCycle::Monthly),
+        ));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        panel.show_plan_comparison = true;
+        panel.selected_billing_cycle = BillingCycle::Annual;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let cs = panel.checkout.as_ref().expect("review opened");
+        assert!(matches!(cs.phase, CheckoutPhase::Review));
+        assert_eq!(cs.tier, PlanTier::Estate);
+        assert_eq!(cs.cycle, BillingCycle::Annual);
+        assert!(!panel.show_plan_comparison);
+        assert_eq!(panel.selected_plan_tier, Some(PlanTier::Estate));
+
+        // Back returns to Change plan and drops the un-invoiced review.
+        let _ = panel.update_message(ConnectAccountMessage::ComparePlans(true));
+        assert!(panel.checkout.is_none());
+        assert!(panel.show_plan_comparison);
+    }
+
+    #[test]
+    fn review_plan_change_blocked_while_purchasing_closed_or_invoice_open() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(false)));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        assert!(panel.checkout.is_none());
+
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert!(matches!(cs.phase, CheckoutPhase::Creating));
+        assert_eq!(cs.tier, PlanTier::Pro);
+        // Change plan never drops an invoice that is out for payment.
+        let _ = panel.update_message(ConnectAccountMessage::ComparePlans(true));
+        assert!(panel.checkout.is_some());
+    }
+
+    #[test]
+    fn start_checkout_uses_the_reviewed_cycle() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        panel.selected_billing_cycle = BillingCycle::Annual;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        // The picker's toggle moving afterwards doesn't change the invoice.
+        panel.selected_billing_cycle = BillingCycle::Monthly;
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert!(matches!(cs.phase, CheckoutPhase::Creating));
+        assert_eq!(cs.cycle, BillingCycle::Annual);
+    }
+
+    #[test]
+    fn renew_current_plan_opens_review_for_the_current_tier_and_cycle() {
+        let mut panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2026-06-13T00:00:00Z"),
+            Some(BillingCycle::Annual),
+        ));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        let task = panel.update_message(ConnectAccountMessage::RenewCurrentPlan);
+        drop(task);
+        // The task re-dispatches ReviewPlanChange; apply it as the runtime would.
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert!(matches!(cs.phase, CheckoutPhase::Review));
+        assert_eq!(cs.cycle, BillingCycle::Annual);
+    }
+
+    // ── Billing v2 D3: BTCPay phases and the per-checkout poll guard ──
+
+    fn charge_status(json: &str) -> ChargeStatusResponse {
+        serde_json::from_str(json).expect("charge status parses")
+    }
+
+    fn checkout_resp() -> CheckoutResponse {
+        serde_json::from_str(
+            r#"{"chargeId":"inv-1","lightningInvoice":"lnbc1fullinvoice","onChainAddress":"bc1qaddr",
+                "amountSats":100000,"amountFiat":100,"fiatCurrency":"USD","plan":"pro",
+                "billingCycle":"annual","checkoutUrl":"https://pay.example/i/inv-1","expiresAt":null}"#,
+        )
+        .expect("checkout parses with a null expiresAt")
+    }
+
+    /// A panel with an invoice out for payment (checkout generation `id`).
+    fn awaiting_panel() -> (ConnectAccountPanel, u64, u64) {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let id = panel.checkout.as_ref().unwrap().id;
+        let gen = panel.session_generation;
+        let _ = panel.update_message(ConnectAccountMessage::CheckoutCreated(
+            Ok(checkout_resp()),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::AwaitingPayment
+        );
+        (panel, gen, id)
+    }
+
+    #[test]
+    fn charge_states_map_to_btcpay_phases() {
+        use CheckoutPhase as P;
+        let awaiting = P::AwaitingPayment;
+        let cases = [
+            (
+                r#"{"chargeId":"c","status":"unpaid","plan":"pro"}"#,
+                P::AwaitingPayment,
+                true,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c","status":"processing","plan":"pro"}"#,
+                P::Processing,
+                true,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c","status":"paid","plan":"pro"}"#,
+                P::Paid { overpaid_sats: 0 },
+                false,
+                true,
+            ),
+            (
+                r#"{"chargeId":"c","status":"expired","plan":"pro"}"#,
+                P::Expired,
+                false,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c","status":"unpaid","state":"partially_paid","plan":"pro",
+                    "amountReceivedSats":62000,"amountDueSats":38000}"#,
+                P::PartlyPaid {
+                    received_sats: 62_000,
+                    due_sats: 38_000,
+                },
+                true,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c","invoiceId":"INV9","status":"expired","state":"needs_support",
+                    "plan":"pro","amountReceivedSats":5000,"additionalStatus":"PaidLate"}"#,
+                P::NeedsSupport {
+                    invoice_id: "INV9".into(),
+                    received_sats: 5_000,
+                },
+                false,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c","status":"paid","state":"paid","plan":"pro","overpaidSats":1200}"#,
+                P::Paid {
+                    overpaid_sats: 1_200,
+                },
+                false,
+                true,
+            ),
+            // Unknown values keep waiting instead of failing the poll.
+            (
+                r#"{"chargeId":"c","status":"refunding","state":"refunding","plan":"pro"}"#,
+                P::AwaitingPayment,
+                true,
+                false,
+            ),
+        ];
+        for (json, phase, polls, paid) in cases {
+            let status = charge_status(json);
+            assert_eq!(
+                next_checkout_phase(&awaiting, &status),
+                (phase, polls, paid),
+                "{}",
+                json
+            );
+        }
+        // Waiting on the BTCPay page stays there while unpaid.
+        let unpaid = charge_status(r#"{"chargeId":"c","status":"unpaid","plan":"pro"}"#);
+        assert_eq!(
+            next_checkout_phase(&P::PayingInBrowser, &unpaid).0,
+            P::PayingInBrowser
+        );
+        // Needs support falls back to the charge id when there is no invoice id.
+        let support = charge_status(
+            r#"{"chargeId":"c7","status":"expired","state":"needs_support","plan":"pro"}"#,
+        );
+        assert_eq!(
+            next_checkout_phase(&awaiting, &support).0,
+            P::NeedsSupport {
+                invoice_id: "c7".into(),
+                received_sats: 0
+            }
+        );
+    }
+
+    #[test]
+    fn polling_continues_after_opening_the_btcpay_page() {
+        let (mut panel, gen, id) = awaiting_panel();
+        let _ = panel.update_message(ConnectAccountMessage::OpenCheckoutUrl(
+            "https://pay.example/i/inv-1".into(),
+        ));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::PayingInBrowser);
+        assert!(
+            cs.phase.polls(),
+            "the poll chain keeps running in the browser phase"
+        );
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(charge_status(
+                r#"{"chargeId":"inv-1","status":"processing","plan":"pro"}"#,
+            )),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Processing
+        );
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(charge_status(
+                r#"{"chargeId":"inv-1","status":"paid","plan":"pro"}"#,
+            )),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Paid { overpaid_sats: 0 }
+        );
+    }
+
+    #[test]
+    fn a_stale_checkout_poll_never_updates_a_new_checkout() {
+        let (mut panel, gen, old_id) = awaiting_panel();
+        let _ = panel.update_message(ConnectAccountMessage::DismissCheckout);
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let new_id = panel.checkout.as_ref().unwrap().id;
+        assert_ne!(old_id, new_id);
+        // The dismissed invoice's poll and create results land late.
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(charge_status(
+                r#"{"chargeId":"inv-1","status":"paid","plan":"pro"}"#,
+            )),
+            gen,
+            old_id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::CheckoutCreated(
+            Ok(checkout_resp()),
+            gen,
+            old_id,
+        ));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::Creating);
+        assert!(cs.checkout.is_none());
+    }
+
+    #[test]
+    fn three_transient_poll_errors_stop_polling_and_check_again_resumes() {
+        let (mut panel, gen, id) = awaiting_panel();
+        for _ in 0..2 {
+            let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+                Err(("timeout".into(), false)),
+                gen,
+                id,
+            ));
+            assert_eq!(
+                panel.checkout.as_ref().unwrap().phase,
+                CheckoutPhase::AwaitingPayment
+            );
+        }
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Err(("timeout".into(), false)),
+            gen,
+            id,
+        ));
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::PollFailed(_)
+        ));
+        // Check again resumes the same invoice; it never creates another.
+        let _ = panel.update_message(ConnectAccountMessage::ResumeChargePolling);
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::AwaitingPayment);
+        assert_eq!(cs.id, id);
+        assert_eq!(cs.poll_errors, 0);
+        // A terminal (4xx) error stops at once.
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Err(("not found".into(), true)),
+            gen,
+            id,
+        ));
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::PollFailed(_)
+        ));
+    }
+
+    #[test]
+    fn expired_create_new_invoice_issues_a_new_checkout_for_the_same_plan() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        panel.selected_billing_cycle = BillingCycle::Annual;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let id = panel.checkout.as_ref().unwrap().id;
+        let gen = panel.session_generation;
+        let _ = panel.update_message(ConnectAccountMessage::CheckoutCreated(
+            Ok(checkout_resp()),
+            gen,
+            id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(charge_status(
+                r#"{"chargeId":"inv-1","status":"expired","plan":"pro"}"#,
+            )),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Expired
+        );
+        panel.selected_billing_cycle = BillingCycle::Monthly;
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::Creating);
+        assert!(cs.id > id);
+        assert_eq!(cs.cycle, BillingCycle::Annual);
+    }
+
+    #[test]
+    fn partly_paid_switches_to_on_chain_for_the_remaining_amount() {
+        let (mut panel, gen, id) = awaiting_panel();
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(charge_status(
+                r#"{"chargeId":"inv-1","status":"unpaid","state":"partially_paid","plan":"pro",
+                    "amountReceivedSats":62000,"amountDueSats":38000}"#,
+            )),
+            gen,
+            id,
+        ));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(
+            cs.phase,
+            CheckoutPhase::PartlyPaid {
+                received_sats: 62_000,
+                due_sats: 38_000
+            }
+        );
+        assert_eq!(cs.network, PaymentNetwork::OnChain);
+        assert!(cs.onchain_qr.is_some());
+        assert_eq!(
+            bip21_uri("bc1qaddr", 38_000),
+            "bitcoin:bc1qaddr?amount=0.00038"
+        );
+        assert_eq!(
+            bip21_uri("bc1qaddr", 100_000_000),
+            "bitcoin:bc1qaddr?amount=1"
+        );
+    }
+
+    #[test]
+    fn start_checkout_never_replaces_an_invoice_out_for_payment() {
+        let (mut panel, _gen, id) = awaiting_panel();
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.id, id);
+        assert_eq!(cs.phase, CheckoutPhase::AwaitingPayment);
+    }
+
+    #[test]
+    fn a_refused_create_is_not_reported_as_a_network_failure() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let id = panel.checkout.as_ref().unwrap().id;
+        let gen = panel.session_generation;
+        let _ = panel.update_message(ConnectAccountMessage::CheckoutCreated(
+            Err((
+                "A plan change is already scheduled for the end of this period".into(),
+                true,
+            )),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Failed {
+                message: "A plan change is already scheduled for the end of this period".into(),
+                refused: true
+            }
+        );
+    }
+
+    #[test]
+    fn change_plan_leaves_a_refused_checkout() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        let _ = panel.update_message(ConnectAccountMessage::StartCheckout(PlanTier::Pro));
+        let id = panel.checkout.as_ref().unwrap().id;
+        let gen = panel.session_generation;
+        let _ = panel.update_message(ConnectAccountMessage::CheckoutCreated(
+            Err(("A plan change is already scheduled".into(), true)),
+            gen,
+            id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ComparePlans(true));
+        assert!(panel.checkout.is_none());
+        assert!(panel.show_plan_comparison);
+    }
+
+    #[test]
+    fn free_review_opens_while_purchasing_is_closed_and_review_cycle_is_editable() {
+        let mut panel = panel_with_plan(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2099-01-01T00:00:00Z"),
+            None,
+        ));
+        panel.features = Some(features_with_purchasing(None, Some(false)));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Free));
+        assert!(panel.checkout.is_some());
+        panel.checkout = None;
+        panel.features = Some(features_with_purchasing(None, Some(true)));
+        panel.selected_billing_cycle = BillingCycle::Monthly;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let _ = panel.update_message(ConnectAccountMessage::SetReviewCycle(BillingCycle::Annual));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.cycle, BillingCycle::Annual);
+        assert!(cs.plan.is_some(), "Review snapshots the plan");
+    }
+
+    #[test]
+    fn pending_plan_fields_parse_leniently() {
+        let plan: ConnectPlan = serde_json::from_str(
+            r#"{"plan":"estate","status":"active","renewalAt":"2027-03-14T00:00:00Z",
+                "entitlements":{},"pendingPlan":"pro","pendingPlanAt":"2027-03-14T00:00:00Z",
+                "pendingBillingCycle":"annual"}"#,
+        )
+        .unwrap();
+        assert_eq!(plan.pending_plan, Some(PlanTier::Pro));
+        assert_eq!(plan.pending_billing_cycle, Some(BillingCycle::Annual));
+        // An empty or future value never drops the account to Free.
+        let plan: ConnectPlan = serde_json::from_str(
+            r#"{"plan":"estate","status":"active","renewalAt":null,"entitlements":{},
+                "pendingPlan":"","pendingBillingCycle":"quarterly"}"#,
+        )
+        .unwrap();
+        assert_eq!(plan.plan, PlanTier::Estate);
+        assert_eq!(plan.pending_plan, None);
+        assert_eq!(plan.pending_billing_cycle, None);
+    }
+
+    // ── Billing v2 Phase B: card checkout, card states, card changes ──
+
+    fn card_plan(tier: &str, auto_renew: bool, extra: &str) -> ConnectPlan {
+        serde_json::from_str(&format!(
+            r#"{{"plan":"{tier}","status":"active","renewalAt":"2099-03-14T00:00:00Z",
+                "entitlements":{{"cubeLimit":3}},"billingCycle":"annual",
+                "paymentMethod":{{"type":"card","brand":"visa","last4":"4242"}},
+                "autoRenew":{auto_renew},"nextChargeAt":"2099-03-14T00:00:00Z",
+                "nextChargeAmount":100{extra}}}"#
+        ))
+        .expect("B4 plan parses")
+    }
+
+    fn card_features(enabled: bool) -> FeaturesResponse {
+        let mut f = features_with_purchasing(None, Some(true));
+        f.card_payments_enabled = Some(enabled);
+        f
+    }
+
+    #[test]
+    fn b4_plan_fields_parse_and_older_plans_still_do() {
+        let plan = card_plan("pro", true, "");
+        assert!(plan.is_card());
+        assert!(plan.card_auto_renews());
+        assert_eq!(plan.card_label().as_deref(), Some("Visa •••• 4242"));
+        assert_eq!(plan.billing_cycle, Some(BillingCycle::Annual));
+        // A payment method this build doesn't know never fails the plan.
+        let odd: ConnectPlan = serde_json::from_str(
+            r#"{"plan":"pro","status":"active","renewalAt":null,"entitlements":{},
+                "paymentMethod":{"type":"paypal"},"billingCycle":"weekly"}"#,
+        )
+        .unwrap();
+        assert_eq!(odd.plan, PlanTier::Pro);
+        assert!(!odd.is_card());
+        assert_eq!(odd.billing_cycle, None);
+        let old: ConnectPlan = serde_json::from_str(
+            r#"{"plan":"pro","status":"active","renewalAt":null,"entitlements":{}}"#,
+        )
+        .unwrap();
+        assert!(old.payment_method.is_none() && old.grace_ends_at.is_none());
+    }
+
+    #[test]
+    fn past_due_with_a_future_grace_end_is_still_entitled() {
+        let now = at(NOW);
+        let mut plan = card_plan("estate", true, r#","graceEndsAt":"2026-06-20T00:00:00Z""#);
+        plan.status = PlanStatus::PastDue;
+        let panel = panel_with_plan(plan.clone());
+        assert!(matches!(
+            panel.plan_lifecycle_at(now),
+            PlanLifecycle::PastDue { .. }
+        ));
+        plan.grace_ends_at = Some("2026-06-01T00:00:00Z".into());
+        let panel = panel_with_plan(plan);
+        assert_eq!(panel.plan_lifecycle_at(now), PlanLifecycle::Expired);
+        // A card that renews by itself needs no renewal reminder.
+        let mut renewing = card_plan("pro", true, "");
+        renewing.renewal_at = Some("2026-06-13T00:00:00Z".into());
+        assert_eq!(
+            panel_with_plan(renewing).plan_lifecycle_at(now),
+            PlanLifecycle::Active
+        );
+    }
+
+    #[test]
+    fn card_is_unavailable_while_the_flag_is_off() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(card_features(false));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let _ = panel.update_message(ConnectAccountMessage::SelectPayWith(PayWith::Card));
+        assert_eq!(panel.checkout.as_ref().unwrap().pay_with, PayWith::Bitcoin);
+        let _ = panel.update_message(ConnectAccountMessage::StartCardCheckout);
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Review
+        );
+    }
+
+    #[test]
+    fn card_checkout_opens_stripe_then_polls_into_subscribed_or_cancelled() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(card_features(true));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        // Bitcoin is pre-selected (I3).
+        assert_eq!(panel.checkout.as_ref().unwrap().pay_with, PayWith::Bitcoin);
+        let _ = panel.update_message(ConnectAccountMessage::SelectPayWith(PayWith::Card));
+        let _ = panel.update_message(ConnectAccountMessage::StartCardCheckout);
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::CardOpening);
+        let (id, gen) = (cs.id, panel.session_generation);
+        let session = |expires: &str| CardCheckoutSession {
+            url: "https://checkout.stripe.example/c/1".into(),
+            session_id: "cs_1".into(),
+            expires_at: Some(expires.into()),
+            starts_at: None,
+        };
+        // A stale create result is dropped.
+        let _ = panel.update_message(ConnectAccountMessage::CardCheckoutCreated(
+            Ok(session("2099-01-01T00:00:00Z")),
+            gen,
+            id + 1,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::CardOpening
+        );
+        let _ = panel.update_message(ConnectAccountMessage::CardCheckoutCreated(
+            Ok(session("2099-01-01T00:00:00Z")),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::CardInBrowser
+        );
+        // Still Free: keep waiting.
+        panel.plan_seq += 1;
+        let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
+            Ok(plan(PlanTier::Free, PlanStatus::Active, None, None)),
+            gen,
+            id,
+            panel.plan_seq,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::CardInBrowser
+        );
+        panel.plan_seq += 1;
+        let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
+            Ok(card_plan("pro", true, "")),
+            gen,
+            id,
+            panel.plan_seq,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::CardActive
+        );
+        assert!(panel.plan.as_ref().unwrap().is_card());
+
+        // An expired session with no subscription is "cancelled" (C4); Try
+        // card again and Pay with bitcoin instead both work from there.
+        let cs = CheckoutState::new(9, PlanTier::Pro, BillingCycle::Annual, None);
+        let mut cs = cs;
+        cs.card_session = Some(session("2020-01-01T00:00:00Z"));
+        let free = plan(PlanTier::Free, PlanStatus::Active, None, None);
+        assert_eq!(
+            next_card_phase(
+                &CheckoutPhase::CardInBrowser,
+                &cs,
+                &free,
+                chrono::Utc::now()
+            ),
+            CheckoutPhase::CardCancelled
+        );
+        panel.checkout = Some(cs);
+        panel.checkout.as_mut().unwrap().phase = CheckoutPhase::CardCancelled;
+        let _ = panel.update_message(ConnectAccountMessage::BackToReview {
+            pay_with: PayWith::Bitcoin,
+        });
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::Review);
+        assert_eq!(cs.pay_with, PayWith::Bitcoin);
+    }
+
+    /// Opens a Free → Pro card checkout and leaves it in the browser.
+    fn card_checkout_in_browser() -> (ConnectAccountPanel, u64, u64) {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(card_features(true));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let _ = panel.update_message(ConnectAccountMessage::SelectPayWith(PayWith::Card));
+        let _ = panel.update_message(ConnectAccountMessage::StartCardCheckout);
+        let (id, gen) = (
+            panel.checkout.as_ref().unwrap().id,
+            panel.session_generation,
+        );
+        let _ = panel.update_message(ConnectAccountMessage::CardCheckoutCreated(
+            Ok(CardCheckoutSession {
+                url: "https://checkout.stripe.example/c/1".into(),
+                session_id: "cs_1".into(),
+                expires_at: Some("2099-01-01T00:00:00Z".into()),
+                starts_at: None,
+            }),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::CardInBrowser
+        );
+        (panel, id, gen)
+    }
+
+    #[test]
+    fn a_card_poll_is_sequenced_when_sent_not_when_it_returns() {
+        // A poll is sent, then a reload while the poll waits to read. The
+        // reload may have read the server first, so whichever response
+        // lands first, a fresh fetch follows and its answer wins.
+        for reload_first in [true, false] {
+            let (mut panel, id, gen) = card_checkout_in_browser();
+            let before = panel.plan_seq;
+            let poll = panel.update_message(ConnectAccountMessage::PollCardPlan(id));
+            assert!(poll.units() > 0);
+            let poll_seq = panel.plan_seq;
+            assert!(poll_seq > before, "the poll takes its number when sent");
+            let _ = panel.plan_fetch_task();
+            let reload_seq = panel.plan_seq;
+            assert!(reload_seq > poll_seq);
+            // The reload read before the poll: still Free.
+            let reloaded = ConnectAccountMessage::PlanReloaded(
+                Some(plan(PlanTier::Free, PlanStatus::Active, None, None)),
+                gen,
+                reload_seq,
+            );
+            let polled = ConnectAccountMessage::CardPlanPolled(
+                Ok(card_plan("pro", true, "")),
+                gen,
+                id,
+                poll_seq,
+            );
+            let task = if reload_first {
+                let _ = panel.update_message(reloaded);
+                let task = panel.update_message(polled);
+                // The older poll never lands over the newer reload.
+                assert_eq!(panel.applied_plan_seq, reload_seq);
+                assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Free);
+                task
+            } else {
+                let task = panel.update_message(polled);
+                assert_eq!(panel.applied_plan_seq, poll_seq);
+                assert!(panel.plan.as_ref().unwrap().is_card());
+                // The reload sent after the poll still outranks it.
+                let _ = panel.update_message(reloaded);
+                assert_eq!(panel.applied_plan_seq, reload_seq);
+                task
+            };
+            assert_eq!(
+                panel.checkout.as_ref().unwrap().phase,
+                CheckoutPhase::CardActive
+            );
+            assert_eq!(task.units(), 2, "billing history plus a fresh plan fetch");
+            let fresh_seq = panel.plan_seq;
+            assert!(fresh_seq > reload_seq);
+            let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+                Some(card_plan("pro", true, "")),
+                gen,
+                fresh_seq,
+            ));
+            assert!(
+                panel.plan.as_ref().unwrap().is_card(),
+                "settles on the card plan"
+            );
+            assert_eq!(panel.applied_plan_seq, fresh_seq);
+        }
+        // No fetch sent after the poll: its answer stands, no extra fetch.
+        let (mut panel, id, gen) = card_checkout_in_browser();
+        let _ = panel.update_message(ConnectAccountMessage::PollCardPlan(id));
+        let poll_seq = panel.plan_seq;
+        let task = panel.update_message(ConnectAccountMessage::CardPlanPolled(
+            Ok(card_plan("pro", false, "")),
+            gen,
+            id,
+            poll_seq,
+        ));
+        assert_eq!(task.units(), 1, "billing history only");
+        assert_eq!(panel.applied_plan_seq, poll_seq);
+        assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(false));
+    }
+
+    #[test]
+    fn three_d_secure_without_a_page_is_unconfirmed_not_failed() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        panel.selected_billing_cycle = BillingCycle::Annual;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let (id, gen) = (
+            panel.checkout.as_ref().unwrap().id,
+            panel.session_generation,
+        );
+        let preview: PlanChangePreview = serde_json::from_str(
+            r#"{"kind":"upgrade","amountDueToday":33.15,"credit":33.15,"currency":"usd",
+                "renewalAt":"2099-03-14T00:00:00Z","effectiveAt":"2026-11-14T00:00:00Z",
+                "nextChargeAmount":200,"prorationDate":"2026-11-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let _ = panel.update_message(ConnectAccountMessage::ChangePreviewLoaded(
+            Ok(preview),
+            gen,
+            id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ConfirmPlanChange);
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeApplying
+        );
+        for url in [r#"null"#, r#""""#] {
+            panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
+            let result: crate::services::coincube::PlanChangeResult = serde_json::from_str(
+                &format!(r#"{{"status":"requires_action","url":{url},"effectiveAt":null}}"#),
+            )
+            .unwrap();
+            let task = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+                Ok(result),
+                gen,
+                id,
+            ));
+            assert!(task.units() > 0, "the plan is reloaded");
+            assert!(
+                matches!(
+                    panel.checkout.as_ref().unwrap().phase,
+                    CheckoutPhase::ChangeUnconfirmed {
+                        refresh: PlanRefresh::Pending(_),
+                        ..
+                    }
+                ),
+                "{url}: {:?}",
+                panel.checkout.as_ref().unwrap().phase
+            );
+        }
+    }
+
+    #[test]
+    fn card_subscriber_changes_plan_through_the_preview() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        panel.selected_billing_cycle = BillingCycle::Annual;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::ChangePreviewing);
+        let (id, gen) = (cs.id, panel.session_generation);
+        let preview: PlanChangePreview = serde_json::from_str(
+            r#"{"kind":"upgrade","amountDueToday":33.15,"credit":33.15,"currency":"usd",
+                "renewalAt":"2099-03-14T00:00:00Z","effectiveAt":"2026-11-14T00:00:00Z",
+                "nextChargeAmount":200,"prorationDate":"2026-11-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let _ = panel.update_message(ConnectAccountMessage::ChangePreviewLoaded(
+            Ok(preview),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeReview
+        );
+        let _ = panel.update_message(ConnectAccountMessage::ConfirmPlanChange);
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeApplying
+        );
+        // 3-D Secure: open the page and poll the plan.
+        let result: crate::services::coincube::PlanChangeResult = serde_json::from_str(
+            r#"{"status":"requires_action","url":"https://bank.example/3ds","effectiveAt":null}"#,
+        )
+        .unwrap();
+        let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+            Ok(result),
+            gen,
+            id,
+        ));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::ChangeInBrowser);
+        assert_eq!(cs.action_url.as_deref(), Some("https://bank.example/3ds"));
+        panel.plan_seq += 1;
+        let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
+            Ok(card_plan("estate", true, "")),
+            gen,
+            id,
+            panel.plan_seq,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeDone { scheduled: false }
+        );
+
+        // A downgrade is scheduled.
+        panel.checkout = None;
+        panel.plan = Some(card_plan("estate", true, ""));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let id = panel.checkout.as_ref().unwrap().id;
+        panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
+        let result: crate::services::coincube::PlanChangeResult =
+            serde_json::from_str(r#"{"status":"scheduled","effectiveAt":"2099-03-14T00:00:00Z"}"#)
+                .unwrap();
+        let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+            Ok(result),
+            gen,
+            id,
+        ));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeDone { scheduled: true }
+        );
+    }
+
+    #[test]
+    fn card_requests_on_plan_billing_track_busy_and_errors() {
+        let mut panel = panel_with_plan(card_plan("estate", true, ""));
+        panel.features = Some(card_features(true));
+        let _ = panel.update_message(ConnectAccountMessage::ShowAutoRenewOff(true));
+        assert!(panel.confirm_auto_renew_off);
+        let gen = panel.session_generation;
+        let _ = panel.update_message(ConnectAccountMessage::SetAutoRenew(false));
+        assert!(panel.card_request_busy);
+        // A second press while busy does nothing.
+        let _ = panel.update_message(ConnectAccountMessage::KeepCurrentPlan);
+        assert!(panel.card_request_busy);
+        let _ = panel.update_message(ConnectAccountMessage::CardRequestDone(
+            Err("Couldn't reach Stripe".into()),
+            gen,
+        ));
+        assert!(!panel.card_request_busy);
+        assert_eq!(
+            panel.card_request_error.as_deref(),
+            Some("Couldn't reach Stripe")
+        );
+        let _ = panel.update_message(ConnectAccountMessage::SetAutoRenew(false));
+        let _ = panel.update_message(ConnectAccountMessage::CardRequestDone(Ok(None), gen));
+        assert!(!panel.confirm_auto_renew_off);
+        assert!(panel.card_request_error.is_none());
+    }
+
+    #[test]
+    fn change_plan_leaves_card_screens_but_never_one_in_flight() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        for (phase, leaves) in [
+            (CheckoutPhase::ChangeReview, true),
+            (CheckoutPhase::ChangePreviewing, true),
+            (
+                CheckoutPhase::ChangeFailed {
+                    message: "x".into(),
+                    refused: true,
+                },
+                true,
+            ),
+            (
+                CheckoutPhase::CardFailed {
+                    message: "x".into(),
+                    refused: true,
+                },
+                true,
+            ),
+            (CheckoutPhase::CardCancelled, true),
+            (CheckoutPhase::ChangeDone { scheduled: true }, true),
+            (CheckoutPhase::CardInBrowser, false),
+            (CheckoutPhase::ChangeInBrowser, false),
+            (CheckoutPhase::ChangeApplying, false),
+            (CheckoutPhase::CardOpening, false),
+        ] {
+            let mut cs = CheckoutState::new(1, PlanTier::Estate, BillingCycle::Annual, None);
+            cs.phase = phase.clone();
+            panel.checkout = Some(cs);
+            let _ = panel.update_message(ConnectAccountMessage::ComparePlans(true));
+            assert_eq!(panel.checkout.is_none(), leaves, "{:?}", phase);
+        }
+    }
+
+    #[test]
+    fn past_due_pay_with_bitcoin_opens_a_bitcoin_review() {
+        let grace = (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339();
+        let mut plan = card_plan("estate", true, &format!(r#","graceEndsAt":"{grace}""#));
+        plan.status = PlanStatus::PastDue;
+        let mut panel = panel_with_plan(plan);
+        panel.features = Some(card_features(true));
+        assert!(!panel.card_change_route(&PlanTier::Estate, BillingCycle::Annual));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::Review);
+        assert_eq!(cs.pay_with, PayWith::Bitcoin);
+    }
+
+    #[test]
+    fn card_change_route_follows_the_api_rules() {
+        let mut panel = panel_with_plan(card_plan("pro", false, ""));
+        panel.features = Some(card_features(true));
+        // Auto-renewal off: upgrades through the card, same tier by bitcoin.
+        assert!(panel.card_change_route(&PlanTier::Estate, BillingCycle::Annual));
+        assert!(!panel.card_change_route(&PlanTier::Pro, BillingCycle::Annual));
+        // Trialing (no cycle yet) never routes to a change.
+        let mut trialing = card_plan("pro", true, "");
+        trialing.billing_cycle = None;
+        panel.plan = Some(trialing);
+        assert!(!panel.card_change_route(&PlanTier::Estate, BillingCycle::Annual));
+        // Flag off: card routes answer 404, so never route there.
+        panel.plan = Some(card_plan("pro", true, ""));
+        panel.features = Some(card_features(false));
+        assert!(!panel.card_change_route(&PlanTier::Estate, BillingCycle::Annual));
+    }
+
+    #[test]
+    fn browser_polling_is_bounded_and_unknown_change_status_is_not_success() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        let gen = panel.session_generation;
+        let mut cs = CheckoutState::new(
+            5,
+            PlanTier::Estate,
+            BillingCycle::Annual,
+            panel.plan.clone(),
+        );
+        cs.phase = CheckoutPhase::ChangeInBrowser;
+        cs.action_url = Some("https://bank.example/3ds".into());
+        cs.browser_polls = MAX_BROWSER_POLLS - 1;
+        panel.checkout = Some(cs);
+        panel.plan_seq += 1;
+        let _ = panel.update_message(ConnectAccountMessage::CardPlanPolled(
+            Ok(card_plan("pro", true, "")),
+            gen,
+            5,
+            panel.plan_seq,
+        ));
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::PollFailed(_)
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ResumeChargePolling);
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::ChangeInBrowser);
+        assert_eq!(cs.browser_polls, 0);
+
+        panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
+        let odd: crate::services::coincube::PlanChangeResult =
+            serde_json::from_str(r#"{"status":"pending_review"}"#).unwrap();
+        let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(Ok(odd), gen, 5));
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeUnconfirmed { .. }
+        ));
+        // No answer / 5xx: the change may have applied, so it's unconfirmed;
+        // a refusal changed nothing.
+        panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
+        let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+            Err(("connection reset".into(), false)),
+            gen,
+            5,
+        ));
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeUnconfirmed { .. }
+        ));
+        panel.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeApplying;
+        let _ = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+            Err(("No plan change is scheduled".into(), true)),
+            gen,
+            5,
+        ));
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangeFailed { refused: true, .. }
+        ));
+    }
+
+    #[test]
+    fn an_unconfirmed_change_tracks_its_plan_refresh() {
+        let mut panel = panel_with_plan(card_plan("pro", true, ""));
+        panel.features = Some(card_features(true));
+        let gen = panel.session_generation;
+        let mut cs = CheckoutState::new(
+            5,
+            PlanTier::Estate,
+            BillingCycle::Annual,
+            panel.plan.clone(),
+        );
+        cs.phase = CheckoutPhase::ChangeApplying;
+        panel.checkout = Some(cs);
+        let task = panel.update_message(ConnectAccountMessage::PlanChangeApplied(
+            Err(("connection reset".into(), false)),
+            gen,
+            5,
+        ));
+        assert!(task.units() > 0, "the plan reload is requested");
+        let seq = panel.plan_seq;
+        let refresh = |p: &ConnectAccountPanel| match &p.checkout.as_ref().unwrap().phase {
+            CheckoutPhase::ChangeUnconfirmed { refresh, .. } => *refresh,
+            other => panic!("unexpected {:?}", other),
+        };
+        assert_eq!(refresh(&panel), PlanRefresh::Pending(seq));
+        // The reload fails: say so, and offer a retry.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(None, gen, seq));
+        assert_eq!(refresh(&panel), PlanRefresh::Failed);
+        let _ = panel.update_message(ConnectAccountMessage::RetryPlanRefresh);
+        let retry = panel.plan_seq;
+        assert!(retry > seq);
+        assert_eq!(refresh(&panel), PlanRefresh::Pending(retry));
+        // An older response doesn't settle the newer refresh.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(card_plan("pro", true, "")),
+            gen,
+            seq,
+        ));
+        assert_eq!(refresh(&panel), PlanRefresh::Pending(retry));
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(card_plan("estate", true, "")),
+            gen,
+            retry,
+        ));
+        assert_eq!(refresh(&panel), PlanRefresh::Updated);
+        assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Estate);
+    }
+
+    #[test]
+    fn a_new_card_attempt_gets_the_full_browser_wait() {
+        let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
+        panel.features = Some(card_features(true));
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let cs = panel.checkout.as_mut().unwrap();
+        cs.phase = CheckoutPhase::CardCancelled;
+        cs.browser_polls = 200;
+        let _ = panel.update_message(ConnectAccountMessage::BackToReview {
+            pay_with: PayWith::Card,
+        });
+        assert_eq!(panel.checkout.as_ref().unwrap().browser_polls, 0);
+        let cs = panel.checkout.as_mut().unwrap();
+        cs.browser_polls = 200;
+        let _ = panel.update_message(ConnectAccountMessage::StartCardCheckout);
+        let cs = panel.checkout.as_ref().unwrap();
+        assert_eq!(cs.phase, CheckoutPhase::CardOpening);
+        assert_eq!(cs.browser_polls, 0);
+    }
+
+    #[test]
+    fn changing_the_review_cycle_rechecks_the_card_route() {
+        // Pro monthly on a card with auto-renewal off: a monthly renewal is
+        // bitcoin; switching Review to Annual is a card upgrade.
+        let mut monthly = card_plan("pro", false, "");
+        monthly.billing_cycle = Some(BillingCycle::Monthly);
+        let mut panel = panel_with_plan(monthly);
+        panel.features = Some(card_features(true));
+        panel.selected_billing_cycle = BillingCycle::Monthly;
+        let _ = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Review
+        );
+        // Staying on Monthly keeps the bitcoin route: SetReviewCycle returns
+        // no task.
+        let stay =
+            panel.update_message(ConnectAccountMessage::SetReviewCycle(BillingCycle::Monthly));
+        assert_eq!(stay.units(), 0, "no re-route while the route is unchanged");
+        // Annual makes it a card upgrade: the handler itself must return the
+        // re-dispatch (a missing dispatch fails here, not just a missing
+        // route check).
+        let task =
+            panel.update_message(ConnectAccountMessage::SetReviewCycle(BillingCycle::Annual));
+        assert_eq!(
+            task.units(),
+            1,
+            "SetReviewCycle returns the ReviewPlanChange dispatch"
+        );
+        assert!(panel.card_change_route(&PlanTier::Pro, BillingCycle::Annual));
+        assert_eq!(panel.checkout.as_ref().unwrap().cycle, BillingCycle::Annual);
+        // What that dispatch does when the runtime delivers it.
+        let preview = panel.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::ChangePreviewing
+        );
+        assert!(preview.units() > 0, "the card preview request goes out");
+    }
+
+    #[test]
+    fn check_again_restores_a_partly_paid_invoice_with_its_amounts() {
+        let (mut panel, gen, id) = awaiting_panel();
+        let partial = charge_status(
+            r#"{"chargeId":"inv-1","status":"unpaid","state":"partially_paid","plan":"pro",
+                "amountReceivedSats":62000,"amountDueSats":38000}"#,
+        );
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(partial),
+            gen,
+            id,
+        ));
+        for _ in 0..3 {
+            let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+                Err(("timeout".into(), false)),
+                gen,
+                id,
+            ));
+        }
+        assert!(matches!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::PollFailed(_)
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ResumeChargePolling);
+        // Never back to "send the full amount" after a partial payment.
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::PartlyPaid {
+                received_sats: 62_000,
+                due_sats: 38_000
+            }
+        );
+        // A seen payment resumes as Confirming, not as unpaid.
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Ok(charge_status(
+                r#"{"chargeId":"inv-1","status":"processing","plan":"pro"}"#,
+            )),
+            gen,
+            id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ChargeStatusUpdated(
+            Err(("gone".into(), true)),
+            gen,
+            id,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::ResumeChargePolling);
+        assert_eq!(
+            panel.checkout.as_ref().unwrap().phase,
+            CheckoutPhase::Processing
+        );
+    }
+
+    #[test]
+    fn an_older_plan_reload_never_overwrites_a_newer_one() {
+        let mut panel = panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, None));
+        let gen = panel.session_generation;
+        let _first = panel.reload_plan_billing();
+        let first = panel.plan_seq;
+        let _second = panel.reload_plan_billing();
+        let second = panel.plan_seq;
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Estate, PlanStatus::Active, None, None)),
+            gen,
+            second,
+        ));
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Pro, PlanStatus::Active, None, None)),
+            gen,
+            first,
+        ));
+        assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Estate);
+    }
+
+    #[test]
+    fn plan_loads_never_move_the_period_under_the_picker() {
+        let mut panel = panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, None));
+        let gen = panel.session_generation;
+        let annual = || {
+            plan(
+                PlanTier::Pro,
+                PlanStatus::Active,
+                None,
+                Some(BillingCycle::Annual),
+            )
+        };
+        panel.show_plan_comparison = true;
+        panel.selected_billing_cycle = BillingCycle::Monthly;
+        let _ = panel.update_message(ConnectAccountMessage::PlanLoaded(Some(annual()), gen));
+        assert_eq!(panel.selected_billing_cycle, BillingCycle::Monthly);
+        panel.show_plan_comparison = false;
+        let _ = panel.update_message(ConnectAccountMessage::PlanLoaded(Some(annual()), gen));
+        assert_eq!(panel.selected_billing_cycle, BillingCycle::Annual);
+    }
+
+    #[test]
+    fn reaching_the_dashboard_with_plan_billing_open_loads_its_history() {
+        use crate::services::coincube::{DuressCheckOutcome, DuressState};
+        let state = |enrolled: bool, registered: bool| DuressState {
+            active: false,
+            unlock_at: None,
+            enrolled,
+            this_device_registered: registered,
+        };
+        // Units of the task returned on reaching the Dashboard, with the
+        // section open or not, for each return path (plain, device
+        // registration, reconcile).
+        let units = |sub: ConnectSubMenu, with_user: bool, s: DuressState| {
+            let mut panel = panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, None));
+            panel.step = ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Checking,
+            };
+            panel.active_sub = sub;
+            panel.user = with_user.then(|| crate::services::coincube::User {
+                id: 7,
+                email: "founder@example.com".into(),
+                email_verified: Some(true),
+            });
+            let gen = panel.session_generation;
+            let task = panel.update_message(ConnectAccountMessage::DuressStateChecked(
+                DuressCheckOutcome::Ok(s),
+                gen,
+                0,
+            ));
+            assert!(matches!(panel.step, ConnectFlowStep::Dashboard));
+            task.units()
+        };
+        for (with_user, enrolled, registered) in [
+            (false, false, true),
+            (true, true, false),
+            (true, false, true),
+        ] {
+            let open = units(
+                ConnectSubMenu::PlanBilling,
+                with_user,
+                state(enrolled, registered),
+            );
+            let other = units(
+                ConnectSubMenu::Overview,
+                with_user,
+                state(enrolled, registered),
+            );
+            assert_eq!(
+                open,
+                other + 1,
+                "billing history requested on the path user={} enrolled={} registered={}",
+                with_user,
+                enrolled,
+                registered
+            );
+        }
+    }
+
+    #[test]
+    fn every_plan_fetch_is_sequenced_so_a_late_one_cannot_win() {
+        let mut panel = panel_with_plan(plan(PlanTier::Pro, PlanStatus::Active, None, None));
+        let gen = panel.session_generation;
+        // The sign-in fetch goes out first ...
+        let _signin = panel.plan_fetch_task();
+        let signin_seq = panel.plan_seq;
+        // ... then a redeem refreshes the plan (also sequenced) ...
+        let before = panel.plan_seq;
+        let _ = panel.update_message(ConnectAccountMessage::CampaignRedeemed(
+            Ok("Estate unlocked".into()),
+            gen,
+        ));
+        assert!(
+            panel.plan_seq > before,
+            "the redeem's plan fetch is sequenced"
+        );
+        let redeem_seq = panel.plan_seq;
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Estate, PlanStatus::Active, None, None)),
+            gen,
+            redeem_seq,
+        ));
+        // ... and the slow sign-in response arrives last: dropped.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Free, PlanStatus::Active, None, None)),
+            gen,
+            signin_seq,
+        ));
+        assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Estate);
+    }
+
+    #[test]
+    fn a_failed_newer_plan_fetch_keeps_an_older_good_answer() {
+        let mut panel = ConnectAccountPanel::new();
+        let gen = panel.session_generation;
+        // The sign-in fetch is in flight when Plan & billing opens.
+        let _signin = panel.plan_fetch_task();
+        let signin = panel.plan_seq;
+        let _open = panel.plan_fetch_task();
+        let open = panel.plan_seq;
+        // The newer one fails, the older one succeeds: keep the plan.
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(None, gen, open));
+        let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+            Some(plan(PlanTier::Pro, PlanStatus::Active, None, None)),
+            gen,
+            signin,
+        ));
+        assert_eq!(
+            panel.plan.as_ref().map(|p| p.plan.clone()),
+            Some(PlanTier::Pro)
+        );
+    }
+
+    #[test]
+    fn billing_wire_types_parse_old_and_new_api_shapes() {
+        use crate::services::coincube::{BillingHistoryEntry, ChargeStatus};
+        // Old checkout: expiresAt null, no startsAt.
+        let old = checkout_resp();
+        assert_eq!(old.expires_at, None);
+        assert_eq!(old.starts_at, None);
+        // New checkout (A4 buy-ahead).
+        let new: CheckoutResponse = serde_json::from_str(
+            r#"{"chargeId":"i","lightningInvoice":"ln","onChainAddress":"bc1","amountSats":1,
+                "amountFiat":10,"fiatCurrency":"USD","plan":"pro","billingCycle":"monthly",
+                "checkoutUrl":"u","expiresAt":"2026-11-14T16:42:00Z","startsAt":"2027-03-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(new.starts_at.as_deref(), Some("2027-03-14T00:00:00Z"));
+        // Old status: status only.
+        let old = charge_status(r#"{"chargeId":"c","status":"processing","plan":"pro"}"#);
+        assert_eq!(old.charge_state(), ChargeState::Processing);
+        assert_eq!(old.amount_due_sats, 0);
+        // Unknown legacy status.
+        let odd = charge_status(r#"{"chargeId":"c","status":"underpaid","plan":"pro"}"#);
+        assert_eq!(odd.status, ChargeStatus::Unknown);
+        // Old history row: no chargeId, no state.
+        let row: BillingHistoryEntry = serde_json::from_str(
+            r#"{"plan":"pro","billingCycle":"annual","amountSats":100000,"amountFiat":100,
+                "fiatCurrency":"USD","status":"paid","createdAt":"2026-07-01T00:00:00Z","paidAt":null}"#,
+        )
+        .unwrap();
+        assert_eq!(row.charge_id, "");
+        assert_eq!(row.charge_state(), ChargeState::Paid);
+        // New history row.
+        let row: BillingHistoryEntry = serde_json::from_str(
+            r#"{"id":4,"chargeId":"c4","invoiceId":"c4","plan":"estate","billingCycle":"annual",
+                "amountSats":200000,"amountFiat":200,"fiatCurrency":"USD","status":"expired",
+                "state":"needs_support","amountReceivedSats":40000,"amountDueSats":0,"overpaidSats":0,
+                "checkoutUrl":"u","expiresAt":null,"paidAt":null,"createdAt":"2026-11-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(row.charge_id, "c4");
+        assert_eq!(row.charge_state(), ChargeState::NeedsSupport);
+    }
+
+    #[test]
     fn start_checkout_ignored_when_purchasing_disabled() {
         let mut panel = panel_with_plan(plan(PlanTier::Free, PlanStatus::Active, None, None));
         panel.features = Some(features_with_purchasing(None, Some(false)));
@@ -8259,6 +10745,14 @@ mod duress_contacts_tests {
             entitlements: entitlements(duress_alerts),
             billing_cycle: Some(BillingCycle::Monthly),
             plan_provenance: None,
+            pending_plan: None,
+            pending_plan_at: None,
+            pending_billing_cycle: None,
+            payment_method: None,
+            auto_renew: None,
+            next_charge_at: None,
+            next_charge_amount: None,
+            grace_ends_at: None,
         }
     }
 
