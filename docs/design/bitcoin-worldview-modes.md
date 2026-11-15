@@ -32,8 +32,7 @@ the Launcher and inside a Cube, with the existing “This device” scope. Offer
 choice per mode that shows its tagline. Under the choices, show what the selected
 mode changes: its network names from the chain presentation registry (BLAKE2b
 only where that network is switched on) and example wording from the voice
-catalog. Samurai has no voice lines, so it lists the standard wording those
-screens already use.
+catalog, for Samurai as for the other modes.
 
 Persist the choice in installation-wide `global_settings.json` with the stable
 values `samurai`, `suitcoiner` and `luke`. A missing value or an unrecognized
@@ -117,7 +116,11 @@ wallet and chain data as input to presentation.
 ## Voice and humor
 
 Samurai uses calm, direct language and is the default when a view has no
-accepted worldview. Suitcoiner treats market consensus and institutional
+accepted worldview. Its voice lines are stoic: quiet discipline and elegant
+simplicity, with no satire, market or ideology jokes, so they suit every user
+as the neutral voice. Samurai speaks on the same passive surfaces as the other
+modes, uses one chain-neutral line for an empty Vault, and stays out of the
+consensus exchange in the picker. Suitcoiner treats market consensus and institutional
 adoption with absolute confidence. Luke treats validation, sovereignty, and
 the ledger with austere conviction. Deliver the satire sincerely. A short line
 beside a clear label is usually enough.
@@ -133,8 +136,8 @@ device preference save. Rivalry Easter eggs are reserved for a later pass.
 On a visible, synchronized Vault with a known zero balance, the active typed
 mainnet selects the joke. Suitcoiner calls an empty BLAKE2b Vault
 “institutionally compliant.” Luke is pleased when a SHA-256 Vault has no
-Spamcoin. A hidden, loading, stale, or unscanned balance and any test network
-suppress these lines.
+Spamcoin. Samurai's empty-Vault line names neither chain. A hidden, loading, stale, or
+unscanned balance and any test network suppress these lines in every mode.
 
 Keep seed phrases, recovery instructions, error messages, fees, addresses,
 confirmation statuses, and technical settings neutral. Payment captions are

@@ -87,6 +87,10 @@ impl VoiceLine {
                 "You have rejected the establishment.",
                 "Has rechazado al poder establecido.",
             ),
+            (Welcome, Samurai) => (
+                "Welcome. Begin when you are ready.",
+                "Te damos la bienvenida. Empieza cuando quieras.",
+            ),
             (Welcome, Suitcoiner) => (
                 "Welcome, institutional-grade HODLer.",
                 "Te damos la bienvenida, HODLer de categoría institucional.",
@@ -95,12 +99,21 @@ impl VoiceLine {
                 "Welcome, sovereign individual.",
                 "Te damos la bienvenida, individuo soberano.",
             ),
+            (Overview, Samurai) => ("Tend to what is yours.", "Cuida lo que es tuyo."),
             (Overview, Suitcoiner) => ("Your Bitcoin empire.", "Tu imperio de Bitcoin."),
             (Overview, Luke) => ("Your sovereign treasury.", "Tu tesorería soberana."),
+            (CreateCube, Samurai) => (
+                "Start with a clear foundation.",
+                "Empieza con una base sólida.",
+            ),
             (CreateCube, Suitcoiner) => {
                 ("Establish a new position.", "Establece una nueva posición.")
             }
             (CreateCube, Luke) => ("Establish your sovereignty.", "Afirma tu soberanía."),
+            (CreateVault, Samurai) => (
+                "Prepare in calm for what may come.",
+                "Prepárate con calma para lo que pueda venir.",
+            ),
             (CreateVault, Suitcoiner) => (
                 "The institutions have custodians. You have better options.",
                 "Las instituciones tienen custodios. Tú tienes mejores opciones.",
@@ -108,6 +121,11 @@ impl VoiceLine {
             (CreateVault, Luke) => (
                 "Guard your keys. Enforce your rules.",
                 "Protege tus claves. Haz cumplir tus reglas.",
+            ),
+            // Samurai takes no side between the two chains.
+            (EmptySha256Vault | EmptyBlake2bVault, Samurai) => (
+                "Empty and ready. Fill it with patience.",
+                "Vacío y listo. Llénalo con paciencia.",
             ),
             (EmptySha256Vault, Suitcoiner) => {
                 ("Time to stack some sats.", "Es hora de acumular sats.")
@@ -124,6 +142,10 @@ impl VoiceLine {
                 "A clean ledger begins with a single transaction.",
                 "Un registro limpio comienza con una sola transacción.",
             ),
+            (EmptyHistory, Samurai) => (
+                "Every path begins with a first step.",
+                "Todo camino empieza con un primer paso.",
+            ),
             (EmptyHistory, Suitcoiner) => (
                 "No economic activity recorded. Yet.",
                 "Sin actividad económica registrada. Por ahora.",
@@ -132,16 +154,23 @@ impl VoiceLine {
                 "The ledger awaits its first honest payment.",
                 "El registro espera su primer pago honesto.",
             ),
+            (Syncing, Samurai) => (
+                "Patience is part of the way.",
+                "La paciencia también es parte del camino.",
+            ),
             (Syncing, Suitcoiner) => ("Consulting the market…", "Consultando al mercado…"),
             (Syncing, Luke) => (
                 "Consulting the ancient rules…",
                 "Consultando las antiguas reglas…",
             ),
+            // Broadcast is not confirmation, so the line claims only intent.
+            (PaymentSent, Samurai) => ("Sent with intention.", "Enviado con intención."),
             (PaymentSent, Suitcoiner) => (
                 "The free market thanks you.",
                 "El libre mercado te lo agradece.",
             ),
             (PaymentSent, Luke) => ("No JPEGs were required.", "No hizo falta ningún JPEG."),
+            (PaymentReceived, Samurai) => ("Received with gratitude.", "Recibido con gratitud."),
             (PaymentReceived, Suitcoiner) => {
                 ("Capital inflow recorded.", "Entrada de capital registrada.")
             }
@@ -149,7 +178,9 @@ impl VoiceLine {
                 "An honest payment has arrived.",
                 "Ha llegado un pago honesto.",
             ),
-            (_, Samurai) => return None,
+            // Consensus is the Suitcoiner/Luke rivalry; the neutral voice
+            // stays out of it.
+            (Consensus, Samurai) => return None,
         };
 
         Some(match locale::language() {
@@ -164,8 +195,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn worldview_voice_is_independent_of_language_and_defaults_to_neutral() {
-        assert_eq!(VoiceLine::PaymentSent.get(), None);
+    fn worldview_voice_is_independent_of_language_and_defaults_to_samurai() {
+        assert_eq!(VoiceLine::PaymentSent.get(), Some("Sent with intention."));
         render_in(WorldviewMode::Suitcoiner, || {
             assert_eq!(
                 VoiceLine::Consensus.get(),
@@ -186,5 +217,51 @@ mod tests {
             assert_eq!(mode(), WorldviewMode::Suitcoiner);
         });
         assert_eq!(mode(), WorldviewMode::Samurai);
+    }
+
+    #[test]
+    fn samurai_speaks_everywhere_but_the_consensus_rivalry() {
+        use VoiceLine::*;
+
+        let all = [
+            Profile,
+            Consensus,
+            ModeChanged,
+            Welcome,
+            Overview,
+            CreateCube,
+            CreateVault,
+            EmptySha256Vault,
+            EmptyBlake2bVault,
+            EmptyHistory,
+            Syncing,
+            PaymentSent,
+            PaymentReceived,
+        ];
+        for language in [locale::Language::English, locale::Language::Spanish] {
+            locale::render_in(language, || {
+                for line in all {
+                    let samurai = line.for_mode(WorldviewMode::Samurai);
+                    assert_eq!(
+                        samurai.is_none(),
+                        matches!(line, Consensus),
+                        "{line:?} in {language:?}"
+                    );
+                    for mode in [WorldviewMode::Suitcoiner, WorldviewMode::Luke] {
+                        assert!(line.for_mode(mode).is_some(), "{line:?} {mode:?}");
+                    }
+                }
+            });
+        }
+        assert_eq!(
+            Overview.for_mode(WorldviewMode::Samurai),
+            Some("Tend to what is yours.")
+        );
+        locale::render_in(locale::Language::Spanish, || {
+            assert_eq!(
+                Overview.for_mode(WorldviewMode::Samurai),
+                Some("Cuida lo que es tuyo.")
+            );
+        });
     }
 }
