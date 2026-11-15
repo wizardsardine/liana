@@ -590,7 +590,7 @@ fn append_descendants<'a>(
 
 fn replacement_fee_entry<'a>(
     is_cancel: bool,
-    feerate: &'a form::Value<String>,
+    feerate: &form::Value<String>,
     processing: bool,
 ) -> Column<'a, Message> {
     if is_cancel {
