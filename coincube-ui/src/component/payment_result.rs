@@ -168,7 +168,8 @@ impl<'a, M> PaymentResult<'a, M> {
         self
     }
 
-    /// The worldview's line under the quote. `None` (Samurai) hides it.
+    /// The worldview's line under the quote. `None` hides it (for example, a
+    /// Vault self-transfer).
     pub fn voice(mut self, voice: Option<&'a str>) -> Self {
         self.voice = voice;
         self
