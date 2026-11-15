@@ -1,18 +1,19 @@
 mod avatar;
 
 use super::{
-    get_countries, AddVaultMemberRequest, ApiResponse, BillingHistoryEntry, ChargeStatusResponse,
-    CheckoutRequest, CheckoutResponse, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
-    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest,
-    CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse,
-    CubeResponse, DownloadStats, FeaturesResponse, Invite, LightningAddress,
+    get_countries, AddVaultMemberRequest, ApiResponse, BillingHistoryEntry, CardCheckoutSession,
+    CardPortalSession, ChargeStatusResponse, CheckoutRequest, CheckoutResponse, CoincubeError,
+    ConnectPlan, ConnectVaultResponse, Contact, ContactCube, Country, CreateConnectVaultRequest,
+    CreateInviteRequest, CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw,
+    CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, Invite, LightningAddress,
     LightningAddressAvailability, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-    PatchConnectVaultRequest, PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit,
-    RecoveryKitStatus, RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest,
-    RegisterCubeRequest, ReportEnvelopeInvalidRequest, ReserveLightningAddressRequest,
-    SaveQuoteRequest, SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats,
-    UpdateCubeRequest, UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User,
-    VaultMemberResponse, VerifiedDevice,
+    PatchConnectVaultRequest, PlanChangePreview, PlanChangeRequest, PlanChangeResult,
+    PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit, RecoveryKitStatus,
+    RedeemCampaignRequest, RedeemCampaignResponse, RefreshTokenRequest, RegisterCubeRequest,
+    ReportEnvelopeInvalidRequest, ReserveLightningAddressRequest, SaveQuoteRequest,
+    SaveQuoteResponse, StatsPeriod, TimeseriesResponse, TodayStats, UpdateCubeRequest,
+    UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User, VaultMemberResponse,
+    VerifiedDevice,
 };
 use reqwest::{Client, Method};
 use serde::Deserialize;
@@ -382,6 +383,77 @@ impl CoincubeClient {
         let res = res.check_success().await?;
         let resp: ApiResponse<CheckoutResponse> = res.json().await?;
         Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/card/checkout-session (billing v2 B3).
+    pub async fn create_card_checkout(
+        &self,
+        req: PlanChangeRequest,
+    ) -> Result<CardCheckoutSession, CoincubeError> {
+        let url = format!("{}/api/v1/connect/card/checkout-session", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<CardCheckoutSession> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/card/portal-session (update the card on file).
+    pub async fn create_card_portal(&self) -> Result<CardPortalSession, CoincubeError> {
+        let url = format!("{}/api/v1/connect/card/portal-session", self.base_url);
+        let res = self
+            .client
+            .post(&url)
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<CardPortalSession> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// PUT /api/v1/connect/plan/auto-renew.
+    pub async fn set_auto_renew(&self, enabled: bool) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/plan/auto-renew", self.base_url);
+        let res = self
+            .client
+            .put(&url)
+            .json(&serde_json::json!({ "enabled": enabled }))
+            .send()
+            .await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// POST /api/v1/connect/plan/change/preview.
+    pub async fn preview_plan_change(
+        &self,
+        req: PlanChangeRequest,
+    ) -> Result<PlanChangePreview, CoincubeError> {
+        let url = format!("{}/api/v1/connect/plan/change/preview", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<PlanChangePreview> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/plan/change.
+    pub async fn change_plan(
+        &self,
+        req: PlanChangeRequest,
+    ) -> Result<PlanChangeResult, CoincubeError> {
+        let url = format!("{}/api/v1/connect/plan/change", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: ApiResponse<PlanChangeResult> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// DELETE /api/v1/connect/plan/change: undo a scheduled downgrade.
+    pub async fn cancel_plan_change(&self) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/connect/plan/change", self.base_url);
+        let res = self.client.delete(&url).send().await?;
+        res.check_success().await?;
+        Ok(())
     }
 
     /// GET /api/v1/connect/checkout/{chargeId} (authenticated)

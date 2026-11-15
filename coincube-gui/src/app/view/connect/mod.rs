@@ -3065,6 +3065,11 @@ mod renewal_banner_tests {
             pending_plan: None,
             pending_plan_at: None,
             pending_billing_cycle: None,
+            payment_method: None,
+            auto_renew: None,
+            next_charge_at: None,
+            next_charge_amount: None,
+            grace_ends_at: None,
         }
     }
 
@@ -3270,6 +3275,7 @@ mod renewal_banner_tests {
             p2p_enabled: None,
             duress_enabled: None,
             bitcoin_blake2b_enabled: None,
+            card_payments_enabled: None,
         }
     }
 
@@ -3323,6 +3329,7 @@ mod renewal_banner_tests {
             p2p_enabled: Some(false),
             duress_enabled: Some(true),
             bitcoin_blake2b_enabled: None,
+            card_payments_enabled: None,
         }
     }
 
@@ -4665,6 +4672,499 @@ mod renewal_banner_tests {
                 billing::FeatureValue::Value("10".into())
             ]
         );
+    }
+
+    fn card_plan_fixture(tier: &str, auto_renew: bool, extra: &str) -> ConnectPlan {
+        serde_json::from_str(&format!(
+            r#"{{"plan":"{tier}","status":"active","renewalAt":"2027-03-14T00:00:00Z",
+                "entitlements":{{"cubeLimit":10,"recoveryAlerts":true,"inheritanceEscrow":true}},
+                "billingCycle":"annual",
+                "paymentMethod":{{"type":"card","brand":"visa","last4":"4242"}},
+                "autoRenew":{auto_renew},"nextChargeAt":"2027-03-14T00:00:00Z",
+                "nextChargeAmount":200{extra}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// Phase B boards: Review with Card (C1), the card screens (C2–C5), card
+    /// states on Plan & billing (C6–C9) and card plan changes (C10–C13).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn card_boards_render_and_capture() {
+        use crate::app::state::connect::account::PayWith;
+        use crate::services::coincube::{CardCheckoutSession, PlanChangePreview};
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let check = |account: &ConnectAccountPanel, name: &str, expected: &[&str]| {
+            let labels = visible_labels(plan_billing_ux(account), &renderer);
+            for text in expected {
+                assert!(
+                    labels.iter().any(|l| l == text),
+                    "{}: missing {:?} in {:?}",
+                    name,
+                    text,
+                    labels
+                );
+            }
+            labels
+        };
+        let mut features = billing_v2_features();
+        features.card_payments_enabled = Some(true);
+        let mut account = dashboard_panel();
+        account.features = Some(features.clone());
+        let mut pro = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-03-14T00:00:00Z"),
+        );
+        pro.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(pro.clone());
+
+        // C1: Review with Card selectable; flag off shows Coming soon.
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let _ = account.update_message(ConnectAccountMessage::SelectPayWith(PayWith::Card));
+        let labels = check(
+            &account,
+            "c01",
+            &["Card", "Continue to secure checkout", "Not charged yet"],
+        );
+        assert!(!labels.iter().any(|l| l == "Coming soon"));
+        assert!(!labels.iter().any(|l| l.contains("isn’t credited")));
+        capture_billing_sheet(&account, "c01-review-card", (1040, 1000)).await;
+        account.features.as_mut().unwrap().card_payments_enabled = Some(false);
+        let labels = check(&account, "c01-off", &["Coming soon", "Create invoice"]);
+        assert!(!labels.iter().any(|l| l == "Continue to secure checkout"));
+        account.features = Some(features.clone());
+
+        // C2–C5.
+        let session = CardCheckoutSession {
+            url: "https://checkout.stripe.example/c/1".into(),
+            session_id: "cs_1".into(),
+            expires_at: Some("2099-01-01T00:00:00Z".into()),
+            starts_at: None,
+        };
+        for (name, phase, expected) in [
+            (
+                "c02-browser",
+                CheckoutPhase::CardInBrowser,
+                vec![
+                    "Finish checkout in your browser",
+                    "Reopen checkout page",
+                    "Waiting for checkout",
+                ],
+            ),
+            (
+                "c03-active",
+                CheckoutPhase::CardActive,
+                // From bitcoin Pro, the card starts when the paid period ends.
+                vec![
+                    "Card subscription set up",
+                    "Estate starts on your card later",
+                    "Replaces Pro · Annual",
+                ],
+            ),
+            (
+                "c04-cancelled",
+                CheckoutPhase::CardCancelled,
+                vec![
+                    "Checkout was cancelled",
+                    "Try card again",
+                    "Pay with bitcoin instead",
+                ],
+            ),
+            (
+                "c05-failed",
+                CheckoutPhase::CardFailed {
+                    message: "Card checkout is unavailable right now".into(),
+                    refused: false,
+                },
+                vec!["Couldn’t open checkout", "Try again"],
+            ),
+        ] {
+            let cs = account.checkout.as_mut().unwrap();
+            cs.phase = phase;
+            cs.pay_with = PayWith::Card;
+            cs.card_session = Some(session.clone());
+            check(&account, name, &expected);
+            capture_billing_sheet(&account, name, (1040, 900)).await;
+        }
+        account.checkout = None;
+
+        // C6: card auto-renews.
+        account.plan = Some(card_plan_fixture("estate", true, ""));
+        check(
+            &account,
+            "c06",
+            &[
+                "Payment",
+                "Visa •••• 4242",
+                "Stripe",
+                "Update card",
+                "Turn off auto-renewal",
+                "Next charge $200 on Mar 14, 2027",
+            ],
+        );
+        capture_billing_sheet(&account, "c06-card-renews", (1040, 1180)).await;
+        // C7: past due with grace.
+        let grace = (chrono::Utc::now() + chrono::Duration::days(10)).to_rfc3339();
+        let mut due = card_plan_fixture("estate", true, &format!(r#","graceEndsAt":"{grace}""#));
+        due.status = PlanStatus::PastDue;
+        account.plan = Some(due);
+        check(
+            &account,
+            "c07",
+            &[
+                "Past due",
+                "Card renewal payment failed",
+                "Pay with bitcoin",
+                "Estate",
+            ],
+        );
+        capture_billing_sheet(&account, "c07-past-due", (1040, 1240)).await;
+        // C8: turn off auto-renewal confirmation.
+        account.plan = Some(card_plan_fixture("estate", true, ""));
+        account.confirm_auto_renew_off = true;
+        check(&account, "c08", &["Turn off auto-renewal?", "Keep it on"]);
+        capture_billing_sheet(&account, "c08-turn-off", (1040, 1240)).await;
+        account.confirm_auto_renew_off = false;
+        // C9: renewal off.
+        account.plan = Some(card_plan_fixture("estate", false, ""));
+        check(
+            &account,
+            "c09",
+            &["Turn auto-renewal back on", "Won’t be charged again"],
+        );
+        capture_billing_sheet(&account, "c09-renewal-off", (1040, 1180)).await;
+
+        // C10–C12: plan changes on a card.
+        account.plan = Some(card_plan_fixture("pro", true, ""));
+        account.selected_billing_cycle = BillingCycle::Annual;
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let upgrade: PlanChangePreview = serde_json::from_str(
+            r#"{"kind":"upgrade","amountDueToday":33.15,"credit":33.15,"currency":"usd",
+                "renewalAt":"2027-03-14T00:00:00Z","nextChargeAmount":200,
+                "prorationDate":"2026-11-14T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let cs = account.checkout.as_mut().unwrap();
+        cs.preview = Some(upgrade);
+        cs.phase = CheckoutPhase::ChangeReview;
+        check(
+            &account,
+            "c10",
+            &[
+                "Upgrade to Estate",
+                "Due today",
+                "$33.15",
+                "Upgrade and pay $33.15",
+                "Visa •••• 4242",
+            ],
+        );
+        capture_billing_sheet(&account, "c10-upgrade", (1040, 1000)).await;
+        account.checkout.as_mut().unwrap().phase = CheckoutPhase::ChangeDone { scheduled: false };
+        check(&account, "c11", &["Plan changed", "You're on Estate"]);
+        capture_billing_sheet(&account, "c11-upgraded", (1040, 900)).await;
+        account.checkout = None;
+        account.plan = Some(card_plan_fixture("estate", true, ""));
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Pro));
+        let downgrade: PlanChangePreview = serde_json::from_str(
+            r#"{"kind":"downgrade","amountDueToday":0,"credit":0,"currency":"usd",
+                "renewalAt":"2027-03-14T00:00:00Z","effectiveAt":"2027-03-14T00:00:00Z",
+                "nextChargeAmount":100}"#,
+        )
+        .unwrap();
+        let cs = account.checkout.as_mut().unwrap();
+        cs.preview = Some(downgrade);
+        cs.phase = CheckoutPhase::ChangeReview;
+        check(
+            &account,
+            "c12",
+            &[
+                "Change to Pro",
+                "What changes",
+                "$0.00",
+                "Schedule change to Pro",
+                "Nothing due today",
+            ],
+        );
+        capture_billing_sheet(&account, "c12-downgrade", (1040, 1000)).await;
+        // C13: the scheduled change on Plan & billing, with the undo.
+        account.checkout = None;
+        account.plan = Some(card_plan_fixture(
+            "estate",
+            true,
+            r#","pendingPlan":"pro","pendingPlanAt":"2027-03-14T00:00:00Z","pendingBillingCycle":"annual""#,
+        ));
+        account.plan.as_mut().unwrap().next_charge_amount = Some(100.0);
+        check(
+            &account,
+            "c13",
+            &[
+                "Changes to Pro · Annual on Mar 14, 2027",
+                "Keep Estate",
+                "Next charge $100 for Pro on Mar 14, 2027",
+            ],
+        );
+        let rows = billing::account_feature_rows(&account);
+        assert!(
+            matches!(&rows[0].1, billing::FeatureValue::Value(v) if v.starts_with("Up to 10 · 3 from")),
+            "{:?}",
+            rows[0]
+        );
+        capture_billing_sheet(&account, "c13-downgrade-scheduled", (1040, 1240)).await;
+    }
+
+    #[test]
+    fn card_start_and_grace_follow_the_api() {
+        let renewal = (chrono::Utc::now() + chrono::Duration::days(90)).to_rfc3339();
+        let mut account = dashboard_panel();
+        let mut f = billing_v2_features();
+        f.card_payments_enabled = Some(true);
+        account.features = Some(f);
+        // A bitcoin Pro subscriber buying Estate by card: the card trials
+        // until the paid period ends (any tier).
+        let pro = plan(PlanTier::Pro, PlanStatus::Active, Some(&renewal));
+        let cs = CheckoutState::new(1, PlanTier::Estate, BillingCycle::Annual, Some(pro));
+        assert!(billing::card_start(&cs).is_some());
+        // From Free: charged today.
+        let free = CheckoutState::new(
+            1,
+            PlanTier::Pro,
+            BillingCycle::Annual,
+            Some(plan(PlanTier::Free, PlanStatus::Active, None)),
+        );
+        assert_eq!(billing::card_start(&free), None);
+        // In card grace, a bitcoin renewal starts now (grace isn't paid time).
+        let grace = (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339();
+        let mut due = card_plan_fixture("estate", true, &format!(r#","graceEndsAt":"{grace}""#));
+        due.status = PlanStatus::PastDue;
+        due.renewal_at = Some(renewal.clone());
+        account.plan = Some(due.clone());
+        let cs = CheckoutState::new(1, PlanTier::Estate, BillingCycle::Annual, Some(due));
+        let facts = billing::review_facts(&account, &cs, chrono::Utc::now());
+        assert_eq!(facts.starts, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn card_dates_and_grace_copy_follow_the_api() {
+        use crate::app::state::connect::account::PayWith;
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        let mut f = billing_v2_features();
+        f.card_payments_enabled = Some(true);
+        account.features = Some(f);
+        // Bitcoin Pro paid through a future date, buying Estate by card: the
+        // card covers start when the paid period ends.
+        let mut pro = plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2099-03-14T00:00:00Z"),
+        );
+        pro.billing_cycle = Some(BillingCycle::Annual);
+        account.plan = Some(pro.clone());
+        account.selected_billing_cycle = BillingCycle::Annual;
+        let _ = account.update_message(ConnectAccountMessage::ReviewPlanChange(PlanTier::Estate));
+        let _ = account.update_message(ConnectAccountMessage::SelectPayWith(PayWith::Card));
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(
+            labels
+                .iter()
+                .any(|l| l == "Mar 14, 2099 – Mar 14, 2100, then renews"),
+            "{:?}",
+            labels
+        );
+        account.checkout = None;
+
+        // A scheduled bitcoin lower tier: the card starts after it ends.
+        let mut estate = plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2099-03-14T00:00:00Z"),
+        );
+        estate.pending_plan = Some(PlanTier::Pro);
+        estate.pending_plan_at = Some("2099-03-14T00:00:00Z".into());
+        estate.pending_billing_cycle = Some(BillingCycle::Monthly);
+        let cs = CheckoutState::new(1, PlanTier::Estate, BillingCycle::Annual, Some(estate));
+        assert_eq!(billing::card_start(&cs).as_deref(), Some("Apr 14, 2099"));
+
+        // In grace, renewing the same tier by bitcoin starts today.
+        let grace = (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339();
+        let mut due = card_plan_fixture("estate", true, &format!(r#","graceEndsAt":"{grace}""#));
+        due.status = PlanStatus::PastDue;
+        account.plan = Some(due);
+        let (_, note, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert!(ok);
+        assert!(note.contains("starting today"), "{}", note);
+
+        // A trialing card with auto-renewal off can't upgrade by bitcoin.
+        let mut trialing = card_plan_fixture("pro", false, "");
+        trialing.billing_cycle = None;
+        account.plan = Some(trialing);
+        let (_, _, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert!(!ok);
+        let (_, _, ok) = billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Annual);
+        assert!(ok, "the same tier by bitcoin is still allowed");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unconfirmed_change_copy_admits_the_uncertainty() {
+        use crate::app::state::connect::account::PlanRefresh;
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        let mut f = billing_v2_features();
+        f.card_payments_enabled = Some(true);
+        account.features = Some(f);
+        // Bitcoin-paid snapshot with no renewal: card_start is None, which
+        // used to fall through to "Charged to your card today".
+        let free = plan(PlanTier::Free, PlanStatus::Active, None);
+        for (refresh, line) in [
+            (PlanRefresh::Pending(3), "Refreshing Plan & billing…"),
+            (PlanRefresh::Failed, "couldn’t be refreshed"),
+            (PlanRefresh::Updated, "now shows the latest plan"),
+        ] {
+            let mut cs = CheckoutState::new(
+                1,
+                PlanTier::Estate,
+                BillingCycle::Annual,
+                Some(free.clone()),
+            );
+            cs.phase = CheckoutPhase::ChangeUnconfirmed {
+                message: "connection reset".into(),
+                refresh,
+            };
+            account.checkout = Some(cs);
+            let labels = visible_labels(plan_billing_ux(&account), &renderer);
+            assert!(labels
+                .iter()
+                .any(|l| l == "We couldn’t confirm the plan change"));
+            assert!(
+                labels.iter().any(|l| l.contains(line)),
+                "{:?}: {:?}",
+                refresh,
+                labels
+            );
+            assert!(!labels.iter().any(|l| l.contains("has just been refreshed")));
+            assert!(
+                !labels
+                    .iter()
+                    .any(|l| l.contains("Charged to your card today")),
+                "{:?}",
+                labels
+            );
+            assert!(labels.iter().any(|l| l == "Not confirmed"));
+            assert_eq!(
+                labels.iter().any(|l| l == "Refresh plan"),
+                refresh == PlanRefresh::Failed
+            );
+        }
+        // A downgrade (or an upgrade) that got no clear answer never says
+        // nothing was charged or refunded.
+        for kind in ["downgrade", "upgrade"] {
+            let mut cs = CheckoutState::new(
+                1,
+                PlanTier::Pro,
+                BillingCycle::Annual,
+                Some(card_plan_fixture("estate", true, "")),
+            );
+            cs.preview = Some(
+                serde_json::from_str(&format!(
+                    r#"{{"kind":"{kind}","amountDueToday":0,"credit":0,"currency":"usd",
+                        "renewalAt":"2099-03-14T00:00:00Z","effectiveAt":"2099-03-14T00:00:00Z",
+                        "nextChargeAmount":100}}"#
+                ))
+                .expect("preview parses"),
+            );
+            cs.phase = CheckoutPhase::ChangeUnconfirmed {
+                message: "connection reset".into(),
+                refresh: PlanRefresh::Pending(3),
+            };
+            account.checkout = Some(cs);
+            let labels = visible_labels(plan_billing_ux(&account), &renderer);
+            assert!(
+                labels
+                    .iter()
+                    .any(|l| l.contains("couldn’t confirm whether the change to Pro went through")),
+                "{kind}: {:?}",
+                labels
+            );
+            assert!(
+                !labels
+                    .iter()
+                    .any(|l| l.contains("Nothing is charged or refunded today")
+                        || l.contains("starts as soon as you confirm")),
+                "{kind}: {:?}",
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn change_plan_cta_for_a_card_subscriber() {
+        let mut account = dashboard_panel();
+        let mut f = billing_v2_features();
+        f.card_payments_enabled = Some(true);
+        account.features = Some(f);
+        account.plan = Some(card_plan_fixture("pro", true, ""));
+        let (label, _, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Annual);
+        assert!(!ok, "current plan on a card: {}", label);
+        let (label, _, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert_eq!((label.as_str(), ok), ("Review upgrade to Estate", true));
+        account.plan = Some(card_plan_fixture("estate", true, ""));
+        let (label, note, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Annual);
+        assert_eq!(
+            (label.as_str(), ok),
+            ("Review change to Pro · Annual", true)
+        );
+        assert!(note.contains("period ends"), "{}", note);
+        account.plan = Some(card_plan_fixture(
+            "estate",
+            true,
+            r#","pendingPlan":"pro","pendingPlanAt":"2027-03-14T00:00:00Z""#,
+        ));
+        let (_, _, ok) = billing::change_plan_cta(&account, &PlanTier::Pro, BillingCycle::Monthly);
+        assert!(!ok, "a change is already scheduled");
+        // Trialing card: nothing can change until it starts.
+        let mut trialing = card_plan_fixture("pro", true, "");
+        trialing.billing_cycle = None;
+        account.plan = Some(trialing);
+        let (_, note, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert!(!ok);
+        assert!(
+            note.contains("starts when your paid period ends"),
+            "{}",
+            note
+        );
+        // Flag off: no card change is offered.
+        account.plan = Some(card_plan_fixture("pro", true, ""));
+        account.features.as_mut().unwrap().card_payments_enabled = Some(false);
+        let (_, _, ok) =
+            billing::change_plan_cta(&account, &PlanTier::Estate, BillingCycle::Annual);
+        assert!(!ok);
     }
 
     #[tokio::test(flavor = "multi_thread")]
