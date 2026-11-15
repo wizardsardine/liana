@@ -612,10 +612,12 @@ pub struct Home {
     pending_remote_rename: Option<PendingRemoteRename>,
     /// Cubes that exist on the Connect server but not locally on this machine.
     remote_cubes: Vec<RemoteCube>,
-    /// UUIDs of this account's Cubes, local or Connect-only, whose Connect
-    /// features are off because they are over the plan's Cube limit
-    /// (`connectFeaturesDisabled`). Display only: opening the Cube and every
-    /// wallet action stay available. Refreshed with `remote_cubes`.
+    /// UUIDs of this account's Cubes whose Connect features are off because
+    /// they are over the plan's Cube limit (`connectFeaturesDisabled`). Holds
+    /// local and Connect-only Cubes alike, but only local rows show the tag:
+    /// a Connect-only Cube has no Connect features here until it is restored.
+    /// Display only: opening the Cube and every wallet action stay available.
+    /// Refreshed with `remote_cubes`.
     connect_off_cubes: std::collections::HashSet<String>,
     /// Generation counter identifying the newest *valid* remote-cube fetch.
     ///
@@ -6189,18 +6191,20 @@ impl Home {
                     && launcher_chrome::is_top_tier(projection.tier)
                 {
                     localized_format!(
-                        "You have {} Cubes on {}; {} includes {}. Existing Cubes keep working. Delete a Cube on this network to bring one in.",
-                        "Tienes {} Cubes en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Elimina un Cube en esta red para traer uno.",
+                        "You have {} {} on {}; {} includes {}. Existing Cubes keep working. Delete a Cube on this network to bring one in.",
+                        "Tienes {} {} en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Elimina un Cube en esta red para traer uno.",
                         projection.total_count,
+                        if projection.total_count == 1 { "Cube" } else { "Cubes" },
                         launcher_chrome::network_name(self.network),
                         projection.tier,
                         projection.cube_limit
                     )
                 } else if projection.total_count > projection.cube_limit {
                     localized_format!(
-                        "You have {} Cubes on {}; {} includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
-                        "Tienes {} Cubes en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
+                        "You have {} {} on {}; {} includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
+                        "Tienes {} {} en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
                         projection.total_count,
+                        if projection.total_count == 1 { "Cube" } else { "Cubes" },
                         launcher_chrome::network_name(self.network),
                         projection.tier,
                         projection.cube_limit
