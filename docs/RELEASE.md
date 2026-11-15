@@ -50,8 +50,8 @@ one — it just has a Spark wallet that never starts. See
 
 ```
 # macOS — inside the mounted DMG
-ls "/Volumes/Tenshu/Tenshu.app/Contents/MacOS/"        # Coincube + coincube-spark-bridge
-codesign --verify --strict "/Volumes/Tenshu/Tenshu.app/Contents/MacOS/coincube-spark-bridge"
+ls "/Volumes/COINCUBE/COINCUBE.app/Contents/MacOS/"        # Coincube + coincube-spark-bridge
+codesign --verify --strict "/Volumes/COINCUBE/COINCUBE.app/Contents/MacOS/coincube-spark-bridge"
 
 # Linux
 tar tzf tenshu-<version>-<target>.tar.gz               # coincube + coincube-spark-bridge

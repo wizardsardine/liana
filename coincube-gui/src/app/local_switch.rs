@@ -106,7 +106,7 @@ impl fmt::Display for PrunedHistory {
             } if u64::from(*earliest) < *prune_height => write!(
                 f,
                 "Your local node keeps blocks only from height {prune_height}, but this Vault \
-                 has history from block {earliest}. Tenshu could not confirm all of it in the \
+                 has history from block {earliest}. COINCUBE Desktop could not confirm all of it in the \
                  local wallet. A recovery scan would need blocks the node no longer keeps. \
                  Keep using COINCUBE | Connect for this Vault."
             ),
@@ -116,7 +116,7 @@ impl fmt::Display for PrunedHistory {
             } => write!(
                 f,
                 "Your local node keeps blocks only from height {prune_height}, and this Vault \
-                 has history from block {earliest}. Tenshu could not confirm all of it in the \
+                 has history from block {earliest}. COINCUBE Desktop could not confirm all of it in the \
                  local wallet, and its history is too close to that height to rescan reliably. Keep using \
                  COINCUBE | Connect for this Vault."
             ),
@@ -124,7 +124,7 @@ impl fmt::Display for PrunedHistory {
                 f,
                 "Your local node keeps blocks only from height {prune_height}, and this \
                  restored Vault's history hasn't been found yet, so it may be older than \
-                 that. Keep using COINCUBE | Connect while Tenshu recovers this Vault's history."
+                 that. Keep using COINCUBE | Connect while COINCUBE Desktop recovers this Vault's history."
             ),
         }
     }

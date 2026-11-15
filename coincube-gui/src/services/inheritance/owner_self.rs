@@ -101,7 +101,7 @@ impl std::fmt::Display for OwnerSelfError {
                 f,
                 "Nothing to back up to your phone yet: this Cube has no Vault, and your phone \
                  key is set up for Vault-only recovery. Create a Vault, or set up Full-Cube \
-                 recovery in your Keychain app, then try again."
+                 recovery in COINCUBE Mobile, then try again."
             ),
             Self::Escrow(e) => write!(f, "{}", e),
             Self::Connect(e) => write!(f, "{}", e),

@@ -216,7 +216,7 @@ pub fn hw_list_view_verify_address(
                             kind.to_string(),
                             version.as_ref(),
                             fingerprint,
-                            "Tenshu cannot request the device to display the address. \n The verification must be done manually with the device control."
+                            "COINCUBE Desktop cannot request the device to display the address. \n The verification must be done manually with the device control."
                         ), false)
                     }
                     _ => (hw::supported_hardware_wallet(

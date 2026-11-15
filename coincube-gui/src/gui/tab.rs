@@ -1625,7 +1625,7 @@ impl Tab {
                 }
                 if cube.network != *chain {
                     return Err(format!(
-                        "This Cube's settings say it lives on {}, but it was found in the {} folder. Tenshu won't open it until the two agree.",
+                        "This Cube's settings say it lives on {}, but it was found in the {} folder. COINCUBE Desktop won't open it until the two agree.",
                         cube.network.label(),
                         chain.label(),
                     ));
@@ -2259,7 +2259,7 @@ impl Tab {
                     if cube.network != chain {
                         l.set_error(format!(
                             "This Cube's settings say it lives on {}, but it was found in \
-                             the {} folder. Tenshu won't open it until the two agree.",
+                             the {} folder. COINCUBE Desktop won't open it until the two agree.",
                             cube.network.label(),
                             chain.label(),
                         ));

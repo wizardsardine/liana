@@ -555,21 +555,21 @@ impl KeychainSignModal {
             | crate::app::ConnectionStatus::Reconnecting
             | crate::app::ConnectionStatus::Renewing => Some(coincube_ui::localized_format!(
                 "Reconnecting to Connect. Requests already sent stay on Connect; signatures \
-                 reach Tenshu once live updates are back.",
+                 reach COINCUBE Desktop once live updates are back.",
                 "Reconectando con Connect. Las solicitudes ya enviadas siguen en Connect; las \
-                 firmas llegarán a Tenshu cuando vuelvan las actualizaciones en vivo."
+                 firmas llegarán a COINCUBE Desktop cuando vuelvan las actualizaciones en vivo."
             )),
             crate::app::ConnectionStatus::Offline => Some(coincube_ui::localized_format!(
                 "No internet connection. Requests already sent stay on Connect; signatures \
-                 reach Tenshu once you’re back online.",
+                 reach COINCUBE Desktop once you’re back online.",
                 "Sin conexión a internet. Las solicitudes ya enviadas siguen en Connect; las \
-                 firmas llegarán a Tenshu cuando vuelvas a estar en línea."
+                 firmas llegarán a COINCUBE Desktop cuando vuelvas a estar en línea."
             )),
             crate::app::ConnectionStatus::RenewFailed => Some(coincube_ui::localized_format!(
-                "{}. Requests already sent stay on Connect; signatures reach Tenshu once it \
+                "{}. Requests already sent stay on Connect; signatures reach COINCUBE Desktop once it \
                  reconnects. Try again from the Connect control in the top bar.",
                 "{}. Las solicitudes ya enviadas siguen en Connect; las firmas llegarán a \
-                 Tenshu cuando se vuelva a conectar. Inténtalo de nuevo desde el control de \
+                 COINCUBE Desktop cuando se vuelva a conectar. Inténtalo de nuevo desde el control de \
                  Connect en la barra superior.",
                 coincube_ui::locale::copy(crate::app::RENEW_FAILED_TITLE),
             )),
@@ -1065,7 +1065,7 @@ impl KeychainSignModal {
             if let Some(entry) = self.pending.get_mut(index) {
                 entry.status = PendingSessionStatus::Failed;
                 entry.error = Some(
-                    "This device can't set up encrypted signing yet. Restart Tenshu and try \
+                    "This device can't set up encrypted signing yet. Restart COINCUBE Desktop and try \
                      again."
                         .to_string(),
                 );
@@ -1076,7 +1076,7 @@ impl KeychainSignModal {
             if let Some(entry) = self.pending.get_mut(index) {
                 entry.status = PendingSessionStatus::Failed;
                 entry.error = Some(format!(
-                    "{} needs to update their Keychain app before they can sign — their app \
+                    "{} needs to update COINCUBE Mobile before they can sign — their app \
                      doesn't support encrypted signing requests yet.",
                     entry.label
                 ));
@@ -1674,7 +1674,7 @@ impl KeychainSignModal {
                 // legitimate origin. Fail closed.
                 return Err(
                     "This Keychain returned an unencrypted signature for an encrypted \
-                     request. Update the Keychain app, then start the signature again."
+                     request. Update COINCUBE Mobile, then start the signature again."
                         .to_string(),
                 );
             };
@@ -2355,9 +2355,9 @@ pub(crate) fn friendly_unresolved_signer(entry: &str) -> String {
             entry.trim_end_matches(" (signer_app_outdated)"),
         ),
         Some("no_device_registered") => localized_format!(
-            "{} hasn't set up the Keychain app yet. Ask them to install it \
+            "{} hasn't set up COINCUBE Mobile yet. Ask them to install it \
              and sign in, then retry.",
-            "{} aún no configuró la app Keychain. Pídele que la instale e \
+            "{} aún no configuró COINCUBE Mobile. Pídele que la instale e \
              inicie sesión, y vuelve a intentarlo.",
             entry,
         ),
@@ -2373,9 +2373,9 @@ pub(crate) fn friendly_unresolved_signer(entry: &str) -> String {
         // account's registration state is wrong, so say nothing about it.
         Some("transport_key_stale") => localized_format!(
             "{} — this signer's Keychain hasn't checked in with Connect \
-             recently. Ask them to open Keychain on their phone, then retry.",
+             recently. Ask them to open COINCUBE Mobile on their phone, then retry.",
             "{} — el Keychain de este firmante no se ha comunicado con Connect \
-             recientemente. Pídele que abra Keychain en su teléfono y vuelve a intentarlo.",
+             recientemente. Pídele que abra COINCUBE Mobile en su teléfono y vuelve a intentarlo.",
             entry,
         ),
         // The key is bound to a device Connect can no longer target (revoked,
@@ -2384,9 +2384,9 @@ pub(crate) fn friendly_unresolved_signer(entry: &str) -> String {
         // that holds it (keychain-app#145).
         Some("enrolled_device_unavailable") => localized_format!(
             "{} is bound to a Keychain that can no longer be reached. Ask them \
-             to open Keychain on the phone that holds this key, then retry.",
+             to open COINCUBE Mobile on the phone that holds this key, then retry.",
             "{} está vinculado a un Keychain al que ya no se puede llegar. Pídele \
-             que abra Keychain en el teléfono que tiene esta clave y vuelve a intentarlo.",
+             que abra COINCUBE Mobile en el teléfono que tiene esta clave y vuelve a intentarlo.",
             entry,
         ),
         // Kept for compatibility, but no server code path emits this token
@@ -2962,7 +2962,11 @@ pub(crate) mod tests {
     #[test]
     fn a_stale_transport_key_tells_the_signer_to_open_keychain() {
         let copy = friendly_unresolved_signer(&entry("transport_key_stale"));
-        assert!(copy.contains("open Keychain on their phone"), "{}", copy);
+        assert!(
+            copy.contains("open COINCUBE Mobile on their phone"),
+            "{}",
+            copy
+        );
         assert!(!copy.contains(FALSE_DIAGNOSIS), "{}", copy);
         assert!(!copy.contains("registered"), "{}", copy);
     }
@@ -2980,7 +2984,7 @@ pub(crate) mod tests {
     fn the_existing_unresolved_arms_still_match_their_exact_tokens() {
         let no_device = friendly_unresolved_signer(&entry("no_device_registered"));
         assert!(
-            no_device.contains("hasn't set up the Keychain app yet"),
+            no_device.contains("hasn't set up COINCUBE Mobile yet"),
             "{}",
             no_device
         );
@@ -3002,7 +3006,7 @@ pub(crate) mod tests {
     fn unresolved_reason_matching_is_exact_not_substring() {
         let copy = friendly_unresolved_signer(&entry("no_device_registered_v2"));
         assert!(
-            !copy.contains("hasn't set up the Keychain app yet"),
+            !copy.contains("hasn't set up COINCUBE Mobile yet"),
             "{}",
             copy
         );
@@ -3101,7 +3105,7 @@ pub(crate) mod tests {
             assert!(!notice.contains(FALSE_DIAGNOSIS), "{}", notice);
         }
         assert!(
-            notices[0].contains("open Keychain on their phone"),
+            notices[0].contains("open COINCUBE Mobile on their phone"),
             "{}",
             notices[0]
         );
@@ -3262,7 +3266,7 @@ pub(crate) mod tests {
         assert_eq!(m.pending[0].status, PendingSessionStatus::Failed);
         let err = m.pending[0].error.as_deref().unwrap();
         assert!(
-            err.contains("update their Keychain app"),
+            err.contains("update COINCUBE Mobile"),
             "expected an update prompt, got: {}",
             err
         );

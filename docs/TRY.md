@@ -1,14 +1,14 @@
-# Quickly try out Tenshu in a test environment
+# Quickly try out COINCUBE Desktop in a test environment
 
 _(Updated July 2026)_
 
-This document is a short set of instructions for trying out Tenshu — the Coincube desktop
+This document is a short set of instructions for trying out COINCUBE Desktop — the Coincube desktop
 app — on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
 give any nuance, details or describe alternative configurations.
 
-This guide uses Tenshu as a "hot wallet" with the "Tenshu-managed" `bitcoind` option.
+This guide uses COINCUBE Desktop as a "hot wallet" with the "COINCUBE-managed" `bitcoind` option.
 You can find [here](./SIGNING_DEVICES.md) the list of supported signing devices.
-If you'd like to try out Tenshu using emulators of a hardware signing device you can use the
+If you'd like to try out COINCUBE Desktop using emulators of a hardware signing device you can use the
 [Specter simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md)
 or the [Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
 (emulators of the other hardware signers will work too when we finish their integration)
@@ -49,9 +49,9 @@ mkdir tenshu_quicktry
 cd tenshu_quicktry
 ```
 
-## Step 1: install Tenshu
+## Step 1: install COINCUBE Desktop
 
-Get Tenshu for your system from the [Coincube website](https://coincube.io) or the
+Get COINCUBE Desktop for your system from the [Coincube website](https://coincube.io) or the
 [GitHub releases page](https://github.com/coincubetech/coincube/releases).
 
 A note for **Linux users only**: released binaries may not be working on your system if it is
@@ -59,7 +59,7 @@ running a too old glibc. In this case you may have to build from source. See the
 about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
 The Linux archive extracts to a `tenshu-<version>-<target>/` directory holding two executables:
-`coincube` and `coincube-spark-bridge`. Keep them together — Tenshu looks for the Spark bridge next
+`coincube` and `coincube-spark-bridge`. Keep them together — COINCUBE Desktop looks for the Spark bridge next
 to its own executable, and moving one without the other disables the Spark wallet.
 
 ### Verify your download
@@ -93,10 +93,10 @@ sha256sum --check SHA256SUMS-1.5.0.txt --ignore-missing
 [docs/security/VERIFY.md](./security/VERIFY.md) for full per-platform instructions and the
 key fingerprint to cross-check.
 
-If all is good, you can run Tenshu!
+If all is good, you can run COINCUBE Desktop!
 
-At startup, you will have the choice between starting Tenshu using an existing configuration or to
-set up a new one. Choose to install Tenshu on a new Bitcoin network.
+At startup, you will have the choice between starting COINCUBE Desktop using an existing configuration or to
+set up a new one. Choose to install COINCUBE Desktop on a new Bitcoin network.
 
 The next screen allows you to either configure a new wallet, participate in the configuration of a
 new wallet (if you are taking part in a multisig for instance), or to recover a wallet from backup.
@@ -114,7 +114,7 @@ the recovery key, and choose "This computer" again.
 
 Of course, it wouldn't make sense for a real wallet to use the same signing device to derive both
 the primary and recovery keys. Or even to use hot keys at all with a non-trivial amount of coins. We
-only do this for convenience in testing Tenshu on Signet. If you'd like to try out signing with a
+only do this for convenience in testing COINCUBE Desktop on Signet. If you'd like to try out signing with a
 hardware wallet you can use the "testnet" mode of a Specter, the "Bitcoin testnet" app of a Ledger,
 or the simulator of any of them (see the links at the top of this document).
 
@@ -123,16 +123,16 @@ mnemonic as well as the descriptor in the next two screens. Otherwise just make 
 ticking the boxes. If you are using a signing device or its simulator you'll have a step for registering
 the descriptor on it.
 
-You can then decide whether you would like to manage `bitcoind` yourself or let Tenshu configure
+You can then decide whether you would like to manage `bitcoind` yourself or let COINCUBE Desktop configure
 and start/stop it while the GUI is being used:
-For the purpose of this guide, we will use the simpler option: to let Tenshu download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
+For the purpose of this guide, we will use the simpler option: to let COINCUBE Desktop download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
 A full Initial Blocks Download (Bitcoin network synchronization, from the beginning of the chain) will take place, as we are using Signet it will be pretty quick.
 
 Click on continue until we finalize the installation.
 
 ## Step 2: have fun
 
-Once synchronized, Tenshu will open the wallet.
+Once synchronized, COINCUBE Desktop will open the wallet.
 You can generate a receive address in the "Receive" menu. You can get signet coins from the signet
 faucet at https://signet.bc-2.jp/.
 
@@ -142,23 +142,23 @@ my own configuration, but it depends on what you configured previously). Then yo
 
 Keep in mind that signet coins have no value!
 
-Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Tenshu!
+Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore COINCUBE Desktop!
 
 ## Cleanup
 
 You need to remove:
 
-- The Tenshu application (the `coincube` binary)
+- The COINCUBE Desktop application (the `coincube` binary)
 - its data directory
 
-For a user Alice the default Tenshu data directory is:
+For a user Alice the default COINCUBE Desktop data directory is:
 
 - /Users/Alice/Library/Application Support/Coincube on MacOS
 - C:\Users\Alice\AppData\Roaming\Coincube on Windows
 - /home/Alice/.coincube on Linux
 
 Assuming you used the throwaway folder as advised in step 0 and did not use custom `bitcoind` or
-Tenshu data directories you can wipe everything using these commands on Linux:
+COINCUBE Desktop data directories you can wipe everything using these commands on Linux:
 
 ```
 cd ..

@@ -8,7 +8,7 @@ pairings keep their original policy path. Bitcoin Blake2b LAN signing remains
 unavailable.
 
 The imported wallet's persisted `WalletId` is derived from its Bitcoin chain
-and canonical receive/change pair. The LAN transport uses Tenshu's existing
+and canonical receive/change pair. The LAN transport uses COINCUBE Desktop's existing
 validated, canonical `/<0;1>/*` descriptor serializer, including its original
 apostrophe spelling for hardened origins and its checksum. Its full SHA-256 binds the
 pairing; the first eight hex characters are only the displayed transport ID.
@@ -45,7 +45,7 @@ the native production-BLoC signed results
 `coincube-gui/src/phone_signer/fixtures/imported_signing_signed.json` have
 SHA-256
 `075e261fa5433603746c7462890c14ea99ac7309da06e288449b46c54e20146b`.
-Desktop tests pin those hashes, require Tenshu's exact descriptor bytes and receive/change
+Desktop tests pin those hashes, require COINCUBE Desktop's exact descriptor bytes and receive/change
 script parity at indices 0, 1, and 7, and verify all ten signed PSBTs with
 Bitcoin 0.32.8. The sortedmulti phone child ranks first at receive 0 and
 second at change 0. The core stores sortedmulti keys in one canonical order,
@@ -58,12 +58,12 @@ The raw native results demonstrate offline script and signature compatibility;
 the exact canonical request, pairing commitment, frozen review and native
 signing replay is captured by [Keychain PR #183](https://github.com/coincubetech/keychain-app/pull/183)
 at `68e6579bdec33a4639543327d8cd8baa12394035`. Its two exported requests
-retain Tenshu's original descriptor string and share full SHA-256
+retain COINCUBE Desktop's original descriptor string and share full SHA-256
 `6c2d38811a23ff93af86b81c84667591e674884d804843ddf35c5b9995cc1219`.
 The request fixture SHA-256 is
 `71bf8c42cce0c9725b641da66d321a9ea6894b5a783ea5725c2100bfdd57c23f`;
 the actual native signed-result fixture SHA-256 is
 `944753d442cad41affbddf424069b08f2a51990ab6148ec645f0d42fa7fb9a31`.
-Desktop tests require the published request bytes to equal the current Tenshu
+Desktop tests require the published request bytes to equal the current COINCUBE Desktop
 exporter and independently verify both returned partial signatures with Bitcoin
 0.32.8. No fixture represents a physical phone or network test.

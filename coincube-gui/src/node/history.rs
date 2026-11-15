@@ -35,7 +35,9 @@ pub const MAX_TRANSIENT_FAILURES: u32 = 12;
 const UNREACHABLE: &str = "Cannot reach local node for ";
 
 fn chain_changed(start: u32) -> String {
-    format!("The chain changed during recovery, so Tenshu scans every block from {start}.")
+    format!(
+        "The chain changed during recovery, so COINCUBE Desktop scans every block from {start}."
+    )
 }
 
 /// Keep running through a missed RPC deadline; pause on anything else, or
@@ -295,7 +297,7 @@ impl NodeRpc {
         if info["private_keys_enabled"].as_bool() != Some(false)
             || info["descriptors"].as_bool() != Some(true)
         {
-            return Err("Recovery requires Tenshu's watch-only descriptor wallet".into());
+            return Err("Recovery requires COINCUBE Desktop's watch-only descriptor wallet".into());
         }
         let receive = descriptor.receive_descriptor().to_string();
         let change = descriptor.change_descriptor().to_string();
@@ -1166,7 +1168,7 @@ pub async fn plan_coin_scans(
                     }
                     None => plan.lower_floor(
                         height,
-                        format!("A pending spend of a coin from block {height} is not in the local wallet yet, so Tenshu scans every block from {height}."),
+                        format!("A pending spend of a coin from block {height} is not in the local wallet yet, so COINCUBE Desktop scans every block from {height}."),
                     ),
                 }
             }
@@ -1206,7 +1208,7 @@ pub async fn plan_coin_scans(
                 Some(None) => {}
                 None => plan.lower_floor(
                     height,
-                    format!("Connect could not say which transaction spent a coin from block {height}, so Tenshu scans every block from {height}."),
+                    format!("Connect could not say which transaction spent a coin from block {height}, so COINCUBE Desktop scans every block from {height}."),
                 ),
             }
         } else {

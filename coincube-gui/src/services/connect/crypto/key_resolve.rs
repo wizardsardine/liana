@@ -131,7 +131,7 @@ impl KeyResolveError {
             }
             _ => format!(
                 "“{}” couldn't be read and needs re-sharing. Ask its owner to re-share the key \
-                 from their Keychain app.",
+                 from COINCUBE Mobile.",
                 key_name
             ),
         }

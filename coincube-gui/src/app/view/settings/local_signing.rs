@@ -200,9 +200,9 @@ fn idle_body<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
     }
     let ready = state.wallet_fingerprint.is_some() && state.selected_key.is_some();
     let hint = if state.selected_key.is_none() {
-        "Select a key above, then open Keychain on the phone."
+        "Select a key above, then open COINCUBE Mobile on the phone."
     } else {
-        "Open Keychain on the phone first."
+        "Open COINCUBE Mobile on the phone first."
     };
     page::rows([page::row(hint)
         .control(page::primary(
@@ -230,10 +230,10 @@ fn waiting_body<'a>(
     let mut info = Column::new()
         .spacing(4)
         .width(Length::Fill)
-        .push(tenshu::label(localized_format!("Scan with Keychain on phone {}", "Escanea con Keychain en el teléfono {}", phone.cert_fp8)))
+        .push(tenshu::label(localized_format!("Scan with COINCUBE Mobile on phone {}", "Escanea con COINCUBE Mobile en el teléfono {}", phone.cert_fp8)))
         .push(page::muted(if remaining > 0 {
             localized_format!(
-                "Phone at {}. The phone and Tenshu verify pairing automatically; no private key leaves this computer.", "Teléfono en {}. El teléfono y Tenshu verifican emparejar automáticamente; ninguna llave privada deja este ordenador.",
+                "Phone at {}. The phone and COINCUBE Desktop verify pairing automatically; no private key leaves this computer.", "Teléfono en {}. El teléfono y COINCUBE Desktop verifican emparejar automáticamente; ninguna llave privada deja este ordenador.",
                 phone.addr
             )
         } else {
@@ -307,7 +307,7 @@ fn picker_body<'a>(
                 .align_y(Alignment::Center)
                 .push(
                     Container::new(page::muted(if discovered.is_empty() {
-                        localized_copy("No phones yet. Open Keychain on a phone on the same network and keep it unlocked.")
+                        localized_copy("No phones yet. Open COINCUBE Mobile on a phone on the same network and keep it unlocked.")
                     } else {
                         localized_copy("Not listed? Check both are on the same Wi-Fi.")
                     }))
@@ -367,7 +367,7 @@ fn error_body<'a>(err: &'a PairingError) -> Element<'a, Message> {
             localized_copy("Keychain needs updating"),
             localized_copy(
                 "This Keychain didn't send an encryption key, so signing requests \
-                 to it couldn't be encrypted. Update the Keychain app on the phone, \
+                 to it couldn't be encrypted. Update COINCUBE Mobile on the phone, \
                  then pair again.",
             )
             .to_string(),

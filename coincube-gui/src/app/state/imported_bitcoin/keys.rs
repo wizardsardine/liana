@@ -386,7 +386,7 @@ pub(super) fn step<'a>(
             }
             KeySource::Elsewhere => card.push(
                 caption(localized_copy(
-                    "Another wallet or person signs with this key. Tenshu saves the PSBT for them.",
+                    "Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.",
                 ))
                 .style(theme::text::secondary),
             ),

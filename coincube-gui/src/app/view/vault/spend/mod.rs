@@ -160,7 +160,7 @@ pub fn spend_view<'a>(
                         button::secondary(
                             None,
                             if mcp_review {
-                                localized_copy("Sign in Tenshu")
+                                localized_copy("Sign in COINCUBE Desktop")
                             } else {
                                 localized_copy("Save")
                             },
@@ -197,7 +197,8 @@ const CHOOSE_COINS_ID: &str = "tenshu.vault.send.choose-coins";
 /// What the collapsed Coins section says. Automatic selection keeps the fee
 /// and the change low (branch and bound over the confirmed coins); it does
 /// not order coins by their recovery dates, so the copy doesn't claim to.
-pub(crate) const AUTOMATIC_COINS: &str = "Automatic: Tenshu picks the coins for this payment.";
+pub(crate) const AUTOMATIC_COINS: &str =
+    "Automatic: COINCUBE Desktop picks the coins for this payment.";
 
 /// Fee presets in display order, each with the block target whose estimate it
 /// fetches. The target, never the label or position, is the preset's identity.
@@ -292,12 +293,12 @@ where
             iced::widget::text(if unsigned {
                 localized_copy("Unsigned transaction. Your signature is required.")
             } else {
-                localized_copy("Signatures present. Review signing status in Tenshu.")
+                localized_copy("Signatures present. Review signing status in COINCUBE Desktop.")
             })
             .size(20),
         )
         .push(iced::widget::text(
-            localized_copy("This screen cannot sign or broadcast yet. Choose Sign in Tenshu to open the ordinary signing controls. A successful preparation may already have reserved a change address."),
+            localized_copy("This screen cannot sign or broadcast yet. Choose Sign in COINCUBE Desktop to open the ordinary signing controls. A successful preparation may already have reserved a change address."),
         ))
         .push(iced::widget::text(localized_format!(
             "Payment total: {} sats", "Importe total del pago: {} sats",

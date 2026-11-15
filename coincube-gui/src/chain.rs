@@ -47,7 +47,7 @@ impl RuntimeSupport {
 /// settings are intact, this version can't run it — and nothing about the
 /// sender/desktop being at fault.
 pub const BTCB2_DORMANT_REASON: &str = "This Cube is on Bitcoin Blake2b, which this version of \
-     Tenshu can't open yet. Its settings are untouched; update Tenshu to a version with \
+     COINCUBE Desktop can't open yet. Its settings are untouched; update COINCUBE Desktop to a version with \
      Bitcoin Blake2b support to use it.";
 
 /// Capability for the explicit authenticated Connect Vault path only.

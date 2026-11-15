@@ -156,22 +156,40 @@ fn ink(theme: &Theme, muted: bool) -> Color {
     }
 }
 
-fn brand_row<'a, M: 'a>(mark: Element<'a, M>, word: text::Text<'a, Theme, Renderer>) -> Row<'a, M> {
+/// `.brand` word size: the COINCUBE wordmark beside the 20px cube.
+pub const BRAND_WORD: f32 = 15.0;
+
+fn brand_row<'a, M: 'a>(mark: Element<'a, M>, word: Element<'a, M>) -> Row<'a, M> {
     Row::new()
         .spacing(8)
         .align_y(Alignment::Center)
         .push(mark)
-        .push(word.size(15).font(font::SEMIBOLD))
+        .push(word)
 }
 
-/// `.brand` where it is not a control: the cube and "Tenshu", muted under a
-/// Cube's unlock face (`.quiet`).
+/// The brand word: the two-tone COINCUBE wordmark, or the same letters in
+/// one muted ink under a Cube's unlock face. Both set "COINCUBE" in Space
+/// Grotesk Bold at [`BRAND_WORD`], so the brand keeps one width either way.
+fn brand_word<'a, M: 'a>(muted: bool) -> Element<'a, M> {
+    if muted {
+        text("COINCUBE")
+            .size(BRAND_WORD)
+            .font(font::SPACE_GROTESK_BOLD)
+            .style(move |theme: &Theme| text::Style {
+                color: Some(ink(theme, true)),
+            })
+            .into()
+    } else {
+        crate::image::coincube_wordmark(BRAND_WORD).into()
+    }
+}
+
+/// `.brand` where it is not a control: the cube and the COINCUBE wordmark,
+/// muted under a Cube's unlock face (`.quiet`).
 pub fn brand_mark<'a, M: 'a>(muted: bool) -> Element<'a, M> {
     brand_row(
         mark(CUBE, BRAND_MARK, move |theme| ink(theme, muted)),
-        text("Tenshu").style(move |theme: &Theme| text::Style {
-            color: Some(ink(theme, muted)),
-        }),
+        brand_word(muted),
     )
     .into()
 }
@@ -195,7 +213,7 @@ pub fn brand_action<'a, M: Clone + 'static>(
             theme.colors.shell.ink
         }
     });
-    Action::new(id, brand_row(cube, text("Tenshu")), focus_intent)
+    Action::new(id, brand_row(cube, brand_word(false)), focus_intent)
         .padding(0.0)
         .style(move |theme: &Theme, status| {
             let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);

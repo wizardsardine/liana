@@ -1120,9 +1120,9 @@ impl SelectKeySource {
         if resolved.raw.is_envelope_invalid() {
             self.error = Some(localized_format!(
                 "“{}” is waiting to be re-shared. Its owner has been asked to share it again \
-                 from their Keychain app.",
+                 from COINCUBE Mobile.",
                 "“{}” está esperando a que se vuelva a compartir. Se le pidió a su titular \
-                 que la comparta de nuevo desde su app Keychain.",
+                 que la comparta de nuevo desde COINCUBE Mobile.",
                 resolved.raw.name
             ));
             return Task::none();
@@ -3485,7 +3485,7 @@ mod tests {
             picker.error.as_deref(),
             Some(
                 "\u{201c}Key 2\u{201d} couldn't be read and needs re-sharing. Ask its owner to \
-                 re-share the key from their Keychain app."
+                 re-share the key from COINCUBE Mobile."
             )
         );
 

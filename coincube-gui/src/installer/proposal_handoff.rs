@@ -42,9 +42,9 @@ impl Step for ProposalHandoff {
         let handoff = card::simple(
             column![
                 caption(localized_copy(if active { "PROPOSAL PREPARED · WAITING FOR YOU" } else { "PROPOSAL ACCESS ENDED" })),
-                h3(localized_copy(if active { "Continue setup in Tenshu" } else { "Setup ended" })),
+                h3(localized_copy(if active { "Continue setup in COINCUBE Desktop" } else { "Setup ended" })),
                 text(localized_copy(if active {
-                    "A paired client prepared a policy proposal. No Vault has been created. You will select the real keys and review the compiled descriptor in Tenshu before creation."
+                    "A paired client prepared a policy proposal. No Vault has been created. You will select the real keys and review the compiled descriptor in COINCUBE Desktop before creation."
                 } else {
                     "This proposal can no longer continue. Return to the launcher, unlock this Cube, and ask the paired client to prepare a fresh proposal."
                 })),
@@ -71,7 +71,7 @@ impl Step for ProposalHandoff {
                 caption(localized_copy("Block time varies; the delay is not a calendar deadline.")),
                 text(localized_copy("Script · P2WSH")),
                 text(format!("Network · {}", crate::chain::canonical_network_name(self.session.chain()))),
-                text(localized_copy("Node · selected and verified in Tenshu")),
+                text(localized_copy("Node · selected and verified in COINCUBE Desktop")),
             ]
             .spacing(10),
         )
@@ -81,7 +81,7 @@ impl Step for ProposalHandoff {
             column![
                 h4_bold(localized_copy("What happens next")),
                 text(localized_copy(
-                    "1  Choose and check the real public keys in Tenshu"
+                    "1  Choose and check the real public keys in COINCUBE Desktop"
                 )),
                 text(localized_copy("2  Complete native backup and node steps")),
                 text(localized_copy(
@@ -98,7 +98,7 @@ impl Step for ProposalHandoff {
         let content = column![
             caption(localized_copy("VAULT SETUP")),
             h3(localized_copy("Vault setup from a paired client")),
-            text(localized_copy("This handoff prepares a Vault for this empty Cube. You approve creation in Tenshu.")),
+            text(localized_copy("This handoff prepares a Vault for this empty Cube. You approve creation in COINCUBE Desktop.")),
             handoff,
             row![plan, checks].spacing(16).width(Length::Fill),
             caption(localized_copy("No read access is granted. Ending setup locks this Cube and discards this proposal; pairing remains until revoked.")),
@@ -203,7 +203,7 @@ mod tests {
             assert!(probe
                 .labels
                 .iter()
-                .any(|s| s.contains("selected and verified in Tenshu")));
+                .any(|s| s.contains("selected and verified in COINCUBE Desktop")));
             assert!(probe
                 .labels
                 .iter()

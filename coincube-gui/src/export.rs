@@ -1729,7 +1729,8 @@ fn import_backup_account(backup: &Backup) -> Result<&backup::Account, Error> {
         )),
         1 => Ok(backup.accounts.first().expect("already checked")),
         _ => Err(Error::BackupImport(
-            "Tenshu does not support importing a backup that contains several accounts.".into(),
+            "COINCUBE Desktop does not support importing a backup that contains several accounts."
+                .into(),
         )),
     }
 }

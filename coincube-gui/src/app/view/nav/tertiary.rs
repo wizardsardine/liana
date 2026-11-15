@@ -310,7 +310,7 @@ fn vault_settings_items(imported: bool) -> Vec<SubItem> {
             },
         )
         .disabled(imported.then(|| {
-            "Pairing is unavailable for imported wallets: this wallet has no Keychain-eligible key in Tenshu."
+            "Pairing is unavailable for imported wallets: this wallet has no Keychain-eligible key in COINCUBE Desktop."
                 .to_string()
         })),
         SubItem::new(

@@ -729,12 +729,12 @@ fn unverified_account_ux<'a>(
     let (title, detail) = match unverified.trouble {
         Trouble::Offline => (
             "No internet connection",
-            "You’re still signed in. Tenshu checks your Connect session again when you’re back \
+            "You’re still signed in. COINCUBE Desktop checks your Connect session again when you’re back \
              online. Connect-only Cubes can be restored then.",
         ),
         Trouble::Unreachable => (
             "Can’t reach COINCUBE | Connect",
-            "You’re still signed in. Tenshu keeps trying. Connect-only Cubes can be restored once \
+            "You’re still signed in. COINCUBE Desktop keeps trying. Connect-only Cubes can be restored once \
              it’s back.",
         ),
     };
@@ -1094,7 +1094,7 @@ fn connect_benefit_rows<'a>() -> [(iced::widget::Text<'a, theme::Theme>, &'stati
         (people_icon(), "Inheritance: invite family or friends to hold keys in the Keychain app, with time-locked recovery keys to recover funds", false),
         (bell_icon(), "Recovery alerts and emergency contacts for people you trust", false),
         (lightning_outline_icon(), "Hosted Esplora server — use your Vault instantly while your node syncs", false),
-        (laptop_icon(), "Sign Vault transactions from your phone with the companion Keychain app", false),
+        (laptop_icon(), "Sign Vault transactions from your phone with the companion COINCUBE Mobile app", false),
         (lightning_outline_icon(), "Lightning Address and avatar for Spark wallets", false),
         (exclamation_circle_icon(), "Connect-enforced spending policies (Pro and Estate)", true),
     ]
@@ -1846,7 +1846,7 @@ fn checking_duress_ux<'a>(status: DuressGateStatus) -> Element<'a, ConnectAccoun
                 )
                 .push(
                     text::caption(localized_copy(
-                        "Make sure Tenshu is up to date, then try again.",
+                        "Make sure COINCUBE Desktop is up to date, then try again.",
                     ))
                     .color(color::GREY_3),
                 )
@@ -6207,7 +6207,7 @@ mod renewal_banner_tests {
             "Sign-in method",
             "What Connect provides",
             "Hosted Esplora server — use your Vault instantly while your node syncs",
-            "Sign Vault transactions from your phone with the companion Keychain app",
+            "Sign Vault transactions from your phone with the companion COINCUBE Mobile app",
             "Sign out…",
         ] {
             assert!(

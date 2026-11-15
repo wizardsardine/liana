@@ -1624,7 +1624,10 @@ fn connect_panel_says_what_the_state_table_says() {
             status: &RECONNECTING,
             signed_out_by: None,
             vault: None,
-            says: &["Reconnecting…", "Tenshu can’t reach Connect right now"],
+            says: &[
+                "Reconnecting…",
+                "COINCUBE Desktop can’t reach Connect right now",
+            ],
             never: &["Try again", "registration"],
         },
         Case {

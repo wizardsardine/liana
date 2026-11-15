@@ -300,7 +300,7 @@ pub(crate) fn standalone<'a, M: 'a>(sheet: Element<'a, M>) -> Element<'a, M> {
             .spacing(8)
             .align_y(Alignment::Center)
             .push(coincube_ui::icon::cube_outline_icon())
-            .push(p2_regular("Tenshu")),
+            .push(coincube_ui::image::coincube_wordmark(15.0)),
     )
     .center_y(Length::Fixed(64.0))
     .padding([0, 24])

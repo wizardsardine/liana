@@ -3481,7 +3481,7 @@ impl ConnectAccountPanel {
                         other => {
                             log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
                             let message = format!(
-                                "Connect returned \"{other}\", which this version of Tenshu \
+                                "Connect returned \"{other}\", which this version of COINCUBE Desktop \
                                  doesn't know"
                             );
                             return self.enter_change_unconfirmed(message);
@@ -4841,7 +4841,7 @@ impl ConnectAccountPanel {
                         e.error = Some(
                             UserError::logged(
                                 "Couldn't open your Cube data",
-                                "Tenshu can't read its data folder, so it can't verify the duress PIN. Restart the app and try again.",
+                                "COINCUBE Desktop can't read its data folder, so it can't verify the duress PIN. Restart the app and try again.",
                                 crate::user_error::CC_CONFIG,
                                 true,
                                 err,
@@ -5109,7 +5109,7 @@ impl ConnectAccountPanel {
                             d.error = Some(
                                 UserError::logged(
                                     "Couldn't open your Cube data",
-                                    "Tenshu can't read its data folder, so it can't verify it's you. Restart the app and try again.",
+                                    "COINCUBE Desktop can't read its data folder, so it can't verify it's you. Restart the app and try again.",
                                     crate::user_error::CC_CONFIG,
                                     true,
                                     err,
@@ -5201,7 +5201,7 @@ impl ConnectAccountPanel {
                         d.error = Some(
                             UserError::logged(
                                 "Couldn't open your Cube data",
-                                "Tenshu can't read its data folder, so it can't verify your PIN. Restart the app and try again.",
+                                "COINCUBE Desktop can't read its data folder, so it can't verify your PIN. Restart the app and try again.",
                                 crate::user_error::CC_CONFIG,
                                 true,
                                 err,
@@ -5329,7 +5329,7 @@ impl ConnectAccountPanel {
                                     d.error = Some(
                                         UserError::logged(
                                             "Duress is off on your account, but not on this device",
-                                            "Tenshu couldn't read its data folder to finish. Reopen Settings to retry.",
+                                            "COINCUBE Desktop couldn't read its data folder to finish. Reopen Settings to retry.",
                                             crate::user_error::CC_CONFIG,
                                             true,
                                             err,

@@ -1046,7 +1046,7 @@ async fn run_pairing_redials_after_phone_closes_early() {
 /// and the full descriptor to this key, so a phone we cannot seal to could only
 /// ever sign over a plaintext path — and a LAN peer is exactly the untrusted
 /// party such a fallback would empower. Refusing at pairing turns that into a
-/// "update the Keychain app" prompt instead of a phone that pairs cleanly and
+/// "update COINCUBE Mobile" prompt instead of a phone that pairs cleanly and
 /// then fails, or worse, silently downgrades.
 #[tokio::test]
 async fn run_pairing_refuses_a_phone_with_no_transport_key() {

@@ -1740,7 +1740,12 @@ fn brand_footprint<'a, M: 'a>() -> Element<'a, M> {
                 .width(Length::Fixed(20.0))
                 .height(Length::Fixed(20.0)),
         )
-        .push(words("Tenshu", 15.0, font::SEMIBOLD, Ink::Clear))
+        .push(
+            text("COINCUBE")
+                .size(top_bar::BRAND_WORD)
+                .font(font::SPACE_GROTESK_BOLD)
+                .color(Color::TRANSPARENT),
+        )
         .into()
 }
 
@@ -2472,7 +2477,7 @@ mod top_bar_tests {
         let brand = live
             .text
             .iter()
-            .find(|(value, _)| value == "Tenshu")
+            .find(|(value, _)| value == "COIN")
             .unwrap()
             .1;
         // The 20px cube and its 8px gap sit at the gutter.

@@ -1829,7 +1829,7 @@ impl Step for InternalBitcoindStep {
         {
             let mut content = iced::widget::Column::new().spacing(20)
                 .push(coincube_ui::component::text::text(coincube_ui::locale::copy("Syncing your local Bitcoin Blake2b node")).bold())
-                .push(coincube_ui::component::text::text(coincube_ui::locale::copy("Keep Tenshu open while the node syncs. This can take several hours. The Vault will be created after your node verifies the active Blake2b chain.")));
+                .push(coincube_ui::component::text::text(coincube_ui::locale::copy("Keep COINCUBE Desktop open while the node syncs. This can take several hours. The Vault will be created after your node verifies the active Blake2b chain.")));
             if let Some(error) = &self.local_sync_error {
                 content = content.push(coincube_ui::component::text::text(
                     coincube_ui::locale::notice(error.clone()),

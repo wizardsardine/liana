@@ -1845,7 +1845,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::Config(e) => write!(f, "Config error: {}", e),
             Self::Wallet(e) => write!(f, "Wallet error: {}", e),
-            Self::Daemon(e) => write!(f, "Tenshu daemon error: {}", e),
+            Self::Daemon(e) => write!(f, "COINCUBE Desktop daemon error: {}", e),
             Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
             Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
             Self::RestoreBackup(e) => write!(f, "Restore backup: {e}"),
@@ -2374,7 +2374,7 @@ mod tests {
         );
         assert!(Error::Daemon(DaemonError::NoAnswer)
             .to_string()
-            .contains("Tenshu daemon error"));
+            .contains("COINCUBE Desktop daemon error"));
         assert!(Error::BitcoindLogs(std::io::Error::other("log"))
             .to_string()
             .contains("Bitcoind logs error"));

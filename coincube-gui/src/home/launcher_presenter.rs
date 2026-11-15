@@ -4916,7 +4916,7 @@ mod tests {
                     appearance,
                     palette,
                 );
-                assert!(mounted.contains("Tenshu"));
+                assert!(mounted.contains("COIN"));
                 assert!(mounted.contains("Opening Example Wallet"));
                 assert!(mounted.contains("Bitcoin"));
                 assert!(mounted.contains(expected));

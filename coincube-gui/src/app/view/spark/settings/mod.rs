@@ -199,9 +199,9 @@ pub const TECHNICAL_DETAILS_ID: &str = "tenshu.settings.spark.technical-details"
 /// 0.28.0+). Tenshu can't run the recovery yet, so this only says they exist.
 fn recoverable_funds_copy(sats: u64) -> String {
     coincube_ui::localized_format!(
-        "{} sats left the Spark balance and are waiting to be recovered on-chain. Tenshu can't \
+        "{} sats left the Spark balance and are waiting to be recovered on-chain. COINCUBE Desktop can't \
          run that recovery yet.",
-        "{} sats salieron del saldo de Spark y esperan ser recuperados en cadena. Tenshu aún no \
+        "{} sats salieron del saldo de Spark y esperan ser recuperados en cadena. COINCUBE Desktop aún no \
          puede hacer esa recuperación.",
         sats
     )
@@ -213,7 +213,7 @@ fn service_summary(status: &SparkSettingsStatus) -> &'static str {
         SparkSettingsStatus::Connected => "Running. Payments and balances are up to date.",
         SparkSettingsStatus::Loading => "Checking that the Spark wallet service is running.",
         SparkSettingsStatus::Error(_) => {
-            "Not responding. Payments and balances may be out of date until Tenshu restarts it."
+            "Not responding. Payments and balances may be out of date until COINCUBE Desktop restarts it."
         }
         SparkSettingsStatus::Unavailable => "Spark isn't set up for this Cube.",
     }

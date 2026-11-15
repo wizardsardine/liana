@@ -309,7 +309,7 @@ pub fn lightning_share_panel<'a>(
                 .push(
                     text(localized_copy(
                         "Anyone with a Lightning wallet can send you bitcoin at this \
-                         address, even while Tenshu is closed.",
+                         address, even while COINCUBE Desktop is closed.",
                     ))
                     .size(P2_SIZE)
                     .style(theme::text::secondary),
@@ -911,7 +911,7 @@ mod tests {
             for line in [
                 "Get paid over Lightning",
                 "Anyone with a Lightning wallet can send you bitcoin at this address, even \
-                 while Tenshu is closed.",
+                 while COINCUBE Desktop is closed.",
                 ADDRESS,
                 "Copy address",
                 "Want a different name?",

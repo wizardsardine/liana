@@ -1157,16 +1157,16 @@ impl ConnectionStatus {
                 .to_owned(),
             ),
             Self::Offline => Some(coincube_ui::localized_format!(
-                "No internet connection. Tenshu reconnects when you’re back online. \
+                "No internet connection. COINCUBE Desktop reconnects when you’re back online. \
                  {CONNECT_WAITS_FOR} wait until then.",
-                "Sin conexión a internet. Tenshu se vuelve a conectar cuando vuelvas a estar \
+                "Sin conexión a internet. COINCUBE Desktop se vuelve a conectar cuando vuelvas a estar \
                  en línea. La firma con Keychain, los Kits de recuperación y las copias de \
                  Cubes en Connect esperan hasta entonces."
             )),
             Self::Reconnecting => Some(coincube_ui::localized_format!(
-                "Tenshu can’t reach Connect right now and keeps trying. \
+                "COINCUBE Desktop can’t reach Connect right now and keeps trying. \
                  {CONNECT_WAITS_FOR} wait until it’s back.",
-                "Tenshu no puede conectarse con Connect en este momento y lo sigue intentando. \
+                "COINCUBE Desktop no puede conectarse con Connect en este momento y lo sigue intentando. \
                  La firma con Keychain, los Kits de recuperación y las copias de Cubes en \
                  Connect esperan hasta que vuelva."
             )),
@@ -1311,8 +1311,8 @@ impl VaultAlert {
                 "{from} Se actualizan cuando vuelvas a estar en línea."
             ),
             VaultStall::Reconnecting => coincube_ui::localized_format!(
-                "{from} Tenshu keeps trying and updates them when Connect is back.",
-                "{from} Tenshu lo sigue intentando y los actualiza cuando Connect vuelva."
+                "{from} COINCUBE Desktop keeps trying and updates them when Connect is back.",
+                "{from} COINCUBE Desktop lo sigue intentando y los actualiza cuando Connect vuelva."
             ),
             VaultStall::NotUpdating if self.needs_sign_in => coincube_ui::localized_format!(
                 "{from} This Vault gets blockchain data through Connect, which needs you signed in.",
@@ -1320,8 +1320,8 @@ impl VaultAlert {
                  que requiere que hayas iniciado sesión."
             ),
             VaultStall::NotUpdating => coincube_ui::localized_format!(
-                "{from} Tenshu keeps trying.",
-                "{from} Tenshu lo sigue intentando."
+                "{from} COINCUBE Desktop keeps trying.",
+                "{from} COINCUBE Desktop lo sigue intentando."
             ),
             VaultStall::NeedsReconnect => coincube_ui::localized_format!(
                 "{from} Press Try again in the Connect control to update this Vault.",
@@ -1482,7 +1482,7 @@ pub(crate) struct DuressCubeDir {
 /// changed.
 pub(crate) const DURESS_DORMANT_CHAIN_MSG: &str =
     "Duress mode can't be changed on this device while it holds a Bitcoin Blake2b Cube, \
-     which this version of Tenshu can't open. Nothing was changed. Update Tenshu to a \
+     which this version of COINCUBE Desktop can't open. Nothing was changed. Update COINCUBE Desktop to a \
      version with Bitcoin Blake2b support, or move that Cube's folder off this device.";
 
 /// Enumerate and validate every Cube a duress operation would touch, **before
@@ -1522,7 +1522,7 @@ pub(crate) fn duress_cube_inventory(root: &std::path::Path) -> Result<Vec<Duress
         let Some(chain) = ChainId::from_dir_name(&name) else {
             return Err(format!(
                 "The '{name}' folder in your data directory holds Cube settings but isn't a \
-                 chain this version of Tenshu knows, so duress mode can't be changed safely. \
+                 chain this version of COINCUBE Desktop knows, so duress mode can't be changed safely. \
                  Nothing was changed."
             ));
         };
@@ -6131,7 +6131,7 @@ impl App {
             {
                 let pairing_changed = "The AI pairing or Vault changed. Reopen AI access and review the current draft.";
                 let unavailable = "Native review is temporarily unavailable. Try Review again.";
-                let stale = "This draft is stale. Ask the paired client to prepare a new request, then review it in Tenshu.";
+                let stale = "This draft is stale. Ask the paired client to prepare a new request, then review it in COINCUBE Desktop.";
                 let failure = if self.mcp_supported()
                     && local_mcp::transactions::supported_chain(self.cube_settings.network)
                 {

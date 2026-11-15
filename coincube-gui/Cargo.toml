@@ -290,7 +290,9 @@ result_large_err = "warn"
 
 [package.metadata.winresource]
 OriginalFilename = "coincube.exe"
-FileDescription = "Tenshu - Secure Bitcoin wallet with multisig and inheritance"
+FileDescription = "COINCUBE"
+ProductName = "COINCUBE Desktop"
+Comments = "COINCUBE Desktop - Secure Bitcoin wallet with multisig and inheritance"
 CompanyName = "COINCUBE TECHNOLOGY LLC"
 InternalName = "Coincube"
 

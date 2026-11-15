@@ -292,7 +292,7 @@ fn ai_access_state_gallery() {
     // 9. Durable revocation could not be confirmed.
     let mut failed = fx.paired("gallery-09");
     failed.revoke();
-    failed.pairing_error = Some("Could not persist revocation or invalidate its storage key. Clients are suspended now; durable revocation is NOT confirmed. Retry before closing Tenshu.");
+    failed.pairing_error = Some("Could not persist revocation or invalidate its storage key. Clients are suspended now; durable revocation is NOT confirmed. Retry before closing COINCUBE Desktop.");
     failed.pairing_poisoned = true;
     let failed = leak(failed);
     // A failed durable revocation is never shown as success: the error

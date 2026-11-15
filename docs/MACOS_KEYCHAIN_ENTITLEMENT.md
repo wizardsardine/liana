@@ -17,7 +17,7 @@
 | Signing step | `.github/workflows/releases.yml` → `rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements` |
 | Same step, nightly | `.github/workflows/nightly.yml` — **points at the same entitlements path**, so one edit covers both |
 | Notarize + staple + verify | `rcodesign notary-submit --staple` then `spctl --assess --type execute` |
-| `.app` bundle to attach entitlements to | `contrib/release/macos/_coincube.zip` → `Tenshu.app` |
+| `.app` bundle to attach entitlements to | `contrib/release/macos/_coincube.zip` → `COINCUBE.app` |
 | Cert expiry monitoring | `.github/workflows/apple-cert-monitor.yml`, weekly, fails under 30 days |
 | Rotation runbook | `docs/APPLE_CERT_ROTATION.md` |
 | Team ID | `8UVR249AD5` (confirmed in the Keychain app's Xcode project and the AASA) |
@@ -30,7 +30,7 @@ Three identifiers are in play and two of them disagree:
 
 | Identifier | Where | Status |
 |---|---|---|
-| `io.coincubetech.Coincube` | `Tenshu.app/Contents/Info.plist` inside `_coincube.zip` | **What actually ships** |
+| `io.coincubetech.Coincube` | `COINCUBE.app/Contents/Info.plist` inside `_coincube.zip` | **What actually ships** |
 | `io.coincube.coincube` | `coincube-frontend/static/.well-known/apple-app-site-association` | What the AASA declares for the desktop app |
 | `io.coincube.keychainApp` | Keychain iOS app | Consistent, unrelated |
 
@@ -79,7 +79,7 @@ That is a statement about the *portal*, not about the signature. It does not ans
 
 **The Bundle ID is immutable** — Apple does not allow editing it after creation. A typo means abandoning the App ID and creating another, so verify it character-for-character against the entitlement value in §3.
 
-**A provisioning profile is required** — §4 settled that empirically on 2026-08-04, and without one the signed app is killed at launch rather than merely refused the keychain. Profiles → create a **Developer ID** profile for that App ID (the macOS type for distribution outside the App Store), download it, **verify it authorises the group** (§4), and embed it as `Tenshu.app/Contents/embedded.provisionprofile` before signing. Done already: the profile is committed at `contrib/release/macos/embedded.provisionprofile`.
+**A provisioning profile is required** — §4 settled that empirically on 2026-08-04, and without one the signed app is killed at launch rather than merely refused the keychain. Profiles → create a **Developer ID** profile for that App ID (the macOS type for distribution outside the App Store), download it, **verify it authorises the group** (§4), and embed it as `COINCUBE.app/Contents/embedded.provisionprofile` before signing. Done already: the profile is committed at `contrib/release/macos/embedded.provisionprofile`.
 
 **No certificate work.** The existing Developer ID Application certificate is not bundle-specific and is unaffected — nothing in `APPLE_CERT_ROTATION.md` changes.
 
@@ -122,7 +122,7 @@ kernel: AMFI: Code has restricted entitlements, but the validation of its code s
 
 Retrieve it with `log show --last 15m --info --predicate 'eventMessage CONTAINS[c] "coincube"'`. **Shipping §3's entitlement without §4's profile produces a DMG that cannot launch for anybody** — strictly worse than shipping neither, and invisible to every check in the pipeline. The two land together or not at all.
 
-**What worked:** a **Developer ID** distribution profile for App ID `io.coincube.tenshu`, generated in the portal (Profiles → Distribution → Developer ID), committed at `contrib/release/macos/embedded.provisionprofile`, copied to `Tenshu.app/Contents/embedded.provisionprofile` before signing. Its entitlements grant `keychain-access-groups = 8UVR249AD5.*`, which covers our group, and `com.apple.developer.associated-domains = *`, which macOS passkey will need later. It carries no `ProvisionedDevices` key, confirming it is a distribution rather than development profile, and expires **2044-07-30**.
+**What worked:** a **Developer ID** distribution profile for App ID `io.coincube.tenshu`, generated in the portal (Profiles → Distribution → Developer ID), committed at `contrib/release/macos/embedded.provisionprofile`, copied to `COINCUBE.app/Contents/embedded.provisionprofile` before signing. Its entitlements grant `keychain-access-groups = 8UVR249AD5.*`, which covers our group, and `com.apple.developer.associated-domains = *`, which macOS passkey will need later. It carries no `ProvisionedDevices` key, confirming it is a distribution rather than development profile, and expires **2044-07-30**.
 
 `com.apple.application-identifier` in the entitlements turned out **not** to be needed — AMFI resolves the identifier from `CFBundleIdentifier`. It is left out rather than added speculatively; the profile grants it if a future need appears.
 
@@ -142,29 +142,29 @@ cargo build --release -p coincube-gui
 # 2. Assemble the bundle the way CI does, profile included. The profile is
 #    sealed by the signature, so it must be in place before step 3.
 unzip contrib/release/macos/_coincube.zip
-cp target/release/coincube Tenshu.app/Contents/MacOS/Coincube
-cp contrib/release/macos/embedded.provisionprofile Tenshu.app/Contents/embedded.provisionprofile
+cp target/release/coincube COINCUBE.app/Contents/MacOS/Coincube
+cp contrib/release/macos/embedded.provisionprofile COINCUBE.app/Contents/embedded.provisionprofile
 #    The template's Resources/ is empty and Coincube.icns is gitignored, so
 #    generate the icon as CI does. Skip it and the app shows the generic icon;
 #    it is sealed by the signature too, so adding it after step 3 breaks it.
 pip install pillow icnsutil
 python contrib/release/macos/icns-creator.py
-cp contrib/release/macos/Coincube.icns Tenshu.app/Contents/Resources/Coincube.icns
+cp contrib/release/macos/Coincube.icns COINCUBE.app/Contents/Resources/Coincube.icns
 
 # 3. Sign with the real Developer ID cert. On a Mac with the cert in the login
 #    keychain, native codesign is enough — no rcodesign install needed.
 codesign -f -s "Developer ID Application: COINCUBE TECHNOLOGY LLC" \
   --options runtime \
   --entitlements contrib/release/macos/coincube.entitlements \
-  Tenshu.app
+  COINCUBE.app
 
 # 4. Confirm the entitlement landed, and that the runtime flag is set
-codesign -d --entitlements - Tenshu.app
-codesign -dv --verbose=4 Tenshu.app 2>&1 | grep -E 'Authority|flags'
+codesign -d --entitlements - COINCUBE.app
+codesign -dv --verbose=4 COINCUBE.app 2>&1 | grep -E 'Authority|flags'
 
 # 5. The real test — run the app and create a Cube. Use a throwaway datadir so
 #    a half-created test Cube never lands in ~/.coincube.
-./Tenshu.app/Contents/MacOS/Coincube --datadir /tmp/tenshu-entitlement-test
+./COINCUBE.app/Contents/MacOS/Coincube --datadir /tmp/tenshu-entitlement-test
 ```
 
 **The profile authorises certificates, not just an App ID.** Its `DeveloperCertificates` array lists the exact certificate(s) allowed to produce the signature — ours lists one. Sign with any *other* Developer ID Application certificate for the same team (a rotated one, a second one issued to another machine, an older p12 still sitting in a CI secret) and AMFI refuses the profile with the same `no eligible provisioning profiles found` / SIGKILL as having no profile at all.
@@ -176,7 +176,7 @@ Nothing else catches it. The common name is identical across every certificate a
 # is the one for diagnosing a CI failure — download the signed app from the
 # run's artifacts and ask which certificate actually produced the signature.
 contrib/release/macos/check-profile-authorises-cert.sh \
-  contrib/release/macos/embedded.provisionprofile --signed-bundle Tenshu.app
+  contrib/release/macos/embedded.provisionprofile --signed-bundle COINCUBE.app
 
 # Against a keychain identity, the way you sign locally.
 contrib/release/macos/check-profile-authorises-cert.sh \
@@ -239,7 +239,7 @@ The pipeline currently proves the app is *signed and notarized*, not that it *wo
 
 - After signing, assert the entitlement is present rather than assuming:
   ```bash
-  codesign -d --entitlements - Tenshu.app 2>&1 | grep -q 'keychain-access-groups' \
+  codesign -d --entitlements - COINCUBE.app 2>&1 | grep -q 'keychain-access-groups' \
     || { echo "entitlement missing from signature"; exit 1; }
   ```
 - A **signed macOS runner job** running `contrib/release/macos/run-signed-device-secret-tests.sh` (with `P12_FILE`/`P12_PASSWORD_FILE`, as §4 documents), which is what turns the three keychain tests from documentation into enforcement. Not bare `cargo test -- --ignored` — §4 explains why that is killed on exec rather than run. This is the D4 item in `company-brain/plans/cube-unlock-hardening-fixes/`.
