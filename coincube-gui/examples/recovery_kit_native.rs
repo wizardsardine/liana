@@ -329,12 +329,28 @@ mod native {
     }
     fn save(root: &Path, state: &State) -> Result<()> {
         let bytes = serde_json::to_vec(state).map_err(|_| "native_state_encode")?;
-        write(root, "state.next", &bytes)?;
-        fs::rename(root.join("state.next"), root.join("state.json"))
+        // A unique staging name: a crash between create and rename must not
+        // leave a fixed `state.next` that makes every later save fail while
+        // `state.json` still holds the last committed snapshot.
+        let staging = format!("state-{}.next", uuid::Uuid::new_v4());
+        write(root, &staging, &bytes)?;
+        fs::rename(root.join(&staging), root.join("state.json"))
             .map_err(|_| "native_state_commit")?;
         fs::File::open(root)
             .and_then(|f| f.sync_all())
             .map_err(|_| "native_state_sync")
+    }
+    /// No interrupted `save` staging file (old fixed name or unique name).
+    fn state_staging_absent(case: &Path) -> Result<bool> {
+        for entry in fs::read_dir(case).map_err(|_| "native_absence_unknown")? {
+            let entry = entry.map_err(|_| "native_absence_unknown")?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "state.next" || (name.starts_with("state-") && name.ends_with(".next")) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
     fn write(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
         let path = root.join(name);
@@ -1334,9 +1350,10 @@ mod native {
             serde_json::from_slice(&state_raw).map_err(|_| "native_orphan_snapshot")?;
         orphan_origin_valid(&origin, &case, id, c.owner_id)?;
         process_absent(&origin.creator)?;
-        for forbidden in ["quarantined-original", "restored", "state.next"] {
+        for forbidden in ["quarantined-original", "restored"] {
             check(absent(&case.join(forbidden))?, "native_orphan_shape")?;
         }
+        check(state_staging_absent(&case)?, "native_orphan_shape")?;
         check(case.join("original").is_dir(), "native_orphan_shape")?;
         let identity = origin.identity.as_ref().ok_or("native_identity_missing")?;
         let kit = origin.kit.as_ref().ok_or("native_kit_missing")?;
@@ -2157,6 +2174,47 @@ mod native {
             )
             .unwrap();
             assert_eq!(event["category"], "http_rate_limit");
+        }
+        #[test]
+        fn interrupted_state_staging_never_blocks_a_later_save() {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+            assert!(state_staging_absent(root).unwrap());
+            // Leftovers from saves that died between create and rename.
+            write(root, "state.next", b"interrupted old staging").unwrap();
+            assert!(!state_staging_absent(root).unwrap());
+            fs::remove_file(root.join("state.next")).unwrap();
+            write(root, "state-old.next", b"interrupted unique staging").unwrap();
+            assert!(!state_staging_absent(root).unwrap());
+            write(root, "state.next", b"interrupted old staging").unwrap();
+            let mut state = legacy215_state();
+            save(root, &state).unwrap();
+            state.stage = "wiped".into();
+            save(root, &state).unwrap();
+            assert_eq!(
+                fs::read(root.join("state.next")).unwrap(),
+                b"interrupted old staging"
+            );
+            assert_eq!(
+                fs::read(root.join("state-old.next")).unwrap(),
+                b"interrupted unique staging"
+            );
+            assert_eq!(
+                private(&root.join("state.json")).unwrap(),
+                serde_json::to_vec(&state).unwrap()
+            );
+            assert_eq!(
+                fs::metadata(root.join("state.json"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            // Only the two leftovers and the committed state remain.
+            assert_eq!(fs::read_dir(root).unwrap().count(), 3);
         }
         #[test]
         fn interrupted_orphan_staging_never_blocks_private_atomic_retry() {
