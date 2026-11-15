@@ -643,66 +643,26 @@ pub fn transaction_detail_view<'a>(
         ))
         .push(card::simple(
             Column::new()
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(1))
-                                .push(text(localized_copy("Date")).bold()),
-                        )
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(2))
-                                .push(text(date_text)),
-                        )
-                        .spacing(20),
-                )
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(1))
-                                .push(text(localized_copy("Status")).bold()),
-                        )
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(2))
-                                .push(payment_status_text(payment, refundable_swap_addresses)),
-                        )
-                        .spacing(20),
-                )
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(1))
-                                .push(text(localized_copy("Amount")).bold()),
-                        )
-                        .push(Column::new().width(Length::FillPortion(2)).push(text(
-                            if mask_amounts {
-                                "••••••".to_owned()
-                            } else {
-                                btc_amount.to_formatted_string_with_unit(bitcoin_unit)
-                            },
-                        )))
-                        .spacing(20),
-                )
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(1))
-                                .push(text(localized_copy("Fees")).bold()),
-                        )
-                        .push(Column::new().width(Length::FillPortion(2)).push(text(
-                            if mask_amounts {
-                                "••••••".to_owned()
-                            } else {
-                                fees_sat.to_formatted_string_with_unit(bitcoin_unit)
-                            },
-                        )))
-                        .spacing(20),
-                )
+                .push(detail_fact_row("Date", || text(date_text).into()))
+                .push(detail_fact_row("Status", || {
+                    payment_status_text(payment, refundable_swap_addresses)
+                }))
+                .push(detail_fact_row("Amount", || {
+                    text(if mask_amounts {
+                        "••••••".to_owned()
+                    } else {
+                        btc_amount.to_formatted_string_with_unit(bitcoin_unit)
+                    })
+                    .into()
+                }))
+                .push(detail_fact_row("Fees", || {
+                    text(if mask_amounts {
+                        "••••••".to_owned()
+                    } else {
+                        fees_sat.to_formatted_string_with_unit(bitcoin_unit)
+                    })
+                    .into()
+                }))
                 .spacing(15),
         ))
         .into()
@@ -855,20 +815,7 @@ pub fn refundable_detail_view<'a>(
         )
         .push(card::simple(
             Column::new()
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(1))
-                                .push(text(localized_copy("Date")).bold()),
-                        )
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(2))
-                                .push(text(date_text)),
-                        )
-                        .spacing(20),
-                )
+                .push(detail_fact_row("Date", || text(date_text).into()))
                 .push(
                     Row::new()
                         .push(
@@ -916,22 +863,14 @@ pub fn refundable_detail_view<'a>(
                         )
                         .spacing(20),
                 )
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(1))
-                                .push(text(localized_copy("Amount")).bold()),
-                        )
-                        .push(Column::new().width(Length::FillPortion(2)).push(text(
-                            if mask_amounts {
-                                "••••••".to_owned()
-                            } else {
-                                btc_amount.to_formatted_string_with_unit(bitcoin_unit)
-                            },
-                        )))
-                        .spacing(20),
-                )
+                .push(detail_fact_row("Amount", || {
+                    text(if mask_amounts {
+                        "••••••".to_owned()
+                    } else {
+                        btc_amount.to_formatted_string_with_unit(bitcoin_unit)
+                    })
+                    .into()
+                }))
                 .spacing(15),
         ))
         .push_maybe((in_flight.is_none() || refunding).then(|| {
@@ -1070,6 +1009,22 @@ fn usdt_headline<'a>(
     }
 }
 
+/// Keep labels and values aligned across payment and refund detail cards.
+/// Build the value after the label, preserving lazy masked-amount formatting.
+fn detail_fact_row<'a>(
+    label: &'static str,
+    value: impl FnOnce() -> Element<'a, Message>,
+) -> coincube_ui::widget::Row<'a, Message> {
+    Row::new()
+        .push(
+            Column::new()
+                .width(Length::FillPortion(1))
+                .push(text(localized_copy(label)).bold()),
+        )
+        .push(Column::new().width(Length::FillPortion(2)).push(value()))
+        .spacing(20)
+}
+
 fn usdt_detail_card<'a>(
     payment: &DomainPayment,
     refundable_swap_addresses: &[String],
@@ -1081,52 +1036,18 @@ fn usdt_detail_card<'a>(
 ) -> Element<'a, Message> {
     card::simple(
         Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        Column::new()
-                            .width(Length::FillPortion(1))
-                            .push(text(localized_copy("Date")).bold()),
-                    )
-                    .push(
-                        Column::new()
-                            .width(Length::FillPortion(2))
-                            .push(text(date_text)),
-                    )
-                    .spacing(20),
-            )
-            .push(
-                Row::new()
-                    .push(
-                        Column::new()
-                            .width(Length::FillPortion(1))
-                            .push(text(localized_copy("Status")).bold()),
-                    )
-                    .push(
-                        Column::new()
-                            .width(Length::FillPortion(2))
-                            .push(payment_status_text(payment, refundable_swap_addresses)),
-                    )
-                    .spacing(20),
-            )
-            .push(
-                Row::new()
-                    .push(
-                        Column::new()
-                            .width(Length::FillPortion(1))
-                            .push(text(localized_copy("Asset Amount")).bold()),
-                    )
-                    .push(
-                        Column::new()
-                            .width(Length::FillPortion(2))
-                            .push(text(if mask_amounts {
-                                "••••••".to_owned()
-                            } else {
-                                usdt_display.to_owned()
-                            })),
-                    )
-                    .spacing(20),
-            )
+            .push(detail_fact_row("Date", || text(date_text).into()))
+            .push(detail_fact_row("Status", || {
+                payment_status_text(payment, refundable_swap_addresses)
+            }))
+            .push(detail_fact_row("Asset Amount", || {
+                text(if mask_amounts {
+                    "••••••".to_owned()
+                } else {
+                    usdt_display.to_owned()
+                })
+                .into()
+            }))
             .push(if fees_sat.to_sat() == 0 {
                 Row::new()
                     .push(
