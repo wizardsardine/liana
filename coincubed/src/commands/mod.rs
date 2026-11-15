@@ -1721,7 +1721,7 @@ impl DaemonControl {
                 change_address = next_change_address;
                 continue;
             }
-            return self.finish_regular_spend(
+            return self.finish_spend(
                 &mut db_conn,
                 destinations_checked,
                 change_info,
@@ -2724,7 +2724,7 @@ impl DaemonControl {
         Ok(())
     }
 
-    fn finish_regular_spend(
+    fn finish_spend(
         &self,
         db: &mut Box<dyn DatabaseConnection>,
         destinations: Vec<(SpendOutputAddress, bitcoin::Amount)>,
@@ -2941,35 +2941,6 @@ impl DaemonControl {
         (candidate_coins, confirmed_cands)
     }
 
-    fn finish_replacement_spend(
-        &self,
-        db: &mut Box<dyn DatabaseConnection>,
-        destinations: Vec<(SpendOutputAddress, bitcoin::Amount)>,
-        change_info: Option<AddrInfo>,
-        created: CreateSpendRes,
-    ) -> Result<CreateSpendResult, CommandError> {
-        let CreateSpendRes {
-            psbt,
-            has_change,
-            warnings,
-        } = created;
-        for (addr, _) in destinations {
-            self.maybe_increase_last_deriv_index(&mut *db, &addr.info);
-        }
-        if has_change {
-            self.maybe_increase_last_deriv_index(&mut *db, &change_info);
-        }
-        if self.config.main_descriptor.as_imported().is_some() {
-            db.store_imported_construction(&psbt)
-                .map_err(CommandError::ImportedSpendValidation)?;
-        }
-
-        Ok(CreateSpendResult::Success {
-            psbt,
-            warnings: warnings.iter().map(|w| w.to_string()).collect(),
-        })
-    }
-
     fn retry_cancel_candidates(
         is_cancel: bool,
         candidates: &mut Vec<CandidateCoin>,
@@ -3125,7 +3096,7 @@ impl DaemonControl {
                     }
                     // In case of success, make sure to update our next derivation index if any address
                     // used in the transaction outputs was from the future.
-                    return self.finish_replacement_spend(
+                    return self.finish_spend(
                         &mut *db,
                         destinations,
                         change_info,
