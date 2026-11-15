@@ -1868,6 +1868,57 @@ pub enum ConnectAccountMessage {
         u64,
         u64,
     ),
+    /// Review: pay with bitcoin or a card (billing v2 Phase B).
+    SelectPayWith(crate::app::state::connect::account::PayWith),
+    /// Review with Card: open Stripe Checkout (C1 → C2).
+    StartCardCheckout,
+    CardCheckoutCreated(
+        Result<crate::services::coincube::CardCheckoutSession, (String, bool)>,
+        u64,
+        u64,
+    ),
+    /// Poll `/connect/plan` for checkout generation `u64` (card checkout or
+    /// 3-D Secure confirmation in the browser).
+    PollCardPlan(u64),
+    /// Result, session generation, checkout generation, and the plan
+    /// sequence number taken when the poll was sent.
+    CardPlanPolled(
+        Result<crate::services::coincube::ConnectPlan, String>,
+        u64,
+        u64,
+        u64,
+    ),
+    /// Reopen Stripe Checkout or the 3-D Secure page.
+    ReopenCardPage,
+    /// Back to Review from the card browser, cancelled or failed screens.
+    BackToReview {
+        pay_with: crate::app::state::connect::account::PayWith,
+    },
+    ChangePreviewLoaded(
+        Result<crate::services::coincube::PlanChangePreview, (String, bool)>,
+        u64,
+        u64,
+    ),
+    /// "Upgrade and pay $X" / "Schedule change to Pro".
+    ConfirmPlanChange,
+    PlanChangeApplied(
+        Result<crate::services::coincube::PlanChangeResult, (String, bool)>,
+        u64,
+        u64,
+    ),
+    /// An unconfirmed plan change: refresh the plan again.
+    RetryPlanRefresh,
+    /// Plan & billing: show or hide "Turn off auto-renewal?" (C8).
+    ShowAutoRenewOff(bool),
+    /// PUT /connect/plan/auto-renew.
+    SetAutoRenew(bool),
+    /// "Update card": Stripe's portal in the browser.
+    OpenCardPortal,
+    /// "Keep Estate": undo a scheduled card downgrade (C13).
+    KeepCurrentPlan,
+    /// A Plan & billing card request finished: `Some(url)` to open (the
+    /// portal), `None` to reload the plan.
+    CardRequestDone(Result<Option<String>, String>, u64),
     /// Review: pick the billing period for this purchase.
     SetReviewCycle(crate::services::coincube::BillingCycle),
     /// Awaiting payment: show the Lightning invoice or the on-chain address.

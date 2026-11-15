@@ -11871,6 +11871,11 @@ mod tests {
             pending_plan: None,
             pending_plan_at: None,
             pending_billing_cycle: None,
+            payment_method: None,
+            auto_renew: None,
+            next_charge_at: None,
+            next_charge_amount: None,
+            grace_ends_at: None,
         }
     }
 
@@ -11886,6 +11891,7 @@ mod tests {
             p2p_enabled: None,
             duress_enabled: Some(false),
             bitcoin_blake2b_enabled: None,
+            card_payments_enabled: None,
         }
     }
 
