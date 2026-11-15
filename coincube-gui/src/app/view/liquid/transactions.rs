@@ -1737,8 +1737,8 @@ mod tests {
                     DomainPaymentDetails::LiquidAsset {
                         asset_id: "synthetic-usdt".into(),
                         asset_info: Some(DomainLiquidAssetInfo {
-                            amount_minor: 123_456_789,
-                            precision: 6,
+                            amount_minor: 12_345_678_900,
+                            precision: 8,
                         }),
                         description: "Synthetic payment".into(),
                         payer_note: None,
