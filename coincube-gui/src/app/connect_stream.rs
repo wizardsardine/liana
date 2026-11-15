@@ -387,3 +387,151 @@ impl App {
         Some(self.set_connect_status(ConnectionStatus::Renewing))
     }
 }
+
+impl App {
+    pub(super) fn connect_stream_ready(
+        &mut self,
+        cfg: Option<(
+            crate::services::connect::grpc::stream::ConnectStreamConfig,
+            String,
+        )>,
+    ) -> Task<Message> {
+        match cfg {
+            Some((mut cfg, email)) => {
+                if self.connect_email.as_deref() != Some(email.as_str())
+                    || !self
+                        .connect_auth
+                        .as_ref()
+                        .is_some_and(|auth| Arc::ptr_eq(auth, &cfg.tokens))
+                {
+                    return Task::none();
+                }
+                let current = match cfg.tokens.try_read() {
+                    Ok(current) => current,
+                    Err(_) => {
+                        let tokens = cfg.tokens.clone();
+                        let retry_cfg = cfg.clone();
+                        return Task::perform(
+                            async move {
+                                drop(tokens.read().await);
+                                Message::ConnectStreamReady(Some((retry_cfg, email)))
+                            },
+                            |message| message,
+                        );
+                    }
+                };
+                let network_dir = self
+                    .cache
+                    .datadir_path
+                    .network_directory(self.cache.network);
+                let cached_account =
+                    crate::services::connect::client::cache::ConnectCache::from_file(&network_dir)
+                        .ok()
+                        .and_then(|cache| cache.active_account().cloned())
+                        .filter(|account| {
+                            account.email == email
+                                && account.tokens.access_token == current.access_token
+                                && account.tokens.refresh_token == current.refresh_token
+                        });
+                drop(current);
+                let Some(account) = cached_account else {
+                    return Task::none();
+                };
+                let Some(device_id) = account.device_id.filter(|id| !id.trim().is_empty()) else {
+                    return Task::none();
+                };
+                // About may have completed re-registration while the
+                // async vault lookup ran. Install its current id, not
+                // the one captured before that await.
+                cfg.device_id = device_id;
+                cfg.last_seen_seq = cfg
+                    .last_seen_seq
+                    .max(account.last_seen_event_seq.unwrap_or(0));
+                tracing::info!(
+                    "Connect stream ready (device_id={}, last_seen_seq={})",
+                    cfg.device_id,
+                    cfg.last_seen_seq,
+                );
+                // Mirror into Cache so deep panels (the open
+                // PSBT modal in particular) can spin up a
+                // GrpcSessionClient on demand.
+                self.cache.connect_grpc_url = Some(cfg.grpc_url.clone());
+                self.cache.connect_tokens = Some(cfg.tokens.clone());
+                self.cache.connect_device_id = Some(cfg.device_id.clone());
+                self.cache.connect_email = Some(email);
+                self.connect_stream_config = Some(cfg);
+                // Subscription will mount on the next render
+                // tick — show `Connecting` until the first
+                // `ConnectStreamMessage::Connected` lands.
+                self.cache.connect_stream_status = ConnectionStatus::Connecting;
+            }
+            None => {
+                tracing::debug!("Connect stream not started: missing grpc_url or device_id",);
+            }
+        }
+        Task::none()
+    }
+
+    pub(super) fn trigger_connect_stream_ready(
+        &mut self,
+        network: coincube_core::miniscript::bitcoin::Network,
+        datadir: CoincubeDirectory,
+        tokens: Arc<
+            tokio::sync::RwLock<crate::services::connect::client::auth::AccessTokenResponse>,
+        >,
+        email: String,
+        cube_uuid: Option<String>,
+    ) -> Task<Message> {
+        if self.in_app_refresh_commit.is_some() {
+            self.deferred_connect_stream_triggers
+                .push(Message::TriggerConnectStreamReady {
+                    network,
+                    datadir,
+                    tokens,
+                    email,
+                    cube_uuid,
+                });
+            return Task::none();
+        }
+        let current = match tokens.try_read() {
+            Ok(current) => current,
+            Err(_) => {
+                let wait_tokens = tokens.clone();
+                let retry_tokens = tokens.clone();
+                return Task::perform(
+                    async move {
+                        drop(wait_tokens.read().await);
+                        Message::TriggerConnectStreamReady {
+                            network,
+                            datadir,
+                            tokens: retry_tokens,
+                            email,
+                            cube_uuid,
+                        }
+                    },
+                    |message| message,
+                );
+            }
+        };
+        let network_dir = datadir.network_directory(network);
+        let owns_cached_session =
+            crate::services::connect::client::cache::ConnectCache::from_file(&network_dir)
+                .ok()
+                .and_then(|cache| cache.active_account().cloned())
+                .is_some_and(|account| {
+                    account.email == email
+                        && account.tokens.access_token == current.access_token
+                        && account.tokens.refresh_token == current.refresh_token
+                });
+        drop(current);
+        if !owns_cached_session {
+            return Task::none();
+        }
+        self.connect_auth = Some(tokens.clone());
+        self.connect_email = Some(email.clone());
+        self.cache.connect_tokens = Some(tokens.clone());
+        self.cache.connect_email = Some(email.clone());
+        self.cache.has_connect_session = true;
+        connect_stream_ready_task(network, datadir, tokens, email, cube_uuid)
+    }
+}
