@@ -1977,6 +1977,26 @@ impl Tab {
         )
     }
 
+    fn installer_from_running_app(
+        app: &app::App,
+        user_flow: UserFlow,
+    ) -> Result<(Box<Installer>, Task<installer::Message>), installer::Error> {
+        use crate::app::settings::global::GlobalSettings;
+
+        Installer::try_new_for_chain(
+            app.datadir().clone(),
+            app.cube_settings().network,
+            user_flow,
+            true,
+            Some(app.cube_settings().clone()),
+            app.breez_client(),
+            app.spark_backend(),
+            GlobalSettings::load_developer_mode(&GlobalSettings::path(app.datadir())),
+            app.authenticated_coincube_client(),
+        )
+        .map(|(install, command)| (Box::new(install), command))
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match message {
@@ -3455,21 +3475,9 @@ impl Tab {
                         // admission gate: `app.cache().network` is a `bitcoin::Network`
                         // and cannot name a fork, so deriving the chain from it would
                         // build a Bitcoin installer for a Bitcoin Blake2b Cube.
-                        match Installer::try_new_for_chain(
-                            app.datadir().clone(),
-                            app.cube_settings().network,
-                            UserFlow::CreateWallet,
-                            true,                              // launched from app
-                            Some(app.cube_settings().clone()), // pass cube settings for returning
-                            app.breez_client(), // pass breez_client to avoid re-entering PIN
-                            app.spark_backend(), // preserve Spark bridge across vault setup
-                            GlobalSettings::load_developer_mode(&GlobalSettings::path(
-                                app.datadir(),
-                            )),
-                            app.authenticated_coincube_client(), // authenticated API client for Keychain keys
-                        ) {
+                        match Self::installer_from_running_app(app, UserFlow::CreateWallet) {
                             Ok((install, command)) => {
-                                self.state = State::Installer(Box::new(install));
+                                self.state = State::Installer(install);
                                 command.map(Message::Install)
                             }
                             Err(error) => Task::done(Message::Run(app::Message::View(
@@ -3507,21 +3515,12 @@ impl Tab {
                         // Same chain derivation and admission gate as `SetupVault`;
                         // a Bitcoin Blake2b Cube is refused here because the fork
                         // admits only the Connect-backed creation flow.
-                        match Installer::try_new_for_chain(
-                            app.datadir().clone(),
-                            app.cube_settings().network,
+                        match Self::installer_from_running_app(
+                            app,
                             UserFlow::RestoreVaultFromRecoveryKit,
-                            true,
-                            Some(app.cube_settings().clone()),
-                            app.breez_client(),
-                            app.spark_backend(),
-                            GlobalSettings::load_developer_mode(&GlobalSettings::path(
-                                app.datadir(),
-                            )),
-                            app.authenticated_coincube_client(),
                         ) {
                             Ok((install, command)) => {
-                                self.state = State::Installer(Box::new(install));
+                                self.state = State::Installer(install);
                                 command.map(Message::Install)
                             }
                             Err(error) => Task::done(Message::Run(app::Message::View(
