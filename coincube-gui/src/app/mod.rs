@@ -6573,84 +6573,7 @@ impl App {
                 }
             }
             Message::ConnectStreamReady(cfg) => {
-                match cfg {
-                    Some((mut cfg, email)) => {
-                        if self.connect_email.as_deref() != Some(email.as_str())
-                            || !self
-                                .connect_auth
-                                .as_ref()
-                                .is_some_and(|auth| Arc::ptr_eq(auth, &cfg.tokens))
-                        {
-                            return Task::none();
-                        }
-                        let current = match cfg.tokens.try_read() {
-                            Ok(current) => current,
-                            Err(_) => {
-                                let tokens = cfg.tokens.clone();
-                                let retry_cfg = cfg.clone();
-                                return Task::perform(
-                                    async move {
-                                        drop(tokens.read().await);
-                                        Message::ConnectStreamReady(Some((retry_cfg, email)))
-                                    },
-                                    |message| message,
-                                );
-                            }
-                        };
-                        let network_dir = self
-                            .cache
-                            .datadir_path
-                            .network_directory(self.cache.network);
-                        let cached_account =
-                            crate::services::connect::client::cache::ConnectCache::from_file(
-                                &network_dir,
-                            )
-                            .ok()
-                            .and_then(|cache| cache.active_account().cloned())
-                            .filter(|account| {
-                                account.email == email
-                                    && account.tokens.access_token == current.access_token
-                                    && account.tokens.refresh_token == current.refresh_token
-                            });
-                        drop(current);
-                        let Some(account) = cached_account else {
-                            return Task::none();
-                        };
-                        let Some(device_id) = account.device_id.filter(|id| !id.trim().is_empty())
-                        else {
-                            return Task::none();
-                        };
-                        // About may have completed re-registration while the
-                        // async vault lookup ran. Install its current id, not
-                        // the one captured before that await.
-                        cfg.device_id = device_id;
-                        cfg.last_seen_seq = cfg
-                            .last_seen_seq
-                            .max(account.last_seen_event_seq.unwrap_or(0));
-                        tracing::info!(
-                            "Connect stream ready (device_id={}, last_seen_seq={})",
-                            cfg.device_id,
-                            cfg.last_seen_seq,
-                        );
-                        // Mirror into Cache so deep panels (the open
-                        // PSBT modal in particular) can spin up a
-                        // GrpcSessionClient on demand.
-                        self.cache.connect_grpc_url = Some(cfg.grpc_url.clone());
-                        self.cache.connect_tokens = Some(cfg.tokens.clone());
-                        self.cache.connect_device_id = Some(cfg.device_id.clone());
-                        self.cache.connect_email = Some(email);
-                        self.connect_stream_config = Some(cfg);
-                        // Subscription will mount on the next render
-                        // tick — show `Connecting` until the first
-                        // `ConnectStreamMessage::Connected` lands.
-                        self.cache.connect_stream_status = ConnectionStatus::Connecting;
-                    }
-                    None => {
-                        tracing::debug!(
-                            "Connect stream not started: missing grpc_url or device_id",
-                        );
-                    }
-                }
+                return self.connect_stream_ready(cfg);
             }
             Message::ConnectStream(event) => {
                 return self.handle_connect_stream(event);
@@ -6685,58 +6608,8 @@ impl App {
                 email,
                 cube_uuid,
             } => {
-                if self.in_app_refresh_commit.is_some() {
-                    self.deferred_connect_stream_triggers.push(
-                        Message::TriggerConnectStreamReady {
-                            network,
-                            datadir,
-                            tokens,
-                            email,
-                            cube_uuid,
-                        },
-                    );
-                    return Task::none();
-                }
-                let current = match tokens.try_read() {
-                    Ok(current) => current,
-                    Err(_) => {
-                        let wait_tokens = tokens.clone();
-                        let retry_tokens = tokens.clone();
-                        return Task::perform(
-                            async move {
-                                drop(wait_tokens.read().await);
-                                Message::TriggerConnectStreamReady {
-                                    network,
-                                    datadir,
-                                    tokens: retry_tokens,
-                                    email,
-                                    cube_uuid,
-                                }
-                            },
-                            |message| message,
-                        );
-                    }
-                };
-                let network_dir = datadir.network_directory(network);
-                let owns_cached_session =
-                    crate::services::connect::client::cache::ConnectCache::from_file(&network_dir)
-                        .ok()
-                        .and_then(|cache| cache.active_account().cloned())
-                        .is_some_and(|account| {
-                            account.email == email
-                                && account.tokens.access_token == current.access_token
-                                && account.tokens.refresh_token == current.refresh_token
-                        });
-                drop(current);
-                if !owns_cached_session {
-                    return Task::none();
-                }
-                self.connect_auth = Some(tokens.clone());
-                self.connect_email = Some(email.clone());
-                self.cache.connect_tokens = Some(tokens.clone());
-                self.cache.connect_email = Some(email.clone());
-                self.cache.has_connect_session = true;
-                return connect_stream_ready_task(network, datadir, tokens, email, cube_uuid);
+                return self
+                    .trigger_connect_stream_ready(network, datadir, tokens, email, cube_uuid);
             }
             Message::EnsureConnectReady => {
                 // The user is signed in to Connect but the signing stream
@@ -19607,6 +19480,145 @@ mod fiat_update_routing_tests {
             assert!(admits(app, failure));
             assert!(app.cache.fiat_price.as_ref().unwrap().res.is_err());
             assert!(app.cache.btc_usd_price.is_none());
+        });
+    }
+}
+
+#[cfg(test)]
+mod stream_startup_routing_tests {
+    use super::*;
+    use crate::services::connect::client::auth::AccessTokenResponse;
+    use crate::services::connect::grpc::stream::ConnectStreamConfig;
+    use iced::futures::StreamExt;
+
+    fn auth() -> Arc<tokio::sync::RwLock<AccessTokenResponse>> {
+        Arc::new(tokio::sync::RwLock::new(AccessTokenResponse {
+            access_token: "synthetic-access".into(),
+            refresh_token: "synthetic-refresh".into(),
+            expires_at: 2000,
+        }))
+    }
+
+    fn config(tokens: Arc<tokio::sync::RwLock<AccessTokenResponse>>) -> ConnectStreamConfig {
+        ConnectStreamConfig {
+            grpc_url: "https://grpc.example.invalid".into(),
+            tokens,
+            device_id: "old-device".into(),
+            user_agent: "test".into(),
+            vault_ids: vec![],
+            last_seen_seq: 4,
+        }
+    }
+
+    fn seed_cached_session(app: &mut App, root: &std::path::Path) {
+        app.cache.datadir_path = CoincubeDirectory::new(root.to_path_buf());
+        let network_dir = app.cache.datadir_path.network_directory(app.cache.network);
+        std::fs::create_dir_all(network_dir.path()).unwrap();
+        std::fs::write(
+            network_dir.path().join(crate::services::connect::client::cache::CONNECT_CACHE_FILENAME),
+            serde_json::to_vec(&serde_json::json!({
+                "active_email": "alice@example.invalid",
+                "accounts": [{"email": "alice@example.invalid", "tokens": {
+                    "access_token": "synthetic-access", "refresh_token": "synthetic-refresh", "expires_at": 2000
+                }, "device_id": "current-device", "last_seen_event_seq": 12}]
+            })).unwrap(),
+        ).unwrap();
+    }
+
+    fn assert_installed(app: &App, owner: &Arc<tokio::sync::RwLock<AccessTokenResponse>>) {
+        let installed = app.connect_stream_config.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&installed.tokens, owner));
+        assert_eq!(installed.device_id, "current-device");
+        assert_eq!(installed.last_seen_seq, 12);
+        assert!(Arc::ptr_eq(
+            app.cache.connect_tokens.as_ref().unwrap(),
+            owner
+        ));
+        assert_eq!(
+            app.cache.connect_device_id.as_deref(),
+            Some("current-device")
+        );
+        assert_eq!(
+            app.cache.connect_stream_status,
+            ConnectionStatus::Connecting
+        );
+    }
+
+    #[tokio::test]
+    async fn same_email_completion_requires_the_current_token_owner() {
+        let _guard = crate::app::session::test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+        seed_cached_session(&mut app, root.path());
+        let current = auth();
+        app.connect_auth = Some(current.clone());
+        app.connect_email = Some("alice@example.invalid".into());
+        let task = app.update(Message::ConnectStreamReady(Some((
+            config(auth()),
+            "alice@example.invalid".into(),
+        ))));
+        assert!(iced_runtime::task::into_stream(task).is_none());
+        assert!(app.connect_stream_config.is_none());
+        assert!(Arc::ptr_eq(app.connect_auth.as_ref().unwrap(), &current));
+        assert!(app.cache.connect_device_id.is_none());
+        // Positive control: the same cache/config is admissible for its owner.
+        drop(app.update(Message::ConnectStreamReady(Some((
+            config(current.clone()),
+            "alice@example.invalid".into(),
+        )))));
+        assert_installed(&app, &current);
+    }
+
+    #[test]
+    fn completion_lock_retry_rechecks_owner_after_unlock() {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            seed_cached_session(&mut app, root.path());
+            let original = auth();
+            app.connect_auth = Some(original.clone());
+            app.connect_email = Some("alice@example.invalid".into());
+            let held = original.write().await;
+            let task = app.update(Message::ConnectStreamReady(Some((
+                config(original.clone()),
+                "alice@example.invalid".into(),
+            ))));
+            let mut outputs = iced_runtime::task::into_stream(task).unwrap();
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), outputs.next())
+                    .await
+                    .is_err()
+            );
+            let replacement = auth();
+            app.connect_auth = Some(replacement.clone());
+            drop(held);
+            let output = tokio::time::timeout(std::time::Duration::from_secs(2), outputs.next())
+                .await
+                .unwrap()
+                .unwrap();
+            let iced_runtime::Action::Output(message @ Message::ConnectStreamReady(_)) = output
+            else {
+                panic!("unlock did not retry stream completion");
+            };
+            assert!(iced_runtime::task::into_stream(app.update(message)).is_none());
+            assert!(app.connect_stream_config.is_none());
+            assert!(Arc::ptr_eq(
+                app.connect_auth.as_ref().unwrap(),
+                &replacement
+            ));
+            assert!(app.cache.connect_device_id.is_none());
+            assert!(app.cache.connect_tokens.is_none());
+            // The new owner may install the identical-token configuration.
+            drop(app.update(Message::ConnectStreamReady(Some((
+                config(replacement.clone()),
+                "alice@example.invalid".into(),
+            )))));
+            assert_installed(&app, &replacement);
         });
     }
 }
