@@ -376,17 +376,7 @@ fn transaction_row<'a>(
     };
 
     // Determine the combo icon based on payment type
-    let combo_icon: Element<'_, Message> = if is_usdt {
-        asset_network_logo("usdt", "liquid", 40.0)
-    } else {
-        match &payment.details {
-            DomainPaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
-            DomainPaymentDetails::LiquidAsset { .. } => asset_network_logo("lbtc", "liquid", 40.0),
-            DomainPaymentDetails::OnChainBitcoin { .. } => {
-                asset_network_logo("btc", "bitcoin", 40.0)
-            }
-        }
-    };
+    let combo_icon = payment_row_icon(is_usdt, &payment.details);
 
     let status = payment_list_status(payment, refundable_swap_addresses);
 
@@ -608,35 +598,7 @@ pub fn transaction_detail_view<'a>(
 
     if let Some(ref usdt_display) = usdt_str {
         // USDt detail view: show USDt amount + L-BTC fees
-        let usdt_num = match &payment.details {
-            DomainPaymentDetails::LiquidAsset { asset_info, .. } => asset_info
-                .as_ref()
-                .map(|i| format_usdt_display(i.amount_minor))
-                .unwrap_or_else(|| format_usdt_display(payment.amount_sat)),
-            _ => format_usdt_display(payment.amount_sat),
-        };
-        let amount_row = if mask_amounts {
-            Row::new().push(text("••••••").size(H1_SIZE).bold())
-        } else if is_receive {
-            Row::new()
-                .spacing(5)
-                .align_y(Alignment::Center)
-                .push(text("+").size(H1_SIZE))
-                .push(text(usdt_num).size(H1_SIZE).bold())
-                .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3))
-        } else {
-            Row::new()
-                .spacing(5)
-                .align_y(Alignment::Center)
-                .push(text("-").size(H1_SIZE))
-                .push(
-                    Row::new()
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .push(text(usdt_num).size(H1_SIZE).bold())
-                        .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3)),
-                )
-        };
+        let amount_row = usdt_headline(payment, mask_amounts, is_receive);
         return Column::new()
             .spacing(20)
             .push(detail_back_button())
@@ -654,78 +616,14 @@ pub fn transaction_detail_view<'a>(
                     .spacing(20)
                     .push(Column::new().push(Container::new(amount_row))),
             )
-            .push(card::simple(
-                Column::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(1))
-                                    .push(text(localized_copy("Date")).bold()),
-                            )
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(2))
-                                    .push(text(date_text)),
-                            )
-                            .spacing(20),
-                    )
-                    .push(
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(1))
-                                    .push(text(localized_copy("Status")).bold()),
-                            )
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(2))
-                                    .push(payment_status_text(payment, refundable_swap_addresses)),
-                            )
-                            .spacing(20),
-                    )
-                    .push(
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(1))
-                                    .push(text(localized_copy("Asset Amount")).bold()),
-                            )
-                            .push(Column::new().width(Length::FillPortion(2)).push(text(
-                                if mask_amounts {
-                                    "••••••".to_owned()
-                                } else {
-                                    usdt_display.clone()
-                                },
-                            )))
-                            .spacing(20),
-                    )
-                    .push(if fees_sat.to_sat() == 0 {
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(1))
-                                    .push(text(usdt_fee_caption(0)).bold()),
-                            )
-                            .push(Column::new().width(Length::FillPortion(2)).push(text("—")))
-                            .spacing(20)
-                    } else {
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .width(Length::FillPortion(1))
-                                    .push(text(usdt_fee_caption(fees_sat.to_sat())).bold()),
-                            )
-                            .push(Column::new().width(Length::FillPortion(2)).push(text(
-                                if mask_amounts {
-                                    "••••••".to_owned()
-                                } else {
-                                    fees_sat.to_formatted_string_with_unit(bitcoin_unit)
-                                },
-                            )))
-                            .spacing(20)
-                    })
-                    .spacing(15),
+            .push(usdt_detail_card(
+                payment,
+                refundable_swap_addresses,
+                usdt_display,
+                fees_sat,
+                bitcoin_unit,
+                mask_amounts,
+                date_text,
             ))
             .into();
     }
@@ -746,44 +644,14 @@ pub fn transaction_detail_view<'a>(
                 .push(asset_network_logo::<Message>(a, n, 32.0))
                 .push(p1_regular(description))
         })
-        .push(
-            Column::new().spacing(20).push(
-                Column::new()
-                    .push(if mask_amounts {
-                        Container::new(text("••••••").size(H1_SIZE))
-                    } else if is_receive {
-                        Container::new(coincube_ui::component::amount::amount_with_size_and_unit(
-                            &btc_amount,
-                            H1_SIZE,
-                            bitcoin_unit,
-                        ))
-                    } else {
-                        Container::new(Row::new().spacing(5).push(text("-").size(H1_SIZE)).push(
-                            coincube_ui::component::amount::amount_with_size_and_unit(
-                                &total_amount,
-                                H1_SIZE,
-                                bitcoin_unit,
-                            ),
-                        ))
-                    })
-                    .push_maybe(fiat_converter.filter(|_| !mask_amounts).map(|converter| {
-                        // Use total_amount for outgoing payments to match headline (includes fees)
-                        let amount_for_conversion =
-                            if is_receive { btc_amount } else { total_amount };
-                        let fiat = converter.convert(amount_for_conversion);
-                        Row::new().align_y(Alignment::Center).push(
-                            text(localized_format!(
-                                "≈ {} {} · current rate",
-                                "♥ {} {} · tasa actual",
-                                fiat.to_formatted_string(),
-                                fiat.currency()
-                            ))
-                            .size(H2_SIZE)
-                            .style(theme::text::secondary),
-                        )
-                    })),
-            ),
-        )
+        .push(btc_detail_headline(
+            is_receive,
+            btc_amount,
+            total_amount,
+            bitcoin_unit,
+            fiat_converter,
+            mask_amounts,
+        ))
         .push(card::simple(
             Column::new()
                 .push(
@@ -1091,81 +959,16 @@ pub fn refundable_detail_view<'a>(
                     "Cantidad de reembolso: {}",
                     btc_amount.to_formatted_string_with_unit(bitcoin_unit)
                 )))
-                .push(
-                    Column::new()
-                        .spacing(10)
-                        .push(text(localized_copy("Bitcoin Address")).size(P2_SIZE).bold())
-                        .push(
-                            Row::new()
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .push(
-                                    if refunding {
-                                        form::Form::new_disabled(
-                                            coincube_ui::locale::copy(
-                                                "Enter Bitcoin address for refund",
-                                            ),
-                                            refund_address,
-                                        )
-                                    } else {
-                                        form::Form::new(
-                                            coincube_ui::locale::copy(
-                                                "Enter Bitcoin address for refund",
-                                            ),
-                                            refund_address,
-                                            Message::RefundAddressEdited,
-                                        )
-                                    }
-                                    .maybe_warning(if refunding {
-                                        None
-                                    } else {
-                                        refund_address.warning.map(coincube_ui::locale::copy)
-                                    })
-                                    .size(14)
-                                    .padding(12),
-                                )
-                                .push_maybe(has_vault.then(|| {
-                                    button::transparent_border(
-                                        None,
-                                        localized_copy("Use Vault address"),
-                                    )
-                                    .on_press_maybe(
-                                        (!refunding).then_some(Message::GenerateVaultRefundAddress),
-                                    )
-                                    .padding([6, 14])
-                                })),
-                        ),
-                )
-                .push(
-                    Column::new()
-                        .spacing(10)
-                        .push(
-                            text(localized_copy("Fee Rate (sat/vB)"))
-                                .size(P2_SIZE)
-                                .bold(),
-                        )
-                        .push(
-                            Row::new()
-                                .spacing(10)
-                                .push(
-                                    if refunding {
-                                        form::Form::new_disabled(
-                                            coincube_ui::locale::copy("Enter fee rate"),
-                                            refund_feerate,
-                                        )
-                                    } else {
-                                        form::Form::new_amount_sats(
-                                            coincube_ui::locale::copy("Enter fee rate"),
-                                            refund_feerate,
-                                            Message::RefundFeerateEdited,
-                                        )
-                                    }
-                                    .size(14)
-                                    .padding(12),
-                                )
-                                .push(fee_priority_buttons(pending_fee_priority, refunding)),
-                        ),
-                )
+                .push(refund_address_controls(
+                    refund_address,
+                    refunding,
+                    has_vault,
+                ))
+                .push(refund_fee_controls(
+                    refund_feerate,
+                    pending_fee_priority,
+                    refunding,
+                ))
                 .push(
                     Row::new().spacing(10).push(
                         button::primary_action(
@@ -1211,6 +1014,266 @@ fn detail_back_button() -> Element<'static, Message> {
         .width(Length::Fixed(150.0))
         .on_press(Message::Close)
         .into()
+}
+
+fn payment_row_icon(is_usdt: bool, details: &DomainPaymentDetails) -> Element<'static, Message> {
+    if is_usdt {
+        asset_network_logo("usdt", "liquid", 40.0)
+    } else {
+        match details {
+            DomainPaymentDetails::Lightning { .. } => asset_network_logo("btc", "lightning", 40.0),
+            DomainPaymentDetails::LiquidAsset { .. } => asset_network_logo("lbtc", "liquid", 40.0),
+            DomainPaymentDetails::OnChainBitcoin { .. } => {
+                asset_network_logo("btc", "bitcoin", 40.0)
+            }
+        }
+    }
+}
+
+fn usdt_headline<'a>(
+    payment: &DomainPayment,
+    mask_amounts: bool,
+    is_receive: bool,
+) -> coincube_ui::widget::Row<'a, Message> {
+    let usdt_num = match &payment.details {
+        DomainPaymentDetails::LiquidAsset { asset_info, .. } => asset_info
+            .as_ref()
+            .map(|i| format_usdt_display(i.amount_minor))
+            .unwrap_or_else(|| format_usdt_display(payment.amount_sat)),
+        _ => format_usdt_display(payment.amount_sat),
+    };
+    if mask_amounts {
+        Row::new().push(text("••••••").size(H1_SIZE).bold())
+    } else if is_receive {
+        Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(text("+").size(H1_SIZE))
+            .push(text(usdt_num).size(H1_SIZE).bold())
+            .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3))
+    } else {
+        Row::new()
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .push(text("-").size(H1_SIZE))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(text(usdt_num).size(H1_SIZE).bold())
+                    .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3)),
+            )
+    }
+}
+
+fn usdt_detail_card<'a>(
+    payment: &DomainPayment,
+    refundable_swap_addresses: &[String],
+    usdt_display: &str,
+    fees_sat: Amount,
+    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    mask_amounts: bool,
+    date_text: String,
+) -> Element<'a, Message> {
+    card::simple(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(1))
+                            .push(text(localized_copy("Date")).bold()),
+                    )
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(2))
+                            .push(text(date_text)),
+                    )
+                    .spacing(20),
+            )
+            .push(
+                Row::new()
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(1))
+                            .push(text(localized_copy("Status")).bold()),
+                    )
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(2))
+                            .push(payment_status_text(payment, refundable_swap_addresses)),
+                    )
+                    .spacing(20),
+            )
+            .push(
+                Row::new()
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(1))
+                            .push(text(localized_copy("Asset Amount")).bold()),
+                    )
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(2))
+                            .push(text(if mask_amounts {
+                                "••••••".to_owned()
+                            } else {
+                                usdt_display.to_owned()
+                            })),
+                    )
+                    .spacing(20),
+            )
+            .push(if fees_sat.to_sat() == 0 {
+                Row::new()
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(1))
+                            .push(text(usdt_fee_caption(0)).bold()),
+                    )
+                    .push(Column::new().width(Length::FillPortion(2)).push(text("—")))
+                    .spacing(20)
+            } else {
+                Row::new()
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(1))
+                            .push(text(usdt_fee_caption(fees_sat.to_sat())).bold()),
+                    )
+                    .push(
+                        Column::new()
+                            .width(Length::FillPortion(2))
+                            .push(text(if mask_amounts {
+                                "••••••".to_owned()
+                            } else {
+                                fees_sat.to_formatted_string_with_unit(bitcoin_unit)
+                            })),
+                    )
+                    .spacing(20)
+            })
+            .spacing(15),
+    )
+    .into()
+}
+
+fn btc_detail_headline<'a>(
+    is_receive: bool,
+    btc_amount: Amount,
+    total_amount: Amount,
+    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    fiat_converter: Option<FiatAmountConverter>,
+    mask_amounts: bool,
+) -> coincube_ui::widget::Column<'a, Message> {
+    Column::new().spacing(20).push(
+        Column::new()
+            .push(if mask_amounts {
+                Container::new(text("••••••").size(H1_SIZE))
+            } else if is_receive {
+                Container::new(coincube_ui::component::amount::amount_with_size_and_unit(
+                    &btc_amount,
+                    H1_SIZE,
+                    bitcoin_unit,
+                ))
+            } else {
+                Container::new(Row::new().spacing(5).push(text("-").size(H1_SIZE)).push(
+                    coincube_ui::component::amount::amount_with_size_and_unit(
+                        &total_amount,
+                        H1_SIZE,
+                        bitcoin_unit,
+                    ),
+                ))
+            })
+            .push_maybe(fiat_converter.filter(|_| !mask_amounts).map(|converter| {
+                // Use total_amount for outgoing payments to match headline (includes fees)
+                let amount_for_conversion = if is_receive { btc_amount } else { total_amount };
+                let fiat = converter.convert(amount_for_conversion);
+                Row::new().align_y(Alignment::Center).push(
+                    text(localized_format!(
+                        "≈ {} {} · current rate",
+                        "♥ {} {} · tasa actual",
+                        fiat.to_formatted_string(),
+                        fiat.currency()
+                    ))
+                    .size(H2_SIZE)
+                    .style(theme::text::secondary),
+                )
+            })),
+    )
+}
+
+fn refund_address_controls<'a>(
+    refund_address: &'a form::Value<String>,
+    refunding: bool,
+    has_vault: bool,
+) -> coincube_ui::widget::Column<'a, Message> {
+    Column::new()
+        .spacing(10)
+        .push(text(localized_copy("Bitcoin Address")).size(P2_SIZE).bold())
+        .push(
+            Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(
+                    if refunding {
+                        form::Form::new_disabled(
+                            coincube_ui::locale::copy("Enter Bitcoin address for refund"),
+                            refund_address,
+                        )
+                    } else {
+                        form::Form::new(
+                            coincube_ui::locale::copy("Enter Bitcoin address for refund"),
+                            refund_address,
+                            Message::RefundAddressEdited,
+                        )
+                    }
+                    .maybe_warning(if refunding {
+                        None
+                    } else {
+                        refund_address.warning.map(coincube_ui::locale::copy)
+                    })
+                    .size(14)
+                    .padding(12),
+                )
+                .push_maybe(has_vault.then(|| {
+                    button::transparent_border(None, localized_copy("Use Vault address"))
+                        .on_press_maybe((!refunding).then_some(Message::GenerateVaultRefundAddress))
+                        .padding([6, 14])
+                })),
+        )
+}
+
+fn refund_fee_controls<'a>(
+    refund_feerate: &'a form::Value<String>,
+    pending_fee_priority: Option<FeeratePriority>,
+    refunding: bool,
+) -> coincube_ui::widget::Column<'a, Message> {
+    Column::new()
+        .spacing(10)
+        .push(
+            text(localized_copy("Fee Rate (sat/vB)"))
+                .size(P2_SIZE)
+                .bold(),
+        )
+        .push(
+            Row::new()
+                .spacing(10)
+                .push(
+                    if refunding {
+                        form::Form::new_disabled(
+                            coincube_ui::locale::copy("Enter fee rate"),
+                            refund_feerate,
+                        )
+                    } else {
+                        form::Form::new_amount_sats(
+                            coincube_ui::locale::copy("Enter fee rate"),
+                            refund_feerate,
+                            Message::RefundFeerateEdited,
+                        )
+                    }
+                    .size(14)
+                    .padding(12),
+                )
+                .push(fee_priority_buttons(pending_fee_priority, refunding)),
+        )
 }
 
 #[cfg(test)]
@@ -1634,6 +1697,155 @@ mod tests {
                     assert!(submit
                         .iter()
                         .any(|message| matches!(message, Message::SubmitRefund)));
+                }
+            }
+        }
+    }
+    fn ordinary_payment_cases() -> Vec<(DomainPayment, bool)> {
+        use crate::app::wallets::DomainLiquidAssetInfo;
+        vec![
+            (
+                payment(
+                    DomainPaymentStatus::Complete,
+                    DomainPaymentDetails::Lightning {
+                        swap_id: None,
+                        description: "Synthetic payment".into(),
+                        payer_note: None,
+                    },
+                ),
+                false,
+            ),
+            (
+                payment(
+                    DomainPaymentStatus::Complete,
+                    DomainPaymentDetails::LiquidAsset {
+                        asset_id: "synthetic-lbtc".into(),
+                        asset_info: None,
+                        description: "Synthetic payment".into(),
+                        payer_note: None,
+                    },
+                ),
+                false,
+            ),
+            (
+                payment(
+                    DomainPaymentStatus::Complete,
+                    DomainPaymentDetails::LiquidAsset {
+                        asset_id: "synthetic-usdt".into(),
+                        asset_info: Some(DomainLiquidAssetInfo {
+                            amount_minor: 123_456_789,
+                            precision: 6,
+                        }),
+                        description: "Synthetic payment".into(),
+                        payer_note: None,
+                    },
+                ),
+                true,
+            ),
+        ]
+    }
+
+    fn assert_ordinary_payment_case(payment: &DomainPayment, is_usdt: bool, masked: bool) {
+        use crate::app::cache::FiatPriceRequest;
+        use crate::services::fiat::{Currency, PriceSource};
+        let converter = Some(
+            FiatAmountConverter::new(
+                100_000.0,
+                None,
+                FiatPriceRequest::new(PriceSource::Coincube, Currency::USD),
+            )
+            .unwrap(),
+        );
+        let row_view = || {
+            transaction_row(
+                7,
+                payment,
+                converter,
+                BitcoinDisplayUnit::Sats,
+                "synthetic-usdt",
+                true,
+                false,
+                &[],
+                masked,
+            )
+        };
+        let detail_view = || {
+            transaction_detail_view(
+                payment,
+                converter,
+                BitcoinDisplayUnit::Sats,
+                "synthetic-usdt",
+                &[],
+                masked,
+            )
+        };
+        let row = capture::inspect_full_window(
+            "liquid-ordinary-row",
+            row_view(),
+            (1440, 1000),
+            "light",
+            theme::Theme::light(),
+        );
+        let detail = capture::inspect_full_window(
+            "liquid-ordinary-detail",
+            detail_view(),
+            (1440, 1000),
+            "light",
+            theme::Theme::light(),
+        );
+        assert!(row.contains("Synthetic payment"));
+        assert!(row.contains("Confirmed"));
+        assert!(detail.contains("Confirmed"));
+        if masked {
+            assert!(row.contains("••••••"));
+            assert!(detail.contains("••••••"));
+            for hidden in ["9,000", "9,100", "123.46", "current rate"] {
+                assert!(!row.contains(hidden));
+                assert!(!detail.contains(hidden));
+            }
+        } else if is_usdt {
+            assert!(row.contains("123.46 USDt"));
+            assert!(detail.contains("123.46"));
+            assert!(detail.contains("USDt"));
+            assert!(detail.contains("Fees (L-BTC)"));
+            assert!(detail.text.iter().any(|(value, _)| value == "100"));
+        } else {
+            let headline = if payment.direction == DomainPaymentDirection::Send {
+                "9,100"
+            } else {
+                "9,000"
+            };
+            assert!(row.contains(headline));
+            assert!(detail.contains(headline));
+            assert!(detail.contains("9,000"));
+            assert!(detail.contains("Fees"));
+            assert!(detail.text.iter().any(|(value, _)| value == "100"));
+            assert!(row.contains("current rate"));
+            assert!(detail.contains("current rate"));
+        }
+        let selection = capture::click_text(row_view(), "Synthetic payment", 0, (1440, 1000));
+        assert!(selection
+            .iter()
+            .any(|message| matches!(message, Message::Select(7))));
+        let back = capture::click_text(detail_view(), "< Back", 0, (1440, 1000));
+        assert!(back.iter().any(|message| matches!(message, Message::Close)));
+    }
+
+    #[test]
+    fn ordinary_liquid_presenters_preserve_asset_cost_privacy_and_selection() {
+        use crate::app::state::preferences::BalancePrivacy;
+        for privacy in [
+            BalancePrivacy::Shown,
+            BalancePrivacy::Hidden,
+            BalancePrivacy::Unresolved,
+        ] {
+            for direction in [
+                DomainPaymentDirection::Receive,
+                DomainPaymentDirection::Send,
+            ] {
+                for (mut payment, is_usdt) in ordinary_payment_cases() {
+                    payment.direction = direction;
+                    assert_ordinary_payment_case(&payment, is_usdt, privacy.masks_amounts());
                 }
             }
         }
