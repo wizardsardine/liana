@@ -3325,18 +3325,21 @@ impl ConnectAccountPanel {
                                 self.billing_history = None;
                                 let history = self.reload_billing_history();
                                 // Same ordering rule as `PlanReloaded`: a
-                                // newer answer already shown wins. The poll
-                                // waits before it fetches, so a reload sent
-                                // meanwhile may have read the server first;
-                                // fetch once more so the screen settles on
-                                // the current plan either way.
+                                // newer answer already shown wins.
                                 if seq > self.applied_plan_seq {
                                     self.applied_plan_seq = seq;
                                     self.apply_loaded_plan(Some(plan));
-                                    return history;
                                 }
-                                let fresh = self.plan_fetch_task();
-                                return iced::Task::batch([history, fresh]);
+                                // The poll waits before it reads, so a fetch
+                                // sent after it may have read the server
+                                // first, whichever response lands first.
+                                // Fetch once more so the screen settles on
+                                // the current plan.
+                                if self.plan_seq != seq {
+                                    let fresh = self.plan_fetch_task();
+                                    return iced::Task::batch([history, fresh]);
+                                }
+                                return history;
                             }
                             return iced::Task::none();
                         }
@@ -9963,8 +9966,9 @@ mod plan_lifecycle_tests {
 
     #[test]
     fn a_card_poll_is_sequenced_when_sent_not_when_it_returns() {
-        // The poll is sent, then a reload; each response order must leave
-        // the newer answer (auto-renewal off) on screen.
+        // A poll is sent, then a reload while the poll waits to read. The
+        // reload may have read the server first, so whichever response
+        // lands first, a fresh fetch follows and its answer wins.
         for reload_first in [true, false] {
             let (mut panel, id, gen) = card_checkout_in_browser();
             let before = panel.plan_seq;
@@ -9975,45 +9979,65 @@ mod plan_lifecycle_tests {
             let _ = panel.plan_fetch_task();
             let reload_seq = panel.plan_seq;
             assert!(reload_seq > poll_seq);
+            // The reload read before the poll: still Free.
+            let reloaded = ConnectAccountMessage::PlanReloaded(
+                Some(plan(PlanTier::Free, PlanStatus::Active, None, None)),
+                gen,
+                reload_seq,
+            );
             let polled = ConnectAccountMessage::CardPlanPolled(
                 Ok(card_plan("pro", true, "")),
                 gen,
                 id,
                 poll_seq,
             );
-            let reloaded = ConnectAccountMessage::PlanReloaded(
-                Some(card_plan("pro", false, "")),
-                gen,
-                reload_seq,
-            );
-            if reload_first {
+            let task = if reload_first {
                 let _ = panel.update_message(reloaded);
                 let task = panel.update_message(polled);
-                // The older poll still finishes the checkout, but leaves the
-                // newer plan alone and fetches once more.
-                assert_eq!(
-                    panel.checkout.as_ref().unwrap().phase,
-                    CheckoutPhase::CardActive
-                );
-                assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(false));
+                // The older poll never lands over the newer reload.
                 assert_eq!(panel.applied_plan_seq, reload_seq);
-                assert_eq!(task.units(), 2, "billing history plus a fresh plan fetch");
-                assert!(panel.plan_seq > reload_seq);
+                assert_eq!(panel.plan.as_ref().unwrap().plan, PlanTier::Free);
+                task
             } else {
                 let task = panel.update_message(polled);
-                assert_eq!(
-                    panel.checkout.as_ref().unwrap().phase,
-                    CheckoutPhase::CardActive
-                );
-                assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(true));
                 assert_eq!(panel.applied_plan_seq, poll_seq);
-                assert_eq!(task.units(), 1, "billing history only");
-                // The reload sent after the poll still lands.
+                assert!(panel.plan.as_ref().unwrap().is_card());
+                // The reload sent after the poll still outranks it.
                 let _ = panel.update_message(reloaded);
-                assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(false));
                 assert_eq!(panel.applied_plan_seq, reload_seq);
-            }
+                task
+            };
+            assert_eq!(
+                panel.checkout.as_ref().unwrap().phase,
+                CheckoutPhase::CardActive
+            );
+            assert_eq!(task.units(), 2, "billing history plus a fresh plan fetch");
+            let fresh_seq = panel.plan_seq;
+            assert!(fresh_seq > reload_seq);
+            let _ = panel.update_message(ConnectAccountMessage::PlanReloaded(
+                Some(card_plan("pro", true, "")),
+                gen,
+                fresh_seq,
+            ));
+            assert!(
+                panel.plan.as_ref().unwrap().is_card(),
+                "settles on the card plan"
+            );
+            assert_eq!(panel.applied_plan_seq, fresh_seq);
         }
+        // No fetch sent after the poll: its answer stands, no extra fetch.
+        let (mut panel, id, gen) = card_checkout_in_browser();
+        let _ = panel.update_message(ConnectAccountMessage::PollCardPlan(id));
+        let poll_seq = panel.plan_seq;
+        let task = panel.update_message(ConnectAccountMessage::CardPlanPolled(
+            Ok(card_plan("pro", false, "")),
+            gen,
+            id,
+            poll_seq,
+        ));
+        assert_eq!(task.units(), 1, "billing history only");
+        assert_eq!(panel.applied_plan_seq, poll_seq);
+        assert_eq!(panel.plan.as_ref().unwrap().auto_renew, Some(false));
     }
 
     #[test]
