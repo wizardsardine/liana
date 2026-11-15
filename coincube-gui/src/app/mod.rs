@@ -19510,11 +19510,46 @@ mod stream_startup_routing_tests {
         }
     }
 
+    fn seed_cached_session(app: &mut App, root: &std::path::Path) {
+        app.cache.datadir_path = CoincubeDirectory::new(root.to_path_buf());
+        let network_dir = app.cache.datadir_path.network_directory(app.cache.network);
+        std::fs::create_dir_all(network_dir.path()).unwrap();
+        std::fs::write(
+            network_dir.path().join(crate::services::connect::client::cache::CONNECT_CACHE_FILENAME),
+            serde_json::to_vec(&serde_json::json!({
+                "active_email": "alice@example.invalid",
+                "accounts": [{"email": "alice@example.invalid", "tokens": {
+                    "access_token": "synthetic-access", "refresh_token": "synthetic-refresh", "expires_at": 2000
+                }, "device_id": "current-device", "last_seen_event_seq": 12}]
+            })).unwrap(),
+        ).unwrap();
+    }
+
+    fn assert_installed(app: &App, owner: &Arc<tokio::sync::RwLock<AccessTokenResponse>>) {
+        let installed = app.connect_stream_config.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&installed.tokens, owner));
+        assert_eq!(installed.device_id, "current-device");
+        assert_eq!(installed.last_seen_seq, 12);
+        assert!(Arc::ptr_eq(
+            app.cache.connect_tokens.as_ref().unwrap(),
+            owner
+        ));
+        assert_eq!(
+            app.cache.connect_device_id.as_deref(),
+            Some("current-device")
+        );
+        assert_eq!(
+            app.cache.connect_stream_status,
+            ConnectionStatus::Connecting
+        );
+    }
+
     #[tokio::test]
     async fn same_email_completion_requires_the_current_token_owner() {
         let _guard = crate::app::session::test_guard();
         let root = tempfile::tempdir().unwrap();
         let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+        seed_cached_session(&mut app, root.path());
         let current = auth();
         app.connect_auth = Some(current.clone());
         app.connect_email = Some("alice@example.invalid".into());
@@ -19526,6 +19561,12 @@ mod stream_startup_routing_tests {
         assert!(app.connect_stream_config.is_none());
         assert!(Arc::ptr_eq(app.connect_auth.as_ref().unwrap(), &current));
         assert!(app.cache.connect_device_id.is_none());
+        // Positive control: the same cache/config is admissible for its owner.
+        drop(app.update(Message::ConnectStreamReady(Some((
+            config(current.clone()),
+            "alice@example.invalid".into(),
+        )))));
+        assert_installed(&app, &current);
     }
 
     #[test]
@@ -19538,6 +19579,7 @@ mod stream_startup_routing_tests {
         runtime.block_on(async {
             let root = tempfile::tempdir().unwrap();
             let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            seed_cached_session(&mut app, root.path());
             let original = auth();
             app.connect_auth = Some(original.clone());
             app.connect_email = Some("alice@example.invalid".into());
@@ -19569,6 +19611,14 @@ mod stream_startup_routing_tests {
                 app.connect_auth.as_ref().unwrap(),
                 &replacement
             ));
+            assert!(app.cache.connect_device_id.is_none());
+            assert!(app.cache.connect_tokens.is_none());
+            // The new owner may install the identical-token configuration.
+            drop(app.update(Message::ConnectStreamReady(Some((
+                config(replacement.clone()),
+                "alice@example.invalid".into(),
+            )))));
+            assert_installed(&app, &replacement);
         });
     }
 }
