@@ -102,6 +102,30 @@ fn status_light<'a, M: 'static>(light: ConnectLight, dim: bool) -> Element<'a, M
         .into()
 }
 
+/// The most characters of an account shown after `Connect ·`. The chip caps
+/// at 300px; after its padding, the glyph, `Connect ·`, the gaps and a
+/// chevron, about 150px is left, which holds ~22 characters at 13px.
+const ACCOUNT_MAX_CHARS: usize = 22;
+/// Of those, the account's opening characters kept before the `…`; the rest
+/// (less the `…`) come from its end, so both the name and the domain read.
+const ACCOUNT_HEAD_CHARS: usize = 10;
+
+/// The account as drawn in the chip: unchanged when it fits, otherwise
+/// middle-elided (`olawale494…cock.edu.ng`). Counts characters, not bytes,
+/// so a non-ASCII address never splits inside one. The control's
+/// accessible label and the Connect panel keep the full address.
+pub fn chip_account(account: &str) -> String {
+    let chars: Vec<char> = account.chars().collect();
+    if chars.len() <= ACCOUNT_MAX_CHARS {
+        return account.to_owned();
+    }
+    let tail = ACCOUNT_MAX_CHARS - ACCOUNT_HEAD_CHARS - 1;
+    let mut elided: String = chars[..ACCOUNT_HEAD_CHARS].iter().collect();
+    elided.push('…');
+    elided.extend(&chars[chars.len() - tail..]);
+    elided
+}
+
 /// What follows `Connect ·`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectDetail<'a> {
@@ -156,7 +180,7 @@ pub fn connect_control<'a, M: Clone + 'static>(
     }
     let sign_in = control.detail == ConnectDetail::SignIn;
     let detail = match control.detail {
-        ConnectDetail::Account(email) => email.to_owned(),
+        ConnectDetail::Account(email) => chip_account(email),
         ConnectDetail::Offline => "Offline".to_owned(),
         ConnectDetail::Checking => "Checking…".to_owned(),
         ConnectDetail::SignIn => "Sign in".to_owned(),
@@ -176,15 +200,21 @@ pub fn connect_control<'a, M: Clone + 'static>(
             .style(|t: &theme::Theme| iced::widget::text::Style {
                 color: Some(t.colors.shell.muted),
             }),
-        text(detail)
-            .size(13)
-            .font(if sign_in {
-                font::SEMIBOLD
-            } else {
-                font::REGULAR
-            })
-            .wrapping(text::Wrapping::None)
-            .style(detail_style),
+        // Clipped to the width the row gives it: if a platform's font or
+        // display scale still draws the account wider than the chip, it is
+        // cut at the chip's edge instead of painting over the next control.
+        container(
+            text(detail)
+                .size(13)
+                .font(if sign_in {
+                    font::SEMIBOLD
+                } else {
+                    font::REGULAR
+                })
+                .wrapping(text::Wrapping::None)
+                .style(detail_style),
+        )
+        .clip(true),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -213,4 +243,35 @@ pub fn connect_control<'a, M: Clone + 'static>(
         style
     });
     bar::accessible(widget, control.label)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chip_account_keeps_short_accounts() {
+        assert_eq!(chip_account("alex@example.test"), "alex@example.test");
+        // Exactly at the limit: nothing to gain from eliding.
+        let at_limit = "a".repeat(ACCOUNT_MAX_CHARS);
+        assert_eq!(chip_account(&at_limit), at_limit);
+    }
+
+    #[test]
+    fn chip_account_middle_elides_long_accounts() {
+        let shown = chip_account("olawale4947@student.babcock.edu.ng");
+        assert_eq!(shown, "olawale494…cock.edu.ng");
+        assert_eq!(shown.chars().count(), ACCOUNT_MAX_CHARS);
+    }
+
+    #[test]
+    fn chip_account_counts_characters_not_bytes() {
+        // Multi-byte characters on both sides of the cut must not panic or
+        // split, and the result still holds the character budget.
+        let account = "ñandú.pérez.álvarez@universidad.ejemplo.es";
+        let shown = chip_account(account);
+        assert_eq!(shown.chars().count(), ACCOUNT_MAX_CHARS);
+        assert!(shown.starts_with("ñandú.pére"));
+        assert!(shown.ends_with("ejemplo.es"));
+    }
 }
