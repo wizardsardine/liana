@@ -19528,40 +19528,47 @@ mod stream_startup_routing_tests {
         assert!(app.cache.connect_device_id.is_none());
     }
 
-    #[tokio::test]
-    async fn completion_lock_retry_rechecks_owner_after_unlock() {
+    #[test]
+    fn completion_lock_retry_rechecks_owner_after_unlock() {
         let _guard = crate::app::session::test_guard();
-        let root = tempfile::tempdir().unwrap();
-        let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
-        let original = auth();
-        app.connect_auth = Some(original.clone());
-        app.connect_email = Some("alice@example.invalid".into());
-        let held = original.write().await;
-        let task = app.update(Message::ConnectStreamReady(Some((
-            config(original.clone()),
-            "alice@example.invalid".into(),
-        ))));
-        let mut outputs = iced_runtime::task::into_stream(task).unwrap();
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(25), outputs.next())
-                .await
-                .is_err()
-        );
-        let replacement = auth();
-        app.connect_auth = Some(replacement.clone());
-        drop(held);
-        let output = tokio::time::timeout(std::time::Duration::from_secs(2), outputs.next())
-            .await
-            .unwrap()
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .unwrap();
-        let iced_runtime::Action::Output(message @ Message::ConnectStreamReady(_)) = output else {
-            panic!("unlock did not retry stream completion");
-        };
-        assert!(iced_runtime::task::into_stream(app.update(message)).is_none());
-        assert!(app.connect_stream_config.is_none());
-        assert!(Arc::ptr_eq(
-            app.connect_auth.as_ref().unwrap(),
-            &replacement
-        ));
+        runtime.block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            let original = auth();
+            app.connect_auth = Some(original.clone());
+            app.connect_email = Some("alice@example.invalid".into());
+            let held = original.write().await;
+            let task = app.update(Message::ConnectStreamReady(Some((
+                config(original.clone()),
+                "alice@example.invalid".into(),
+            ))));
+            let mut outputs = iced_runtime::task::into_stream(task).unwrap();
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), outputs.next())
+                    .await
+                    .is_err()
+            );
+            let replacement = auth();
+            app.connect_auth = Some(replacement.clone());
+            drop(held);
+            let output = tokio::time::timeout(std::time::Duration::from_secs(2), outputs.next())
+                .await
+                .unwrap()
+                .unwrap();
+            let iced_runtime::Action::Output(message @ Message::ConnectStreamReady(_)) = output
+            else {
+                panic!("unlock did not retry stream completion");
+            };
+            assert!(iced_runtime::task::into_stream(app.update(message)).is_none());
+            assert!(app.connect_stream_config.is_none());
+            assert!(Arc::ptr_eq(
+                app.connect_auth.as_ref().unwrap(),
+                &replacement
+            ));
+        });
     }
 }
