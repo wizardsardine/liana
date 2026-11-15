@@ -960,6 +960,12 @@ pub enum SparkSideshiftReceiveMessage {
     /// Look again for a restored, settled shift's bitcoin (a timer, while it
     /// is still unknown).
     RecheckRestoredArrival,
+    /// Look for the claimed deposit paid by a settled shift's settle
+    /// transaction (a timer, and every Spark payment, while it is awaited).
+    CheckSettleClaim,
+    /// What that lookup found: the claimed amount in sats, or `None` when the
+    /// claim isn't in the wallet yet.
+    SettleClaimChecked(Option<u64>),
     Back,
     Reset,
 }

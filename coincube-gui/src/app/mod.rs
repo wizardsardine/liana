@@ -9477,6 +9477,15 @@ impl App {
                                 tasks.push(Task::done(Message::View(view::Message::Home(
                                     view::HomeMessage::SparkPaymentSucceeded { amount_sat },
                                 ))));
+                                // A claimed on-chain deposit lands as a
+                                // payment: let a settled cross-network
+                                // receive check whether it was its own,
+                                // rather than wait for its next timer tick.
+                                tasks.push(Task::done(Message::View(
+                                    view::Message::SparkSideshiftReceive(
+                                        view::SparkSideshiftReceiveMessage::CheckSettleClaim,
+                                    ),
+                                )));
                             }
                         }
                     }
