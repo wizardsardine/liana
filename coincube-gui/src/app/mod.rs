@@ -10348,10 +10348,13 @@ impl App {
             // The avatar flow opens inline under Cube identity on Display &
             // appearance, rather than replacing the page.
             Menu::Cube(menu::CubeSubMenu::Settings(menu::CubeSettingsOption::Avatar)) => {
+                let spark_unavailable = features::spark(self.cache.chain())
+                    .reason()
+                    .map(str::to_string);
                 let flow = if !authenticated {
                     sign_in_prompt::sign_in_prompt("set up an Avatar")
                 } else if !has_ln_address {
-                    sign_in_prompt::claim_ln_address_prompt()
+                    sign_in_prompt::claim_ln_address_prompt(spark_unavailable)
                 } else {
                     view::connect::avatar_ux(&self.panels.connect.cube)
                         .map(view::Message::ConnectCube)
