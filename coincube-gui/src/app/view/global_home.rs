@@ -3512,18 +3512,33 @@ pub fn global_home_view<'a>(
         .into()
     };
 
+    // `.hero`: the balance on the left and, at the far right on the same
+    // baseline, the worldview's voice line and art, over a hairline. The
+    // art is decorative and stays while balances are hidden.
+    let total_balance_row = coincube_ui::component::tenshu::worldview_hero(
+        Column::new()
+            .spacing(6)
+            .push(total_balance_label_row)
+            .push(total_balance_value),
+        coincube_ui::worldview_copy::VoiceLine::Overview.get(),
+    );
+    let total_balance_block = Column::new().spacing(6).push(total_balance_row).push_maybe(
+        (total_partial && !total_balance_loading && !total_balance_masked).then(|| {
+            text(localized_copy(
+                "Partial total · one or more wallet amounts or USD valuations are unavailable",
+            ))
+            .size(P2_SIZE)
+            .style(theme::text::warning)
+        }),
+    );
     let total_balance_block = Column::new()
-        .spacing(6)
-        .push(total_balance_label_row)
-        .push(total_balance_value)
-        .push_maybe(
-            (total_partial && !total_balance_loading && !total_balance_masked).then(|| {
-                text(localized_copy(
-                    "Partial total · one or more wallet amounts or USD valuations are unavailable",
-                ))
-                .size(P2_SIZE)
-                .style(theme::text::warning)
-            }),
+        .push(total_balance_block)
+        .push(Space::new().height(Length::Fixed(28.0)))
+        .push(
+            Container::new(Space::new())
+                .width(Length::Fill)
+                .height(Length::Fixed(1.0))
+                .style(theme::tenshu::control::divider),
         );
 
     // A Cube with no wallet yet has nothing to total; the Wallets cards
@@ -3534,7 +3549,7 @@ pub fn global_home_view<'a>(
         Column::new()
             .spacing(12)
             .push_maybe(has_any_wallet.then_some(total_balance_block))
-            .push_maybe(has_any_wallet.then(|| Space::new().height(Length::Fixed(20.0))))
+            .push_maybe(has_any_wallet.then(|| Space::new().height(Length::Fixed(8.0))))
             .push(
                 Row::new()
                     .spacing(8)
@@ -3577,11 +3592,6 @@ pub fn overview_page<'a>(
     }
     let body = Column::new()
         .spacing(36)
-        .push_maybe(
-            coincube_ui::worldview_copy::VoiceLine::Overview
-                .get()
-                .map(|line| p2_regular(line).style(theme::text::secondary)),
-        )
         .push(overview)
         .push_maybe(recent_activity);
     crate::app::view::dashboard_headed(menu, cache, head, body)
@@ -5246,6 +5256,189 @@ mod tests {
                     )
                 },
             );
+        }
+    }
+
+    const WORLDVIEWS: [(coincube_ui::theme::WorldviewMode, &str); 3] = [
+        (coincube_ui::theme::WorldviewMode::Samurai, "samurai"),
+        (coincube_ui::theme::WorldviewMode::Suitcoiner, "suitcoiner"),
+        (coincube_ui::theme::WorldviewMode::Luke, "luke"),
+    ];
+    const ARTWORK: [(coincube_ui::theme::ArtworkStyle, &str); 2] = [
+        (coincube_ui::theme::ArtworkStyle::Scene, "scene"),
+        (coincube_ui::theme::ArtworkStyle::Existing, "existing"),
+    ];
+
+    /// The Overview's worldview hero in every mode, artwork style and
+    /// appearance: the voice line (where the mode has one) at the far right
+    /// of the Total balance row and level with its SATS line, never above the
+    /// balance; under the balance once the column is too narrow for the row;
+    /// still there while balances are hidden.
+    #[test]
+    fn overview_worldview_hero_sets_the_voice_line_beside_the_balance() {
+        use coincube_ui::worldview_copy::{self, VoiceLine};
+
+        let fixture = ViewFixture::new();
+        let find = |probe: &capture::Inspection, needle: &str| {
+            probe
+                .text
+                .iter()
+                .find(|(value, _)| value == needle)
+                .map(|(_, bounds)| *bounds)
+        };
+        for (mode, name) in WORLDVIEWS {
+            let line = VoiceLine::Overview.for_mode(mode);
+            for (artwork, art) in ARTWORK {
+                for (appearance, base) in [
+                    ("dark", theme::Theme::dark()),
+                    ("light", theme::Theme::light()),
+                ] {
+                    let theme = base.with_worldview(mode).with_artwork(artwork);
+                    let render = |masked: bool| {
+                        let mut config = fixture.config(0, None, None);
+                        config.light_theme = appearance == "light";
+                        config.balance_masked = masked;
+                        worldview_copy::render_in(mode, || overview(config))
+                    };
+                    for masked in [false, true] {
+                        let scenario = format!("overview-hero-{name}-{art}");
+                        let wide = capture::inspect(
+                            &scenario,
+                            render(masked),
+                            (1440, 900),
+                            appearance,
+                            theme,
+                        );
+                        let title = find(&wide, "Total balance").expect("the Total balance title");
+                        let Some(line) = line else {
+                            continue;
+                        };
+                        let said =
+                            find(&wide, line).unwrap_or_else(|| panic!("{}: {}", scenario, line));
+                        assert!(
+                            said.x > title.x + title.width,
+                            "{}: the line sits right of the balance, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                        assert!(
+                            said.y > title.y + title.height,
+                            "{}: the line stands on the row's baseline, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                        assert!(
+                            said.width <= 190.0 + 1.0,
+                            "{}: the line wraps at 190px, {:?}",
+                            scenario,
+                            said
+                        );
+
+                        let narrow = capture::inspect_wide_content(
+                            &format!("{scenario}-stacked"),
+                            render(masked),
+                            (1024, 768),
+                            appearance,
+                            theme,
+                            480,
+                        );
+                        let title =
+                            find(&narrow, "Total balance").expect("the Total balance title");
+                        let said =
+                            find(&narrow, line).unwrap_or_else(|| panic!("{}: {}", scenario, line));
+                        assert!(
+                            (said.x - title.x).abs() <= 1.0,
+                            "{}: stacked under the balance, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                        assert!(
+                            said.y > title.y + 40.0,
+                            "{}: under the SATS line, {:?} vs {:?}",
+                            scenario,
+                            said,
+                            title
+                        );
+                    }
+                }
+            }
+        }
+        // The line no longer heads the page above the balance.
+        let page = capture::inspect(
+            "overview-hero-page",
+            worldview_copy::render_in(coincube_ui::theme::WorldviewMode::Suitcoiner, || {
+                overview(fixture.config(0, None, None))
+            }),
+            (1440, 900),
+            "dark",
+            theme::Theme::dark().with_worldview(coincube_ui::theme::WorldviewMode::Suitcoiner),
+        );
+        if let (Some(line), Some(title)) = (
+            VoiceLine::Overview.for_mode(coincube_ui::theme::WorldviewMode::Suitcoiner),
+            find(&page, "Total balance"),
+        ) {
+            let said = find(&page, line).expect("Suitcoiner's Overview line");
+            assert!(said.y >= title.y);
+        }
+    }
+
+    /// The Overview in each worldview, artwork style and appearance under the
+    /// app shell, for before/after review of the worldview hero. Opt-in:
+    /// `TOP_BAR_CAPTURE_DIR=<dir> cargo test -p coincube-gui --lib
+    /// overview_worldview_hero_capture -- --ignored`.
+    #[test]
+    #[ignore = "writes PNG frames; needs a GPU adapter"]
+    fn overview_worldview_hero_capture() {
+        use crate::app::state::preferences::BalancePrivacy;
+        use crate::app::view::activity::{recent_activity, RecentScope};
+        use crate::app::view::nav::shell::capture_tests;
+        let Some(directory) = capture_tests::directory() else {
+            return;
+        };
+        let mut renderer = capture_tests::renderer();
+        let fixture = ViewFixture::new();
+        let activity = overview_activity();
+        let menu = Menu::Cube(crate::app::menu::CubeSubMenu::Overview);
+        for (mode, name) in WORLDVIEWS {
+            for (artwork, art) in ARTWORK {
+                for (appearance, palette) in capture_tests::themes() {
+                    let light = appearance == "light";
+                    let palette = palette.with_worldview(mode).with_artwork(artwork);
+                    let cache = capture_tests::cache(light, BalancePrivacy::Shown);
+                    capture_tests::save_page_head_frames(
+                        &mut renderer,
+                        &directory,
+                        &format!("overview-{name}-{art}"),
+                        appearance,
+                        &palette,
+                        || {
+                            coincube_ui::worldview_copy::render_in(mode, || {
+                                let mut config = fixture.config(0, None, None);
+                                config.light_theme = light;
+                                config.has_liquid = false;
+                                config.pending_spark_incoming = None;
+                                config.pending_vault_incoming = None;
+                                let transfer = transfer_head_action(&config);
+                                overview_page(
+                                    &menu,
+                                    &cache,
+                                    transfer,
+                                    overview(config),
+                                    Some(recent_activity(
+                                        &activity,
+                                        &cache,
+                                        RecentScope::Cube,
+                                        None,
+                                    )),
+                                )
+                            })
+                        },
+                    );
+                }
+            }
         }
     }
 

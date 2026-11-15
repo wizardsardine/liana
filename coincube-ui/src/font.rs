@@ -34,9 +34,10 @@ pub const MONO_MEDIUM: Font = Font {
     stretch: Stretch::Normal,
 };
 
+/// IBM Plex Sans 400 italic (`.say { font-style: italic }`), for voice lines.
 pub const ITALIC: Font = Font {
     family: Family::Name("IBM Plex Sans"),
-    weight: Weight::Light,
+    weight: Weight::Normal,
     style: iced::font::Style::Italic,
     stretch: Stretch::Normal,
 };
@@ -54,6 +55,7 @@ pub const BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Bold.t
 pub const MEDIUM_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Medium.ttf");
 pub const SEMIBOLD_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-SemiBold.ttf");
 pub const REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Regular.ttf");
+pub const ITALIC_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Italic.ttf");
 pub const MONO_REGULAR_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexMono-Regular.ttf");
 pub const MONO_MEDIUM_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexMono-Medium.ttf");
 
@@ -69,6 +71,7 @@ pub fn load() -> Vec<Cow<'static, [u8]>> {
         MEDIUM_BYTES.into(),
         SEMIBOLD_BYTES.into(),
         REGULAR_BYTES.into(),
+        ITALIC_BYTES.into(),
         MONO_REGULAR_BYTES.into(),
         MONO_MEDIUM_BYTES.into(),
         SPACE_GROTESK_BOLD_BYTES.into(),

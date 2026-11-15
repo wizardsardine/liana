@@ -190,6 +190,140 @@ pub fn opening_image<'a, M: 'a>(side: f32, opacity: f32) -> Option<Element<'a, M
     }))
 }
 
+/// The Overview's worldview art beside the Total balance, `side` square:
+/// the mode's scene in a rounded, hairline frame under
+/// [`ArtworkStyle::Scene`], else its existing cutout contained at the
+/// bottom right with no frame (Kage for Samurai). It uses the empty-history
+/// slot's set, the same art as the Appearance thumbnail. Decorative: it has
+/// no label and stays while balances are hidden.
+pub fn overview_art<'a, M: 'a>(side: f32) -> Element<'a, M> {
+    Element::new(OverviewArt { side })
+}
+
+/// Kage (`kage/kage.png`): Samurai's existing Overview art.
+fn kage() -> Option<&'static Handle> {
+    static KAGE: LazyLock<Option<Handle>> = LazyLock::new(|| {
+        decode_png(crate::component::quote_display::default_image_for_context("first-launch").0)
+    });
+    KAGE.as_ref()
+}
+
+/// The Overview art for `mode` and `style`, and whether it is a full scene.
+pub fn overview_choice(
+    mode: WorldviewMode,
+    style: ArtworkStyle,
+) -> Option<(&'static Handle, bool)> {
+    selected(mode, style, Slot::EmptyHistory).or_else(|| kage().map(|handle| (handle, false)))
+}
+
+/// `.art.scene { border-radius: 10px }`.
+const OVERVIEW_ART_RADIUS: f32 = 10.0;
+
+struct OverviewArt {
+    side: f32,
+}
+
+impl<M> Widget<M, Theme, iced::Renderer> for OverviewArt {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(self.side), Length::Fixed(self.side))
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut Tree,
+        _renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::Node::new(limits.resolve(
+            Length::Fixed(self.side),
+            Length::Fixed(self.side),
+            Size::ZERO,
+        ))
+    }
+
+    fn draw(
+        &self,
+        _tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        _style: &renderer::Style,
+        layout: Layout<'_>,
+        _cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        use iced::advanced::image::Renderer as _;
+        use iced::advanced::Renderer as _;
+
+        let bounds = layout.bounds();
+        if bounds.intersection(viewport).is_none() {
+            return;
+        }
+        let Some((handle, scene, size)) = overview_choice(theme.worldview(), theme.artwork())
+            .and_then(|(handle, scene)| {
+                renderer
+                    .measure_image(handle)
+                    .map(|size| (handle, scene, size))
+            })
+        else {
+            return;
+        };
+        let natural = Size::new(size.width as f32, size.height as f32);
+        let (fitted, radius) = if scene {
+            (
+                ContentFit::Cover.fit(natural, bounds.size()),
+                OVERVIEW_ART_RADIUS,
+            )
+        } else {
+            (ContentFit::Contain.fit(natural, bounds.size()), 0.0)
+        };
+        // A scene is centred and cropped to the frame; a cutout stands in the
+        // bottom-right corner, its feet on the row's baseline.
+        let drawn = if scene {
+            Rectangle::new(
+                iced::Point::new(
+                    bounds.center_x() - fitted.width / 2.0,
+                    bounds.center_y() - fitted.height / 2.0,
+                ),
+                fitted,
+            )
+        } else {
+            Rectangle::new(
+                iced::Point::new(
+                    bounds.x + bounds.width - fitted.width,
+                    bounds.y + bounds.height - fitted.height,
+                ),
+                fitted,
+            )
+        };
+        renderer.draw_image(
+            iced::advanced::image::Image {
+                handle: handle.clone(),
+                filter_method: iced::advanced::image::FilterMethod::Linear,
+                rotation: iced::Radians(0.0),
+                border_radius: radius.into(),
+                opacity: 1.0,
+                snap: true,
+            },
+            drawn,
+            bounds,
+        );
+        if scene {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds,
+                    border: iced::Border {
+                        color: theme.colors.shell.line,
+                        width: 1.0,
+                        radius: OVERVIEW_ART_RADIUS.into(),
+                    },
+                    ..renderer::Quad::default()
+                },
+                iced::Color::TRANSPARENT,
+            );
+        }
+    }
+}
+
 fn selected(
     mode: WorldviewMode,
     style: ArtworkStyle,
@@ -356,6 +490,73 @@ impl<M> Widget<M, Theme, iced::Renderer> for Illustration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Overview art: a distinct picture for every worldview and artwork
+    /// style, Kage for Samurai's existing set. (tiny-skia ignores an image's
+    /// corner radius, so the scene frame's rounding shows only in wgpu
+    /// captures.)
+    #[test]
+    fn overview_art_draws_each_worldview_and_style() {
+        use iced::advanced::renderer::Headless;
+
+        let side = 104.0;
+        let mut element = overview_art::<()>(side);
+        let mut tree = Tree::new(element.as_widget());
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            crate::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("software renderer");
+        let size = Size::new(side, side);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(400.0, 400.0)),
+        );
+        assert_eq!(node.size(), size);
+        let viewport = Rectangle::with_size(size);
+        let background = iced::Color::from_rgb8(1, 2, 3);
+        let mut captures = std::collections::HashSet::new();
+        for mode in [
+            WorldviewMode::Samurai,
+            WorldviewMode::Suitcoiner,
+            WorldviewMode::Luke,
+        ] {
+            for style in [ArtworkStyle::Scene, ArtworkStyle::Existing] {
+                let (_, scene) = overview_choice(mode, style).expect("Overview art");
+                assert_eq!(scene, style == ArtworkStyle::Scene, "{mode:?} {style:?}");
+                let theme = Theme::dark().with_worldview(mode).with_artwork(style);
+                element.as_widget().draw(
+                    &tree,
+                    &mut renderer,
+                    &theme,
+                    &renderer::Style {
+                        text_color: iced::Color::WHITE,
+                    },
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &viewport,
+                );
+                let pixels = renderer.screenshot(Size::new(104, 104), 1.0, background);
+                let blank = [1u8, 2, 3];
+                assert!(
+                    pixels.chunks_exact(4).any(|pixel| pixel[..3] != blank),
+                    "{mode:?} {style:?} draws"
+                );
+                assert!(
+                    captures.insert(pixels),
+                    "{mode:?} {style:?} should draw distinct pixels"
+                );
+                iced::advanced::Renderer::reset(&mut renderer, viewport);
+            }
+        }
+        assert_eq!(
+            overview_choice(WorldviewMode::Samurai, ArtworkStyle::Existing)
+                .map(|(handle, _)| handle.id()),
+            kage().map(Handle::id)
+        );
+    }
 
     #[test]
     fn mounted_illustration_draws_the_selected_worldview() {

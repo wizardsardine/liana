@@ -114,6 +114,16 @@ impl Theme {
     pub fn worldview(&self) -> WorldviewMode {
         self.worldview
     }
+
+    /// The active worldview's accent: muted ink for Samurai, antique gold for
+    /// Suitcoiner, oxblood for Luke. Decorative marks only, never body text.
+    pub fn worldview_accent(&self) -> iced::Color {
+        match self.worldview {
+            WorldviewMode::Samurai => self.colors.shell.muted,
+            WorldviewMode::Suitcoiner => self.colors.shell.suitcoiner,
+            WorldviewMode::Luke => self.colors.shell.luke,
+        }
+    }
 }
 
 impl iced::theme::Base for Theme {
