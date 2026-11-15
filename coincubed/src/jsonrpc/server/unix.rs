@@ -553,6 +553,48 @@ mod tests {
         }
     }
 
+    /// The handler starts with a 2 KiB buffer and doubles it. A peer that never
+    /// sends a newline must be refused once that buffer reaches 4 MiB, and the
+    /// allocation must not step past the cap. A framed request larger than the
+    /// first buffer, and still under the cap, still parses.
+    #[test]
+    fn an_unframed_rpc_body_stops_at_four_mib() {
+        const FOUR_MIB: usize = 4 * 1024 * 1024;
+        assert_eq!(MAX_RPC_MESSAGE, FOUR_MIB);
+
+        let mut reader = io::Cursor::new(vec![b'{'; FOUR_MIB + 1]);
+        let mut buf = vec![0; 2048];
+        let mut end = 0usize;
+        let mut cursor = 0usize;
+        let error = read_command(&mut reader, &mut buf, &mut end, &mut cursor)
+            .expect_err("a body with no newline must not be accepted");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "JSON-RPC message exceeds 4 MiB");
+        assert_eq!(
+            buf.len(),
+            FOUR_MIB,
+            "the read buffer must not grow past 4 MiB"
+        );
+        assert_eq!(
+            reader.position(),
+            FOUR_MIB as u64,
+            "refusal must happen when the cap is filled, not after reading further"
+        );
+
+        let method = "m".repeat(3_000);
+        let payload = format!("{{\"jsonrpc\":\"2.0\",\"method\":\"{method}\",\"id\":7}}\n");
+        assert!(payload.len() > 2048 && payload.len() < FOUR_MIB);
+        let mut reader = io::Cursor::new(payload.into_bytes());
+        let mut buf = vec![0; 2048];
+        let mut end = 0usize;
+        let mut cursor = 0usize;
+        let request = read_command(&mut reader, &mut buf, &mut end, &mut cursor)
+            .unwrap()
+            .expect("a framed request under the cap parses");
+        assert_eq!(request.method.len(), 3_000);
+        assert_eq!(request.id, ReqId::Num(7));
+    }
+
     fn read_one_command(socket_path: &path::Path) -> thread::JoinHandle<Option<Request>> {
         let listener = rpcserver_setup(socket_path).unwrap();
         thread::spawn(move || {
