@@ -583,18 +583,7 @@ pub fn transaction_detail_view<'a>(
     };
 
     // Helper: combo icon for detail view based on payment type
-    let make_detail_icon =
-        |is_usdt: bool, details: &DomainPaymentDetails| -> (&'static str, &'static str) {
-            if is_usdt {
-                ("usdt", "liquid")
-            } else {
-                match details {
-                    DomainPaymentDetails::Lightning { .. } => ("btc", "lightning"),
-                    DomainPaymentDetails::LiquidAsset { .. } => ("lbtc", "liquid"),
-                    DomainPaymentDetails::OnChainBitcoin { .. } => ("btc", "bitcoin"),
-                }
-            }
-        };
+    let make_detail_icon = detail_asset_network;
 
     if let Some(ref usdt_display) = usdt_str {
         // USDt detail view: show USDt amount + L-BTC fees
@@ -1014,6 +1003,21 @@ fn detail_back_button() -> Element<'static, Message> {
         .width(Length::Fixed(150.0))
         .on_press(Message::Close)
         .into()
+}
+
+fn detail_asset_network(
+    is_usdt: bool,
+    details: &DomainPaymentDetails,
+) -> (&'static str, &'static str) {
+    if is_usdt {
+        ("usdt", "liquid")
+    } else {
+        match details {
+            DomainPaymentDetails::Lightning { .. } => ("btc", "lightning"),
+            DomainPaymentDetails::LiquidAsset { .. } => ("lbtc", "liquid"),
+            DomainPaymentDetails::OnChainBitcoin { .. } => ("btc", "bitcoin"),
+        }
+    }
 }
 
 fn payment_row_icon(is_usdt: bool, details: &DomainPaymentDetails) -> Element<'static, Message> {
