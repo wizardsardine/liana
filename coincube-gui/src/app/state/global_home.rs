@@ -3247,6 +3247,7 @@ impl State for GlobalHome {
                         Task::done(Message::ShowReceivedCelebration {
                             context: "spark-receive".to_string(),
                             amount_sat,
+                            payment_id: None,
                         })
                     }
                     HomeMessage::SparkDepositsChanged => {
@@ -4816,6 +4817,7 @@ impl GlobalHome {
             return Task::done(Message::ShowReceivedCelebration {
                 context: "spark-receive".to_string(),
                 amount_sat,
+                payment_id: None,
             });
         }
         Task::none()
@@ -5862,7 +5864,7 @@ mod tests {
         assert!(!home.pending_spark_incoming_is_swap);
         assert!(matches!(
             out.as_slice(),
-            [Message::ShowReceivedCelebration { amount_sat: 28_253, context }]
+            [Message::ShowReceivedCelebration { amount_sat: 28_253, context, .. }]
                 if context == "spark-receive"
         ));
 

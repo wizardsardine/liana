@@ -94,10 +94,6 @@ icon!(
     r#"<rect x="3.5" y="8" width="11" height="7.5" rx="1.5"/><path d="M6 8V5.75a3 3 0 0 1 6 0V8"/>"#
 );
 icon!(CLOSE, r#"<path d="m4.5 4.5 9 9M13.5 4.5l-9 9"/>"#);
-icon!(
-    COPY,
-    r#"<rect x="6.5" y="6.5" width="8.5" height="8.5" rx="1.5"/><path d="M11.5 6.5V4.25c0-.7-.55-1.25-1.25-1.25h-6c-.7 0-1.25.55-1.25 1.25v6c0 .7.55 1.25 1.25 1.25H6.5"/>"#
-);
 
 /// One icon at `size` px, tinted by `color` (the canvas's `currentColor`).
 pub fn glyph<'a, M: 'a>(
@@ -165,7 +161,7 @@ mod tests {
             SIGNING,
             LOCK,
             CLOSE,
-            COPY,
+            coincube_ui::component::tenshu::copy_icon::COPY_GLYPH,
         ] {
             assert!(source.starts_with("<svg") && source.ends_with("</svg>"));
             assert!(source.contains(r#"viewBox="0 0 18 18""#));

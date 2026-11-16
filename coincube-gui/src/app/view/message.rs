@@ -1222,6 +1222,8 @@ pub enum LiquidReceiveMessage {
     ShowQrCode,
     CloseQrCode,
     DismissCelebration,
+    /// Copy the received payment's transaction ID from its receipt.
+    CopyReceivedTxId(String),
     GenerateAddress,
     /// Carries the SDK error itself, not its `to_string()`: the receive panel
     /// renders this, and the raw Breez string is a GraphQL/swap-service trace.

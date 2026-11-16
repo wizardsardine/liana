@@ -247,10 +247,12 @@ pub enum Message {
     /// SideShift-swap deposit. Emitted from `GlobalHome` on auto-claim success;
     /// handled inline in `App::update` (the only place that owns the overlay
     /// state). `context` picks the Kage image (`"spark-receive"`); `amount_sat`
-    /// is formatted for display against the user's bitcoin unit.
+    /// is formatted for display against the user's bitcoin unit; `payment_id`,
+    /// when known, is shown with a copy button.
     ShowReceivedCelebration {
         context: String,
         amount_sat: u64,
+        payment_id: Option<String>,
     },
     SettingsSaved,
     SettingsSaveFailed(Error),

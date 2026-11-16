@@ -656,6 +656,7 @@
   "Copy PSBT": "Copiar PSBT",
   "Copy address": "Copiar dirección",
   "Copy descriptor": "Copiar descriptor",
+  "Copy invoice": "Copiar factura",
   "Copy is unavailable after a storage error.": "No se puede copiar tras un error de almacenamiento.",
   "Copy private client configuration": "Copiar configuración privada del cliente",
   "Copy private configuration": "Copiar configuración privada",

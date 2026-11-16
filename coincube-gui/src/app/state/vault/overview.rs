@@ -71,6 +71,8 @@ pub struct VaultOverview {
     rescan_seen_running: bool,
     show_received_celebration: bool,
     received_amount_display: String,
+    /// The received payment's txid, for the receipt.
+    received_txid: Option<String>,
     received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
 }
@@ -105,6 +107,7 @@ impl VaultOverview {
             last_reload: Instant::now(),
             show_received_celebration: false,
             received_amount_display: String::new(),
+            received_txid: None,
             received_quote: coincube_ui::component::quote_display::random_quote("bitcoin-receive"),
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
                 "bitcoin-receive",
@@ -169,6 +172,7 @@ impl VaultOverview {
             let celebration = view::vault::overview::received_celebration_page(
                 "bitcoin-receive",
                 passive_received_amount(&self.received_amount_display, cache),
+                self.received_txid.as_deref(),
                 &self.received_quote,
                 &self.received_image_handle,
             );
@@ -353,6 +357,7 @@ impl State for VaultOverview {
                                 coincube_ui::component::quote_display::image_handle_for_context(
                                     "bitcoin-receive",
                                 );
+                            self.received_txid = Some(newest.outpoint.txid.to_string());
                             self.show_received_celebration = true;
                         }
                     }
@@ -1042,6 +1047,7 @@ mod received_privacy_tests {
                 view::vault::overview::received_celebration_page(
                     "bitcoin-receive",
                     passive_received_amount(amount, &cache),
+                    None,
                     &quote,
                     &image,
                 ),
@@ -1059,5 +1065,27 @@ mod received_privacy_tests {
                 assert!(!mounted.contains(amount));
             }
         }
+    }
+    #[test]
+    fn receipt_shows_the_txid_with_copy() {
+        let quote = coincube_ui::component::quote_display::random_quote("bitcoin-receive");
+        let image =
+            coincube_ui::component::quote_display::image_handle_for_context("bitcoin-receive");
+        let txid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let mounted = capture::inspect(
+            "vault-received-celebration-txid",
+            view::vault::overview::received_celebration_page(
+                "bitcoin-receive",
+                "1,000 sats",
+                Some(txid),
+                &quote,
+                &image,
+            ),
+            (1440, 900),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(mounted.contains("Transaction ID"));
+        assert!(mounted.contains("01234567 … 89abcdef"));
     }
 }

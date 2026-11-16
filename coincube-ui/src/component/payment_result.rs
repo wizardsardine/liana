@@ -21,9 +21,8 @@ use super::{button, separation};
 use crate::font;
 use crate::icon;
 use crate::locale::{copy as localized_copy, Text as CopyText};
-use crate::theme::tenshu::button::{self as tenshu_button, ActionKind, ActionShape};
-use crate::theme::tenshu::{text as tone_text, type_size, Tone};
-use crate::widget::{Button, Column, Container, Element, Row, Text};
+use crate::theme::tenshu::{text as tone_text, Tone};
+use crate::widget::{Column, Container, Element, Row, Text};
 
 /// The artwork's side in the two-column layout.
 const ART_SIDE: u16 = 300;
@@ -73,6 +72,7 @@ pub struct ReceiptRow<'a, M> {
     note: Option<Cow<'a, str>>,
     mono: bool,
     copy: Option<M>,
+    copy_tip: Option<Cow<'a, str>>,
 }
 
 impl<'a, M> ReceiptRow<'a, M> {
@@ -83,6 +83,7 @@ impl<'a, M> ReceiptRow<'a, M> {
             note: None,
             mono: false,
             copy: None,
+            copy_tip: None,
         }
     }
 
@@ -98,9 +99,17 @@ impl<'a, M> ReceiptRow<'a, M> {
         self
     }
 
-    /// A Copy button after the value, sending `message`.
+    /// A copy button after the value, sending `message`. Its tooltip reads
+    /// "Copy <label>" unless [`Self::copy_tip`] names it.
     pub fn on_copy(mut self, message: M) -> Self {
         self.copy = Some(message);
+        self
+    }
+
+    /// The copy button's tooltip, for a label that doesn't name what is
+    /// copied (such as "To").
+    pub fn copy_tip(mut self, tip: impl Into<Cow<'a, str>>) -> Self {
+        self.copy_tip = Some(tip.into());
         self
     }
 }
@@ -188,7 +197,7 @@ impl<'a, M> PaymentResult<'a, M> {
 }
 
 /// A long identifier as its first and last eight characters, for a receipt
-/// row whose Copy button carries the full value.
+/// row whose copy button carries the full value.
 pub fn short_id(id: &str) -> String {
     let chars: Vec<char> = id.chars().collect();
     if chars.len() <= 24 {
@@ -244,27 +253,19 @@ fn receipt_row<'a, M: Clone + 'a>(row: ReceiptRow<'a, M>) -> Element<'a, M> {
     }
     let mut line = Row::new()
         .spacing(16)
-        .align_y(Alignment::Start)
+        .align_y(Alignment::Center)
         .push(
-            Container::new(super::tenshu::body(row.label).style(tone_text::muted))
+            Container::new(super::tenshu::body(row.label.clone()).style(tone_text::muted))
                 .width(Length::Fixed(LABEL_WIDTH)),
         )
         .push(value_col);
     if let Some(copy) = row.copy {
-        // The quiet text action (`.rlink`) the rest of Tenshu uses for an
-        // inline row action; the owner confirms the copy with a toast.
-        line = line.push(
-            Button::new(
-                iced::widget::text(localized_copy("Copy"))
-                    .font(font::MEDIUM)
-                    .size(type_size::BODY),
-            )
-            .padding(0)
-            .style(|t, status| {
-                tenshu_button::action(t, status, ActionKind::Quiet, ActionShape::Compact)
-            })
-            .on_press(copy),
-        );
+        // The square copy button Activity's detail panel uses; the owner
+        // confirms the copy with a toast.
+        let tip = row.copy_tip.unwrap_or_else(|| {
+            Cow::Owned(crate::localized_format!("Copy {}", "Copiar {}", row.label))
+        });
+        line = line.push(super::tenshu::copy_icon(tip, copy));
     }
     Container::new(line)
         .padding([11, 0])
