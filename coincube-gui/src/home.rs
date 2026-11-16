@@ -1018,6 +1018,28 @@ impl Home {
         )
     }
 
+    /// The banner on the Create form when this network is full and Connect
+    /// still lists a Cube that is not on this device. Estate has no higher
+    /// plan, so deleting is its only remedy.
+    fn create_form_remote_limit_copy(&self) -> String {
+        let summary = self.cube_limit_summary(self.network);
+        if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+            localized_format!(
+                "Cube limit reached. {} \
+                 Delete a remote Cube to create one here.",
+                "Alcanzaste el límite de Cubes. {} Elimina un Cube remoto para crear uno aquí.",
+                summary,
+            )
+        } else {
+            localized_format!(
+                "Cube limit reached. {} \
+                 Upgrade your Connect account or delete a remote Cube to create one here.",
+                "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect o elimina un Cube remoto para crear uno aquí.",
+                summary,
+            )
+        }
+    }
+
     /// The server's reason for refusing this Cube's registration, as user copy —
     /// `None` when no attempt has failed, which is the "still mid-sync" case.
     ///
@@ -6462,18 +6484,25 @@ impl Home {
                 // Network selection — right-aligned at top
                 .push(
                     Row::new()
-                        .push(if self.showing_create_form() && self.can_leave_create_journey() {
-                            Some(
-                                button::secondary(Some(icon::previous_icon()), localized_copy("Back to Cube list"))
-                                    .on_press_maybe(if self.creating_cube {
-                                        None
-                                    } else {
-                                        Some(ViewMessage::ShowCreateCube(false))
-                                    }),
-                            )
-                        } else {
-                            None
-                        })
+                        .push(
+                            if self.showing_create_form() && self.can_leave_create_journey() {
+                                Some(
+                                    button::secondary(
+                                        Some(icon::previous_icon()),
+                                        localized_copy("Back to Cube list"),
+                                    )
+                                    .on_press_maybe(
+                                        if self.creating_cube {
+                                            None
+                                        } else {
+                                            Some(ViewMessage::ShowCreateCube(false))
+                                        },
+                                    ),
+                                )
+                            } else {
+                                None
+                            },
+                        )
                         .push(Space::new().width(Length::Fill))
                         .spacing(10)
                         .push(
@@ -6583,25 +6612,11 @@ impl Home {
                                     // two pages crammed into one.
                                     if self.showing_create_form() {
                                         if at_limit && !remote_for_net.is_empty() {
-                                            // Estate has no higher plan.
-                                            let message = if launcher_chrome::is_top_tier(
-                                                self.account_tier.display_name(),
-                                            ) {
-                                                localized_format!(
-                                                    "Cube limit reached. {} \
-                                                     Delete a remote Cube to create one here.", "Alcanzaste el límite de Cubes. {} Elimina un Cube remoto para crear uno aquí.",
-                                                    self.cube_limit_summary(self.network),
-                                                )
-                                            } else {
-                                                localized_format!(
-                                                    "Cube limit reached. {} \
-                                                     Upgrade your Connect account or delete a remote Cube to create one here.", "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect o elimina un Cube remoto para crear uno aquí.",
-                                                    self.cube_limit_summary(self.network),
-                                                )
-                                            };
                                             col = col.push(
                                                 Container::new(
-                                                    p1_regular(message)
+                                                    p1_regular(
+                                                        self.create_form_remote_limit_copy(),
+                                                    )
                                                     .style(theme::text::secondary),
                                                 )
                                                 .max_width(500),
@@ -10481,6 +10496,96 @@ mod tests {
             shown
         );
         assert!(!shown.iter().any(|l| l.contains("Upgrade")), "{:?}", shown);
+    }
+
+    /// A queued or stale Import press is refused before a name and PIN, and
+    /// the refusal follows the plan: Estate can only delete, every lower tier
+    /// can still upgrade. A plan with a free slot still opens the import.
+    #[test]
+    fn a_stale_import_press_at_the_limit_follows_the_plan() {
+        let full = |tier: AccountTier| {
+            let mut home = home();
+            home.network = ChainId::Bitcoin;
+            home.account_tier = tier;
+            home.server_cube_limit = Some(1);
+            home.state = State::Cubes {
+                cubes: vec![cube("a", "A", Network::Bitcoin)],
+                create_cube: false,
+                source: ChainId::Bitcoin,
+            };
+            home
+        };
+
+        let mut estate = full(AccountTier::Estate);
+        let _ = estate.update(Message::View(ViewMessage::ShowImportBitcoin));
+        let err = estate.error.expect("a full plan must refuse the import");
+        assert!(
+            err.contains("Delete a Bitcoin mainnet Cube to import a wallet."),
+            "{}",
+            err
+        );
+        assert!(!err.contains("Upgrade"), "{}", err);
+        assert!(estate.pending_bitcoin_import.is_none());
+
+        let mut free = full(AccountTier::Free);
+        let _ = free.update(Message::View(ViewMessage::ShowImportBitcoin));
+        let err = free.error.expect("a full plan must refuse the import");
+        assert!(err.contains("Upgrade"), "{}", err);
+        assert!(
+            err.contains("delete a Bitcoin mainnet Cube, to import a wallet."),
+            "{}",
+            err
+        );
+        assert!(free.pending_bitcoin_import.is_none());
+
+        let mut room = full(AccountTier::Estate);
+        room.server_cube_limit = Some(2);
+        let _ = room.update(Message::View(ViewMessage::ShowImportBitcoin));
+        assert!(room.error.is_none(), "{:?}", room.error);
+        assert!(room.pending_bitcoin_import.is_some());
+    }
+
+    /// Create's own refusal, and the banner shown when the only free slot is
+    /// a Cube registered from another device, name deletion on Estate and an
+    /// upgrade on every lower tier.
+    #[test]
+    fn create_limit_copy_follows_the_plan() {
+        let mut home = home();
+        home.network = ChainId::Bitcoin;
+        home.server_cube_limit = Some(1);
+        home.state = State::NoCube { create_cube: true };
+        home.remote_cubes = vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)];
+
+        home.account_tier = AccountTier::Estate;
+        let created = home.cube_limit_error();
+        assert!(
+            created.contains("Delete a Cube on this network"),
+            "{}",
+            created
+        );
+        assert!(!created.contains("Upgrade"), "{}", created);
+        let banner = home.create_form_remote_limit_copy();
+        assert!(
+            banner.contains("Delete a remote Cube to create one here."),
+            "{}",
+            banner
+        );
+        assert!(banner.contains("not on this device"), "{}", banner);
+        assert!(!banner.contains("Upgrade"), "{}", banner);
+
+        home.account_tier = AccountTier::Pro;
+        let created = home.cube_limit_error();
+        assert!(
+            created.contains("Upgrade your Connect account"),
+            "{}",
+            created
+        );
+        let banner = home.create_form_remote_limit_copy();
+        assert!(
+            banner.contains("Upgrade your Connect account or delete a remote Cube"),
+            "{}",
+            banner
+        );
     }
 
     #[test]

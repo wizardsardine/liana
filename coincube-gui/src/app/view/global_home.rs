@@ -4368,6 +4368,132 @@ mod tests {
         }
     }
 
+    /// Spark USDB is a dollar holding: $50 at $50,000/BTC is 100,000 sats,
+    /// folded into the Spark card and the Cube total. An empty holding draws
+    /// no row. A missing, zero, or non-finite quote must not invent that
+    /// 100,000, and a balance from before sync must not either.
+    #[test]
+    fn overview_usdb_holding_is_valued_in_sats_and_omitted_until_it_is_real() {
+        use crate::app::view::shared::landing::capture;
+
+        let fixture = ViewFixture::new();
+        // 50.00 USDB (6 decimals) at $50,000/BTC.
+        let usdb = coincube_spark_protocol::UsdbBalanceSnapshot {
+            token_identifier: "btkn1synthetic".into(),
+            balance: 50_000_000,
+            decimals: 6,
+            ticker: "USDB".into(),
+        };
+        let zero = coincube_spark_protocol::UsdbBalanceSnapshot {
+            balance: 0,
+            ..usdb.clone()
+        };
+        let spark_only = |config: &mut GlobalViewConfig<'_>| {
+            config.has_liquid = false;
+            config.has_vault = false;
+            config.liquid_balance = Amount::ZERO;
+            config.usdt_balance = 0;
+            config.vault_balance = Amount::ZERO;
+            config.spark_btc_balance = Amount::from_sat(250_000);
+            config.spark_balance = Amount::from_sat(250_000);
+            config.spark_balance_error = false;
+            config.total_balance_loading = false;
+            config.pending_spark_incoming = None;
+            config.pending_vault_incoming = None;
+        };
+        let inspect = |config| {
+            capture::inspect(
+                "hub-usdb-value",
+                overview(config),
+                (1024, 768),
+                "dark",
+                theme::Theme::dark(),
+            )
+        };
+        let words = |found: &capture::Inspection| -> String {
+            found
+                .text
+                .iter()
+                .map(|(value, _)| value.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let mut valued_config = fixture.config(0, None, None);
+        spark_only(&mut valued_config);
+        valued_config.spark_usdb_balance = Some(&usdb);
+        valued_config.spark_balance_loaded = true;
+        valued_config.btc_usd_price = Some(50_000.0);
+        let valued = inspect(valued_config);
+        assert!(valued.contains("50.00 USDB"), "{}", words(&valued));
+        assert!(
+            valued.contains("≈ 100,000"),
+            "the row must show the sat equivalent, not the raw base units:\n{}",
+            words(&valued)
+        );
+        assert!(
+            valued.contains("350,000"),
+            "250,000 sats of BTC plus 100,000 sats of USDB:\n{}",
+            words(&valued)
+        );
+        assert!(
+            !valued.contains("50,000,000"),
+            "token base units must not be shown as sats:\n{}",
+            words(&valued)
+        );
+        assert!(valued.has_focus(landing_control_id("test-cube", "Spark", "send-usdb")));
+
+        let mut empty_config = fixture.config(0, None, None);
+        spark_only(&mut empty_config);
+        empty_config.spark_usdb_balance = Some(&zero);
+        empty_config.spark_balance_loaded = true;
+        empty_config.btc_usd_price = Some(50_000.0);
+        let empty = inspect(empty_config);
+        assert!(!empty.contains("USDB"), "{}", words(&empty));
+        assert!(!empty.contains("350,000"), "{}", words(&empty));
+        assert!(empty.contains("250,000"), "{}", words(&empty));
+        assert!(!empty.has_focus(landing_control_id("test-cube", "Spark", "send-usdb")));
+
+        for price in [None, Some(0.0), Some(f64::NAN)] {
+            let mut unvalued_config = fixture.config(0, None, None);
+            spark_only(&mut unvalued_config);
+            unvalued_config.spark_usdb_balance = Some(&usdb);
+            unvalued_config.spark_balance_loaded = true;
+            unvalued_config.btc_usd_price = price;
+            let unvalued = inspect(unvalued_config);
+            let shown = words(&unvalued);
+            assert!(unvalued.contains("50.00 USDB"), "{:?}: {}", price, shown);
+            assert!(
+                !unvalued.contains("≈"),
+                "no quote must not invent a sat line: {:?}: {}",
+                price,
+                shown
+            );
+            assert!(
+                !unvalued.contains("100,000") && !unvalued.contains("350,000"),
+                "an unvalued holding must stay out of the total: {:?}: {}",
+                price,
+                shown
+            );
+            assert!(unvalued.contains("Partial total"), "{:?}: {}", price, shown);
+        }
+
+        let mut presync_config = fixture.config(0, None, None);
+        spark_only(&mut presync_config);
+        presync_config.spark_usdb_balance = Some(&usdb);
+        presync_config.spark_balance_loaded = false;
+        presync_config.btc_usd_price = Some(50_000.0);
+        let presync = inspect(presync_config);
+        let waiting = words(&presync);
+        assert!(presync.contains("Waiting for Spark sync"), "{}", waiting);
+        assert!(!presync.contains("50.00 USDB"), "{}", waiting);
+        assert!(
+            !presync.contains("100,000") && !presync.contains("350,000"),
+            "a pre-sync holding must not enter the total: {}",
+            waiting
+        );
+    }
+
     #[test]
     fn overview_vault_recovery_footer_routes_to_tools_and_respects_availability_and_privacy() {
         use crate::app::view::shared::landing::capture;
