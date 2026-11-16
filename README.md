@@ -12,7 +12,7 @@ _Secure Bitcoin wallet with Vault multi-sig, Liquid spending, Buy/Sell and inher
 
 ## About
 
-COINCUBE | Tenshu is a comprehensive Bitcoin wallet solution built on a hard fork of [Liana](https://github.com/wizardsardine/liana) with significant modifications by [Coincube Technology LLC](https://coincube.io). We retain the original license and acknowledge the foundational work of the Liana project. This wallet provides:
+COINCUBE Desktop is a comprehensive Bitcoin wallet solution built on a hard fork of [Liana](https://github.com/wizardsardine/liana) with significant modifications by [Coincube Technology LLC](https://coincube.io). We retain the original license and acknowledge the foundational work of the Liana project. This wallet provides:
 
 **VAULT** - Secure multisig custody with time-locked inheritance paths. Like the original Liana, you have
 a primary spending path (always accessible) and recovery paths (available after inactivity periods).
@@ -27,22 +27,22 @@ Example VAULT configuration:
 
 **SPARK WALLET** - Second Lightning-enabled wallet powered by the Breez Spark SDK, running alongside the Liquid wallet. Both wallets derive from the same master seed, so one mnemonic and one PIN cover everything. Spark support is currently limited to Bitcoin mainnet and Regtest.
 
-COINCUBE | Tenshu is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
+COINCUBE Desktop is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
 **user-friendly Bitcoin custody**.
 
 ## Usage
 
-COINCUBE | Tenshu is available on Windows, Mac and Linux. To install and start using it see
+COINCUBE Desktop is available on Windows, Mac and Linux. To install and start using it see
 [`docs/USAGE.md`](docs/USAGE.md).
 
-If you just want to quickly try out COINCUBE | Tenshu on Bitcoin Signet or Testnet, see [`docs/TRY.md`](docs/TRY.md).
+If you just want to quickly try out COINCUBE Desktop on Bitcoin Signet or Testnet, see [`docs/TRY.md`](docs/TRY.md).
 
-## Hacking on COINCUBE | Tenshu
+## Hacking on COINCUBE Desktop
 
-COINCUBE | Tenshu is an open source project. It is [hosted at Github](https://github.com/coincubetech/coincube).
+COINCUBE Desktop is an open source project. It is [hosted at Github](https://github.com/coincubetech/coincube).
 Contributions are welcome. See [here](CONTRIBUTING.md) for guidelines.
 
-COINCUBE | Tenshu is separated in main components:
+COINCUBE Desktop is separated in main components:
 
 #### coincubed (Vault Daemon)
 
@@ -51,9 +51,9 @@ command interface and a standalone daemon that exposes a JSONRPC API through a U
 
 The code for the daemon can be found in the [`coincubed`](coincubed) folder (to be renamed to `coincubed`).
 
-#### COINCUBE | Tenshu GUI
+#### COINCUBE Desktop GUI
 
-The GUI provides an installer for setting up COINCUBE | Tenshu and a graphical interface
+The GUI provides an installer for setting up COINCUBE Desktop and a graphical interface
 built with the [`iced`](https://github.com/iced-rs/iced/) library.
 
 The code for the GUI can be found in the [`coincube-gui`](coincube-gui) folder.
@@ -89,6 +89,6 @@ that could potentially impact the security of users' funds.
 
 ## License
 
-COINCUBE | Tenshu is a hard fork of Liana, originally developed by Wizardsardine.
+COINCUBE Desktop is a hard fork of Liana, originally developed by Wizardsardine.
 
 Released under the BSD 3-Clause Licence. See the [LICENCE](LICENCE) file.

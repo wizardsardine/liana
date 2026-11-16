@@ -476,7 +476,7 @@ mod shell_tests {
                     &mut labels,
                 );
                 for required in [
-                    "Tenshu",
+                    "COIN",
                     "Everyday",
                     "Overview",
                     "Activity",
@@ -503,7 +503,7 @@ mod shell_tests {
                 let brand = labels
                     .0
                     .iter()
-                    .find(|(label, _)| label == "Tenshu")
+                    .find(|(label, _)| label == "COIN")
                     .unwrap()
                     .1;
                 let mut messages = Vec::new();

@@ -301,14 +301,14 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           unzip contrib/release/macos/_coincube.zip
-          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Tenshu.app/Contents/Info.plist
+          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" COINCUBE.app/Contents/Info.plist
 
           # Guard the checked-in bundle template before anything is copied
           # into it. A wrong CFBundleIdentifier desyncs the keychain access
           # group in coincube.entitlements (<TeamID>.<bundleID>) and strands
           # device secrets; missing Bonjour keys break the LAN signer only
           # once the build is on a user's machine.
-          plist=Tenshu.app/Contents/Info.plist
+          plist=COINCUBE.app/Contents/Info.plist
           bundle_id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist")
           [ "$bundle_id" = "io.coincube.tenshu" ] \
             || { echo "unexpected CFBundleIdentifier: $bundle_id"; exit 1; }
@@ -317,9 +317,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :NSBonjourServices:0" "$plist" | grep -qx '_coincube-signer._tcp' \
             || { echo "_coincube-signer._tcp missing from NSBonjourServices"; exit 1; }
 
-          mv target/${{ matrix.target }}/minimal/coincube Tenshu.app/Contents/MacOS/Coincube
-          mv target/${{ matrix.target }}/minimal/tenshu-mcp Tenshu.app/Contents/MacOS/tenshu-mcp
-          mv contrib/release/macos/Coincube.icns Tenshu.app/Contents/Resources/Coincube.icns
+          mv target/${{ matrix.target }}/minimal/coincube COINCUBE.app/Contents/MacOS/Coincube
+          mv target/${{ matrix.target }}/minimal/tenshu-mcp COINCUBE.app/Contents/MacOS/tenshu-mcp
+          mv contrib/release/macos/Coincube.icns COINCUBE.app/Contents/Resources/Coincube.icns
 
           # The gui resolves the Spark bridge as a sibling of its own
           # executable, under that literal filename — see resolve_bridge_path()
@@ -330,7 +330,7 @@ jobs:
           # it has to be in place before signing: notarization rejects unsigned
           # nested Mach-O, and adding one afterwards breaks the seal.
           mv coincube-spark-bridge/target/${{ matrix.target }}/minimal/coincube-spark-bridge \
-             Tenshu.app/Contents/MacOS/coincube-spark-bridge
+             COINCUBE.app/Contents/MacOS/coincube-spark-bridge
 
           # keychain-access-groups is a *restricted* entitlement: AMFI validates
           # it against an embedded provisioning profile at exec time. Without
@@ -339,7 +339,7 @@ jobs:
           # still pass. Determined empirically 2026-08-04; see
           # docs/MACOS_KEYCHAIN_ENTITLEMENT.md §4. The profile is sealed by the
           # signature, so it has to be in place before the signing step.
-          cp contrib/release/macos/embedded.provisionprofile Tenshu.app/Contents/embedded.provisionprofile
+          cp contrib/release/macos/embedded.provisionprofile COINCUBE.app/Contents/embedded.provisionprofile
 
       # rcodesign's XML parser accepts things Apple's AMFI parser rejects —
       # most easily a double hyphen inside a comment, which XML forbids. CI
@@ -363,7 +363,7 @@ jobs:
         # with no network entitlements and the feature breaks at
         # runtime. See contrib/release/macos/README.md and
         # contrib/release/macos/coincube.entitlements.
-        run: rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements --p12-file cert.p12 --p12-password-file cert.pass Tenshu.app
+        run: rcodesign sign --for-notarization --entitlements-xml-path contrib/release/macos/coincube.entitlements --p12-file cert.p12 --p12-password-file cert.pass COINCUBE.app
 
       # The pipeline otherwise only proves the app is signed and notarized,
       # not that the signature carries what the app needs. Without
@@ -373,7 +373,7 @@ jobs:
       - name: Verify signature, entitlement and provisioning profile
         if: matrix.platform == 'macos'
         run: |
-          entitlements=$(codesign -d --entitlements - Tenshu.app 2>&1)
+          entitlements=$(codesign -d --entitlements - COINCUBE.app 2>&1)
           echo "$entitlements"
           echo "$entitlements" | grep -q 'keychain-access-groups' \
             || { echo "entitlement missing from signature"; exit 1; }
@@ -392,7 +392,7 @@ jobs:
           # and com.apple.application-identifier carry the SAME value here — a
           # substring match over the whole blob cannot tell which key it found,
           # which also means the grep above is satisfied by either one.
-          codesign -d --entitlements - --xml Tenshu.app 2>/dev/null > entitlements.plist
+          codesign -d --entitlements - --xml COINCUBE.app 2>/dev/null > entitlements.plist
           appid=$(/usr/libexec/PlistBuddy -c "Print :com.apple.application-identifier" entitlements.plist 2>/dev/null) \
             || { echo "com.apple.application-identifier missing from the signature — every passkey ceremony would fail with ASAuthorizationError 1004"; exit 1; }
           [ "$appid" = "8UVR249AD5.io.coincube.tenshu" ] \
@@ -424,7 +424,7 @@ jobs:
           # it — the app won't launch. An expired profile fails identically, and
           # neither failure is visible at sign, notarize or spctl time, so it
           # has to be checked here or discovered by a user.
-          profile=Tenshu.app/Contents/embedded.provisionprofile
+          profile=COINCUBE.app/Contents/embedded.provisionprofile
           test -f "$profile" || { echo "provisioning profile missing from bundle"; exit 1; }
           security cms -D -i "$profile" > profile.plist 2>/dev/null
           plutil -extract Entitlements.keychain-access-groups.0 raw -o - profile.plist \
@@ -445,7 +445,7 @@ jobs:
           # Read the certificate back out of the finished signature rather than
           # out of the p12: that is what AMFI will judge, and it needs no secret.
           contrib/release/macos/check-profile-authorises-cert.sh \
-            "$profile" --signed-bundle Tenshu.app
+            "$profile" --signed-bundle COINCUBE.app
 
       # Every artifact built between 2026-04-15 and 2026-08-06 shipped without
       # the Spark bridge, and nothing in this pipeline noticed: codesign,
@@ -457,14 +457,14 @@ jobs:
       - name: Verify Spark bridge is bundled, correct arch, signed and runnable
         if: matrix.platform == 'macos'
         run: |
-          bridge=Tenshu.app/Contents/MacOS/coincube-spark-bridge
-          test -x Tenshu.app/Contents/MacOS/tenshu-mcp
-          codesign --verify --strict Tenshu.app/Contents/MacOS/tenshu-mcp
-          python3 contrib/check_mcp_binary.py Tenshu.app/Contents/MacOS/tenshu-mcp
+          bridge=COINCUBE.app/Contents/MacOS/coincube-spark-bridge
+          test -x COINCUBE.app/Contents/MacOS/tenshu-mcp
+          codesign --verify --strict COINCUBE.app/Contents/MacOS/tenshu-mcp
+          python3 contrib/check_mcp_binary.py COINCUBE.app/Contents/MacOS/tenshu-mcp
 
           # (1) Present at all — the failure this exists to catch.
           test -f "$bridge" \
-            || { echo "coincube-spark-bridge missing from Tenshu.app/Contents/MacOS"; exit 1; }
+            || { echo "coincube-spark-bridge missing from COINCUBE.app/Contents/MacOS"; exit 1; }
 
           # (2) Built for this leg's architecture. A wrong-arch bridge is still
           #     found by resolve_bridge_path() — it just dies on exec, which
@@ -510,20 +510,20 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           base64 -D <<< "${{ secrets.APPSTORECONNECT_KEY_JSON }}" > key.json
-          rcodesign notary-submit --api-key-path key.json --max-wait-seconds 1800 --staple Tenshu.app
-          spctl --assess --type execute --verbose Tenshu.app
+          rcodesign notary-submit --api-key-path key.json --max-wait-seconds 1800 --staple COINCUBE.app
+          spctl --assess --type execute --verbose COINCUBE.app
 
       - name: Create DMG
         if: matrix.platform == 'macos'
         run: |
           create-dmg \
-            --volname "Tenshu" \
+            --volname "COINCUBE" \
             --window-size 600 400 \
             --icon-size 128 \
-            --icon "Tenshu.app" 175 120 \
+            --icon "COINCUBE.app" 175 120 \
             --app-drop-link 425 120 \
             "tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
-            Tenshu.app
+            COINCUBE.app
 
       - name: Stage macOS DMG
         if: matrix.platform == 'macos'

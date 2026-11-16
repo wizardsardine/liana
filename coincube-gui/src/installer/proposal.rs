@@ -116,7 +116,7 @@ impl Session {
         let descriptor = ctx
             .descriptor
             .as_ref()
-            .ok_or_else(|| failed("Select actual keys in Tenshu first."))?;
+            .ok_or_else(|| failed("Select actual keys in COINCUBE Desktop first."))?;
         if let Some(input) = self
             .store
             .creation_input(&self.proposal.proposal_id)
@@ -175,7 +175,7 @@ impl Session {
             if !ctx.in_cube_fork_vault
                 || !crate::chain::is_managed_local_fork(&cfg, &ctx.coincube_directory)
             {
-                return Err(failed("Select Tenshu's managed Bitcoin Blake2b node. Native installation must verify its availability and exact chain."));
+                return Err(failed("Select COINCUBE Desktop's managed Bitcoin Blake2b node. Native installation must verify its availability and exact chain."));
             }
         }
         // Fingerprints/provenance/aliases and exact persisted daemon config
@@ -505,7 +505,7 @@ impl Step for Review {
             text(format!("Network · {}", self.session.chain().dir_name())),
             text(&self.backend),
             text(coincube_ui::localized_format!("Primary: 3 of 5. Recovery: {} of {} after {} relative blocks for each coin. Block time varies; this is not a calendar deadline.", "Principal: 3 de 5. Recuperación: {} de {} después de {} bloques relativos para cada moneda. El tiempo de los bloques varía; no es una fecha límite de calendario.", topology.recovery.quorum.threshold, topology.recovery.quorum.key_count, topology.recovery.relative_delay_blocks)),
-            text(localized_copy("Tenshu validated this actual descriptor. For assistant-supplied keys, the account xpub fingerprint below is computed from the key itself; the origin fingerprint was supplied by the assistant and was not checked. Verify every key on its source device, signer distribution and recovery assumptions before creating. Distinct fingerprints do not prove independent custody.")),
+            text(localized_copy("COINCUBE Desktop validated this actual descriptor. For assistant-supplied keys, the account xpub fingerprint below is computed from the key itself; the origin fingerprint was supplied by the assistant and was not checked. Verify every key on its source device, signer distribution and recovery assumptions before creating. Distinct fingerprints do not prove independent custody.")),
             text(&self.descriptor),
             text(localized_copy("Creation ends MCP access. A separate approval is required to read the resulting Vault. Backup possession and recovery testing are not verified by descriptor validation.")),
             text(localized_copy(self.warning.as_deref().unwrap_or("Confirm that this is the exact policy and set of public keys you intend.")))].spacing(16).padding(24);

@@ -1151,9 +1151,9 @@ mod tests {
             let mut with_signature = tx.clone();
             with_signature.psbt.inputs[0].final_script_sig = Some(ScriptBuf::new());
             let signed_texts = render(&with_signature);
-            assert!(signed_texts
-                .iter()
-                .any(|(s, _)| s == "Signatures present. Review signing status in Tenshu."));
+            assert!(signed_texts.iter().any(
+                |(s, _)| s == "Signatures present. Review signing status in COINCUBE Desktop."
+            ));
             assert!(!signed_texts
                 .iter()
                 .any(|(s, _)| s == "Unsigned transaction. Your signature is required."));

@@ -376,7 +376,7 @@ fn schema_update_note<'a>() -> Element<'a, Msg> {
         Tone::Muted,
         localized_copy("A newer pricing update is available"),
         localized_copy(
-            "Some plan details may be incomplete. Update Tenshu to see the latest plans and prices.",
+            "Some plan details may be incomplete. Update COINCUBE Desktop to see the latest plans and prices.",
         ),
         None,
     )
@@ -2294,7 +2294,7 @@ fn card_phase_ux<'a>(
                 format!("Change to {tier}")
             },
             format!(
-                "Tenshu couldn’t confirm whether the change to {tier} went through. Check Plan \
+                "COINCUBE Desktop couldn’t confirm whether the change to {tier} went through. Check Plan \
                  & billing before you try again."
             ),
         ),

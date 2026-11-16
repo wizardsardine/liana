@@ -300,7 +300,7 @@ impl Settings {
             {
                 "Pairing storage failed. All paired clients are suspended and their stored authorization is invalid. Pairing recovery is required."
             } else {
-                "Could not persist revocation or invalidate its storage key. Clients are suspended now; durable revocation is NOT confirmed. Retry before closing Tenshu."
+                "Could not persist revocation or invalidate its storage key. Clients are suspended now; durable revocation is NOT confirmed. Retry before closing COINCUBE Desktop."
             },
         );
     }

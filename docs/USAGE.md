@@ -48,12 +48,18 @@ See [this issue](https://github.com/wizardsardine/coincube/issues/414) for detai
 
 The macOS application is distributed as a codesigned and notarized disk image
 (`tenshu-<version>-<target>.dmg`, one for Apple Silicon and one for Intel). Open the DMG and drag
-`Tenshu.app` into your Applications folder; because it is notarized, no Gatekeeper override is
+`COINCUBE.app` into your Applications folder; because it is notarized, no Gatekeeper override is
 needed.
 
-The app's bundle identifier is `io.coincube.tenshu`. If you have an older Tenshu installed that
+The app's bundle identifier is `io.coincube.tenshu`. If you have an older Tenshu build installed that
 predates that identifier, macOS treats the new build as a **separate** application and will not
 replace it — remove the old one to avoid running two copies.
+
+The app bundle was renamed from `Tenshu.app` to `COINCUBE.app`. Both carry the same bundle
+identifier and share your data, keychain items and settings, but dragging the new bundle into
+Applications does not replace the old one: delete `Tenshu.app` after installing. AI clients
+paired for local MCP access store the adapter's full path, so pair them again (or edit the
+`command` path) after the move.
 
 We do not yet distribute codesigned binaries for Windows at this time.
 

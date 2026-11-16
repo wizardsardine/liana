@@ -228,7 +228,7 @@ fn main() -> iced::Result {
         Fixture::update,
         Fixture::view,
     )
-    .title("Tenshu keyboard fixture · synthetic data")
+    .title("COINCUBE Desktop keyboard fixture · synthetic data")
     .theme(Fixture::theme)
     .subscription(Fixture::subscription)
     .window(iced::window::Settings {

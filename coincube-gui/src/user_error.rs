@@ -270,9 +270,9 @@ fn lan_keychain_error(error: &Error, connect_available: bool) -> UserError {
             "Couldn't sign with your Keychain over Wi-Fi",
             if connect_available {
                 "Send the request through COINCUBE | Connect instead, or check that the phone \
-                 is on the same Wi-Fi with Keychain open, then try again."
+                 is on the same Wi-Fi with COINCUBE Mobile open, then try again."
             } else {
-                "Check that the phone is on the same Wi-Fi with Keychain open, then try again."
+                "Check that the phone is on the same Wi-Fi with COINCUBE Mobile open, then try again."
             },
             CC_HW_LAN,
             true,
@@ -302,7 +302,7 @@ impl From<&Error> for UserError {
         match error {
             Error::Config(_) => UserError::new(
                 "Configuration problem",
-                "Tenshu's configuration couldn't be read. Restart the app; if it keeps failing, contact support and quote the reference below.",
+                "COINCUBE Desktop's configuration couldn't be read. Restart the app; if it keeps failing, contact support and quote the reference below.",
                 CC_CONFIG,
                 false,
             ),
@@ -369,13 +369,13 @@ impl From<&Error> for UserError {
 
                 DaemonError::Start(_) => UserError::new(
                     "The wallet engine didn't start",
-                    "Restart the app. If it still won't start, check that no other Tenshu instance is running.",
+                    "Restart the app. If it still won't start, check that no other COINCUBE Desktop instance is running.",
                     CC_DMN_START,
                     true,
                 ),
 
                 DaemonError::ClientNotSupported => UserError::new(
-                    "This wallet needs a newer version of Tenshu",
+                    "This wallet needs a newer version of COINCUBE Desktop",
                     "Update to the latest version to open it.",
                     CC_DMN_UNSUPPORTED,
                     false,
@@ -459,7 +459,7 @@ impl From<&Error> for UserError {
 
             Error::ImportExport(_) => UserError::new(
                 "Import or export failed",
-                "Check that the file is a Tenshu export and that you can read it, then try again.",
+                "Check that the file is a COINCUBE Desktop export and that you can read it, then try again.",
                 CC_BACKUP,
                 true,
             ),
@@ -568,7 +568,7 @@ impl From<&crate::app::breez_liquid::BreezError> for UserError {
 
             B::SignerNotFound(_) | B::SignerError(_) => UserError::logged(
                 "Couldn't unlock your Liquid wallet",
-                "Restart Tenshu and unlock your Cube again. If it keeps failing, contact support and quote the reference below.",
+                "Restart COINCUBE Desktop and unlock your Cube again. If it keeps failing, contact support and quote the reference below.",
                 CC_LQD_SIGNER,
                 false,
                 e,
@@ -592,7 +592,7 @@ impl From<&crate::app::breez_spark::client::SparkClientError> for UserError {
     fn from(e: &crate::app::breez_spark::client::SparkClientError) -> UserError {
         UserError::logged(
             "The Spark wallet couldn't complete that",
-            "Try again. If it keeps failing, restart Tenshu and contact support with the reference below.",
+            "Try again. If it keeps failing, restart COINCUBE Desktop and contact support with the reference below.",
             CC_SPK,
             true,
             e,
@@ -640,7 +640,7 @@ impl From<&crate::export::Error> for UserError {
             ),
             E::UnknownFormat | E::ParsePsbt | E::ParseDescriptor | E::ParseXpub => {
                 UserError::logged(
-                    "Tenshu couldn't read that file",
+                    "COINCUBE Desktop couldn't read that file",
                     "Check that it's the file you meant and that it isn't damaged, then try again.",
                     CC_BACKUP,
                     false,
@@ -946,8 +946,8 @@ mod tests {
         assert!(!u.retryable, "invalid input needs new input, not a retry");
     }
 
-    /// Anything local is Tenshu; anything that failed over the network to the
-    /// account service is COINCUBE | Connect. Naming the wrong one sends the
+    /// Anything local is COINCUBE Desktop; anything that failed over the
+    /// network to the account service is COINCUBE | Connect. Naming the wrong one sends the
     /// user somewhere they cannot act.
     #[test]
     fn local_failures_name_tenshu_not_the_backend() {
@@ -963,14 +963,20 @@ mod tests {
             let u: UserError = e.into();
             let copy = format!("{} {}", u.title, u.guidance);
             assert!(
-                !copy.contains("COINCUBE") && !copy.contains("Coincube"),
+                !copy.contains("Connect")
+                    && !copy.contains("Coincube")
+                    && copy.matches("COINCUBE").count() == copy.matches("COINCUBE Desktop").count(),
                 "a local failure must not name the backend: {:?}",
                 copy
             );
         }
 
         let u: UserError = (&Error::Config("bad toml".to_string())).into();
-        assert!(u.guidance.contains("Tenshu"), "got {:?}", u.guidance);
+        assert!(
+            u.guidance.contains("COINCUBE Desktop"),
+            "got {:?}",
+            u.guidance
+        );
     }
 
     /// The toast has room for one text run, so the three fields are joined —

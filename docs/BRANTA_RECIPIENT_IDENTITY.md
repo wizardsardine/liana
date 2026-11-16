@@ -1,11 +1,11 @@
 # Recipient identity checks
 
-Tenshu performs optional, send-only Branta lookups during preparation of
+COINCUBE Desktop performs optional, send-only Branta lookups during preparation of
 external Spark BOLT11 payments and VAULT Bitcoin/BIP21 requests containing both
 `branta_id` and `branta_secret`. No lookup runs on typing, internal-transfer paths,
 Liquid, Spark-native addresses/invoices, stablecoin/cross-chain sends, plain
 Bitcoin addresses, BOLT12, LNURL or Lightning addresses. Ark and silent-payment
-support in the SDK does not enable those payment routes in Tenshu.
+support in the SDK does not enable those payment routes in COINCUBE Desktop.
 
 The setting is local `global_settings.json:recipient_identity_checks`, exposed
 in Cube Settings / Payment checks ("Recipient checks"). It is device-wide: it
@@ -81,7 +81,7 @@ Only a `tampered` verdict from the SDK's `verify` blocks sending and requires
 replacing the request. In SDK 4.0.0 it covers an on-chain BIP21 address that does
 not match the address decrypted from `branta_id`, and on-chain addresses in one
 request (path, `bc=`, `tb=`) that disagree. It is not reachable for BOLT11. VAULT
-pays only the path address, so Tenshu passes the SDK only the path address,
+pays only the path address, so COINCUBE Desktop passes the SDK only the path address,
 `branta_id`, `branta_secret` and any `bc=`/`tb=`. Other legs (`pay=`, `lno=`,
 `lightning=`, `bolt12`, ...) are dropped first: the SDK would otherwise return
 `unknown` for an unbindable leg before decrypting `branta_id`, which would hide a
@@ -136,7 +136,7 @@ caps lookup response bodies. No other SDK source was changed.
 See [provenance](../vendor/branta/TENSHU_PROVENANCE.md).
 
 4.0.0 returns one of `match`, `unknown`, `tampered` or `incomplete` from `verify`.
-Tenshu maps `match` with a bound destination to an identity, `tampered` to a block,
+COINCUBE Desktop maps `match` with a bound destination to an identity, `tampered` to a block,
 and everything else to silence. Descriptions now come only from encrypted payment
 metadata, so older registrations that stored a plaintext description show their
 platform without a description.

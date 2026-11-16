@@ -233,7 +233,7 @@ pub fn parse_wallet_descriptor_blob(bytes: &[u8]) -> Result<RecoveredWalletBlob,
             Ok(RecoveredWalletBlob::Imported(imported))
         }
         _ => Err(RestoreError::BlobParse(format!(
-            "descriptor blob version {} is not supported; update Tenshu",
+            "descriptor blob version {} is not supported; update COINCUBE Desktop",
             header.version
         ))),
     }

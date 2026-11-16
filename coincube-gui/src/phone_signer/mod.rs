@@ -414,7 +414,7 @@ impl HWI for PhoneSigner {
         let Some(env) = partial.signature_envelope.as_ref() else {
             return Err(HwiError::Device(
                 "This Keychain returned an unencrypted signature for an encrypted \
-                 request. Update the Keychain app, then try again."
+                 request. Update COINCUBE Mobile, then try again."
                     .to_string(),
             ));
         };

@@ -87,7 +87,8 @@ impl std::fmt::Display for PairingError {
             Self::TransportKeyMissing => write!(
                 f,
                 "This Keychain didn't send an encryption key, so signing requests \
-                 to it couldn't be encrypted. Update the Keychain app, then pair again."
+                 to it couldn't be encrypted. Update COINCUBE Mobile on the phone, \
+                 then pair again."
             ),
             Self::PhoneVerificationFailed => write!(
                 f,

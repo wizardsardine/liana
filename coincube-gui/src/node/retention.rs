@@ -93,7 +93,7 @@ pub fn managed_binding(
         return Err("Managed recovery requires the managed node's cookie authentication".into());
     };
     if !is_managed_endpoint(datadir, network, chain, cfg) {
-        return Err("This node is not managed by Tenshu".into());
+        return Err("This node is not managed by COINCUBE Desktop".into());
     }
     let conf =
         InternalBitcoindConfig::from_file(&root.join("bitcoin.conf")).map_err(|e| e.to_string())?;

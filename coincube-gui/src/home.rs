@@ -3286,9 +3286,9 @@ impl Home {
                         if cube.network != source {
                             self.error = Some(coincube_ui::localized_format!(
                                 "This Cube's settings say it lives on {}, but it was found in \
-                                 the {} folder. Tenshu won't open it until the two agree.",
+                                 the {} folder. COINCUBE Desktop won't open it until the two agree.",
                                 "Los ajustes de este Cube indican que está en {}, pero se encontró \
-                                 en la carpeta {}. Tenshu no lo abrirá hasta que coincidan.",
+                                 en la carpeta {}. COINCUBE Desktop no lo abrirá hasta que coincidan.",
                                 cube.network.label(),
                                 source.label(),
                             ));
@@ -7576,7 +7576,7 @@ fn creation_choice_view(
         kit_row
             .description(localized_copy(
                 "Kept with your Connect account. Signing in also syncs this Cube to your \
-                 other devices and the Keychain app.",
+                 other devices and COINCUBE Mobile.",
             ))
             .accessory(page::status(
                 page::Status::Unknown,
@@ -9002,9 +9002,9 @@ impl DeleteCubeModal {
         };
 
         let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The Tenshu-managed Bitcoin node for this network will not be affected by this action.)"),
+            Some(true) => Some("(The COINCUBE-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
-            None if has_vault => Some("(If you are using a Tenshu-managed Bitcoin node, it will not be affected by this action.)"),
+            None if has_vault => Some("(If you are using a COINCUBE-managed Bitcoin node, it will not be affected by this action.)"),
             _ => None,
         };
         let help_text_3 = "WARNING: This cannot be undone.";

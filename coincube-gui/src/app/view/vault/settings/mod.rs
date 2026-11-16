@@ -266,7 +266,7 @@ pub fn connections<'a>(cache: &'a Cache) -> Element<'a, Message> {
                     localized_copy(if alert.stall == crate::app::VaultStall::NeedsReconnect {
                         "Press Try again in the Connect control."
                     } else {
-                        "Tenshu keeps trying."
+                        "COINCUBE Desktop keeps trying."
                     })
                 ))
         }
@@ -309,12 +309,12 @@ pub fn connections<'a>(cache: &'a Cache) -> Element<'a, Message> {
                 localized_copy("Starting live updates from Connect.").to_owned()
             }
             ConnectionStatus::Reconnecting | ConnectionStatus::Renewing => localized_format!(
-                "Can’t reach Connect. Requests already sent stay on Connect; signatures reach Tenshu once it’s back.",
-                "No se puede conectar con Connect. Las solicitudes ya enviadas se quedan en Connect; las firmas llegarán a Tenshu cuando vuelva."
+                "Can’t reach Connect. Requests already sent stay on Connect; signatures reach COINCUBE Desktop once it’s back.",
+                "No se puede conectar con Connect. Las solicitudes ya enviadas se quedan en Connect; las firmas llegarán a COINCUBE Desktop cuando vuelva."
             ),
             ConnectionStatus::Offline => localized_format!(
-                "No internet connection. Requests already sent stay on Connect; signatures reach Tenshu once you’re back online.",
-                "Sin conexión a internet. Las solicitudes ya enviadas se quedan en Connect; las firmas llegarán a Tenshu cuando vuelvas a estar en línea."
+                "No internet connection. Requests already sent stay on Connect; signatures reach COINCUBE Desktop once you’re back online.",
+                "Sin conexión a internet. Las solicitudes ya enviadas se quedan en Connect; las firmas llegarán a COINCUBE Desktop cuando vuelvas a estar en línea."
             ),
             ConnectionStatus::RenewFailed => localized_format!(
                 "{}. Requests already sent stay on Connect; try again from Cube connections.",
@@ -765,7 +765,7 @@ pub fn switch_discards_scan_confirm<'a>(
             )
             .push(
                 text(localized_copy(
-                    "If you wait, Tenshu can switch for you once the scan has finished.",
+                    "If you wait, COINCUBE Desktop can switch for you once the scan has finished.",
                 ))
                 .size(14)
                 .style(theme::text::secondary),
@@ -1549,7 +1549,7 @@ pub fn wallet_settings<'a>(
         localized_copy("Unavailable: this Vault has no Keychain key. One can only be added when a Vault is \
          created.")
     } else {
-        localized_copy("Unavailable: this wallet has no Keychain-eligible key in Tenshu.")
+        localized_copy("Unavailable: this wallet has no Keychain-eligible key in COINCUBE Desktop.")
     });
     let pair_row = if pairable {
         pair_row.control(page::button(
@@ -1751,7 +1751,7 @@ pub fn node_backend_status<'a>(
                     localized_copy("Applying your node change…"),
                 ))
                 .push(page::muted(localized_copy(
-                    "Tenshu is stopping the previous wallet backend and loading the new one. \
+                    "COINCUBE Desktop is stopping the previous wallet backend and loading the new one. \
                      This can take a while if a wallet scan is still running. \
                      Local blockchain progress is shown separately below.",
                 ))),
@@ -1824,7 +1824,7 @@ pub fn node_backend_status<'a>(
         } else if still_syncing {
             let next = if pending && auto_switch_to_pending {
                 localized_copy(
-                    "Tenshu will automatically switch to this node once syncing is complete.",
+                    "COINCUBE Desktop will automatically switch to this node once syncing is complete.",
                 )
                 .to_owned()
                     + " "
@@ -2180,11 +2180,11 @@ pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
                     Row::new()
                         .spacing(10)
                         .push(badge::badge(icon::bitcoin_icon()))
-                        .push(text(localized_copy("Tenshu-managed node (recommended)")).bold())
+                        .push(text(localized_copy("COINCUBE-managed node (recommended)")).bold())
                         .align_y(Alignment::Center),
                 )
                 .push(
-                    text(localized_copy("Tenshu downloads and runs a pruned node (~15 GB) automatically. No configuration needed."))
+                    text(localized_copy("COINCUBE Desktop downloads and runs a pruned node (~15 GB) automatically. No configuration needed."))
                         .size(13)
                         .style(theme::text::secondary),
                 )
@@ -2302,7 +2302,7 @@ pub fn internal_node_setup_panel<'a>(
                 )
                 .push(
                     text(localized_copy(
-                        "Tenshu will automatically switch to this node once syncing is complete.",
+                        "COINCUBE Desktop will automatically switch to this node once syncing is complete.",
                     ))
                     .size(13)
                     .style(theme::text::secondary),
@@ -2529,7 +2529,7 @@ pub fn inbound_tor_section<'a>(
     // machine is awake.
     if enabled {
         content = content.push(page::caption(localized_copy(
-            "Your node is reachable while Tenshu is open and your computer is awake. \
+            "Your node is reachable while COINCUBE Desktop is open and your computer is awake. \
              Minimizing is fine; if the computer sleeps, connections reconnect \
              automatically on wake.",
         )));
@@ -2967,7 +2967,9 @@ pub fn wallet_history_section<'a>(
         body = body.push(actions.push(page::muted(if status.cancel_queued {
             localized_copy("Cancelling after the current batch…")
         } else {
-            localized_copy("Both wait for the current batch. Progress is saved if Tenshu closes.")
+            localized_copy(
+                "Both wait for the current batch. Progress is saved if COINCUBE Desktop closes.",
+            )
         })));
         (StepState::Current, Some(format!("{percent:.0}%")))
     } else if let Some(job) = job.filter(|_| paused) {
@@ -3011,7 +3013,7 @@ pub fn wallet_history_section<'a>(
     } else {
         body = body
             .push(page::muted(
-                localized_copy("Your node only keeps recent blocks, so it hasn't seen this Vault's older payments yet. Tenshu brings them over and checks every payment and spend against your node."),
+                localized_copy("Your node only keeps recent blocks, so it hasn't seen this Vault's older payments yet. COINCUBE Desktop brings them over and checks every payment and spend against your node."),
             ))
             .push(
                 Row::new()
@@ -3056,7 +3058,7 @@ pub fn wallet_history_section<'a>(
                         )),
                 )
                 .push(page::muted(
-                    localized_copy("Downloads and scans every block from there. Keep Tenshu open; progress is saved if interrupted."),
+                    localized_copy("Downloads and scans every block from there. Keep COINCUBE Desktop open; progress is saved if interrupted."),
                 ))
                 .push(page::plain_button(
                     localized_copy("Recover from this date or block"),
@@ -3096,7 +3098,7 @@ pub fn wallet_history_section<'a>(
                 localized_copy("Switching to your local node…"),
             ))
             .push(page::muted(localized_copy(
-                "Tenshu is stopping Connect and loading this Vault on your local node.",
+                "COINCUBE Desktop is stopping Connect and loading this Vault on your local node.",
             )))
             .into()
     } else if done {
@@ -3155,7 +3157,7 @@ pub fn wallet_history_section<'a>(
                     .spacing(4)
                     .push(page::heading(if switched { localized_copy("Vault moved to your local node") } else { localized_copy("Move this Vault to your local node") }))
                     .push(page::muted(if switched {
-                        localized_copy("All steps complete. Tenshu reads this Vault from your node.")
+                        localized_copy("All steps complete. COINCUBE Desktop reads this Vault from your node.")
                     } else if switching {
                         localized_copy("Your blockchain and Vault history are ready. Finishing the switch…")
                     } else {
@@ -4586,7 +4588,7 @@ mod tests {
                 }
                 if step == LocalNodeSwitchStep::Switching {
                     assert!(!labels.0.iter().any(|text| text == "Not now"
-                        || text == "All steps complete. Tenshu reads this Vault from your node."));
+                        || text == "All steps complete. COINCUBE Desktop reads this Vault from your node."));
                 }
                 if let Ok(directory) = std::env::var("LOCAL_NODE_WIZARD_CAPTURE_DIR") {
                     std::fs::create_dir_all(&directory).unwrap();

@@ -74,8 +74,8 @@ impl std::fmt::Display for OwnerSelfError {
         match self {
             Self::NoRecipient => write!(
                 f,
-                "This Cube isn't set up for phone recovery yet. Create a recovery key in your \
-                 Keychain app first, then check again."
+                "This Cube isn't set up for phone recovery yet. Create a recovery key in \
+                 COINCUBE Mobile first, then check again."
             ),
             Self::RecipientMissingKey => write!(
                 f,
@@ -90,7 +90,7 @@ impl std::fmt::Display for OwnerSelfError {
             Self::UnreadableRecipientKey(e) => write!(
                 f,
                 "Your phone recovery key is unreadable ({}). Create the recovery key again in \
-                 your Keychain app, then check again.",
+                 COINCUBE Mobile, then check again.",
                 e
             ),
             Self::TierMismatch => write!(
@@ -101,7 +101,7 @@ impl std::fmt::Display for OwnerSelfError {
                 f,
                 "Nothing to back up to your phone yet: this Cube has no Vault, and your phone \
                  key is set up for Vault-only recovery. Create a Vault, or set up Full-Cube \
-                 recovery in your Keychain app, then try again."
+                 recovery in COINCUBE Mobile, then try again."
             ),
             Self::Escrow(e) => write!(f, "{}", e),
             Self::Connect(e) => write!(f, "{}", e),
@@ -785,7 +785,7 @@ mod tests {
             err
         );
         let msg = err.to_string();
-        assert!(msg.contains("Keychain app"), "{}", msg);
+        assert!(msg.contains("COINCUBE Mobile"), "{}", msg);
         assert!(!msg.contains("base58"), "{}", msg);
     }
 

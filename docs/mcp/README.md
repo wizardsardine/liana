@@ -1,12 +1,12 @@
-# Tenshu local AI access (MCP)
+# COINCUBE Desktop local AI access (MCP)
 
-Local MCP supports **Bitcoin and Bitcoin Blake2b Vaults using Tenshu's embedded
+Local MCP supports **Bitcoin and Bitcoin Blake2b Vaults using COINCUBE Desktop's embedded
 daemon on macOS, Linux and Windows**. Supported exact chain identities are
 `bitcoin`, `testnet4`, `regtest`, `bitcoin-blake2b` and
 `bitcoin-blake2b-testnet4`. Normal builds include wallet proposals, public-key
 wallet preparation and unsigned transaction preparation. Liquid, Spark, imported
 non-Vault policies and external daemons remain unsupported. MCP starts disabled. Explicitly paired clients keep their selected scope until
-revoked; protected access pauses while the Cube is locked or Tenshu is closed.
+revoked; protected access pauses while the Cube is locked or COINCUBE Desktop is closed.
 No Connect API or mobile Keychain changes are needed.
 
 ## Integration and release status
@@ -39,7 +39,7 @@ cargo test -p coincube-mcp --features adapter --locked
 Debug binaries are `target/debug/coincube` and `target/debug/tenshu-mcp`.
 `make release` uses `target/release/`; production workflows use `target/<triple>/minimal/`.
 The Linux tarball includes `tenshu-mcp` beside `coincube`. The macOS bundle includes
-`Tenshu.app/Contents/MacOS/tenshu-mcp` beside `Coincube`. The release/nightly workflows
+`COINCUBE.app/Contents/MacOS/tenshu-mcp` beside `Coincube`. The release/nightly workflows
 build and stage it before signing. Packaging changes still need validation by CI
 and a signed-release smoke test. Both macOS release architectures use native
 runners and execute `contrib/check_mcp_binary.py` on the signed adapter before
@@ -64,11 +64,11 @@ already signed application bundle.
    **Prepare unsigned transactions**. Each kind is its own pairing; a client that
    should do both needs two. The name is for your reference, not an authenticated
    application identity. Read the financial-data caution beside the pair action.
-4. Choose **Pair client until revoked**. Tenshu saves the exact client scope and a
+4. Choose **Pair client until revoked**. COINCUBE Desktop saves the exact client scope and a
    random bearer credential in a device-keystore-protected encrypted registry. The
    form closes and the new client's row opens.
 5. Choose **Copy private client configuration** and paste it into your trusted MCP
-   host's local configuration. Tenshu confirms **Copied** beside the action. The
+   host's local configuration. COINCUBE Desktop confirms **Copied** beside the action. The
    configuration contains a credential: never paste it into a chat, issue, shared
    document or repository. Clear your clipboard after setup.
 6. Restart/reconnect the MCP host. Discover tools, then call `tenshu_list_wallets`
@@ -77,7 +77,7 @@ already signed application bundle.
 The copied command is derived from the running desktop executable's directory.
 The adapter must be installed beside it. Each client row shows its status
 (**Available**, **Paused** or **Suspended**) with the reason, its access, and, under
-**Manage**, the requests answered this session. **Available** means Tenshu will answer
+**Manage**, the requests answered this session. **Available** means COINCUBE Desktop will answer
 that client while the Cube is unlocked; neither the status nor the count is a verified
 host identity or a persistent-connection indicator (IPC connections are per request).
 
@@ -100,7 +100,7 @@ a client's permissions in this slice, revoke its row and pair it again explicitl
 runtime immediately. Revoking cannot erase information already given to the AI
 provider. Pairing files are also removed on Cube deletion and duress wipe; the
 keystore wrapping item can remain inert. Storage/authentication failures restore
-no access. If a durable revocation write fails, Tenshu suspends all clients and
+no access. If a durable revocation write fails, COINCUBE Desktop suspends all clients and
 tries to invalidate only this registry's wrapping key; an error explicitly states
 when durable revocation could not be confirmed. Do not treat that error as success.
 
@@ -116,7 +116,7 @@ The GUI produces this shape, with actual paths and a private pairing credential:
 {
   "mcpServers": {
     "tenshu": {
-      "command": "/Applications/Tenshu.app/Contents/MacOS/tenshu-mcp",
+      "command": "/Applications/COINCUBE.app/Contents/MacOS/tenshu-mcp",
       "env": {
         "TENSHU_MCP_PAIRING": "/PRIVATE_DATADIR/regtest/mcp-pairings/CUBE_SCOPE/CLIENT.endpoint",
         "TENSHU_MCP_CREDENTIAL": "REPLACE_WITH_THE_PRIVATE_PAIRING_FROM_TENSHU"
@@ -162,7 +162,7 @@ All outputs are structured JSON with advertised schemas. Balance and unsigned
 preparation amounts are satoshis; history rows omit exact amounts.
 Tool discovery and `tenshu_get_capabilities` are public static build metadata.
 They do not inspect installed wallets or grant authority. Every wallet-data call is authenticated
-and scoped inside Tenshu, regardless of what the adapter or host claims.
+and scoped inside COINCUBE Desktop, regardless of what the adapter or host claims.
 
 | Tool | Input | Result / limitations |
 |---|---|---|
@@ -174,7 +174,7 @@ and scoped inside Tenshu, regardless of what the adapter or host claims.
 | `tenshu_prepare_wallet_proposal` | Exact `network`, explicit 3-of-5 primary, recovery quorum/delay, bounded retry ID | Requires separate proposal consent in an empty unlocked Cube. Produces an in-memory topology draft; keys, actual descriptor validation and creation approval are native-only. |
 | `tenshu_get_wallet_proposal` | `{"proposal_id":"…"}` | Only the current proposal grant's draft. Existing read grants cannot access proposals, and proposal grants cannot access wallet reads. |
 | `tenshu_prepare_wallet_creation` | Exact `network`, public account keys and explicit topology | Separate setup pairing, actual descriptor validation and native builder; creation approval remains native. |
-| `tenshu_prepare_transaction` | Exact `network`, opaque wallet/request IDs, recipients in sats, fee rate and fee ceiling | Separate transaction pairing; unsigned PSBT stays in Tenshu, only a summary is returned. |
+| `tenshu_prepare_transaction` | Exact `network`, opaque wallet/request IDs, recipients in sats, fee rate and fee ceiling | Separate transaction pairing; unsigned PSBT stays in COINCUBE Desktop, only a summary is returned. |
 | `tenshu_get_prepared_transaction` | Opaque wallet and draft IDs | Current transaction pairing/session summary only; no PSBT or input/change-address export. |
 
 The history output schema removes the former `incoming_sats`, `outgoing_sats`,
@@ -201,7 +201,7 @@ has a matching grant. Enabled tools still require their separate desktop scope.
 The initial proposal shape is deliberately limited to a 3-of-5 primary and one
 explicitly chosen recovery path (1–5 slots, valid threshold, positive block delay)
 for P2WSH on the selected supported chain. No recovery values are silently
-selected by Tenshu. The topology-only tool requires the intended `network` and
+selected by COINCUBE Desktop. The topology-only tool requires the intended `network` and
 accepts no keys, descriptors, paths, labels or credentials. Separately scoped
 public-key wallet assembly is described below.
 Only one draft per proposal grant is retained. An exact retry returns that draft;
@@ -265,10 +265,10 @@ memory/configuration; this feature does not sandbox arbitrary same-user malware.
 
 - `access_denied`: invalid/expired/revoked grant, wallet outside the grant, or
   capability not selected. Wallet absence and lack of permission are intentionally
-  indistinguishable. Review the grant in Tenshu; never let the AI approve itself.
+  indistinguishable. Review the grant in COINCUBE Desktop; never let the AI approve itself.
 - `wallet_unavailable`: desktop/daemon closed or unavailable, stale socket path,
   ten-second read timeout, transport failure, or history requested while wallet
-  synchronization is incomplete/unsafe. Inspect Tenshu's sync state and retry
+  synchronization is incomplete/unsafe. Inspect COINCUBE Desktop's sync state and retry
   after it recovers; this error does not mean the wallet has no activity.
 - `invalid_input`: unknown fields, missing/wrong fields, wallet ID over 64 bytes,
   or history limit outside 1–50. Tool errors never return raw daemon exceptions.
@@ -366,7 +366,7 @@ omit these features explicitly with `--no-default-features`.
    a client** and select the separate **Propose a wallet policy** access. Existing wallet-read grants cannot prepare a proposal.
    Save the private client configuration only in the trusted client's local file.
 3. The client prepares one topology draft with `network` matching the paired
-   Cube. It receives `needs_keys` with no public/private keys or descriptor. In Tenshu, click **Review proposal and
+   Cube. It receives `needs_keys` with no public/private keys or descriptor. In COINCUBE Desktop, click **Review proposal and
    select keys**. This native click opens the existing key picker, backup and
    hardware registration flows. These preparatory actions have their existing
    local/device confirmations; they are not MCP approvals.
@@ -383,7 +383,7 @@ omit these features explicitly with `--no-default-features`.
    wallet/daemon persistence, a shared per-Cube OS reservation, captured session
    generation, live grant and exact review snapshot must all pass. There is no
    approve/install/sign/broadcast MCP operation. Bitcoin-family creation uses
-   a native-configured Bitcoin node. Bitcoin Blake2b creation uses Tenshu's
+   a native-configured Bitcoin node. Bitcoin Blake2b creation uses COINCUBE Desktop's
    isolated managed Knots Blake2b node, including the existing saved beta/global
    feature gate and exact-chain backend admission. Arbitrary fork RPC and
    Connect/provider enrollment are not added by this workflow. Creating consumes
@@ -466,10 +466,10 @@ The returned minimized proposal identifies the topology and native descriptor
 validation result, without returning xpubs or descriptors. Exact retries return
 the same proposal; changed keys, topology or retry identity conflict. Use
 `tenshu_get_wallet_proposal` with its opaque ID to inspect that session's state.
-Then open **Review prepared wallet in Tenshu**. The ordinary builder is populated
+Then open **Review prepared wallet in COINCUBE Desktop**. The ordinary builder is populated
 with the public keys and manual/unverified provenance. The user verifies hardware
 and fingerprints, handles seed/backup/PIN/passkey steps, reviews the exact
-configuration, and chooses **Create this Vault** in Tenshu. Actual key
+configuration, and chooses **Create this Vault** in COINCUBE Desktop. Actual key
 changes require a fresh proposal; aliases and other native configuration are
 bound by the final native review. No MCP call can approve creation or skip these
 steps. The existing local node restriction and once-only creation admission apply.
@@ -524,7 +524,7 @@ The returned `fee_sats` is the actual fee. `fee_rate_sat_vb` is an estimate:
 the fee divided by the maximum signed virtual size, rounded up. That size
 includes the descriptor's maximum witness satisfaction and the SegWit marker
 and flag, because the unsigned transaction's witness is still empty. A shorter
-real signature can make the broadcast rate higher than this estimate. Tenshu
+real signature can make the broadcast rate higher than this estimate. COINCUBE Desktop
 rejects a draft when the estimate is already above the requested rate or the
 fee is above the ceiling, before committing a change index. It stores the
 requested rate on the PSBT. Before broadcast, it rechecks the total fee against
@@ -532,11 +532,11 @@ the ceiling and checks the fee rate against the same maximum signed size used
 to prepare the draft. A shorter real signature does not cause a refusal.
 For MCP drafts, recipient and change amounts must be at least their output
 script's network dust limit. The exact minimum is accepted, including a
-P2WPKH output at 294 sats. Ordinary spends keep Tenshu's 500-sat wallet floor.
-Tenshu verifies the actual inputs, recipient amounts, wallet-owned change,
+P2WPKH output at 294 sats. Ordinary spends keep COINCUBE Desktop's 500-sat wallet floor.
+COINCUBE Desktop verifies the actual inputs, recipient amounts, wallet-owned change,
 unsigned state and total fee before returning a minimized summary. The review
-screen stays view-only until the user chooses Sign in Tenshu. The raw PSBT,
-input identities and change address stay inside Tenshu. Request IDs are immutable
+screen stays view-only until the user chooses Sign in COINCUBE Desktop. The raw PSBT,
+input identities and change address stay inside COINCUBE Desktop. Request IDs are immutable
 after an engine attempt: exact retries return the same draft or error without a
 new change reservation, and changed input conflicts. At most eight engine
 construction attempts (including failures) are retained per client/unlock. Use `tenshu_get_prepared_transaction` with the

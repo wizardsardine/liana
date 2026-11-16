@@ -1265,7 +1265,9 @@ fn section_content<'a>(
                 )
                 .tag(CopyText::ThisDevice.get())
                 .trailing_tag()
-                .description(localized_copy("Public download counts for Tenshu releases"))
+                .description(localized_copy(
+                    "Public download counts for COINCUBE Desktop releases",
+                ))
                 .into(),
             );
             rows.push(
@@ -1282,7 +1284,7 @@ fn section_content<'a>(
                 .tag(CopyText::ThisDevice.get())
                 .trailing_tag()
                 .description(localized_copy(
-                    "Licenses for the software Tenshu is built on",
+                    "Licenses for the software COINCUBE Desktop is built on",
                 ))
                 .into(),
             );

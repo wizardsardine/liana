@@ -1420,10 +1420,10 @@ fn connect_node_choices<'a>(
     let node_description = if install_node {
         let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
         localized_format!(
-                    "Tenshu will download and configure a pruned {} node \
+                    "COINCUBE Desktop will download and configure a pruned {} node \
                     (~{} GB of disk space required). \
                     Once synced, your Vault will automatically switch to your local node.",
-                    "Tenshu descargará y configurará un nodo {} podado \
+                    "COINCUBE Desktop descargará y configurará un nodo {} podado \
                     (se necesitan unos {} GB de espacio en disco). \
                     Cuando termine de sincronizarse, tu Vault cambiará automáticamente a tu nodo local.",
                     node_flavor.display_name(),
@@ -1506,14 +1506,14 @@ fn connect_node_choices<'a>(
                             ui_instance,
                             "advanced-existing",
                             localized_copy("I already have a node"),
-                            localized_copy("Connect Tenshu to a Bitcoin node already running locally or remotely."),
+                            localized_copy("Connect COINCUBE Desktop to a Bitcoin node already running locally or remotely."),
                             message::SelectBitcoindTypeMsg::UseExternal(true),
                         ))
                         .push(node_option_card(
                             ui_instance,
                             "advanced-local",
                             localized_copy("Install a node only"),
-                            localized_copy("Tenshu installs a pruned node on your computer without COINCUBE | Connect as a fallback."),
+                            localized_copy("COINCUBE Desktop installs a pruned node on your computer without COINCUBE | Connect as a fallback."),
                             message::SelectBitcoindTypeMsg::UseExternal(false),
                         ))
                         .push(node_option_card(
@@ -1559,14 +1559,14 @@ pub fn select_bitcoind_type<'a>(
         // keeps each description next to the action it explains.
         let local_description = if network == bitcoin::Network::Regtest {
             localized_copy(
-                "Tenshu will install a pruned node on your computer. No local node required beforehand.",
+                "COINCUBE Desktop will install a pruned node on your computer. No local node required beforehand.",
             )
             .to_owned()
         } else {
             let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
             localized_format!(
-                "Tenshu will download and configure a pruned Bitcoin node on your computer (~{} GB of disk space required).",
-                "Tenshu descargará y configurará un nodo Bitcoin podado en tu computadora (se necesitan unos {} GB de espacio en disco).",
+                "COINCUBE Desktop will download and configure a pruned Bitcoin node on your computer (~{} GB of disk space required).",
+                "COINCUBE Desktop descargará y configurará un nodo Bitcoin podado en tu computadora (se necesitan unos {} GB de espacio en disco).",
                 disk_gb
             )
         };
@@ -1578,7 +1578,7 @@ pub fn select_bitcoind_type<'a>(
                 "existing",
                 localized_copy("I already have a node"),
                 localized_copy(
-                    "Connect Tenshu to a Bitcoin node already running locally or remotely.",
+                    "Connect COINCUBE Desktop to a Bitcoin node already running locally or remotely.",
                 ),
                 message::SelectBitcoindTypeMsg::UseExternal(true),
             ))
@@ -1644,8 +1644,10 @@ fn node_installation_feedback<'a>(
             .align_y(Alignment::Center)
             .push(icon::square_check_icon().style(theme::text::success))
             .push(
-                text(localized_copy("Tenshu-managed bitcoind already installed"))
-                    .style(theme::text::success),
+                text(localized_copy(
+                    "COINCUBE-managed bitcoind already installed",
+                ))
+                .style(theme::text::success),
             )
     } else if let Some(DownloadState::Downloading { progress, .. }) = download_state {
         Row::new()
@@ -3910,7 +3912,7 @@ mod policy_layout_tests {
         assert!(!mounted
             .labels
             .iter()
-            .any(|(text, _)| text == "Tenshu-managed bitcoind already installed"));
+            .any(|(text, _)| text == "COINCUBE-managed bitcoind already installed"));
         let failure = Err(StartInternalBitcoindError::ExecutableNotFound);
         let mut mounted = MountedPolicy::default();
         let messages = inspect_entry(

@@ -2,7 +2,7 @@
 
 **Why:** `releases.yml` builds the MSI with `cargo wix` and uploads it with **no Authenticode signature**. `docs/USAGE.md` admits it: *"We do not yet distribute codesigned binaries for Windows at this time."*
 
-Every Windows user installing Tenshu sees a SmartScreen warning naming an **Unknown publisher**, and has to click through it. For a Bitcoin wallet that is worse than cosmetic: it trains users to dismiss precisely the warning that would otherwise flag a trojaned installer, and it leaves us with no way to tell a real Tenshu MSI from a hostile one.
+Every Windows user installing COINCUBE Desktop sees a SmartScreen warning naming an **Unknown publisher**, and has to click through it. For a Bitcoin wallet that is worse than cosmetic: it trains users to dismiss precisely the warning that would otherwise flag a trojaned installer, and it leaves us with no way to tell a real COINCUBE Desktop MSI from a hostile one.
 
 **Target: signed MSI before public Beta.** Lead time is the risk, not effort — start the identity validation early, because the signing wiring itself is a couple of hours.
 

@@ -1819,11 +1819,11 @@ impl Installer {
 pub fn daemon_check(cfg: coincubed::config::Config) -> Result<(), Error> {
     // Start Daemon to check correctness of installation
     match coincubed::DaemonHandle::start_default(cfg, false) {
-        Ok(daemon) => daemon
-            .stop()
-            .map_err(|e| Error::Unexpected(format!("Failed to stop Tenshu daemon: {}", e))),
+        Ok(daemon) => daemon.stop().map_err(|e| {
+            Error::Unexpected(format!("Failed to stop COINCUBE Desktop daemon: {}", e))
+        }),
         Err(e) => Err(Error::Unexpected(format!(
-            "Failed to start Tenshu daemon: {}",
+            "Failed to start COINCUBE Desktop daemon: {}",
             e
         ))),
     }

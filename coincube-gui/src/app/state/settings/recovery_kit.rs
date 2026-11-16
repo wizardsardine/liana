@@ -1518,7 +1518,7 @@ fn upload_hold(cache: &Cache) -> Option<&'static str> {
         S::Offline => Some("No internet connection. Back up once you’re back online."),
         S::Connecting => Some("Connect is still starting. Back up in a moment."),
         S::Reconnecting | S::Renewing => {
-            Some("Tenshu can’t reach Connect right now. Back up once it’s back.")
+            Some("COINCUBE Desktop can’t reach Connect right now. Back up once it’s back.")
         }
         S::RenewFailed => Some(
             "Couldn’t reconnect this computer to Connect. Press Try again in the Connect \

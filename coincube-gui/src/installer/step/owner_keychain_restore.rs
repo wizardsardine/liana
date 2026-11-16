@@ -75,7 +75,9 @@ fn parse_owner_artifacts(
                 let blob: SeedBlob = serde_json::from_slice(&plaintext)
                     .map_err(|e| format!("Seed backup is invalid: {e}"))?;
                 if blob.version != BLOB_VERSION {
-                    return Err("This seed backup needs a newer version of Tenshu.".into());
+                    return Err(
+                        "This seed backup needs a newer version of COINCUBE Desktop.".into(),
+                    );
                 }
                 seed = Some(blob);
             }

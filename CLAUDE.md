@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-COINCUBE | Tenshu — a desktop Bitcoin wallet (Rust, iced GUI) hard-forked from Wizardsardine's Liana (v13). Each **Cube** (PIN- or passkey-encrypted container) holds up to three wallets: a **Vault** (miniscript multisig with time-locked recovery paths, served by the `coincubed` daemon), a **Liquid** wallet (Breez Liquid SDK, in-process) and a **Spark** wallet (Breez Spark SDK, out-of-process). A server-side **Connect** account (the sibling `coincube-api` repo) adds auth/OTP, billing, Cube registration, multi-signer Keychain phone signing over gRPC, duress and recovery features.
+COINCUBE Desktop (formerly COINCUBE | Tenshu; the OS shows it as "COINCUBE") — a desktop Bitcoin wallet (Rust, iced GUI) hard-forked from Wizardsardine's Liana (v13). Each **Cube** (PIN- or passkey-encrypted container) holds up to three wallets: a **Vault** (miniscript multisig with time-locked recovery paths, served by the `coincubed` daemon), a **Liquid** wallet (Breez Liquid SDK, in-process) and a **Spark** wallet (Breez Spark SDK, out-of-process). A server-side **Connect** account (the sibling `coincube-api` repo) adds auth/OTP, billing, Cube registration, multi-signer Keychain phone signing over gRPC, duress and recovery features.
 
 ## Build, lint, test
 

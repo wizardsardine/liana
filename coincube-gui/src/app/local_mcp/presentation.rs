@@ -146,11 +146,11 @@ const INTRO: &str =
     "Let AI apps on this computer use this Cube's Vault, with only the access you choose.";
 #[cfg(feature = "mcp-proposals")]
 const SETUP_INTRO: &str =
-    "Let an AI app help plan a new Vault. You choose the keys and create it in Tenshu.";
+    "Let an AI app help plan a new Vault. You choose the keys and create it in COINCUBE Desktop.";
 const ENABLE_ON: &str = "Clients work while this Cube is unlocked.";
 const ENABLE_SUSPENDED: &str = "Clients are suspended after a storage error.";
 const ENABLE_OFF: &str = "Clients are paused. Turning on grants no new access.";
-const UNSUPPORTED: &str = "Needs a Vault run by Tenshu on Bitcoin (mainnet, Testnet4 or Regtest) or Bitcoin Blake2b (mainnet or Testnet4). Spark, Liquid, imported wallets and external daemons aren't supported.";
+const UNSUPPORTED: &str = "Needs a Vault run by COINCUBE Desktop on Bitcoin (mainnet, Testnet4 or Regtest) or Bitcoin Blake2b (mainnet or Testnet4). Spark, Liquid, imported wallets and external daemons aren't supported.";
 const PAIR_HINT: &str = "Access lasts until you revoke it.";
 pub(super) const CAUTION: &str =
     "Local isn't private. What a client reads can reach its AI provider.";
@@ -275,7 +275,7 @@ fn kinds_of_access<'a>(setup: bool) -> Ui<'a> {
         rows.push(
             page::row(localized_copy("Prepare a wallet from public keys"))
                 .description(localized_copy(
-                    "You verify each key and create the Vault in Tenshu.",
+                    "You verify each key and create the Vault in COINCUBE Desktop.",
                 ))
                 .into(),
         );
@@ -288,7 +288,7 @@ fn kinds_of_access<'a>(setup: bool) -> Ui<'a> {
         rows.push(
             page::row(localized_copy("Prepare unsigned transactions"))
                 .description(localized_copy(
-                    "Drafts payments. You review and sign in Tenshu.",
+                    "Drafts payments. You review and sign in COINCUBE Desktop.",
                 ))
                 .into(),
         );
@@ -562,12 +562,12 @@ fn proposal_card<'a>(
             .push(muted(localized_copy(if keys_ready {
                 "A valid descriptor doesn't prove separate owners or backups. Check each key on its device."
             } else {
-                "Select real keys in Tenshu."
+                "Select real keys in COINCUBE Desktop."
             })))
             .push(action(
                 id,
                 if keys_ready {
-                    "Review prepared wallet in Tenshu"
+                    "Review prepared wallet in COINCUBE Desktop"
                 } else {
                     "Review proposal and select keys"
                 },
@@ -663,15 +663,15 @@ fn transaction_card(client_id: &str, draft: Prepared) -> Ui<'static> {
         .push(transaction_field(
             localized_copy("Inputs"),
             localized_format!(
-                "{} selected by Tenshu",
-                "{} seleccionadas por Tenshu",
+                "{} selected by COINCUBE Desktop",
+                "{} seleccionadas por COINCUBE Desktop",
                 draft.input_count
             ),
             false,
         ))
         .push(transaction_field(
             localized_copy("Signatures"),
-            localized_copy("None yet · signing happens in Tenshu's review"),
+            localized_copy("None yet · signing happens in COINCUBE Desktop's review"),
             false,
         ));
 
@@ -709,7 +709,7 @@ fn transaction_card(client_id: &str, draft: Prepared) -> Ui<'static> {
             .align_y(iced::Alignment::Center),
         )
         .push(muted(localized_copy(
-            "Drafted by this client, which can't sign or send. You review and sign in Tenshu.",
+            "Drafted by this client, which can't sign or send. You review and sign in COINCUBE Desktop.",
         )))
         .push(page::status(status, localized_copy(status_text)))
         .push(details)
@@ -1261,7 +1261,9 @@ fn name_field(settings: &Settings) -> Ui<'_> {
             view::Message::FocusAction,
         )
         .placeholder("Claude Desktop")
-        .hint(localized_copy("A label only; Tenshu can't verify the app."))
+        .hint(localized_copy(
+            "A label only; COINCUBE Desktop can't verify the app.",
+        ))
         .on_input(|value| message(Message::ClientName(value))),
     )
     .max_width(480)
@@ -1390,7 +1392,7 @@ fn pairing_card(settings: &Settings) -> Ui<'_> {
                     localized_copy("Prepare unsigned transactions"),
                 )
                 .description(localized_copy(
-                    "No balances or history. You sign in Tenshu.",
+                    "No balances or history. You sign in COINCUBE Desktop.",
                 ))],
                 chosen,
                 view::Message::FocusAction,
@@ -1550,7 +1552,7 @@ fn setup_card(settings: &Settings) -> Ui<'_> {
             localized_copy("Prepare a wallet from public keys"),
         )
         .description(localized_copy(
-            "Its AI provider may see the public keys. You verify each in Tenshu.",
+            "Its AI provider may see the public keys. You verify each in COINCUBE Desktop.",
         )),
     ];
     body = body.push(name_field(settings)).push(

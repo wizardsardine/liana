@@ -522,7 +522,7 @@ fn lightning_address_body<'a>(
                 ),
         )
         .push(p2_regular(localized_copy(
-            "Anyone with a Lightning wallet can pay this address, even while Tenshu is closed.",
+            "Anyone with a Lightning wallet can pay this address, even while COINCUBE Desktop is closed.",
         )))
         .push(
             button::transparent_border(None, localized_copy("Change in Settings"))
@@ -1173,7 +1173,7 @@ fn phase_body<'a>(
                 ),
                 SparkReceiveMethod::LightningAddress => (
                     localized_copy("Lightning address"),
-                    localized_copy("Anyone with a Lightning wallet can pay this address, even while Tenshu is closed."),
+                    localized_copy("Anyone with a Lightning wallet can pay this address, even while COINCUBE Desktop is closed."),
                 ),
                 SparkReceiveMethod::Spark => (
                     localized_copy("Spark address"),

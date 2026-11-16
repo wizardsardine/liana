@@ -68,7 +68,7 @@ fn check_worldview_art(artwork: ArtworkStyle, art_label: &str) {
                 theme,
                 (1024, 768),
             );
-            assert!(failed.contains("Tenshu failed to start"));
+            assert!(failed.contains("COINCUBE Desktop failed to start"));
             let history = capture::inspect(
                 &format!("worldview-{name}-{art_label}-empty-history"),
                 SparkTransactionsView {

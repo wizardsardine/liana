@@ -30,7 +30,7 @@ pub fn about_section<'a>(
 /// only appears when this Cube runs it locally.
 fn versions(coincubed_version: Option<&str>) -> Vec<(&'static str, String)> {
     let mut versions = vec![
-        ("Tenshu", crate::VERSION.to_string()),
+        ("COINCUBE Desktop", crate::VERSION.to_string()),
         ("Interface", format!("coincube-gui {}", crate::VERSION)),
     ];
     if let Some(version) = coincubed_version {
@@ -107,7 +107,7 @@ mod tests {
         for label in [
             "Version",
             "Copy version details",
-            "Tenshu",
+            "COINCUBE Desktop",
             "Interface",
             "Wallet service",
             "coincubed 0.9.0-dev",

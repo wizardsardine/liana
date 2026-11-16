@@ -4819,11 +4819,8 @@ mod tests {
                 assert!(labels.0.iter().any(|text| text == "In use · Local Node"));
                 assert!(labels.0.iter().any(|text| text == "Catching up 99.9%"));
                 assert!(!labels.0.iter().any(|text| text == "Switch to local node"));
-                assert!(labels
-                    .0
-                    .iter()
-                    .any(|text| text
-                        == "All steps complete. Tenshu reads this Vault from your node."));
+                assert!(labels.0.iter().any(|text| text
+                    == "All steps complete. COINCUBE Desktop reads this Vault from your node."));
             }
         }
     }

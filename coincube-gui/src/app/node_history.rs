@@ -387,7 +387,7 @@ impl Context {
                     saved.phase = Phase::FetchingForLoad;
                     saved.wallet_ready = false;
                     saved.rewind(Some(
-                        "The local wallet had to be reloaded, so Tenshu scans every block again."
+                        "The local wallet had to be reloaded, so COINCUBE Desktop scans every block again."
                             .into(),
                     ));
                     history::write_json(&path, &saved)?;
@@ -467,7 +467,7 @@ impl Context {
                 saved.phase = Phase::Paused;
                 // Resuming scans every block, the check single blocks missed.
                 saved.rewind(Some(
-                    "Checking single blocks left Connect and your node disagreeing, so Tenshu scans every block."
+                    "Checking single blocks left Connect and your node disagreeing, so COINCUBE Desktop scans every block."
                         .into(),
                 ));
                 saved.last_error = status.error.clone();

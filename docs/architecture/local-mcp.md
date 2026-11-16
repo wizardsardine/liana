@@ -2,7 +2,7 @@
 
 ## Implementation
 
-Tenshu is a Rust Cargo workspace with an Iced 0.14 desktop, not a web frontend.
+COINCUBE Desktop is a Rust Cargo workspace with an Iced 0.14 desktop, not a web frontend.
 `coincube-gui/src/gui/tab.rs` owns unlocked `App` instances and lock transitions.
 `app/mod.rs` owns the active Cube, daemon, wallet, settings panels and shutdown.
 `daemon/mod.rs::Daemon` is the existing async wallet interface. The embedded
@@ -198,7 +198,7 @@ for reads; old proposal IDs and grants are not revived. Existing hardware
 registration/backup preparatory actions retain their native confirmations and
 are distinct from the wallet/daemon persistence admission boundary.
 
-Creation uses native-configured Bitcoin nodes. Fork creation requires Tenshu's
+Creation uses native-configured Bitcoin nodes. Fork creation requires COINCUBE Desktop's
 isolated managed Knots Blake2b backend; review classifies its exact chain and
 managed configuration without creating wallet files. The existing install path
 then rechecks the saved beta preference, global feature availability and exact
@@ -220,7 +220,7 @@ Shared Bitcoin/Blake2b address encodings cannot override the selected chain.
 
 The wallet engine performs coin selection and constructs the PSBT. The service
 validates the actual outputs, wallet-owned change, unsigned state and fee limits
-before retaining the draft; raw PSBTs and input/change identities stay in Tenshu.
+before retaining the draft; raw PSBTs and input/change identities stay in COINCUBE Desktop.
 Exact request retries return the same cached result; changed content conflicts.
 The separate native review opens that exact draft without authorizing a signature
 or broadcast. Existing native signing and broadcast checks remain mandatory.

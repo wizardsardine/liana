@@ -122,7 +122,7 @@ case "$MODE" in
                 echo "copy of the certificate, or use one of:" >&2
                 echo >&2
                 echo "  $0 $PROFILE --identity \"Developer ID Application: COINCUBE TECHNOLOGY LLC\"" >&2
-                echo "  $0 $PROFILE --signed-bundle /path/to/Tenshu.app" >&2
+                echo "  $0 $PROFILE --signed-bundle /path/to/COINCUBE.app" >&2
                 exit 2
             }
         done
@@ -260,7 +260,7 @@ IDENT_PY
         # `--extract-certificates` writes the chain as DER, leaf first, using its
         # argument as a filename PREFIX — which may include a directory. Writing
         # straight into $WORK avoids cd'ing, which would break a RELATIVE bundle
-        # path like the `Tenshu.app` the workflows pass.
+        # path like the `COINCUBE.app` the workflows pass.
         if ! err=$(codesign -d --extract-certificates="$WORK/chain" "$BUNDLE_PATH" 2>&1); then
             echo "could not read a signature from $BUNDLE_PATH" >&2
             echo "  $err" >&2

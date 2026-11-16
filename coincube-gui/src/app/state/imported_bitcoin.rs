@@ -3890,7 +3890,7 @@ impl ImportedBitcoinPanel {
         ) {
             content = content.push(
                 caption(localized_copy(
-                    "Progress updates automatically. Keep Tenshu open while it scans.",
+                    "Progress updates automatically. Keep COINCUBE Desktop open while it scans.",
                 ))
                 .style(theme::text::secondary),
             );
