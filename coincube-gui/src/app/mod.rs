@@ -14375,6 +14375,9 @@ pub(crate) mod shell_tests {
             Arc::new(EmbeddedDaemon::unstarted_for_test(cfg, None));
         let chain = crate::chain::ChainId::Bitcoin;
         let cache = Cache {
+            // Node tasks use the cached directory, not App::datadir. Keep both
+            // bound to this fixture instead of the empty default (the cwd).
+            datadir_path: CoincubeDirectory::new(root.to_path_buf()),
             fiat_chain: chain,
             network: chain.bitcoin_network(),
             btcb2_server_enabled: true,
@@ -17534,6 +17537,7 @@ mod local_node_sync_tests {
         let root = std::env::temp_dir().join(format!("history-poll-{}", uuid::Uuid::new_v4()));
         let _guard = crate::app::session::test_guard();
         let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        assert_eq!(app.cache.datadir_path.path(), root.as_path());
         let config = node(8333);
         let mut daemon_config = app.daemon.as_ref().unwrap().config().unwrap().clone();
         daemon_config.pending_bitcoind = Some(config.clone());
@@ -17598,6 +17602,7 @@ mod local_node_sync_tests {
             std::env::temp_dir().join(format!("history-settings-owner-{}", uuid::Uuid::new_v4()));
         let _guard = crate::app::session::test_guard();
         let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        assert_eq!(app.cache.datadir_path.path(), root.as_path());
         let config = node(8333);
         let mut daemon_config = app.daemon.as_ref().unwrap().config().unwrap().clone();
         daemon_config.pending_bitcoind = Some(config.clone());
