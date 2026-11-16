@@ -96,7 +96,8 @@ def fixture(chain):
 @pytest.mark.parametrize('chain', public.CHAINS)
 def test_independent_unfunded_verifier_requires_exact_primary_and_recovery_signatures(chain):
     psbt,identity=fixture(chain);proof=public.verify(psbt.serialize(),identity,chain)
-    assert proof['verified_key_count']==2 and proof['verified_paths']==[[0,0],[2,0]]
+    assert proof['verified_key_count']==2
+    assert proof['verified_paths']==[[0,0],[2,0]]
     assert proof['sighash']==(1 if chain==public.CHAINS[0] else 0x21)
     assert proof['funded'] is proof['recognized_utxo'] is proof['gui'] is proof['broadcast'] is False
 
@@ -119,7 +120,8 @@ def test_independent_verifier_refuses_bad_domain_origins_outputs_and_signature_s
         sigs=psbt.i[0].map.pop(field);psbt.i[0].map[2 if field==0xfc else 0xfc]={k[10:] if field==0xfc else b'\x08coincube\x00'+k:v for k,v in sigs.items()}
     else:
         key=next(iter(psbt.i[0].map[field]));value=psbt.i[0].map[field][key];psbt.i[0].map[field][key]=value[:-2]+bytes([value[-2]^1])+value[-1:]
-    with pytest.raises(Failed): public.verify(psbt.serialize(),identity,chain)
+    serialized = psbt.serialize()
+    with pytest.raises(Failed): public.verify(serialized,identity,chain)
 
 
 @pytest.mark.parametrize('raw',[b'psbt\xff\x01\x00\x01x\x01\x00\x01y\x00', b'psbt\xff\xfd\x01\x00\x00\x01x\x00'])
@@ -304,8 +306,9 @@ def test_completed_native_proof_revalidation_needs_no_capacity_or_cleanup_contex
 def test_cleanup_rejects_untyped_noop_admission():
     from harness import qa_cleanup
     runner = SimpleNamespace()
+    untyped_admission = SimpleNamespace(runner=runner, observe=lambda: None)
     with pytest.raises(Failed, match='ADMISSION'):
-        qa_cleanup.cleanup_admission(runner, SimpleNamespace(runner=runner, observe=lambda: None))
+        qa_cleanup.cleanup_admission(runner, untyped_admission)
 
 
 def test_native_legacy_operation_has_immediate_before_after_identity_guards(monkeypatch):
@@ -316,7 +319,8 @@ def test_native_legacy_operation_has_immediate_before_after_identity_guards(monk
     admission.runner = runner
     admission.observe = lambda: runner.observe()
     def operation(actual, record):
-        assert actual is runner and record == {'fixture': 'exact'}
+        assert actual is runner
+        assert record == {'fixture': 'exact'}
         calls.append('backup')
     qa_cleanup.cleanup_local(admission, operation, runner, {'fixture': 'exact'})
     assert calls == ['identity', 'backup', 'identity']
@@ -366,7 +370,8 @@ def test_narrow_abandonment_requires_live_observer_and_never_claims_native_accep
     try:
         marker = suite.abandon_capacity({'email':'qa@example.invalid','tokens':{'access_token':'offline-only'}},5,old,archive)
         assert len(observed) == 1
-        assert marker['native_acceptance'] is False and marker['all_old_material_retained'] is True
+        assert marker['native_acceptance'] is False
+        assert marker['all_old_material_retained'] is True
         assert before == ((old/'checkpoint.json').read_bytes(), (case/'state.json').read_bytes())
         first = suite.journal.data['artifacts']['capacity_abandonment']
         assert suite.abandon_capacity({'email':'qa@example.invalid','tokens':{'access_token':'offline-only'}},5,old,archive) == marker
@@ -467,7 +472,8 @@ def test_delayed_retirement_refreshes_current_token_without_resetting_completed_
         saved=deepcopy(suite.journal.data['artifacts']['testnet4']['bind_auth'])
         before=list(calls);tokens.clear()
         suite.execute({'tokens':{'access_token':'current-unit-token'}},1)
-        assert tokens and all(token=='current-unit-token' for token in tokens)
+        assert tokens
+        assert all(token=='current-unit-token' for token in tokens)
         assert suite.journal.data['artifacts']['testnet4']['bind_auth']==saved
         assert ('testnet4','create_export') not in calls[len(before):]
         assert ('testnet4','refresh_auth') in calls[len(before):]
@@ -484,8 +490,12 @@ def test_failed_child_identity_is_durable_before_wait_and_never_contains_token(t
         native.process(executable,{'action':'refresh_auth','config':{'unit':'offline-only'}},tmp_path,access_token='unit-token-must-not-persist')
     rows=list((tmp_path/'native-processes').glob('*.json'));assert len(rows)==1
     raw=rows[0].read_text();identity=json.loads(raw)
-    assert identity['pid']>0 and identity['start_id'] and identity['exited'] is True and identity['returncode']==2
-    assert identity['code']=='native_unit_failure' and 'unit-token-must-not-persist' not in raw
+    assert identity['pid']>0
+    assert identity['start_id']
+    assert identity['exited'] is True
+    assert identity['returncode']==2
+    assert identity['code']=='native_unit_failure'
+    assert 'unit-token-must-not-persist' not in raw
     assert rows[0].stat().st_mode&0o077==0
 
 
@@ -514,7 +524,8 @@ def test_initial_identity_write_failure_reaps_child_without_action_payload(tmp_p
     monkeypatch.setattr(native,'atomic_write',fail_write)
     with pytest.raises(Blocked,match='Native process unavailable'):
         native.process(executable,{'action':'reopen_sign','config':{}},tmp_path)
-    assert len(children)==1 and children[0].poll() is not None
+    assert len(children)==1
+    assert children[0].poll() is not None
     with pytest.raises(ChildProcessError):os.waitpid(children[0].pid,os.WNOHANG)
     assert not marker.exists()
 
@@ -588,8 +599,11 @@ def test_owned_awake_startup_failure_blocks_before_suite(monkeypatch):
     monkeypatch.setattr(native.sys,'platform','darwin')
     def unavailable(*args,**kwargs):raise OSError('unit failure')
     monkeypatch.setattr(native.subprocess,'Popen',unavailable)
+    awake = native.keep_awake()
+    unexpected_entry = pytest.fail.Exception('must not enter suite')
     with pytest.raises(Blocked):
-        with native.keep_awake():pytest.fail('must not enter suite')
+        with awake:
+            raise unexpected_entry
 
 
 @pytest.mark.parametrize('action,expected',[('wipe_original',1380),('retire_remote',1380),('retire_orphan_215',1380),('restore',660),('reopen_sign',660)])
