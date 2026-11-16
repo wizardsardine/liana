@@ -5,7 +5,7 @@ from icnsutil import IcnsFile
 
 # Input PNGs (should be at least 1024x1024)
 # macOS: Big-Sur-style tile (white squircle + margin + shadow) — Tenshu artwork
-input_file = "coincube-ui/static/logos/tenshu-macos-1024.png"
+input_file = "coincube-ui/static/logos/coincube-macos-1024.png"
 # Windows: full-bleed white square — same Tenshu artwork
 ico_input_file = "coincube-ui/static/logos/tenshu-square-1024.png"
 output_file = "contrib/release/macos/Coincube.icns"

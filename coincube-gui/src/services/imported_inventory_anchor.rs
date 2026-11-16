@@ -20,7 +20,11 @@ const MAX_FIELD: usize = 512;
 const MAX_ITEM: usize = 8_192;
 const MAX_RETIRE: usize = 32;
 #[cfg(all(not(test), target_os = "macos"))]
-const SERVICE: &str = "io.coincube.tenshu.imported-inventory-anchor.v1";
+const SERVICE: &str = "io.coincube.desktop.imported-inventory-anchor.v1";
+/// Service name used by Tenshu-era builds. [`load_bytes`] migrates an anchor
+/// found only here; see `apple::migrate_legacy`.
+#[cfg(all(not(test), target_os = "macos"))]
+const LEGACY_SERVICE: &str = "io.coincube.tenshu.imported-inventory-anchor.v1";
 
 #[cfg(all(target_os = "macos", debug_assertions, feature = "native-anchor-probe"))]
 mod native_probe_service {
@@ -35,7 +39,7 @@ mod native_probe_service {
     }
 
     pub(super) fn with<T>(run_id: uuid::Uuid, action: impl FnOnce() -> T) -> T {
-        let service = format!("io.coincube.tenshu.native-imported-anchor-probe.{run_id}");
+        let service = format!("io.coincube.desktop.native-imported-anchor-probe.{run_id}");
         SERVICE.with(|slot| {
             assert!(slot.borrow().is_none(), "nested native anchor probe");
             *slot.borrow_mut() = Some(service);
@@ -75,6 +79,20 @@ fn service() -> String {
         return synthetic;
     }
     SERVICE.to_owned()
+}
+
+/// Read the current anchor item, migrating a Tenshu-era one if that is all
+/// there is. Synthetic probe services have no legacy counterpart.
+#[cfg(all(not(test), target_os = "macos"))]
+fn load_bytes(account: &str) -> Result<Option<Vec<u8>>, String> {
+    let service = service();
+    if let Some(bytes) = apple::load(&service, account)? {
+        return Ok(Some(bytes));
+    }
+    if service != SERVICE {
+        return Ok(None);
+    }
+    apple::migrate_legacy(SERVICE, LEGACY_SERVICE, account)
 }
 
 pub(super) const fn supported() -> bool {
@@ -156,7 +174,7 @@ pub(super) fn load(scope: &Scope) -> Result<Option<Anchor>, String> {
     }
     #[cfg(all(not(test), target_os = "macos"))]
     {
-        let bytes = apple::load(&service(), &account)?;
+        let bytes = load_bytes(&account)?;
         let anchor = bytes.map(|bytes| Anchor::decode(&bytes)).transpose()?;
         if anchor.as_ref().is_some_and(|anchor| &anchor.scope != scope) {
             return Err("Imported inventory anchor belongs to another wallet.".into());
@@ -192,7 +210,7 @@ pub(in crate::services) fn absent_for_operation(
     }
     #[cfg(all(not(test), target_os = "macos"))]
     {
-        Ok(apple::load(&service(), &account)?.is_none())
+        Ok(load_bytes(&account)?.is_none())
     }
     #[cfg(all(not(test), not(target_os = "macos")))]
     {

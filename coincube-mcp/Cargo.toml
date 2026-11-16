@@ -12,7 +12,7 @@ native-transactions = []
 adapter = ["dep:rmcp"]
 
 [[bin]]
-name = "tenshu-mcp"
+name = "coincube-mcp"
 path = "src/main.rs"
 required-features = ["adapter"]
 

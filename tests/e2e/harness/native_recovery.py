@@ -131,7 +131,7 @@ def build(cfg, binding):
                 executable.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 import plistlib
                 with (bundle / 'Contents/Info.plist').open('wb') as f:
-                    plistlib.dump({'CFBundleIdentifier': 'io.coincube.tenshu', 'CFBundleExecutable': 'recovery_kit_native',
+                    plistlib.dump({'CFBundleIdentifier': 'io.coincube.desktop', 'CFBundleExecutable': 'recovery_kit_native',
                                   'CFBundleName': 'NativeRecoveryQA', 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1'}, f)
                 shutil.copy2(checkout / 'target/debug/examples/recovery_kit_native', executable)
                 shutil.copy2(release / 'embedded.provisionprofile', bundle / 'Contents/embedded.provisionprofile')

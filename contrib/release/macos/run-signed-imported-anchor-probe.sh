@@ -49,7 +49,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>io.coincube.tenshu</string>
+  <key>CFBundleIdentifier</key><string>io.coincube.desktop</string>
   <key>CFBundleExecutable</key><string>Probe</string>
   <key>CFBundleName</key><string>Imported Anchor Probe</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -60,7 +60,7 @@ codesign -f -s "$SIGN_IDENTITY" --options runtime --entitlements "$ENTITLEMENTS"
 codesign --verify --strict "$BUNDLE"
 "$REPO_ROOT/contrib/release/macos/check-profile-authorises-cert.sh" \
     "$PROFILE" --signed-bundle "$BUNDLE"
-codesign -d --entitlements - "$BUNDLE" 2>&1 | grep -q '8UVR249AD5.io.coincube.tenshu'
+codesign -d --entitlements - "$BUNDLE" 2>&1 | grep -q '8UVR249AD5.io.coincube.desktop'
 
 # Each phase is a fresh signed process against one disposable empty repository.
 # The fault seam changes only synthetic Security.framework queries in this

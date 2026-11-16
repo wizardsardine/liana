@@ -564,13 +564,14 @@ async fn capability_discovery_is_static_without_desktop_access() {
 #[cfg(feature = "adapter")]
 #[tokio::test]
 async fn actual_stdio_binary_only_emits_protocol_and_exits_on_eof() {
-    stdio_companion(std::ffi::OsStr::new(env!("CARGO_BIN_EXE_tenshu-mcp"))).await;
+    stdio_companion(std::ffi::OsStr::new(env!("CARGO_BIN_EXE_coincube-mcp"))).await;
 }
 #[cfg(feature = "adapter")]
 #[tokio::test]
-#[ignore = "requires extracted installed companion via TENSHU_MCP_TEST_ADAPTER"]
+#[ignore = "requires extracted installed companion via COINCUBE_MCP_TEST_ADAPTER"]
 async fn extracted_adapter_stdio() {
-    let binary = std::env::var_os("TENSHU_MCP_TEST_ADAPTER").expect("provide installed companion");
+    let binary =
+        std::env::var_os("COINCUBE_MCP_TEST_ADAPTER").expect("provide installed companion");
     stdio_companion(&binary).await;
 }
 #[cfg(feature = "adapter")]
@@ -582,8 +583,8 @@ async fn stdio_companion(binary: &std::ffi::OsStr) {
     };
     let server = start(Arc::new(Fixture::default()), [true; 3]);
     let mut child = Command::new(binary)
-        .env("TENSHU_MCP_SOCKET", &server.socket)
-        .env("TENSHU_MCP_CREDENTIAL", server.grant.credential())
+        .env("COINCUBE_MCP_SOCKET", &server.socket)
+        .env("COINCUBE_MCP_CREDENTIAL", server.grant.credential())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -599,7 +600,7 @@ async fn stdio_companion(binary: &std::ffi::OsStr) {
         .unwrap()
         .unwrap();
     let value: serde_json::Value = serde_json::from_str(&response).unwrap();
-    assert_eq!(value["result"]["serverInfo"]["name"], "tenshu-mcp");
+    assert_eq!(value["result"]["serverInfo"]["name"], "coincube-mcp");
     stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"tenshu_get_capabilities\",\"arguments\":{}}}\n").await.unwrap();
     let response = tokio::time::timeout(Duration::from_secs(3), stdout.next_line())
         .await

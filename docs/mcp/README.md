@@ -29,17 +29,17 @@ Use the repository's pinned Rust toolchain and normal desktop prerequisites
 needed by the MCP executable.
 
 ```sh
-make build               # Spark bridge, desktop and tenshu-mcp
+make build               # Spark bridge, desktop and coincube-mcp
 make run                 # builds bridge + adapter, runs desktop
 # Adapter alone, for development:
 cargo build -p coincube-mcp --features adapter --locked
 cargo test -p coincube-mcp --features adapter --locked
 ```
 
-Debug binaries are `target/debug/coincube` and `target/debug/tenshu-mcp`.
+Debug binaries are `target/debug/coincube` and `target/debug/coincube-mcp`.
 `make release` uses `target/release/`; production workflows use `target/<triple>/minimal/`.
-The Linux tarball includes `tenshu-mcp` beside `coincube`. The macOS bundle includes
-`COINCUBE.app/Contents/MacOS/tenshu-mcp` beside `Coincube`. The release/nightly workflows
+The Linux tarball includes `coincube-mcp` beside `coincube`. The macOS bundle includes
+`COINCUBE.app/Contents/MacOS/coincube-mcp` beside `Coincube`. The release/nightly workflows
 build and stage it before signing. Packaging changes still need validation by CI
 and a signed-release smoke test. Both macOS release architectures use native
 runners and execute `contrib/check_mcp_binary.py` on the signed adapter before
@@ -104,9 +104,15 @@ no access. If a durable revocation write fails, COINCUBE Desktop suspends all cl
 tries to invalidate only this registry's wrapping key; an error explicitly states
 when durable revocation could not be confirmed. Do not treat that error as success.
 
-Legacy configurations with TENSHU_MCP_SOCKET retain their one-hour session-only
+Legacy configurations with COINCUBE_MCP_SOCKET retain their one-hour session-only
 semantics and are never silently upgraded. Pair again through the new UI once
 to obtain a persistent configuration.
+
+Configurations issued by Tenshu-era builds name the old `tenshu-mcp` binary
+(`Tenshu.app/Contents/MacOS/tenshu-mcp`, `tenshu-mcp.exe`) and `TENSHU_MCP_*`
+variables. Neither exists any more: the adapter is `coincube-mcp` and reads only
+`COINCUBE_MCP_*`. Such a client fails to start its server. Remove its entry,
+revoke the old pairing in **AI access**, and pair the client again.
 
 ## STDIO client configuration
 
@@ -116,26 +122,26 @@ The GUI produces this shape, with actual paths and a private pairing credential:
 {
   "mcpServers": {
     "tenshu": {
-      "command": "/Applications/COINCUBE.app/Contents/MacOS/tenshu-mcp",
+      "command": "/Applications/COINCUBE.app/Contents/MacOS/coincube-mcp",
       "env": {
-        "TENSHU_MCP_PAIRING": "/PRIVATE_DATADIR/regtest/mcp-pairings/CUBE_SCOPE/CLIENT.endpoint",
-        "TENSHU_MCP_CREDENTIAL": "REPLACE_WITH_THE_PRIVATE_PAIRING_FROM_TENSHU"
+        "COINCUBE_MCP_PAIRING": "/PRIVATE_DATADIR/regtest/mcp-pairings/CUBE_SCOPE/CLIENT.endpoint",
+        "COINCUBE_MCP_CREDENTIAL": "REPLACE_WITH_THE_PRIVATE_PAIRING_FROM_COINCUBE"
       }
     }
   }
 }
 ```
 
-On Windows the copied command ends in `tenshu-mcp.exe`; the MSI installs it beside
+On Windows the copied command ends in `coincube-mcp.exe`; the MSI installs it beside
 `coincube.exe`. The private locator resolves to a local pipe name such as
-`\\.\pipe\tenshu-mcp-PID-RANDOM`, not a TCP address. Keep the generated name unchanged:
+`\\.\pipe\coincube-mcp-PID-RANDOM`, not a TCP address. Keep the generated name unchanged:
 the adapter validates its format and checks the pipe server's OS process ID
 before sending the credential. The pipe DACL permits only the current Windows
 logon session and rejects remote clients. The bearer grant is still required.
 The client grants identification-only SQOS, not impersonation rights.
 
 Use the copied values, not these placeholders. On Linux/development builds the
-command is the absolute installed/build path to `tenshu-mcp`. There are no tool
+command is the absolute installed/build path to `coincube-mcp`. There are no tool
 arguments for paths, credentials, shell commands or daemon RPC methods.
 
 - **Maple AI Desktop:** preferred target, but its current custom-STDIO configuration
@@ -298,8 +304,8 @@ runs explicitly in the pinned platform CI jobs after building the companion bina
 
 ```sh
 cargo build -p coincube-mcp --features adapter --locked
-TENSHU_MCP_TEST_ADAPTER="$PWD/target/debug/tenshu-mcp" BREEZ_API_KEY=DUMMY_BREEZ_API_KEY cargo test -p coincube-gui --lib stdio_client_reads_real_wallet_and_observes_revocation -- --ignored
-TENSHU_MCP_TEST_ADAPTER="$PWD/target/debug/tenshu-mcp" BREEZ_API_KEY=DUMMY_BREEZ_API_KEY cargo test -p coincube-gui --lib stdio_acceptance_tests --locked -- --ignored --test-threads=1
+COINCUBE_MCP_TEST_ADAPTER="$PWD/target/debug/coincube-mcp" BREEZ_API_KEY=DUMMY_BREEZ_API_KEY cargo test -p coincube-gui --lib stdio_client_reads_real_wallet_and_observes_revocation -- --ignored
+COINCUBE_MCP_TEST_ADAPTER="$PWD/target/debug/coincube-mcp" BREEZ_API_KEY=DUMMY_BREEZ_API_KEY cargo test -p coincube-gui --lib stdio_acceptance_tests --locked -- --ignored --test-threads=1
 ```
 
 The preparation acceptance tests launch the actual companion with native
@@ -319,7 +325,7 @@ to fifteen seconds (the native IPC deadline is ten), and EOF shutdown to five.
 It checks response identity and frame size, drains stderr, and reports the failed
 phase/request ID, child exit status, stderr byte count and a recognized fixed
 startup diagnostic without printing credentials or arbitrary process output.
-Set `TENSHU_MCP_TEST_TRACE=1` for per-request phase timing without tool arguments.
+Set `COINCUBE_MCP_TEST_TRACE=1` for per-request phase timing without tool arguments.
 The earlier three-second proposal response timeout was observed once in a smoke
 run and passed unchanged in isolated and complete-suite reruns; its cause was
 not established. The bounded driver adds diagnostic evidence and allows native

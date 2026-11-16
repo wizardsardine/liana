@@ -12,7 +12,7 @@
 # machine, an older p12 still sitting in a CI secret — produces a bundle that
 # is refused at exec:
 #
-#     taskgated-helper: Disallowing io.coincube.tenshu because no eligible
+#     taskgated-helper: Disallowing io.coincube.desktop because no eligible
 #                       provisioning profiles found
 #     amfid: not valid: ... "No matching profile found"
 #     kernel: AMFI: Code has restricted entitlements, but the validation of

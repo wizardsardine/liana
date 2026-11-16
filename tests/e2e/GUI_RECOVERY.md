@@ -65,7 +65,9 @@ Before enabling it, implement and independently review these requirements:
 ### Original secret-store exclusion
 
 Production `services/unlock/device_secret/mod.rs` uses service
-`io.coincube.tenshu.device-secret.v1` and **Cube UUID as the account**. The
+`io.coincube.desktop.device-secret.v1` and **Cube UUID as the account**. It falls
+back to the Tenshu-era `io.coincube.tenshu.device-secret.v1` when the current
+service has no entry, so an isolator must prove that record absent too. The
 profile only scopes a lock file. A fresh datadir/PID does not exclude the original
 Keychain factor used by the recovery loader.
 

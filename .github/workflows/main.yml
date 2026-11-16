@@ -330,9 +330,9 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           cargo build -p coincube-mcp --features adapter --locked
-          adapter="$PWD/target/debug/tenshu-mcp"
-          TENSHU_MCP_TEST_ADAPTER="$adapter" cargo test -p coincube-gui --lib stdio_client_reads_real_wallet_and_observes_revocation -- --ignored
-          TENSHU_MCP_TEST_ADAPTER="$adapter" cargo test -p coincube-gui --lib stdio_acceptance_tests --locked -- --ignored --test-threads=1
+          adapter="$PWD/target/debug/coincube-mcp"
+          COINCUBE_MCP_TEST_ADAPTER="$adapter" cargo test -p coincube-gui --lib stdio_client_reads_real_wallet_and_observes_revocation -- --ignored
+          COINCUBE_MCP_TEST_ADAPTER="$adapter" cargo test -p coincube-gui --lib stdio_acceptance_tests --locked -- --ignored --test-threads=1
       - name: Wallet proposals, transactions and native lock boundaries
         if: matrix.toolchain == 'pinned' && matrix.os != 'windows-latest'
         env:
@@ -393,12 +393,12 @@ jobs:
         run: |
           cargo build -p coincube-mcp --features adapter --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $env:TENSHU_MCP_TEST_ADAPTER = Join-Path $PWD 'target/debug/tenshu-mcp.exe'
+          $env:COINCUBE_MCP_TEST_ADAPTER = Join-Path $PWD 'target/debug/coincube-mcp.exe'
           cargo test -p coincube-gui --lib app::local_mcp::tests --no-default-features --locked -- --include-ignored --test-threads=2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test -p coincube-gui --lib stdio_acceptance_tests --no-default-features --features mcp-proposals,mcp-transactions --locked -- --ignored --test-threads=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Remove-Item Env:TENSHU_MCP_TEST_ADAPTER
+          Remove-Item Env:COINCUBE_MCP_TEST_ADAPTER
       - name: Wallet proposals, transactions and native lock boundaries
         shell: pwsh
         env:

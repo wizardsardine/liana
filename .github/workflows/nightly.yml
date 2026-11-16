@@ -169,7 +169,7 @@ jobs:
           stage=tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
           mkdir -p "$stage"
           cp target/${{ matrix.target }}/minimal/coincube "$stage/"
-          cp target/${{ matrix.target }}/minimal/tenshu-mcp "$stage/"
+          cp target/${{ matrix.target }}/minimal/coincube-mcp "$stage/"
           cp coincube-spark-bridge/target/${{ matrix.target }}/minimal/coincube-spark-bridge "$stage/"
           cp LICENCE README.md "$stage/"
           tar czf "$stage.tar.gz" "$stage"
@@ -243,15 +243,15 @@ jobs:
             Write-Host "bridge installs to $($bridge.DirectoryName) but the gui installs to $($gui.DirectoryName) — they must be siblings"
             exit 1
           }
-          $mcp = Get-ChildItem -Path $dest -Recurse -Filter tenshu-mcp.exe | Select-Object -First 1
+          $mcp = Get-ChildItem -Path $dest -Recurse -Filter coincube-mcp.exe | Select-Object -First 1
           if (-not $mcp -or $mcp.DirectoryName -ne $gui.DirectoryName) {
-            Write-Host "tenshu-mcp.exe must install beside coincube.exe"; exit 1
+            Write-Host "coincube-mcp.exe must install beside coincube.exe"; exit 1
           }
           # Run the actual extracted companion against the tested named-pipe fixture.
-          $env:TENSHU_MCP_TEST_ADAPTER = $mcp.FullName
+          $env:COINCUBE_MCP_TEST_ADAPTER = $mcp.FullName
           cargo test -p coincube-mcp --features adapter --locked extracted_adapter_stdio -- --ignored
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Remove-Item Env:TENSHU_MCP_TEST_ADAPTER
+          Remove-Item Env:COINCUBE_MCP_TEST_ADAPTER
           Write-Host "all companion binaries install to $($gui.DirectoryName)"
 
           # It execs and speaks the protocol. No API key, no mnemonic, no
@@ -312,7 +312,7 @@ jobs:
           # once the build is on a user's machine.
           plist=COINCUBE.app/Contents/Info.plist
           bundle_id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist")
-          [ "$bundle_id" = "io.coincube.tenshu" ] \
+          [ "$bundle_id" = "io.coincube.desktop" ] \
             || { echo "unexpected CFBundleIdentifier: $bundle_id"; exit 1; }
           /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$plist" > /dev/null \
             || { echo "NSLocalNetworkUsageDescription missing from Info.plist"; exit 1; }
@@ -320,7 +320,7 @@ jobs:
             || { echo "_coincube-signer._tcp missing from NSBonjourServices"; exit 1; }
 
           mv target/${{ matrix.target }}/minimal/coincube COINCUBE.app/Contents/MacOS/Coincube
-          mv target/${{ matrix.target }}/minimal/tenshu-mcp COINCUBE.app/Contents/MacOS/tenshu-mcp
+          mv target/${{ matrix.target }}/minimal/coincube-mcp COINCUBE.app/Contents/MacOS/coincube-mcp
           mv contrib/release/macos/Coincube.icns COINCUBE.app/Contents/Resources/Coincube.icns
 
           # The gui resolves the Spark bridge as a sibling of its own
@@ -379,8 +379,8 @@ jobs:
           echo "$entitlements"
           echo "$entitlements" | grep -q 'keychain-access-groups' \
             || { echo "entitlement missing from signature"; exit 1; }
-          echo "$entitlements" | grep -q '8UVR249AD5.io.coincube.tenshu' \
-            || { echo "keychain access group is not 8UVR249AD5.io.coincube.tenshu"; exit 1; }
+          echo "$entitlements" | grep -q '8UVR249AD5.io.coincube.desktop' \
+            || { echo "keychain access group is not 8UVR249AD5.io.coincube.desktop"; exit 1; }
 
           # The entitlement whose absence shipped a dead passkey path in every
           # artifact up to 2026-08-07. AuthenticationServices refuses WebAuthn to
@@ -401,17 +401,27 @@ jobs:
           codesign -d --entitlements - --xml COINCUBE.app 2>/dev/null > entitlements.plist
           appid=$(/usr/libexec/PlistBuddy -c "Print :com.apple.application-identifier" entitlements.plist 2>/dev/null) \
             || { echo "com.apple.application-identifier missing from the signature — every passkey ceremony would fail with ASAuthorizationError 1004"; exit 1; }
-          [ "$appid" = "8UVR249AD5.io.coincube.tenshu" ] \
-            || { echo "com.apple.application-identifier is '$appid', expected 8UVR249AD5.io.coincube.tenshu — unlike the wildcard-granted entitlements this must match the profile exactly"; exit 1; }
+          [ "$appid" = "8UVR249AD5.io.coincube.desktop" ] \
+            || { echo "com.apple.application-identifier is '$appid', expected 8UVR249AD5.io.coincube.desktop — unlike the wildcard-granted entitlements this must match the profile exactly"; exit 1; }
           echo "com.apple.application-identifier = $appid"
 
           # With the value above pinned by key, pin the access group the same way
           # so the grep further up cannot be satisfied by the app identifier alone.
           group=$(/usr/libexec/PlistBuddy -c "Print :keychain-access-groups:0" entitlements.plist 2>/dev/null) \
             || { echo "keychain-access-groups missing from the signature"; exit 1; }
-          [ "$group" = "8UVR249AD5.io.coincube.tenshu" ] \
-            || { echo "keychain access group is '$group', expected 8UVR249AD5.io.coincube.tenshu"; exit 1; }
+          [ "$group" = "8UVR249AD5.io.coincube.desktop" ] \
+            || { echo "keychain access group is '$group', expected 8UVR249AD5.io.coincube.desktop"; exit 1; }
           echo "keychain-access-groups = $group"
+
+          # The legacy Tenshu group must stay listed second: Tenshu-era builds
+          # (io.coincube.tenshu) stored device secrets there, and without it
+          # those Cubes can't be opened on this machine. New items still go to
+          # the first group.
+          legacy=$(/usr/libexec/PlistBuddy -c "Print :keychain-access-groups:1" entitlements.plist 2>/dev/null) \
+            || { echo "legacy keychain access group missing from the signature"; exit 1; }
+          [ "$legacy" = "8UVR249AD5.io.coincube.tenshu" ] \
+            || { echo "second keychain access group is '$legacy', expected 8UVR249AD5.io.coincube.tenshu"; exit 1; }
+          echo "legacy keychain-access-group = $legacy"
 
           # Team identity, granted by the profile alongside the application
           # identifier. Also restricted, so a value the profile does not grant is
@@ -464,9 +474,9 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           bridge=COINCUBE.app/Contents/MacOS/coincube-spark-bridge
-          test -x COINCUBE.app/Contents/MacOS/tenshu-mcp
-          codesign --verify --strict COINCUBE.app/Contents/MacOS/tenshu-mcp
-          python3 contrib/check_mcp_binary.py COINCUBE.app/Contents/MacOS/tenshu-mcp
+          test -x COINCUBE.app/Contents/MacOS/coincube-mcp
+          codesign --verify --strict COINCUBE.app/Contents/MacOS/coincube-mcp
+          python3 contrib/check_mcp_binary.py COINCUBE.app/Contents/MacOS/coincube-mcp
 
           # (1) Present at all — the failure this exists to catch.
           test -f "$bridge" \

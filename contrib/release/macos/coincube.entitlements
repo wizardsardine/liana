@@ -36,19 +36,31 @@
 
         The value is `<TeamID>.<bundleID>` and must stay in sync with
         CFBundleIdentifier in the Info.plist baked into `_coincube.zip`
-        (io.coincube.tenshu). Team ID 8UVR249AD5 is written literally on
+        (io.coincube.desktop). Team ID 8UVR249AD5 is written literally on
         purpose: `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` are
         Xcode build-setting substitutions, and `rcodesign` signs this file
         verbatim without expanding anything — a signature carrying the raw
         variable string fails at runtime looking exactly like a keychain bug.
 
-        The Rust side does not set kSecAttrAccessGroup, so items land in the
-        first group listed here. An access group is part of a keychain item's
-        identity: once a signed, entitled build has shipped, changing this
-        value strands every device secret written under the old group.
+        The device-secret code does not set kSecAttrAccessGroup, so new items
+        land in the FIRST group listed here, and reads search every listed
+        group. An access group is part of a keychain item's identity: once a
+        signed, entitled build has shipped, dropping a group strands every
+        item written under it.
+
+        The second group is the legacy Tenshu one (bundle ID
+        io.coincube.tenshu, used by nightly and local builds from 2026-08 to
+        2026-11). It stays listed so the app can still read the device
+        secrets and imported-inventory anchors those builds wrote, and copy
+        them forward (services/unlock/device_secret/mod.rs,
+        services/imported_inventory_anchor/apple.rs). The profile grants the
+        team wildcard 8UVR249AD5.*, which covers both. Keep the new group
+        first, and do not remove the legacy one without a decision that
+        Tenshu-era installs no longer need to open.
     -->
     <key>keychain-access-groups</key>
     <array>
+        <string>8UVR249AD5.io.coincube.desktop</string>
         <string>8UVR249AD5.io.coincube.tenshu</string>
     </array>
 
@@ -82,7 +94,7 @@
         absent.
     -->
     <key>com.apple.application-identifier</key>
-    <string>8UVR249AD5.io.coincube.tenshu</string>
+    <string>8UVR249AD5.io.coincube.desktop</string>
 
     <!--
         Team identity. Granted by the profile alongside the application
@@ -97,8 +109,9 @@
         `com.apple.developer.associated-domains` as a wildcard).
 
         The domain must match the AASA served from coincube.io, whose
-        `webcredentials.apps` array already lists
-        8UVR249AD5.io.coincube.tenshu, and the RP ID the app passes to
+        `webcredentials.apps` array must list
+        8UVR249AD5.io.coincube.desktop (keep the Tenshu ID there during the
+        transition), and the RP ID the app passes to
         AuthenticationServices (`COINCUBE_PASSKEY_RP_ID`, which still defaults
         to "localhost" — see services/passkey/mod.rs).
 

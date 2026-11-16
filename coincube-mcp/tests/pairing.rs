@@ -126,7 +126,7 @@ fn locator_rejects_corruption_links_and_shared_permissions() {
     assert!(pairing::resolve(&locator).is_err());
     pairing::publish(
         &locator,
-        std::path::Path::new("/tmp/tenshu-mcp-fixture/rpc"),
+        std::path::Path::new("/tmp/coincube-mcp-fixture/rpc"),
     )
     .unwrap();
     #[cfg(unix)]

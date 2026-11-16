@@ -63,7 +63,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>io.coincube.tenshu</string>
+    <string>io.coincube.desktop</string>
     <key>CFBundleExecutable</key>
     <string>TestRunner</string>
     <key>CFBundleName</key>

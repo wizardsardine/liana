@@ -36,7 +36,7 @@ fn delete(run_id: uuid::Uuid) {
         static kSecUseDataProtectionKeychain: core_foundation::string::CFStringRef;
     }
     let key = |value| unsafe { CFString::wrap_under_get_rule(value) };
-    let service = format!("io.coincube.tenshu.native-imported-anchor-probe.{run_id}");
+    let service = format!("io.coincube.desktop.native-imported-anchor-probe.{run_id}");
     let account = format!(
         "{}:{}:{}",
         hex::encode(format!("native-anchor-probe-{run_id}")),
@@ -62,7 +62,7 @@ fn delete(run_id: uuid::Uuid) {
         ),
         (
             key(unsafe { kSecAttrAccessGroup }),
-            CFString::new("8UVR249AD5.io.coincube.tenshu").into_CFType(),
+            CFString::new("8UVR249AD5.io.coincube.desktop").into_CFType(),
         ),
     ]);
     let status = unsafe { SecItemDelete(query.as_concrete_TypeRef()) };
@@ -90,7 +90,7 @@ fn delete(run_id: uuid::Uuid) {
         ),
         (
             key(unsafe { kSecAttrAccessGroup }),
-            CFString::new("8UVR249AD5.io.coincube.tenshu").into_CFType(),
+            CFString::new("8UVR249AD5.io.coincube.desktop").into_CFType(),
         ),
         (
             key(unsafe { kSecReturnData }),

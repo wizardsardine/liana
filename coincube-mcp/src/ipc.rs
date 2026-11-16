@@ -290,7 +290,7 @@ impl Server {
         // /tmp keeps sockaddr_un paths short even on macOS. tempfile creates
         // the directory atomically with 0700; never chmod an existing path.
         let directory = tempfile::Builder::new()
-            .prefix("tenshu-mcp-")
+            .prefix("coincube-mcp-")
             .tempdir_in("/tmp")?;
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
         let socket = directory.path().join("rpc");

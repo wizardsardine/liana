@@ -37,7 +37,7 @@
 /// - **The Recovery Kit carries the seed** (**I11**). A re-authentication
 ///   ceremony at Kit time re-derives it, so recovery no longer depends on the
 ///   user having written twelve words down, or on iCloud Keychain being on.
-/// - **The signing prerequisites are met**: `io.coincube.tenshu` is signed with
+/// - **The signing prerequisites are met**: `io.coincube.desktop` is signed with
 ///   `keychain-access-groups` and `com.apple.developer.associated-domains`,
 ///   authorised by the embedded provisioning profile, and the AASA at
 ///   coincube.io lists the app under `webcredentials`.

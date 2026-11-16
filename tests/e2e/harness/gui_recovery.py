@@ -19,7 +19,7 @@ from .gui_verify import CHAINS, funding_parent, references, verify_export
 from .state import Blocked, Failed, Journal, atomic_write, digest, private_read
 
 PREREQUISITE = "9e9a1f25995b4be9a6ab188240a2bf92d5f3209b"
-CACHE_SERVICE = "io.coincube.tenshu.device-secret.v1"
+CACHE_SERVICE = "io.coincube.desktop.device-secret.v1"
 STAGES = ("preflight", "create", "mode_parity", "backup", "exit_original", "exclude_original_cache", "restore", "restart", "wrong_pin",
           "unlock", "funding", "sign_export", "verify", "retain")
 REPLY_FIELDS = {
