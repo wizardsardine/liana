@@ -182,9 +182,11 @@ pub(crate) fn display_content<'a>(
         .into()
 }
 
-/// The status line under the Cube name field: an unsaved edit first, then
-/// how far the last rename got (this device, then Connect). `None` until
-/// the name is edited or renamed this session.
+/// The status line under the Cube name field: a save in flight or a failed
+/// save first (the field still holds the submitted text until the save
+/// lands), then an unsaved edit, then how far the last rename got (this
+/// device, then Connect). `None` until the name is edited or renamed this
+/// session.
 pub(crate) fn cube_name_status(
     saved_name: &str,
     sync: cache::CubeNameSync,
@@ -192,23 +194,24 @@ pub(crate) fn cube_name_status(
 ) -> Option<(page::Status, &'static str)> {
     use cache::CubeNameSync;
     let typed = name_input.map(str::trim).unwrap_or_default();
-    if !typed.is_empty() && typed != saved_name {
-        return Some((page::Status::Warn, "Not saved yet. Press Return to save."));
-    }
+    let unsaved = !typed.is_empty() && typed != saved_name;
     Some(match sync {
-        CubeNameSync::Idle => return None,
         CubeNameSync::Saving => (page::Status::Busy, "Saving…"),
+        CubeNameSync::SaveFailed => (page::Status::Bad, "Couldn't save the Cube name."),
+        _ if unsaved => (page::Status::Warn, "Not saved yet. Press Return to save."),
+        CubeNameSync::Idle => return None,
         CubeNameSync::Syncing => (
             page::Status::Busy,
             "Saved on this device. Syncing to Connect…",
         ),
         CubeNameSync::Synced => (page::Status::Ok, "Saved and synced to Connect."),
         CubeNameSync::LocalOnly => (page::Status::Ok, "Saved on this device."),
+        // The Launcher's catch-up re-sends unsynced renames when it signs
+        // in to Connect, which happens when COINCUBE opens.
         CubeNameSync::SyncFailed => (
             page::Status::Warn,
-            "Saved on this device. Connect sync will retry.",
+            "Saved on this device. Connect will sync it next time you open COINCUBE.",
         ),
-        CubeNameSync::SaveFailed => (page::Status::Bad, "Couldn't save the Cube name."),
     })
 }
 
@@ -1886,6 +1889,16 @@ mod tests {
         assert_eq!(
             cube_name_status("Home", CubeNameSync::SyncFailed, None).map(|(s, _)| s),
             Some(Status::Warn)
+        );
+        // The field still holds the submitted name while it saves, and
+        // after a failed save: those states win over "Not saved yet".
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Saving, Some("Holiday")).map(|(s, _)| s),
+            Some(Status::Busy)
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::SaveFailed, Some("Holiday")).map(|(s, _)| s),
+            Some(Status::Bad)
         );
     }
 
