@@ -1614,6 +1614,8 @@ impl GUI {
                 .map(|sheet| preferences_view::Diagnostics {
                     can_open_logs: sheet.diagnostics.can_open_logs(),
                     support_summary_preview: Some(sheet.diagnostics.support_summary()),
+                    support_summary_copied: sheet.diagnostics.support_summary_copied(),
+                    open_logs_failed: sheet.diagnostics.open_logs_failed(),
                     ..Default::default()
                 })
                 .unwrap_or_default(),
@@ -2091,16 +2093,16 @@ impl GUI {
             ViewMessage::Action(Action::Close) => self.close_preferences_sheet(),
             ViewMessage::Action(Action::RetryLoad) => self.retry_preferences(),
             ViewMessage::Action(Action::OpenLogs) => {
-                if let Some(sheet) = &self.preferences_sheet {
+                if let Some(sheet) = &mut self.preferences_sheet {
                     sheet.diagnostics.open_logs();
                 }
                 Task::none()
             }
             ViewMessage::Action(Action::CopySupportSummary) => self
                 .preferences_sheet
-                .as_ref()
+                .as_mut()
                 .map_or_else(Task::none, |sheet| {
-                    iced::clipboard::write(sheet.diagnostics.support_summary().to_owned())
+                    iced::clipboard::write(sheet.diagnostics.copy_support_summary())
                 }),
             // These remain disabled until their real diagnostic owners supply
             // an explicit capability to the sheet's view model.
