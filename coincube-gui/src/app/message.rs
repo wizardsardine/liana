@@ -40,9 +40,12 @@ pub enum Message {
     /// The Cube name typed in Settings was written to this device's Cube
     /// settings (`Ok(name)`) or could not be.
     CubeNameSaved(Result<String, String>),
-    /// Connect accepted (`Ok`) or refused the renamed Cube.
+    /// Connect accepted (`Ok`) or refused the renamed Cube. `name` is the
+    /// name that was sent, so a reply to an older rename is not mistaken
+    /// for the current one.
     CubeNameSynced {
         cube_id: String,
+        name: String,
         result: Result<(), String>,
     },
     /// The Spark nickname typed in Settings was written to this device's

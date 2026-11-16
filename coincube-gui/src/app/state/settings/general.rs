@@ -1708,15 +1708,15 @@ impl State for GeneralSettingsState {
             self.saved = false;
         }
         match message {
+            // The rename reports its own progress under the Cube name field
+            // (`Cache::cube_name_sync`), not on Amounts & currency's "Saved".
             Message::View(view::Message::Settings(view::SettingsMessage::CubeNameEdited(name))) => {
-                self.saved = false;
                 self.name_input = Some(name);
                 Task::none()
             }
             // The App saved the name; show the Cube's name again.
             Message::View(view::Message::Settings(view::SettingsMessage::CubeNameSubmitted(_))) => {
                 self.name_input = None;
-                self.saved = true;
                 Task::none()
             }
             Message::Fiat(FiatMessage::SaveChanges) => {
