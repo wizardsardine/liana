@@ -4134,7 +4134,8 @@ impl Home {
                 // When the plan tier changes (e.g. upgrade), invalidate the
                 // cached server limit so `cube_limit()` uses the new tier
                 // until fresh limits are fetched.
-                if old_tier != self.account_tier {
+                let tier_changed = old_tier != self.account_tier;
+                if tier_changed {
                     self.server_cube_limit = None;
                 }
                 if let Err(e) = GlobalSettings::update_account_tier(
@@ -4317,6 +4318,15 @@ impl Home {
                     tasks.push(self.fetch_remote_cubes());
 
                     return Task::batch(tasks);
+                }
+
+                // A mid-session upgrade or downgrade changes which Cubes
+                // Connect keeps on (billing v2: the oldest N per network), so
+                // re-read the list for the Connect-off tags. The fetch claims a
+                // new generation, so one started under the old tier is dropped.
+                // The sign-in edge above already fetched.
+                if tier_changed && now_authenticated {
+                    return Task::batch([task, self.fetch_remote_cubes()]);
                 }
 
                 task
@@ -6187,9 +6197,9 @@ impl Home {
             .push(paths.push(rule()));
         if projection.at_limit() {
             content = content.push(
-                p2_regular(if projection.total_count > projection.cube_limit
-                    && launcher_chrome::is_top_tier(projection.tier)
-                {
+                // Estate has no higher plan, at the limit or over it:
+                // deleting a Cube is the only remedy.
+                p2_regular(if launcher_chrome::is_top_tier(projection.tier) {
                     localized_format!(
                         "You have {} {} on {}; {} includes {}. Existing Cubes keep working. Delete a Cube on this network to bring one in.",
                         "Tienes {} {} en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Elimina un Cube en esta red para traer uno.",
@@ -10376,6 +10386,77 @@ mod tests {
         assert!(!home.passkey_mode);
     }
 
+    /// Estate has no higher plan. At its limit, not only over it, the import
+    /// page names deletion as the remedy and never says to upgrade.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn estate_at_its_limit_is_not_told_to_upgrade_on_the_import_page() {
+        use iced::advanced::{
+            layout,
+            renderer::Headless,
+            widget::{Id, Operation, Tree},
+            Layout,
+        };
+
+        #[derive(Default)]
+        struct Labels(Vec<String>);
+        impl Operation for Labels {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _: Option<&Id>, _: iced::Rectangle, text: &str) {
+                self.0.push(text.to_owned());
+            }
+        }
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(14.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        use coincube_ui::{theme::WorldviewMode, worldview_copy};
+        let labels = |home: &Home| {
+            let mut element =
+                worldview_copy::render_in(WorldviewMode::Suitcoiner, || home.create_journey_view());
+            let mut tree = Tree::new(element.as_widget());
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, iced::Size::new(1440.0, 900.0)),
+            );
+            let mut labels = Labels::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            labels.0
+        };
+
+        let mut home = home();
+        home.network = ChainId::Bitcoin;
+        home.state = State::Cubes {
+            cubes: vec![CubeSettings::new_with_raw_id(
+                "a".to_string(),
+                "A".to_string(),
+                ChainId::Bitcoin,
+            )],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.account_tier = AccountTier::Estate;
+        home.server_cube_limit = Some(1);
+        let _ = home.update(Message::View(ViewMessage::ShowRestoreHub));
+        assert!(home.restore_hub);
+        let shown = labels(&home);
+        assert!(
+            shown.iter().any(|l| l
+                == "You have 1 Cube on Bitcoin mainnet; Estate includes 1. Existing Cubes \
+                    keep working. Delete a Cube on this network to bring one in."),
+            "{:?}",
+            shown
+        );
+        assert!(!shown.iter().any(|l| l.contains("Upgrade")), "{:?}", shown);
+    }
+
     #[test]
     fn a_full_bitcoin_plan_closes_the_import_path() {
         let mut home = home();
@@ -11487,6 +11568,56 @@ mod tests {
             home.remote_cubes.is_empty(),
             "a fetch issued for the signed-out account must not repopulate the list"
         );
+    }
+
+    /// Billing v2: an upgrade or downgrade mid-session changes which Cubes
+    /// Connect keeps on. A plan load that changes the tier must re-read the
+    /// list so a "Connect off" tag doesn't outlive the upgrade, and must
+    /// supersede a fetch started under the old tier.
+    #[test]
+    fn a_tier_change_refetches_the_cube_list_for_connect_off_tags() {
+        use crate::app::view::ConnectAccountMessage;
+
+        // The tier change persists to the datadir: keep it out of the crate.
+        let dir = tmp_datadir("tier-change-refetch");
+        let mut home = signed_in_home_with_datadir(&dir);
+        home.account_tier = AccountTier::default();
+        home.connect_off_cubes.insert("cube-1".to_string());
+        let _ = home.fetch_remote_cubes();
+        let inflight = home.remote_cubes_request;
+
+        // Same tier: nothing to re-read.
+        let generation = home.connect_account.session_generation();
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::PlanLoaded(None, generation),
+        )));
+        assert_eq!(home.remote_cubes_request, inflight);
+
+        // Upgrade to Pro.
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::PlanLoaded(Some(duress_entitled_plan()), generation),
+        )));
+        assert_eq!(home.account_tier, AccountTier::Pro);
+        assert_ne!(
+            home.remote_cubes_request, inflight,
+            "a tier change must start a fresh catalog fetch"
+        );
+
+        // The fetch from before the upgrade still lists the Cube as off.
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: inflight,
+            connect_off: vec!["cube-1".to_string()],
+            result: Ok(Vec::new()),
+        });
+        // The fresh one says Connect is back on.
+        let refreshed = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: refreshed,
+            connect_off: Vec::new(),
+            result: Ok(Vec::new()),
+        });
+        assert!(home.connect_off_cubes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A refusal reason describes what *one account's* server said. The local

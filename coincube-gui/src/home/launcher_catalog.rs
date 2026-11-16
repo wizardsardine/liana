@@ -1296,6 +1296,22 @@ pub(super) const CONNECT_OFF_TAG: &str = "Connect off";
 pub(super) const CONNECT_OFF_NOTE: &str =
     "Over your plan's Cube limit. The Cube and its funds keep \
      working; Connect features are off. Upgrade to turn them back on.";
+/// The same note on the top plan (Estate), which has nothing to upgrade to:
+/// Connect keeps the oldest Cubes on, so deleting one frees a slot.
+pub(super) const CONNECT_OFF_NOTE_TOP_TIER: &str =
+    "Over your plan's Cube limit. The Cube and its funds keep \
+     working; Connect features are off. Delete a Cube on this network to \
+     turn them back on.";
+
+/// The Connect-off note for an account on `tier` (an `AccountTier` display
+/// name).
+pub(super) fn connect_off_note(tier: &str) -> &'static str {
+    if super::launcher_chrome::is_top_tier(tier) {
+        CONNECT_OFF_NOTE_TOP_TIER
+    } else {
+        CONNECT_OFF_NOTE
+    }
+}
 
 /// The small muted chip a Connect-off Cube carries in the lists.
 pub(super) fn connect_off_tag<'a, M: 'a>() -> Element<'a, M> {
@@ -1327,8 +1343,9 @@ pub(super) struct LocalRow<'a> {
     pub(super) wallets: String,
     /// Connect reports this Cube over the plan's Cube limit
     /// (`connectFeaturesDisabled`): its Connect features are off. Display
-    /// only; opening it and every wallet action stay available.
-    pub(super) connect_off: bool,
+    /// only; opening it and every wallet action stay available. Holds the
+    /// note the details show, which depends on the plan.
+    pub(super) connect_off: Option<&'static str>,
     /// The key is nonempty, the record's chain is the current network and the
     /// list's source, and `catalog_index` resolves to this very record.
     /// Otherwise the row is shown but its controls have no press target.
@@ -1622,7 +1639,10 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
                     chain == network && home.liquid_on_disk,
                 ),
                 vault: vault_subtitle(cube),
-                connect_off: home.connect_off_cubes.contains(&cube.id),
+                connect_off: home
+                    .connect_off_cubes
+                    .contains(&cube.id)
+                    .then(|| connect_off_note(home.account_tier.display_name())),
                 key,
                 cube,
                 name,
@@ -1889,7 +1909,7 @@ fn local_row<'a>(row: &LocalRow<'_>, selected: bool, table: bool) -> Element<'a,
                 .style(tone_style(Tone::Warn))
                 .wrapping(Wrapping::WordOrGlyph)
         }))
-        .push(row.connect_off.then(connect_off_tag));
+        .push(row.connect_off.map(|_| connect_off_tag()));
     let facts: Element<'a, ViewMessage> = if table {
         Row::new()
             .spacing(CELL_GAP)
@@ -2070,10 +2090,10 @@ fn details_panel<'a>(row: &LocalRow<'_>) -> Element<'a, ViewMessage> {
                     .wrapping(Wrapping::WordOrGlyph)
                     .into(),
             ))
-            .push(row.connect_off.then(|| {
+            .push(row.connect_off.map(|note| {
                 detail_line(
                     "Connect",
-                    p2_regular(localized_copy(CONNECT_OFF_NOTE))
+                    p2_regular(localized_copy(note))
                         .style(muted)
                         .wrapping(Wrapping::WordOrGlyph)
                         .into(),
@@ -3877,14 +3897,17 @@ mod tests {
             theme::Theme::dark(),
         );
         assert!(!tree.contains(CONNECT_OFF_TAG));
-        assert!(project(&home).locals.iter().all(|row| !row.connect_off));
+        assert!(project(&home)
+            .locals
+            .iter()
+            .all(|row| row.connect_off.is_none()));
 
         home.connect_off_cubes.insert("cube-1".to_string());
         let projection = project(&home);
         let flags: Vec<(&str, bool)> = projection
             .locals
             .iter()
-            .map(|row| (row.key.cube_id.as_str(), row.connect_off))
+            .map(|row| (row.key.cube_id.as_str(), row.connect_off.is_some()))
             .collect();
         assert_eq!(
             flags,
@@ -3913,6 +3936,19 @@ mod tests {
         // Opening stays available.
         assert!(tree.has(&details_open_id(&key("cube-1"))));
         assert!(tree.has(&open_id(&key("cube-1"))));
+
+        // Estate has no plan to upgrade to: the note says to delete a Cube.
+        home.account_tier = crate::app::settings::global::AccountTier::Estate;
+        let tree = home_tree(
+            "connect-off-details-estate",
+            &home,
+            WIDE,
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(tree.contains(CONNECT_OFF_NOTE_TOP_TIER));
+        assert!(!tree.contains(CONNECT_OFF_NOTE));
+        assert!(!CONNECT_OFF_NOTE_TOP_TIER.contains("Upgrade"));
     }
 
     /// Switching network makes it current before its list is read (and keeps

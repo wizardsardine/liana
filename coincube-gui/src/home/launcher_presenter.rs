@@ -334,7 +334,7 @@ fn local_facts<'a>(
             .push(row.sync_warning.as_ref().map(|warning| {
                 tenshu::caption(warning.clone()).style(text_tone(tenshu::Tone::Warn))
             }))
-            .push(row.connect_off.then(launcher_catalog::connect_off_tag));
+            .push(row.connect_off.map(|_| launcher_catalog::connect_off_tag()));
     if table {
         Row::new()
             .spacing(CELL_GAP)
@@ -495,10 +495,10 @@ fn details<'a>(row: &launcher_catalog::LocalRow<'_>, light: bool) -> Element<'a,
                 .wrapping(Wrapping::WordOrGlyph)
                 .into(),
         ))
-        .push(row.connect_off.then(|| {
+        .push(row.connect_off.map(|note| {
             detail_line(
                 "Connect",
-                tenshu::body(localized_copy(launcher_catalog::CONNECT_OFF_NOTE))
+                tenshu::body(localized_copy(note))
                     .style(text_tone(tenshu::Tone::Muted))
                     .wrapping(Wrapping::WordOrGlyph)
                     .into(),
@@ -781,7 +781,7 @@ fn floor_details<'a>(
         ))
         // The fixed face has room for a short line only; the List details
         // carry the full explanation.
-        .push(row.connect_off.then(|| {
+        .push(row.connect_off.map(|_| {
             face_fact(
                 "Connect",
                 face_words(

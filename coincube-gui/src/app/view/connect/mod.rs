@@ -4668,13 +4668,35 @@ mod renewal_banner_tests {
             labels
         );
         assert!(!labels.iter().any(|l| l == "Pending"), "{:?}", labels);
+        // The page lists card rows too, so its copy names both providers.
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.starts_with("Every card and bitcoin payment")),
+            "{:?}",
+            labels
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.starts_with("Card payments are processed by Stripe.")),
+            "{:?}",
+            labels
+        );
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l.starts_with("Every bitcoin invoice")),
+            "{:?}",
+            labels
+        );
         capture_billing_sheet(&account, "4-history", (1040, 1080)).await;
 
         account.billing_history = Some(Vec::new());
         let labels = visible_labels(plan_billing_ux(&account), &renderer);
         assert!(labels
             .iter()
-            .any(|l| l == "No payments yet. Invoices you create appear here."));
+            .any(|l| l == "No payments yet. Payments you make appear here."));
         account.billing_history = None;
         let labels = visible_labels(plan_billing_ux(&account), &renderer);
         assert!(labels.iter().any(|l| l == "Loading billing history…"));

@@ -981,21 +981,21 @@ pub(super) fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<
         ))
         .push(sheet_title(localized_copy("Billing history")))
         .push(lead(localized_copy(
-            "Every bitcoin invoice on this account. Contact support with the invoice ID for any \
-             payment marked Needs support.",
+            "Every card and bitcoin payment on this account. Contact support with the invoice ID \
+             for any payment marked Needs support.",
         )))
         .push(space(20.0));
     col = match &state.billing_history {
         None => col.push(lead(localized_copy("Loading billing history…"))),
         Some(entries) if entries.is_empty() => col.push(lead(localized_copy(
-            "No payments yet. Invoices you create appear here.",
+            "No payments yet. Payments you make appear here.",
         ))),
         Some(entries) => col.push(ruled_list(entries.iter().map(history_row))),
     };
     col.push(space(12.0))
         .push(footnote(localized_copy(
-            "Payments use Lightning or on-chain bitcoin through BTCPay. Amounts in sats are fixed \
-             when the invoice is created.",
+            "Card payments are processed by Stripe. Bitcoin payments use Lightning or on-chain \
+             through BTCPay; their amounts in sats are fixed when the invoice is created.",
         )))
         .into()
 }
