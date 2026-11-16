@@ -16,6 +16,7 @@ extern crate serde_json;
 use coincube_core::miniscript::bitcoin;
 use coincube_ui::widget::{action, Element};
 
+mod about;
 mod cache;
 pub mod pane;
 pub mod tab;
@@ -28,8 +29,9 @@ use crate::{
         settings::global::{GlobalSettings, PreferencesReceipt, WindowConfig},
         settings::preferences::Zoom,
         state::preferences::{
-            BalancePrivacyChrome, BeginSaveError, Operation, PreferencesNotice, PreferencesOwner,
-            PreferencesPageState, SaveOutcome, SaveRequest,
+            AboutPage, BalancePrivacyChrome, BeginSaveError, Operation, PreferencesNotice,
+            PreferencesOwner, PreferencesPageState, SaveOutcome, SaveRequest,
+            Section as PreferencesSection,
         },
         view::{
             connect::{
@@ -1045,6 +1047,7 @@ pub enum Message {
     ),
     ConnectSheet(ConnectSheetMessage),
     Preferences(SaveRequest, Result<PreferencesReceipt, String>),
+    PreferencesAbout(about::AboutMessage),
 }
 
 #[derive(Debug)]
@@ -1605,7 +1608,11 @@ impl GUI {
                 .and_then(|sheet| sheet.worldview_changed),
             worldview_sharing: self.worldview_view(),
             diagnostics: preferences_view::Diagnostics::default(),
-            about: preferences_view::About::default(),
+            about: self
+                .preferences_sheet
+                .as_ref()
+                .map(|sheet| sheet.about.view())
+                .unwrap_or_default(),
             max_zoom: self.zoom.screen_width.map(Zoom::largest_for_screen),
         }
     }
@@ -2016,6 +2023,38 @@ impl GUI {
                 if let Some(sheet) = &mut self.preferences_sheet {
                     sheet.page.select(section);
                 }
+                if section == PreferencesSection::About {
+                    return self.load_about_versions();
+                }
+                Task::none()
+            }
+            ViewMessage::BackToAbout => {
+                if let Some(sheet) = &mut self.preferences_sheet {
+                    sheet.page.open_about_page(AboutPage::Main);
+                }
+                Task::none()
+            }
+            ViewMessage::DownloadStatsPeriod(period) => self
+                .preferences_sheet
+                .as_mut()
+                .map_or_else(Task::none, |sheet| sheet.about.select_period(period))
+                .map(Message::PreferencesAbout),
+            ViewMessage::Action(Action::OpenDownloadStats) => {
+                let Some(sheet) = &mut self.preferences_sheet else {
+                    return Task::none();
+                };
+                sheet.page.open_about_page(AboutPage::DownloadStats);
+                sheet.about.refresh_stats().map(Message::PreferencesAbout)
+            }
+            ViewMessage::Action(Action::RefreshDownloadStats) => self
+                .preferences_sheet
+                .as_mut()
+                .map_or_else(Task::none, |sheet| sheet.about.refresh_stats())
+                .map(Message::PreferencesAbout),
+            ViewMessage::Action(Action::OpenLicenses) => {
+                if let Some(sheet) = &mut self.preferences_sheet {
+                    sheet.page.open_about_page(AboutPage::Licenses);
+                }
                 Task::none()
             }
             ViewMessage::Change(change) => self.change_preference(change),
@@ -2046,6 +2085,26 @@ impl GUI {
             // an explicit capability to the sheet's view model.
             ViewMessage::Action(_) => Task::none(),
         }
+    }
+
+    /// Starts About's component version checks against the Cube the sheet
+    /// was opened from (its Vault daemon, if it has one).
+    fn load_about_versions(&mut self) -> Task<Message> {
+        let Some(sheet) = &self.preferences_sheet else {
+            return Task::none();
+        };
+        let daemon = self
+            .panes
+            .get(sheet.origin.pane)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == sheet.origin.tab_id))
+            .and_then(|tab| match &tab.state {
+                tab::State::App(app) => app.daemon(),
+                _ => None,
+            });
+        self.preferences_sheet
+            .as_mut()
+            .map_or_else(Task::none, |sheet| sheet.about.load_versions(daemon))
+            .map(Message::PreferencesAbout)
     }
 
     /// Retries `load_or_initialize_preferences` on the preferences lane.
@@ -3387,6 +3446,7 @@ impl GUI {
                     origin,
                     page: PreferencesPageState::default(),
                     worldview_changed: None,
+                    about: about::AboutState::default(),
                 });
                 self.connect_sheet = None;
                 self.publish_preferences_sheet();
@@ -3934,6 +3994,12 @@ impl GUI {
                 self.worldview_complete(origin, context, request, result)
             }
             Message::PreferencesSheet(message) => self.preferences_sheet_message(message),
+            Message::PreferencesAbout(message) => {
+                if let Some(sheet) = &mut self.preferences_sheet {
+                    sheet.about.apply(message);
+                }
+                Task::none()
+            }
             Message::ConnectSheet(message) => self.connect_sheet_message(message),
             Message::Tick => {
                 if self
@@ -4252,6 +4318,7 @@ struct PreferencesSheet {
     origin: OverlayOrigin,
     page: PreferencesPageState,
     worldview_changed: Option<coincube_ui::theme::WorldviewMode>,
+    about: about::AboutState,
 }
 
 struct ConnectSheet {
