@@ -527,53 +527,15 @@ pub fn broadcast_action_with_identity_review<'a>(
     receipt: BroadcastReceipt<'a>,
 ) -> Element<'a, Message> {
     if saved {
-        use coincube_ui::component::payment_result::{
-            payment_result, short_id, Outcome, ReceiptRow,
-        };
         let replaces_pending = !conflicting_txids.is_empty();
-        let detail = if is_self_transfer && replaces_pending {
-            localized_copy("The coins return to this wallet once the cancellation confirms.")
-        } else {
-            localized_copy("You can close this. Activity updates when it confirms.")
-        };
-        let mut page = payment_result(
-            Outcome::Confirming,
+        saved_broadcast_result(
             spend_amount_display,
-            "bitcoin-send",
             sent_quote,
             sent_image_handle,
-            Message::Spend(super::super::SpendTxMessage::Cancel),
+            is_self_transfer,
+            replaces_pending,
+            receipt,
         )
-        .detail(detail)
-        .row(ReceiptRow::new(localized_copy("Paid from"), "Vault"))
-        .voice(if is_self_transfer {
-            None
-        } else {
-            coincube_ui::worldview_copy::VoiceLine::PaymentSent.get()
-        });
-        if let Some(headline) = broadcast_headline(is_self_transfer, replaces_pending) {
-            page = page.headline(headline);
-        }
-        if let Some(fee) = receipt.fee {
-            page = page.row(ReceiptRow::new(localized_copy("Network fee"), fee));
-        }
-        if let Some(txid) = receipt.txid {
-            let txid = txid.to_string();
-            page = page.row(
-                ReceiptRow::new(localized_copy("Transaction ID"), short_id(&txid))
-                    .mono()
-                    .on_copy(Message::CopyWithToast(
-                        txid,
-                        "Transaction ID copied to clipboard".to_string(),
-                    )),
-            );
-        }
-        // The modal draws no surface of its own.
-        Container::new(page)
-            .padding(32)
-            .max_width(1000)
-            .style(theme::card::modal)
-            .into()
     } else {
         card::simple(
             Column::new()
@@ -584,70 +546,7 @@ pub fn broadcast_action_with_identity_review<'a>(
                 )
                 .push(p1_regular(crate::chain::canonical_network_name(chain)))
                 .push(error.map(|err| card::error(CopyText::BroadcastFailed.get(), notice(err))))
-                .push(if conflicting_txids.is_empty() {
-                    None
-                } else {
-                    Some(
-                        conflicting_txids.iter().fold(
-                            Column::new()
-                                .spacing(5)
-                                .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
-                                    if conflicting_txids.len() > 1 {
-                                        localized_copy(
-                                            "WARNING: Broadcasting this transaction \
-                                        will invalidate some pending payments.",
-                                        )
-                                    } else {
-                                        localized_copy(
-                                            "WARNING: Broadcasting this transaction \
-                                        will invalidate a pending payment.",
-                                        )
-                                    },
-                                )))
-                                .push(Row::new().padding([0, 30]).push(text(
-                                    if conflicting_txids.len() > 1 {
-                                        localized_copy(
-                                            "The following transactions are \
-                                        spending one or more inputs \
-                                        from the transaction to be \
-                                        broadcast and will be \
-                                        dropped, along with any other \
-                                        transactions that depend on them:",
-                                        )
-                                    } else {
-                                        localized_copy(
-                                            "The following transaction is \
-                                        spending one or more inputs \
-                                        from the transaction to be \
-                                        broadcast and will be \
-                                        dropped, along with any other \
-                                        transactions that depend on it:",
-                                        )
-                                    },
-                                ))),
-                            |col, txid| {
-                                col.push(
-                                    Row::new()
-                                        .padding([0, 30])
-                                        .spacing(5)
-                                        .align_y(Alignment::Center)
-                                        .push(text(txid.to_string()))
-                                        .push(
-                                            Button::new(
-                                                icon::clipboard_icon()
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .on_press(Message::CopyWithToast(
-                                                txid.to_string(),
-                                                "Copied transaction ID to clipboard".to_string(),
-                                            ))
-                                            .style(theme::button::transparent_border),
-                                        ),
-                                )
-                            },
-                        ),
-                    )
-                })
+                .push(conflicting_transactions_warning(conflicting_txids))
                 .push_maybe(identity_review)
                 .push(Row::new().push(Column::new().width(Length::Fill)).push(
                     // Disabled "Broadcasting…" state mirrors the
@@ -761,13 +660,13 @@ pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
 pub fn keychain_unavailable_action<'a>(action_scope: u64, signed_in: bool) -> Element<'a, Message> {
     let body = if signed_in {
         localized_copy(
-            "Connect hasn't finished setting up this device for Keychain \
+            "Connect hasn't finished setting up this device for COINCUBE Mobile \
          signing. Set it up now, or pair a phone over Wi-Fi to sign \
          locally without Connect.",
         )
     } else {
         localized_copy(
-            "To sign with a Keychain phone through Connect, sign in to \
+            "To sign with a phone through Connect, sign in to \
          COINCUBE Connect. Or pair a phone over Wi-Fi to sign locally — \
          no Connect required.",
         )
@@ -783,7 +682,7 @@ pub fn keychain_unavailable_action<'a>(action_scope: u64, signed_in: bool) -> El
     card::simple(
         Column::new()
             .spacing(15)
-            .push(text(localized_copy("Keychain signing needs Connect")).bold())
+            .push(text(localized_copy("Mobile signing needs Connect")).bold())
             .push(text(body).style(theme::text::secondary))
             .push(
                 Row::new()
@@ -960,42 +859,12 @@ pub fn spend_overview_with_cancel<'a>(
                         Column::new()
                             .padding(15)
                             .spacing(10)
-                            .push(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(text("PSBT").bold().width(Length::Fill))
-                                    .push(
-                                        Row::new()
-                                            .spacing(5)
-                                            .push(if saved {
-                                                Container::new(export_button)
-                                            } else {
-                                                Container::new(tooltip::Tooltip::new(
-                                                    export_button,
-                                                    Container::new(p1_regular(
-                                                        localized_copy("Sign or save the transaction first to enable export"),
-                                                    ))
-                                                    .style(theme::card::simple)
-                                                    .padding(10),
-                                                    tooltip::Position::Top,
-                                                ))
-                                            })
-                                            .push(
-                                                button::secondary_action(
-                                                    action_id(action_scope, "overview.import"),
-                                                    Some(icon::restore_icon()),
-                                                    coincube_ui::locale::copy("Import"),
-                                                    Message::FocusAction,
-                                                )
-                                                .on_press_maybe(if currently_signing || !saved {
-                                                    None
-                                                } else {
-                                                    Some(Message::ImportPsbt)
-                                                }),
-                                            ),
-                                    )
-                                    .align_y(Alignment::Center),
-                            )
+                            .push(psbt_heading_toolbar(
+                                export_button,
+                                action_scope,
+                                saved,
+                                currently_signing,
+                            ))
                             .push(
                                 Row::new()
                                     .push(p1_bold("Tx ID").width(Length::Fill))
@@ -1018,10 +887,15 @@ pub fn spend_overview_with_cancel<'a>(
                                     .align_y(Alignment::Center),
                             ),
                     )
-                    .push(signatures(tx, desc_info, key_aliases, match &replay {
-                        None => broadcast_ready,
-                        Some(pill) => pill.review.signatures_complete(&pill.entangled),
-                    }))
+                    .push(signatures(
+                        tx,
+                        desc_info,
+                        key_aliases,
+                        match &replay {
+                            None => broadcast_ready,
+                            Some(pill) => pill.review.signatures_complete(&pill.entangled),
+                        },
+                    ))
                     .push_maybe(replay.as_ref().map(replay_status_view)),
             )
             .style(theme::card::simple),
@@ -1030,8 +904,14 @@ pub fn spend_overview_with_cancel<'a>(
             Some(
                 Row::new()
                     .push(Space::new().width(Length::Fill))
-                    .push_maybe(cancel.map(|message| secondary_action(action_id(action_scope, "overview.cancel"), CopyText::Cancel.get())
-                        .on_press(message).width(Length::Fixed(150.0))))
+                    .push_maybe(cancel.map(|message| {
+                        secondary_action(
+                            action_id(action_scope, "overview.cancel"),
+                            CopyText::Cancel.get(),
+                        )
+                        .on_press(message)
+                        .width(Length::Fixed(150.0))
+                    }))
                     .push(if tx.status != SpendStatus::Pending {
                         None
                     } else if sign_or_broadcast && allow_signing {
@@ -1041,9 +921,12 @@ pub fn spend_overview_with_cancel<'a>(
                         // as its own row.
                         Some(
                             Row::new().push(
-                                primary_action(action_id(action_scope, "overview.sign"), localized_copy("Sign"))
-                                    .on_press(Message::Spend(SpendTxMessage::Sign))
-                                    .width(Length::Fixed(150.0)),
+                                primary_action(
+                                    action_id(action_scope, "overview.sign"),
+                                    localized_copy("Sign"),
+                                )
+                                .on_press(Message::Spend(SpendTxMessage::Sign))
+                                .width(Length::Fixed(150.0)),
                             ),
                         )
                     } else if !allow_signing {
@@ -1053,12 +936,15 @@ pub fn spend_overview_with_cancel<'a>(
                         // spend awaits its acknowledgement.
                         Some(
                             Row::new().push(
-                                primary_action(action_id(action_scope, "overview.broadcast"), localized_copy("Broadcast"))
-                                    .on_press_maybe(
-                                        broadcast_ready
-                                            .then_some(Message::Spend(SpendTxMessage::Broadcast)),
-                                    )
-                                    .width(Length::Fixed(150.0)),
+                                primary_action(
+                                    action_id(action_scope, "overview.broadcast"),
+                                    localized_copy("Broadcast"),
+                                )
+                                .on_press_maybe(
+                                    broadcast_ready
+                                        .then_some(Message::Spend(SpendTxMessage::Broadcast)),
+                                )
+                                .width(Length::Fixed(150.0)),
                             ),
                         )
                     })
@@ -1461,10 +1347,7 @@ fn outputs_view_with_identities_masked<'a>(
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| {
-                    if is_external {
-                        return true;
-                    }
-                    !change_indexes.contains(i)
+                    is_payment_output(i, is_external, change_indexes)
                 })
                 .count();
             if count > 0 {
@@ -1484,10 +1367,7 @@ fn outputs_view_with_identities_masked<'a>(
                                 .iter()
                                 .enumerate()
                                 .filter(|(i, _)| {
-                                    if is_external {
-                                        return true;
-                                    }
-                                    !change_indexes.contains(i)
+                                    is_payment_output(i, is_external, change_indexes)
                                 })
                                 .fold(
                                     Column::new().padding(20),
@@ -1957,8 +1837,8 @@ fn signing_key_kind_caption(kind: &SigningKeyKind) -> Option<&'static str> {
         SigningKeyKind::Master => Some("This computer"),
         SigningKeyKind::Hardware => Some("Hardware wallet"),
         SigningKeyKind::BorderWallet => Some("Border Wallet"),
-        SigningKeyKind::Keychain => Some("Keychain"),
-        SigningKeyKind::LanKeychain => Some("Keychain · local network"),
+        SigningKeyKind::Keychain => Some("Mobile"),
+        SigningKeyKind::LanKeychain => Some("Mobile · local network"),
         SigningKeyKind::Unknown => None,
     }
 }
@@ -2458,54 +2338,7 @@ fn border_wallet_recon_grid_view(recon: &BorderWalletReconstructionState) -> Ele
         button::secondary(None, localized_copy("Clear"))
     };
 
-    let grid_content: Element<Message> = if let Some(grid) = &recon.grid {
-        let mut grid_col = Column::new().spacing(1);
-
-        for row_idx in 0..WordGrid::ROWS {
-            let mut row_widget = Row::new().spacing(1);
-            for col_idx in 0..WordGrid::COLS {
-                let word = grid.word_at(row_idx, col_idx).unwrap_or("???");
-                let prefix = &word[..std::cmp::min(4, word.len())];
-                let cell = CellRef::new(row_idx as u16, col_idx as u8);
-                let is_selected = recon.pattern.cells().contains(&cell);
-
-                let order_num = recon
-                    .pattern
-                    .cells()
-                    .iter()
-                    .position(|c| c == &cell)
-                    .map(|p| p + 1);
-
-                let label = if let Some(n) = order_num {
-                    format!("{}", n)
-                } else {
-                    prefix.to_string()
-                };
-
-                let cell_style = if is_selected {
-                    theme::button::primary
-                } else {
-                    theme::button::secondary
-                };
-
-                let r = row_idx as u16;
-                let c = col_idx as u8;
-                let cell_btn = Button::new(text::text(label).size(11).align_x(Horizontal::Center))
-                    .style(cell_style)
-                    .on_press(Message::Spend(SpendTxMessage::BorderWalletRecon(
-                        BorderWalletReconMessage::ToggleCell(r, c),
-                    )))
-                    .width(50)
-                    .height(28);
-
-                row_widget = row_widget.push(cell_btn);
-            }
-            grid_col = grid_col.push(row_widget);
-        }
-        scrollable(grid_col).height(400).into()
-    } else {
-        p1_regular(localized_copy("No grid available")).into()
-    };
+    let grid_content = reconstruction_grid_content(recon);
 
     let error_text: Option<Element<Message>> = recon
         .error
@@ -2659,6 +2492,240 @@ pub fn update_spend_success_view<'a>() -> Element<'a, Message> {
         .width(Length::Fixed(400.0))
         .align_x(Alignment::Center)
         .into()
+}
+
+fn saved_broadcast_result<'a>(
+    spend_amount_display: &'a str,
+    sent_quote: &'a coincube_ui::component::quote_display::Quote,
+    sent_image_handle: &'a iced::widget::image::Handle,
+    is_self_transfer: bool,
+    replaces_pending: bool,
+    receipt: BroadcastReceipt<'a>,
+) -> Element<'a, Message> {
+    use coincube_ui::component::payment_result::{payment_result, short_id, Outcome, ReceiptRow};
+    let detail = if is_self_transfer && replaces_pending {
+        localized_copy("The coins return to this wallet once the cancellation confirms.")
+    } else {
+        localized_copy("You can close this. Activity updates when it confirms.")
+    };
+    let mut page = payment_result(
+        Outcome::Confirming,
+        spend_amount_display,
+        "bitcoin-send",
+        sent_quote,
+        sent_image_handle,
+        Message::Spend(super::super::SpendTxMessage::Cancel),
+    )
+    .detail(detail)
+    .row(ReceiptRow::new(localized_copy("Paid from"), "Vault"))
+    .voice(if is_self_transfer {
+        None
+    } else {
+        coincube_ui::worldview_copy::VoiceLine::PaymentSent.get()
+    });
+    if let Some(headline) = broadcast_headline(is_self_transfer, replaces_pending) {
+        page = page.headline(headline);
+    }
+    if let Some(fee) = receipt.fee {
+        page = page.row(ReceiptRow::new(localized_copy("Network fee"), fee));
+    }
+    if let Some(txid) = receipt.txid {
+        let txid = txid.to_string();
+        page = page.row(
+            ReceiptRow::new(localized_copy("Transaction ID"), short_id(&txid))
+                .mono()
+                .on_copy(Message::CopyWithToast(
+                    txid,
+                    "Transaction ID copied to clipboard".to_string(),
+                )),
+        );
+    }
+    // The modal draws no surface of its own.
+    Container::new(page)
+        .padding(32)
+        .max_width(1000)
+        .style(theme::card::modal)
+        .into()
+}
+
+fn conflicting_transactions_warning<'a>(
+    conflicting_txids: &HashSet<Txid>,
+) -> Option<Column<'a, Message>> {
+    if conflicting_txids.is_empty() {
+        None
+    } else {
+        Some(
+            conflicting_txids.iter().fold(
+                Column::new()
+                    .spacing(5)
+                    .push(Row::new().spacing(10).push(icon::warning_icon()).push(text(
+                        if conflicting_txids.len() > 1 {
+                            localized_copy(
+                                "WARNING: Broadcasting this transaction \
+                                        will invalidate some pending payments.",
+                            )
+                        } else {
+                            localized_copy(
+                                "WARNING: Broadcasting this transaction \
+                                        will invalidate a pending payment.",
+                            )
+                        },
+                    )))
+                    .push(
+                        Row::new()
+                            .padding([0, 30])
+                            .push(text(if conflicting_txids.len() > 1 {
+                                localized_copy(
+                                    "The following transactions are \
+                                        spending one or more inputs \
+                                        from the transaction to be \
+                                        broadcast and will be \
+                                        dropped, along with any other \
+                                        transactions that depend on them:",
+                                )
+                            } else {
+                                localized_copy(
+                                    "The following transaction is \
+                                        spending one or more inputs \
+                                        from the transaction to be \
+                                        broadcast and will be \
+                                        dropped, along with any other \
+                                        transactions that depend on it:",
+                                )
+                            })),
+                    ),
+                |col, txid| {
+                    col.push(
+                        Row::new()
+                            .padding([0, 30])
+                            .spacing(5)
+                            .align_y(Alignment::Center)
+                            .push(text(txid.to_string()))
+                            .push(
+                                Button::new(icon::clipboard_icon().style(theme::text::secondary))
+                                    .on_press(Message::CopyWithToast(
+                                        txid.to_string(),
+                                        "Copied transaction ID to clipboard".to_string(),
+                                    ))
+                                    .style(theme::button::transparent_border),
+                            ),
+                    )
+                },
+            ),
+        )
+    }
+}
+
+fn psbt_heading_toolbar<'a>(
+    export_button: coincube_ui::widget::action::Action<'a, Message>,
+    action_scope: u64,
+    saved: bool,
+    currently_signing: bool,
+) -> Row<'a, Message> {
+    Row::new()
+        .align_y(Alignment::Center)
+        .push(text("PSBT").bold().width(Length::Fill))
+        .push(
+            Row::new()
+                .spacing(5)
+                .push(if saved {
+                    Container::new(export_button)
+                } else {
+                    Container::new(tooltip::Tooltip::new(
+                        export_button,
+                        Container::new(p1_regular(localized_copy(
+                            "Sign or save the transaction first to enable export",
+                        )))
+                        .style(theme::card::simple)
+                        .padding(10),
+                        tooltip::Position::Top,
+                    ))
+                })
+                .push(
+                    button::secondary_action(
+                        action_id(action_scope, "overview.import"),
+                        Some(icon::restore_icon()),
+                        coincube_ui::locale::copy("Import"),
+                        Message::FocusAction,
+                    )
+                    .on_press_maybe(if currently_signing || !saved {
+                        None
+                    } else {
+                        Some(Message::ImportPsbt)
+                    }),
+                ),
+        )
+        .align_y(Alignment::Center)
+}
+
+fn is_payment_output(index: &usize, is_external: bool, change_indexes: &[usize]) -> bool {
+    if is_external {
+        return true;
+    }
+    !change_indexes.contains(index)
+}
+
+fn reconstruction_grid_row<'a>(
+    recon: &BorderWalletReconstructionState,
+    grid: &WordGrid,
+    row_idx: usize,
+) -> Row<'a, Message> {
+    let mut row_widget = Row::new().spacing(1);
+    for col_idx in 0..WordGrid::COLS {
+        let word = grid.word_at(row_idx, col_idx).unwrap_or("???");
+        let prefix = &word[..std::cmp::min(4, word.len())];
+        let cell = CellRef::new(row_idx as u16, col_idx as u8);
+        let is_selected = recon.pattern.cells().contains(&cell);
+
+        let order_num = recon
+            .pattern
+            .cells()
+            .iter()
+            .position(|c| c == &cell)
+            .map(|p| p + 1);
+
+        let label = if let Some(n) = order_num {
+            format!("{}", n)
+        } else {
+            prefix.to_string()
+        };
+
+        let cell_style = if is_selected {
+            theme::button::primary
+        } else {
+            theme::button::secondary
+        };
+
+        let r = row_idx as u16;
+        let c = col_idx as u8;
+        let cell_btn = Button::new(text::text(label).size(11).align_x(Horizontal::Center))
+            .style(cell_style)
+            .on_press(Message::Spend(SpendTxMessage::BorderWalletRecon(
+                BorderWalletReconMessage::ToggleCell(r, c),
+            )))
+            .width(50)
+            .height(28);
+
+        row_widget = row_widget.push(cell_btn);
+    }
+
+    row_widget
+}
+
+fn reconstruction_grid_content<'a>(
+    recon: &'a BorderWalletReconstructionState,
+) -> Element<'a, Message> {
+    if let Some(grid) = &recon.grid {
+        let mut grid_col = Column::new().spacing(1);
+
+        for row_idx in 0..WordGrid::ROWS {
+            let row_widget = reconstruction_grid_row(recon, grid, row_idx);
+            grid_col = grid_col.push(row_widget);
+        }
+        scrollable(grid_col).height(400).into()
+    } else {
+        p1_regular(localized_copy("No grid available")).into()
+    }
 }
 
 #[cfg(test)]
@@ -3371,7 +3438,7 @@ mod tests {
         assert_eq!(signing_key_kind_caption(&SigningKeyKind::Unknown), None);
         assert_eq!(
             signing_key_kind_caption(&SigningKeyKind::LanKeychain),
-            Some("Keychain · local network")
+            Some("Mobile · local network")
         );
 
         let active = SigningPath {
@@ -3435,13 +3502,13 @@ mod tests {
                 ),
                 signing_row(
                     fg3,
-                    "Keychain signer",
+                    "Mobile signer",
                     SigningKeyKind::Keychain,
                     SigningKeyState::Available(SigningKeyAction::Keychain),
                 ),
                 signing_row(
                     fg1,
-                    "Keychain over Wi-Fi",
+                    "Mobile over Wi-Fi",
                     SigningKeyKind::LanKeychain,
                     SigningKeyState::Available(SigningKeyAction::Hardware(1)),
                 ),
@@ -3460,7 +3527,7 @@ mod tests {
                     "Wi-Fi failed, nothing to offer",
                     SigningKeyKind::LanKeychain,
                     SigningKeyState::LanFailed {
-                        reason: "Pair this Keychain again".to_string(),
+                        reason: "Pair this phone again".to_string(),
                         retry: None,
                         connect: false,
                     },
