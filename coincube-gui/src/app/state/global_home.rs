@@ -3221,6 +3221,26 @@ impl State for GlobalHome {
                             HomeMessage::SparkDepositsChanged,
                         )))
                     }
+                    HomeMessage::SwapClaimObserved { amount_sat } => {
+                        // Only a swap's tracker is ours to retire: a
+                        // Vault/Liquid→Spark transfer's tracker belongs to
+                        // that transfer. Already completed by our own claim
+                        // (`complete_spark_auto_claim` clears `is_swap`), it
+                        // has celebrated, so this is a no-op then.
+                        if !self.pending_spark_incoming_is_swap {
+                            return Task::none();
+                        }
+                        self.pending_spark_incoming = None;
+                        self.pending_spark_incoming_swap_id = None;
+                        self.pending_spark_deposit_seen = false;
+                        self.pending_spark_incoming_is_swap = false;
+                        self.auto_claiming_spark_deposit = None;
+                        self.spark_claim_awaiting_settlement = false;
+                        Task::done(Message::ShowReceivedCelebration {
+                            context: "spark-receive".to_string(),
+                            amount_sat,
+                        })
+                    }
                     HomeMessage::SparkDepositsChanged => {
                         // The Spark bridge signalled a change to the unclaimed-deposit
                         // list — could be a new deposit appearing, one maturing, or one
@@ -5804,6 +5824,70 @@ mod tests {
                     })
                     .collect(),
             )
+    }
+
+    /// The Receive flow seeing its swap's claim first retires Home's swap
+    /// tracker and celebrates, so a later swap isn't skipped behind it. A
+    /// transfer's tracker, or one already celebrated, is left alone.
+    #[test]
+    fn a_swap_claim_seen_by_the_flow_retires_home_swap_tracker() {
+        use crate::app::view::HomeMessage;
+        let mut home = panel();
+        send(
+            &mut home,
+            HomeMessage::SwapSettledAwaitingArrival {
+                amount_sat: 28_600,
+                deposit_seen: false,
+            },
+        );
+        assert!(home.pending_spark_incoming.is_some());
+        assert!(home.pending_spark_incoming_is_swap);
+
+        let out = outputs(home.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Home(HomeMessage::SwapClaimObserved {
+                amount_sat: 28_253,
+            })),
+        ));
+        assert!(home.pending_spark_incoming.is_none());
+        assert!(!home.pending_spark_incoming_is_swap);
+        assert!(matches!(
+            out.as_slice(),
+            [Message::ShowReceivedCelebration { amount_sat: 28_253, context }]
+                if context == "spark-receive"
+        ));
+
+        // The next swap registers instead of being skipped.
+        send(
+            &mut home,
+            HomeMessage::SwapSettledAwaitingArrival {
+                amount_sat: 10_000,
+                deposit_seen: false,
+            },
+        );
+        assert_eq!(
+            home.pending_spark_incoming
+                .as_ref()
+                .map(|p| p.amount.to_sat()),
+            Some(10_000)
+        );
+
+        // A transfer's tracker is not a swap's: untouched, no celebration.
+        let mut transfer = panel();
+        transfer.pending_spark_incoming = Some(PendingTransfer {
+            amount: Amount::from_sat(5_000),
+            stage: TransferStage::PendingDeposit,
+        });
+        let out = outputs(transfer.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::Home(HomeMessage::SwapClaimObserved {
+                amount_sat: 5_000,
+            })),
+        ));
+        assert!(transfer.pending_spark_incoming.is_some());
+        assert!(out.is_empty());
     }
 
     /// #968 review finding 1: Tenshu v175 hides Liquid (master §3 decision
