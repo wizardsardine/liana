@@ -19134,6 +19134,46 @@ mod cube_name_routing_tests {
     }
 
     #[test]
+    fn rename_field_shows_saving_then_saved_not_an_unsaved_warning() {
+        use crate::app::view::settings::page::Status;
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            app.panels.connect.cube.server_cube_id = None;
+            drop(app.panels.global_settings.update(
+                None,
+                &app.cache,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::GeneralSection,
+                )),
+            ));
+            drop(app.panels.global_settings.update(
+                None,
+                &app.cache,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::CubeNameEdited("New name".into()),
+                )),
+            ));
+            let status = |app: &App| {
+                app.panels
+                    .global_settings
+                    .general()
+                    .expect("Display & appearance is open")
+                    .cube_name_status(&app.cache)
+                    .map(|(kind, _)| kind)
+            };
+            assert_eq!(status(&app), Some(Status::Warn));
+            // Return: the field keeps the typed text until the save lands.
+            drop(app.update(Message::View(view::Message::Settings(
+                view::SettingsMessage::CubeNameSubmitted("New name".into()),
+            ))));
+            assert_eq!(status(&app), Some(Status::Busy));
+            drop(app.update(Message::CubeNameSaved(Ok("New name".into()))));
+            assert_eq!(status(&app), Some(Status::Ok));
+        });
+    }
+
+    #[test]
     fn rename_sync_reply_only_settles_the_current_name() {
         use crate::app::cache::CubeNameSync;
         with_session(async {

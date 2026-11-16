@@ -1595,6 +1595,19 @@ impl GeneralSettingsState {
             .map(str::to_owned)
     }
 
+    /// The status line the Cube name field shows for this panel's typed
+    /// text and the App's rename progress.
+    pub fn cube_name_status(
+        &self,
+        cache: &Cache,
+    ) -> Option<(crate::app::view::settings::page::Status, &'static str)> {
+        crate::app::view::settings::general::cube_name_status(
+            &cache.cube_name,
+            cache.cube_name_sync,
+            self.name_input.as_deref(),
+        )
+    }
+
     /// The Display & appearance content without the dashboard, so the App
     /// can show the avatar flow inline beneath Cube identity.
     pub fn display_content<'a>(
