@@ -215,6 +215,10 @@ pub struct HardwareWallets {
     /// The Split policy bound into Coldcard and BitBox02 handles at listing
     /// (#568 B4b-2); used only when no wallet is loaded.
     split_policy: Option<SplitPolicyBinding>,
+    /// Bumped when a device fails to unlock. The refresh stream counts that
+    /// device as still connected and would never list it again, so the bump
+    /// restarts the stream and the device is found afresh.
+    rescan: u64,
 }
 
 impl std::fmt::Debug for HardwareWallets {
@@ -233,6 +237,7 @@ impl HardwareWallets {
             datadir_path,
             persist_pairing: true,
             split_policy: None,
+            rescan: 0,
         }
     }
 
@@ -391,6 +396,9 @@ impl HardwareWallets {
                     Err(e) => {
                         warn!("Pairing failed with an external device {}", e);
                         self.list.retain(|hw| hw.id() != &id);
+                        // E.g. a BitBox02 found while locked: once unlocked,
+                        // a fresh scan pairs it again.
+                        self.rescan += 1;
                     }
                     Ok(hw) => {
                         if let Some(h) = self.list.iter_mut().find(|hw1| {
@@ -416,15 +424,19 @@ impl HardwareWallets {
     }
 
     pub fn refresh(&self) -> iced::Subscription<HardwareWalletMessage> {
-        let state = RefreshState {
+        iced::Subscription::run_with(self.refresh_state(), make_refresh_stream)
+    }
+
+    fn refresh_state(&self) -> RefreshState {
+        RefreshState {
             network: self.network,
             keys_aliases: self.aliases.clone(),
             wallet: self.wallet.clone(),
             datadir_path: self.datadir_path.clone(),
             persist_pairing: self.persist_pairing,
             split_policy: self.split_policy.clone(),
-        };
-        iced::Subscription::run_with(state, make_refresh_stream)
+            rescan: self.rescan,
+        }
     }
 }
 
@@ -494,6 +506,7 @@ struct RefreshState {
     datadir_path: CoincubeDirectory,
     persist_pairing: bool,
     split_policy: Option<SplitPolicyBinding>,
+    rescan: u64,
 }
 
 impl std::hash::Hash for RefreshState {
@@ -506,6 +519,7 @@ impl std::hash::Hash for RefreshState {
         self.datadir_path.path().hash(state);
         self.persist_pairing.hash(state);
         self.split_policy.hash(state);
+        self.rescan.hash(state);
     }
 }
 
@@ -1527,10 +1541,39 @@ mod tests {
             datadir_path: CoincubeDirectory::new(root.into()),
             persist_pairing: true,
             split_policy,
+            rescan: 0,
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         state.hash(&mut hasher);
         hasher.finish()
+    }
+
+    fn listing_hash(listing: &HardwareWallets) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        listing.refresh_state().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// A device that fails to unlock leaves the list, and the refresh stream
+    /// restarts so it can be found again (a BitBox02 plugged in while locked
+    /// otherwise vanished until replugged). A success restarts nothing.
+    #[test]
+    fn a_failed_unlock_restarts_the_device_scan() {
+        let mut listing = HardwareWallets::new(
+            CoincubeDirectory::new("/synthetic/one".into()),
+            Network::Testnet4,
+        );
+        let before = listing_hash(&listing);
+        let _ = listing.update(HardwareWalletMessage::Unlocked(
+            "bitbox-synthetic".into(),
+            Err(async_hwi::Error::Device(
+                "error querying device info".into(),
+            )),
+        ));
+        let after = listing_hash(&listing);
+        assert_ne!(before, after, "the scan restarts");
+        assert!(listing.list.is_empty());
     }
 
     /// #568 B4b-2: the Split policy binding is part of the subscription
