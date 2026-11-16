@@ -4443,6 +4443,15 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        // The row sets the bold figure and its muted "USDB" unit as separate
+        // text, as the BTC row does, so look for the figure followed by the
+        // unit rather than one "50.00 USDB" string.
+        let shows_usdb_amount = |found: &capture::Inspection| -> bool {
+            found
+                .text
+                .windows(2)
+                .any(|pair| pair[0].0 == "50.00" && pair[1].0 == "USDB")
+        };
 
         let mut valued_config = fixture.config(0, None, None);
         spark_only(&mut valued_config);
@@ -4450,7 +4459,7 @@ mod tests {
         valued_config.spark_balance_loaded = true;
         valued_config.btc_usd_price = Some(50_000.0);
         let valued = inspect(valued_config);
-        assert!(valued.contains("50.00 USDB"), "{}", words(&valued));
+        assert!(shows_usdb_amount(&valued), "{}", words(&valued));
         assert!(
             valued.contains("≈ 100,000"),
             "the row must show the sat equivalent, not the raw base units:\n{}",
@@ -4487,7 +4496,7 @@ mod tests {
             unvalued_config.btc_usd_price = price;
             let unvalued = inspect(unvalued_config);
             let shown = words(&unvalued);
-            assert!(unvalued.contains("50.00 USDB"), "{:?}: {}", price, shown);
+            assert!(shows_usdb_amount(&unvalued), "{:?}: {}", price, shown);
             assert!(
                 !unvalued.contains("≈"),
                 "no quote must not invent a sat line: {:?}: {}",
@@ -4511,7 +4520,8 @@ mod tests {
         let presync = inspect(presync_config);
         let waiting = words(&presync);
         assert!(presync.contains("Waiting for Spark sync"), "{}", waiting);
-        assert!(!presync.contains("50.00 USDB"), "{}", waiting);
+        assert!(!shows_usdb_amount(&presync), "{}", waiting);
+        assert!(!presync.contains("50.00"), "{}", waiting);
         assert!(
             !presync.contains("100,000") && !presync.contains("350,000"),
             "a pre-sync holding must not enter the total: {}",
