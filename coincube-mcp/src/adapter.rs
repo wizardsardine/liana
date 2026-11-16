@@ -165,8 +165,9 @@ impl Adapter {
 impl ServerHandler for Adapter {
     /// Negotiate the SDK lifecycle while advertising only tool capabilities.
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("tenshu-mcp", env!("CARGO_PKG_VERSION")))
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
+            Implementation::new("coincube-mcp", env!("CARGO_PKG_VERSION")),
+        )
     }
     /// Return public discovery metadata without granting wallet-read authority.
     async fn list_tools(

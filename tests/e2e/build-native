@@ -51,7 +51,7 @@ try:
         run([release / "check-profile-authorises-cert.sh", release / "embedded.provisionprofile", "--identity", identity])
         executable.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (bundle / "Contents/Info.plist").open("wb") as stream:
-            plistlib.dump({"CFBundleIdentifier": "io.coincube.tenshu", "CFBundleExecutable": "testnet4_provision",
+            plistlib.dump({"CFBundleIdentifier": "io.coincube.desktop", "CFBundleExecutable": "testnet4_provision",
                           "CFBundleName": "Testnet4Provision", "CFBundlePackageType": "APPL", "CFBundleVersion": "1"}, stream)
         shutil.copy2(repo / "target/debug/examples/testnet4_provision", executable)
         shutil.copy2(release / "embedded.provisionprofile", bundle / "Contents/embedded.provisionprofile")

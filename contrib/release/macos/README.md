@@ -6,11 +6,11 @@ We distribute the application as a zipped [MacOS app bundle](https://developer.a
 
 | | |
 |---|---|
-| App ID | `io.coincube.tenshu` — the `CFBundleIdentifier` baked into [`_coincube.zip`](_coincube.zip); must also exist in the Apple Developer portal under Identifiers, with Associated Domains enabled |
+| App ID | `io.coincube.desktop` — the `CFBundleIdentifier` baked into [`_coincube.zip`](_coincube.zip); must also exist in the Apple Developer portal under Identifiers, with Associated Domains enabled |
 | Team ID | `8UVR249AD5` |
-| Keychain access group | `8UVR249AD5.io.coincube.tenshu` (`<TeamID>.<bundleID>`) |
+| Keychain access groups | `8UVR249AD5.io.coincube.desktop` (`<TeamID>.<bundleID>`), listed first, where new items go; then the legacy `8UVR249AD5.io.coincube.tenshu`, kept so Tenshu-era installs can still read and migrate their items |
 | Entitlements | [`coincube.entitlements`](coincube.entitlements) |
-| Provisioning profile | [`embedded.provisionprofile`](embedded.provisionprofile), copied to `COINCUBE.app/Contents/` before signing. Expires 2044-07-30 |
+| Provisioning profile | [`embedded.provisionprofile`](embedded.provisionprofile), copied to `COINCUBE.app/Contents/` before signing. Developer ID profile "COINCUBE \| Desktop" for `8UVR249AD5.io.coincube.desktop`, issued 2026-11-16 against the Developer ID Application certificate expiring 2031-01-20 (SHA-1 `84F82391…1EEBE547`). Expires 2044-11-11 |
 
 Four things about this that are easy to get wrong:
 
@@ -26,8 +26,11 @@ Four things about this that are easy to get wrong:
 
 - **The access group is part of a keychain item's identity.** Change the bundle identifier after a
   signed, entitled build has reached users and every device secret written under the old group
-  becomes unreachable, which makes their `ENCRYPTED_V3` Cubes undecryptable. Treat the identifier as
-  frozen.
+  becomes unreachable, which makes their `ENCRYPTED_V3` Cubes undecryptable. The 2026-11 rename
+  from `io.coincube.tenshu` to `io.coincube.desktop` handles this by keeping the old group in the
+  entitlements and copying items forward in code (`services/unlock/device_secret/mod.rs`,
+  `services/imported_inventory_anchor/apple.rs`). Any further change needs the same treatment;
+  never drop a group that shipped.
 - **The Team ID is written literally** in the entitlements file. `$(AppIdentifierPrefix)` and
   `$(TeamIdentifierPrefix)` are Xcode build-setting substitutions; `rcodesign` signs the XML
   verbatim and expands nothing, so a signature carrying the raw variable string fails at runtime

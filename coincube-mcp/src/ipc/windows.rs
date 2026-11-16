@@ -25,7 +25,7 @@ use windows_sys::Win32::{
     },
 };
 
-const PREFIX: &str = r"\\.\pipe\tenshu-mcp-";
+const PREFIX: &str = r"\\.\pipe\coincube-mcp-";
 
 fn user_sid() -> io::Result<String> {
     use windows_sys::Win32::Security::{TOKEN_USER, TokenUser};
@@ -394,11 +394,11 @@ mod tests {
     #[test]
     fn only_strict_local_endpoints_are_accepted() {
         for invalid in [
-            r"\\remote\pipe\tenshu-mcp-1",
+            r"\\remote\pipe\coincube-mcp-1",
             r"\\localhost\pipe\anything",
             "C:\\file",
             "tcp://127.0.0.1",
-            r"\\.\pipe\tenshu-mcp-0-abc",
+            r"\\.\pipe\coincube-mcp-0-abc",
         ] {
             assert!(expected_pid(Path::new(invalid)).is_err());
         }

@@ -820,10 +820,10 @@ impl Settings {
                 let executable = std::env::current_exe()
                     .ok()?
                     .parent()?
-                    .join(format!("tenshu-mcp{}", std::env::consts::EXE_SUFFIX));
+                    .join(format!("coincube-mcp{}", std::env::consts::EXE_SUFFIX));
                 let config = serde_json::to_string_pretty(&serde_json::json!({"mcpServers": {"tenshu": {
                     "command": executable,
-                    "env": {"TENSHU_MCP_PAIRING": store.location.locator(&id), "TENSHU_MCP_CREDENTIAL": client.credential}
+                    "env": {"COINCUBE_MCP_PAIRING": store.location.locator(&id), "COINCUBE_MCP_CREDENTIAL": client.credential}
                 }}})).ok();
                 if config.is_some() {
                     self.copied = Some(id);
@@ -913,10 +913,10 @@ impl Settings {
                     let executable = std::env::current_exe()
                         .ok()?
                         .parent()?
-                        .join(format!("tenshu-mcp{}", std::env::consts::EXE_SUFFIX));
+                        .join(format!("coincube-mcp{}", std::env::consts::EXE_SUFFIX));
                     return serde_json::to_string_pretty(&serde_json::json!({"mcpServers": {"tenshu": {
                         "command": executable,
-                        "env": {"TENSHU_MCP_SOCKET": server.socket, "TENSHU_MCP_CREDENTIAL": server.grant.credential()}
+                        "env": {"COINCUBE_MCP_SOCKET": server.socket, "COINCUBE_MCP_CREDENTIAL": server.grant.credential()}
                     }}})).ok();
                 }
             }
@@ -1998,7 +1998,7 @@ mod tests {
                 assert!(inspection.contains("Only the parts you allow."));
                 assert!(inspection.contains("Never shared"));
                 assert!(!inspection.contains("Your AI provider may receive financial information"));
-                assert!(!inspection.contains("TENSHU_MCP_CREDENTIAL"));
+                assert!(!inspection.contains("COINCUBE_MCP_CREDENTIAL"));
             }
             let spanish =
                 coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
@@ -2560,8 +2560,8 @@ mod tests {
                 .clone();
             let original = configuration(&mut settings, &first);
             let vars = &original["mcpServers"]["tenshu"]["env"];
-            let path = std::path::PathBuf::from(vars["TENSHU_MCP_PAIRING"].as_str().unwrap());
-            let token = vars["TENSHU_MCP_CREDENTIAL"].as_str().unwrap();
+            let path = std::path::PathBuf::from(vars["COINCUBE_MCP_PAIRING"].as_str().unwrap());
+            let token = vars["COINCUBE_MCP_CREDENTIAL"].as_str().unwrap();
             let socket = wire::pairing::resolve(&path).unwrap();
             let wire::Response::List(list) =
                 wire::ipc::call(&socket, token, wire::Request::List(wire::Empty {}))
@@ -2611,8 +2611,8 @@ mod tests {
             let second_cfg = configuration(&mut settings, &second);
             let second_vars = &second_cfg["mcpServers"]["tenshu"]["env"];
             let second_path =
-                std::path::PathBuf::from(second_vars["TENSHU_MCP_PAIRING"].as_str().unwrap());
-            let second_token = second_vars["TENSHU_MCP_CREDENTIAL"].as_str().unwrap();
+                std::path::PathBuf::from(second_vars["COINCUBE_MCP_PAIRING"].as_str().unwrap());
+            let second_token = second_vars["COINCUBE_MCP_CREDENTIAL"].as_str().unwrap();
             assert_eq!(
                 wire::ipc::call(
                     &wire::pairing::resolve(&second_path).unwrap(),
@@ -2753,7 +2753,7 @@ mod tests {
     // Unlike the isolated protocol/IPC tests, this crosses both process and
     // wallet-service boundaries, using the configuration issued by Settings.
     #[test]
-    #[ignore = "build tenshu-mcp and set TENSHU_MCP_TEST_ADAPTER; run explicitly in CI"]
+    #[ignore = "build coincube-mcp and set COINCUBE_MCP_TEST_ADAPTER; run explicitly in CI"]
     /// Exercise an actual companion process against SQLite and verify revocation.
     fn stdio_client_reads_real_wallet_and_observes_revocation() {
         use serde_json::{json, Value};
@@ -2774,8 +2774,8 @@ mod tests {
                 Message::CopyConfig, None, None, true, "mcp-fixture"
             ).unwrap()).unwrap();
             let environment = config["mcpServers"]["tenshu"]["env"].as_object().unwrap();
-            let executable = std::env::var_os("TENSHU_MCP_TEST_ADAPTER")
-                .expect("set TENSHU_MCP_TEST_ADAPTER to the built adapter");
+            let executable = std::env::var_os("COINCUBE_MCP_TEST_ADAPTER")
+                .expect("set COINCUBE_MCP_TEST_ADAPTER to the built adapter");
             let mut child = tokio::process::Command::new(executable)
                 .envs(environment.iter().map(|(k,v)| (k, v.as_str().unwrap())))
                 .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
@@ -2804,7 +2804,7 @@ mod tests {
                     "clientInfo":{"name":"wallet-acceptance", "version":"1"}
                 }
             })).await;
-            assert_eq!(initialized["serverInfo"]["name"], "tenshu-mcp");
+            assert_eq!(initialized["serverInfo"]["name"], "coincube-mcp");
             stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n").await.unwrap();
             let discovered = response(&mut stdin, &mut stdout, json!({"jsonrpc":"2.0", "id":2, "method":"tools/list"})).await;
             let tools = discovered["tools"].as_array().unwrap();

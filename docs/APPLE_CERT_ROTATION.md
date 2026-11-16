@@ -89,7 +89,7 @@ notarizes cleanly, then **fails to launch on every user's Mac** with no error
 message. See `docs/MACOS_KEYCHAIN_ENTITLEMENT.md` §4.
 
 - Apple Developer Portal → Profiles → Distribution → **Developer ID**
-- App ID `io.coincube.tenshu`, new certificate
+- App ID `io.coincube.desktop`, new certificate
 - Download and replace `contrib/release/macos/embedded.provisionprofile` in the
   repo (it holds no secrets — it is committed, not a CI secret)
 

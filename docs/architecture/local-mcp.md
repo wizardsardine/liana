@@ -33,7 +33,7 @@ new adapter executable.
   Unix socket host; official Rust `rmcp` SDK adapter behind the `adapter` feature.
 - `coincube-gui/src/app/local_mcp.rs`: trusted settings, active-Vault service
   implementation, minimized projections from existing wallet APIs.
-- `tenshu-mcp`: STDIO binary launched by the AI host; one fixed typed request per
+- `coincube-mcp`: STDIO binary launched by the AI host; one fixed typed request per
   authenticated local IPC connection, no wallet engine, database or AI SDK.
 - Cube Settings → AI access: opt-in, wallet scope and capability selection,
   persistent client pairing, private configuration and immediate revocation.
@@ -247,7 +247,7 @@ a Node runtime; TypeScript SDK v2 is not applicable to this codebase.
 ## Windows transport extension (Phase 2)
 
 The Windows adapter retains the same grant checks and wire protocol. A random
-local `\\.\pipe\tenshu-mcp-<desktop-pid>-<random>` endpoint is created with
+local `\\.\pipe\coincube-mcp-<desktop-pid>-<random>` endpoint is created with
 first-instance protection and remote-client rejection. Its protected DACL allows
 only the desktop process's logon SID, excluding other users and logon sessions;
 no default permissive pipe ACL is used. Missing logon identity fails closed.

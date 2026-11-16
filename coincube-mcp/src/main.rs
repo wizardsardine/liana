@@ -15,13 +15,13 @@ async fn run() -> Result<(), ()> {
     if !cfg!(any(unix, windows)) {
         return Err(());
     }
-    let pairing = std::env::var_os("TENSHU_MCP_PAIRING").map(std::path::PathBuf::from);
-    let socket = std::env::var_os("TENSHU_MCP_SOCKET").map(std::path::PathBuf::from);
+    let pairing = std::env::var_os("COINCUBE_MCP_PAIRING").map(std::path::PathBuf::from);
+    let socket = std::env::var_os("COINCUBE_MCP_SOCKET").map(std::path::PathBuf::from);
     if pairing.is_some() == socket.is_some() {
         return Err(());
     }
     let socket = socket.unwrap_or_default();
-    let credential = std::env::var("TENSHU_MCP_CREDENTIAL").map_err(|_| ())?;
+    let credential = std::env::var("COINCUBE_MCP_CREDENTIAL").map_err(|_| ())?;
     if credential.len() != 64 || !credential.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(());
     }

@@ -132,8 +132,8 @@
                 KeyPath='yes' />
             </Component>
             <Component Id='mcpBinary' Guid='*'>
-              <File Id='mcpExe' Name='tenshu-mcp.exe'
-                Source='$(var.CargoTargetBinDir)\tenshu-mcp.exe' KeyPath='yes' />
+              <File Id='mcpExe' Name='coincube-mcp.exe'
+                Source='$(var.CargoTargetBinDir)\coincube-mcp.exe' KeyPath='yes' />
             </Component>
           </Directory>
         </Directory>

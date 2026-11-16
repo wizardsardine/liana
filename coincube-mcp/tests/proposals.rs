@@ -315,14 +315,14 @@ async fn actual_stdio_proposal_is_not_a_wallet_and_cannot_approve_itself() {
     use serde_json::json;
     let server = server(Arc::new(Store::for_chain(Chain::Regtest)));
     let mut client = stdio::Client::start(
-        std::ffi::OsStr::new(env!("CARGO_BIN_EXE_tenshu-mcp")),
+        std::ffi::OsStr::new(env!("CARGO_BIN_EXE_coincube-mcp")),
         &[
             (
-                "TENSHU_MCP_SOCKET".into(),
+                "COINCUBE_MCP_SOCKET".into(),
                 server.socket.to_str().unwrap().into(),
             ),
             (
-                "TENSHU_MCP_CREDENTIAL".into(),
+                "COINCUBE_MCP_CREDENTIAL".into(),
                 server.grant.credential().into(),
             ),
         ],

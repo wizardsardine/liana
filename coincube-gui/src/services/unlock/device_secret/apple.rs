@@ -382,7 +382,7 @@ mod tests {
     #[test]
     #[ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"]
     fn the_item_is_device_only_and_not_synchronizable() {
-        const SERVICE: &str = "io.coincube.tenshu.test.device-secret";
+        const SERVICE: &str = "io.coincube.desktop.test.device-secret";
         let account = format!("attr-probe-{}", std::process::id());
 
         let _ = delete(SERVICE, &account);
