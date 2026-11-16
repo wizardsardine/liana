@@ -10,7 +10,7 @@ We distribute the application as a zipped [MacOS app bundle](https://developer.a
 | Team ID | `8UVR249AD5` |
 | Keychain access groups | `8UVR249AD5.io.coincube.desktop` (`<TeamID>.<bundleID>`), listed first, where new items go; then the legacy `8UVR249AD5.io.coincube.tenshu`, kept so Tenshu-era installs can still read and migrate their items |
 | Entitlements | [`coincube.entitlements`](coincube.entitlements) |
-| Provisioning profile | [`embedded.provisionprofile`](embedded.provisionprofile), copied to `COINCUBE.app/Contents/` before signing. Expires 2044-07-30 |
+| Provisioning profile | [`embedded.provisionprofile`](embedded.provisionprofile), copied to `COINCUBE.app/Contents/` before signing. Developer ID profile "COINCUBE \| Desktop" for `8UVR249AD5.io.coincube.desktop`, issued 2026-11-16 against the Developer ID Application certificate expiring 2031-01-20 (SHA-1 `84F82391…1EEBE547`). Expires 2044-11-11 |
 
 Four things about this that are easy to get wrong:
 
