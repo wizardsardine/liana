@@ -256,8 +256,26 @@ async fn remove_cube_import_within(
         }
     }
     if let Some(attachment) = expected_attachment {
-        crate::services::imported_keys::LocalKeyRepository::new(directory, expected, attachment)?
+        if expected.network.is_blake2b() {
+            // The local-key repository refuses every BTCB2 scope, so a BTCB2
+            // import can never have admitted keys. Storage under its
+            // operation id is unexplained: keep it and refuse the delete.
+            let key_root = directory
+                .path()
+                .join("imported-local-keys")
+                .join(intent.operation_id.to_string());
+            if super::blocking_fs(move || Ok(storage_present(&key_root))).await? {
+                return Err(
+                    "Unexpected imported key storage for a Bitcoin Blake2b Cube; no files were removed."
+                        .into(),
+                );
+            }
+        } else {
+            crate::services::imported_keys::LocalKeyRepository::new(
+                directory, expected, attachment,
+            )?
             .remove_operation_storage()?;
+        }
     }
 
     // Keep the Cube visible until cleanup finishes. An interrupted removal
@@ -345,37 +363,45 @@ mod tests {
 
     impl Fixture {
         async fn new() -> Self {
+            Self::on_chain(ChainId::Regtest).await
+        }
+
+        async fn on_chain(chain: ChainId) -> Self {
             let root = std::env::temp_dir().join(format!("import-removal-test-{}", Uuid::new_v4()));
-            let directory = NetworkDirectory::new(root.join("regtest"));
+            let directory = NetworkDirectory::new(root.join(chain.dir_name()));
             directory.init().unwrap();
             let secp = Secp256k1::new();
-            let master = Xpriv::new_master(Network::Regtest, &[51; 32]).unwrap();
+            let network = chain.bitcoin_network();
+            let coin = if network == Network::Bitcoin { 0 } else { 1 };
+            let master = Xpriv::new_master(network, &[51; 32]).unwrap();
             let account = master
-                .derive_priv(&secp, &DerivationPath::from_str("m/84'/1'/0'").unwrap())
+                .derive_priv(
+                    &secp,
+                    &DerivationPath::from_str(&format!("m/84'/{coin}'/0'")).unwrap(),
+                )
                 .unwrap();
             let key = format!(
-                "[{}/84'/1'/0']{}",
+                "[{}/84'/{coin}'/0']{}",
                 master.fingerprint(&secp),
                 Xpub::from_priv(&secp, &account)
             );
             let descriptor = ImportedWalletDescriptor::parse(
                 &format!("wpkh({key}/0/*)"),
                 Some(&format!("wpkh({key}/1/*)")),
-                ChainId::Regtest,
+                chain,
             )
             .unwrap();
-            let wallet =
-                ImportedWalletAttachment::new(descriptor.clone(), ChainId::Regtest, 0, 20).unwrap();
+            let wallet = ImportedWalletAttachment::new(descriptor.clone(), chain, 0, 20).unwrap();
             let config = Config::new(
-                coincubed::config::BitcoinConfig::new(ChainId::Regtest, Duration::from_secs(30)),
+                coincubed::config::BitcoinConfig::new(chain, Duration::from_secs(30)),
                 None,
                 log::LevelFilter::Info,
                 WalletDescriptor::Imported(descriptor),
                 directory.coincubed_data_directory(&wallet.wallet_id),
             );
-            let mut cube = CubeSettings::new("Selected".into(), ChainId::Regtest);
+            let mut cube = CubeSettings::new("Selected".into(), chain);
             cube.bitcoin_import = Some(Box::new(BitcoinImport::pending()));
-            let other = CubeSettings::new("Unrelated".into(), ChainId::Regtest);
+            let other = CubeSettings::new("Unrelated".into(), chain);
             settings::update_settings_file(&directory, |mut settings| {
                 settings.cubes = vec![other.clone(), cube.clone()];
                 Some(settings)
@@ -539,6 +565,55 @@ mod tests {
         assert!(!key_root.exists());
         assert_eq!(fs::read(unrelated).unwrap(), b"unrelated");
         assert_eq!(Settings::from_file(&f.directory).unwrap().cubes.len(), 1);
+    }
+
+    /// A BTCB2 Cube paired from a Bitcoin import has an attached wallet but
+    /// can never hold imported local keys; deleting it must not consult the
+    /// local-key repository, which refuses every BTCB2 scope.
+    #[tokio::test]
+    async fn installed_btcb2_import_is_removed() {
+        let mut f = Fixture::on_chain(ChainId::BitcoinBlake2b).await;
+        f.install().await;
+        let destination = f.destination();
+        let journal = journal_path(&f.directory, f.operation_id());
+        assert!(destination.join("coincubed.sqlite3").is_file());
+        let unrelated = f.directory.path().join("keep-me");
+        fs::write(&unrelated, b"unrelated").unwrap();
+
+        remove_cube_import(&f.directory, &f.cube).await.unwrap();
+        let saved = Settings::from_file(&f.directory).unwrap();
+        assert_eq!(saved.cubes.len(), 1);
+        assert_eq!(saved.cubes[0].id, f.other.id);
+        assert!(saved.wallets.is_empty());
+        assert!(!destination.exists());
+        assert!(!journal.exists());
+        assert_eq!(fs::read(unrelated).unwrap(), b"unrelated");
+        remove_cube_import(&f.directory, &f.cube).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn btcb2_import_with_unexplained_key_storage_is_refused() {
+        let mut f = Fixture::on_chain(ChainId::BitcoinBlake2b).await;
+        f.install().await;
+        let destination = f.destination();
+        let key_root = f
+            .directory
+            .path()
+            .join("imported-local-keys")
+            .join(f.operation_id().to_string());
+        crate::dir::create_directory(&key_root).unwrap();
+        fs::write(key_root.join("orphan.key"), b"synthetic ciphertext").unwrap();
+
+        let error = remove_cube_import(&f.directory, &f.cube).await.unwrap_err();
+        assert!(
+            error.contains("no files were removed"),
+            "unexpected error: {}",
+            error
+        );
+        assert!(key_root.join("orphan.key").is_file());
+        assert!(destination.join("coincubed.sqlite3").is_file());
+        let saved = Settings::from_file(&f.directory).unwrap();
+        assert!(saved.cubes.iter().any(|cube| cube.id == f.cube.id));
     }
 
     #[tokio::test]
