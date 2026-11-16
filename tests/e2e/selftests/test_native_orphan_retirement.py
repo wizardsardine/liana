@@ -42,7 +42,8 @@ def orphan_run(flow,tmp_path,monkeypatch):
     monkeypatch.setattr(native,'NativeCleanupContext',lambda *args,**kwargs:context)
     calls=[]
     def worker(cfg,binding,exe,receipt,request,directory,access_token=None):
-        assert request['action']=='retire_orphan_215' and access_token=='current-unit-token'
+        assert request['action']=='retire_orphan_215'
+        assert access_token=='current-unit-token'
         calls.append(request)
         root=Path(request['config']['case_root']);root.mkdir(mode=0o700)
         atomic_write(root/'orphan.json',json.dumps({'config':request['config'],'phase':'complete','remote_id':12,
@@ -69,7 +70,8 @@ def test_actual_configured_and_global_funding_protection_precedes_any_orphan_del
         before=private_read(qa_funding.ROOT/'pool.json')
         with pytest.raises(Failed,match='ORPHAN_PROTECTED'):
             suite.retire_orphan_215(account,5,old,archive,'/unit/workstation')
-        assert calls==[] and flow[1]['deletes']==[]
+        assert calls==[]
+        assert flow[1]['deletes']==[]
         assert private_read(qa_funding.ROOT/'pool.json')==before
     finally:suite.close()
 
@@ -79,8 +81,10 @@ def test_remote_only_outcome_keeps_old_pending_and_cannot_count_as_lifecycle_acc
     before=private_read(old/'checkpoint.json'),private_read(case/'state.json')
     try:
         outcome=suite.retire_orphan_215(account,5,old,archive,'/unit/workstation')
-        assert len(calls)==1 and outcome['remote_metadata_retired'] is True
-        assert outcome['old_flow']=='BLOCKED' and outcome['native_acceptance'] is False
+        assert len(calls)==1
+        assert outcome['remote_metadata_retired'] is True
+        assert outcome['old_flow']=='BLOCKED'
+        assert outcome['native_acceptance'] is False
         assert outcome['local_recovery_retained'] is True
         assert before==(private_read(old/'checkpoint.json'),private_read(case/'state.json'))
         assert 'native_recovery_acceptance' not in suite.journal.data['artifacts']
