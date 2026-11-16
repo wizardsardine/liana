@@ -140,11 +140,15 @@ sign_with_rcodesign() {
     cd "$RELEASE_BUILD_DIR"
     if [ "$TARGET" = "liana" ]; then
         APP_BUNDLE="Liana.app"
-        chmod u+w "./$APP_BUNDLE/Contents/MacOS/Liana"
     else
         APP_BUNDLE="LianaBusiness.app"
-        chmod u+w "./$APP_BUNDLE/Contents/MacOS/LianaBusiness"
     fi
+
+    if [ ! -d "$APP_BUNDLE" ]; then
+        echo "App bundle not found: $RELEASE_BUILD_DIR/$APP_BUNDLE (run release.sh first)"
+        exit 1
+    fi
+    chmod u+w "./$APP_BUNDLE/Contents/MacOS/${APP_BUNDLE%.app}"
 
     rcodesign sign \
         --digest sha256 \

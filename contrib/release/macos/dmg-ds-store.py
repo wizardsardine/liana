@@ -7,10 +7,14 @@ usage: dmg-ds-store.py <out .DS_Store> <App.app> <volume name>
 
 Requires the `ds_store` and `mac_alias` packages
 (nixpkgs: python3Packages.ds-store pulls both).
+
+The dates embedded in the background picture alias are taken from
+SOURCE_DATE_EPOCH so the output is reproducible.
 """
 
 import argparse
 import datetime
+import os
 
 from ds_store import DSStore
 from mac_alias import Alias, VolumeInfo, TargetInfo, ALIAS_FIXED_DISK, ALIAS_KIND_FILE
@@ -25,15 +29,18 @@ args = p.parse_args()
 
 x, y, w, h = (int(v) for v in args.window.split(","))
 
+timestamp = datetime.datetime.fromtimestamp(
+    int(os.environ.get("SOURCE_DATE_EPOCH", "0")), datetime.timezone.utc
+).replace(microsecond=0)
+
 
 def background_alias(volname, rel_path):
     """Build an alias record by hand so it can be produced without mounting
     the volume. Finder resolves it by volume name + path."""
-    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     folder = rel_path.rsplit("/", 1)[0] if "/" in rel_path else volname
     volume = VolumeInfo(
         name=volname,
-        creation_date=now,
+        creation_date=timestamp,
         fs_type=b"H+",
         disk_type=ALIAS_FIXED_DISK,
         attribute_flags=0,
@@ -45,7 +52,7 @@ def background_alias(volname, rel_path):
         filename=rel_path.rsplit("/", 1)[-1],
         folder_cnid=0,
         cnid=0,
-        creation_date=now,
+        creation_date=timestamp,
         creator_code=b"\0\0\0\0",
         type_code=b"\0\0\0\0",
         folder_name=folder,
