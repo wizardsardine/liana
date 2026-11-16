@@ -1113,6 +1113,7 @@ pub async fn load_application(
         vault_lacks_keychain_key: wallet.lacks_keychain_key(),
         cube_name: config.cube_settings.name.clone(),
         cube_name_sync: Default::default(),
+        spark_nickname_save: Default::default(),
         wallet_names: Default::default(),
         cube_connect_owner: config.cube_settings.connect_owner.clone(),
         cube_owned_by_other_account: false,

@@ -119,6 +119,19 @@ pub fn saved_nickname(input: &str) -> Option<String> {
 }
 
 impl SparkSettings {
+    /// The nickname field's status line for this panel's typed text, the
+    /// saved nickname and the App's save progress.
+    pub fn nickname_status(
+        &self,
+        cache: &Cache,
+    ) -> Option<(crate::app::view::settings::page::Status, &'static str)> {
+        crate::app::view::spark::settings::nickname_status(
+            self.nickname_input.as_deref(),
+            cache.wallet_names.spark.as_deref(),
+            cache.spark_nickname_save,
+        )
+    }
+
     /// A typed nickname that would change the saved one (`saved`), to save
     /// when the user leaves Balances & conversion without pressing Return.
     /// One too long to save stays in the field with its error instead.
@@ -159,6 +172,7 @@ impl State for SparkSettings {
                 .push(crate::app::view::spark::settings::nickname_group(
                     self.nickname_input.as_deref(),
                     cache.wallet_names.spark.as_deref(),
+                    cache.spark_nickname_save,
                 ))
                 .into()
         };

@@ -9032,6 +9032,7 @@ impl App {
                 // to the saved name.
                 if self.spark_nickname_in_flight.is_some() {
                     self.spark_nickname_queued = Some(nickname);
+                    self.cache.spark_nickname_save = cache::NameSave::Saving;
                     return Task::none();
                 }
                 // So is one going back to the saved name while an earlier
@@ -9043,6 +9044,9 @@ impl App {
                         &self.cube_settings.id,
                     )
                 {
+                    // What was asked for is what is saved: an earlier
+                    // failure no longer applies.
+                    self.settle_failed_spark_nickname();
                     return self.panels.spark_settings.update(
                         self.daemon.clone(),
                         &self.cache,
@@ -9058,6 +9062,11 @@ impl App {
             Message::SparkNicknameSaved { cube_id, .. } if cube_id != self.cube_settings.id => {}
             Message::SparkNicknameSaved { result, .. } => {
                 self.spark_nickname_in_flight = None;
+                self.cache.spark_nickname_save = if result.is_ok() {
+                    cache::NameSave::Saved
+                } else {
+                    cache::NameSave::Failed
+                };
                 let mut tasks = Vec::new();
                 match result {
                     Ok(nickname) => {
@@ -9086,6 +9095,7 @@ impl App {
                 // it, unless it is what is saved.
                 if let Some(next) = self.spark_nickname_queued.take() {
                     if next == self.cube_settings.spark_alias {
+                        self.settle_failed_spark_nickname();
                         tasks.push(self.panels.spark_settings.update(
                             self.daemon.clone(),
                             &self.cache,
@@ -10157,12 +10167,22 @@ impl App {
         self.datadir.network_directory(self.cube_settings.network)
     }
 
+    /// A request that lands on the saved nickname without a write (the
+    /// shortcut, or a queued one) settles an earlier failed save: the field
+    /// then shows what is saved, not "Couldn't save".
+    fn settle_failed_spark_nickname(&mut self) {
+        if self.cache.spark_nickname_save == cache::NameSave::Failed {
+            self.cache.spark_nickname_save = cache::NameSave::Saved;
+        }
+    }
+
     /// Write `nickname` to this Cube's settings; [`Message::SparkNicknameSaved`]
     /// answers. Callers start one only while none is running, so this App's
     /// requests are coalesced; the write itself follows every earlier one
     /// for this Cube, from any App.
     fn start_spark_nickname_write(&mut self, nickname: Option<String>) -> Task<Message> {
         self.spark_nickname_in_flight = Some(nickname.clone());
+        self.cache.spark_nickname_save = cache::NameSave::Saving;
         let cube_id = self.cube_settings.id.clone();
         let write =
             SparkNicknameWrite::new(self.spark_nickname_network_dir(), cube_id.clone(), nickname);
@@ -16798,6 +16818,81 @@ mod settings_navigation_integration_tests {
             )))),
         );
         app
+    }
+
+    /// The nickname field says what happened: not saved yet while typed,
+    /// Saving after Return (not the unsaved warning: the field keeps the
+    /// text until the save lands), then saved, or the failure.
+    #[test]
+    fn the_spark_nickname_field_shows_saving_then_saved_or_the_failure() {
+        use crate::app::view::settings::page::Status;
+        let _guard = crate::app::session::test_guard();
+        let root =
+            std::env::temp_dir().join(format!("spark-nickname-status-{}", uuid::Uuid::new_v4()));
+        let mut app = nickname_app(&root);
+        let status = |app: &App| {
+            app.panels
+                .spark_settings
+                .nickname_status(&app.cache)
+                .map(|(kind, _)| kind)
+        };
+        assert_eq!(status(&app), None);
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameEdited(
+                "Daily".into(),
+            ))),
+        );
+        assert_eq!(status(&app), Some(Status::Warn));
+        let saved = outputs(
+            app.update(nickname(view::SparkSettingsMessage::NicknameSubmitted(
+                "Daily".into(),
+            ))),
+        );
+        assert_eq!(status(&app), Some(Status::Busy));
+        for message in saved {
+            drop(app.update(message));
+        }
+        assert_eq!(status(&app), Some(Status::Ok));
+
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameEdited(
+                "Travel".into(),
+            ))),
+        );
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameSubmitted(
+                "Travel".into(),
+            ))),
+        );
+        assert_eq!(status(&app), Some(Status::Busy));
+        drop(app.update(Message::SparkNicknameSaved {
+            cube_id: app.cube_settings.id.clone(),
+            result: Err("synthetic disk failure".into()),
+        }));
+        assert_eq!(status(&app), Some(Status::Bad));
+
+        // Back to the saved name: nothing is written, and the failure no
+        // longer applies.
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameEdited(
+                "Daily".into(),
+            ))),
+        );
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameSubmitted(
+                "Daily".into(),
+            ))),
+        );
+        assert_eq!(status(&app), Some(Status::Ok));
+
+        // Too long to save: the field's own error, no status line.
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameEdited(
+                "a".repeat(crate::app::settings::WALLET_ALIAS_MAXIMUM_LENGTH),
+            ))),
+        );
+        assert_eq!(status(&app), None);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Submissions made while a nickname write runs wait for it, so the
