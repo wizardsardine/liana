@@ -449,9 +449,9 @@ fn check_session_network(
     }
     if network.is_empty() {
         return Err(if session_exists {
-            "Connect needs updating before Keychain can sign on Bitcoin Blake2b. The request was cancelled."
+            "Connect needs updating before COINCUBE Mobile can sign on Bitcoin Blake2b. The request was cancelled."
         } else {
-            "Connect needs updating before Keychain can sign on Bitcoin Blake2b. Nothing was sent to the signer."
+            "Connect needs updating before COINCUBE Mobile can sign on Bitcoin Blake2b. Nothing was sent to the signer."
         });
     }
     Err(if session_exists {
@@ -699,7 +699,7 @@ impl KeychainSignModal {
     pub fn launch(&self) -> Task<Message> {
         let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
             return Task::done(Message::KeychainSign(KeychainSignMessage::Classified(Err(
-                OpError::new("Imported wallets do not use Cube Keychain signing."),
+                OpError::new("Imported wallets do not use Mobile signing."),
             ))));
         };
         let mut client = self.coincube_client.clone();
@@ -824,7 +824,7 @@ impl KeychainSignModal {
                 vault_id = vault_id,
                 phase = "classified",
                 required = %required_summary,
-                "No Keychain signers required for this transaction"
+                "No Mobile signers required for this transaction"
             );
             // No keychain rows to show. In the unified picker this isn't an
             // error — the user simply signs with the local signers listed
@@ -961,7 +961,7 @@ impl KeychainSignModal {
             let Some(matched) = by_fp.get(&target.key_fingerprint) else {
                 tracing::warn!(
                     "ResolveSigners returned target for fingerprint {} that wasn't classified \
-                     as Keychain — skipping",
+                     as Mobile — skipping",
                     target.key_fingerprint,
                 );
                 continue;
@@ -991,7 +991,7 @@ impl KeychainSignModal {
             let outdated = self.wallet.chain.is_blake2b() && !replay_protection.is_capable();
             let error = outdated.then(|| {
                 format!(
-                    "{}'s Keychain needs updating before it can sign on Bitcoin Blake2b.",
+                    "{}'s COINCUBE Mobile needs updating before it can sign on Bitcoin Blake2b.",
                     label
                 )
             });
@@ -1032,7 +1032,7 @@ impl KeychainSignModal {
         };
         let Some(descriptor) = self.wallet.inheritance_descriptor() else {
             entry.status = PendingSessionStatus::Failed;
-            entry.error = Some("Imported wallets do not use Cube Keychain signing.".into());
+            entry.error = Some("Imported wallets do not use Mobile signing.".into());
             return Task::none();
         };
         if self.wallet.chain.is_blake2b()
@@ -1041,7 +1041,7 @@ impl KeychainSignModal {
         {
             entry.status = PendingSessionStatus::Failed;
             entry.error = Some(format!(
-                "{}'s Keychain needs updating before it can sign on Bitcoin Blake2b.",
+                "{}'s COINCUBE Mobile needs updating before it can sign on Bitcoin Blake2b.",
                 entry.label
             ));
             return Task::none();
@@ -1673,7 +1673,7 @@ impl KeychainSignModal {
                 // an envelope-less signature on a live session no longer has a
                 // legitimate origin. Fail closed.
                 return Err(
-                    "This Keychain returned an unencrypted signature for an encrypted \
+                    "This phone returned an unencrypted signature for an encrypted \
                      request. Update COINCUBE Mobile, then start the signature again."
                         .to_string(),
                 );
@@ -1883,7 +1883,7 @@ impl KeychainSignModal {
             target: "coincube_gui::signing",
             vault_id = self.vault_id.unwrap_or(0),
             cancelling = non_terminal,
-            "User cancelled Keychain signing flow"
+            "User cancelled Mobile signing flow"
         );
         let tokens = self.tokens.clone();
         let grpc_url = self.grpc_url.clone();
@@ -2113,7 +2113,7 @@ impl Modal for KeychainSignModal {
             .padding(15)
             .width(iced::Length::Fixed(modal_const::MODAL_WIDTH as f32));
 
-        col = col.push(p1_bold("Sign via Keychain"));
+        col = col.push(p1_bold("Sign via Mobile"));
 
         // Stream-health banner: surfaced only while sessions are
         // pending and the realtime stream is unhealthy. We don't
@@ -2200,7 +2200,7 @@ impl Modal for KeychainSignModal {
                 }
             }
             Phase::AllDone => {
-                col = col.push(p1_regular("All Keychain signers have completed. Closing…"));
+                col = col.push(p1_regular("All Mobile signers have completed. Closing…"));
             }
         }
 
@@ -2263,9 +2263,9 @@ fn friendly_grpc_error(status: tonic::Status) -> (String, bool) {
             "NETWORK_INVALID" if status.code() == tonic::Code::InvalidArgument => Some("Connect doesn't recognise this Vault's network. Update COINCUBE."),
             "NETWORK_INVALID" => Some("This Vault's Connect record has an unrecognised network. Contact support at https://coincube.io/support."),
             "NETWORK_MISMATCH" => Some("This Vault's network doesn't match its Connect Cube. Reopen the Cube; if this repeats, contact support at https://coincube.io/support."),
-            "CHAIN_IDENTITY_REQUIRED" => Some("Update COINCUBE to keep signing with Keychain."),
+            "CHAIN_IDENTITY_REQUIRED" => Some("Update COINCUBE to keep signing with COINCUBE Mobile."),
             "TARGET_KEY_NOT_ON_VAULT" => Some("One of the keys selected isn't part of this Vault. Refresh the signers and try again."),
-            "SIGNER_APP_OUTDATED" => Some("This signer's Keychain needs updating before it can sign on Bitcoin Blake2b."),
+            "SIGNER_APP_OUTDATED" => Some("This signer's COINCUBE Mobile needs updating before it can sign on Bitcoin Blake2b."),
             "NETWORK_DISABLED" => Some("Bitcoin Blake2b isn't enabled for this account."),
             _ => None,
         };
@@ -2350,8 +2350,8 @@ fn unresolved_signer_reason(entry: &str) -> Option<&str> {
 pub(crate) fn friendly_unresolved_signer(entry: &str) -> String {
     match unresolved_signer_reason(entry) {
         Some("signer_app_outdated") => localized_format!(
-            "{}'s Keychain needs updating before it can sign on Bitcoin Blake2b.",
-            "El Keychain de {} necesita actualizarse antes de poder firmar en Bitcoin Blake2b.",
+            "{}'s COINCUBE Mobile needs updating before it can sign on Bitcoin Blake2b.",
+            "El COINCUBE Mobile de {} necesita actualizarse antes de poder firmar en Bitcoin Blake2b.",
             entry.trim_end_matches(" (signer_app_outdated)"),
         ),
         Some("no_device_registered") => localized_format!(
@@ -2372,9 +2372,9 @@ pub(crate) fn friendly_unresolved_signer(entry: &str) -> String {
         // Opening Keychain re-registers the device; nothing about the
         // account's registration state is wrong, so say nothing about it.
         Some("transport_key_stale") => localized_format!(
-            "{} — this signer's Keychain hasn't checked in with Connect \
+            "{} — this signer's COINCUBE Mobile hasn't checked in with Connect \
              recently. Ask them to open COINCUBE Mobile on their phone, then retry.",
-            "{} — el Keychain de este firmante no se ha comunicado con Connect \
+            "{} — el COINCUBE Mobile de este firmante no se ha comunicado con Connect \
              recientemente. Pídele que abra COINCUBE Mobile en su teléfono y vuelve a intentarlo.",
             entry,
         ),
@@ -2383,9 +2383,9 @@ pub(crate) fn friendly_unresolved_signer(entry: &str) -> String {
         // replacement; Keychain re-claims the key on launch on the handset
         // that holds it (keychain-app#145).
         Some("enrolled_device_unavailable") => localized_format!(
-            "{} is bound to a Keychain that can no longer be reached. Ask them \
+            "{} is bound to a phone that can no longer be reached. Ask them \
              to open COINCUBE Mobile on the phone that holds this key, then retry.",
-            "{} está vinculado a un Keychain al que ya no se puede llegar. Pídele \
+            "{} está vinculado a un teléfono al que ya no se puede llegar. Pídele \
              que abra COINCUBE Mobile en el teléfono que tiene esta clave y vuelve a intentarlo.",
             entry,
         ),
@@ -2954,7 +2954,7 @@ pub(crate) mod tests {
         let copy = friendly_unresolved_signer("Alice (signer_app_outdated)");
         assert_eq!(
             copy,
-            "Alice's Keychain needs updating before it can sign on Bitcoin Blake2b."
+            "Alice's COINCUBE Mobile needs updating before it can sign on Bitcoin Blake2b."
         );
         assert!(!copy.contains(FALSE_DIAGNOSIS));
     }

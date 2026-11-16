@@ -348,8 +348,12 @@ pub fn next_checkout_phase(
             false,
             true,
         ),
-        ChargeState::Expired => (CheckoutPhase::Expired, false, false),
-        ChargeState::NeedsSupport => (
+        // Declined is a card outcome; if a bitcoin charge ever reports it,
+        // nothing was taken, so end like an expiry and offer a new invoice.
+        ChargeState::Expired | ChargeState::Declined => (CheckoutPhase::Expired, false, false),
+        // Refunded or charged back after payment: terminal, and the plan
+        // isn't what was paid for, so send the user to support with the id.
+        ChargeState::NeedsSupport | ChargeState::Refunded | ChargeState::ChargedBack => (
             CheckoutPhase::NeedsSupport {
                 invoice_id: status
                     .invoice_id
@@ -7149,7 +7153,7 @@ mod duress_enroll_tests {
         let c: CubeResponse = serde_json::from_value(serde_json::json!({
             "id": 42,
             "uuid": "keychain-only-uuid",
-            "name": "Keychain-only",
+            "name": "Mobile-only",
             "network": "mainnet",
             "status": "active",
             "hasRecoveryKit": true,
@@ -9477,6 +9481,31 @@ mod plan_lifecycle_tests {
                 false,
                 true,
             ),
+            // Card-only outcomes are terminal if a bitcoin poll ever sees them.
+            (
+                r#"{"chargeId":"c","status":"expired","state":"declined","plan":"pro"}"#,
+                P::Expired,
+                false,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c8","status":"paid","state":"refunded","plan":"pro"}"#,
+                P::NeedsSupport {
+                    invoice_id: "c8".into(),
+                    received_sats: 0,
+                },
+                false,
+                false,
+            ),
+            (
+                r#"{"chargeId":"c9","status":"paid","state":"charged_back","plan":"pro"}"#,
+                P::NeedsSupport {
+                    invoice_id: "c9".into(),
+                    received_sats: 0,
+                },
+                false,
+                false,
+            ),
             // Unknown values keep waiting instead of failing the poll.
             (
                 r#"{"chargeId":"c","status":"refunding","state":"refunding","plan":"pro"}"#,
@@ -10678,6 +10707,32 @@ mod plan_lifecycle_tests {
         .unwrap();
         assert_eq!(row.charge_id, "c4");
         assert_eq!(row.charge_state(), ChargeState::NeedsSupport);
+        assert_eq!(row.provider, "");
+        assert!(!row.is_card());
+        // Card (Stripe) rows: provider and the card-only states.
+        for (state, want) in [
+            ("declined", ChargeState::Declined),
+            ("refunded", ChargeState::Refunded),
+            ("charged_back", ChargeState::ChargedBack),
+        ] {
+            let row: BillingHistoryEntry = serde_json::from_str(&format!(
+                r#"{{"chargeId":"cs_1","provider":"stripe","plan":"pro","billingCycle":"monthly",
+                    "amountSats":0,"amountFiat":9.99,"fiatCurrency":"USD","status":"expired",
+                    "state":"{state}","createdAt":"2026-11-01T00:00:00Z"}}"#
+            ))
+            .unwrap();
+            assert_eq!(row.provider, "stripe");
+            assert!(row.is_card());
+            assert_eq!(row.amount_sats, 0);
+            assert_eq!(row.charge_state(), want, "{state}");
+        }
+        let btc: BillingHistoryEntry = serde_json::from_str(
+            r#"{"chargeId":"c5","provider":"btcpay","plan":"pro","billingCycle":"monthly",
+                "amountSats":21000,"amountFiat":10,"fiatCurrency":"USD","status":"paid",
+                "state":"paid","createdAt":"2026-11-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert!(!btc.is_card());
     }
 
     #[test]

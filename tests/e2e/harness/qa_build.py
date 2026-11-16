@@ -16,6 +16,13 @@ from .state import Blocked, Failed, atomic_write, digest, private_read
 BUNDLE = "io.coincube.keychainApp"
 TEAM = "8UVR249AD5"
 DEFINE = "COINCUBE_QA_HOME_REFRESH=true"
+# The mobile repository was renamed keychain-app -> coincube-mobile on
+# 2026-11-15. GitHub redirects the old name, so checkouts whose origin still
+# uses it are the same repository and stay accepted.
+QA_SOURCE_REMOTES = (
+    "git@github.com:coincubetech/coincube-mobile.git", "https://github.com/coincubetech/coincube-mobile.git",
+    "git@github.com:coincubetech/keychain-app.git", "https://github.com/coincubetech/keychain-app.git",
+)
 
 
 def configure_fresh(config, *, compatibility=False):
@@ -129,9 +136,8 @@ def prepare(config, strict, device, minimum_build, query):
     if "strict_process" in journal.data["artifacts"]:
         raise Failed("QA_BUILD_RESUME", "An existing strict process cannot receive a new QA build; use a fresh run.")
     checkout = Path(build_config["checkout"])
-    if command(["git", "remote", "get-url", "origin"], cwd=checkout).decode().strip() not in (
-            "git@github.com:coincubetech/keychain-app.git", "https://github.com/coincubetech/keychain-app.git"):
-        raise Failed("QA_BUILD_REPOSITORY", "The QA source must be the configured COINCUBE Keychain repository.")
+    if command(["git", "remote", "get-url", "origin"], cwd=checkout).decode().strip() not in QA_SOURCE_REMOTES:
+        raise Failed("QA_BUILD_REPOSITORY", "The QA source must be the configured COINCUBE Mobile repository.")
     source = root / "source"
     if source.is_symlink():
         raise Failed("QA_BUILD_SOURCE", "The QA source directory cannot be a symlink.")

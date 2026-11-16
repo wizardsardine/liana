@@ -446,7 +446,7 @@ impl State for SparkOverview {
 
 /// Spark's Send, paying from `asset` — each Overview balance row's Send.
 /// Spark's Receive, set for what the balance row holds (USDB → USDB).
-fn receive_into(asset: coincube_spark_protocol::WalletAsset) -> Task<Message> {
+pub(crate) fn receive_into(asset: coincube_spark_protocol::WalletAsset) -> Task<Message> {
     Task::batch(vec![
         redirect(Menu::Spark(SparkSubMenu::Receive)),
         Task::done(Message::View(view::Message::SparkReceive(
@@ -455,7 +455,7 @@ fn receive_into(asset: coincube_spark_protocol::WalletAsset) -> Task<Message> {
     ])
 }
 
-fn send_from(asset: coincube_spark_protocol::WalletAsset) -> Task<Message> {
+pub(crate) fn send_from(asset: coincube_spark_protocol::WalletAsset) -> Task<Message> {
     Task::batch(vec![
         redirect(Menu::Spark(SparkSubMenu::Send)),
         Task::done(Message::View(view::Message::SparkSend(

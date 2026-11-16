@@ -166,7 +166,7 @@ jobs:
       - name: Package Linux archive
         if: matrix.platform == 'linux'
         run: |
-          stage=tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
+          stage=coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
           mkdir -p "$stage"
           cp target/${{ matrix.target }}/minimal/coincube "$stage/"
           cp target/${{ matrix.target }}/minimal/coincube-mcp "$stage/"
@@ -193,7 +193,7 @@ jobs:
         if: matrix.platform == 'linux'
         uses: actions/upload-artifact@v6
         with:
-          name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
+          name: coincube-desktop-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
           path: ${{ env.STAGE }}.tar.gz
 
       # --------------------------------------------------
@@ -219,7 +219,7 @@ jobs:
           # (target\minimal). The bridge builds into its own workspace's target
           # dir, so copy it across before wix looks for it.
           Copy-Item coincube-spark-bridge\target\minimal\coincube-spark-bridge.exe target\minimal\
-          cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+          cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       # A string grep of the .msi proves nothing — the payload is in a
       # compressed cab. An administrative install unpacks the real file table,
@@ -229,7 +229,7 @@ jobs:
       - name: Verify Spark bridge is in the MSI
         if: matrix.platform == 'windows'
         run: |
-          $msi = (Resolve-Path "target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi").Path
+          $msi = (Resolve-Path "target/wix/coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi").Path
           $dest = Join-Path $env:RUNNER_TEMP "msi-contents"
           Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
           $p = Start-Process msiexec -ArgumentList @('/a', "`"$msi`"", '/qn', "TARGETDIR=`"$dest`"") -Wait -PassThru -NoNewWindow
@@ -265,8 +265,8 @@ jobs:
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v6
         with:
-          name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
-          path: target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
+          name: coincube-desktop-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
+          path: target/wix/coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
 
       # --------------------------------------------------
       # macOS (arm64; the x64 leg ships from releases.yml only)
@@ -561,15 +561,15 @@ jobs:
             --icon-size 128 \
             --icon "COINCUBE.app" 175 120 \
             --app-drop-link 425 120 \
-            "tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
+            "coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
             COINCUBE.app
 
       - name: Upload macOS artifact
         if: matrix.platform == 'macos'
         uses: actions/upload-artifact@v6
         with:
-          name: tenshu-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
-          path: tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
+          name: coincube-desktop-nightly-${{ env.BUILD_TAG }}-${{ matrix.target }}
+          path: coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
 
       - name: Cleanup secrets
         if: matrix.platform == 'macos' && always()

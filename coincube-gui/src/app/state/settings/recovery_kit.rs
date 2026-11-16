@@ -962,8 +962,8 @@ pub fn update_with_imported(
                     let reload = load_status(rk, client, server_cube_id);
                     let toast = Task::done(Message::View(view::Message::ShowToast(
                         log::Level::Info,
-                        "Backed up to your phone. You can restore this Cube by approving on \
-                         your Keychain."
+                        "Backed up to your phone. You can restore this Cube by approving in \
+                         COINCUBE Mobile."
                             .to_string(),
                     )));
                     Task::batch([toast, persist, reload])
@@ -2205,7 +2205,7 @@ async fn remove_phone_copy(
                 Ok(()) | Err(CoincubeError::NotFound) => {}
                 Err(e) => {
                     return Err(format!(
-                        "Couldn't remove the copy sealed to your phone (Keychain) ({}). The \
+                        "Couldn't remove the copy sealed to your phone (COINCUBE Mobile) ({}). The \
                          phone copy is still restorable — try Remove again.",
                         e
                     ))
@@ -2224,7 +2224,7 @@ async fn remove_phone_copy(
                 verify_phone_copy_gone(
                     client,
                     cube_id,
-                    "The copy sealed to your phone (Keychain) is still restorable but its \
+                    "The copy sealed to your phone (COINCUBE Mobile) is still restorable but its \
                      recovery key is no longer registered, so it couldn't be removed from this \
                      device. Contact support to clear it.",
                 )
@@ -2232,10 +2232,10 @@ async fn remove_phone_copy(
             }
             Err(e) => {
                 return Err(format!(
-                    "Couldn't reach the copy sealed to your phone (Keychain) ({}). The phone \
+                "Couldn't reach the copy sealed to your phone (COINCUBE Mobile) ({}). The phone \
                      copy may still be restorable — try Remove again.",
-                    e
-                ))
+                e
+            ))
             }
         }
     } else {
@@ -2251,7 +2251,7 @@ async fn remove_phone_copy(
         verify_phone_copy_gone(
             client,
             cube_id,
-            "The copy sealed to your phone (Keychain) is still restorable. Reopen Settings and \
+            "The copy sealed to your phone (COINCUBE Mobile) is still restorable. Reopen Settings and \
              try Remove again to clear it.",
         )
         .await?;
@@ -2297,7 +2297,7 @@ async fn verify_phone_copy_gone(
         Err(CoincubeError::NotFound) => Ok(()),
         Err(e) => Err(format!(
             "Removed your password kit, but couldn't confirm the copy sealed to your phone \
-             (Keychain) was cleared ({}). Reopen Settings to check before relying on removal.",
+             (COINCUBE Mobile) was cleared ({}). Reopen Settings to check before relying on removal.",
             e
         )),
     }
@@ -4247,7 +4247,7 @@ mod tests {
             "password kit was deleted before the verify failed — the caller must drop its slot"
         );
         assert!(
-            err.message.contains("phone") || err.message.contains("Keychain"),
+            err.message.contains("phone") || err.message.contains("Mobile"),
             "error must name the surviving phone path: {}",
             err.message
         );
@@ -4338,7 +4338,7 @@ mod tests {
             "password kit was deleted before the recipient step failed — its slot must drop"
         );
         assert!(
-            err.message.contains("phone") || err.message.contains("Keychain"),
+            err.message.contains("phone") || err.message.contains("Mobile"),
             "error must name the phone path: {}",
             err.message
         );
@@ -4437,7 +4437,7 @@ mod tests {
             "the kit 404 counts as torn down (idempotent), so its slot must drop"
         );
         assert!(
-            err.message.contains("phone") || err.message.contains("Keychain"),
+            err.message.contains("phone") || err.message.contains("Mobile"),
             "error must name the surviving phone path: {}",
             err.message
         );

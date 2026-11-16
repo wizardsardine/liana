@@ -610,6 +610,26 @@ fn dock_action<'a>(
     .into()
 }
 
+/// "You have [N] Cubes on [network]; [plan] includes [limit]. Existing Cubes
+/// keep working. Upgrade to add more." for an account already over its
+/// per-network limit (billing v2 D5). The top tier (Estate) has nothing to
+/// upgrade to, so it drops the last sentence.
+pub(crate) fn over_limit_sentence(total: usize, network: &str, tier: &str, limit: usize) -> String {
+    let cubes = if total == 1 { "Cube" } else { "Cubes" };
+    let mut sentence = format!(
+        "You have {total} {cubes} on {network}; {tier} includes {limit}. Existing Cubes keep working."
+    );
+    if !is_top_tier(tier) {
+        sentence.push_str(" Upgrade to add more.");
+    }
+    sentence
+}
+
+/// Whether `tier` (an `AccountTier` display name) is the highest plan.
+pub(crate) fn is_top_tier(tier: &str) -> bool {
+    tier == crate::app::settings::global::AccountTier::Estate.display_name()
+}
+
 /// "[network]: [N] of [N] Cubes on the [plan] plan" while the plan has no
 /// Cube slot left on the current network: Create Cube and Import or restore
 /// are both closed then. The limit is per network, so the copy names it —
@@ -619,12 +639,11 @@ pub(super) fn plan_full(projection: &Projection<'_>) -> Option<String> {
         if projection.total_count > projection.cube_limit {
             // Over the limit after a plan change or the billing v2 limits:
             // existing Cubes keep working, only new ones are blocked.
-            format!(
-                "{}: {} Cubes; the {} plan includes {}. Existing Cubes keep working.",
-                network_name(projection.network),
+            over_limit_sentence(
                 projection.total_count,
+                network_name(projection.network),
                 projection.tier,
-                projection.cube_limit
+                projection.cube_limit,
             )
         } else {
             format!(
@@ -672,18 +691,22 @@ pub(super) fn dock<'a>(
         full.is_none().then_some(ViewMessage::ShowRestoreHub),
         quiet,
     );
+    // Estate has no plan to upgrade to: the caption stands alone.
+    let top_tier = is_top_tier(projection.tier);
     let import_caption = full.map(|caption| {
         Row::new()
             .spacing(4)
             .align_y(Alignment::Center)
             .push(words(caption, 12.0, font::REGULAR, Ink::Muted))
-            .push(small_link(
-                Id::new("tenshu.launcher.dock.upgrade"),
-                "Upgrade plan",
-                ViewMessage::GoToSection(HomeSection::Connect(
-                    crate::app::menu::ConnectSubMenu::PlanBilling,
-                )),
-            ))
+            .push((!top_tier).then(|| {
+                small_link(
+                    Id::new("tenshu.launcher.dock.upgrade"),
+                    "Upgrade plan",
+                    ViewMessage::GoToSection(HomeSection::Connect(
+                        crate::app::menu::ConnectSubMenu::PlanBilling,
+                    )),
+                )
+            }))
     });
     let recover = (home.connect_account.is_authenticated()
         && !home.network.is_blake2b()
@@ -1141,10 +1164,23 @@ pub(super) fn plan_rows(projection: &Projection<'_>) -> Vec<PlanRow> {
         .collect()
 }
 
-/// Why Create and Import are off, when the current network is full.
+/// Why Create and Import are off, when the current network is full. The top
+/// tier (Estate) has nothing to upgrade to, so deleting is its only remedy.
 fn plan_limit_note(projection: &Projection<'_>) -> Option<String> {
     projection.at_limit().then(|| {
-        if projection.total_count > projection.cube_limit {
+        let top_tier = is_top_tier(projection.tier);
+        if top_tier && projection.total_count > projection.cube_limit {
+            format!(
+                "Existing Cubes keep working. To add one, delete {} Cubes until you're \
+                 under the plan's limit.",
+                network_name(projection.network),
+            )
+        } else if top_tier {
+            format!(
+                "Delete a {} Cube to add one.",
+                network_name(projection.network),
+            )
+        } else if projection.total_count > projection.cube_limit {
             format!(
                 "Existing Cubes keep working. To add one, upgrade, or delete {} Cubes until \
                  you're under the plan's limit.",
@@ -2379,6 +2415,18 @@ mod top_bar_tests {
             shown
         );
         assert!(at("Upgrade plan").is_some());
+        assert!(super::plan_limit_note(&projection)
+            .unwrap()
+            .starts_with("Upgrade"));
+
+        // Estate has no higher plan: no link, and the note says to delete.
+        home.account_tier = crate::app::settings::global::AccountTier::Estate;
+        let projection = launcher_catalog::project(&home);
+        assert!(super::plan_full(&projection).is_some());
+        let (_, live) = probe(super::dock(&home, &projection, false));
+        assert!(!live.text.iter().any(|(value, _)| value == "Upgrade plan"));
+        let note = super::plan_limit_note(&projection).unwrap();
+        assert!(!note.to_lowercase().contains("upgrade"), "{}", note);
     }
 
     /// The Network menu counts Connect-only Cubes beside this device's, so a

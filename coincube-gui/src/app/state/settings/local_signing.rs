@@ -784,7 +784,7 @@ impl State for LocalSigningState {
                         super::keychain_backfill::apply_to_wallet(wallet, &found),
                     )))),
                     Err(e) => {
-                        tracing::warn!("Keychain key lookup for the Pair panel failed: {}", e);
+                        tracing::warn!("Mobile key lookup for the Pair panel failed: {}", e);
                         Task::none()
                     }
                 }
@@ -1145,7 +1145,7 @@ mod tests {
     #[test]
     fn removing_phone_requires_matching_vault_review_and_explicit_confirmation() {
         let dir = fresh_dir();
-        let phone = paired(17, "Keychain", None);
+        let phone = paired(17, "Mobile", None);
         let mut other_vault_phone = paired(18, "Other Vault", None);
         other_vault_phone.vault_fingerprint = Fingerprint::from([1, 2, 3, 4]);
         seed_store(&dir, vec![phone.clone(), other_vault_phone.clone()]);
@@ -2367,7 +2367,7 @@ mod tests {
         let mut state = LocalSigningState::default();
         state.apply_wallet(&wallet(false));
         assert_eq!(state.vault_keys.len(), 1, "{:?}", state.vault_keys);
-        assert_eq!(state.selected_key, None, "may not be a Keychain key");
+        assert_eq!(state.selected_key, None, "may not be a Mobile key");
 
         // Once recorded as a Keychain key, it is chosen for the user.
         state.apply_wallet(&wallet(true));

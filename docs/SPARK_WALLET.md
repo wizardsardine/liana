@@ -4,7 +4,7 @@ The Spark wallet is COINCUBE's default backend for everyday Lightning UX. It run
 
 ## Networks
 
-Spark ships **mainnet only**. The Breez Spark SDK (0.25.0 as of September 2026) does not publish a regtest flow, and COINCUBE uses real mainnet sats in small amounts for end-to-end testing. Liquid's regtest flow (`docs/BREEZ_SDK_REGTEST.md`) is untouched and still works.
+Spark ships **mainnet only**. The bridge pins upstream `breez-sdk-spark` tag 0.28.1 (`coincube-spark-bridge/Cargo.toml`). That SDK does not publish a regtest flow, and COINCUBE uses real mainnet sats in small amounts for end-to-end testing. Liquid's regtest flow (`docs/BREEZ_SDK_REGTEST.md`) is untouched and still works.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ So, for each platform, CI builds the bridge under the same `minimal` profile as 
 |---|---|
 | macOS | `COINCUBE.app/Contents/MacOS/coincube-spark-bridge`, placed before `rcodesign sign` so the signature seals it |
 | Windows | the MSI's `bin` directory, next to `coincube.exe` |
-| Linux | inside `tenshu-<version>-<target>.tar.gz`, next to `coincube` |
+| Linux | inside `coincube-desktop-<version>-<target>.tar.gz`, next to `coincube` |
 
 Two consequences worth knowing before editing a workflow or a `.wxs`:
 
@@ -90,6 +90,22 @@ Spark uses a deposit-address model: the user sends BTC to a static address, the 
 - A **Claim** that the SDK defers (0.28.0+) leaves a neutral "Not claimed yet" note on that deposit's row naming why. Each deferred deposit retains its own note until it is retried, claimed, or leaves the pending list. See Troubleshooting.
 - The list refreshes automatically on `Event::DepositsChanged` events from the bridge (emitted for `SdkEvent::UnclaimedDeposits`, `ClaimedDeposits`, and `NewDeposits`), so the card appears the moment the SDK observes an incoming deposit without manual refresh.
 
+### Receive from another network (SideShift)
+
+Spark → Receive → **From another network** deposits a supported stablecoin and receives bitcoin. The flow is `coincube-gui/src/app/state/spark/sideshift_receive.rs` (a close copy of the Liquid receive flow, with three differences that are load-bearing):
+
+- SideShift has no Lightning rail. The shift settles to the Spark wallet's **static** on-chain deposit address (`receive_onchain(new_address = false)`), which is reusable and therefore safe for a variable amount. Bitcoin shows up after confirmation, not when SideShift reports `Settled`. The rate is variable; there is no fixed-rate quote step.
+- The user deposits the other asset and receives BTC. Copy must not say they receive the deposited coin.
+- A refund address is collected **before** Generate, and it has to be an address on the **origin** network. `validate_refund_address` (`coincube-gui/src/services/sideshift/types.rs`) is a shape check, not a checksum: an empty address, an unrecognized shape, or an address that detects as a different network (a Bitcoin address pasted for a Tron deposit is the usual case) is refused. Generate stays disabled until that check passes (`can_generate`). A refund sent to the wrong network is not recoverable from this app.
+
+Arrival is matched on SideShift's settle txid, not on an amount:
+
+- Unclaimed deposits are compared with `txid`. A match is still pending; Home is asked to auto-claim it.
+- Claimed payments are scanned newest-first, at most 5 pages of 100. A match is a `deposit` whose status is `Completed` and whose `details.tx_id` equals the settle hash (ASCII case-insensitive). The shown amount is that payment's sats, after the network fee.
+- Home's watcher treats an empty unclaimed list as "claimed" and skips a swap it is not already tracking. That misses an SDK background claim while another transfer is tracked, and it waits forever if a restored shift is registered after the deposit was already claimed. The receive flow therefore watches the settle tx itself (`awaiting_claim`) and, for a shift restored from `PendingSparkShift`, does not register the arrival until it knows the bitcoin is still unclaimed (`arrival_unconfirmed`). Unknown, or a lookup that failed, is not guessed. While the phase is still Active, a 30-second timer retries that restored lookup and, once it has resolved, an arrival that is still waiting on the claim. The two timers do not run together.
+
+The offered deposit assets are the stablecoin list in `deposit_options`. Ether, BNB, SOL, and TRX are intentionally absent.
+
 ### Lightning Address routing (Phase 5)
 
 `@coincube.io` Lightning Addresses are fulfilled by whichever backend the cube's `default_lightning_backend` setting prefers. New cubes default to Spark; users can flip to Liquid in **Settings → Lightning**.
@@ -124,6 +140,7 @@ Four things the switch does *not* control, and how the app handles them:
 - **A console window opens with the Cube on Windows** — the bridge was spawned without `CREATE_NO_WINDOW`. A current build sets that flag in `SparkClient` (`coincube-gui/src/app/breez_spark/client.rs`). Closing the console kills the bridge, and the Spark panels then show unavailable. Hiding the window by detaching the process would also leave the mnemonic-holding child running after the GUI exits.
 - **Auto-convert switched itself off** — the breaker tripped after three failed conversions in a row (see above). **Spark → Settings** shows the last reason, which is the AMM's (e.g. `Pool has no liquidity`). Turn it back on once the pool is healthy; check the live pool list with the `curl` above.
 - **"Not claimed yet" under Pending deposits** — since SDK 0.28.0 a claim can be *deferred*: an early claim would cost more than the fee ceiling (`NetworkRecommended` + 5 sat/vB), no early claim is offered at the deposit's depth yet, or the claim provider declined. Nothing failed: `claim_deposit` answers Ok with `ClaimDepositOk::deferred` naming the reason, the card shows it as a note rather than an error, and the SDK claims the deposit on its own (early as confirmations accrue, or at maturity). Home's auto-claim treats a deferral like a failure in its log and leaves its indicator pending.
+- **A SideShift receive stays on "Arriving in Spark" after the settle tx is claimed** — the page finishes when a completed deposit payment's `tx_id` matches SideShift's settle hash, or when that hash is still in the unclaimed list. Matching on amount, or treating "the unclaimed list is empty" as claimed, leaves the flow waiting. A restored shift that cannot see the hash yet stays unconfirmed and looks again; it does not register the arrival with Home. See [Receive from another network](#receive-from-another-network-sideshift).
 - **"sats … waiting to be recovered on-chain" under Spark → Settings → Connections** — the SDK (0.28.0+) reports funds that left the Spark balance and wait for an on-chain `recover_funds` (`GetInfoOk::recoverable_funds_sats`; the bridge also logs a warning on the SDK's `RecoverableFunds` event). COINCUBE Desktop has no recovery flow yet, so it only shows the figure.
 - **"insufficient funds" on a send well under the shown balance** — the balance on the Send and Home cards is bitcoin *plus* USDB valued at the BTC/USD price. The `connected — identity …, balance N sats` line at bridge startup is bitcoin only. The bridge should cover the gap from USDB automatically; if it didn't, check whether `get_info` reports the USDB token balance.
 - **Incoming Lightning Address payments land on Liquid, not Spark** — either the cube's `default_lightning_backend` is still set to Liquid (check **Settings → Lightning**), the bridge is down for this cube (check the bridge-status card in **Spark → Settings**), the API hasn't been updated to send the `description` field over SSE yet, or the payer is sending a NIP-57 zap (description exceeds 639 bytes → automatic fallback).

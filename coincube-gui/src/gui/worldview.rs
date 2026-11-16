@@ -241,7 +241,7 @@ impl GUI {
     pub(super) fn worldview_view(&self) -> preferences_view::WorldviewSharing {
         let Some(binding) = self.worldview_binding() else {
             return preferences_view::WorldviewSharing {
-                status: copy("Sign in to Connect to share with Keychain."),
+                status: copy("Sign in to Connect to share with COINCUBE Mobile."),
                 ..Default::default()
             };
         };
@@ -259,11 +259,11 @@ impl GUI {
             Error::Unavailable => copy("Couldn’t confirm the shared selection. Refresh before trying again."),
         }
         } else if snapshot.is_some_and(|value| value.selection.is_some()) {
-            copy("Shared with Keychain")
+            copy("Shared with Mobile")
         } else if snapshot.is_some() {
-            copy("No Worldview selection is shared with Keychain.")
+            copy("No Worldview selection is shared with COINCUBE Mobile.")
         } else {
-            copy("Refresh to check the selection shared with Keychain.")
+            copy("Refresh to check the selection shared with COINCUBE Mobile.")
         };
         let ready = !self.preferences.is_busy()
             && !self.preferences.has_queued_changes()

@@ -258,7 +258,7 @@ fn phone_keys() -> Element<'static, Msg> {
             segment("key-a", 0u8, "Alex's key · a1b2c3d4")
                 .description("Signs on this device. Ready to pair."),
             segment("key-b", 1, "Recovery key · e5f6a7b8")
-                .description("Held by Keychain on a phone."),
+                .description("Held by COINCUBE Mobile on a phone."),
             segment("key-c", 2, "Hardware key · c9d0e1f2")
                 .description("A hardware device cannot pair with a phone.")
                 .disabled(),

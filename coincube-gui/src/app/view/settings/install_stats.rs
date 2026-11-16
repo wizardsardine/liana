@@ -72,16 +72,22 @@ pub fn install_stats_section<'a>(
     }
 
     col = col.push(downloads_card(download_stats, today_count, loading));
-    col = col.push(chart_card(timeseries, period, loading));
+    col = col.push(chart_card(timeseries, period, loading, |p| {
+        Message::Settings(SettingsMessage::InstallStats(
+            InstallStatsViewMessage::PeriodChanged(p),
+        ))
+    }));
 
     dashboard(menu, cache, col)
 }
 
-fn downloads_card<'a>(
+/// Total downloads against the goal, with today's count. Shared by the
+/// Cube settings Stats page and App preferences › About › Download Stats.
+pub fn downloads_card<'a, M: 'a>(
     stats: Option<&'a DownloadStats>,
     today_count: Option<u32>,
     loading: bool,
-) -> Element<'a, Message> {
+) -> Element<'a, M> {
     let today_label = match today_count {
         Some(n) => format!("+{} downloads today", n),
         None if loading => "Loading…".to_string(),
@@ -146,12 +152,15 @@ fn downloads_card<'a>(
         .into()
 }
 
-fn chart_card<'a>(
+/// The downloads line chart with its Day/Week/Month/Year selector;
+/// `on_period` builds the message a period button sends.
+pub fn chart_card<'a, M: Clone + 'static>(
     timeseries: Option<&'a [TimeseriesPoint]>,
     period: StatsPeriod,
     loading: bool,
-) -> Element<'a, Message> {
-    let chart_area: Element<'a, Message> = if loading && timeseries.is_none() {
+    on_period: impl Fn(StatsPeriod) -> M,
+) -> Element<'a, M> {
+    let chart_area: Element<'a, M> = if loading && timeseries.is_none() {
         Row::new()
             .push(Space::new().width(Length::Fill))
             .push(
@@ -189,10 +198,10 @@ fn chart_card<'a>(
 
     let period_buttons = Row::new()
         .spacing(8)
-        .push(period_btn(StatsPeriod::Day, period))
-        .push(period_btn(StatsPeriod::Week, period))
-        .push(period_btn(StatsPeriod::Month, period))
-        .push(period_btn(StatsPeriod::Year, period));
+        .push(period_btn(StatsPeriod::Day, period, &on_period))
+        .push(period_btn(StatsPeriod::Week, period, &on_period))
+        .push(period_btn(StatsPeriod::Month, period, &on_period))
+        .push(period_btn(StatsPeriod::Year, period, &on_period));
 
     card::simple(
         Column::new()
@@ -204,7 +213,11 @@ fn chart_card<'a>(
     .into()
 }
 
-fn period_btn(p: StatsPeriod, current: StatsPeriod) -> Element<'static, Message> {
+fn period_btn<M: Clone + 'static>(
+    p: StatsPeriod,
+    current: StatsPeriod,
+    on_period: &impl Fn(StatsPeriod) -> M,
+) -> Element<'static, M> {
     let is_active = p == current;
     Button::new(text(p.label()).size(13).bold().style(if is_active {
         theme::text::primary
@@ -217,9 +230,7 @@ fn period_btn(p: StatsPeriod, current: StatsPeriod) -> Element<'static, Message>
     } else {
         theme::button::transparent_border
     })
-    .on_press(Message::Settings(SettingsMessage::InstallStats(
-        InstallStatsViewMessage::PeriodChanged(p),
-    )))
+    .on_press(on_period(p))
     .into()
 }
 
@@ -239,7 +250,7 @@ struct LineChart {
     points: Vec<TimeseriesPoint>,
 }
 
-impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
+impl<M> canvas::Program<M, coincube_ui::theme::Theme> for LineChart {
     type State = ();
 
     fn draw(

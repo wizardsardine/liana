@@ -195,7 +195,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             labels(&sections),
-            ["Wallet & signers", "Node", "Keychain", "Data & exports"]
+            ["Wallet & signers", "Node", "Mobile", "Data & exports"]
         );
         assert!(sections[2].disabled_reason.is_none());
         assert!((sections[0].matches)(&Menu::Vault(VaultSubMenu::Settings(
@@ -234,7 +234,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             labels(&settings),
-            ["Wallet & signers", "Node", "Keychain", "Data & exports"]
+            ["Wallet & signers", "Node", "Mobile", "Data & exports"]
         );
         assert!(settings[2].disabled_reason.is_some());
         context.network = crate::chain::ChainId::BitcoinBlake2b;

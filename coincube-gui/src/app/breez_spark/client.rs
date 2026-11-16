@@ -1628,6 +1628,42 @@ impl Drop for SparkClientInner {
 // Bridge binary discovery
 // ---------------------------------------------------------------------------
 
+/// The version the Spark bridge this app would launch reports through
+/// `--version` (`coincube-spark-bridge 0.1.0` → `0.1.0`). Runs the binary
+/// found by the same discovery and trust checks as a real launch, with no
+/// mnemonic and no network; gives up after five seconds.
+pub async fn bridge_version() -> Result<String, SparkClientError> {
+    let path = resolve_bridge_path()?;
+    let mut command = Command::new(&path);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(bridge_windows_creation_flags());
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output())
+        .await
+        .map_err(|_| SparkClientError::BridgeUnavailable("--version timed out".to_string()))?
+        .map_err(|e| SparkClientError::BridgeUnavailable(format!("--version: {e}")))?;
+    if !output.status.success() {
+        return Err(SparkClientError::BridgeUnavailable(format!(
+            "--version exited with {}",
+            output.status
+        )));
+    }
+    parse_bridge_version(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| {
+        SparkClientError::BridgeUnavailable("--version printed no version".to_string())
+    })
+}
+
+/// `coincube-spark-bridge 0.1.0\n` → `0.1.0`.
+fn parse_bridge_version(stdout: &str) -> Option<String> {
+    let version = stdout.trim().rsplit(' ').next()?.trim();
+    (!version.is_empty() && version.chars().next()?.is_ascii_digit()).then(|| version.to_string())
+}
+
 /// Locate the `coincube-spark-bridge` executable.
 ///
 /// Precedence:
@@ -2192,6 +2228,16 @@ mod unknown_outcome_tests {
             deadline_for(&send, RequestKind::StateChanging),
             SEND_SOFT_DEADLINE
         );
+    }
+
+    #[test]
+    fn bridge_version_reads_the_clap_version_line() {
+        assert_eq!(
+            parse_bridge_version("coincube-spark-bridge 0.1.0\n").as_deref(),
+            Some("0.1.0")
+        );
+        assert_eq!(parse_bridge_version(""), None);
+        assert_eq!(parse_bridge_version("error: unexpected argument"), None);
     }
 
     /// The bridge's console is hidden on Windows, and the child is not

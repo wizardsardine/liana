@@ -147,7 +147,7 @@ pub async fn lookup(
             Some(settings)
         })
         .await
-        .map_err(|e| format!("Failed to save Keychain keys: {}", e))?;
+        .map_err(|e| format!("Failed to save Mobile keys: {}", e))?;
     }
     Ok(found)
 }

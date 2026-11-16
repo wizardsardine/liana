@@ -78,7 +78,7 @@ def build(tmp_path, config, monkeypatch):
         args = [str(a) for a in args]
         calls.append(args)
         if "get-url" in args:
-            return b"git@github.com:coincubetech/keychain-app.git\n"
+            return b"git@github.com:coincubetech/coincube-mobile.git\n"
         if args[:2] == ["git", "archive"]:
             return archive.getvalue()
         if "--machine" in args:
@@ -126,6 +126,30 @@ def test_build_defines_qa_hook_before_install_and_resume_never_relaunches(build)
     prepare(build)
     assert calls == [["device", "info", "apps", "--device", "synthetic-device", "--bundle-id",
                       qa_build.BUNDLE, "--include-removable-apps", "--include-default-apps"]]
+
+
+@pytest.mark.parametrize("origin,accepted", [
+    ("https://github.com/coincubetech/coincube-mobile.git", True),
+    ("git@github.com:coincubetech/keychain-app.git", True),
+    ("https://github.com/coincubetech/keychain-app.git", True),
+    ("git@github.com:someone/coincube-mobile.git", False),
+    ("git@github.com:coincubetech/coincube-mobile", False),
+])
+def test_build_source_origin_must_be_the_mobile_repository(build, monkeypatch, origin, accepted):
+    inner = qa_build.command
+
+    def command(args, **kwargs):
+        if "get-url" in [str(a) for a in args]:
+            return (origin + "\n").encode()
+        return inner(args, **kwargs)
+
+    monkeypatch.setattr(qa_build, "command", command)
+    if accepted:
+        prepare(build)
+    else:
+        with pytest.raises(Failed) as error:
+            prepare(build)
+        assert error.value.code == "QA_BUILD_REPOSITORY"
 
 
 def test_interrupted_build_reextracts_instead_of_trusting_mutable_source(build, monkeypatch):

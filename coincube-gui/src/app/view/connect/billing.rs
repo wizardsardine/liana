@@ -881,6 +881,9 @@ pub(super) fn history_status(state: ChargeState) -> (&'static str, Tone) {
         ChargeState::NeedsSupport => ("Needs support", Tone::Bad),
         ChargeState::Unpaid => ("Unpaid", Tone::Muted),
         ChargeState::Expired => ("Expired", Tone::Muted),
+        ChargeState::Declined => ("Declined", Tone::Bad),
+        ChargeState::Refunded => ("Refunded", Tone::Muted),
+        ChargeState::ChargedBack => ("Charged back", Tone::Bad),
         ChargeState::Unknown => ("Pending", Tone::Muted),
     }
 }
@@ -893,16 +896,24 @@ pub(super) fn history_row_parts(
         .paid_at
         .as_deref()
         .unwrap_or(entry.created_at.as_str());
+    let card = entry.is_card();
     let item = format!(
-        "{} · {} · bitcoin",
+        "{} · {} · {}",
         entry.plan,
-        cycle_label(entry.billing_cycle)
+        cycle_label(entry.billing_cycle),
+        if card { "card" } else { "bitcoin" }
     );
-    let amount = format!(
-        "${} · {} sats",
-        format_usd(entry.amount_fiat),
-        group_sats(entry.amount_sats)
-    );
+    // A card charge is priced in fiat; it carries sats only when the API
+    // filled them in.
+    let amount = if card && entry.amount_sats == 0 {
+        format!("${}", format_usd(entry.amount_fiat))
+    } else {
+        format!(
+            "${} · {} sats",
+            format_usd(entry.amount_fiat),
+            group_sats(entry.amount_sats)
+        )
+    };
     let (status, tone) = history_status(entry.charge_state());
     (format_date(date), item, amount, status, tone)
 }
@@ -970,21 +981,21 @@ pub(super) fn billing_history_ux<'a>(state: &'a ConnectAccountPanel) -> Element<
         ))
         .push(sheet_title(localized_copy("Billing history")))
         .push(lead(localized_copy(
-            "Every bitcoin invoice on this account. Contact support with the invoice ID for any \
-             payment marked Needs support.",
+            "Every card and bitcoin payment on this account. Contact support with the invoice ID \
+             for any payment marked Needs support.",
         )))
         .push(space(20.0));
     col = match &state.billing_history {
         None => col.push(lead(localized_copy("Loading billing history…"))),
         Some(entries) if entries.is_empty() => col.push(lead(localized_copy(
-            "No payments yet. Invoices you create appear here.",
+            "No payments yet. Payments you make appear here.",
         ))),
         Some(entries) => col.push(ruled_list(entries.iter().map(history_row))),
     };
     col.push(space(12.0))
         .push(footnote(localized_copy(
-            "Payments use Lightning or on-chain bitcoin through BTCPay. Amounts in sats are fixed \
-             when the invoice is created.",
+            "Card payments are processed by Stripe. Bitcoin payments use Lightning or on-chain \
+             through BTCPay; their amounts in sats are fixed when the invoice is created.",
         )))
         .into()
 }

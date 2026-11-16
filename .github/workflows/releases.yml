@@ -142,7 +142,7 @@ jobs:
       # upload-rust-binary-action built and uploaded exactly one binary and has
       # no way to carry a second, so the Spark bridge could never have ridden
       # along with it. Hand-rolled build + archive + upload instead. The asset
-      # name is unchanged (tenshu-<version>-<target>.tar.gz — see
+      # name follows the release pattern (coincube-desktop-<version>-<target>.tar.gz — see
       # docs/security/VERIFY.md); what changes is that the tarball now has a
       # leading directory holding both binaries.
       - name: Build Linux binaries
@@ -161,7 +161,7 @@ jobs:
       - name: Package Linux archive
         if: matrix.platform == 'linux'
         run: |
-          stage=tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
+          stage=coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
           mkdir -p "$stage"
           cp target/${{ matrix.target }}/minimal/coincube "$stage/"
           cp target/${{ matrix.target }}/minimal/coincube-mcp "$stage/"
@@ -187,7 +187,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.target }}
-          path: tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.tar.gz
+          path: coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.tar.gz
           if-no-files-found: error
           compression-level: 0
 
@@ -216,7 +216,7 @@ jobs:
           # (target\minimal). The bridge builds into its own workspace's target
           # dir, so copy it across before wix looks for it.
           Copy-Item coincube-spark-bridge\target\minimal\coincube-spark-bridge.exe target\minimal\
-          cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+          cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       # A string grep of the .msi proves nothing — the payload is in a
       # compressed cab. An administrative install unpacks the real file table,
@@ -226,7 +226,7 @@ jobs:
       - name: Verify Spark bridge is in the MSI
         if: matrix.platform == 'windows'
         run: |
-          $msi = (Resolve-Path "target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi").Path
+          $msi = (Resolve-Path "target/wix/coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi").Path
           $dest = Join-Path $env:RUNNER_TEMP "msi-contents"
           Remove-Item -Recurse -Force $dest -ErrorAction SilentlyContinue
           $p = Start-Process msiexec -ArgumentList @('/a', "`"$msi`"", '/qn', "TARGETDIR=`"$dest`"") -Wait -PassThru -NoNewWindow
@@ -263,7 +263,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.target }}
-          path: target/wix/tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
+          path: target/wix/coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
           if-no-files-found: error
           compression-level: 0
 
@@ -541,7 +541,7 @@ jobs:
             --icon-size 128 \
             --icon "COINCUBE.app" 175 120 \
             --app-drop-link 425 120 \
-            "tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
+            "coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
             COINCUBE.app
 
       - name: Stage macOS DMG
@@ -549,7 +549,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.target }}
-          path: tenshu-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
+          path: coincube-desktop-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
           if-no-files-found: error
           compression-level: 0
 
@@ -592,7 +592,7 @@ jobs:
       - name: Generate checksums file
         run: |
           cd artifacts
-          find . -maxdepth 1 -type f -name 'tenshu-*' -printf '%f\0' | sort -z | xargs -0 -r sha256sum > SHA256SUMS-${{ env.COINCUBE_VERSION }}.txt
+          find . -maxdepth 1 -type f -name 'coincube-desktop-*' -printf '%f\0' | sort -z | xargs -0 -r sha256sum > SHA256SUMS-${{ env.COINCUBE_VERSION }}.txt
           cd ..
 
       - name: Import GPG signing key

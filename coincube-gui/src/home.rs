@@ -612,6 +612,13 @@ pub struct Home {
     pending_remote_rename: Option<PendingRemoteRename>,
     /// Cubes that exist on the Connect server but not locally on this machine.
     remote_cubes: Vec<RemoteCube>,
+    /// UUIDs of this account's Cubes whose Connect features are off because
+    /// they are over the plan's Cube limit (`connectFeaturesDisabled`). Holds
+    /// local and Connect-only Cubes alike, but only local rows show the tag:
+    /// a Connect-only Cube has no Connect features here until it is restored.
+    /// Display only: opening the Cube and every wallet action stay available.
+    /// Refreshed with `remote_cubes`.
+    connect_off_cubes: std::collections::HashSet<String>,
     /// Generation counter identifying the newest *valid* remote-cube fetch.
     ///
     /// `fetch_remote_cubes` has three independent triggers (sign-in, local
@@ -781,6 +788,7 @@ impl Home {
                 }),
                 pending_remote_rename: None,
                 remote_cubes: Vec::new(),
+                connect_off_cubes: std::collections::HashSet::new(),
                 remote_cubes_request: 0,
                 delete_remote_cube_modal: None,
                 recovery_method_modal: None,
@@ -955,10 +963,17 @@ impl Home {
         let mut summary = if total > limit {
             // Already over (the limit dropped, or the plan changed): say how
             // many the plan includes rather than an impossible ratio.
-            localized_format!(
-                "{name}: you have {total} Cubes; the {tier} plan includes {limit}",
-                "{name}: tienes {total} Cubes; el plan {tier} incluye {limit}"
-            )
+            if total == 1 {
+                localized_format!(
+                    "You have {total} Cube on {name}; {tier} includes {limit}",
+                    "Tienes {total} Cube en {name}; {tier} incluye {limit}"
+                )
+            } else {
+                localized_format!(
+                    "You have {total} Cubes on {name}; {tier} includes {limit}",
+                    "Tienes {total} Cubes en {name}; {tier} incluye {limit}"
+                )
+            }
         } else {
             localized_format!(
                 "{name}: {}/{limit} Cubes on the {tier} plan",
@@ -983,6 +998,16 @@ impl Home {
         // Over the limit after a plan change or the 1/3/10 limits: every
         // existing Cube keeps working (billing v2 decision 8, I8); only new
         // Cubes are blocked.
+        if self.account_tier == AccountTier::Estate {
+            // The top plan has nothing to upgrade to.
+            return localized_format!(
+                "Cube limit reached. {} Existing Cubes keep working. Delete a \
+                 Cube on this network to create more.",
+                "Alcanzaste el límite de Cubes. {} Los Cubes existentes siguen \
+                 funcionando. Elimina un Cube de esta red para crear más.",
+                self.cube_limit_summary(self.network),
+            );
+        }
         localized_format!(
             "Cube limit reached. {} Existing Cubes keep working. Upgrade your \
              Connect account or delete a Cube on this network to create more.",
@@ -991,6 +1016,28 @@ impl Home {
              red para crear más.",
             self.cube_limit_summary(self.network),
         )
+    }
+
+    /// The banner on the Create form when this network is full and Connect
+    /// still lists a Cube that is not on this device. Estate has no higher
+    /// plan, so deleting is its only remedy.
+    fn create_form_remote_limit_copy(&self) -> String {
+        let summary = self.cube_limit_summary(self.network);
+        if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+            localized_format!(
+                "Cube limit reached. {} \
+                 Delete a remote Cube to create one here.",
+                "Alcanzaste el límite de Cubes. {} Elimina un Cube remoto para crear uno aquí.",
+                summary,
+            )
+        } else {
+            localized_format!(
+                "Cube limit reached. {} \
+                 Upgrade your Connect account or delete a remote Cube to create one here.",
+                "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect o elimina un Cube remoto para crear uno aquí.",
+                summary,
+            )
+        }
     }
 
     /// The server's reason for refusing this Cube's registration, as user copy —
@@ -1009,6 +1056,15 @@ impl Home {
         // `responses.ErrCubeLimitReached` / "Cube limit reached for this
         // network" in the API's cube handler — change both together.
         if reason.contains("Cube limit reached") {
+            // Estate has no higher plan: deleting is the only remedy.
+            if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+                return Some(localized_format!(
+                    "Out of Cube slots — this Cube is saved on this device only.\n\n\
+                     {} Delete a Cube on this network you no longer need, and \
+                     this one will sync automatically.", "Alcanzaste el límite de Cubes. Este Cube se guardó solo en este dispositivo.\n\n{} Elimina un Cube de esta red que ya no necesites. Este Cube se sincronizará automáticamente.",
+                    self.cube_limit_summary(cube.network),
+                ));
+            }
             return Some(localized_format!(
                 "Out of Cube slots — this Cube is saved on this device only.\n\n\
                  {} Upgrade your Connect account, or delete a Cube on this \
@@ -1938,8 +1994,13 @@ impl Home {
                 // or stale press before the user fills in a name and PIN.
                 if launcher_catalog::project(self).at_limit() {
                     self.set_error(
-                        "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or delete \
-                         a Bitcoin mainnet Cube, to import a wallet.",
+                        if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+                            "Bitcoin mainnet has no free Cube slot on your plan. Delete a \
+                             Bitcoin mainnet Cube to import a wallet."
+                        } else {
+                            "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or \
+                             delete a Bitcoin mainnet Cube, to import a wallet."
+                        },
                     );
                     return Task::none();
                 }
@@ -2656,9 +2717,11 @@ impl Home {
                 }
                 Task::none()
             }
-            Message::RemoteCubesLoaded { request_id, result } => {
-                self.apply_remote_cubes(request_id, result)
-            }
+            Message::RemoteCubesLoaded {
+                request_id,
+                result,
+                connect_off,
+            } => self.apply_remote_cubes(request_id, result, connect_off),
             Message::CubeRemoteUpdated {
                 cube_id,
                 network,
@@ -4053,6 +4116,7 @@ impl Home {
                     // deliberately keeps what it already has.
                     self.cube_sync_errors.clear();
                     self.remote_cubes.clear();
+                    self.connect_off_cubes.clear();
                     // Clearing alone isn't enough: a fetch issued for the
                     // account we just left is still in flight and would
                     // repopulate the list. Bump the generation so its
@@ -4106,7 +4170,8 @@ impl Home {
                 // When the plan tier changes (e.g. upgrade), invalidate the
                 // cached server limit so `cube_limit()` uses the new tier
                 // until fresh limits are fetched.
-                if old_tier != self.account_tier {
+                let tier_changed = old_tier != self.account_tier;
+                if tier_changed {
                     self.server_cube_limit = None;
                 }
                 if let Err(e) = GlobalSettings::update_account_tier(
@@ -4289,6 +4354,15 @@ impl Home {
                     tasks.push(self.fetch_remote_cubes());
 
                     return Task::batch(tasks);
+                }
+
+                // A mid-session upgrade or downgrade changes which Cubes
+                // Connect keeps on (billing v2: the oldest N per network), so
+                // re-read the list for the Connect-off tags. The fetch claims a
+                // new generation, so one started under the old tier is dropped.
+                // The sign-in edge above already fetched.
+                if tier_changed && now_authenticated {
+                    return Task::batch([task, self.fetch_remote_cubes()]);
                 }
 
                 task
@@ -6159,12 +6233,25 @@ impl Home {
             .push(paths.push(rule()));
         if projection.at_limit() {
             content = content.push(
-                p2_regular(if projection.total_count > projection.cube_limit {
+                // Estate has no higher plan, at the limit or over it:
+                // deleting a Cube is the only remedy.
+                p2_regular(if launcher_chrome::is_top_tier(projection.tier) {
                     localized_format!(
-                        "{}: {} Cubes; the {} plan includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
-                        "{}: {} Cubes; el plan {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
-                        launcher_chrome::network_name(self.network),
+                        "You have {} {} on {}; {} includes {}. Existing Cubes keep working. Delete a Cube on this network to bring one in.",
+                        "Tienes {} {} en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Elimina un Cube en esta red para traer uno.",
                         projection.total_count,
+                        if projection.total_count == 1 { "Cube" } else { "Cubes" },
+                        launcher_chrome::network_name(self.network),
+                        projection.tier,
+                        projection.cube_limit
+                    )
+                } else if projection.total_count > projection.cube_limit {
+                    localized_format!(
+                        "You have {} {} on {}; {} includes {}. Existing Cubes keep working. Upgrade, or delete a Cube on this network, to bring one in.",
+                        "Tienes {} {} en {}; {} incluye {}. Los Cubes existentes siguen funcionando. Mejora tu plan, o elimina un Cube en esta red, para traer uno.",
+                        projection.total_count,
+                        if projection.total_count == 1 { "Cube" } else { "Cubes" },
+                        launcher_chrome::network_name(self.network),
                         projection.tier,
                         projection.cube_limit
                     )
@@ -6397,18 +6484,25 @@ impl Home {
                 // Network selection — right-aligned at top
                 .push(
                     Row::new()
-                        .push(if self.showing_create_form() && self.can_leave_create_journey() {
-                            Some(
-                                button::secondary(Some(icon::previous_icon()), localized_copy("Back to Cube list"))
-                                    .on_press_maybe(if self.creating_cube {
-                                        None
-                                    } else {
-                                        Some(ViewMessage::ShowCreateCube(false))
-                                    }),
-                            )
-                        } else {
-                            None
-                        })
+                        .push(
+                            if self.showing_create_form() && self.can_leave_create_journey() {
+                                Some(
+                                    button::secondary(
+                                        Some(icon::previous_icon()),
+                                        localized_copy("Back to Cube list"),
+                                    )
+                                    .on_press_maybe(
+                                        if self.creating_cube {
+                                            None
+                                        } else {
+                                            Some(ViewMessage::ShowCreateCube(false))
+                                        },
+                                    ),
+                                )
+                            } else {
+                                None
+                            },
+                        )
                         .push(Space::new().width(Length::Fill))
                         .spacing(10)
                         .push(
@@ -6520,11 +6614,9 @@ impl Home {
                                         if at_limit && !remote_for_net.is_empty() {
                                             col = col.push(
                                                 Container::new(
-                                                    p1_regular(localized_format!(
-                                                        "Cube limit reached. {} \
-                                                         Upgrade your Connect account or delete a remote Cube to create one here.", "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect o elimina un Cube remoto para crear uno aquí.",
-                                                        self.cube_limit_summary(self.network),
-                                                    ))
+                                                    p1_regular(
+                                                        self.create_form_remote_limit_copy(),
+                                                    )
                                                     .style(theme::text::secondary),
                                                 )
                                                 .max_width(500),
@@ -8007,6 +8099,9 @@ pub enum Message {
     RemoteCubesLoaded {
         request_id: u64,
         result: Result<Vec<RemoteCube>, String>,
+        /// UUIDs of every listed Cube (local ones included) with Connect
+        /// features off. Applied only with an `Ok` result.
+        connect_off: Vec<String>,
     },
     /// Another network's Cubes, read without touching its directory.
     NetworkCatalogLoaded {
@@ -10332,6 +10427,167 @@ mod tests {
         assert!(!home.passkey_mode);
     }
 
+    /// Estate has no higher plan. At its limit, not only over it, the import
+    /// page names deletion as the remedy and never says to upgrade.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn estate_at_its_limit_is_not_told_to_upgrade_on_the_import_page() {
+        use iced::advanced::{
+            layout,
+            renderer::Headless,
+            widget::{Id, Operation, Tree},
+            Layout,
+        };
+
+        #[derive(Default)]
+        struct Labels(Vec<String>);
+        impl Operation for Labels {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _: Option<&Id>, _: iced::Rectangle, text: &str) {
+                self.0.push(text.to_owned());
+            }
+        }
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(14.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        use coincube_ui::{theme::WorldviewMode, worldview_copy};
+        let labels = |home: &Home| {
+            let mut element =
+                worldview_copy::render_in(WorldviewMode::Suitcoiner, || home.create_journey_view());
+            let mut tree = Tree::new(element.as_widget());
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, iced::Size::new(1440.0, 900.0)),
+            );
+            let mut labels = Labels::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            labels.0
+        };
+
+        let mut home = home();
+        home.network = ChainId::Bitcoin;
+        home.state = State::Cubes {
+            cubes: vec![CubeSettings::new_with_raw_id(
+                "a".to_string(),
+                "A".to_string(),
+                ChainId::Bitcoin,
+            )],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.account_tier = AccountTier::Estate;
+        home.server_cube_limit = Some(1);
+        let _ = home.update(Message::View(ViewMessage::ShowRestoreHub));
+        assert!(home.restore_hub);
+        let shown = labels(&home);
+        assert!(
+            shown.iter().any(|l| l
+                == "You have 1 Cube on Bitcoin mainnet; Estate includes 1. Existing Cubes \
+                    keep working. Delete a Cube on this network to bring one in."),
+            "{:?}",
+            shown
+        );
+        assert!(!shown.iter().any(|l| l.contains("Upgrade")), "{:?}", shown);
+    }
+
+    /// A queued or stale Import press is refused before a name and PIN, and
+    /// the refusal follows the plan: Estate can only delete, every lower tier
+    /// can still upgrade. A plan with a free slot still opens the import.
+    #[test]
+    fn a_stale_import_press_at_the_limit_follows_the_plan() {
+        let full = |tier: AccountTier| {
+            let mut home = home();
+            home.network = ChainId::Bitcoin;
+            home.account_tier = tier;
+            home.server_cube_limit = Some(1);
+            home.state = State::Cubes {
+                cubes: vec![cube("a", "A", Network::Bitcoin)],
+                create_cube: false,
+                source: ChainId::Bitcoin,
+            };
+            home
+        };
+
+        let mut estate = full(AccountTier::Estate);
+        let _ = estate.update(Message::View(ViewMessage::ShowImportBitcoin));
+        let err = estate.error.expect("a full plan must refuse the import");
+        assert!(
+            err.contains("Delete a Bitcoin mainnet Cube to import a wallet."),
+            "{}",
+            err
+        );
+        assert!(!err.contains("Upgrade"), "{}", err);
+        assert!(estate.pending_bitcoin_import.is_none());
+
+        let mut free = full(AccountTier::Free);
+        let _ = free.update(Message::View(ViewMessage::ShowImportBitcoin));
+        let err = free.error.expect("a full plan must refuse the import");
+        assert!(err.contains("Upgrade"), "{}", err);
+        assert!(
+            err.contains("delete a Bitcoin mainnet Cube, to import a wallet."),
+            "{}",
+            err
+        );
+        assert!(free.pending_bitcoin_import.is_none());
+
+        let mut room = full(AccountTier::Estate);
+        room.server_cube_limit = Some(2);
+        let _ = room.update(Message::View(ViewMessage::ShowImportBitcoin));
+        assert!(room.error.is_none(), "{:?}", room.error);
+        assert!(room.pending_bitcoin_import.is_some());
+    }
+
+    /// Create's own refusal, and the banner shown when the only free slot is
+    /// a Cube registered from another device, name deletion on Estate and an
+    /// upgrade on every lower tier.
+    #[test]
+    fn create_limit_copy_follows_the_plan() {
+        let mut home = home();
+        home.network = ChainId::Bitcoin;
+        home.server_cube_limit = Some(1);
+        home.state = State::NoCube { create_cube: true };
+        home.remote_cubes = vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)];
+
+        home.account_tier = AccountTier::Estate;
+        let created = home.cube_limit_error();
+        assert!(
+            created.contains("Delete a Cube on this network"),
+            "{}",
+            created
+        );
+        assert!(!created.contains("Upgrade"), "{}", created);
+        let banner = home.create_form_remote_limit_copy();
+        assert!(
+            banner.contains("Delete a remote Cube to create one here."),
+            "{}",
+            banner
+        );
+        assert!(banner.contains("not on this device"), "{}", banner);
+        assert!(!banner.contains("Upgrade"), "{}", banner);
+
+        home.account_tier = AccountTier::Pro;
+        let created = home.cube_limit_error();
+        assert!(
+            created.contains("Upgrade your Connect account"),
+            "{}",
+            created
+        );
+        let banner = home.create_form_remote_limit_copy();
+        assert!(
+            banner.contains("Upgrade your Connect account or delete a remote Cube"),
+            "{}",
+            banner
+        );
+    }
+
     #[test]
     fn a_full_bitcoin_plan_closes_the_import_path() {
         let mut home = home();
@@ -10988,6 +11244,7 @@ mod tests {
         let current = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
         });
 
@@ -11013,6 +11270,7 @@ mod tests {
         let current = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("remote-a", "Remote A", Network::Bitcoin)]),
         });
 
@@ -11099,7 +11357,7 @@ mod tests {
         let error = home.error.clone().unwrap_or_default();
         assert!(
             error.contains(
-                "Cube limit reached. Bitcoin mainnet: you have 2 Cubes; the Free plan includes 1."
+                "Cube limit reached. You have 2 Cubes on Bitcoin mainnet; Free includes 1."
             ),
             "{}",
             error
@@ -11269,12 +11527,14 @@ mod tests {
         let current = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Ok(vec![remote.clone()]),
         });
         assert_eq!(home.remote_cubes.len(), 1);
 
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: current,
+            connect_off: Vec::new(),
             result: Err("offline".to_string()),
         });
         assert_eq!(home.remote_cubes.len(), 1);
@@ -11311,6 +11571,7 @@ mod tests {
         // The newer fetch lands first and is applied.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: newer,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("newer", "Newer", Network::Bitcoin)]),
         });
         assert_eq!(home.remote_cubes.len(), 1);
@@ -11319,6 +11580,7 @@ mod tests {
         // The older one straggles in afterwards and must be dropped.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: older,
+            connect_off: Vec::new(),
             result: Ok(vec![
                 remote_cube("stale-a", "Stale A", Network::Bitcoin),
                 remote_cube("stale-b", "Stale B", Network::Bitcoin),
@@ -11373,6 +11635,7 @@ mod tests {
         // The pre-delete response straggles in, still listing the deleted Cube.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: inflight,
+            connect_off: Vec::new(),
             result: Ok(vec![
                 remote_cube("remote-a", "Remote A", Network::Bitcoin),
                 remote_cube("remote-b", "Remote B", Network::Bitcoin),
@@ -11391,6 +11654,7 @@ mod tests {
         let refreshed = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: refreshed,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube("remote-b", "Remote B", Network::Bitcoin)]),
         });
         assert_eq!(
@@ -11424,6 +11688,7 @@ mod tests {
 
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: inflight,
+            connect_off: Vec::new(),
             result: Ok(vec![remote_cube(
                 "prior-account",
                 "Prior Account Cube",
@@ -11434,6 +11699,60 @@ mod tests {
             home.remote_cubes.is_empty(),
             "a fetch issued for the signed-out account must not repopulate the list"
         );
+    }
+
+    /// Billing v2: an upgrade or downgrade mid-session changes which Cubes
+    /// Connect keeps on. A plan load that changes the tier must re-read the
+    /// list so a "Connect off" tag doesn't outlive the upgrade, and must
+    /// supersede a fetch started under the old tier.
+    #[test]
+    fn a_tier_change_refetches_the_cube_list_for_connect_off_tags() {
+        use crate::app::view::ConnectAccountMessage;
+
+        // The tier change persists to the datadir: keep it out of the crate.
+        let dir = tmp_datadir("tier-change-refetch");
+        let mut home = signed_in_home_with_datadir(&dir);
+        home.account_tier = AccountTier::default();
+        home.connect_off_cubes.insert("cube-1".to_string());
+        let _ = home.fetch_remote_cubes();
+        let inflight = home.remote_cubes_request;
+
+        // Same tier: nothing to re-read.
+        let generation = home.connect_account.session_generation();
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::PlanLoaded(None, generation),
+        )));
+        assert_eq!(home.remote_cubes_request, inflight);
+
+        // Upgrade to Pro.
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::PlanLoaded(Some(duress_entitled_plan()), generation),
+        )));
+        assert_eq!(home.account_tier, AccountTier::Pro);
+        assert_ne!(
+            home.remote_cubes_request, inflight,
+            "a tier change must start a fresh catalog fetch"
+        );
+
+        // The fetch from before the upgrade lands late with an old view.
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: inflight,
+            connect_off: vec!["cube-2".to_string()],
+            result: Ok(Vec::new()),
+        });
+        assert!(
+            !home.connect_off_cubes.contains("cube-2"),
+            "a fetch from the old tier must be dropped"
+        );
+        // The fresh one says Connect is back on.
+        let refreshed = home.remote_cubes_request;
+        let _ = home.update(Message::RemoteCubesLoaded {
+            request_id: refreshed,
+            connect_off: Vec::new(),
+            result: Ok(Vec::new()),
+        });
+        assert!(home.connect_off_cubes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A refusal reason describes what *one account's* server said. The local
@@ -11957,6 +12276,7 @@ mod tests {
             members: Vec::new(),
             pending_invites: Vec::new(),
             vault: None,
+            connect_features_disabled: false,
         }
     }
 
@@ -12267,6 +12587,16 @@ mod tests {
         assert!(hint.contains("Out of Cube slots"), "{}", hint);
         assert!(hint.contains("2/2"), "{}", hint);
         assert!(hint.contains("Upgrade"), "{}", hint);
+
+        // Estate has no higher plan: the hint names deletion only.
+        home.account_tier = AccountTier::Estate;
+        let hint = home
+            .cube_sync_hint(&local)
+            .expect("a refusal must be shown");
+        assert!(hint.contains("Out of Cube slots"), "{}", hint);
+        assert!(!hint.contains("Upgrade"), "{}", hint);
+        assert!(hint.contains("Delete a Cube on this network"), "{}", hint);
+        home.account_tier = AccountTier::default();
 
         // A Cube listed from another network's read-only catalog is described
         // by its own network's count, not the current network's.

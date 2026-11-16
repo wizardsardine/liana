@@ -78,9 +78,13 @@ cargo build --manifest-path coincube-spark-bridge/Cargo.toml
 
 At runtime the gui looks for the bridge binary next to the gui executable, then falls back to `coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge`. A custom location can be provided via the `COINCUBE_SPARK_BRIDGE_PATH` environment variable. Released artifacts ship the bridge next to the app executable on every platform, and CI asserts it is there — see [`docs/SPARK_WALLET.md`](docs/SPARK_WALLET.md#packaging).
 
+## Connect billing
+
+Plan & billing, card and bitcoin checkout, and per-network Cube limits are rendered from Connect. The desktop contract — what may be omitted, which response wins, and when Create Cube closes — is [`docs/BILLING.md`](docs/BILLING.md).
+
 ## Connect signing flow
 
-Multi-signer Keychain signing — desktop collects signatures from contacts whose private keys live in the Coincube Keychain phone app, via the Connect gRPC stream. See [`docs/SIGNING_FLOW.md`](docs/SIGNING_FLOW.md) for the architecture, the happy-path sequence, the failure-mode UX inventory, and debugging guidance.
+Multi-signer Mobile signing — desktop collects signatures from contacts whose private keys live in the COINCUBE Mobile phone app, via the Connect gRPC stream. See [`docs/SIGNING_FLOW.md`](docs/SIGNING_FLOW.md) for the architecture, the happy-path sequence, the failure-mode UX inventory, and debugging guidance.
 
 ## Security
 

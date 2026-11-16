@@ -366,7 +366,7 @@ async fn try_pair_once(
     // selected in the scanned QR; only the phone's local record supplies ID.
     let reported = complete.signer_binding.as_ref().ok_or_else(|| {
         PairingError::InternalError(
-            "Pair again with an updated Keychain and select its exact vault key.".into(),
+            "Pair again with an updated COINCUBE Mobile and select its exact vault key.".into(),
         )
     })?;
     if reported.xpub != offer.signer_xpub
@@ -422,7 +422,7 @@ async fn try_pair_once(
     });
 
     let name = if complete.device_name.is_empty() {
-        "Keychain phone".to_string()
+        "Phone".to_string()
     } else {
         complete.device_name
     };

@@ -245,7 +245,7 @@ impl Step for InheritanceRestoreStep {
                 false,
                 None,
                 Some(
-                    "Recovering this Vault — approve the decryption on your Keychain when prompted…"
+                    "Recovering this Vault — approve the decryption in COINCUBE Mobile when prompted…"
                         .to_string(),
                 ),
             ),

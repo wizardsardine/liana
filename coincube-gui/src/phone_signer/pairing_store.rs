@@ -137,7 +137,7 @@ impl ImportedPairingScope {
         fingerprint: Fingerprint,
     ) -> Result<Self, String> {
         use coincube_core::miniscript::{DescriptorPublicKey, ForEachKey};
-        let error = "The selected Keychain account is not an exact imported wallet key.";
+        let error = "The selected phone account is not an exact imported wallet key.";
         if *wallet_id != WalletId::for_imported(wallet, wallet.chain()).map_err(|_| error)? {
             return Err(error.into());
         }
@@ -191,7 +191,7 @@ impl PairedPhone {
     ) -> Result<&SignerBinding, String> {
         use coincube_core::miniscript::{DescriptorPublicKey, ForEachKey};
         use sha2::{Digest, Sha256};
-        let error = "Pair this Keychain again and select its exact imported account key.";
+        let error = "Pair this phone again and select its exact imported account key.";
         let binding = self.signer_binding.as_ref().ok_or(error)?;
         let scope = binding.imported_scope.as_ref().ok_or(error)?;
         let digest = Sha256::digest(descriptor.as_bytes());
@@ -233,7 +233,7 @@ impl PairedPhone {
         use coincube_core::{descriptors::CoincubeDescriptor, miniscript::DescriptorPublicKey};
         use sha2::{Digest, Sha256};
         use std::str::FromStr;
-        let error = "Pair this Keychain again and select its exact vault key.";
+        let error = "Pair this phone again and select its exact vault key.";
         let parsed = CoincubeDescriptor::from_str(descriptor).map_err(|_| error)?;
         let vault_keys: Vec<(String, Fingerprint)> = parsed
             .spendable_keys()
@@ -265,7 +265,7 @@ impl PairedPhone {
         descriptor_sha256_hex: &str,
         vault_keys: &[(String, Fingerprint)],
     ) -> Result<&SignerBinding, String> {
-        let error = "Pair this Keychain again and select its exact vault key.";
+        let error = "Pair this phone again and select its exact vault key.";
         let binding = self.signer_binding.as_ref().ok_or(error)?;
         let member = vault_keys
             .iter()
@@ -334,14 +334,14 @@ impl PairingStoreFile {
             .filter(|row| row.cert_pin == phone.cert_pin);
         let current = matching
             .next()
-            .ok_or("This Keychain is no longer paired; pair it again.")?;
+            .ok_or("This phone is no longer paired; pair it again.")?;
         let revision = phone
             .signer_binding
             .as_ref()
             .and_then(|binding| binding.imported_scope.as_ref())
             .and_then(|scope| scope.pairing_revision.as_deref())
             .filter(|revision| !revision.is_empty())
-            .ok_or("This imported Keychain pairing predates exact admission; pair it again.")?;
+            .ok_or("This imported phone pairing predates exact admission; pair it again.")?;
         if matching.next().is_some()
             || current
                 .signer_binding
@@ -353,7 +353,7 @@ impl PairingStoreFile {
             || current.transport_pubkey != phone.transport_pubkey
             || current.signer_binding != phone.signer_binding
         {
-            return Err("This Keychain pairing is ambiguous; pair it again.".into());
+            return Err("This phone pairing is ambiguous; pair it again.".into());
         }
         let binding = phone.exact_signer_for(policy)?;
         if self
@@ -365,7 +365,7 @@ impl PairingStoreFile {
             != 1
         {
             return Err(
-                "This imported Keychain key ID has more than one pairing; pair again.".into(),
+                "This imported Mobile key ID has more than one pairing; pair again.".into(),
             );
         }
         Ok(binding)

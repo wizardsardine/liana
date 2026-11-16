@@ -127,7 +127,7 @@ fn phone() -> DiscoveredPhone {
     DiscoveredPhone {
         cert_fp8: "a1b2c3d4".into(),
         addr: "192.0.2.20:54502".parse().unwrap(),
-        instance_name: "Synthetic Keychain".into(),
+        instance_name: "Synthetic Mobile".into(),
     }
 }
 
@@ -142,7 +142,7 @@ fn pair_state(scenario: &str) -> LocalSigningState {
         xpub: synthetic_xpub,
         descriptor_key: String::new(),
         fingerprint: Some(vault_id),
-        name: Some("Synthetic Keychain key".into()),
+        name: Some("Synthetic Mobile key".into()),
         keychain: true,
     });
     state.flow = match scenario {
@@ -596,7 +596,7 @@ async fn mounted_settings_pair_route_accepts_vault_and_denies_imported_wallet() 
         let pair_bounds = labels
             .0
             .iter()
-            .find(|(label, _)| label == "Keychain")
+            .find(|(label, _)| label == "Mobile")
             .expect("mounted Pair settings choice")
             .1;
         let pair_center = pair_bounds.center();
@@ -817,7 +817,7 @@ async fn actual_vault_settings_capture_matrix() {
                         .expect("imported wallet settings rail");
                     let pair = items
                         .iter()
-                        .find(|item| item.label == "Keychain")
+                        .find(|item| item.label == "Mobile")
                         .expect("imported Pair nav item");
                     let reason = pair
                         .disabled_reason
@@ -825,7 +825,7 @@ async fn actual_vault_settings_capture_matrix() {
                         .expect("imported Pair must explain its denial");
                     assert!(
                         reason.contains("unavailable for imported wallets")
-                            && reason.contains("no Keychain-eligible key"),
+                            && reason.contains("no Mobile-eligible key"),
                         "imported Pair denial reason changed: {}",
                         reason
                     );
