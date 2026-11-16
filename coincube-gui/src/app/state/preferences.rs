@@ -138,16 +138,33 @@ impl Section {
     }
 }
 
+/// What About shows: its rows, or one of the pages its links open.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AboutPage {
+    #[default]
+    Main,
+    DownloadStats,
+    Licenses,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PreferencesPageState {
     pub section: Section,
+    pub about_page: AboutPage,
     pub component_versions_expanded: bool,
     pub registration_repair_expanded: bool,
 }
 
 impl PreferencesPageState {
+    /// Choosing a section (About included) shows its main page.
     pub fn select(&mut self, section: Section) {
         self.section = section;
+        self.about_page = AboutPage::Main;
+    }
+
+    pub fn open_about_page(&mut self, page: AboutPage) {
+        self.section = Section::About;
+        self.about_page = page;
     }
 
     pub fn toggle_component_versions(&mut self) {

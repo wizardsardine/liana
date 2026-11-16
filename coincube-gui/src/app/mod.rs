@@ -10000,6 +10000,11 @@ impl App {
         }
     }
 
+    /// The Vault daemon this Cube session runs, if the Cube has a Vault.
+    pub fn daemon(&self) -> Option<Arc<dyn Daemon + Sync + Send>> {
+        self.daemon.clone()
+    }
+
     pub fn spawn_daemon_switch(&mut self, cfg: DaemonConfig) -> Task<Message> {
         // A generic backend switch cannot carry fresh authenticated admission.
         // Reopen the fork Cube through its authenticated startup route instead.

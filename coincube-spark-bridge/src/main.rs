@@ -27,6 +27,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(
     name = "coincube-spark-bridge",
+    version,
     about = "Sibling process hosting breez-sdk-spark for coincube-gui"
 )]
 struct Cli {
