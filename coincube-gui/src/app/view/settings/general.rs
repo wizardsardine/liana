@@ -135,26 +135,29 @@ pub(crate) fn display_content<'a>(
         .push(page::saved_line(saved));
 
     let name = name_input.unwrap_or(cache.cube_name.as_str());
-    let name_row = page::row(localized_copy("Cube name"))
-        .description(localized_copy(
-            "Saved when you press Return or leave the field.",
-        ))
-        .control(
-            Container::new(
-                coincube_ui::component::tenshu::text_field(
-                    CUBE_NAME_ID,
-                    "Cube name",
-                    name,
-                    Message::FocusAction,
-                )
-                .hide_label()
-                .size(coincube_ui::component::tenshu::FieldSize::Compact)
-                .width(Length::Fixed(280.0))
-                .on_input(|value| SettingsMessage::CubeNameEdited(value).into())
-                .on_submit(SettingsMessage::CubeNameSubmitted(name.to_owned()).into()),
+    let mut name_row = page::row(localized_copy("Cube name")).description(localized_copy(
+        "Saved when you press Return or leave the field.",
+    ));
+    if let Some((kind, copy)) = cube_name_status(&cache.cube_name, cache.cube_name_sync, name_input)
+    {
+        name_row = name_row.line(page::status(kind, localized_copy(copy)));
+    }
+    let name_row = name_row.control(
+        Container::new(
+            coincube_ui::component::tenshu::text_field(
+                CUBE_NAME_ID,
+                "Cube name",
+                name,
+                Message::FocusAction,
             )
-            .width(Length::Fixed(280.0)),
-        );
+            .hide_label()
+            .size(coincube_ui::component::tenshu::FieldSize::Compact)
+            .width(Length::Fixed(280.0))
+            .on_input(|value| SettingsMessage::CubeNameEdited(value).into())
+            .on_submit(SettingsMessage::CubeNameSubmitted(name.to_owned()).into()),
+        )
+        .width(Length::Fixed(280.0)),
+    );
 
     let flow_open = avatar_flow.is_some();
     let mut identity = Column::new()
@@ -177,6 +180,39 @@ pub(crate) fn display_content<'a>(
         ))
         .push(page::group(localized_copy("Cube identity"), None, identity))
         .into()
+}
+
+/// The status line under the Cube name field: a save in flight or a failed
+/// save first (the field still holds the submitted text until the save
+/// lands), then an unsaved edit, then how far the last rename got (this
+/// device, then Connect). `None` until the name is edited or renamed this
+/// session.
+pub(crate) fn cube_name_status(
+    saved_name: &str,
+    sync: cache::CubeNameSync,
+    name_input: Option<&str>,
+) -> Option<(page::Status, &'static str)> {
+    use cache::CubeNameSync;
+    let typed = name_input.map(str::trim).unwrap_or_default();
+    let unsaved = !typed.is_empty() && typed != saved_name;
+    Some(match sync {
+        CubeNameSync::Saving => (page::Status::Busy, "Saving…"),
+        CubeNameSync::SaveFailed => (page::Status::Bad, "Couldn't save the Cube name."),
+        _ if unsaved => (page::Status::Warn, "Not saved yet. Press Return to save."),
+        CubeNameSync::Idle => return None,
+        CubeNameSync::Syncing => (
+            page::Status::Busy,
+            "Saved on this device. Syncing to Connect…",
+        ),
+        CubeNameSync::Synced => (page::Status::Ok, "Saved and synced to Connect."),
+        CubeNameSync::LocalOnly => (page::Status::Ok, "Saved on this device."),
+        // The Launcher's catch-up re-sends unsynced renames when it signs
+        // in to Connect, which happens when COINCUBE opens.
+        CubeNameSync::SyncFailed => (
+            page::Status::Warn,
+            "Saved on this device. Connect will sync it next time you open COINCUBE.",
+        ),
+    })
 }
 
 /// The Avatar row: the 48px tile, how many regenerations remain and the
@@ -1091,7 +1127,7 @@ pub(crate) fn backup_contents(overview: &BackupOverview) -> BackupContents {
         methods.push(("Password", m));
     }
     if let Some(m) = overview.keychain.as_ref() {
-        methods.push(("Keychain", m));
+        methods.push(("Mobile", m));
     }
 
     match methods.as_slice() {
@@ -1434,7 +1470,7 @@ fn recovery_kit_card<'a>(
             methods.push("Password");
         }
         if keychain_present {
-            methods.push("Keychain");
+            methods.push("Mobile");
         }
         row = row.line(page::muted(localized_format!(
             "Protected by: {}",
@@ -1824,6 +1860,48 @@ fn drift_warning_line(d: &DescriptorDrift) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cube_name_status_puts_unsaved_edits_before_sync_progress() {
+        use super::{cube_name_status, page::Status};
+        use crate::app::cache::CubeNameSync;
+        assert_eq!(cube_name_status("Home", CubeNameSync::Idle, None), None);
+        // Typing the saved name back, or only spaces, is not an edit.
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Idle, Some(" Home ")),
+            None
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Idle, Some("  ")),
+            None
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Synced, Some("Holiday")).map(|(s, _)| s),
+            Some(Status::Warn)
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Syncing, None).map(|(s, _)| s),
+            Some(Status::Busy)
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Synced, None).map(|(s, _)| s),
+            Some(Status::Ok)
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::SyncFailed, None).map(|(s, _)| s),
+            Some(Status::Warn)
+        );
+        // The field still holds the submitted name while it saves, and
+        // after a failed save: those states win over "Not saved yet".
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::Saving, Some("Holiday")).map(|(s, _)| s),
+            Some(Status::Busy)
+        );
+        assert_eq!(
+            cube_name_status("Home", CubeNameSync::SaveFailed, Some("Holiday")).map(|(s, _)| s),
+            Some(Status::Bad)
+        );
+    }
+
     #[test]
     fn backup_page_is_spanish() {
         use crate::app::state::preferences::BalancePrivacy;
@@ -2417,7 +2495,7 @@ mod tests {
             backup_contents(&backup_overview(Some(&st))),
             BackupContents::PerMethod(vec![
                 ("Password", vec!["Master Seed Phrase", "Wallet Descriptor"]),
-                ("Keychain", vec!["Wallet Descriptor"]),
+                ("Mobile", vec!["Wallet Descriptor"]),
             ])
         );
     }

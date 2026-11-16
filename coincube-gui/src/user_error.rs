@@ -255,19 +255,19 @@ fn lan_keychain_error(error: &Error, connect_available: bool) -> UserError {
     );
     if needs_repair {
         UserError::new(
-            "This Keychain needs to be paired again",
+            "This phone needs to be paired again",
             if connect_available {
                 "Send the request through COINCUBE | Connect instead, or pair the phone again \
-                 in Settings > Keychain."
+                 in Settings > Mobile."
             } else {
-                "Pair the phone again in Settings > Keychain."
+                "Pair the phone again in Settings > Mobile."
             },
             CC_HW_LAN_REPAIR,
             false,
         )
     } else {
         UserError::new(
-            "Couldn't sign with your Keychain over Wi-Fi",
+            "Couldn't sign with COINCUBE Mobile over Wi-Fi",
             if connect_available {
                 "Send the request through COINCUBE | Connect instead, or check that the phone \
                  is on the same Wi-Fi with COINCUBE Mobile open, then try again."
@@ -841,7 +841,7 @@ mod tests {
         assert!(u
             .guidance
             .starts_with("Send the request through COINCUBE | Connect"));
-        assert!(u.guidance.contains("Settings > Keychain"), "{}", u.guidance);
+        assert!(u.guidance.contains("Settings > Mobile"), "{}", u.guidance);
 
         let u = lan_keychain_error(&stale, false);
         assert!(

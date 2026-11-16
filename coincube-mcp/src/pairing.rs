@@ -82,7 +82,7 @@ pub fn resolve(path: &Path) -> io::Result<PathBuf> {
             || directory
                 .file_name()
                 .and_then(|v| v.to_str())
-                .is_none_or(|v| !v.starts_with("tenshu-mcp-"))
+                .is_none_or(|v| !v.starts_with("coincube-mcp-"))
             || locator.socket.file_name().is_none_or(|v| v != "rpc")
         {
             return Err(io::Error::other("invalid endpoint"));

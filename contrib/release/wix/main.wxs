@@ -88,7 +88,7 @@
     <Directory Id='TARGETDIR' Name='SourceDir'>
       <Directory Id="ProgramMenuFolder" />
       <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-        <Directory Id='APPLICATIONFOLDER' Name='Tenshu'>
+        <Directory Id='APPLICATIONFOLDER' Name='COINCUBE'>
           <Component Id='License' Guid='*'>
             <File Id='LicenseFile'
               Source='LICENCE'
@@ -132,8 +132,8 @@
                 KeyPath='yes' />
             </Component>
             <Component Id='mcpBinary' Guid='*'>
-              <File Id='mcpExe' Name='tenshu-mcp.exe'
-                Source='$(var.CargoTargetBinDir)\tenshu-mcp.exe' KeyPath='yes' />
+              <File Id='mcpExe' Name='coincube-mcp.exe'
+                Source='$(var.CargoTargetBinDir)\coincube-mcp.exe' KeyPath='yes' />
             </Component>
           </Directory>
         </Directory>

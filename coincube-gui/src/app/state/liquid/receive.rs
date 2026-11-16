@@ -85,6 +85,8 @@ pub struct LiquidReceive {
     /// Show the "Payment received!" celebration screen.
     show_received_celebration: bool,
     received_amount_display: String,
+    /// The received payment's transaction ID, for the receipt.
+    received_tx_id: Option<String>,
     received_celebration_context: String,
     received_quote: coincube_ui::component::quote_display::Quote,
     received_image_handle: iced::widget::image::Handle,
@@ -155,6 +157,7 @@ impl LiquidReceive {
             show_qr_modal: false,
             show_received_celebration: false,
             received_amount_display: String::new(),
+            received_tx_id: None,
             received_celebration_context: "liquid-receive".to_string(),
             received_quote: coincube_ui::component::quote_display::random_quote("liquid-receive"),
             received_image_handle: coincube_ui::component::quote_display::image_handle_for_context(
@@ -208,6 +211,7 @@ impl State for LiquidReceive {
             let celebration = view::liquid::received_celebration_page(
                 &self.received_celebration_context,
                 passive_received_amount(&self.received_amount_display, cache),
+                self.received_tx_id.as_deref(),
                 &self.received_quote,
                 &self.received_image_handle,
             )
@@ -362,6 +366,12 @@ impl State for LiquidReceive {
                 }
                 LiquidReceiveMessage::DismissCelebration => {
                     self.show_received_celebration = false;
+                }
+                LiquidReceiveMessage::CopyReceivedTxId(tx_id) => {
+                    return Task::done(Message::View(view::Message::CopyWithToast(
+                        tx_id,
+                        "Transaction ID copied to clipboard".to_string(),
+                    )));
                 }
                 LiquidReceiveMessage::Copy => {
                     if let Some(address) = self.current_address() {
@@ -761,6 +771,8 @@ impl State for LiquidReceive {
                                     }
                                 };
                                 self.received_celebration_context = context.to_string();
+                                self.received_tx_id =
+                                    payment.tx_id.clone().filter(|id| !id.is_empty());
                                 self.received_quote =
                                     coincube_ui::component::quote_display::random_quote(context);
                                 self.received_image_handle =
@@ -1242,6 +1254,7 @@ mod receive_privacy_tests {
                 view::liquid::received_celebration_page(
                     "note-receive",
                     passive_received_amount(amount, &cache),
+                    None,
                     &quote,
                     &image,
                 ),

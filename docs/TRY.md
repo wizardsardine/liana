@@ -58,7 +58,7 @@ A note for **Linux users only**: released binaries may not be working on your sy
 running a too old glibc. In this case you may have to build from source. See the [short section
 about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
-The Linux archive extracts to a `tenshu-<version>-<target>/` directory holding two executables:
+The Linux archive extracts to a `coincube-desktop-<version>-<target>/` directory holding two executables:
 `coincube` and `coincube-spark-bridge`. Keep them together — COINCUBE Desktop looks for the Spark bridge next
 to its own executable, and moving one without the other disables the Spark wallet.
 
@@ -71,10 +71,10 @@ alongside a signed checksums manifest:
 - `SHA256SUMS-<version>.txt.asc` — GPG signature of that manifest, made with the Coincube release
   signing key (`67F9701BF0D2DAF4`, `Coincube Release Signing <releases@coincube.io>`)
 
-Release artifacts are named `tenshu-<version>-<target>.<ext>`, e.g.
-`tenshu-1.5.0-aarch64-apple-darwin.dmg` (macOS Apple Silicon),
-`tenshu-1.5.0-x86_64-pc-windows-msvc.msi` (Windows), or
-`tenshu-1.5.0-x86_64-unknown-linux-gnu.tar.gz` (Linux).
+Release artifacts are named `coincube-desktop-<version>-<target>.<ext>`, e.g.
+`coincube-desktop-1.5.0-aarch64-apple-darwin.dmg` (macOS Apple Silicon),
+`coincube-desktop-1.5.0-x86_64-pc-windows-msvc.msi` (Windows), or
+`coincube-desktop-1.5.0-x86_64-unknown-linux-gnu.tar.gz` (Linux).
 
 To verify your download (example for version 1.5.0):
 

@@ -39,8 +39,8 @@ def check(binary, expect_proposals=True, expect_transactions=True):
                 process = subprocess.Popen(
                     [str(Path(binary).resolve())], stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
-                    env={**os.environ, "TENSHU_MCP_SOCKET": endpoint,
-                         "TENSHU_MCP_CREDENTIAL": credential},
+                    env={**os.environ, "COINCUBE_MCP_SOCKET": endpoint,
+                         "COINCUBE_MCP_CREDENTIAL": credential},
                 )
                 try:
                     def send(message):
@@ -70,7 +70,7 @@ def check(binary, expect_proposals=True, expect_transactions=True):
                     send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
                         "protocolVersion": "2024-11-05", "capabilities": {},
                         "clientInfo": {"name": "package-smoke", "version": "1"}}})
-                    assert receive(1)["serverInfo"]["name"] == "tenshu-mcp"
+                    assert receive(1)["serverInfo"]["name"] == "coincube-mcp"
                     send({"jsonrpc": "2.0", "method": "notifications/initialized"})
                     send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
                     expected_tools = {

@@ -213,7 +213,7 @@ mod tests {
             "This computer",
             "Live updates",
             "On",
-            "Keychain signing requests and signatures arrive as they happen.",
+            "Mobile signing requests and signatures arrive as they happen.",
         ] {
             assert!(probe.contains(label), "{}", label);
         }

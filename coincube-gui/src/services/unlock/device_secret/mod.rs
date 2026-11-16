@@ -59,7 +59,20 @@ use coincube_core::seed_crypt::DeviceSecret;
 use super::UnlockError;
 
 /// Keyring service name. Versioned so a future re-key can coexist.
-const SERVICE: &str = "io.coincube.tenshu.device-secret.v1";
+const SERVICE: &str = "io.coincube.desktop.device-secret.v1";
+
+/// The service name Tenshu-era builds (bundle ID `io.coincube.tenshu`,
+/// 2026-08 to 2026-11) wrote under, on every platform.
+///
+/// A v3 seed file is unopenable without its device secret, so an install that
+/// still holds its secret here must keep opening. [`load_raw`] reads this name
+/// when [`SERVICE`] has no entry and copies the value forward. On macOS the
+/// legacy item also lives in the legacy access group
+/// (`8UVR249AD5.io.coincube.tenshu`); it stays readable because
+/// `coincube.entitlements` still lists that group second and these queries
+/// name no group. Remove this only with a recorded decision that Tenshu-era
+/// installs no longer need to open.
+const LEGACY_SERVICE: &str = "io.coincube.tenshu.device-secret.v1";
 
 /// Serialises provisioning **within this process**.
 ///
@@ -126,39 +139,39 @@ impl Capability {
 /// `get_password`/`set_password`: the string form forced a hex round-trip
 /// through a `String` the caller could not scrub.
 mod backend {
-    use super::{UnlockError, SERVICE};
+    use super::UnlockError;
     use zeroize::Zeroizing;
 
     #[cfg(target_os = "macos")]
-    pub fn load(cube_id: &str) -> Result<Option<Zeroizing<Vec<u8>>>, UnlockError> {
-        super::apple::load(SERVICE, cube_id)
+    pub fn load(service: &str, cube_id: &str) -> Result<Option<Zeroizing<Vec<u8>>>, UnlockError> {
+        super::apple::load(service, cube_id)
     }
 
     #[cfg(target_os = "macos")]
-    pub fn add_if_absent(cube_id: &str, secret: &[u8]) -> Result<(), UnlockError> {
-        super::apple::add_if_absent(SERVICE, cube_id, secret)?;
+    pub fn add_if_absent(service: &str, cube_id: &str, secret: &[u8]) -> Result<(), UnlockError> {
+        super::apple::add_if_absent(service, cube_id, secret)?;
         Ok(())
     }
 
     #[cfg(target_os = "macos")]
-    pub fn verify_attributes(cube_id: &str) -> Result<(), UnlockError> {
-        super::apple::verify_attributes(SERVICE, cube_id)
+    pub fn verify_attributes(service: &str, cube_id: &str) -> Result<(), UnlockError> {
+        super::apple::verify_attributes(service, cube_id)
     }
 
     #[cfg(target_os = "macos")]
-    pub fn delete(cube_id: &str) -> Result<(), UnlockError> {
-        super::apple::delete(SERVICE, cube_id)
+    pub fn delete(service: &str, cube_id: &str) -> Result<(), UnlockError> {
+        super::apple::delete(service, cube_id)
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn entry(cube_id: &str) -> Result<keyring::Entry, UnlockError> {
-        keyring::Entry::new(SERVICE, cube_id)
+    fn entry(service: &str, cube_id: &str) -> Result<keyring::Entry, UnlockError> {
+        keyring::Entry::new(service, cube_id)
             .map_err(|e| UnlockError::KeystoreUnreachable(super::describe(&e.to_string())))
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn load(cube_id: &str) -> Result<Option<Zeroizing<Vec<u8>>>, UnlockError> {
-        match entry(cube_id)?.get_secret() {
+    pub fn load(service: &str, cube_id: &str) -> Result<Option<Zeroizing<Vec<u8>>>, UnlockError> {
+        match entry(service, cube_id)?.get_secret() {
             // Wrapped the instant it exists — before any length check or
             // conversion can return early past it.
             Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
@@ -170,19 +183,19 @@ mod backend {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn add_if_absent(cube_id: &str, secret: &[u8]) -> Result<(), UnlockError> {
+    pub fn add_if_absent(service: &str, cube_id: &str, secret: &[u8]) -> Result<(), UnlockError> {
         // Windows Credential Manager and Secret Service have no atomic
         // create-if-absent. The caller holds both provisioning locks, so the
         // check-then-set window is closed against this application; a foreign
         // writer racing us is out of scope, and the mandatory read-back in
         // `get_or_create` still returns whatever actually landed.
-        entry(cube_id)?
+        entry(service, cube_id)?
             .set_secret(secret)
             .map_err(|e| UnlockError::KeystoreUnreachable(super::describe(&e.to_string())))
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn verify_attributes(_cube_id: &str) -> Result<(), UnlockError> {
+    pub fn verify_attributes(_service: &str, _cube_id: &str) -> Result<(), UnlockError> {
         // Windows DPAPI and Secret Service expose no equivalent of
         // `kSecAttrSynchronizable`; neither syncs these items off-machine by
         // default. Nothing to assert, so nothing is claimed.
@@ -190,8 +203,8 @@ mod backend {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn delete(cube_id: &str) -> Result<(), UnlockError> {
-        match entry(cube_id)?.delete_credential() {
+    pub fn delete(service: &str, cube_id: &str) -> Result<(), UnlockError> {
+        match entry(service, cube_id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(UnlockError::KeystoreUnreachable(super::describe(
                 &e.to_string(),
@@ -210,16 +223,16 @@ pub fn capability() -> Capability {
     let probe = probe_account();
     let probe_value = [0x5Au8; 32];
 
-    let _ = backend::delete(&probe);
-    if let Err(e) = backend::add_if_absent(&probe, &probe_value) {
+    let _ = backend::delete(SERVICE, &probe);
+    if let Err(e) = backend::add_if_absent(SERVICE, &probe, &probe_value) {
         return Capability::Unavailable(e.to_string());
     }
-    let read_back = backend::load(&probe);
+    let read_back = backend::load(SERVICE, &probe);
     // The attribute contract is part of "usable", not a separate nicety: an
     // item that syncs to iCloud is worse than no item at all, because the user
     // believes they have a second factor that is in fact escrowed.
-    let attrs = backend::verify_attributes(&probe);
-    let _ = backend::delete(&probe);
+    let attrs = backend::verify_attributes(SERVICE, &probe);
+    let _ = backend::delete(SERVICE, &probe);
 
     match (read_back, attrs) {
         (Ok(Some(v)), Ok(())) if v.as_slice() == probe_value => Capability::Available,
@@ -308,9 +321,72 @@ fn to_secret(bytes: &Zeroizing<Vec<u8>>) -> Result<DeviceSecret, UnlockError> {
 ///
 /// None of the three is ever reported as a wrong PIN.
 pub fn load(cube_id: &str) -> Result<DeviceSecret, UnlockError> {
-    match backend::load(cube_id)? {
+    match load_raw(cube_id)? {
         Some(bytes) => to_secret(&bytes),
         None => Err(UnlockError::DeviceSecretMissing),
+    }
+}
+
+/// Read this Cube's entry under [`SERVICE`], falling back to [`LEGACY_SERVICE`].
+///
+/// A legacy hit is returned as-is, so the Cube opens whatever happens next, and
+/// is then copied forward under [`SERVICE`] (see [`copy_forward`]). The legacy
+/// entry is left in place: it keeps a downgrade to a Tenshu-era build working,
+/// and [`delete`] removes both.
+///
+/// [`SERVICE`] always wins when it has an entry. Nothing writes [`SERVICE`] for
+/// an existing Cube except [`copy_forward`], which writes the legacy bytes, and
+/// [`get_or_create`] mints only after this function found neither entry.
+fn load_raw(cube_id: &str) -> Result<Option<Zeroizing<Vec<u8>>>, UnlockError> {
+    if let Some(bytes) = backend::load(SERVICE, cube_id)? {
+        return Ok(Some(bytes));
+    }
+    let Some(legacy) = backend::load(LEGACY_SERVICE, cube_id)? else {
+        return Ok(None);
+    };
+    copy_forward(cube_id, &legacy);
+    Ok(Some(legacy))
+}
+
+/// Best-effort copy of a legacy entry under [`SERVICE`].
+///
+/// Never fails the caller: the legacy entry already opens the Cube. The copy
+/// is kept only if it reads back byte-identical and carries the required
+/// attributes (device-only, not synchronizable); otherwise it is removed so
+/// the next open falls back to the legacy entry again rather than trusting a
+/// copy that differs or could leave the machine.
+fn copy_forward(cube_id: &str, legacy: &[u8]) {
+    if let Err(e) = backend::add_if_absent(SERVICE, cube_id, legacy) {
+        tracing::warn!("device secret: couldn't copy the legacy entry forward: {e}");
+        return;
+    }
+    let copied = backend::load(SERVICE, cube_id);
+    let verified = backend::verify_attributes(SERVICE, cube_id);
+    match (copied, verified) {
+        (Ok(Some(bytes)), Ok(())) if bytes.as_slice() == legacy => {
+            tracing::info!("device secret: copied the legacy Tenshu entry forward");
+        }
+        (copied, verified) => {
+            tracing::warn!(
+                "device secret: discarding the forward copy (read back: {}, attributes: {})",
+                match &copied {
+                    Ok(Some(b)) if b.as_slice() == legacy => "matches",
+                    Ok(Some(_)) => "differs",
+                    Ok(None) => "missing",
+                    Err(_) => "error",
+                },
+                if verified.is_ok() {
+                    "ok"
+                } else {
+                    "not verified"
+                },
+            );
+            // Only a copy that differs would be dangerous to keep, because
+            // SERVICE wins on the next open. A missing one needs no cleanup.
+            if !matches!(copied, Ok(None)) {
+                let _ = backend::delete(SERVICE, cube_id);
+            }
+        }
     }
 }
 
@@ -359,7 +435,7 @@ pub fn get_or_create(datadir_root: &Path, cube_id: &str) -> Result<DeviceSecret,
                 use rand::RngCore;
                 rand::rngs::OsRng.fill_bytes(candidate.as_mut());
             }
-            backend::add_if_absent(cube_id, candidate.as_ref())?;
+            backend::add_if_absent(SERVICE, cube_id, candidate.as_ref())?;
             // Read back unconditionally — see the note above.
             load(cube_id)?
         }
@@ -374,8 +450,13 @@ pub fn get_or_create(datadir_root: &Path, cube_id: &str) -> Result<DeviceSecret,
     // than no item at all: the user believes they have a second factor that is
     // in fact escrowed.
     //
-    // Read-only, so this does not disturb the idempotence above.
-    backend::verify_attributes(cube_id)?;
+    // Read-only, so this does not disturb the idempotence above. A Cube whose
+    // only entry is still the legacy one (the forward copy failed) is checked
+    // under that name instead.
+    match backend::load(SERVICE, cube_id)? {
+        Some(_) => backend::verify_attributes(SERVICE, cube_id)?,
+        None => backend::verify_attributes(LEGACY_SERVICE, cube_id)?,
+    }
     Ok(secret)
 }
 
@@ -392,8 +473,12 @@ pub fn get_or_create(datadir_root: &Path, cube_id: &str) -> Result<DeviceSecret,
 /// It is kept because the tests need it and because a deliberate "forget this
 /// Cube" action would want it. **Not** called by the duress wipe either — see
 /// the module docs for why a wipe deliberately leaves the entry behind.
+///
+/// Removes the legacy Tenshu-era entry too, so a forgotten Cube cannot come
+/// back through the [`load_raw`] fallback.
 pub fn delete(cube_id: &str) -> Result<(), UnlockError> {
-    backend::delete(cube_id)
+    backend::delete(SERVICE, cube_id)?;
+    backend::delete(LEGACY_SERVICE, cube_id)
 }
 
 #[cfg(test)]
@@ -560,6 +645,72 @@ mod tests {
             Err(UnlockError::DeviceSecretMissing)
         ));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// **The Tenshu migration regression test.**
+    ///
+    /// A Cube provisioned by a Tenshu-era build holds its secret only under
+    /// [`LEGACY_SERVICE`]. It must keep opening with the same bytes, gain a
+    /// byte-identical copy under [`SERVICE`], never be re-minted by
+    /// `get_or_create`, and disappear entirely on `delete`.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"
+    )]
+    fn legacy_tenshu_entry_still_opens_and_is_copied_forward() {
+        let root = tmp_root("legacy");
+        let cube_id = probe_cube_id("legacy");
+        let _ = delete(&cube_id);
+
+        let legacy = [0x42u8; 32];
+        backend::add_if_absent(LEGACY_SERVICE, &cube_id, &legacy).unwrap();
+        assert!(backend::load(SERVICE, &cube_id).unwrap().is_none());
+
+        assert_eq!(*load(&cube_id).unwrap(), legacy);
+        assert_eq!(
+            backend::load(SERVICE, &cube_id)
+                .unwrap()
+                .as_deref()
+                .map(Vec::as_slice),
+            Some(legacy.as_slice()),
+            "the legacy entry was not copied forward"
+        );
+        assert!(
+            backend::load(LEGACY_SERVICE, &cube_id).unwrap().is_some(),
+            "the legacy entry must stay for downgrades"
+        );
+        assert_eq!(
+            *get_or_create(&root, &cube_id).unwrap(),
+            legacy,
+            "provisioning replaced a migrated secret"
+        );
+
+        delete(&cube_id).unwrap();
+        assert!(backend::load(SERVICE, &cube_id).unwrap().is_none());
+        assert!(backend::load(LEGACY_SERVICE, &cube_id).unwrap().is_none());
+        assert!(matches!(
+            load(&cube_id),
+            Err(UnlockError::DeviceSecretMissing)
+        ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The new service always wins over a stale legacy entry.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"
+    )]
+    fn current_entry_takes_precedence_over_legacy() {
+        let cube_id = probe_cube_id("precedence");
+        let _ = delete(&cube_id);
+
+        backend::add_if_absent(LEGACY_SERVICE, &cube_id, &[0x01u8; 32]).unwrap();
+        backend::add_if_absent(SERVICE, &cube_id, &[0x02u8; 32]).unwrap();
+        assert_eq!(*load(&cube_id).unwrap(), [0x02u8; 32]);
+
+        delete(&cube_id).unwrap();
     }
 
     /// Missing entry and unreachable keystore stay distinct from each other and

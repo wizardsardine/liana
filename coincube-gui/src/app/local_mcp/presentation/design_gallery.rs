@@ -36,7 +36,8 @@ fn render(scenario: &str, view: impl Fn() -> Ui<'static>) -> capture::Inspection
         );
         for (value, _) in &inspection.text {
             assert!(
-                !value.contains("TENSHU_MCP_CREDENTIAL") && !value.contains("TENSHU_MCP_PAIRING"),
+                !value.contains("COINCUBE_MCP_CREDENTIAL")
+                    && !value.contains("COINCUBE_MCP_PAIRING"),
                 "{}: private configuration reached the page",
                 scenario
             );
@@ -258,7 +259,7 @@ fn ai_access_state_gallery() {
         true,
         "gallery-06",
     );
-    assert!(config.is_some_and(|config| config.contains("TENSHU_MCP_CREDENTIAL")));
+    assert!(config.is_some_and(|config| config.contains("COINCUBE_MCP_CREDENTIAL")));
     assert_eq!(paired.copied.as_deref(), Some(first.as_str()));
     let paired = leak(paired);
     let page = render("06-paired-available", || view_for_cube(paired, true));

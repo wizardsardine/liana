@@ -602,6 +602,8 @@ pub enum SparkReceiveMessage {
     /// ignored. Pre-Phase-4f BOLT11-less events (Spark-native /
     /// on-chain / token) still trigger the auto-advance.
     PaymentReceived {
+        /// The SDK's payment ID, shown (with copy) on the receipt.
+        payment_id: String,
         amount_sat: i64,
         bolt11: Option<String>,
         /// The token a token payment moved; its `amount_sat` is then that

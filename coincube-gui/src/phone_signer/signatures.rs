@@ -47,7 +47,7 @@ pub(super) fn authenticated_prevouts(
             .map_err(|e| {
                 format!(
                     "Input {} of this transaction cannot be verified ({}), so its amount \
-                     cannot be shown to the Keychain for review. Recreate the spend in \
+                     cannot be shown to the phone for review. Recreate the spend in \
                      COINCUBE and try again.",
                     i, e
                 )
@@ -62,7 +62,8 @@ pub(super) fn merge_verified(
     descriptor: &str,
     binding: &SignerBinding,
 ) -> Result<(), String> {
-    let reject = || "Keychain returned an invalid or unauthorized signature delta.".to_owned();
+    let reject =
+        || "COINCUBE Mobile returned an invalid or unauthorized signature delta.".to_owned();
     if original.unsigned_tx != returned.unsigned_tx
         || original.inputs.len() != returned.inputs.len()
         || original.inputs.len() != original.unsigned_tx.input.len()
@@ -258,8 +259,9 @@ pub(super) fn merge_imported_verified(
     wallet: &ImportedWalletDescriptor,
     binding: &SignerBinding,
 ) -> Result<(), String> {
-    let reject =
-        || "Keychain returned an invalid or unauthorized imported signature delta.".to_owned();
+    let reject = || {
+        "COINCUBE Mobile returned an invalid or unauthorized imported signature delta.".to_owned()
+    };
     let scope = binding.imported_scope.as_ref().ok_or_else(reject)?;
     let expected_wallet_id =
         crate::app::settings::WalletId::for_imported(wallet, scope.chain).map_err(|_| reject())?;

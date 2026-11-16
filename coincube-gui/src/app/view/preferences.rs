@@ -27,8 +27,9 @@ use crate::app::{
         MotionPreference, NetworkActivitySource, PreferenceChange, ThemePreference, WorldviewMode,
         Zoom,
     },
-    state::preferences::{BalancePrivacy, PreferencesPageState, Section},
+    state::preferences::{AboutPage, BalancePrivacy, PreferencesPageState, Section},
 };
+use crate::services::coincube::{DownloadStats, StatsPeriod, TimeseriesPoint};
 use coincube_ui::locale::Text as CopyText;
 use coincube_ui::theme::palette::ThemeMode;
 
@@ -407,6 +408,7 @@ pub enum Action {
     RepairRegistration,
     OpenDownloadStats,
     OpenLicenses,
+    RefreshDownloadStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -416,6 +418,9 @@ pub enum Message {
     Change(PreferenceChange),
     ToggleComponentVersions,
     ToggleRegistrationRepair,
+    /// From a page About opened, back to About's rows.
+    BackToAbout,
+    DownloadStatsPeriod(StatsPeriod),
     Action(Action),
 }
 
@@ -430,16 +435,54 @@ pub struct Diagnostics<'a> {
     /// Already sanitized by the caller's explicit support-summary allowlist;
     /// displayed for inspection before the user chooses Copy.
     pub support_summary_preview: Option<&'a str>,
+    /// The summary reached the clipboard since the sheet opened.
+    pub support_summary_copied: bool,
+    /// The last Open folder attempt failed.
+    pub open_logs_failed: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct About<'a> {
     pub build_provenance: Option<&'a str>,
+    /// Resolved text for each component: a version, or why there is none.
+    /// None while the check is still running.
     pub daemon_version: Option<&'a str>,
     pub spark_bridge_version: Option<&'a str>,
     pub can_open_download_stats: bool,
     pub can_open_licenses: bool,
+    pub download_stats: DownloadStatsView<'a>,
 }
+
+/// The public download counts About › Download Stats draws.
+#[derive(Debug, Clone, Copy)]
+pub struct DownloadStatsView<'a> {
+    pub stats: Option<&'a DownloadStats>,
+    pub today: Option<u32>,
+    pub timeseries: Option<&'a [TimeseriesPoint]>,
+    pub period: StatsPeriod,
+    pub loading: bool,
+    pub error: Option<&'a str>,
+}
+
+impl Default for DownloadStatsView<'_> {
+    fn default() -> Self {
+        Self {
+            stats: None,
+            today: None,
+            timeseries: None,
+            period: StatsPeriod::Year,
+            loading: false,
+            error: None,
+        }
+    }
+}
+
+/// The open-source licences About › Open-source licenses lists: this app's
+/// own licence and notice, then every third-party crate it ships
+/// (`contrib/third-party-licenses.sh` regenerates the list).
+const APP_LICENCE: &str = include_str!("../../../../LICENCE");
+const APP_NOTICE: &str = include_str!("../../../../NOTICE");
+const THIRD_PARTY_LICENCES: &str = include_str!("../../../assets/THIRD_PARTY_LICENSES.txt");
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WorldviewSharing {
@@ -493,9 +536,9 @@ fn worldview_sharing_row<'a>(sharing: &WorldviewSharing) -> Element<'a, Message>
     };
     let content = Column::new()
         .spacing(8)
-        .push(tenshu_text::label(localized_copy("Share with Keychain")))
+        .push(tenshu_text::label(localized_copy("Share with Mobile")))
         .push(
-            tenshu_text::body(localized_copy("Once sharing is enabled, saved Worldview and artwork changes automatically update Keychain on your Connect account."))
+            tenshu_text::body(localized_copy("Once sharing is enabled, saved Worldview and artwork changes automatically update COINCUBE Mobile on your Connect account."))
                 .size(13)
                 .style(theme::tenshu::text::muted),
         )
@@ -678,6 +721,9 @@ fn section_content<'a>(
     page: &'a PreferencesPageState,
     model: ViewModel<'a>,
 ) -> Element<'a, Message> {
+    if page.section == Section::About && page.about_page != AboutPage::Main {
+        return about_page(page.about_page, model.about);
+    }
     let mut content = Column::new()
         .push(
             container(tenshu_text::heading(page.section.label()))
@@ -1069,7 +1115,7 @@ fn section_content<'a>(
             let diagnostics = model.diagnostics;
             let mut logs = Column::new().width(Length::Fill).push(
                 setting_row(
-                    CopyText::SanitizedLogs.get(),
+                    CopyText::Logs.get(),
                     Row::new()
                         .push(
                             ActionButton::new(
@@ -1089,7 +1135,11 @@ fn section_content<'a>(
                         .push(
                             ActionButton::new(
                                 "tenshu.preferences.copy-support-summary",
-                                CopyText::CopySummary.get(),
+                                if diagnostics.support_summary_copied {
+                                    CopyText::Copied.get()
+                                } else {
+                                    CopyText::CopySummary.get()
+                                },
                                 ActionKind::Secondary,
                                 Message::FocusAction,
                             )
@@ -1105,9 +1155,16 @@ fn section_content<'a>(
                 )
                 .tag(CopyText::ThisDevice.get())
                 .trailing_tag()
-                .description(CopyText::LogsAreSanitizedBeforeTheyRe.get())
+                .description(CopyText::LogFilesCanIncludeYourAccountEmail.get())
                 .without_divider(),
             );
+            if diagnostics.open_logs_failed {
+                logs = logs.push(status_text(
+                    CopyText::CouldNotOpenTheLogFolder.get(),
+                    Tone::Bad,
+                ));
+                logs = logs.push(iced::widget::Space::new().height(Length::Fixed(14.0)));
+            }
             // The allowlisted summary stays inspectable before Copy.
             if let Some(preview) = diagnostics.support_summary_preview {
                 logs = logs.push(
@@ -1243,13 +1300,13 @@ fn section_content<'a>(
             if page.component_versions_expanded {
                 rows.push(sub_row(
                     CopyText::WalletDaemon.get(),
-                    about.daemon_version.unwrap_or(CopyText::NotLoaded.get()),
+                    about.daemon_version.unwrap_or(localized_copy("Checking…")),
                 ));
                 rows.push(sub_row(
                     CopyText::SparkBridge.get(),
                     about
                         .spark_bridge_version
-                        .unwrap_or(CopyText::NotLoaded.get()),
+                        .unwrap_or(localized_copy("Checking…")),
                 ));
             }
             rows.push(
@@ -1298,6 +1355,112 @@ fn section_content<'a>(
                     list.push(row)
                 }),
         )
+        .into()
+}
+
+/// A page About opens: a back link to About, the page's heading, its body.
+fn about_page<'a>(page: AboutPage, about: About<'a>) -> Element<'a, Message> {
+    let back = FocusableAction::new(
+        "tenshu.preferences.about-back",
+        Row::new()
+            .push(
+                previous_icon()
+                    .size(14)
+                    .width(Length::Fixed(16.0))
+                    .style(theme::tenshu::text::ink),
+            )
+            .push(tenshu_text::label(CopyText::About.get()))
+            .spacing(6)
+            .align_y(Alignment::Center),
+        Message::FocusAction,
+    )
+    .padding(0)
+    .style(theme::tenshu::control::disclosure)
+    .on_press(Message::BackToAbout);
+    let (title, body): (&'static str, Element<'a, Message>) = match page {
+        AboutPage::Main | AboutPage::DownloadStats => (
+            CopyText::DownloadStats.get(),
+            download_stats_page(about.download_stats),
+        ),
+        AboutPage::Licenses => (localized_copy("Open-source licenses"), licences_page()),
+    };
+    Column::new()
+        .push(back)
+        .push(
+            container(tenshu_text::heading(title))
+                .padding(iced::Padding::default().top(12).bottom(16)),
+        )
+        .push(body)
+        .width(Length::Fill)
+        .into()
+}
+
+fn download_stats_page<'a>(stats: DownloadStatsView<'a>) -> Element<'a, Message> {
+    use crate::app::view::settings::install_stats::{chart_card, downloads_card};
+    let refresh = ActionButton::new(
+        "tenshu.preferences.download-stats-refresh",
+        localized_copy("Refresh"),
+        ActionKind::Secondary,
+        Message::FocusAction,
+    )
+    .compact()
+    .on_press_maybe((!stats.loading).then_some(Message::Action(Action::RefreshDownloadStats)));
+    let mut column = Column::new()
+        .push(
+            Row::new()
+                .push(
+                    tenshu_text::body(localized_copy(
+                        "Public download counts for COINCUBE Desktop releases",
+                    ))
+                    .size(13)
+                    .style(theme::tenshu::text::muted)
+                    .width(Length::Fill),
+                )
+                .push(refresh)
+                .spacing(16)
+                .align_y(Alignment::Center),
+        )
+        .spacing(16)
+        .width(Length::Fill);
+    if let Some(error) = stats.error {
+        column = column.push(status_text(
+            coincube_ui::locale::notice(error.to_string()),
+            Tone::Bad,
+        ));
+    }
+    column
+        .push(downloads_card(stats.stats, stats.today, stats.loading))
+        .push(chart_card(
+            stats.timeseries,
+            stats.period,
+            stats.loading,
+            Message::DownloadStatsPeriod,
+        ))
+        .into()
+}
+
+fn licences_page<'a>() -> Element<'a, Message> {
+    let block = |text: &'static str| {
+        tenshu_text::body(text)
+            .size(12)
+            .font(font::MONO_REGULAR)
+            .style(theme::tenshu::text::ink)
+    };
+    Column::new()
+        .push(
+            tenshu_text::body(localized_copy(
+                "COINCUBE Desktop is open source under the BSD 3-Clause License.",
+            ))
+            .size(13)
+            .style(theme::tenshu::text::muted),
+        )
+        .push(block(APP_LICENCE))
+        .push(horizontal_rule())
+        .push(block(APP_NOTICE))
+        .push(horizontal_rule())
+        .push(block(THIRD_PARTY_LICENCES))
+        .spacing(16)
+        .width(Length::Fill)
         .into()
 }
 
@@ -2587,7 +2750,7 @@ mod tests {
         let model = ViewModel {
             saved: Some(DevicePreferences::default()),
             worldview_sharing: WorldviewSharing {
-                status: "Shared with Keychain",
+                status: "Shared with Mobile",
                 shared_selection: Some(("Luke", "The Stone Crossing")),
                 can_refresh: true,
                 can_publish: true,
@@ -2636,7 +2799,7 @@ mod tests {
             ] {
                 coincube_ui::locale::render_in(language, || {
                     let sharing = WorldviewSharing {
-                        status: localized_copy("Shared with Keychain"),
+                        status: localized_copy("Shared with Mobile"),
                         shared_selection: Some(("Suitcoiner", "Gilded Wall Street")),
                         can_refresh: true,
                         can_publish: true,

@@ -44,9 +44,9 @@ impl Drop for Client {
 impl Client {
     pub async fn start(executable: &OsStr, environment: &[(String, String)]) -> Self {
         let mut child = Command::new(executable)
-            .env_remove("TENSHU_MCP_SOCKET")
-            .env_remove("TENSHU_MCP_PAIRING")
-            .env_remove("TENSHU_MCP_CREDENTIAL")
+            .env_remove("COINCUBE_MCP_SOCKET")
+            .env_remove("COINCUBE_MCP_PAIRING")
+            .env_remove("COINCUBE_MCP_CREDENTIAL")
             .envs(environment.iter().map(|(key, value)| (key, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -95,7 +95,7 @@ impl Client {
                 STARTUP_TIMEOUT,
             )
             .await;
-        assert_eq!(initialized["result"]["serverInfo"]["name"], "tenshu-mcp");
+        assert_eq!(initialized["result"]["serverInfo"]["name"], "coincube-mcp");
         client
             .write(
                 b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n",
@@ -137,7 +137,7 @@ impl Client {
         bytes.push(b'\n');
         self.write(&bytes, method, id).await;
         let result = read_response(&mut self.stdout, id, deadline).await;
-        if std::env::var_os("TENSHU_MCP_TEST_TRACE").is_some() {
+        if std::env::var_os("COINCUBE_MCP_TEST_TRACE").is_some() {
             eprintln!(
                 "MCP test phase={method} id={id} elapsed_ms={}",
                 started.elapsed().as_millis()

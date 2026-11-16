@@ -15,7 +15,9 @@ use security_framework_sys::item::{
     kSecAttrAccessGroup, kSecAttrAccount, kSecAttrService, kSecClass, kSecClassGenericPassword,
     kSecReturnAttributes, kSecReturnData, kSecValueData,
 };
-use security_framework_sys::keychain_item::{SecItemAdd, SecItemCopyMatching, SecItemUpdate};
+use security_framework_sys::keychain_item::{
+    SecItemAdd, SecItemCopyMatching, SecItemDelete, SecItemUpdate,
+};
 
 extern "C" {
     static kSecAttrAccessible: CFStringRef;
@@ -23,7 +25,12 @@ extern "C" {
     static kSecUseDataProtectionKeychain: CFStringRef;
 }
 
-const ACCESS_GROUP: &str = "8UVR249AD5.io.coincube.tenshu";
+const ACCESS_GROUP: &str = "8UVR249AD5.io.coincube.desktop";
+
+/// Group that Tenshu-era builds (bundle ID `io.coincube.tenshu`) wrote anchors
+/// to. `coincube.entitlements` keeps it listed second so [`migrate_legacy`] can
+/// move those anchors into [`ACCESS_GROUP`].
+const LEGACY_ACCESS_GROUP: &str = "8UVR249AD5.io.coincube.tenshu";
 
 #[cfg(all(debug_assertions, feature = "native-anchor-probe"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,7 +73,7 @@ mod probe_fault {
 #[cfg(all(debug_assertions, feature = "native-anchor-probe"))]
 pub(in crate::services) fn arm_probe_fault(service: &str, fault: ProbeFault) {
     assert!(
-        service.starts_with("io.coincube.tenshu.native-imported-anchor-probe."),
+        service.starts_with("io.coincube.desktop.native-imported-anchor-probe."),
         "fault injection requires a synthetic service"
     );
     probe_fault::arm(fault);
@@ -84,6 +91,10 @@ fn cfstr(value: CFStringRef) -> CFString {
 }
 
 fn identity(service: &str, account: &str) -> Vec<(CFString, CFType)> {
+    identity_in(service, account, ACCESS_GROUP)
+}
+
+fn identity_in(service: &str, account: &str, group: &str) -> Vec<(CFString, CFType)> {
     vec![
         (
             cfstr(unsafe { kSecUseDataProtectionKeychain }),
@@ -103,13 +114,17 @@ fn identity(service: &str, account: &str) -> Vec<(CFString, CFType)> {
         ),
         (
             cfstr(unsafe { kSecAttrAccessGroup }),
-            CFString::new(ACCESS_GROUP).into_CFType(),
+            CFString::new(group).into_CFType(),
         ),
     ]
 }
 
 fn verify_attributes(service: &str, account: &str) -> Result<(), String> {
-    let mut query = identity(service, account);
+    verify_attributes_in(service, account, ACCESS_GROUP)
+}
+
+fn verify_attributes_in(service: &str, account: &str, group: &str) -> Result<(), String> {
+    let mut query = identity_in(service, account, group);
     query.push((
         cfstr(unsafe { kSecReturnAttributes }),
         CFBoolean::from(true).into_CFType(),
@@ -130,7 +145,7 @@ fn verify_attributes(service: &str, account: &str) -> Result<(), String> {
     };
     if string_attr(unsafe { kSecAttrService }).as_deref() != Some(service)
         || string_attr(unsafe { kSecAttrAccount }).as_deref() != Some(account)
-        || string_attr(unsafe { kSecAttrAccessGroup }).as_deref() != Some(ACCESS_GROUP)
+        || string_attr(unsafe { kSecAttrAccessGroup }).as_deref() != Some(group)
         || string_attr(unsafe { kSecAttrAccessible }).as_deref()
             != Some(
                 cfstr(unsafe { kSecAttrAccessibleWhenUnlockedThisDeviceOnly })
@@ -154,7 +169,8 @@ fn verify_attributes(service: &str, account: &str) -> Result<(), String> {
 pub(super) fn load(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
     let mut query = identity(service, account);
     #[cfg(all(debug_assertions, feature = "native-anchor-probe"))]
-    let injected_readback = service.starts_with("io.coincube.tenshu.native-imported-anchor-probe.")
+    let injected_readback = service
+        .starts_with("io.coincube.desktop.native-imported-anchor-probe.")
         && probe_fault::take_readback();
     #[cfg(all(debug_assertions, feature = "native-anchor-probe"))]
     if injected_readback {
@@ -224,7 +240,7 @@ pub(super) fn update(service: &str, account: &str, value: &[u8]) -> Result<(), S
     #[cfg(all(debug_assertions, feature = "native-anchor-probe"))]
     let mut identity = identity;
     #[cfg(all(debug_assertions, feature = "native-anchor-probe"))]
-    let injected = if service.starts_with("io.coincube.tenshu.native-imported-anchor-probe.") {
+    let injected = if service.starts_with("io.coincube.desktop.native-imported-anchor-probe.") {
         probe_fault::take_update()
     } else {
         None
@@ -269,4 +285,71 @@ pub(super) fn update(service: &str, account: &str, value: &[u8]) -> Result<(), S
         return Err("Synthetic imported anchor update completed before reported error.".into());
     }
     verify_attributes(service, account)
+}
+
+/// Move a Tenshu-era anchor into the current service and access group.
+///
+/// Called only after [`load`] found no current item. Returns `Ok(None)` when
+/// there is no legacy item either. Otherwise the legacy item's attributes are
+/// verified, its bytes are written as the current item (or an identical
+/// current item from a concurrent migration is accepted), and the legacy item
+/// is deleted. The bytes are returned for the caller to decode as usual.
+///
+/// The legacy item must not outlive the move. This is freshness state: a stale
+/// copy that a later fallback could read back would be a rollback. So every
+/// failure is an error rather than a silent fallback, and a failed delete is
+/// reported even though the current item already exists (the next load then
+/// finds the current item and never consults the legacy one).
+pub(super) fn migrate_legacy(
+    service: &str,
+    legacy_service: &str,
+    account: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut query = identity_in(legacy_service, account, LEGACY_ACCESS_GROUP);
+    query.push((
+        cfstr(unsafe { kSecReturnData }),
+        CFBoolean::from(true).into_CFType(),
+    ));
+    let params = CFDictionary::from_CFType_pairs(&query);
+    let mut output: core_foundation_sys::base::CFTypeRef = std::ptr::null();
+    let status = unsafe { SecItemCopyMatching(params.as_concrete_TypeRef(), &mut output) };
+    if status == errSecItemNotFound {
+        return Ok(None);
+    }
+    if status != 0 || output.is_null() {
+        return Err(format!(
+            "Cannot read legacy imported inventory anchor (OSStatus {status})."
+        ));
+    }
+    let legacy = unsafe { CFData::wrap_under_create_rule(output as _) }
+        .bytes()
+        .to_vec();
+    verify_attributes_in(legacy_service, account, LEGACY_ACCESS_GROUP)?;
+
+    if let Err(create_error) = create(service, account, &legacy) {
+        // A concurrent migration may have written the same bytes first.
+        match load(service, account)? {
+            Some(current) if current == legacy => {}
+            Some(_) => {
+                return Err(
+                    "Imported inventory anchor differs from its legacy copy; refusing to migrate."
+                        .into(),
+                )
+            }
+            None => return Err(create_error),
+        }
+    }
+    if load(service, account)?.as_deref() != Some(legacy.as_slice()) {
+        return Err("Migrated imported inventory anchor was not confirmed.".into());
+    }
+
+    let params =
+        CFDictionary::from_CFType_pairs(&identity_in(legacy_service, account, LEGACY_ACCESS_GROUP));
+    let status = unsafe { SecItemDelete(params.as_concrete_TypeRef()) };
+    if status != 0 && status != errSecItemNotFound {
+        return Err(format!(
+            "Imported inventory anchor was migrated but its legacy copy could not be removed (OSStatus {status})."
+        ));
+    }
+    Ok(Some(legacy))
 }

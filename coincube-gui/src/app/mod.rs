@@ -1009,6 +1009,8 @@ pub struct App {
     received_celebration_context: String,
     /// The receipt's "Into …" line for the payment shown, untranslated.
     received_celebration_wallet: &'static str,
+    /// The receipt's ID row: its untranslated label and the full ID.
+    received_celebration_id: Option<(&'static str, String)>,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
     received_celebration_image: iced::widget::image::Handle,
     /// tx_ids of recent incoming payments we've already toasted for in
@@ -1110,7 +1112,7 @@ pub enum ConnectionStatus {
 
 /// What everything Tenshu sends to Connect waits for while live updates
 /// aren't on.
-pub const CONNECT_WAITS_FOR: &str = "Keychain signing, Recovery Kits and Cube backups to Connect";
+pub const CONNECT_WAITS_FOR: &str = "Mobile signing, Recovery Kits and Cube backups to Connect";
 
 /// The status light on the Connect control's account glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1152,7 +1154,7 @@ impl ConnectionStatus {
             }
             Self::Connected => Some(
                 coincube_ui::locale::copy(
-                    "Keychain signing requests and signatures arrive as they happen.",
+                    "Mobile signing requests and signatures arrive as they happen.",
                 )
                 .to_owned(),
             ),
@@ -1160,14 +1162,14 @@ impl ConnectionStatus {
                 "No internet connection. COINCUBE Desktop reconnects when you’re back online. \
                  {CONNECT_WAITS_FOR} wait until then.",
                 "Sin conexión a internet. COINCUBE Desktop se vuelve a conectar cuando vuelvas a estar \
-                 en línea. La firma con Keychain, los Kits de recuperación y las copias de \
+                 en línea. La firma con Mobile, los Kits de recuperación y las copias de \
                  Cubes en Connect esperan hasta entonces."
             )),
             Self::Reconnecting => Some(coincube_ui::localized_format!(
                 "COINCUBE Desktop can’t reach Connect right now and keeps trying. \
                  {CONNECT_WAITS_FOR} wait until it’s back.",
                 "COINCUBE Desktop no puede conectarse con Connect en este momento y lo sigue intentando. \
-                 La firma con Keychain, los Kits de recuperación y las copias de Cubes en \
+                 La firma con Mobile, los Kits de recuperación y las copias de Cubes en \
                  Connect esperan hasta que vuelva."
             )),
             Self::Renewing => Some(
@@ -1206,7 +1208,7 @@ pub fn renew_failed_detail() -> String {
         "Connect stopped recognizing this computer, and renewing its link automatically \
          didn’t work. {CONNECT_WAITS_FOR} wait until it does.",
         "Connect dejó de reconocer esta computadora y no se pudo renovar su vínculo \
-         automáticamente. La firma con Keychain, los Kits de recuperación y las copias de \
+         automáticamente. La firma con Mobile, los Kits de recuperación y las copias de \
          Cubes en Connect esperan hasta que se renueve."
     )
 }
@@ -1231,7 +1233,7 @@ impl SignedOutBy {
     pub fn detail(&self) -> String {
         coincube_ui::localized_format!(
             "Sign in to use {CONNECT_WAITS_FOR} again.",
-            "Inicia sesión para volver a usar la firma con Keychain, los Kits de recuperación \
+            "Inicia sesión para volver a usar la firma con Mobile, los Kits de recuperación \
              y las copias de Cubes en Connect."
         )
     }
@@ -3905,6 +3907,7 @@ impl App {
             received_celebration_amount: String::new(),
             received_celebration_context: "transaction-received".to_string(),
             received_celebration_wallet: "",
+            received_celebration_id: None,
             received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                 "transaction-received",
             ),
@@ -4187,6 +4190,7 @@ impl App {
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
                 received_celebration_wallet: "",
+                received_celebration_id: None,
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                     "transaction-received",
                 ),
@@ -6775,7 +6779,7 @@ impl App {
                                 "EnsureConnectReady: no Connect gRPC URL available for {network}"
                             );
                             return info_toast(
-                                "Keychain signing over Connect isn't available on this network. \
+                                "Mobile signing over Connect isn't available on this network. \
                                  Pair a phone over Wi-Fi to sign locally instead.",
                             );
                         };
@@ -9209,6 +9213,7 @@ impl App {
             Message::ShowReceivedCelebration {
                 context,
                 amount_sat,
+                payment_id,
             } => {
                 // Drive the same global overlay the Liquid `PaymentSucceeded`
                 // handler uses, but for a Spark deposit that just claimed (the
@@ -9228,6 +9233,9 @@ impl App {
                     coincube_ui::component::quote_display::image_handle_for_context(&context);
                 self.received_celebration_context = context.clone();
                 self.received_celebration_wallet = "Into Spark";
+                self.received_celebration_id = payment_id
+                    .filter(|id| !id.is_empty())
+                    .map(|id| ("Payment ID", id));
                 self.show_received_celebration = true;
                 // A Spark swap's bitcoin just landed. Forward the arrival to the
                 // cross-network Receive flow so it advances from "Bitcoin
@@ -9321,10 +9329,10 @@ impl App {
 
                 match event {
                     SparkEvent::PaymentSucceeded {
+                        id,
                         amount_sat,
                         bolt11,
                         token,
-                        ..
                     } => {
                         // Phase 4f: forward the BOLT11 field so the
                         // Receive panel can correlate against its
@@ -9334,6 +9342,7 @@ impl App {
                         let is_token = token.is_some();
                         tasks.push(Task::done(Message::View(view::Message::SparkReceive(
                             view::SparkReceiveMessage::PaymentReceived {
+                                payment_id: id,
                                 amount_sat,
                                 bolt11,
                                 token,
@@ -9549,6 +9558,11 @@ impl App {
                             };
                             self.received_celebration_context = context.to_string();
                             self.received_celebration_wallet = "Into Liquid";
+                            self.received_celebration_id = details
+                                .tx_id
+                                .clone()
+                                .filter(|id| !id.is_empty())
+                                .map(|id| ("Transaction ID", id));
                             self.received_celebration_quote =
                                 coincube_ui::component::quote_display::random_quote(context);
                             self.received_celebration_image =
@@ -9806,8 +9820,12 @@ impl App {
             Message::CubeNameSaved(result) => {
                 return self.route_cube_name_saved(result);
             }
-            Message::CubeNameSynced { cube_id, result } => {
-                return self.route_cube_name_synced(cube_id, result);
+            Message::CubeNameSynced {
+                cube_id,
+                name,
+                result,
+            } => {
+                return self.route_cube_name_synced(cube_id, name, result);
             }
             // Vault Recovery Alerts dispatch (Estate Notifications — PR 2).
             // Like the Recovery Kit above, the handler needs the
@@ -9998,6 +10016,11 @@ impl App {
             self.cache.cube_encryption_key = None;
             self.cache.clear_btcb2_fiat();
         }
+    }
+
+    /// The Vault daemon this Cube session runs, if the Cube has a Vault.
+    pub fn daemon(&self) -> Option<Arc<dyn Daemon + Sync + Send>> {
+        self.daemon.clone()
     }
 
     pub fn spawn_daemon_switch(&mut self, cfg: DaemonConfig) -> Task<Message> {
@@ -10339,6 +10362,17 @@ impl App {
         .on_activity(view::Message::ReceivedCelebrationActivity);
         if !self.received_celebration_wallet.is_empty() {
             page = page.detail(coincube_ui::locale::copy(self.received_celebration_wallet));
+        }
+        if let Some((label, id)) = &self.received_celebration_id {
+            use coincube_ui::component::payment_result::{short_id, ReceiptRow};
+            page = page.row(
+                ReceiptRow::new(coincube_ui::locale::copy(label), short_id(id))
+                    .mono()
+                    .on_copy(view::Message::CopyWithToast(
+                        id.clone(),
+                        format!("{label} copied to clipboard"),
+                    )),
+            );
         }
         page.into()
     }
@@ -16588,6 +16622,7 @@ mod hidden_liquid_receive_tests {
         drop(app.update(super::Message::ShowReceivedCelebration {
             context: "spark-receive".to_string(),
             amount_sat: 12_345,
+            payment_id: None,
         }));
         let _ = std::fs::remove_dir_all(&root);
         assert!(app.show_received_celebration);
@@ -19106,6 +19141,97 @@ mod cube_name_routing_tests {
     }
 
     #[test]
+    fn rename_status_moves_from_saving_to_saved_on_this_device() {
+        use crate::app::cache::CubeNameSync;
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            app.panels.connect.cube.server_cube_id = None;
+            drop(app.update(Message::View(view::Message::Settings(
+                view::SettingsMessage::CubeNameSubmitted("New name".into()),
+            ))));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::Saving);
+            // Without a Connect registration there is nothing to sync.
+            drop(app.update(Message::CubeNameSaved(Ok("New name".into()))));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::LocalOnly);
+            drop(app.update(Message::CubeNameSaved(Err("disk".into()))));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::SaveFailed);
+        });
+    }
+
+    #[test]
+    fn rename_field_shows_saving_then_saved_not_an_unsaved_warning() {
+        use crate::app::view::settings::page::Status;
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            app.panels.connect.cube.server_cube_id = None;
+            drop(app.panels.global_settings.update(
+                None,
+                &app.cache,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::GeneralSection,
+                )),
+            ));
+            drop(app.panels.global_settings.update(
+                None,
+                &app.cache,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::CubeNameEdited("New name".into()),
+                )),
+            ));
+            let status = |app: &App| {
+                app.panels
+                    .global_settings
+                    .general()
+                    .expect("Display & appearance is open")
+                    .cube_name_status(&app.cache)
+                    .map(|(kind, _)| kind)
+            };
+            assert_eq!(status(&app), Some(Status::Warn));
+            // Return: the field keeps the typed text until the save lands.
+            drop(app.update(Message::View(view::Message::Settings(
+                view::SettingsMessage::CubeNameSubmitted("New name".into()),
+            ))));
+            assert_eq!(status(&app), Some(Status::Busy));
+            drop(app.update(Message::CubeNameSaved(Ok("New name".into()))));
+            assert_eq!(status(&app), Some(Status::Ok));
+        });
+    }
+
+    #[test]
+    fn rename_sync_reply_only_settles_the_current_name() {
+        use crate::app::cache::CubeNameSync;
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            let cube_id = app.cube_settings.id.clone();
+            app.cache.cube_name = "Current".into();
+            app.cache.cube_name_sync = CubeNameSync::Syncing;
+            // An older rename's reply leaves the newer one syncing.
+            drop(app.update(Message::CubeNameSynced {
+                cube_id: cube_id.clone(),
+                name: "Older".into(),
+                result: Ok(()),
+            }));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::Syncing);
+            drop(app.update(Message::CubeNameSynced {
+                cube_id: cube_id.clone(),
+                name: "Current".into(),
+                result: Err("offline".into()),
+            }));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::SyncFailed);
+            app.cache.cube_name_sync = CubeNameSync::Syncing;
+            drop(app.update(Message::CubeNameSynced {
+                cube_id,
+                name: "Current".into(),
+                result: Ok(()),
+            }));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::Synced);
+        });
+    }
+
+    #[test]
     fn remote_name_completion_never_replaces_local_name_or_route() {
         with_session(async {
             let root = tempfile::tempdir().unwrap();
@@ -19117,6 +19243,7 @@ mod cube_name_routing_tests {
             for result in [Ok(()), Err("synthetic remote failure".into())] {
                 let task = app.update(Message::CubeNameSynced {
                     cube_id: "older-cube".into(),
+                    name: "Older name".into(),
                     result,
                 });
                 assert!(iced_runtime::task::into_stream(task).is_none());

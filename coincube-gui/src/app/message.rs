@@ -40,9 +40,12 @@ pub enum Message {
     /// The Cube name typed in Settings was written to this device's Cube
     /// settings (`Ok(name)`) or could not be.
     CubeNameSaved(Result<String, String>),
-    /// Connect accepted (`Ok`) or refused the renamed Cube.
+    /// Connect accepted (`Ok`) or refused the renamed Cube. `name` is the
+    /// name that was sent, so a reply to an older rename is not mistaken
+    /// for the current one.
     CubeNameSynced {
         cube_id: String,
+        name: String,
         result: Result<(), String>,
     },
     /// The Spark nickname typed in Settings was written to this device's
@@ -244,10 +247,12 @@ pub enum Message {
     /// SideShift-swap deposit. Emitted from `GlobalHome` on auto-claim success;
     /// handled inline in `App::update` (the only place that owns the overlay
     /// state). `context` picks the Kage image (`"spark-receive"`); `amount_sat`
-    /// is formatted for display against the user's bitcoin unit.
+    /// is formatted for display against the user's bitcoin unit; `payment_id`,
+    /// when known, is shown with a copy button.
     ShowReceivedCelebration {
         context: String,
         amount_sat: u64,
+        payment_id: Option<String>,
     },
     SettingsSaved,
     SettingsSaveFailed(Error),

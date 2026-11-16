@@ -652,7 +652,7 @@ mod tests {
                 password
             );
             assert_eq!(
-                inspection.contains("The copy sealed to your phone (Keychain)"),
+                inspection.contains("The copy sealed to your phone (COINCUBE Mobile)"),
                 phone
             );
             assert!(inspection.contains("COINCUBE can't undo this."));
@@ -694,7 +694,7 @@ mod tests {
     fn confirm_remove_paths_keychain_only() {
         assert_eq!(
             confirm_remove_paths(false, true),
-            vec!["The copy sealed to your phone (Keychain)"]
+            vec!["The copy sealed to your phone (COINCUBE Mobile)"]
         );
     }
 
@@ -704,7 +704,7 @@ mod tests {
             confirm_remove_paths(true, true),
             vec![
                 "Your password-encrypted Recovery Kit",
-                "The copy sealed to your phone (Keychain)",
+                "The copy sealed to your phone (COINCUBE Mobile)",
             ]
         );
     }

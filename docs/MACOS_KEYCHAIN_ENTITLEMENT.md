@@ -26,6 +26,23 @@ Manual procedure and history: `contrib/release/macos/README.md`.
 
 ## 2. Settle the bundle identifier first — rename to Tenshu
 
+> **Superseded 2026-11-15: the bundle ID is now `io.coincube.desktop`.** Robert
+> chose it when the app was renamed COINCUBE Desktop. Unlike the move to
+> Tenshu described below, signed and entitled Tenshu builds had already written
+> device secrets and imported-inventory anchors to `8UVR249AD5.io.coincube.tenshu`,
+> so that group can no longer be dropped. `coincube.entitlements` now lists
+> `8UVR249AD5.io.coincube.desktop` first (new items) and the Tenshu group second.
+> The device secret moved to service `io.coincube.desktop.device-secret.v1`;
+> `device_secret::load` falls back to `io.coincube.tenshu.device-secret.v1` and
+> copies the value forward, keeping the legacy entry for downgrades. The anchor
+> moved to `io.coincube.desktop.imported-inventory-anchor.v1` in the new group;
+> `apple::migrate_legacy` moves a Tenshu-era anchor and deletes the old copy,
+> because a stale freshness record must not survive. Apple portal prerequisites:
+> register App ID `io.coincube.desktop` with Associated Domains, issue a
+> Developer ID profile for it (replacing `embedded.provisionprofile`), and add
+> `8UVR249AD5.io.coincube.desktop` to the AASA `webcredentials.apps`. The
+> history below is kept as written.
+
 Three identifiers are in play and two of them disagree:
 
 | Identifier | Where | Status |
@@ -246,7 +263,7 @@ The pipeline currently proves the app is *signed and notarized*, not that it *wo
 
 ## 7. Stale docs to fix while here
 
-`docs/USAGE.md:43-50` is inherited verbatim from the Liana upstream and is wrong in several ways: it describes `Coincube.zip` / `Coincube-noncodesigned.zip` (CI ships `tenshu-<version>-<target>.dmg`), links `wizardsardine.com`, and cites a Wizardsardine PGP key. Users following it will not find the artifacts.
+`docs/USAGE.md:43-50` is inherited verbatim from the Liana upstream and is wrong in several ways: it describes `Coincube.zip` / `Coincube-noncodesigned.zip` (CI ships `coincube-desktop-<version>-<target>.dmg`), links `wizardsardine.com`, and cites a Wizardsardine PGP key. Users following it will not find the artifacts.
 
 ---
 

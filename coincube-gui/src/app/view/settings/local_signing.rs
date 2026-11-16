@@ -48,7 +48,7 @@ pub fn section<'a>(
                 .width(Length::Fill)
                 .push(Space::new().height(Length::Fixed(page::GROUP_GAP)))
                 .push(page::rows([page::row(localized_copy(
-                    "This Vault has no Keychain key",
+                    "This Vault has no Mobile key",
                 ))
                 .description(localized_copy(
                     "Phones sign with a key from COINCUBE Mobile, and that key \
@@ -87,11 +87,11 @@ fn key_group<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
         return page::group(
             localized_copy("Key for the phone"),
             None,
-            page::rows([page::row(localized_copy("No Keychain keys to pair"))
-                .description(
-                    localized_copy("This Vault doesn't have a key from COINCUBE Mobile, so there's \
-                     no phone that can sign for it. Keychain keys are added when you create a Vault."),
-                )
+            page::rows([page::row(localized_copy("No Mobile keys to pair"))
+                .description(localized_copy(
+                    "This Vault doesn't have a key from COINCUBE Mobile, so there's \
+                     no phone that can sign for it. Mobile keys are added when you create a Vault.",
+                ))
                 .into()]),
         );
     }
@@ -153,7 +153,7 @@ fn key_group<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
 fn key_title(key: &PairableKey) -> String {
     match (&key.name, key.fingerprint) {
         (Some(name), _) => name.clone(),
-        (None, Some(fp)) if key.keychain => format!("Keychain key {}", fp),
+        (None, Some(fp)) if key.keychain => format!("Mobile key {}", fp),
         (None, Some(fp)) => format!("Key {}", fp),
         (None, None) => "Unnamed key".to_string(),
     }
@@ -163,8 +163,8 @@ fn key_title(key: &PairableKey) -> String {
 /// the phone shows for it.
 fn key_subtitle(key: &PairableKey) -> Option<String> {
     match (key.keychain, key.fingerprint) {
-        (true, Some(fp)) => Some(format!("Keychain · {}", fp)),
-        (true, None) => Some("Keychain".to_string()),
+        (true, Some(fp)) => Some(format!("Mobile · {}", fp)),
+        (true, None) => Some("Mobile".to_string()),
         (false, Some(fp)) => Some(fp.to_string()),
         (false, None) => None,
     }
@@ -193,7 +193,7 @@ fn idle_body<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
         return page::rows([page::row("")
             .line(page::status(
                 page::Status::Off,
-                "No Keychain-eligible key in this Vault",
+                "No Mobile-eligible key in this Vault",
             ))
             .control(page::button(PAIR_ID, "Pair phone", None))
             .into()]);
@@ -364,9 +364,9 @@ fn error_body<'a>(err: &'a PairingError) -> Element<'a, Message> {
             .to_string(),
         ),
         PairingError::TransportKeyMissing => (
-            localized_copy("Keychain needs updating"),
+            localized_copy("Mobile needs updating"),
             localized_copy(
-                "This Keychain didn't send an encryption key, so signing requests \
+                "This phone didn't send an encryption key, so signing requests \
                  to it couldn't be encrypted. Update COINCUBE Mobile on the phone, \
                  then pair again.",
             )
@@ -605,10 +605,10 @@ mod tests {
     fn keys_are_labelled_by_name_and_never_by_xpub() {
         let named = key(Some("My iPhone"), true);
         assert_eq!(key_title(&named), "My iPhone");
-        assert_eq!(key_subtitle(&named).as_deref(), Some("Keychain · f108451f"));
+        assert_eq!(key_subtitle(&named).as_deref(), Some("Mobile · f108451f"));
 
         let unnamed = key(None, true);
-        assert_eq!(key_title(&unnamed), "Keychain key f108451f");
+        assert_eq!(key_title(&unnamed), "Mobile key f108451f");
 
         let other = key(None, false);
         assert_eq!(key_title(&other), "Key f108451f");
@@ -653,14 +653,14 @@ mod tests {
         let mut state = LocalSigningState::default();
         state.keychain_keys_recorded = true;
         let empty = render(&state);
-        assert!(empty.contains("This Vault has no Keychain key"));
+        assert!(empty.contains("This Vault has no Mobile key"));
         for gone in ["Key for the phone", "Pair a phone", "Paired phones"] {
             assert!(!empty.contains(gone), "{}", gone);
         }
 
         state.vault_keys = vec![key(Some("My iPhone"), true)];
         let pairable = render(&state);
-        assert!(!pairable.contains("This Vault has no Keychain key"));
+        assert!(!pairable.contains("This Vault has no Mobile key"));
         for shown in ["Key for the phone", "Pair a phone", "Paired phones"] {
             assert!(pairable.contains(shown), "{}", shown);
         }

@@ -59,6 +59,8 @@ pub struct SparkReceiveView<'a> {
     pub network: Network,
     pub cube_name: &'a str,
     pub received_amount_display: &'a str,
+    /// The payment ID for a one-payment receipt.
+    pub received_payment_id: Option<&'a str>,
     pub received_celebration_context: &'a str,
     pub received_quote: &'a coincube_ui::component::quote_display::Quote,
     pub received_image_handle: &'a iced::widget::image::Handle,
@@ -106,7 +108,17 @@ impl<'a> SparkReceiveView<'a> {
 
         // ── Payment result: the receipt first, the worldview art beside it ──
         if let SparkReceivePhase::Received { count, .. } = self.phase {
-            use coincube_ui::component::payment_result::{payment_result, Outcome};
+            use coincube_ui::component::payment_result::{
+                payment_result, short_id, Outcome, ReceiptRow,
+            };
+            let id_row = self.received_payment_id.filter(|_| *count == 1).map(|id| {
+                ReceiptRow::new(localized_copy("Payment ID"), short_id(id))
+                    .mono()
+                    .on_copy(Message::CopyWithToast(
+                        id.to_string(),
+                        "Payment ID copied to clipboard".to_string(),
+                    ))
+            });
             let detail = if *count > 1 {
                 coincube_ui::localized_format!(
                     "Into Spark · {} payments",
@@ -129,6 +141,7 @@ impl<'a> SparkReceiveView<'a> {
                 Message::SparkReceive(SparkReceiveMessage::Reset),
             )
             .detail(detail)
+            .rows(id_row)
             .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
             .on_activity(Message::SparkReceive(SparkReceiveMessage::ViewActivity))
             .into();
@@ -2048,6 +2061,7 @@ mod tests {
                         network: Network::Bitcoin,
                         cube_name: "Everyday",
                         received_amount_display: "",
+                        received_payment_id: None,
                         received_celebration_context: "spark-receive",
                         received_quote: &quote,
                         received_image_handle: &image,
@@ -2289,6 +2303,7 @@ mod tests {
                     network: Network::Bitcoin,
                     cube_name: "Everyday",
                     received_amount_display: "+87,654,321 sats",
+                    received_payment_id: Some("0123456789abcdef0123456789abcdef"),
                     received_celebration_context: "spark-receive",
                     received_quote: &quote,
                     received_image_handle: &image,
@@ -2318,6 +2333,9 @@ mod tests {
                 "dark",
                 theme::Theme::dark(),
             );
+            // The payment ID is not an amount: it shows whatever the privacy.
+            assert!(mounted.contains("Payment ID"));
+            assert!(mounted.contains("01234567 … 89abcdef"));
             if privacy == Some(BalancePrivacy::Shown) {
                 assert!(mounted.contains("+87,654,321"));
                 assert!(mounted.contains("sats"));

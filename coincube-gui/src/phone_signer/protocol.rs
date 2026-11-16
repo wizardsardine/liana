@@ -67,7 +67,7 @@ pub fn unpaired_envelope(reason: impl Into<String>) -> LocalEnvelope {
 /// offers to pair again, exactly as for a phone that refuses a stale pairing.
 pub fn phone_unpaired_text() -> String {
     format!(
-        "{}: This Keychain removed its pairing with this computer. Pair it again to sign over the local network.",
+        "{}: This phone removed its pairing with this computer. Pair it again to sign over the local network.",
         super::PAIR_AGAIN_CODE
     )
 }

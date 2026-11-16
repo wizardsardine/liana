@@ -3898,6 +3898,26 @@ mod renewal_banner_tests {
     }
 
     #[test]
+    fn recovery_kit_allowance_follows_cube_limit() {
+        use billing::FeatureValue::Included;
+        let mut account = dashboard_panel();
+        let mut features = billing_v2_features();
+        // The server's bullet lags the entitlement (7 vs 10 Cubes).
+        features
+            .plans
+            .iter_mut()
+            .find(|p| p.name == "estate")
+            .unwrap()
+            .features
+            .push("Cube Recovery Kit (up to 7)".to_string());
+        account.features = Some(features);
+        account.plan = Some(plan(PlanTier::Estate, PlanStatus::Active, None));
+        let rows = billing::account_feature_rows(&account);
+        assert!(rows.contains(&("Cube Recovery Kit (up to 10)".to_string(), Included)));
+        assert!(!rows.iter().any(|(n, _)| n.contains("up to 7")));
+    }
+
+    #[test]
     fn comparison_rows_follow_board_order_and_server_limits() {
         use billing::FeatureValue::{ComingSoon, Included, Muted, Value};
         let mut account = dashboard_panel();

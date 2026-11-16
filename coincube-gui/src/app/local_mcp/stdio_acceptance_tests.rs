@@ -88,8 +88,8 @@ async fn client(settings: &mut Settings, id: &str) -> stdio::Client {
         .iter()
         .map(|(key, value)| (key.clone(), value.as_str().unwrap().to_owned()))
         .collect();
-    let executable = std::env::var_os("TENSHU_MCP_TEST_ADAPTER")
-        .expect("build the companion and set TENSHU_MCP_TEST_ADAPTER");
+    let executable = std::env::var_os("COINCUBE_MCP_TEST_ADAPTER")
+        .expect("build the companion and set COINCUBE_MCP_TEST_ADAPTER");
     let mut client = stdio::Client::start(&executable, &environment).await;
     let discovered = client.request("tools/list", json!({})).await;
     assert_eq!(discovered["result"]["tools"].as_array().unwrap().len(), 10);
@@ -216,7 +216,7 @@ fn configure_native_node(ctx: &mut crate::installer::Context, chain: ChainId) {
 }
 
 #[test]
-#[ignore = "build tenshu-mcp and set TENSHU_MCP_TEST_ADAPTER; run explicitly in platform CI"]
+#[ignore = "build coincube-mcp and set COINCUBE_MCP_TEST_ADAPTER; run explicitly in platform CI"]
 fn stdio_client_creation_reaches_native_review_on_every_chain() {
     use crate::installer::{
         self,
@@ -446,7 +446,7 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
 }
 
 #[test]
-#[ignore = "build tenshu-mcp and set TENSHU_MCP_TEST_ADAPTER; run explicitly in platform CI"]
+#[ignore = "build coincube-mcp and set COINCUBE_MCP_TEST_ADAPTER; run explicitly in platform CI"]
 fn stdio_client_unsigned_transaction_reaches_native_review_on_every_chain() {
     use crate::app::{
         menu::{Menu, VaultSubMenu},

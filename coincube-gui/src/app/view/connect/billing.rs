@@ -726,6 +726,16 @@ pub(super) enum FeatureValue {
     ComingSoon,
 }
 
+/// Each Cube has one Recovery Kit, so the kit allowance is the Cube
+/// allowance. The server's "Cube Recovery Kit (up to N)" bullet is
+/// hand-written and can lag the `cubeLimit` entitlement; restate it from
+/// the entitlement, as the "Cubes per network" row is.
+fn recovery_kit_copy(name: &str, cube_limit: u32) -> Option<String> {
+    name.to_ascii_lowercase()
+        .starts_with("cube recovery kit")
+        .then(|| format!("Cube Recovery Kit (up to {cube_limit})"))
+}
+
 /// "Features on this account" (board 1): "Cubes per network" first, then
 /// included features, then Coming soon rows (master decisions 9 and 10).
 /// Built from the account's tier in `/connect/features` (bullets and
@@ -771,6 +781,7 @@ pub(super) fn account_feature_rows(state: &ConnectAccountPanel) -> Vec<(String, 
             let Some((name, value)) = launch_feature_copy(feature) else {
                 continue;
             };
+            let name = recovery_kit_copy(&name, ent.cube_limit).unwrap_or(name);
             if rows
                 .iter()
                 .chain(coming_soon.iter())

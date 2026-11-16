@@ -626,10 +626,19 @@ pub fn payment_view<'a>(
 pub fn received_celebration_page<'a>(
     context: &str,
     amount_display: &'a str,
+    txid: Option<&str>,
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, Message> {
-    use coincube_ui::component::payment_result::{payment_result, Outcome};
+    use coincube_ui::component::payment_result::{payment_result, short_id, Outcome, ReceiptRow};
+    let id_row = txid.map(|id| {
+        ReceiptRow::new(localized_copy("Transaction ID"), short_id(id))
+            .mono()
+            .on_copy(Message::CopyWithToast(
+                id.to_string(),
+                "Transaction ID copied to clipboard".to_string(),
+            ))
+    });
     payment_result(
         Outcome::Received,
         amount_display,
@@ -639,6 +648,7 @@ pub fn received_celebration_page<'a>(
         Message::DismissReceivedCelebration,
     )
     .detail(localized_copy("Into Vault"))
+    .rows(id_row)
     .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
     .on_activity(Message::ReceivedCelebrationActivity)
     .into()

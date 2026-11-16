@@ -9,9 +9,9 @@ The recommended installation method for regular users is to download an executab
 from the [Github release page](https://github.com/coincubetech/coincube/releases). If you prefer to
 build the project from source, see [`BUILD.md`](BUILD.md) instead.
 
-Release artifacts are named `tenshu-<version>-<target>.<ext>`, where `<target>` is the Rust target
-triple — for instance `tenshu-1.5.0-aarch64-apple-darwin.dmg` for macOS on Apple Silicon, or
-`tenshu-1.5.0-x86_64-pc-windows-msvc.msi` for Windows.
+Release artifacts are named `coincube-desktop-<version>-<target>.<ext>`, where `<target>` is the Rust target
+triple — for instance `coincube-desktop-1.5.0-aarch64-apple-darwin.dmg` for macOS on Apple Silicon, or
+`coincube-desktop-1.5.0-x86_64-pc-windows-msvc.msi` for Windows.
 
 We recommend you verify what you downloaded before installing it. Every release ships a
 `SHA256SUMS-<version>.txt` covering all of its artifacts, plus a `SHA256SUMS-<version>.txt.asc` GPG
@@ -47,19 +47,26 @@ See [this issue](https://github.com/wizardsardine/coincube/issues/414) for detai
 #### Apple, Windows, codesigned and notarized binaries
 
 The macOS application is distributed as a codesigned and notarized disk image
-(`tenshu-<version>-<target>.dmg`, one for Apple Silicon and one for Intel). Open the DMG and drag
+(`coincube-desktop-<version>-<target>.dmg`, one for Apple Silicon and one for Intel). Open the DMG and drag
 `COINCUBE.app` into your Applications folder; because it is notarized, no Gatekeeper override is
 needed.
 
-The app's bundle identifier is `io.coincube.tenshu`. If you have an older Tenshu build installed that
-predates that identifier, macOS treats the new build as a **separate** application and will not
-replace it — remove the old one to avoid running two copies.
+The app's bundle identifier is `io.coincube.desktop`. Earlier builds used `Tenshu.app` with
+`io.coincube.tenshu` (and, before that, `io.coincube.coincube`), so macOS treats COINCUBE as a
+**separate** application and will not replace the old one: delete `Tenshu.app` after installing
+to avoid running two copies.
 
-The app bundle was renamed from `Tenshu.app` to `COINCUBE.app`. Both carry the same bundle
-identifier and share your data, keychain items and settings, but dragging the new bundle into
-Applications does not replace the old one: delete `Tenshu.app` after installing. AI clients
-paired for local MCP access store the adapter's full path, so pair them again (or edit the
-`command` path) after the move.
+Your Cubes, wallets and settings carry over, because the data directory does not depend on the
+bundle. Each Cube's device secret, which lives in the macOS keychain, carries over too: on first
+unlock COINCUBE reads it from the Tenshu entry and copies it to its own. If unlock reports a
+missing device secret, restore that Cube from its Recovery Kit or mnemonic.
+
+Local MCP: the adapter binary is now `coincube-mcp` (it was `tenshu-mcp`), and its environment
+variables are now `COINCUBE_MCP_*` instead of `TENSHU_MCP_*`. AI clients paired with an earlier
+build point at the old path and variable names, so remove that entry and pair them again from
+**Settings → AI access**.
+On Windows the install folder also moved, from `Program Files\Tenshu` to
+`Program Files\COINCUBE`, so pair local MCP clients again after upgrading there too.
 
 We do not yet distribute codesigned binaries for Windows at this time.
 
