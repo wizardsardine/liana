@@ -660,13 +660,13 @@ pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
 pub fn keychain_unavailable_action<'a>(action_scope: u64, signed_in: bool) -> Element<'a, Message> {
     let body = if signed_in {
         localized_copy(
-            "Connect hasn't finished setting up this device for Keychain \
+            "Connect hasn't finished setting up this device for COINCUBE Mobile \
          signing. Set it up now, or pair a phone over Wi-Fi to sign \
          locally without Connect.",
         )
     } else {
         localized_copy(
-            "To sign with a Keychain phone through Connect, sign in to \
+            "To sign with a phone through Connect, sign in to \
          COINCUBE Connect. Or pair a phone over Wi-Fi to sign locally — \
          no Connect required.",
         )
@@ -682,7 +682,7 @@ pub fn keychain_unavailable_action<'a>(action_scope: u64, signed_in: bool) -> El
     card::simple(
         Column::new()
             .spacing(15)
-            .push(text(localized_copy("Keychain signing needs Connect")).bold())
+            .push(text(localized_copy("Mobile signing needs Connect")).bold())
             .push(text(body).style(theme::text::secondary))
             .push(
                 Row::new()
@@ -1837,8 +1837,8 @@ fn signing_key_kind_caption(kind: &SigningKeyKind) -> Option<&'static str> {
         SigningKeyKind::Master => Some("This computer"),
         SigningKeyKind::Hardware => Some("Hardware wallet"),
         SigningKeyKind::BorderWallet => Some("Border Wallet"),
-        SigningKeyKind::Keychain => Some("Keychain"),
-        SigningKeyKind::LanKeychain => Some("Keychain · local network"),
+        SigningKeyKind::Keychain => Some("Mobile"),
+        SigningKeyKind::LanKeychain => Some("Mobile · local network"),
         SigningKeyKind::Unknown => None,
     }
 }
@@ -3438,7 +3438,7 @@ mod tests {
         assert_eq!(signing_key_kind_caption(&SigningKeyKind::Unknown), None);
         assert_eq!(
             signing_key_kind_caption(&SigningKeyKind::LanKeychain),
-            Some("Keychain · local network")
+            Some("Mobile · local network")
         );
 
         let active = SigningPath {
@@ -3502,13 +3502,13 @@ mod tests {
                 ),
                 signing_row(
                     fg3,
-                    "Keychain signer",
+                    "Mobile signer",
                     SigningKeyKind::Keychain,
                     SigningKeyState::Available(SigningKeyAction::Keychain),
                 ),
                 signing_row(
                     fg1,
-                    "Keychain over Wi-Fi",
+                    "Mobile over Wi-Fi",
                     SigningKeyKind::LanKeychain,
                     SigningKeyState::Available(SigningKeyAction::Hardware(1)),
                 ),
@@ -3527,7 +3527,7 @@ mod tests {
                     "Wi-Fi failed, nothing to offer",
                     SigningKeyKind::LanKeychain,
                     SigningKeyState::LanFailed {
-                        reason: "Pair this Keychain again".to_string(),
+                        reason: "Pair this phone again".to_string(),
                         retry: None,
                         connect: false,
                     },
