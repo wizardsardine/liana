@@ -435,6 +435,10 @@ pub struct Diagnostics<'a> {
     /// Already sanitized by the caller's explicit support-summary allowlist;
     /// displayed for inspection before the user chooses Copy.
     pub support_summary_preview: Option<&'a str>,
+    /// The summary reached the clipboard since the sheet opened.
+    pub support_summary_copied: bool,
+    /// The last Open folder attempt failed.
+    pub open_logs_failed: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -1111,7 +1115,7 @@ fn section_content<'a>(
             let diagnostics = model.diagnostics;
             let mut logs = Column::new().width(Length::Fill).push(
                 setting_row(
-                    CopyText::SanitizedLogs.get(),
+                    CopyText::Logs.get(),
                     Row::new()
                         .push(
                             ActionButton::new(
@@ -1131,7 +1135,11 @@ fn section_content<'a>(
                         .push(
                             ActionButton::new(
                                 "tenshu.preferences.copy-support-summary",
-                                CopyText::CopySummary.get(),
+                                if diagnostics.support_summary_copied {
+                                    CopyText::Copied.get()
+                                } else {
+                                    CopyText::CopySummary.get()
+                                },
                                 ActionKind::Secondary,
                                 Message::FocusAction,
                             )
@@ -1147,9 +1155,16 @@ fn section_content<'a>(
                 )
                 .tag(CopyText::ThisDevice.get())
                 .trailing_tag()
-                .description(CopyText::LogsAreSanitizedBeforeTheyRe.get())
+                .description(CopyText::LogFilesCanIncludeYourAccountEmail.get())
                 .without_divider(),
             );
+            if diagnostics.open_logs_failed {
+                logs = logs.push(status_text(
+                    CopyText::CouldNotOpenTheLogFolder.get(),
+                    Tone::Bad,
+                ));
+                logs = logs.push(iced::widget::Space::new().height(Length::Fixed(14.0)));
+            }
             // The allowlisted summary stays inspectable before Copy.
             if let Some(preview) = diagnostics.support_summary_preview {
                 logs = logs.push(
