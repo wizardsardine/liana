@@ -12483,6 +12483,16 @@ mod tests {
         assert!(hint.contains("2/2"), "{}", hint);
         assert!(hint.contains("Upgrade"), "{}", hint);
 
+        // Estate has no higher plan: the hint names deletion only.
+        home.account_tier = AccountTier::Estate;
+        let hint = home
+            .cube_sync_hint(&local)
+            .expect("a refusal must be shown");
+        assert!(hint.contains("Out of Cube slots"), "{}", hint);
+        assert!(!hint.contains("Upgrade"), "{}", hint);
+        assert!(hint.contains("Delete a Cube on this network"), "{}", hint);
+        home.account_tier = AccountTier::default();
+
         // A Cube listed from another network's read-only catalog is described
         // by its own network's count, not the current network's.
         let mut other = local.clone();

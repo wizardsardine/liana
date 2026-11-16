@@ -3787,10 +3787,15 @@ mod tests {
                 "2 only in Connect",
                 "Testnet4",
                 "3 of 7",
-                "Upgrade, or delete a Bitcoin mainnet Cube, to add one.",
+                // Estate has no higher plan.
+                "Delete a Bitcoin mainnet Cube to add one.",
             ] {
                 assert!(tree.contains(line), "missing {:?}", line);
             }
+            assert!(
+                !tree.contains("Upgrade, or delete a Bitcoin mainnet Cube, to add one."),
+                "Estate is told to upgrade"
+            );
         }
 
         // Developer mode off lists Bitcoin alone, but a Signet Cube held only
