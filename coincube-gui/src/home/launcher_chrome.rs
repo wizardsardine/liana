@@ -2426,7 +2426,7 @@ mod top_bar_tests {
         let (_, live) = probe(super::dock(&home, &projection, false));
         assert!(!live.text.iter().any(|(value, _)| value == "Upgrade plan"));
         let note = super::plan_limit_note(&projection).unwrap();
-        assert!(!note.to_lowercase().contains("upgrade"), "{note}");
+        assert!(!note.to_lowercase().contains("upgrade"), "{}", note);
     }
 
     /// The Network menu counts Connect-only Cubes beside this device's, so a
