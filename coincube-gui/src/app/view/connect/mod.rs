@@ -1091,7 +1091,7 @@ fn account_error_card<'a>(err: &PanelError) -> Element<'a, ConnectAccountMessage
 fn connect_benefit_rows<'a>() -> [(iced::widget::Text<'a, theme::Theme>, &'static str, bool); 7] {
     [
         (shield_check_icon(), "Encrypted Recovery Kit backup for each Cube — COINCUBE never sees your keys", false),
-        (people_icon(), "Inheritance: invite family or friends to hold keys in the Keychain app, with time-locked recovery keys to recover funds", false),
+        (people_icon(), "Inheritance: invite family or friends to hold keys in the COINCUBE Mobile app, with time-locked recovery keys to recover funds", false),
         (bell_icon(), "Recovery alerts and emergency contacts for people you trust", false),
         (lightning_outline_icon(), "Hosted Esplora server — use your Vault instantly while your node syncs", false),
         (laptop_icon(), "Sign Vault transactions from your phone with the companion COINCUBE Mobile app", false),

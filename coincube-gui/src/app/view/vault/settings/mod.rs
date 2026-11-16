@@ -1554,7 +1554,7 @@ pub fn wallet_settings<'a>(
     let pair_row = if pairable {
         pair_row.control(page::button(
             VAULT_PAIR_ID,
-            localized_copy("Open COINCUBE Mobile"),
+            localized_copy("Open Keychain"),
             Some(Message::Menu(Menu::Vault(VaultSubMenu::Settings(Some(
                 crate::app::menu::SettingsOption::LocalSigning,
             ))))),

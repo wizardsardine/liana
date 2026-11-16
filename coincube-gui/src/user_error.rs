@@ -270,9 +270,9 @@ fn lan_keychain_error(error: &Error, connect_available: bool) -> UserError {
             "Couldn't sign with your Keychain over Wi-Fi",
             if connect_available {
                 "Send the request through COINCUBE | Connect instead, or check that the phone \
-                 is on the same Wi-Fi with Keychain open, then try again."
+                 is on the same Wi-Fi with COINCUBE Mobile open, then try again."
             } else {
-                "Check that the phone is on the same Wi-Fi with Keychain open, then try again."
+                "Check that the phone is on the same Wi-Fi with COINCUBE Mobile open, then try again."
             },
             CC_HW_LAN,
             true,
@@ -964,6 +964,7 @@ mod tests {
             let copy = format!("{} {}", u.title, u.guidance);
             assert!(
                 !copy.contains("Connect")
+                    && !copy.contains("Coincube")
                     && copy.matches("COINCUBE").count() == copy.matches("COINCUBE Desktop").count(),
                 "a local failure must not name the backend: {:?}",
                 copy

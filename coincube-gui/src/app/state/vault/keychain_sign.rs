@@ -1159,7 +1159,7 @@ impl KeychainSignModal {
                     entry.status = PendingSessionStatus::Failed;
                     entry.error = Some(format!(
                         "Couldn't encrypt the request for {}: their registered signing key looks \
-                         invalid. Ask them to re-open their Keychain app.",
+                         invalid. Ask them to reopen COINCUBE Mobile.",
                         entry.label
                     ));
                 }

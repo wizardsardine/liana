@@ -51,7 +51,7 @@ pub fn section<'a>(
                     "This Vault has no Keychain key",
                 ))
                 .description(localized_copy(
-                    "Phones sign with a key from the COINCUBE Keychain app, and that key \
+                    "Phones sign with a key from COINCUBE Mobile, and that key \
                          can only be added when a Vault is created.",
                 ))
                 .into()])),
@@ -89,7 +89,7 @@ fn key_group<'a>(state: &'a LocalSigningState) -> Element<'a, Message> {
             None,
             page::rows([page::row(localized_copy("No Keychain keys to pair"))
                 .description(
-                    localized_copy("This Vault doesn't have a key from the COINCUBE Keychain app, so there's \
+                    localized_copy("This Vault doesn't have a key from COINCUBE Mobile, so there's \
                      no phone that can sign for it. Keychain keys are added when you create a Vault."),
                 )
                 .into()]),
