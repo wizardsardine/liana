@@ -2330,6 +2330,7 @@ mod tests {
             members: Vec::new(),
             pending_invites: Vec::new(),
             vault: None,
+            connect_features_disabled: false,
         }
     }
 
@@ -2529,6 +2530,7 @@ mod tests {
             members: vec![],
             pending_invites: vec![],
             vault: None,
+            connect_features_disabled: false,
         }
     }
 

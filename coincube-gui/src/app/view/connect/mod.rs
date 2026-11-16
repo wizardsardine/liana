@@ -3352,6 +3352,7 @@ mod renewal_banner_tests {
     fn billing_entry(status: ChargeStatus) -> BillingHistoryEntry {
         BillingHistoryEntry {
             charge_id: format!("charge-{status:?}"),
+            provider: String::new(),
             plan: PlanTier::Pro,
             billing_cycle: BillingCycle::Monthly,
             amount_sats: 42_000,
@@ -4610,6 +4611,14 @@ mod renewal_banner_tests {
         partial.amount_received_sats = 21_000;
         let mut over = row(ChargeStatus::Paid, Some(ChargeState::Paid), "chg-over");
         over.overpaid_sats = 1_500;
+        let card = |state: ChargeState, id: &str, fiat: f64| {
+            let mut e = row(ChargeStatus::Expired, Some(state), id);
+            e.provider = "stripe".into();
+            e.plan = PlanTier::Estate;
+            e.amount_sats = 0;
+            e.amount_fiat = fiat;
+            e
+        };
         let mut account = dashboard_panel();
         account.features = Some(billing_v2_features());
         account.show_billing_history = true;
@@ -4620,6 +4629,9 @@ mod renewal_banner_tests {
             support,
             row(ChargeStatus::Expired, Some(ChargeState::Expired), "chg-exp"),
             row(ChargeStatus::Processing, None, "chg-proc"),
+            card(ChargeState::Declined, "cs-declined", 19.0),
+            card(ChargeState::Refunded, "cs-refunded", 29.0),
+            card(ChargeState::ChargedBack, "cs-chargeback", 39.0),
         ]);
         let labels = visible_labels(plan_billing_ux(&account), &renderer);
         for text in [
@@ -4633,6 +4645,14 @@ mod renewal_banner_tests {
             "Invoice chg-support · 40,000 sats received",
             "Invoice INV-PARTIAL · 21,000 sats received",
             "Invoice chg-over · overpaid by 1,500 sats",
+            "Declined",
+            "Refunded",
+            "Charged back",
+            "Pro · Monthly · bitcoin",
+            "Estate · Monthly · card",
+            "$19",
+            "$29",
+            "$39",
         ] {
             assert!(
                 labels.iter().any(|l| l == text),
@@ -4641,16 +4661,94 @@ mod renewal_banner_tests {
                 labels
             );
         }
-        capture_billing_sheet(&account, "4-history", (1040, 860)).await;
+        // Card rows show fiat only, never "0 sats".
+        assert!(
+            !labels.iter().any(|l| l == "$19 · 0 sats"),
+            "card row shows sats: {:?}",
+            labels
+        );
+        assert!(!labels.iter().any(|l| l == "Pending"), "{:?}", labels);
+        // The page lists card rows too, so its copy names both providers.
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.starts_with("Every card and bitcoin payment")),
+            "{:?}",
+            labels
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.starts_with("Card payments are processed by Stripe.")),
+            "{:?}",
+            labels
+        );
+        assert!(
+            !labels
+                .iter()
+                .any(|l| l.starts_with("Every bitcoin invoice")),
+            "{:?}",
+            labels
+        );
+        capture_billing_sheet(&account, "4-history", (1040, 1080)).await;
 
         account.billing_history = Some(Vec::new());
         let labels = visible_labels(plan_billing_ux(&account), &renderer);
         assert!(labels
             .iter()
-            .any(|l| l == "No payments yet. Invoices you create appear here."));
+            .any(|l| l == "No payments yet. Payments you make appear here."));
         account.billing_history = None;
         let labels = visible_labels(plan_billing_ux(&account), &renderer);
         assert!(labels.iter().any(|l| l == "Loading billing history…"));
+    }
+
+    /// A bitcoin lower tier bought ahead shows on Plan & billing as a muted
+    /// "Changes to" notice, without the card's Keep button.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn bitcoin_pending_change_notice_renders() {
+        use iced::advanced::renderer::Headless;
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut account = dashboard_panel();
+        account.features = Some(billing_v2_features());
+        let mut estate = plan(
+            PlanTier::Estate,
+            PlanStatus::Active,
+            Some("2099-03-14T00:00:00Z"),
+        );
+        estate.pending_plan = Some(PlanTier::Pro);
+        estate.pending_plan_at = Some("2099-03-14T00:00:00Z".into());
+        estate.pending_billing_cycle = Some(BillingCycle::Annual);
+        assert!(!estate.is_card());
+        account.plan = Some(estate.clone());
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        for text in [
+            "Changes to Pro · Annual on Mar 14, 2099",
+            "You keep Estate until then. The Pro period you paid for starts on Mar 14, 2099.",
+        ] {
+            assert!(
+                labels.iter().any(|l| l == text),
+                "missing {:?} in {:?}",
+                text,
+                labels
+            );
+        }
+        assert!(!labels.iter().any(|l| l == "Keep Estate"), "{:?}", labels);
+
+        // Without a cycle the title is just the tier and date.
+        estate.pending_billing_cycle = None;
+        account.plan = Some(estate);
+        let labels = visible_labels(plan_billing_ux(&account), &renderer);
+        assert!(
+            labels.iter().any(|l| l == "Changes to Pro on Mar 14, 2099"),
+            "{:?}",
+            labels
+        );
     }
 
     /// D5: the offline Cube limits are 1 / 3 / 10 and the comparison falls

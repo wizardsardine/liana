@@ -67,6 +67,13 @@ impl Home {
                     local_uuids.insert(cube.id);
                 }
 
+                // Every listed Cube over the plan's limit, local or not.
+                let connect_off: Vec<String> = server_cubes
+                    .iter()
+                    .filter(|sc| sc.connect_features_disabled)
+                    .map(|sc| sc.uuid.clone())
+                    .collect();
+
                 // Keep only server cubes with no local counterpart
                 let remote_source: Vec<CubeResponse> = server_cubes
                     .into_iter()
@@ -135,9 +142,19 @@ impl Home {
                 )
                 .await;
 
-                Ok(remote_only)
+                Ok((remote_only, connect_off))
             },
-            move |result| Message::RemoteCubesLoaded { request_id, result },
+            move |result: Result<(Vec<RemoteCube>, Vec<String>), String>| {
+                let (result, connect_off) = match result {
+                    Ok((remote_only, connect_off)) => (Ok(remote_only), connect_off),
+                    Err(e) => (Err(e), Vec::new()),
+                };
+                Message::RemoteCubesLoaded {
+                    request_id,
+                    result,
+                    connect_off,
+                }
+            },
         )
     }
 
@@ -159,6 +176,7 @@ impl Home {
         &mut self,
         request_id: u64,
         result: Result<Vec<RemoteCube>, String>,
+        connect_off: Vec<String>,
     ) -> Task<Message> {
         // Superseded by a newer fetch, or invalidated by logout. Drop
         // it: applying it would either roll the list back to an older
@@ -174,6 +192,7 @@ impl Home {
         match result {
             Ok(remote_only) => {
                 self.remote_cubes = remote_only;
+                self.connect_off_cubes = connect_off.into_iter().collect();
             }
             Err(e) => {
                 log::warn!("[LAUNCHER] Failed to fetch remote cubes: {e}");

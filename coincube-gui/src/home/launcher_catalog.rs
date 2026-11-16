@@ -1290,6 +1290,39 @@ fn focus(id: Id) -> ViewMessage {
     ViewMessage::Catalog(CatalogMessage::Focus(id))
 }
 
+/// The tag on a Cube whose Connect features are off (billing v2).
+pub(super) const CONNECT_OFF_TAG: &str = "Connect off";
+/// Why, where there is room for it.
+pub(super) const CONNECT_OFF_NOTE: &str =
+    "Over your plan's Cube limit. The Cube and its funds keep \
+     working; Connect features are off. Upgrade to turn them back on.";
+/// The same note on the top plan (Estate), which has nothing to upgrade to:
+/// Connect keeps the oldest Cubes on, so deleting one frees a slot.
+pub(super) const CONNECT_OFF_NOTE_TOP_TIER: &str =
+    "Over your plan's Cube limit. The Cube and its funds keep \
+     working; Connect features are off. Delete a Cube on this network to \
+     turn them back on.";
+
+/// The Connect-off note for an account on `tier` (an `AccountTier` display
+/// name).
+pub(super) fn connect_off_note(tier: &str) -> &'static str {
+    if super::launcher_chrome::is_top_tier(tier) {
+        CONNECT_OFF_NOTE_TOP_TIER
+    } else {
+        CONNECT_OFF_NOTE
+    }
+}
+
+/// The small muted chip a Connect-off Cube carries in the lists.
+pub(super) fn connect_off_tag<'a, M: 'a>() -> Element<'a, M> {
+    coincube_ui::component::tenshu::status_chip(
+        None,
+        localized_copy(CONNECT_OFF_TAG),
+        coincube_ui::theme::tenshu::Tone::Muted,
+    )
+    .into()
+}
+
 /// A row in the local section.
 #[derive(Debug, Clone)]
 pub(super) struct LocalRow<'a> {
@@ -1308,6 +1341,11 @@ pub(super) struct LocalRow<'a> {
     pub(super) open: bool,
     /// The wallets the Cube holds, as the details list them.
     pub(super) wallets: String,
+    /// Connect reports this Cube over the plan's Cube limit
+    /// (`connectFeaturesDisabled`): its Connect features are off. Display
+    /// only; opening it and every wallet action stay available. Holds the
+    /// note the details show, which depends on the plan.
+    pub(super) connect_off: Option<&'static str>,
     /// The key is nonempty, the record's chain is the current network and the
     /// list's source, and `catalog_index` resolves to this very record.
     /// Otherwise the row is shown but its controls have no press target.
@@ -1601,6 +1639,10 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
                     chain == network && home.liquid_on_disk,
                 ),
                 vault: vault_subtitle(cube),
+                connect_off: home
+                    .connect_off_cubes
+                    .contains(&cube.id)
+                    .then(|| connect_off_note(home.account_tier.display_name())),
                 key,
                 cube,
                 name,
@@ -1866,7 +1908,8 @@ fn local_row<'a>(row: &LocalRow<'_>, selected: bool, table: bool) -> Element<'a,
             p2_regular(warning.clone())
                 .style(tone_style(Tone::Warn))
                 .wrapping(Wrapping::WordOrGlyph)
-        }));
+        }))
+        .push(row.connect_off.map(|_| connect_off_tag()));
     let facts: Element<'a, ViewMessage> = if table {
         Row::new()
             .spacing(CELL_GAP)
@@ -2047,6 +2090,15 @@ fn details_panel<'a>(row: &LocalRow<'_>) -> Element<'a, ViewMessage> {
                     .wrapping(Wrapping::WordOrGlyph)
                     .into(),
             ))
+            .push(row.connect_off.map(|note| {
+                detail_line(
+                    "Connect",
+                    p2_regular(localized_copy(note))
+                        .style(muted)
+                        .wrapping(Wrapping::WordOrGlyph)
+                        .into(),
+                )
+            }))
             .push(detail_line(
                 localized_copy("Wallets"),
                 p2_regular(row.wallets.clone())
@@ -3735,10 +3787,15 @@ mod tests {
                 "2 only in Connect",
                 "Testnet4",
                 "3 of 7",
-                "Upgrade, or delete a Bitcoin mainnet Cube, to add one.",
+                // Estate has no higher plan.
+                "Delete a Bitcoin mainnet Cube to add one.",
             ] {
                 assert!(tree.contains(line), "missing {:?}", line);
             }
+            assert!(
+                !tree.contains("Upgrade, or delete a Bitcoin mainnet Cube, to add one."),
+                "Estate is told to upgrade"
+            );
         }
 
         // Developer mode off lists Bitcoin alone, but a Signet Cube held only
@@ -3789,11 +3846,10 @@ mod tests {
         let projection = project(&home);
         assert!(projection.at_limit());
         let full = super::super::launcher_chrome::plan_full(&projection).unwrap();
-        assert!(full.contains("2 Cubes; the"), "{}", full);
-        assert!(
-            full.contains("includes 1. Existing Cubes keep working."),
-            "{}",
-            full
+        assert_eq!(
+            full,
+            "You have 2 Cubes on Bitcoin mainnet; Free includes 1. Existing Cubes keep \
+             working. Upgrade to add more."
         );
         assert!(!full.contains("2 of 1"), "{}", full);
         // The longer dock line still renders at the minimum window size.
@@ -3809,6 +3865,95 @@ mod tests {
         let tree = home_tree("plan-over-limit", &home, WIDE, "dark", theme::Theme::dark());
         assert!(tree.contains("2 · plan includes 1"));
         assert!(!tree.contains("2 of 1"));
+    }
+
+    /// Estate is the top plan: the over-limit line drops "Upgrade to add
+    /// more." and keeps the singular/plural count right.
+    #[test]
+    fn over_the_limit_copy_on_estate_has_no_upgrade() {
+        use crate::app::settings::global::AccountTier;
+        let mut home = home_with(&[("a", "A"), ("b", "B")]);
+        home.account_tier = AccountTier::Estate;
+        home.server_cube_limit = Some(1);
+        let full = super::super::launcher_chrome::plan_full(&project(&home)).unwrap();
+        assert_eq!(
+            full,
+            "You have 2 Cubes on Bitcoin mainnet; Estate includes 1. Existing Cubes keep working."
+        );
+        assert_eq!(
+            super::super::launcher_chrome::over_limit_sentence(1, "Bitcoin Signet", "Free", 0),
+            "You have 1 Cube on Bitcoin Signet; Free includes 0. Existing Cubes keep working. \
+             Upgrade to add more."
+        );
+    }
+
+    /// Billing v2: a Cube Connect reports over the plan's limit carries a
+    /// "Connect off" tag and, in its details, why. Others carry neither, and
+    /// the Cube still opens.
+    #[test]
+    fn connect_off_tag_shows_only_for_cubes_connect_turned_off() {
+        let mut home = rows(3);
+        home.catalog.mode = LauncherMode::List;
+        let tree = home_tree(
+            "connect-off-none",
+            &home,
+            WIDE,
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(!tree.contains(CONNECT_OFF_TAG));
+        assert!(project(&home)
+            .locals
+            .iter()
+            .all(|row| row.connect_off.is_none()));
+
+        home.connect_off_cubes.insert("cube-1".to_string());
+        let projection = project(&home);
+        let flags: Vec<(&str, bool)> = projection
+            .locals
+            .iter()
+            .map(|row| (row.key.cube_id.as_str(), row.connect_off.is_some()))
+            .collect();
+        assert_eq!(
+            flags,
+            [("cube-0", false), ("cube-1", true), ("cube-2", false)]
+        );
+        let tree = home_tree("connect-off-row", &home, WIDE, "dark", theme::Theme::dark());
+        assert_eq!(
+            tree.text
+                .iter()
+                .filter(|(t, _)| t == CONNECT_OFF_TAG)
+                .count(),
+            1,
+            "one tag"
+        );
+        assert!(!tree.contains(CONNECT_OFF_NOTE));
+
+        catalog(&mut home, CatalogMessage::Select(key("cube-1")));
+        let tree = home_tree(
+            "connect-off-details",
+            &home,
+            WIDE,
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(tree.contains(CONNECT_OFF_NOTE));
+        // Opening stays available.
+        assert!(tree.has(&details_open_id(&key("cube-1"))));
+        assert!(tree.has(&open_id(&key("cube-1"))));
+
+        // Estate has no plan to upgrade to: the note says to delete a Cube.
+        home.account_tier = crate::app::settings::global::AccountTier::Estate;
+        let tree = home_tree(
+            "connect-off-details-estate",
+            &home,
+            WIDE,
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(tree.contains(CONNECT_OFF_NOTE_TOP_TIER));
+        assert!(!tree.contains(CONNECT_OFF_NOTE));
+        assert!(!CONNECT_OFF_NOTE_TOP_TIER.contains("Upgrade"));
     }
 
     /// Switching network makes it current before its list is read (and keeps

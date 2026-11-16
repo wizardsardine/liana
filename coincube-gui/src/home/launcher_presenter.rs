@@ -333,7 +333,8 @@ fn local_facts<'a>(
             .push(tenshu::caption(lock_state(row.open)))
             .push(row.sync_warning.as_ref().map(|warning| {
                 tenshu::caption(warning.clone()).style(text_tone(tenshu::Tone::Warn))
-            }));
+            }))
+            .push(row.connect_off.map(|_| launcher_catalog::connect_off_tag()));
     if table {
         Row::new()
             .spacing(CELL_GAP)
@@ -493,7 +494,16 @@ fn details<'a>(row: &launcher_catalog::LocalRow<'_>, light: bool) -> Element<'a,
             tenshu::body(row.connect.1.clone())
                 .wrapping(Wrapping::WordOrGlyph)
                 .into(),
-        ));
+        ))
+        .push(row.connect_off.map(|note| {
+            detail_line(
+                "Connect",
+                tenshu::body(localized_copy(note))
+                    .style(text_tone(tenshu::Tone::Muted))
+                    .wrapping(Wrapping::WordOrGlyph)
+                    .into(),
+            )
+        }));
     content = content.push(detail_line(
         localized_copy("Next step"),
         tenshu::body(unlock_prompt(row.cube)).into(),
@@ -768,7 +778,21 @@ fn floor_details<'a>(
         .push(face_fact(
             "Wallets",
             face_words(row.wallets.clone(), 14.0, font::REGULAR, false).into(),
-        ));
+        ))
+        // The fixed face has room for a short line only; the List details
+        // carry the full explanation.
+        .push(row.connect_off.map(|_| {
+            face_fact(
+                "Connect",
+                face_words(
+                    localized_copy("Off · over plan limit"),
+                    14.0,
+                    font::REGULAR,
+                    true,
+                )
+                .into(),
+            )
+        }));
     let actions = Row::new()
         .spacing(16)
         .align_y(Alignment::Center)
