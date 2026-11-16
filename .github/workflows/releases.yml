@@ -440,6 +440,15 @@ jobs:
           plutil -extract Entitlements.keychain-access-groups.0 raw -o - profile.plist \
             | grep -q '^8UVR249AD5' \
             || { echo "profile does not grant the 8UVR249AD5 keychain access group"; exit 1; }
+          # Unlike the keychain group (granted as the team wildcard), the
+          # application identifier is granted EXACTLY, so a profile issued for
+          # another App ID (the Tenshu-era one, say) passes the check above yet
+          # cannot authorise this signature: AMFI SIGKILLs the app at launch.
+          profile_appid=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.application-identifier" profile.plist 2>/dev/null) \
+            || { echo "profile grants no com.apple.application-identifier"; exit 1; }
+          [ "$profile_appid" = "8UVR249AD5.io.coincube.desktop" ] \
+            || { echo "profile grants application-identifier '$profile_appid', expected 8UVR249AD5.io.coincube.desktop — regenerate it for this App ID"; exit 1; }
+          echo "profile grants com.apple.application-identifier = $profile_appid"
           expiry=$(plutil -extract ExpirationDate raw -o - profile.plist)
           days=$(( ( $(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$expiry" +%s) - $(date +%s) ) / 86400 ))
           echo "provisioning profile valid for $days more days (expires $expiry)"
