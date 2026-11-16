@@ -33,7 +33,7 @@ impl Default for InstallStatsState {
             download_stats: None,
             today_count: None,
             timeseries: None,
-            period: StatsPeriod::Week,
+            period: StatsPeriod::Year,
             loading: false,
             pending_responses: 0,
             fetch_gen: 0,
