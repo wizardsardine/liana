@@ -672,7 +672,8 @@ impl ImportedBitcoinPanel {
             keys: import
                 .attachment()
                 .filter(|_| import.active_attachment().is_none())
-                .map(|wallet| KeysState::new(&wallet.descriptor)),
+                // No device access yet, so they start on recovery words.
+                .map(|wallet| KeysState::new(&wallet.descriptor).starting_on(KeySource::Words)),
             keys_confirmed: false,
             keys_stored: KeysStored::None,
             adding_keys: false,
@@ -1330,12 +1331,19 @@ impl ImportedBitcoinPanel {
                     Ok(wallet)
                 }) {
                     Ok(wallet) => {
-                        let keys = KeysState::new(&wallet.descriptor);
+                        let mut keys = KeysState::new(&wallet.descriptor);
                         // A descriptor without signer origins names no key to
                         // check; it goes straight to Review.
                         self.keys_confirmed = keys.slots.is_empty();
-                        self.keys = Some(keys);
                         self.review = Some(wallet);
+                        // Keys start on a hardware wallet, so its device list
+                        // starts now; without device access they start on
+                        // recovery words.
+                        if !keys.slots.is_empty() && self.ensure_review_hardware_wallets().is_err()
+                        {
+                            keys = keys.starting_on(KeySource::Words);
+                        }
+                        self.keys = Some(keys);
                         self.review_connect_epoch =
                             (self.provider == Provider::Connect).then_some(connect_epoch);
                     }
@@ -1420,7 +1428,8 @@ impl ImportedBitcoinPanel {
                 if self.stored_keys != Some(0) || self.adding_keys {
                     return Task::none();
                 }
-                self.keys = Some(KeysState::new(&wallet.descriptor));
+                // Only words are stored, so a device is not offered.
+                self.keys = Some(KeysState::new(&wallet.descriptor).starting_on(KeySource::Words));
                 self.keys_confirmed = false;
                 self.keys_stored = KeysStored::None;
                 self.adding_keys = true;
@@ -2794,11 +2803,7 @@ impl ImportedBitcoinPanel {
             .iter()
             .filter(|slot| slot.source == KeySource::Hardware && slot.provided())
             .count();
-        let elsewhere = keys
-            .slots
-            .iter()
-            .filter(|slot| slot.source == KeySource::Elsewhere)
-            .count();
+        let elsewhere = keys.signs_elsewhere();
         let mut parts = Vec::new();
         match &self.keys_stored {
             KeysStored::Stored(count) => parts.push(coincube_ui::localized_format!(
@@ -2871,6 +2876,61 @@ impl ImportedBitcoinPanel {
                 } if *fingerprint == account.fingerprint => Some(device.clone()),
                 _ => None,
             })
+    }
+
+    /// The Keys step's list of connected hardware wallets. A paired phone is
+    /// not one.
+    fn key_devices(&self) -> Vec<keys::ListedDevice> {
+        use crate::hw::UnsupportedReason;
+        let Some(listing) = &self.hardware_wallets else {
+            return Vec::new();
+        };
+        listing
+            .list
+            .iter()
+            .filter(|listed| !listed.is_lan_phone())
+            .map(|listed| {
+                let kind = keys::device_name(listed.kind());
+                match listed {
+                    HardwareWallet::Supported {
+                        fingerprint, alias, ..
+                    } => keys::ListedDevice {
+                        name: alias
+                            .as_ref()
+                            .map_or_else(|| kind.to_owned(), |alias| format!("{alias} ({kind})")),
+                        fingerprint: Some(*fingerprint),
+                        problem: None,
+                    },
+                    HardwareWallet::Locked { .. } => keys::ListedDevice {
+                        name: kind.to_owned(),
+                        fingerprint: None,
+                        problem: Some("locked; unlock it to read its fingerprint"),
+                    },
+                    HardwareWallet::Unsupported { reason, .. } => {
+                        let (fingerprint, problem) = match reason {
+                            UnsupportedReason::NotPartOfWallet(fingerprint) => {
+                                (Some(*fingerprint), None)
+                            }
+                            UnsupportedReason::AppIsNotOpen => {
+                                (None, Some("open the Bitcoin app on it"))
+                            }
+                            UnsupportedReason::WrongNetwork => {
+                                (None, Some("set to a different network"))
+                            }
+                            UnsupportedReason::Version { .. } => {
+                                (None, Some("firmware too old; update it"))
+                            }
+                            UnsupportedReason::Method(_) => (None, Some("not supported")),
+                        };
+                        keys::ListedDevice {
+                            name: kind.to_owned(),
+                            fingerprint,
+                            problem,
+                        }
+                    }
+                }
+            })
+            .collect()
     }
 
     fn device_connected(&self, account: &coincube_core::imported_keys::ImportedAccount) -> bool {
@@ -3268,6 +3328,7 @@ impl ImportedBitcoinPanel {
                     keys,
                     self.adding_keys,
                     |account| self.device_connected(account),
+                    &self.key_devices(),
                     self.error.as_ref(),
                 ),
                 None => self.setup_step(),
@@ -5700,9 +5761,13 @@ mod tests {
         let summary = keys.summary();
         assert!(summary.contains("2 of 3 provided"), "{}", summary);
         assert!(summary.contains("1 signs elsewhere"), "{}", summary);
-        // A signer left unsettled still blocks Review.
-        keys.slots[2].source = KeySource::Words;
+        // A signer left unanswered signs elsewhere too: the threshold is met.
+        keys.slots[2].source = KeySource::Hardware;
         keys.slots[2].status = keys::KeyStatus::Missing;
+        assert!(keys.ready());
+        assert!(keys.summary().contains("1 signs elsewhere"));
+        // Not while a check is in flight.
+        keys.slots[2].status = keys::KeyStatus::Checking;
         assert!(!keys.ready());
     }
 
@@ -5724,11 +5789,14 @@ mod tests {
             &[
                 "Keys",
                 "Add the wallet's keys",
+                "Hardware wallet",
+                "Recovery words",
                 "Signs elsewhere",
-                "Verify key",
+                "Connected hardware wallets",
                 "Review wallet",
             ],
-            &["Import and scan wallet"],
+            // No device is connected, so no check is offered yet.
+            &["Import and scan wallet", "Check device", "Verify key"],
         );
         // Review stays shut, and so does importing.
         let _ = panel.update_view(ImportMessage::KeysDone, None, 0);
@@ -5739,6 +5807,7 @@ mod tests {
             Some("Add the wallet's keys before importing it.")
         );
 
+        let _ = panel.update_view(ImportMessage::KeySourcePicked(0, KeySource::Words), None, 0);
         // Each check carries an id; only the check a slot waits for lands.
         let check_of = |panel: &ImportedBitcoinPanel, index: usize| {
             panel.keys.as_ref().unwrap().slots[index].check
@@ -5857,7 +5926,7 @@ mod tests {
     fn storing_keys_reports_its_outcome_and_clears_the_words() {
         let mut panel = ready_import_panel();
         let wallet = panel.import.active_attachment().cloned().unwrap();
-        let mut keys = KeysState::new(&wallet.descriptor);
+        let mut keys = KeysState::new(&wallet.descriptor).starting_on(KeySource::Words);
         keys.slots[0].words = phrase(1);
         keys.slots[0].status = keys::KeyStatus::Verified;
         panel.keys = Some(keys);
@@ -5888,7 +5957,7 @@ mod tests {
         let directory = NetworkDirectory::new(root.join("bitcoin"));
         let mut panel =
             ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
-        let mut keys = KeysState::new(&wallet.descriptor);
+        let mut keys = KeysState::new(&wallet.descriptor).starting_on(KeySource::Words);
         keys.slots[0].words = phrase(1);
         keys.slots[0].status = keys::KeyStatus::Verified;
         panel.keys = Some(keys);
