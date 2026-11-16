@@ -1429,6 +1429,7 @@ pub fn wallet_settings<'a>(
     provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
     processing: bool,
     updated: bool,
+    name_status: Option<(crate::app::view::settings::page::Status, &'static str)>,
     hardware_registration_allowed: bool,
     expert_open: bool,
 ) -> Element<'a, Message> {
@@ -1458,18 +1459,21 @@ pub fn wallet_settings<'a>(
         None => name_field,
     };
 
-    let mut identity: Vec<Element<'a, Message>> =
-        vec![page::row(localized_copy(if vault.is_some() {
-            "Vault name"
-        } else {
-            "Wallet name"
-        }))
-        .description(format!(
-            "{} ID {} · {}",
-            localized_copy(if vault.is_some() { "Vault" } else { "Wallet" }),
-            vault_id,
-            crate::app::view::nav::shell::network_label(cache.chain())
-        ))
+    let mut name_row = page::row(localized_copy(if vault.is_some() {
+        "Vault name"
+    } else {
+        "Wallet name"
+    }))
+    .description(format!(
+        "{} ID {} · {}",
+        localized_copy(if vault.is_some() { "Vault" } else { "Wallet" }),
+        vault_id,
+        crate::app::view::nav::shell::network_label(cache.chain())
+    ));
+    if let Some((kind, copy)) = name_status {
+        name_row = name_row.line(page::status(kind, localized_copy(copy)));
+    }
+    let mut identity: Vec<Element<'a, Message>> = vec![name_row
         .control(Container::new(name_field).width(Length::Fixed(280.0)))
         .into()];
     if let Some(vault) = vault {

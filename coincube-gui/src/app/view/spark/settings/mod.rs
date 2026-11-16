@@ -81,36 +81,56 @@ pub const NICKNAME_ID: &str = "tenshu.settings.spark.nickname";
 
 /// The Spark nickname (master plan §3 decision 6): the side panel's
 /// "Spark · ‹nickname›". `input` is a name typed but not saved yet, `saved`
-/// the Cube's. Return saves it, and so does leaving the tab.
-pub fn nickname_group<'a>(input: Option<&'a str>, saved: Option<&'a str>) -> Element<'a, Message> {
+/// the Cube's. Return saves it, and so does leaving the tab. `save` is the
+/// last save's progress, for the status line under the description.
+pub fn nickname_group<'a>(
+    input: Option<&'a str>,
+    saved: Option<&'a str>,
+    save: crate::app::cache::NameSave,
+) -> Element<'a, Message> {
     let value = input.or(saved).unwrap_or_default();
-    let row = page::row(localized_copy("Nickname"))
-        .description(localized_copy(
-            "Shown in the side panel as “Spark · nickname”. Leave it empty to show “Spark”. \
+    let mut row = page::row(localized_copy("Nickname")).description(localized_copy(
+        "Shown in the side panel as “Spark · nickname”. Leave it empty to show “Spark”. \
              Saved when you press Return or leave this tab.",
-        ))
-        .control(
-            Container::new(
-                text_field(NICKNAME_ID, "Spark nickname", value, Message::FocusAction)
-                    .hide_label()
-                    .size(FieldSize::Compact)
-                    .width(Length::Fixed(280.0))
-                    .placeholder("Spark")
-                    .error_maybe((!nickname_fits(value)).then_some("Use fewer than 64 characters."))
-                    .on_input(|value| {
-                        Message::SparkSettings(SparkSettingsMessage::NicknameEdited(value))
-                    })
-                    .on_submit(Message::SparkSettings(
-                        SparkSettingsMessage::NicknameSubmitted(value.to_owned()),
-                    )),
-            )
-            .width(Length::Fixed(280.0)),
-        );
+    ));
+    if let Some((kind, copy)) = nickname_status(input, saved, save) {
+        row = row.line(page::status(kind, localized_copy(copy)));
+    }
+    let row = row.control(
+        Container::new(
+            text_field(NICKNAME_ID, "Spark nickname", value, Message::FocusAction)
+                .hide_label()
+                .size(FieldSize::Compact)
+                .width(Length::Fixed(280.0))
+                .placeholder("Spark")
+                .error_maybe((!nickname_fits(value)).then_some("Use fewer than 64 characters."))
+                .on_input(|value| {
+                    Message::SparkSettings(SparkSettingsMessage::NicknameEdited(value))
+                })
+                .on_submit(Message::SparkSettings(
+                    SparkSettingsMessage::NicknameSubmitted(value.to_owned()),
+                )),
+        )
+        .width(Length::Fixed(280.0)),
+    );
     page::group(
         localized_copy("Spark identity"),
         None,
         page::rows([row.into()]),
     )
+}
+
+/// The nickname field's status line. A typed nickname too long to save
+/// already shows its own error, so it is not "unsaved".
+pub fn nickname_status(
+    input: Option<&str>,
+    saved: Option<&str>,
+    save: crate::app::cache::NameSave,
+) -> Option<(page::Status, &'static str)> {
+    use crate::app::state::spark::settings::saved_nickname;
+    let unsaved = input
+        .is_some_and(|input| nickname_fits(input) && saved_nickname(input).as_deref() != saved);
+    page::local_name_status(unsaved, save)
 }
 
 impl SparkSettingsView {
@@ -489,7 +509,11 @@ mod tests {
                                 }
                                 .render(),
                             )
-                            .push(nickname_group(None, cache.wallet_names.spark.as_deref())),
+                            .push(nickname_group(
+                                None,
+                                cache.wallet_names.spark.as_deref(),
+                                cache.spark_nickname_save,
+                            )),
                     )
                 },
             );

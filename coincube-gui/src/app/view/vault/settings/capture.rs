@@ -325,6 +325,7 @@ impl Fixture {
                 &self.provider_keys,
                 false,
                 false,
+                None,
                 false,
                 // Advanced open, so the imported-wallet check sees its body.
                 scenario == "wallet_imported",
