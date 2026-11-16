@@ -79,8 +79,7 @@ def test_blake2b_full_quota_cannot_select_or_delete_ordinary_testnet4_fixture(fl
     try:
         config = dict(ordinary.config, chain='bitcoin-blake2b-testnet4')
         with pytest.raises(Failed, match='CLEANUP_CHAIN'):
-            admission = native.NativeCleanupConsumerV1(ordinary.suite, runner, config, runner.account, 5, None, {})
-            cleanup.ensure_capacity(runner, admission=admission)
+            native.NativeCleanupConsumerV1(ordinary.suite, runner, config, runner.account, 5, None, {})
         assert flow[1]['deletes'] == []
         assert private_read(qa_funding.ROOT/'pool.json') == before
         assert calls == []
