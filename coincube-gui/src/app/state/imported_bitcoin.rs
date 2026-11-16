@@ -1367,6 +1367,7 @@ impl ImportedBitcoinPanel {
                 if let Some(slot) = self.key_slot(index) {
                     slot.source = source;
                     slot.check = 0;
+                    slot.auto_checked = None;
                     slot.words = zeroize::Zeroizing::new(String::new());
                     slot.passphrase = zeroize::Zeroizing::new(String::new());
                     slot.status = if source == KeySource::Elsewhere {
@@ -1379,6 +1380,8 @@ impl ImportedBitcoinPanel {
                     if let Err(error) = self.ensure_review_hardware_wallets() {
                         self.error = Some(error);
                     }
+                    // Its device may already be connected.
+                    return self.auto_check_devices();
                 }
                 Task::none()
             }
@@ -1959,7 +1962,7 @@ impl ImportedBitcoinPanel {
                 let Some(listing) = &mut self.hardware_wallets else {
                     return Task::none();
                 };
-                match listing.update(message) {
+                let task = match listing.update(message) {
                     Ok(task) => task.map(|message| {
                         Message::View(view::Message::ImportedBitcoin(ImportMessage::Hardware(
                             message,
@@ -1969,7 +1972,9 @@ impl ImportedBitcoinPanel {
                         self.error = Some(format!("Hardware wallet: {error}"));
                         Task::none()
                     }
-                }
+                };
+                // The list may now hold the device a key is waiting for.
+                Task::batch([task, self.auto_check_devices()])
             }
             ImportMessage::SignWithDevice(id) => {
                 if !self.is_ready() {
@@ -2491,7 +2496,8 @@ impl ImportedBitcoinPanel {
                         };
                     }
                 }
-                Task::none()
+                // Another key's device may be waiting its turn.
+                self.auto_check_devices()
             }
             ImportEvent::KeysInventory(epoch, result)
                 if epoch == self.keys_gate.load(Ordering::SeqCst) =>
@@ -2900,13 +2906,21 @@ impl ImportedBitcoinPanel {
                             .map_or_else(|| kind.to_owned(), |alias| format!("{alias} ({kind})")),
                         fingerprint: Some(*fingerprint),
                         problem: None,
+                        pairing_code: None,
                     },
-                    HardwareWallet::Locked { .. } => keys::ListedDevice {
+                    // A BitBox02 waiting to be paired shows a code to confirm.
+                    HardwareWallet::Locked { pairing_code, .. } => keys::ListedDevice {
                         name: kind.to_owned(),
                         fingerprint: None,
                         problem: Some(
-                            localized_copy("locked; unlock it to read its fingerprint").to_owned(),
+                            localized_copy(if pairing_code.is_some() {
+                                "Confirm this pairing code on the device:"
+                            } else {
+                                "Locked. Unlock it to see which key it holds."
+                            })
+                            .to_owned(),
                         ),
+                        pairing_code: pairing_code.clone(),
                     },
                     HardwareWallet::Unsupported { reason, .. } => {
                         let fixed = |problem: &str| Some(localized_copy(problem).to_owned());
@@ -2915,10 +2929,10 @@ impl ImportedBitcoinPanel {
                                 (Some(*fingerprint), None)
                             }
                             UnsupportedReason::AppIsNotOpen => {
-                                (None, fixed("open the Bitcoin app on it"))
+                                (None, fixed("Open the Bitcoin app on it."))
                             }
                             UnsupportedReason::WrongNetwork => {
-                                (None, fixed("set to a different network"))
+                                (None, fixed("Set to a different network than this wallet."))
                             }
                             UnsupportedReason::Version {
                                 minimal_supported_version,
@@ -2926,16 +2940,19 @@ impl ImportedBitcoinPanel {
                             } => (
                                 None,
                                 Some(coincube_ui::localized_format!(
-                                    "firmware too old; update to {minimal_supported_version} or later",
-                                    "firmware demasiado antiguo; actualiza a {minimal_supported_version} o posterior"
+                                    "Firmware too old to read its key. Update it to {minimal_supported_version} or later.",
+                                    "Firmware demasiado antiguo para leer su clave. Actualízalo a {minimal_supported_version} o posterior."
                                 )),
                             ),
-                            UnsupportedReason::Method(_) => (None, fixed("not supported")),
+                            UnsupportedReason::Method(_) => {
+                                (None, fixed("Can't read its key in COINCUBE Desktop."))
+                            }
                         };
                         keys::ListedDevice {
                             name: kind.to_owned(),
                             fingerprint,
                             problem,
+                            pairing_code: None,
                         }
                     }
                 }
@@ -2943,8 +2960,64 @@ impl ImportedBitcoinPanel {
             .collect()
     }
 
-    fn device_connected(&self, account: &coincube_core::imported_keys::ImportedAccount) -> bool {
-        self.connected_device(account).is_some()
+    /// Check each hardware key whose device has just appeared, without a
+    /// click: reading the key is read-only, and the row tells the user to
+    /// approve on the device if it asks (Robert, 2026-11-16). Each key is
+    /// checked once per connection of its device; a failed check waits for
+    /// Check again or for the device to be reconnected.
+    fn auto_check_devices(&mut self) -> Task<Message> {
+        if self.adding_keys || self.keys_confirmed || self.review.is_none() {
+            return Task::none();
+        }
+        let connected: Vec<(
+            String,
+            coincube_core::miniscript::bitcoin::bip32::Fingerprint,
+        )> = self
+            .hardware_wallets
+            .as_ref()
+            .map(|listing| {
+                listing
+                    .list
+                    .iter()
+                    .filter(|listed| !listed.is_lan_phone())
+                    .filter_map(|listed| match listed {
+                        HardwareWallet::Supported {
+                            id, fingerprint, ..
+                        } => Some((id.clone(), *fingerprint)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // One check at a time, so a device never has two requests waiting
+        // on it; the next starts when this one lands.
+        let busy = self.keys.as_ref().is_some_and(KeysState::checking);
+        let mut due = None;
+        if let Some(keys) = &mut self.keys {
+            for (index, slot) in keys.slots.iter_mut().enumerate() {
+                let device = connected
+                    .iter()
+                    .find(|(_, fingerprint)| *fingerprint == slot.account.fingerprint)
+                    .map(|(id, _)| id);
+                // Unplugged: the next connection is checked afresh.
+                if device.is_none() {
+                    slot.auto_checked = None;
+                }
+                // A failed check is tried again only on a fresh connection.
+                let waiting = slot.status == KeyStatus::Missing
+                    || (matches!(slot.status, KeyStatus::Failed(_)) && slot.auto_checked.is_none());
+                if slot.source != KeySource::Hardware || !waiting {
+                    continue;
+                }
+                if let Some(id) = device {
+                    if !busy && due.is_none() && slot.auto_checked.as_ref() != Some(id) {
+                        slot.auto_checked = Some(id.clone());
+                        due = Some(index);
+                    }
+                }
+            }
+        }
+        due.map_or_else(Task::none, |index| self.check_device(index))
     }
 
     /// The device list for the Keys step, before the wallet is installed.
@@ -3337,7 +3410,6 @@ impl ImportedBitcoinPanel {
                 Some(keys) => keys::step(
                     keys,
                     self.adding_keys,
-                    |account| self.device_connected(account),
                     &self.key_devices(),
                     self.error.as_ref(),
                 ),
@@ -5781,50 +5853,220 @@ mod tests {
         assert!(!keys.ready());
     }
 
-    /// Each key card follows the connected list: a locked device may be the
-    /// one, a readable match offers the check and names the device, and the
-    /// list says which key each readable device holds.
+    use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+
+    /// A readable device is shown in the row of the key it holds, once;
+    /// a locked device or a non-signer is listed apart, with what to do.
     #[tokio::test]
-    async fn key_cards_follow_the_connected_devices() {
+    async fn a_matched_device_sits_in_its_keys_row() {
         let wallet = two_of_three();
         let keys = KeysState::new(&wallet);
-        let first = keys.slots[0].account.fingerprint;
         let third = keys.slots[2].account.fingerprint;
+        let stranger = Fingerprint::from([0x9d, 0x0e, 0x11, 0xaa]);
         let devices = vec![
             keys::ListedDevice {
                 name: "Jade".into(),
                 fingerprint: None,
-                problem: Some("locked; unlock it to read its fingerprint".into()),
+                problem: Some("Locked. Unlock it to see which key it holds.".into()),
+                pairing_code: None,
+            },
+            keys::ListedDevice {
+                name: "BitBox02".into(),
+                fingerprint: None,
+                problem: Some("Confirm this pairing code on the device:".into()),
+                pairing_code: Some("7NQ3B Z4WKD".into()),
             },
             keys::ListedDevice {
                 name: "Coldcard".into(),
                 fingerprint: Some(third),
                 problem: None,
+                pairing_code: None,
+            },
+            keys::ListedDevice {
+                name: "Ledger".into(),
+                fingerprint: Some(stranger),
+                problem: None,
+                pairing_code: None,
             },
         ];
-        let (form, _) = keys::step(
-            &keys,
-            false,
-            |account| account.fingerprint == third,
-            &devices,
-            None,
-        );
+        let (form, actions) = keys::step(&keys, false, &devices, None);
         let shown = rendered_labels(form).await;
         assert_labels(
             &shown,
             &[
-                "Jade · locked; unlock it to read its fingerprint",
-                &format!("Coldcard · fingerprint {third} · Key 3 of 3 · ready to check"),
-                &format!(
-                    "No device with fingerprint {first} yet. It may be Jade (locked; unlock it to read its fingerprint)."
-                ),
-                &format!(
-                    "Found: Coldcard with fingerprint {third} is connected. Check it to confirm this key."
-                ),
+                "Key 1",
+                "Key 3",
+                "Waiting for its device",
+                "Coldcard",
+                "Connected, and its fingerprint matches this key.",
                 "Check device",
+                "Connected, not matched to a key",
+                "Jade",
+                "Locked. Unlock it to see which key it holds.",
+                "BitBox02",
+                "7NQ3B Z4WKD",
+                "Ledger",
+                &stranger.to_string(),
+                "Not a signer of this wallet.",
             ],
+            &["Connected hardware wallets", "Where is this key?"],
+        );
+        // The Coldcard is named once: in Key 3's row, not again below.
+        assert_eq!(shown.iter().filter(|text| *text == "Coldcard").count(), 1);
+        let footer = rendered_labels(actions).await;
+        assert_labels(&footer, &["0 of 2 needed keys verified"], &[]);
+    }
+
+    /// With the threshold met, a key nobody answered is not needed, and the
+    /// footer says it signs elsewhere.
+    #[tokio::test]
+    async fn a_spare_key_signs_elsewhere_once_the_threshold_is_met() {
+        let wallet = two_of_three();
+        let mut keys = KeysState::new(&wallet);
+        keys.slots[0].status = KeyStatus::Verified;
+        keys.slots[1].status = KeyStatus::Verified;
+        assert!(keys.ready());
+        let (form, actions) = keys::step(&keys, false, &[], None);
+        let shown = rendered_labels(form).await;
+        assert_labels(
+            &shown,
+            &[
+                "Not needed to spend",
+                "2 keys are verified, so this one signs elsewhere. Connect its device to add it anyway.",
+            ],
+            &[
+                "Waiting for its device",
+                "No hardware wallet connected. Plug one in and unlock it; it appears beside the key it holds.",
+            ],
+        );
+        let footer = rendered_labels(actions).await;
+        assert_labels(
+            &footer,
+            &["2 of 2 needed keys verified · Key 3 signs elsewhere"],
             &[],
         );
+    }
+
+    /// A device that never answers: enough for the Keys step to list it and
+    /// start a check, which the tests never run.
+    #[derive(Debug)]
+    struct SilentDevice;
+
+    #[async_trait::async_trait]
+    impl async_hwi::HWI for SilentDevice {
+        fn device_kind(&self) -> async_hwi::DeviceKind {
+            async_hwi::DeviceKind::Coldcard
+        }
+        async fn get_version(&self) -> Result<async_hwi::Version, async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+        async fn get_master_fingerprint(&self) -> Result<Fingerprint, async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+        async fn get_extended_pubkey(
+            &self,
+            _: &coincube_core::miniscript::bitcoin::bip32::DerivationPath,
+        ) -> Result<coincube_core::miniscript::bitcoin::bip32::Xpub, async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+        async fn register_wallet(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<[u8; 32]>, async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+        async fn is_wallet_registered(&self, _: &str, _: &str) -> Result<bool, async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+        async fn display_address(
+            &self,
+            _: &async_hwi::AddressScript,
+        ) -> Result<(), async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+        async fn sign_tx(
+            &self,
+            _: &mut coincube_core::miniscript::bitcoin::Psbt,
+        ) -> Result<(), async_hwi::Error> {
+            unreachable!("the check never runs here")
+        }
+    }
+
+    fn connected(id: &str, fingerprint: Fingerprint) -> HardwareWallet {
+        HardwareWallet::Supported {
+            id: id.into(),
+            device: Arc::new(SilentDevice),
+            kind: async_hwi::DeviceKind::Coldcard,
+            fingerprint,
+            version: None,
+            registered: None,
+            alias: None,
+        }
+    }
+
+    /// The matching device starts its key's check without a click, once per
+    /// connection: a failed check is not repeated until the device is
+    /// reconnected, and only one check runs at a time.
+    #[test]
+    fn a_matching_device_is_checked_once_per_connection() {
+        let directory = NetworkDirectory::new(std::env::temp_dir().join("import-auto-check"));
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let wallet =
+            ImportedWalletAttachment::new(two_of_three(), ChainId::Bitcoin, 0, 200).unwrap();
+        panel.keys = Some(KeysState::new(&wallet.descriptor));
+        panel.review = Some(wallet);
+        let first = panel.keys.as_ref().unwrap().slots[0].account.fingerprint;
+        let third = panel.keys.as_ref().unwrap().slots[2].account.fingerprint;
+        let mut listing = HardwareWallets::new(
+            crate::dir::CoincubeDirectory::new(std::env::temp_dir().join("import-auto-check")),
+            Network::Bitcoin,
+        );
+        listing.list = vec![connected("coldcard-1", third), connected("jade-1", first)];
+        panel.hardware_wallets = Some(listing);
+        let status = |panel: &ImportedBitcoinPanel, index: usize| {
+            panel.keys.as_ref().unwrap().slots[index].status.clone()
+        };
+
+        let _ = panel.auto_check_devices();
+        // One check at a time: the first matching key starts, the other waits.
+        assert_eq!(status(&panel, 0), KeyStatus::Checking);
+        assert_eq!(status(&panel, 2), KeyStatus::Missing);
+
+        // It fails; the waiting key's check starts, the failed one stays put.
+        let check = panel.keys.as_ref().unwrap().slots[0].check;
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::DeviceVerified(
+            generation,
+            0,
+            check,
+            Err("Not this key.".into()),
+        ));
+        assert_eq!(status(&panel, 0), KeyStatus::Failed("Not this key.".into()));
+        assert_eq!(status(&panel, 2), KeyStatus::Checking);
+        let check = panel.keys.as_ref().unwrap().slots[2].check;
+        let _ = panel.update_event(ImportEvent::DeviceVerified(generation, 2, check, Ok(())));
+        assert_eq!(status(&panel, 2), KeyStatus::Verified);
+        let _ = panel.auto_check_devices();
+        assert_eq!(status(&panel, 0), KeyStatus::Failed("Not this key.".into()));
+
+        // Unplugged and plugged back in: checked afresh.
+        panel
+            .hardware_wallets
+            .as_mut()
+            .unwrap()
+            .list
+            .retain(|hw| hw.id() != "jade-1");
+        let _ = panel.auto_check_devices();
+        panel
+            .hardware_wallets
+            .as_mut()
+            .unwrap()
+            .list
+            .push(connected("jade-1", first));
+        let _ = panel.auto_check_devices();
+        assert_eq!(status(&panel, 0), KeyStatus::Checking);
     }
 
     #[tokio::test]
@@ -5845,10 +6087,8 @@ mod tests {
             &[
                 "Keys",
                 "Add the wallet's keys",
-                "Hardware wallet",
-                "Recovery words",
-                "Signs elsewhere",
-                "Connected hardware wallets",
+                "Waiting for its device",
+                "No hardware wallet connected. Plug one in and unlock it; it appears beside the key it holds.",
                 "Review wallet",
             ],
             // No device is connected, so no check is offered yet.
