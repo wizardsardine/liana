@@ -57,8 +57,8 @@ wildcard-cleanup-plan.md
 # and CI stays the source of truth for shipped artifacts.
 contrib/release/macos/build-sign-local.sh
 # Its outputs, alongside the bundle above.
-/tenshu-*.dmg
-/tenshu-*-notarize.zip
+/coincube-desktop-*.dmg
+/coincube-desktop-*-notarize.zip
 
 # BTCB2 two-chain harness: verified Knots downloads (tests/tools/fetch_knots.sh)
 tests/tools/knots/
