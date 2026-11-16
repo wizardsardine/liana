@@ -3349,6 +3349,72 @@ pub fn global_home_view<'a>(
                 .into()
         };
 
+        // US Dollar row, as on the Spark page: shown while the wallet holds
+        // USDB, with its own Send/Receive.
+        let spark_usdb_row = spark_usdb_balance
+            .filter(|holding| holding.balance > 0)
+            .map(|holding| {
+                let usdb_text = format!(
+                    "{} USDB",
+                    crate::app::breez_spark::assets::format_token_display_u128(
+                        holding.balance,
+                        holding.decimals,
+                    )
+                );
+                // ≈ sats only at a dedicated BTC/USD quote.
+                let usdb_sats = usable_usd_quote.map(|_| {
+                    format!(
+                        "≈ {}",
+                        Amount::from_sat(spark_usdb_as_sats)
+                            .to_formatted_string_with_unit(bitcoin_unit)
+                    )
+                });
+                coincube_ui::component::tenshu::fit_row(
+                    Row::new()
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .push(
+                            coincube_ui::image::asset_logo("usdb")
+                                .width(Length::Fixed(32.0))
+                                .height(Length::Fixed(32.0)),
+                        )
+                        .push(text("USDB").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
+                        .push(amount_cell::<Message>(
+                            if wallet_balance_masked {
+                                AmountCell::masked()
+                            } else if spark_balance_error && !spark_balance_loaded {
+                                AmountCell::unavailable(coincube_ui::locale::copy(
+                                    "Spark bridge has not returned a balance",
+                                ))
+                            } else if !spark_balance_loaded {
+                                AmountCell::unknown("Waiting for Spark sync")
+                            } else {
+                                AmountCell::shown(usdb_text, usdb_sats)
+                            },
+                            AmountTier::Row,
+                        )),
+                    Row::new()
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .push(
+                            landing_button(
+                                landing_control_id(cube_id, "Spark", "send-usdb"),
+                                localized_copy("Send"),
+                                None,
+                                Message::FocusAction,
+                                Some(Message::Home(HomeMessage::SendSparkUsdb)),
+                                theme::button::primary,
+                            )
+                            .width(Length::Fixed(90.0)),
+                        )
+                        .push(orange_outline_btn(
+                            "Spark",
+                            "receive-usdb",
+                            Message::Home(HomeMessage::ReceiveSparkUsdb),
+                        )),
+                )
+            });
+
         let spark_card_content = Column::new()
             .spacing(12)
             .push(landing_button(
@@ -3363,38 +3429,7 @@ pub fn global_home_view<'a>(
             ))
             .push(spark_header)
             .push(spark_btc_row)
-            .push_maybe(spark_usdb_balance.map(|holding| {
-                let text_value = format!(
-                    "{} USDB",
-                    crate::app::breez_spark::assets::format_token_display_u128(
-                        holding.balance,
-                        holding.decimals,
-                    )
-                );
-                Row::new()
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(
-                        text("USDB")
-                            .size(P1_SIZE)
-                            .style(theme::text::secondary)
-                            .width(Length::Fixed(60.0)),
-                    )
-                    .push(amount_cell::<Message>(
-                        if wallet_balance_masked {
-                            AmountCell::masked()
-                        } else if spark_balance_error && !spark_balance_loaded {
-                            AmountCell::unavailable(coincube_ui::locale::copy(
-                                "Spark bridge has not returned a balance",
-                            ))
-                        } else if !spark_balance_loaded {
-                            AmountCell::unknown("Waiting for Spark sync")
-                        } else {
-                            AmountCell::shown(text_value, None)
-                        },
-                        AmountTier::Row,
-                    ))
-            }))
+            .push_maybe(spark_usdb_row)
             .push_maybe((spark_balance_error && spark_balance_loaded).then(|| {
                 text(localized_copy("Last known Spark balance · refresh failed"))
                     .size(P2_SIZE)
@@ -4068,6 +4103,12 @@ mod tests {
                 );
                 assert!(shown.contains(&raw_usdb));
                 assert!(shown.contains("Partial total"));
+                // The US Dollar row carries its own Send/Receive, as on the
+                // Spark page.
+                for control in ["send-usdb", "receive-usdb"] {
+                    assert!(shown.has_focus(landing_control_id("test-cube", "Spark", control)));
+                }
+                assert!(!normal.has_focus(landing_control_id("test-cube", "Spark", "send-usdb")));
 
                 let mut masked = fixture.config(0, None, None);
                 masked.spark_usdb_balance = Some(&usdb);
@@ -4292,6 +4333,39 @@ mod tests {
             "{messages:?}",
             messages = messages
         );
+    }
+
+    #[test]
+    fn overview_usdb_row_send_and_receive_route_to_spark_usdb() {
+        use crate::app::view::shared::landing::capture;
+        let fixture = ViewFixture::new();
+        let usdb = coincube_spark_protocol::UsdbBalanceSnapshot {
+            token_identifier: "btkn1synthetic".into(),
+            balance: 50_760_000,
+            decimals: 6,
+            ticker: "USDB".into(),
+        };
+        for (control, expected) in [("send-usdb", true), ("receive-usdb", false)] {
+            let mut config = fixture.config(0, None, None);
+            config.spark_usdb_balance = Some(&usdb);
+            config.spark_balance_loaded = true;
+            let messages = capture::activate(
+                overview(config),
+                landing_control_id("test-cube", "Spark", control),
+                (1024, 768),
+                true,
+            );
+            assert!(
+                messages.iter().any(|message| match message {
+                    Message::Home(HomeMessage::SendSparkUsdb) => expected,
+                    Message::Home(HomeMessage::ReceiveSparkUsdb) => !expected,
+                    _ => false,
+                }),
+                "{}: {:?}",
+                control,
+                messages
+            );
+        }
     }
 
     #[test]

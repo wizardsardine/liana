@@ -1169,6 +1169,14 @@ impl State for GlobalHome {
                         use crate::app::menu::SparkSubMenu;
                         crate::app::state::redirect(Menu::Spark(SparkSubMenu::Receive))
                     }
+                    HomeMessage::SendSparkUsdb => crate::app::state::spark::overview::send_from(
+                        coincube_spark_protocol::WalletAsset::Usdb,
+                    ),
+                    HomeMessage::ReceiveSparkUsdb => {
+                        crate::app::state::spark::overview::receive_into(
+                            coincube_spark_protocol::WalletAsset::Usdb,
+                        )
+                    }
                     HomeMessage::SparkBalanceUpdated {
                         btc,
                         usdb_balance,
