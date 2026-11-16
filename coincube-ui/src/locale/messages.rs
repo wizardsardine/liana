@@ -67,7 +67,7 @@ catalog! {
     Diagnostics => ("Diagnostics", "Diagnóstico"),
     Done => ("Done", "Listo"),
     EncryptingAndUploading => ("Encrypting and uploading…", "Cifrando y subiendo…"),
-    KitPhoneEncryptionProgress => ("Encrypting your recovery material to your Mobile key and uploading.", "Estamos cifrando tus datos de recuperación con tu clave de Mobile y subiendo la copia."),
+    KitPhoneEncryptionProgress => ("Encrypting your recovery material to your Mobile key and uploading.", "Estamos cifrando tus datos de recuperación con tu clave de COINCUBE Mobile y subiendo la copia."),
     EnterYourCubePinToUnlockAndDisplayYour => ("Enter your Cube PIN to unlock and display your 12-word recovery phrase.", "Ingresa el PIN de tu Cube para desbloquear y ver tu frase de recuperación de 12 palabras."),
     EnterYourCubePinToUnlockYourMasterSeed => ("Enter your Cube PIN to unlock your Master Seed Phrase. We'll encrypt it on-device before uploading.", "Ingresa el PIN de tu Cube para desbloquear tu frase de recuperación maestra. La cifraremos en este dispositivo antes de subirla."),
     ErrorWhileStartingTenshu => ("Error while starting COINCUBE Desktop", "Error al iniciar COINCUBE Desktop"),

@@ -330,7 +330,7 @@ pub fn view(panel: &RecoverVaultPanel) -> Element<'_, RecoverVaultMessage> {
         .push(
             p2_regular(localized_copy(
                 "Vaults you're a keyholder for appear here. When a vault's \
-                 recovery window opens, you can recover it with your Mobile — \
+                 recovery window opens, you can recover it with COINCUBE Mobile — \
                  no password needed.",
             ))
             .style(theme::text::secondary),

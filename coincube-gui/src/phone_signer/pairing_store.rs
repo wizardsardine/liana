@@ -137,7 +137,7 @@ impl ImportedPairingScope {
         fingerprint: Fingerprint,
     ) -> Result<Self, String> {
         use coincube_core::miniscript::{DescriptorPublicKey, ForEachKey};
-        let error = "The selected Mobile account is not an exact imported wallet key.";
+        let error = "The selected phone account is not an exact imported wallet key.";
         if *wallet_id != WalletId::for_imported(wallet, wallet.chain()).map_err(|_| error)? {
             return Err(error.into());
         }

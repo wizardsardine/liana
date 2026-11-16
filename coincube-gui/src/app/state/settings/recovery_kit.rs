@@ -962,8 +962,8 @@ pub fn update_with_imported(
                     let reload = load_status(rk, client, server_cube_id);
                     let toast = Task::done(Message::View(view::Message::ShowToast(
                         log::Level::Info,
-                        "Backed up to your phone. You can restore this Cube by approving on \
-                         your Mobile."
+                        "Backed up to your phone. You can restore this Cube by approving in \
+                         COINCUBE Mobile."
                             .to_string(),
                     )));
                     Task::batch([toast, persist, reload])
@@ -2297,7 +2297,7 @@ async fn verify_phone_copy_gone(
         Err(CoincubeError::NotFound) => Ok(()),
         Err(e) => Err(format!(
             "Removed your password kit, but couldn't confirm the copy sealed to your phone \
-             (Mobile) was cleared ({}). Reopen Settings to check before relying on removal.",
+             (COINCUBE Mobile) was cleared ({}). Reopen Settings to check before relying on removal.",
             e
         )),
     }
