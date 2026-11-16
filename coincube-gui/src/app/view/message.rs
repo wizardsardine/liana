@@ -2511,6 +2511,10 @@ pub enum HomeMessage {
     SendSparkBtc,
     /// Navigate to Spark Receive.
     ReceiveSparkBtc,
+    /// Navigate to Spark Send, paying from US Dollar (USDB).
+    SendSparkUsdb,
+    /// Navigate to Spark Receive, set to USDB.
+    ReceiveSparkUsdb,
     /// Bridge returned a fresh Spark balance (used by the Home
     /// page's periodic balance refresh). Carries the raw
     /// `balance_sats` and the optional Stable Balance USDB holding
