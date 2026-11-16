@@ -207,7 +207,7 @@ catalog! {
     Logs => ("Logs", "Registros"),
     OpenFolder => ("Open folder", "Abrir carpeta"),
     CopySummary => ("Copy summary", "Copiar resumen"),
-    LogFilesCanIncludeYourAccountEmail => ("Log files can include your account email and file paths. Review them before you share.", "Los archivos de registro pueden incluir el correo de tu cuenta y rutas de archivos. Revísalos antes de compartirlos."),
+    LogFilesCanIncludeYourAccountEmail => ("Log files can include your account email, file paths, addresses and transaction IDs. Review them before you share.", "Los archivos de registro pueden incluir el correo de tu cuenta, rutas de archivos, direcciones e identificadores de transacciones. Revísalos antes de compartirlos."),
     Copied => ("Copied", "Copiado"),
     CouldNotOpenTheLogFolder => ("Could not open the log folder.", "No se pudo abrir la carpeta de registros."),
     RepairDeviceRegistration => ("Repair device registration", "Reparar el registro del dispositivo"),
