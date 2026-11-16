@@ -3,6 +3,9 @@ use tracing_subscriber::{filter, fmt::writer::BoxMakeWriter, prelude::*, reload}
 
 use crate::dir::CoincubeDirectory;
 
+/// Folder under the data directory that holds the GUI's log files.
+pub const LOGS_DIR: &str = "logs";
+
 #[derive(Debug)]
 pub enum LoggerError {
     Io(std::io::Error),
@@ -27,7 +30,7 @@ pub fn setup_logger(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut log_path = datadir.path().to_path_buf();
 
-    log_path.push("logs");
+    log_path.push(LOGS_DIR);
     std::fs::create_dir_all(&log_path)?;
 
     log_path.push(chrono::Local::now().format("%v+%H:%M-%S.log").to_string());
