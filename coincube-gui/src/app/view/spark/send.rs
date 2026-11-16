@@ -237,6 +237,7 @@ impl<'a> SparkSendView<'a> {
                         recipient.to_string(),
                         recipient_copied_notice(recipient).to_string(),
                     ))
+                    .copy_tip(recipient_copy_tip(recipient))
             };
             let mut rows = Vec::new();
             if !recipient.is_empty() {
@@ -773,10 +774,25 @@ fn method_label(method: &str) -> &str {
 
 /// The toast after copying the receipt's recipient: a BOLT11 invoice reads
 /// as an invoice, anything else (Bitcoin or Spark address) as an address.
-fn recipient_copied_notice(recipient: &str) -> &'static str {
+/// The To row's copy tooltip, naming what the recipient is.
+fn recipient_copy_tip(recipient: &str) -> &'static str {
+    if recipient_is_invoice(recipient) {
+        localized_copy("Copy invoice")
+    } else {
+        localized_copy("Copy address")
+    }
+}
+
+fn recipient_is_invoice(recipient: &str) -> bool {
     let lower = recipient.trim().to_ascii_lowercase();
-    let bare = lower.strip_prefix("lightning:").unwrap_or(&lower);
-    if bare.starts_with("ln") {
+    lower
+        .strip_prefix("lightning:")
+        .unwrap_or(&lower)
+        .starts_with("ln")
+}
+
+fn recipient_copied_notice(recipient: &str) -> &'static str {
+    if recipient_is_invoice(recipient) {
         "Invoice copied to clipboard"
     } else {
         "Address copied to clipboard"

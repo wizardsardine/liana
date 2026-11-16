@@ -1936,47 +1936,19 @@ pub fn detail_column<'a>(detail: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 fn identifier_row<'a>(index: usize, name: &'static str, value: &str) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::copy_icon;
     let copy = Action::new(
         Id::from(format!("tenshu.activity.detail.copy.{index}")),
-        container(glyph::glyph(glyph::COPY, 16.0, glyph::ink))
-            .center_x(Length::Fixed(28.0))
-            .center_y(Length::Fixed(28.0)),
+        copy_icon::content(),
         Message::FocusAction,
     )
     .padding(0)
-    .style(|theme: &theme::Theme, status| {
-        let shell = theme.colors.shell;
-        let hovered = matches!(
-            status,
-            iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-        );
-        iced::widget::button::Style {
-            background: hovered.then_some(iced::Background::Color(shell.selected)),
-            text_color: shell.ink,
-            border: iced::Border {
-                color: shell.line,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..Default::default()
-        }
-    })
+    .style(copy_icon::style)
     .on_press(Message::CopyWithToast(
         value.to_owned(),
         format!("{name} copied"),
     ));
-    let copy = iced::widget::tooltip(
-        copy,
-        container(words(
-            format!("Copy {name}"),
-            12.0,
-            font::REGULAR,
-            glyph::muted,
-        ))
-        .padding([6, 10])
-        .style(theme::container::shell_menu),
-        iced::widget::tooltip::Position::Left,
-    );
+    let copy = copy_icon::with_tooltip(copy, format!("Copy {name}"));
     column![
         row![
             column![
