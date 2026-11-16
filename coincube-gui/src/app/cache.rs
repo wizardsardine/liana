@@ -128,6 +128,21 @@ pub struct LookupOrigin {
     pub chain: crate::chain::ChainId,
 }
 
+/// Progress of a name saved only on this device (the Spark nickname, the
+/// Vault name), shown under its field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NameSave {
+    /// Not saved this session.
+    #[default]
+    Idle,
+    /// Being written to this device's settings.
+    Saving,
+    /// Written to this device's settings.
+    Saved,
+    /// Could not be written.
+    Failed,
+}
+
 /// Progress of the last Cube rename, shown under the Cube name field.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CubeNameSync {
@@ -243,6 +258,8 @@ pub struct Cache {
     /// How far the last rename on Settings › Display & appearance got:
     /// written on this device, then accepted by Connect.
     pub cube_name_sync: CubeNameSync,
+    /// How far the last Spark nickname save got (Settings › Spark).
+    pub spark_nickname_save: NameSave,
     /// The wallet names the side panel shows after "Spark" and "Vault".
     /// Synced from the Cube settings and the loaded Vault by the App.
     pub wallet_names: WalletNames,
@@ -524,6 +541,7 @@ impl std::default::Default for Cache {
             vault_lacks_keychain_key: false,
             cube_name: String::new(),
             cube_name_sync: CubeNameSync::Idle,
+            spark_nickname_save: NameSave::Idle,
             wallet_names: WalletNames::default(),
             cube_connect_owner: None,
             cube_owned_by_other_account: false,

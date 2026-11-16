@@ -707,6 +707,7 @@
   "Couldn't save that preference": "No se pudo guardar esa preferencia",
   "Couldn't save the Cube name.": "No se pudo guardar el nombre del Cube.",
   "Couldn't save the QR image": "No se pudo guardar la imagen QR",
+  "Couldn't save. Press Return to try again.": "No se pudo guardar. Pulsa Intro para intentarlo de nuevo.",
   "Couldn't sign over Wi-Fi.": "No se pudo firmar por Wi-Fi.",
   "Couldn't sign with COINCUBE Mobile over Wi-Fi": "No se pudo firmar con COINCUBE Mobile por Wi-Fi",
   "Couldn't sync the wallet — swaps are paused. It'll retry automatically.": "No se pudo sincronizar la cartera. Los intercambios están en pausa y la sincronización se reintentará automáticamente.",

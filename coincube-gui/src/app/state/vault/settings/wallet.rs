@@ -14,7 +14,7 @@ use coincube_ui::{
 use crate::{
     app::settings::WALLET_ALIAS_MAXIMUM_LENGTH,
     app::{
-        cache::Cache,
+        cache::{Cache, NameSave},
         error::Error,
         menu::Menu,
         message::Message,
@@ -49,6 +49,8 @@ pub struct WalletSettingsState {
     keys_aliases: Vec<(Fingerprint, form::Value<String>)>,
     wallet: Arc<Wallet>,
     wallet_alias: form::Value<String>,
+    /// How far the last Vault name save got, for the field's status line.
+    name_save: NameSave,
     modal: Modal,
     processing: bool,
     updated: bool,
@@ -70,6 +72,7 @@ impl WalletSettingsState {
             },
             wallet,
             warning: None,
+            name_save: NameSave::Idle,
             modal: Modal::None,
             processing: false,
             updated: false,
@@ -108,6 +111,35 @@ impl WalletSettingsState {
 }
 
 impl WalletSettingsState {
+    /// The Vault name the Save button would write, or `None` when it would
+    /// leave the saved name alone.
+    fn changed_alias(&self) -> Option<String> {
+        let typed = &self.wallet_alias.value;
+        match self.wallet.alias.as_ref() {
+            Some(saved) if saved == typed => None,
+            None if typed.is_empty() => None,
+            _ => Some(typed.clone()),
+        }
+    }
+
+    /// The Vault name field's status line. A name too long to save already
+    /// shows its own error, so it gets none.
+    pub fn name_status(&self) -> Option<(crate::app::view::settings::page::Status, &'static str)> {
+        crate::app::view::settings::page::local_name_status(
+            self.wallet_alias.valid,
+            self.changed_alias().is_some(),
+            self.name_save,
+        )
+    }
+
+    /// A save that leaves the Vault name alone means the saved name is the
+    /// one wanted, so an earlier failed name save no longer applies.
+    fn settle_failed_name(&mut self) {
+        if self.name_save == NameSave::Failed {
+            self.name_save = NameSave::Idle;
+        }
+    }
+
     /// Whether Settings offers "Register on hardware device". It does on
     /// every chain, Bitcoin Blake2b included (HW-1 Amendment B): devices may
     /// build a BTCB2 Vault, and the signing picker sends an unregistered
@@ -129,6 +161,7 @@ impl State for WalletSettingsState {
             &self.wallet.provider_keys,
             self.processing,
             self.updated,
+            self.name_status(),
             self.hardware_registration_allowed(),
             self.expert_open,
         );
@@ -180,7 +213,24 @@ impl State for WalletSettingsState {
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
+                // Before the modal check: a Register opened while the save
+                // ran takes the result, and the field must not stay Saving.
+                if self.name_save == NameSave::Saving {
+                    self.name_save = if res.is_ok() {
+                        NameSave::Saved
+                    } else {
+                        NameSave::Failed
+                    };
+                }
                 if let Modal::RegisterWallet(modal) = &mut self.modal {
+                    // The modal takes the result, but this panel's wallet
+                    // must follow it too (as the Vault settings wrapper's
+                    // does): a name save that lands while Register is open
+                    // would otherwise still read as "Not saved yet" once it
+                    // closes. Signer fields keep what was typed.
+                    if let Ok(wallet) = &res {
+                        self.wallet = wallet.clone();
+                    }
                     modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
                 } else {
                     match res {
@@ -223,26 +273,17 @@ impl State for WalletSettingsState {
                 self.modal = Modal::None;
                 self.processing = true;
                 self.updated = false;
+                let alias = self.changed_alias();
+                if alias.is_some() {
+                    self.name_save = NameSave::Saving;
+                } else {
+                    self.settle_failed_name();
+                }
                 Task::perform(
                     update_aliases(
                         self.data_dir.clone(),
                         self.wallet.clone(),
-                        match self
-                            .wallet
-                            .alias
-                            .as_ref()
-                            .map(|a| *a == self.wallet_alias.value)
-                        {
-                            Some(true) => None,
-                            Some(false) => Some(self.wallet_alias.value.clone()),
-                            None => {
-                                if self.wallet_alias.value.is_empty() {
-                                    None
-                                } else {
-                                    Some(self.wallet_alias.value.clone())
-                                }
-                            }
-                        },
+                        alias,
                         self.keys_aliases
                             .iter()
                             .map(|(fg, name)| (*fg, name.value.to_owned()))
@@ -300,6 +341,7 @@ impl State for WalletSettingsState {
             Message::View(view::Message::ImportExport(ImportExportMessage::UpdateAliases(
                 aliases,
             ))) => {
+                self.settle_failed_name();
                 self.processing = true;
                 self.updated = false;
                 Task::perform(
@@ -634,6 +676,141 @@ mod chain_tests {
     use super::*;
     use crate::chain::ChainId;
     use iced::futures::StreamExt;
+
+    /// The Vault name field says what happened: not saved yet while typed,
+    /// Saving after Return, then saved, or the failure. A later save that
+    /// leaves the name alone (signer names only) clears the failure.
+    #[tokio::test]
+    async fn vault_name_field_shows_saving_then_saved_or_the_failure() {
+        use crate::app::view::settings::page::Status;
+        let descriptor = crate::app::state::vault::test_support::unified::fixture().descriptor;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(ChainId::Bitcoin));
+        let dir = CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("coincube-vault-name-{}", uuid::Uuid::new_v4())),
+        );
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let mut state =
+            WalletSettingsState::new(dir.clone(), wallet.clone(), Arc::new(Config::new(false)));
+        let cache = Cache::default();
+        let kind = |state: &WalletSettingsState| state.name_status().map(|(kind, _)| kind);
+        let send = |state: &mut WalletSettingsState, message| {
+            drop(state.update(Some(daemon.clone()), &cache, message))
+        };
+        let settings = |intent| Message::View(view::Message::Settings(intent));
+
+        assert_eq!(kind(&state), None);
+        send(&mut state, settings(view::SettingsMessage::Save));
+        assert_eq!(kind(&state), None, "no name change, nothing to report");
+
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Savings".into())),
+        );
+        assert_eq!(kind(&state), Some(Status::Warn));
+        send(&mut state, settings(view::SettingsMessage::Save));
+        assert_eq!(kind(&state), Some(Status::Busy));
+        send(
+            &mut state,
+            Message::WalletUpdated(Ok(Arc::new(
+                wallet.as_ref().clone().with_alias(Some("Savings".into())),
+            ))),
+        );
+        assert_eq!(kind(&state), Some(Status::Ok));
+
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Estate".into())),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        send(
+            &mut state,
+            Message::WalletUpdated(Err(Error::Unexpected("synthetic disk failure".into()))),
+        );
+        assert_eq!(kind(&state), Some(Status::Bad));
+
+        // Back to the saved name, and a signer name changed: the save leaves
+        // the Vault name alone and the failure no longer applies.
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Savings".into())),
+        );
+        let signer = state.keys_aliases[0].0;
+        send(
+            &mut state,
+            settings(view::SettingsMessage::FingerprintAliasEdited(
+                signer,
+                "Phone".into(),
+            )),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        assert_eq!(kind(&state), None);
+
+        // Too long to save, even right after a save: the field's own error,
+        // no status line.
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Holiday".into())),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        send(
+            &mut state,
+            Message::WalletUpdated(Ok(Arc::new(
+                wallet.as_ref().clone().with_alias(Some("Holiday".into())),
+            ))),
+        );
+        assert_eq!(kind(&state), Some(Status::Ok));
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited(
+                "a".repeat(WALLET_ALIAS_MAXIMUM_LENGTH),
+            )),
+        );
+        assert_eq!(kind(&state), None);
+        let _ = std::fs::remove_dir_all(dir.path());
+    }
+
+    /// A Vault name save that lands while Register is open: the modal takes
+    /// the result, and once it closes the field says the name was saved,
+    /// not "Not saved yet".
+    #[tokio::test]
+    async fn vault_name_saved_while_register_is_open_reads_saved_after_it_closes() {
+        use crate::app::view::settings::page::Status;
+        let descriptor = crate::app::state::vault::test_support::unified::fixture().descriptor;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(ChainId::Bitcoin));
+        let dir = CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("coincube-vault-name-reg-{}", uuid::Uuid::new_v4())),
+        );
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let mut state =
+            WalletSettingsState::new(dir.clone(), wallet.clone(), Arc::new(Config::new(false)));
+        let cache = Cache::default();
+        let send = |state: &mut WalletSettingsState, message| {
+            drop(state.update(Some(daemon.clone()), &cache, message))
+        };
+        let settings = |intent| Message::View(view::Message::Settings(intent));
+
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Savings".into())),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        send(&mut state, settings(view::SettingsMessage::RegisterWallet));
+        assert!(matches!(state.modal, Modal::RegisterWallet(_)));
+        send(
+            &mut state,
+            Message::WalletUpdated(Ok(Arc::new(
+                wallet.as_ref().clone().with_alias(Some("Savings".into())),
+            ))),
+        );
+        send(&mut state, Message::View(view::Message::Close));
+        assert!(state.modal.is_none());
+        assert_eq!(state.name_status().map(|(kind, _)| kind), Some(Status::Ok));
+        let _ = std::fs::remove_dir_all(dir.path());
+    }
 
     #[tokio::test]
     async fn descriptor_copy_requires_expert_review_and_emits_once() {
