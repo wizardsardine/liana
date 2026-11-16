@@ -10167,10 +10167,6 @@ impl App {
         self.datadir.network_directory(self.cube_settings.network)
     }
 
-    /// Write `nickname` to this Cube's settings; [`Message::SparkNicknameSaved`]
-    /// answers. Callers start one only while none is running, so this App's
-    /// requests are coalesced; the write itself follows every earlier one
-    /// for this Cube, from any App.
     /// A request that lands on the saved nickname without a write (the
     /// shortcut, or a queued one) settles an earlier failed save: the field
     /// then shows what is saved, not "Couldn't save".
@@ -10180,6 +10176,10 @@ impl App {
         }
     }
 
+    /// Write `nickname` to this Cube's settings; [`Message::SparkNicknameSaved`]
+    /// answers. Callers start one only while none is running, so this App's
+    /// requests are coalesced; the write itself follows every earlier one
+    /// for this Cube, from any App.
     fn start_spark_nickname_write(&mut self, nickname: Option<String>) -> Task<Message> {
         self.spark_nickname_in_flight = Some(nickname.clone());
         self.cache.spark_nickname_save = cache::NameSave::Saving;

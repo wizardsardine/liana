@@ -739,7 +739,20 @@ mod chain_tests {
         send(&mut state, settings(view::SettingsMessage::Save));
         assert_eq!(kind(&state), None);
 
-        // Too long to save: the field's own error, no status line.
+        // Too long to save, even right after a save: the field's own error,
+        // no status line.
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Holiday".into())),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        send(
+            &mut state,
+            Message::WalletUpdated(Ok(Arc::new(
+                wallet.as_ref().clone().with_alias(Some("Holiday".into())),
+            ))),
+        );
+        assert_eq!(kind(&state), Some(Status::Ok));
         send(
             &mut state,
             settings(view::SettingsMessage::WalletAliasEdited(
