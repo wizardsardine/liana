@@ -7153,7 +7153,7 @@ mod duress_enroll_tests {
         let c: CubeResponse = serde_json::from_value(serde_json::json!({
             "id": 42,
             "uuid": "keychain-only-uuid",
-            "name": "Keychain-only",
+            "name": "Mobile-only",
             "network": "mainnet",
             "status": "active",
             "hasRecoveryKit": true,

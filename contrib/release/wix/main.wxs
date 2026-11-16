@@ -88,7 +88,7 @@
     <Directory Id='TARGETDIR' Name='SourceDir'>
       <Directory Id="ProgramMenuFolder" />
       <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-        <Directory Id='APPLICATIONFOLDER' Name='Tenshu'>
+        <Directory Id='APPLICATIONFOLDER' Name='COINCUBE'>
           <Component Id='License' Guid='*'>
             <File Id='LicenseFile'
               Source='LICENCE'

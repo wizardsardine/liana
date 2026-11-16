@@ -235,7 +235,7 @@ const HARDWARE_DEVICE_TIP: &str = "Use a plugged-in hardware signer. \
 
 /// The Keychain Keys card's tip on the Bitcoin Blake2b picker, where the
 /// card is disabled.
-const BLAKE2B_KEYCHAIN_TIP: &str = "Keychain keys are not available for Bitcoin Blake2b yet.";
+const BLAKE2B_KEYCHAIN_TIP: &str = "Mobile keys are not available for Bitcoin Blake2b yet.";
 
 /// The Hardware Device card's tip on the Bitcoin Blake2b picker. A device
 /// signs the legacy way, so a spend that only devices sign is replayable
@@ -471,7 +471,7 @@ impl SelectKeySource {
         // template's mirroring is unaffected: it edits a primary key at both
         // of its slots at once, so neither counts as "elsewhere".
         if matches!(source, KeySource::KeychainKey { .. }) && self.key_placed_elsewhere(fg) {
-            return Some("This Keychain key is already used elsewhere in this Vault.".to_string());
+            return Some("This phone key is already used elsewhere in this Vault.".to_string());
         }
         // The Cube Key lives on this device behind the Cube's PIN or Passkey,
         // so as both a primary and an inheritance key it would let whoever
@@ -1157,7 +1157,7 @@ impl SelectKeySource {
             Ok(xpub) => xpub,
             Err(e) => {
                 tracing::warn!(
-                    "Keychain key {} ({}) could not be resolved: {}",
+                    "Mobile key {} ({}) could not be resolved: {}",
                     resolved.raw.id,
                     resolved.raw.name,
                     e
@@ -1196,13 +1196,13 @@ impl SelectKeySource {
         // an identical key and another key from the same owner are placed).
         if self.key_placed_elsewhere(fingerprint) {
             self.error =
-                Some("This Keychain key is already used elsewhere in this Vault.".to_string());
+                Some("This phone key is already used elsewhere in this Vault.".to_string());
             return Task::none();
         }
 
         if self.owner_placed_elsewhere(resolved.owner.primary_owner_id(), fingerprint) {
             self.error =
-                Some("This owner already has a Keychain key placed in this Vault.".to_string());
+                Some("This owner already has a Mobile key placed in this Vault.".to_string());
             return Task::none();
         }
 
@@ -1302,7 +1302,7 @@ impl SelectKeySource {
 
     fn view_my_keychain_keys(&self) -> Element<Message> {
         let mut col = Column::new().spacing(modal::V_SPACING).width(modal::BTN_W);
-        col = col.push(p1_bold(localized_copy("My Keychain Keys")));
+        col = col.push(p1_bold(localized_copy("My Mobile Keys")));
 
         // Treat "not yet fetched" as loading — the auto-fetch fires on
         // the first update() call, leaving a brief pre-fetch window
@@ -1311,7 +1311,7 @@ impl SelectKeySource {
             && self.my_keychain_keys.is_empty()
             && self.keychain_keys_error.is_none()
         {
-            col = col.push(p1_regular(localized_copy("Fetching Keychain keys…")));
+            col = col.push(p1_regular(localized_copy("Fetching Mobile keys…")));
             return col.into();
         }
         if let Some(err) = &self.keychain_keys_error {
@@ -1328,7 +1328,7 @@ impl SelectKeySource {
         }
         if self.my_keychain_keys.is_empty() {
             col = col.push(p1_regular(localized_copy(
-                "No Keychain keys. Add one in the COINCUBE mobile app.",
+                "No Mobile keys. Add one in the COINCUBE mobile app.",
             )));
             return col.into();
         }
@@ -1396,7 +1396,7 @@ impl SelectKeySource {
 
     fn view_contact_keychain_keys(&self) -> Element<Message> {
         let mut col = Column::new().spacing(modal::V_SPACING).width(modal::BTN_W);
-        col = col.push(p1_bold(localized_copy("Contact Keychain Keys")));
+        col = col.push(p1_bold(localized_copy("Contact Mobile Keys")));
 
         // Treat "not yet fetched" as loading (see view_my_keychain_keys).
         if (!self.keychain_keys_fetched || self.keychain_keys_loading)
@@ -1514,7 +1514,7 @@ impl SelectKeySource {
         let keychain_tip = if blake2b {
             Some(BLAKE2B_KEYCHAIN_TIP)
         } else if !keychain_enabled {
-            Some("Sign in to Connect to use Keychain keys.")
+            Some("Sign in to Connect to use Mobile keys.")
         } else {
             None
         };
@@ -1542,7 +1542,7 @@ impl SelectKeySource {
             },
             GridCard {
                 icon: icon::key_icon,
-                title: "Keychain Keys",
+                title: "Mobile Keys",
                 tip: keychain_tip,
                 on_press: keychain_enabled.then_some(SelectKeySourceMessage::ShowKeychainKeys),
             },
@@ -1756,7 +1756,7 @@ impl SelectKeySource {
 
     fn view_keychain_keys_screen(&self) -> Element<Message> {
         let header = modal::header(
-            Some(localized_copy("Keychain Keys").to_string()),
+            Some(localized_copy("Mobile Keys").to_string()),
             Some(|| Message::Close),
         );
 
@@ -2853,7 +2853,7 @@ mod tests {
     /// The key-source grid every chain shows, in display order.
     const GRID_TITLES: [&str; 6] = [
         "Hardware Device",
-        "Keychain Keys",
+        "Mobile Keys",
         "Cube Key",
         "Border Wallet",
         "Import xpub File",
@@ -2872,10 +2872,7 @@ mod tests {
         );
         assert_eq!(cards[0].tip, Some(HARDWARE_DEVICE_TIP));
         assert!(cards[1].on_press.is_none());
-        assert_eq!(
-            cards[1].tip,
-            Some("Sign in to Connect to use Keychain keys.")
-        );
+        assert_eq!(cards[1].tip, Some("Sign in to Connect to use Mobile keys."));
         let _ = picker.view_grid(Vec::new());
     }
 
@@ -3149,7 +3146,7 @@ mod tests {
             .insert(fg, (vec![(1, 0)], keychain_key(fg, 42, 7)));
         assert_eq!(
             picker.key_unavailable_reason(fg, &source),
-            Some("This Keychain key is already used elsewhere in this Vault.".to_string())
+            Some("This phone key is already used elsewhere in this Vault.".to_string())
         );
     }
 
@@ -3511,7 +3508,7 @@ mod tests {
         let _ = elsewhere_picker.on_select_keychain_key(resolved_key(4, "8a550171", 7));
         assert_eq!(
             elsewhere_picker.error.as_deref(),
-            Some("This Keychain key is already used elsewhere in this Vault.")
+            Some("This phone key is already used elsewhere in this Vault.")
         );
 
         let owner_fg = Fingerprint::from_str("c658b283").unwrap();
@@ -3523,7 +3520,7 @@ mod tests {
         let _ = owner_picker.on_select_keychain_key(resolved_key(5, "8a550171", 42));
         assert_eq!(
             owner_picker.error.as_deref(),
-            Some("This owner already has a Keychain key placed in this Vault.")
+            Some("This owner already has a Mobile key placed in this Vault.")
         );
 
         let mut collision_picker = empty_picker();

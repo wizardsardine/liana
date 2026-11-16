@@ -299,7 +299,7 @@ fn vault_settings_items(imported: bool) -> Vec<SubItem> {
             },
         ),
         SubItem::new(
-            "Keychain",
+            "Mobile",
             phone_icon,
             Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))),
             |m| {
@@ -310,7 +310,7 @@ fn vault_settings_items(imported: bool) -> Vec<SubItem> {
             },
         )
         .disabled(imported.then(|| {
-            "Pairing is unavailable for imported wallets: this wallet has no Keychain-eligible key in COINCUBE Desktop."
+            "Pairing is unavailable for imported wallets: this wallet has no Mobile-eligible key in COINCUBE Desktop."
                 .to_string()
         })),
         SubItem::new(

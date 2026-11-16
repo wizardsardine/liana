@@ -954,7 +954,7 @@ pub fn define_coincube_connect<'a>(
                     .spacing(8)
                     .push(text(localized_copy("  •  Hosted Esplora server — use your Vault instantly while your node syncs")))
                     .push(text(localized_copy("  •  Encrypted wallet descriptor backup")))
-                    .push(text(localized_copy("  •  Integration with the companion Keychain mobile app"))))
+                    .push(text(localized_copy("  •  Integration with the companion COINCUBE Mobile app"))))
                     .center_x(Length::Fill),
             )
             .push(text(

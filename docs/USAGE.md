@@ -9,9 +9,9 @@ The recommended installation method for regular users is to download an executab
 from the [Github release page](https://github.com/coincubetech/coincube/releases). If you prefer to
 build the project from source, see [`BUILD.md`](BUILD.md) instead.
 
-Release artifacts are named `tenshu-<version>-<target>.<ext>`, where `<target>` is the Rust target
-triple — for instance `tenshu-1.5.0-aarch64-apple-darwin.dmg` for macOS on Apple Silicon, or
-`tenshu-1.5.0-x86_64-pc-windows-msvc.msi` for Windows.
+Release artifacts are named `coincube-desktop-<version>-<target>.<ext>`, where `<target>` is the Rust target
+triple — for instance `coincube-desktop-1.5.0-aarch64-apple-darwin.dmg` for macOS on Apple Silicon, or
+`coincube-desktop-1.5.0-x86_64-pc-windows-msvc.msi` for Windows.
 
 We recommend you verify what you downloaded before installing it. Every release ships a
 `SHA256SUMS-<version>.txt` covering all of its artifacts, plus a `SHA256SUMS-<version>.txt.asc` GPG
@@ -47,7 +47,7 @@ See [this issue](https://github.com/wizardsardine/coincube/issues/414) for detai
 #### Apple, Windows, codesigned and notarized binaries
 
 The macOS application is distributed as a codesigned and notarized disk image
-(`tenshu-<version>-<target>.dmg`, one for Apple Silicon and one for Intel). Open the DMG and drag
+(`coincube-desktop-<version>-<target>.dmg`, one for Apple Silicon and one for Intel). Open the DMG and drag
 `COINCUBE.app` into your Applications folder; because it is notarized, no Gatekeeper override is
 needed.
 
@@ -59,7 +59,9 @@ The app bundle was renamed from `Tenshu.app` to `COINCUBE.app`. Both carry the s
 identifier and share your data, keychain items and settings, but dragging the new bundle into
 Applications does not replace the old one: delete `Tenshu.app` after installing. AI clients
 paired for local MCP access store the adapter's full path, so pair them again (or edit the
-`command` path) after the move.
+`command` path) after the move. On Windows the install folder likewise moved from
+`Program Files\Tenshu` to `Program Files\COINCUBE`, so re-pair local MCP clients after upgrading
+there too.
 
 We do not yet distribute codesigned binaries for Windows at this time.
 

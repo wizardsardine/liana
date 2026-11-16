@@ -172,7 +172,7 @@ pub(super) fn template_introduction(
                     .push(p2_regular(localized_copy(tip)).style(theme::text::secondary))
                     .push(show_keychain_tip.then(|| {
                         p2_regular(localized_copy(
-                            "A family member or friend can contribute a Keychain key remotely.",
+                            "A family member or friend can contribute a Mobile key remotely.",
                         ))
                         .style(theme::text::secondary)
                     })),
@@ -606,7 +606,7 @@ mod tests {
             "dark",
             coincube_ui::theme::Theme::dark(),
         );
-        let tip = "A family member or friend can contribute a Keychain key remotely.";
+        let tip = "A family member or friend can contribute a Mobile key remotely.";
         assert!(!unavailable.labels.iter().any(|(label, _)| label == tip));
         assert!(available.labels.iter().any(|(label, _)| label == tip));
     }

@@ -128,7 +128,7 @@ Pin both actions to a checked version — don't float — and confirm the ambien
 In CI, after signing:
 
 ```powershell
-signtool verify /pa /v target\wix\tenshu-*.msi
+signtool verify /pa /v target\wix\coincube-desktop-*.msi
 ```
 
 Manually, on a clean Windows VM with no prior reputation:
@@ -149,7 +149,7 @@ Expect ~$300–700/yr, EV vetting of one to three weeks, and a second certificat
 
 ## 7. While you're here
 
-`docs/USAGE.md:43-50` still carries Liana upstream text: wrong artifact names (`Coincube.zip` rather than `tenshu-<version>-<target>.{dmg,msi}`), a `wizardsardine.com` link, and a Wizardsardine PGP key. Anyone following it to verify a download will not find our artifacts. Fix it in the same PR that lands signing, so the install instructions and the signature story change together.
+`docs/USAGE.md:43-50` still carries Liana upstream text: wrong artifact names (`Coincube.zip` rather than `coincube-desktop-<version>-<target>.{dmg,msi}`), a `wizardsardine.com` link, and a Wizardsardine PGP key. Anyone following it to verify a download will not find our artifacts. Fix it in the same PR that lands signing, so the install instructions and the signature story change together.
 
 ---
 

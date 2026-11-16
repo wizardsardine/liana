@@ -116,7 +116,7 @@ pub(crate) fn lan_signing_allowed(chain: crate::chain::ChainId) -> bool {
     !chain.is_blake2b()
 }
 
-pub(crate) const BTCB2_LAN_UNAVAILABLE: &str = "Keychain signing over the local network is unavailable for Bitcoin Blake2b until chain-bound pairing is supported. Use a supported Connect signer.";
+pub(crate) const BTCB2_LAN_UNAVAILABLE: &str = "Mobile signing over the local network is unavailable for Bitcoin Blake2b until chain-bound pairing is supported. Use a supported Connect signer.";
 
 impl std::fmt::Debug for PhoneSigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -133,7 +133,7 @@ impl PhoneSigner {
             PhonePolicyKind::Vault(_) => self.paired_phone.exact_signer_for(&self.policy),
             PhonePolicyKind::Imported { .. } => {
                 let current = pairing_store::load(&self.pairing_dir).map_err(|_| {
-                    HwiError::Device("Could not read the Keychain pairing; pair it again.".into())
+                    HwiError::Device("Could not read the phone pairing; pair it again.".into())
                 })?;
                 current.unique_signer_for(&self.paired_phone, &self.policy)
             }
@@ -284,7 +284,7 @@ impl HWI for PhoneSigner {
             &self.paired_phone.transport_pubkey,
         ) {
             return Err(HwiError::Device(
-                "This Keychain's encryption key is missing or unusable. Pair it again \
+                "This phone's encryption key is missing or unusable. Pair it again \
                  to sign over the local network."
                     .to_string(),
             ));
@@ -301,13 +301,13 @@ impl HWI for PhoneSigner {
         };
         let psbt_envelope = seal(&psbt_bytes).map_err(|e| {
             HwiError::Device(format!(
-                "could not encrypt the transaction for this Keychain: {}",
+                "could not encrypt the transaction for this phone: {}",
                 e
             ))
         })?;
         let descriptor_envelope = seal(self.descriptor.as_bytes()).map_err(|e| {
             HwiError::Device(format!(
-                "could not encrypt the descriptor for this Keychain: {}",
+                "could not encrypt the descriptor for this phone: {}",
                 e
             ))
         })?;
@@ -413,7 +413,7 @@ impl HWI for PhoneSigner {
         }
         let Some(env) = partial.signature_envelope.as_ref() else {
             return Err(HwiError::Device(
-                "This Keychain returned an unencrypted signature for an encrypted \
+                "This phone returned an unencrypted signature for an encrypted \
                  request. Update COINCUBE Mobile, then try again."
                     .to_string(),
             ));

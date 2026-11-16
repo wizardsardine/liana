@@ -58,7 +58,7 @@ impl PhonePolicy {
         wallet_id: WalletId,
     ) -> Result<Self, String> {
         if chain.is_blake2b() || wallet.chain() != chain {
-            return Err("Keychain LAN signing is unavailable on this Bitcoin chain.".into());
+            return Err("Mobile LAN signing is unavailable on this Bitcoin chain.".into());
         }
         let expected = WalletId::for_imported(&wallet, chain).map_err(|e| e.to_string())?;
         if wallet_id != expected {

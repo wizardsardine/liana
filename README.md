@@ -80,7 +80,7 @@ At runtime the gui looks for the bridge binary next to the gui executable, then 
 
 ## Connect signing flow
 
-Multi-signer Keychain signing — desktop collects signatures from contacts whose private keys live in the Coincube Keychain phone app, via the Connect gRPC stream. See [`docs/SIGNING_FLOW.md`](docs/SIGNING_FLOW.md) for the architecture, the happy-path sequence, the failure-mode UX inventory, and debugging guidance.
+Multi-signer Mobile signing — desktop collects signatures from contacts whose private keys live in the COINCUBE Mobile phone app, via the Connect gRPC stream. See [`docs/SIGNING_FLOW.md`](docs/SIGNING_FLOW.md) for the architecture, the happy-path sequence, the failure-mode UX inventory, and debugging guidance.
 
 ## Security
 

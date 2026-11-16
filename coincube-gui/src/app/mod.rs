@@ -1110,7 +1110,7 @@ pub enum ConnectionStatus {
 
 /// What everything Tenshu sends to Connect waits for while live updates
 /// aren't on.
-pub const CONNECT_WAITS_FOR: &str = "Keychain signing, Recovery Kits and Cube backups to Connect";
+pub const CONNECT_WAITS_FOR: &str = "Mobile signing, Recovery Kits and Cube backups to Connect";
 
 /// The status light on the Connect control's account glyph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1152,7 +1152,7 @@ impl ConnectionStatus {
             }
             Self::Connected => Some(
                 coincube_ui::locale::copy(
-                    "Keychain signing requests and signatures arrive as they happen.",
+                    "Mobile signing requests and signatures arrive as they happen.",
                 )
                 .to_owned(),
             ),
@@ -1160,14 +1160,14 @@ impl ConnectionStatus {
                 "No internet connection. COINCUBE Desktop reconnects when you’re back online. \
                  {CONNECT_WAITS_FOR} wait until then.",
                 "Sin conexión a internet. COINCUBE Desktop se vuelve a conectar cuando vuelvas a estar \
-                 en línea. La firma con Keychain, los Kits de recuperación y las copias de \
+                 en línea. La firma con Mobile, los Kits de recuperación y las copias de \
                  Cubes en Connect esperan hasta entonces."
             )),
             Self::Reconnecting => Some(coincube_ui::localized_format!(
                 "COINCUBE Desktop can’t reach Connect right now and keeps trying. \
                  {CONNECT_WAITS_FOR} wait until it’s back.",
                 "COINCUBE Desktop no puede conectarse con Connect en este momento y lo sigue intentando. \
-                 La firma con Keychain, los Kits de recuperación y las copias de Cubes en \
+                 La firma con Mobile, los Kits de recuperación y las copias de Cubes en \
                  Connect esperan hasta que vuelva."
             )),
             Self::Renewing => Some(
@@ -1206,7 +1206,7 @@ pub fn renew_failed_detail() -> String {
         "Connect stopped recognizing this computer, and renewing its link automatically \
          didn’t work. {CONNECT_WAITS_FOR} wait until it does.",
         "Connect dejó de reconocer esta computadora y no se pudo renovar su vínculo \
-         automáticamente. La firma con Keychain, los Kits de recuperación y las copias de \
+         automáticamente. La firma con Mobile, los Kits de recuperación y las copias de \
          Cubes en Connect esperan hasta que se renueve."
     )
 }
@@ -1231,7 +1231,7 @@ impl SignedOutBy {
     pub fn detail(&self) -> String {
         coincube_ui::localized_format!(
             "Sign in to use {CONNECT_WAITS_FOR} again.",
-            "Inicia sesión para volver a usar la firma con Keychain, los Kits de recuperación \
+            "Inicia sesión para volver a usar la firma con Mobile, los Kits de recuperación \
              y las copias de Cubes en Connect."
         )
     }
@@ -6775,7 +6775,7 @@ impl App {
                                 "EnsureConnectReady: no Connect gRPC URL available for {network}"
                             );
                             return info_toast(
-                                "Keychain signing over Connect isn't available on this network. \
+                                "Mobile signing over Connect isn't available on this network. \
                                  Pair a phone over Wi-Fi to sign locally instead.",
                             );
                         };
