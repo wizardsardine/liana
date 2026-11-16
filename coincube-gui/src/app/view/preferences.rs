@@ -466,7 +466,7 @@ impl Default for DownloadStatsView<'_> {
             stats: None,
             today: None,
             timeseries: None,
-            period: StatsPeriod::Week,
+            period: StatsPeriod::Year,
             loading: false,
             error: None,
         }

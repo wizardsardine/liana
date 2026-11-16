@@ -56,7 +56,7 @@ impl Default for StatsState {
             request: None,
             timeseries_request: None,
             pending: 0,
-            period: StatsPeriod::Week,
+            period: StatsPeriod::Year,
             stats: None,
             today: None,
             timeseries: None,
@@ -264,6 +264,14 @@ mod tests {
             Some(CopyText::Unavailable.get())
         );
         assert_eq!(about.view().daemon_version, None, "still checking");
+    }
+
+    #[test]
+    fn download_chart_defaults_to_year() {
+        assert_eq!(
+            AboutState::default().view().download_stats.period,
+            StatsPeriod::Year
+        );
     }
 
     #[test]
