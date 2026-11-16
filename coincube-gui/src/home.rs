@@ -1034,6 +1034,15 @@ impl Home {
         // `responses.ErrCubeLimitReached` / "Cube limit reached for this
         // network" in the API's cube handler — change both together.
         if reason.contains("Cube limit reached") {
+            // Estate has no higher plan: deleting is the only remedy.
+            if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+                return Some(localized_format!(
+                    "Out of Cube slots — this Cube is saved on this device only.\n\n\
+                     {} Delete a Cube on this network you no longer need, and \
+                     this one will sync automatically.", "Alcanzaste el límite de Cubes. Este Cube se guardó solo en este dispositivo.\n\n{} Elimina un Cube de esta red que ya no necesites. Este Cube se sincronizará automáticamente.",
+                    self.cube_limit_summary(cube.network),
+                ));
+            }
             return Some(localized_format!(
                 "Out of Cube slots — this Cube is saved on this device only.\n\n\
                  {} Upgrade your Connect account, or delete a Cube on this \
@@ -1963,8 +1972,13 @@ impl Home {
                 // or stale press before the user fills in a name and PIN.
                 if launcher_catalog::project(self).at_limit() {
                     self.set_error(
-                        "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or delete \
-                         a Bitcoin mainnet Cube, to import a wallet.",
+                        if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+                            "Bitcoin mainnet has no free Cube slot on your plan. Delete a \
+                             Bitcoin mainnet Cube to import a wallet."
+                        } else {
+                            "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or \
+                             delete a Bitcoin mainnet Cube, to import a wallet."
+                        },
                     );
                     return Task::none();
                 }
@@ -6569,13 +6583,25 @@ impl Home {
                                     // two pages crammed into one.
                                     if self.showing_create_form() {
                                         if at_limit && !remote_for_net.is_empty() {
+                                            // Estate has no higher plan.
+                                            let message = if launcher_chrome::is_top_tier(
+                                                self.account_tier.display_name(),
+                                            ) {
+                                                localized_format!(
+                                                    "Cube limit reached. {} \
+                                                     Delete a remote Cube to create one here.", "Alcanzaste el límite de Cubes. {} Elimina un Cube remoto para crear uno aquí.",
+                                                    self.cube_limit_summary(self.network),
+                                                )
+                                            } else {
+                                                localized_format!(
+                                                    "Cube limit reached. {} \
+                                                     Upgrade your Connect account or delete a remote Cube to create one here.", "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect o elimina un Cube remoto para crear uno aquí.",
+                                                    self.cube_limit_summary(self.network),
+                                                )
+                                            };
                                             col = col.push(
                                                 Container::new(
-                                                    p1_regular(localized_format!(
-                                                        "Cube limit reached. {} \
-                                                         Upgrade your Connect account or delete a remote Cube to create one here.", "Alcanzaste el límite de Cubes. {} Mejora tu plan de Connect o elimina un Cube remoto para crear uno aquí.",
-                                                        self.cube_limit_summary(self.network),
-                                                    ))
+                                                    p1_regular(message)
                                                     .style(theme::text::secondary),
                                                 )
                                                 .max_width(500),
@@ -11603,12 +11629,16 @@ mod tests {
             "a tier change must start a fresh catalog fetch"
         );
 
-        // The fetch from before the upgrade still lists the Cube as off.
+        // The fetch from before the upgrade lands late with an old view.
         let _ = home.update(Message::RemoteCubesLoaded {
             request_id: inflight,
-            connect_off: vec!["cube-1".to_string()],
+            connect_off: vec!["cube-2".to_string()],
             result: Ok(Vec::new()),
         });
+        assert!(
+            !home.connect_off_cubes.contains("cube-2"),
+            "a fetch from the old tier must be dropped"
+        );
         // The fresh one says Connect is back on.
         let refreshed = home.remote_cubes_request;
         let _ = home.update(Message::RemoteCubesLoaded {
