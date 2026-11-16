@@ -34,7 +34,7 @@ def verify(directory: Path, version: str) -> None:
     directory = directory.resolve(strict=True)
     if not directory.is_dir():
         raise ValueError(f"asset directory is not a directory: {directory}")
-    expected = {f"tenshu-{version}-{target}" for target in TARGETS}
+    expected = {f"coincube-desktop-{version}-{target}" for target in TARGETS}
     manifest_name = f"SHA256SUMS-{version}.txt"
     signature_name = f"{manifest_name}.asc"
     actual = {path.name for path in directory.iterdir() if path.is_file()}

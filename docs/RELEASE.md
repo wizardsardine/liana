@@ -54,10 +54,10 @@ ls "/Volumes/COINCUBE/COINCUBE.app/Contents/MacOS/"        # Coincube + coincube
 codesign --verify --strict "/Volumes/COINCUBE/COINCUBE.app/Contents/MacOS/coincube-spark-bridge"
 
 # Linux
-tar tzf tenshu-<version>-<target>.tar.gz               # coincube + coincube-spark-bridge
+tar tzf coincube-desktop-<version>-<target>.tar.gz               # coincube + coincube-spark-bridge
 
 # Windows — after installing
-dir "C:\Program Files\Tenshu\bin"                      # coincube.exe + coincube-spark-bridge.exe
+dir "C:\Program Files\COINCUBE\bin"                      # coincube.exe + coincube-spark-bridge.exe
 ```
 
 Then check the bridge runs, which needs no API key, mnemonic or network:

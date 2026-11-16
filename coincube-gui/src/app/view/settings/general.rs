@@ -1091,7 +1091,7 @@ pub(crate) fn backup_contents(overview: &BackupOverview) -> BackupContents {
         methods.push(("Password", m));
     }
     if let Some(m) = overview.keychain.as_ref() {
-        methods.push(("Keychain", m));
+        methods.push(("Mobile", m));
     }
 
     match methods.as_slice() {
@@ -1434,7 +1434,7 @@ fn recovery_kit_card<'a>(
             methods.push("Password");
         }
         if keychain_present {
-            methods.push("Keychain");
+            methods.push("Mobile");
         }
         row = row.line(page::muted(localized_format!(
             "Protected by: {}",
@@ -2417,7 +2417,7 @@ mod tests {
             backup_contents(&backup_overview(Some(&st))),
             BackupContents::PerMethod(vec![
                 ("Password", vec!["Master Seed Phrase", "Wallet Descriptor"]),
-                ("Keychain", vec!["Wallet Descriptor"]),
+                ("Mobile", vec!["Wallet Descriptor"]),
             ])
         );
     }

@@ -49,7 +49,7 @@ So, for each platform, CI builds the bridge under the same `minimal` profile as 
 |---|---|
 | macOS | `COINCUBE.app/Contents/MacOS/coincube-spark-bridge`, placed before `rcodesign sign` so the signature seals it |
 | Windows | the MSI's `bin` directory, next to `coincube.exe` |
-| Linux | inside `tenshu-<version>-<target>.tar.gz`, next to `coincube` |
+| Linux | inside `coincube-desktop-<version>-<target>.tar.gz`, next to `coincube` |
 
 Two consequences worth knowing before editing a workflow or a `.wxs`:
 

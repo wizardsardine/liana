@@ -302,7 +302,7 @@ pub fn connections<'a>(cache: &'a Cache) -> Element<'a, Message> {
         let (kind, word) = live_updates_status(status);
         let line = match status {
             ConnectionStatus::Connected => localized_copy(
-                "Signing requests and signatures from Keychain arrive as they happen.",
+                "Signing requests and signatures from COINCUBE Mobile arrive as they happen.",
             )
             .to_owned(),
             ConnectionStatus::Inactive | ConnectionStatus::Connecting => {
@@ -323,7 +323,7 @@ pub fn connections<'a>(cache: &'a Cache) -> Element<'a, Message> {
             ),
         };
         content = content.push(page::group_with_action(
-            localized_copy("Keychain signing"),
+            localized_copy("Mobile signing"),
             page::link(
                 "tenshu.settings.vault-connections.cube",
                 localized_copy("Cube connections"),
@@ -1543,18 +1543,22 @@ pub fn wallet_settings<'a>(
 
     // A Vault without a Keychain key has no Keychain tab to open.
     let pairable = vault.is_some() && !cache.vault_lacks_keychain_key;
-    let pair_row = page::row("Keychain").description(if pairable {
-        localized_copy("Pair a phone holding this Vault's Keychain key. Same Wi-Fi. No Connect account needed.")
+    let pair_row = page::row("Mobile").description(if pairable {
+        localized_copy(
+            "Pair a phone holding this Vault's Mobile key. Same Wi-Fi. No Connect account needed.",
+        )
     } else if vault.is_some() {
-        localized_copy("Unavailable: this Vault has no Keychain key. One can only be added when a Vault is \
-         created.")
+        localized_copy(
+            "Unavailable: this Vault has no Mobile key. One can only be added when a Vault is \
+         created.",
+        )
     } else {
-        localized_copy("Unavailable: this wallet has no Keychain-eligible key in COINCUBE Desktop.")
+        localized_copy("Unavailable: this wallet has no Mobile-eligible key in COINCUBE Desktop.")
     });
     let pair_row = if pairable {
         pair_row.control(page::button(
             VAULT_PAIR_ID,
-            localized_copy("Open Keychain"),
+            localized_copy("Pair phone"),
             Some(Message::Menu(Menu::Vault(VaultSubMenu::Settings(Some(
                 crate::app::menu::SettingsOption::LocalSigning,
             ))))),
@@ -3593,7 +3597,7 @@ mod tests {
             "Sync",
             "Synced to block 974,600.",
             "Node settings",
-            "Keychain signing",
+            "Mobile signing",
             "Signing updates",
             "Cube connections",
         ] {

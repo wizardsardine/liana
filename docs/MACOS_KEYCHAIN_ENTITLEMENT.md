@@ -246,7 +246,7 @@ The pipeline currently proves the app is *signed and notarized*, not that it *wo
 
 ## 7. Stale docs to fix while here
 
-`docs/USAGE.md:43-50` is inherited verbatim from the Liana upstream and is wrong in several ways: it describes `Coincube.zip` / `Coincube-noncodesigned.zip` (CI ships `tenshu-<version>-<target>.dmg`), links `wizardsardine.com`, and cites a Wizardsardine PGP key. Users following it will not find the artifacts.
+`docs/USAGE.md:43-50` is inherited verbatim from the Liana upstream and is wrong in several ways: it describes `Coincube.zip` / `Coincube-noncodesigned.zip` (CI ships `coincube-desktop-<version>-<target>.dmg`), links `wizardsardine.com`, and cites a Wizardsardine PGP key. Users following it will not find the artifacts.
 
 ---
 

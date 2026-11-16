@@ -48,7 +48,7 @@ fn case<'a>(input: &'a Value, name: &str) -> &'a Value {
 fn policy(vector: &Value) -> PhonePolicy {
     let text = vector["descriptor"].as_str().unwrap();
     let imported = ImportedWalletDescriptor::parse(text, None, crate::chain::ChainId::Testnet)
-        .expect("Keychain fixture must pass desktop imported policy");
+        .expect("Mobile fixture must pass desktop imported policy");
     let wallet_id =
         crate::app::settings::WalletId::for_imported(&imported, crate::chain::ChainId::Testnet)
             .unwrap();
@@ -83,7 +83,7 @@ fn phone_for_key(input: &Value, policy: &PhonePolicy, index: usize) -> pairing_s
     pairing_store::PairedPhone {
         signer_binding: Some(binding),
         cert_pin: [7; 32],
-        name: "Synthetic Keychain".into(),
+        name: "Synthetic Mobile".into(),
         paired_at_unix: 1,
         wallet_fingerprints: vec![fingerprint],
         vault_fingerprint: policy.transport_id(),

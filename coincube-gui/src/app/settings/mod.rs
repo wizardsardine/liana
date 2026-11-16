@@ -5514,7 +5514,7 @@ mod test {
         // the password slot. `has_recovery_kit` must still report a kit, so the
         // Home card reads "Backed up" in agreement with Settings — not "no
         // recovery kit" (keychain-crk-status-fixes).
-        let mut cube = CubeSettings::new("Keychain-only".to_string(), Network::Bitcoin);
+        let mut cube = CubeSettings::new("Mobile-only".to_string(), Network::Bitcoin);
         cube.remote_synced = true;
         assert!(cube
             .recovery_kit_last_backed_up_descriptor_fingerprint

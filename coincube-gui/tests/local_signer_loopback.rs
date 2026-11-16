@@ -983,9 +983,9 @@ async fn imported_cached_signer_refuses_before_present_session_after_revocation(
             .await
             .expect_err("cached imported handle lost its authority");
         let expected = if replace {
-            "This Keychain pairing is ambiguous; pair it again."
+            "This phone pairing is ambiguous; pair it again."
         } else {
-            "This Keychain is no longer paired; pair it again."
+            "This phone is no longer paired; pair it again."
         };
         match error {
             async_hwi::Error::Device(message) => assert_eq!(message, expected),

@@ -165,7 +165,7 @@ fn section_routes(menu: &Menu, cache: &Cache) -> Vec<RouteChoice> {
         Some(RouteScope::Vault) => [
             (SettingsOption::Wallet, "Wallet & signers", "wallet"),
             (SettingsOption::Node, "Node", "node"),
-            (SettingsOption::LocalSigning, "Keychain", "pair"),
+            (SettingsOption::LocalSigning, "Mobile", "pair"),
             (SettingsOption::Connections, "Connections", "connections"),
             (SettingsOption::ImportExport, "Data & exports", "data"),
         ]
@@ -329,7 +329,7 @@ mod tests {
         assert!(scopes(&cache).contains(&RouteScope::Vault));
         assert!(section_routes(&menu, &cache)
             .iter()
-            .any(|choice| choice.label == "Keychain" && !choice.enabled));
+            .any(|choice| choice.label == "Mobile" && !choice.enabled));
         assert!(!section_routes(&menu, &cache)
             .iter()
             .any(|choice| choice.label == "Data & exports"));
@@ -345,16 +345,16 @@ mod tests {
         };
         let node = Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node)));
         let mut cache = spark_cache();
-        assert!(labels(&node, &cache).contains(&"Keychain".to_owned()));
+        assert!(labels(&node, &cache).contains(&"Mobile".to_owned()));
 
         cache.vault_lacks_keychain_key = true;
-        assert!(!labels(&node, &cache).contains(&"Keychain".to_owned()));
+        assert!(!labels(&node, &cache).contains(&"Mobile".to_owned()));
         // Still listed while it is the tab open, so the row doesn't vanish
         // from under the reader when a Keychain lookup finds nothing.
         let open = Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning)));
         assert!(section_routes(&open, &cache)
             .iter()
-            .any(|choice| choice.label == "Keychain" && choice.selected));
+            .any(|choice| choice.label == "Mobile" && choice.selected));
     }
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
             [
                 "Wallet & signers",
                 "Node",
-                "Keychain",
+                "Mobile",
                 "Connections",
                 "Data & exports"
             ]

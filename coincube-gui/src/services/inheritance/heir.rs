@@ -51,13 +51,13 @@ pub enum HeirDecryptError {
 impl std::fmt::Display for HeirDecryptError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Keychain(m) => write!(f, "Keychain couldn't complete recovery: {}", m),
+            Self::Keychain(m) => write!(f, "COINCUBE Mobile couldn't complete recovery: {}", m),
             Self::Envelope(m) => write!(f, "The recovery data was malformed: {}", m),
             Self::BadKeyOrCorrupt => {
                 write!(f, "The recovery data couldn't be decrypted on this device.")
             }
             Self::BlobParse(m) => write!(f, "The recovery data wasn't recognised: {}", m),
-            Self::Rejected => write!(f, "The recovery was declined on the Keychain."),
+            Self::Rejected => write!(f, "The recovery was declined in COINCUBE Mobile."),
             Self::Expired => write!(
                 f,
                 "The recovery request expired before it was approved. Please try again."
@@ -651,7 +651,7 @@ mod tests {
         let res = decrypt_envelopes(&mut relay, CUBE, &set).await;
         assert!(
             matches!(res, Err(HeirDecryptError::Keychain(_))),
-            "a create failure surfaces as a Keychain error, got {:?}",
+            "a create failure surfaces as a Mobile error, got {:?}",
             res
         );
         // The whole restore is abandoned before any approval is awaited: no

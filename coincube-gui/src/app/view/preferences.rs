@@ -493,9 +493,9 @@ fn worldview_sharing_row<'a>(sharing: &WorldviewSharing) -> Element<'a, Message>
     };
     let content = Column::new()
         .spacing(8)
-        .push(tenshu_text::label(localized_copy("Share with Keychain")))
+        .push(tenshu_text::label(localized_copy("Share with Mobile")))
         .push(
-            tenshu_text::body(localized_copy("Once sharing is enabled, saved Worldview and artwork changes automatically update Keychain on your Connect account."))
+            tenshu_text::body(localized_copy("Once sharing is enabled, saved Worldview and artwork changes automatically update COINCUBE Mobile on your Connect account."))
                 .size(13)
                 .style(theme::tenshu::text::muted),
         )
@@ -2587,7 +2587,7 @@ mod tests {
         let model = ViewModel {
             saved: Some(DevicePreferences::default()),
             worldview_sharing: WorldviewSharing {
-                status: "Shared with Keychain",
+                status: "Shared with Mobile",
                 shared_selection: Some(("Luke", "The Stone Crossing")),
                 can_refresh: true,
                 can_publish: true,
@@ -2636,7 +2636,7 @@ mod tests {
             ] {
                 coincube_ui::locale::render_in(language, || {
                     let sharing = WorldviewSharing {
-                        status: localized_copy("Shared with Keychain"),
+                        status: localized_copy("Shared with Mobile"),
                         shared_selection: Some(("Suitcoiner", "Gilded Wall Street")),
                         can_refresh: true,
                         can_publish: true,

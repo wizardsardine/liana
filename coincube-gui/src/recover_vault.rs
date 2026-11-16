@@ -330,7 +330,7 @@ pub fn view(panel: &RecoverVaultPanel) -> Element<'_, RecoverVaultMessage> {
         .push(
             p2_regular(localized_copy(
                 "Vaults you're a keyholder for appear here. When a vault's \
-                 recovery window opens, you can recover it with your Keychain — \
+                 recovery window opens, you can recover it with COINCUBE Mobile — \
                  no password needed.",
             ))
             .style(theme::text::secondary),
@@ -444,7 +444,7 @@ fn recover_status_view(status: &RecoverStatus) -> Element<'_, RecoverVaultMessag
             .style(theme::text::secondary)
             .into(),
         RecoverStatus::Ready => p2_bold(localized_copy(
-            "Recovery data received — approve on your Keychain",
+            "Recovery data received — approve in COINCUBE Mobile",
         ))
         .into(),
         RecoverStatus::Failed(copy) => p2_regular(coincube_ui::locale::notice(copy.clone()))

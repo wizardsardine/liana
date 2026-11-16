@@ -1156,7 +1156,7 @@ impl PsbtState {
                 let missing = keychain_connect_missing(cache);
                 if !missing.is_empty() {
                     tracing::info!(
-                        "Keychain signer selected but Connect not ready (missing {})",
+                        "Mobile signer selected but Connect not ready (missing {})",
                         missing.join(", ")
                     );
                     self.modal = Some(PsbtModal::KeychainUnavailable(KeychainUnavailableModal {
@@ -2504,7 +2504,7 @@ impl SignModal {
                 let state = match self.lan_failures.get(&fp) {
                     None => St::Available(Act::Hardware(i)),
                     Some(true) => St::LanFailed {
-                        reason: "This Keychain needs to be paired again.".to_string(),
+                        reason: "This phone needs to be paired again.".to_string(),
                         retry: None,
                         connect: connect_idle,
                     },
@@ -2566,7 +2566,7 @@ impl SignModal {
         if self.keychain.as_ref().is_some_and(|k| k.is_loading()) {
             return (
                 Kind::Unknown,
-                St::Disabled("Looking up Keychain signers…".to_string()),
+                St::Disabled("Looking up Mobile signers…".to_string()),
             );
         }
         // Unidentified: an external key whose device isn't connected and which
@@ -2726,8 +2726,8 @@ impl SignModal {
         let mut notices = Vec::new();
         if let Some(err) = k.error() {
             notices.push(coincube_ui::localized_format!(
-                "Couldn't start Keychain signing: {}",
-                "No se pudo iniciar la firma con Keychain: {}",
+                "Couldn't start Mobile signing: {}",
+                "No se pudo iniciar la firma con Mobile: {}",
                 coincube_ui::locale::notice(err.to_string())
             ));
         }

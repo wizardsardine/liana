@@ -452,7 +452,7 @@ impl Step for Review {
                     } else if key.is_some_and(|k| k.keychain_key_id.is_some()) {
                         (
                             format!("fingerprint {fp}"),
-                            "Keychain metadata recorded; verify on the phone",
+                            "Mobile metadata recorded; verify on the phone",
                         )
                     } else if ctx.hws.iter().any(|(_, fingerprint, _)| *fingerprint == fp) {
                         (

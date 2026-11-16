@@ -123,7 +123,7 @@ impl KeyResolveError {
         match self {
             Self::Locked => format!(
                 "“{}” is encrypted to this Cube's key, which isn't available on this device. \
-                 Restore this Cube from its seed to use Keychain keys.",
+                 Restore this Cube from its seed to use Mobile keys.",
                 key_name
             ),
             Self::WrongNetwork { .. } => {
