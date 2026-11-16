@@ -1,4 +1,7 @@
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
+
+#[cfg(test)]
+mod coverage_tests;
 use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::localized_format;
 

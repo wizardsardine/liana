@@ -16,6 +16,9 @@ use crate::services::coincube::{DownloadStats, StatsPeriod, TimeseriesPoint};
 
 const DOWNLOAD_GOAL: u32 = 1_000_000;
 
+#[cfg(test)]
+mod coverage_tests;
+
 #[allow(clippy::too_many_arguments)]
 pub fn install_stats_section<'a>(
     menu: &'a Menu,

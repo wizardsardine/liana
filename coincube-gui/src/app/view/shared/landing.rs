@@ -316,6 +316,32 @@ pub(crate) mod capture {
         inspect_at_width(scenario, content, outer, appearance, theme, outer.0)
     }
 
+    /// Exercise layout and actual software drawing, including style closures
+    /// and canvases, without changing process-wide screenshot settings.
+    pub fn inspect_rendered_full_window<M: 'static>(
+        scenario: &str,
+        content: Element<'_, M>,
+        outer: (u32, u32),
+        appearance: &str,
+        theme: theme::Theme,
+    ) -> Inspection {
+        inspect_sized(
+            scenario,
+            content,
+            outer,
+            appearance,
+            theme,
+            (outer.0, outer.1.saturating_sub(100).max(1)),
+            InspectionMode::DrawScroll,
+        )
+    }
+
+    enum InspectionMode {
+        LayoutScroll,
+        LayoutFill,
+        DrawScroll,
+    }
+
     /// Activity and payment forms use the wide dashboard body rather than the
     /// ordinary 8/10 content width. Match its measured shell width in captures.
     pub fn inspect_wide_content<M: 'static>(
@@ -347,7 +373,7 @@ pub(crate) mod capture {
             appearance,
             theme,
             (width, height),
-            false,
+            InspectionMode::LayoutFill,
         )
     }
 
@@ -367,7 +393,7 @@ pub(crate) mod capture {
             appearance,
             theme,
             (width, height),
-            true,
+            InspectionMode::LayoutScroll,
         )
     }
 
@@ -378,7 +404,7 @@ pub(crate) mod capture {
         appearance: &str,
         theme: theme::Theme,
         (width, height): (u32, u32),
-        scroll: bool,
+        mode: InspectionMode,
     ) -> Inspection {
         for bytes in font::load() {
             iced::advanced::graphics::text::font_system()
@@ -393,7 +419,7 @@ pub(crate) mod capture {
             Some("tiny-skia"),
         ))
         .expect("software renderer for a synthetic R06a presenter");
-        let mut element: Element<'_, M> = if scroll {
+        let mut element: Element<'_, M> = if !matches!(mode, InspectionMode::LayoutFill) {
             iced::widget::scrollable(content)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -428,8 +454,8 @@ pub(crate) mod capture {
                 width
             );
         }
-        if let Ok(directory) = std::env::var("R06A_CAPTURE_DIR") {
-            std::fs::create_dir_all(&directory).expect("create disposable capture directory");
+        let capture_directory = std::env::var("R06A_CAPTURE_DIR").ok();
+        if matches!(mode, InspectionMode::DrawScroll) || capture_directory.is_some() {
             let viewport = Rectangle::with_size(size);
             element.as_widget_mut().update(
                 &mut tree,
@@ -459,18 +485,22 @@ pub(crate) mod capture {
                 1.0,
                 theme.colors.general.background,
             );
-            let filename = format!(
-                "{scenario}-{appearance}-{}x{}-content-only-synthetic.png",
-                outer.0, outer.1
-            );
-            image::save_buffer(
-                std::path::Path::new(&directory).join(filename),
-                &pixels,
-                width,
-                height,
-                image::ColorType::Rgba8,
-            )
-            .expect("save synthetic R06a presenter capture");
+            assert_eq!(pixels.len(), width as usize * height as usize * 4);
+            if let Some(directory) = capture_directory {
+                std::fs::create_dir_all(&directory).expect("create disposable capture directory");
+                let filename = format!(
+                    "{scenario}-{appearance}-{}x{}-content-only-synthetic.png",
+                    outer.0, outer.1
+                );
+                image::save_buffer(
+                    std::path::Path::new(&directory).join(filename),
+                    &pixels,
+                    width,
+                    height,
+                    image::ColorType::Rgba8,
+                )
+                .expect("save synthetic R06a presenter capture");
+            }
         }
         Inspection {
             text: probe.entries,

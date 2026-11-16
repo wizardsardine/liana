@@ -23,6 +23,9 @@ use super::{
 };
 use coincube_ui::font;
 
+#[cfg(test)]
+mod coverage_tests;
+
 /// Top-level contacts dispatcher.
 pub fn contacts_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     match &state.contacts_state.step {

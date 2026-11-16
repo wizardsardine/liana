@@ -51,6 +51,9 @@ const COORDINATOR_MISMATCH_MSG: &str =
     "Active Mostro coordinator doesn't match this wallet's network — select a matching \
      coordinator in P2P → Settings.";
 
+#[cfg(test)]
+mod coverage_tests;
+
 /// Per-field validation warnings for the order creation form.
 /// Which chat view is currently active (mutually exclusive).
 #[derive(Default, PartialEq)]
