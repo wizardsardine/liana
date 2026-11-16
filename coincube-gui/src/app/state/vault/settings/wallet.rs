@@ -223,6 +223,14 @@ impl State for WalletSettingsState {
                     };
                 }
                 if let Modal::RegisterWallet(modal) = &mut self.modal {
+                    // The modal takes the result, but this panel's wallet
+                    // must follow it too (as the Vault settings wrapper's
+                    // does): a name save that lands while Register is open
+                    // would otherwise still read as "Not saved yet" once it
+                    // closes. Signer fields keep what was typed.
+                    if let Ok(wallet) = &res {
+                        self.wallet = wallet.clone();
+                    }
                     modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
                 } else {
                     match res {
@@ -760,6 +768,47 @@ mod chain_tests {
             )),
         );
         assert_eq!(kind(&state), None);
+        let _ = std::fs::remove_dir_all(dir.path());
+    }
+
+    /// A Vault name save that lands while Register is open: the modal takes
+    /// the result, and once it closes the field says the name was saved,
+    /// not "Not saved yet".
+    #[tokio::test]
+    async fn vault_name_saved_while_register_is_open_reads_saved_after_it_closes() {
+        use crate::app::view::settings::page::Status;
+        let descriptor = crate::app::state::vault::test_support::unified::fixture().descriptor;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(ChainId::Bitcoin));
+        let dir = CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("coincube-vault-name-reg-{}", uuid::Uuid::new_v4())),
+        );
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let mut state =
+            WalletSettingsState::new(dir.clone(), wallet.clone(), Arc::new(Config::new(false)));
+        let cache = Cache::default();
+        let send = |state: &mut WalletSettingsState, message| {
+            drop(state.update(Some(daemon.clone()), &cache, message))
+        };
+        let settings = |intent| Message::View(view::Message::Settings(intent));
+
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Savings".into())),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        send(&mut state, settings(view::SettingsMessage::RegisterWallet));
+        assert!(matches!(state.modal, Modal::RegisterWallet(_)));
+        send(
+            &mut state,
+            Message::WalletUpdated(Ok(Arc::new(
+                wallet.as_ref().clone().with_alias(Some("Savings".into())),
+            ))),
+        );
+        send(&mut state, Message::View(view::Message::Close));
+        assert!(state.modal.is_none());
+        assert_eq!(state.name_status().map(|(kind, _)| kind), Some(Status::Ok));
         let _ = std::fs::remove_dir_all(dir.path());
     }
 
