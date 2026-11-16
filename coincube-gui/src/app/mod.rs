@@ -1009,6 +1009,8 @@ pub struct App {
     received_celebration_context: String,
     /// The receipt's "Into …" line for the payment shown, untranslated.
     received_celebration_wallet: &'static str,
+    /// The receipt's ID row: its untranslated label and the full ID.
+    received_celebration_id: Option<(&'static str, String)>,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
     received_celebration_image: iced::widget::image::Handle,
     /// tx_ids of recent incoming payments we've already toasted for in
@@ -3905,6 +3907,7 @@ impl App {
             received_celebration_amount: String::new(),
             received_celebration_context: "transaction-received".to_string(),
             received_celebration_wallet: "",
+            received_celebration_id: None,
             received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                 "transaction-received",
             ),
@@ -4187,6 +4190,7 @@ impl App {
                 received_celebration_amount: String::new(),
                 received_celebration_context: "transaction-received".to_string(),
                 received_celebration_wallet: "",
+                received_celebration_id: None,
                 received_celebration_quote: coincube_ui::component::quote_display::random_quote(
                     "transaction-received",
                 ),
@@ -9209,6 +9213,7 @@ impl App {
             Message::ShowReceivedCelebration {
                 context,
                 amount_sat,
+                payment_id,
             } => {
                 // Drive the same global overlay the Liquid `PaymentSucceeded`
                 // handler uses, but for a Spark deposit that just claimed (the
@@ -9228,6 +9233,9 @@ impl App {
                     coincube_ui::component::quote_display::image_handle_for_context(&context);
                 self.received_celebration_context = context.clone();
                 self.received_celebration_wallet = "Into Spark";
+                self.received_celebration_id = payment_id
+                    .filter(|id| !id.is_empty())
+                    .map(|id| ("Payment ID", id));
                 self.show_received_celebration = true;
                 // A Spark swap's bitcoin just landed. Forward the arrival to the
                 // cross-network Receive flow so it advances from "Bitcoin
@@ -9321,10 +9329,10 @@ impl App {
 
                 match event {
                     SparkEvent::PaymentSucceeded {
+                        id,
                         amount_sat,
                         bolt11,
                         token,
-                        ..
                     } => {
                         // Phase 4f: forward the BOLT11 field so the
                         // Receive panel can correlate against its
@@ -9334,6 +9342,7 @@ impl App {
                         let is_token = token.is_some();
                         tasks.push(Task::done(Message::View(view::Message::SparkReceive(
                             view::SparkReceiveMessage::PaymentReceived {
+                                payment_id: id,
                                 amount_sat,
                                 bolt11,
                                 token,
@@ -9549,6 +9558,11 @@ impl App {
                             };
                             self.received_celebration_context = context.to_string();
                             self.received_celebration_wallet = "Into Liquid";
+                            self.received_celebration_id = details
+                                .tx_id
+                                .clone()
+                                .filter(|id| !id.is_empty())
+                                .map(|id| ("Transaction ID", id));
                             self.received_celebration_quote =
                                 coincube_ui::component::quote_display::random_quote(context);
                             self.received_celebration_image =
@@ -10348,6 +10362,17 @@ impl App {
         .on_activity(view::Message::ReceivedCelebrationActivity);
         if !self.received_celebration_wallet.is_empty() {
             page = page.detail(coincube_ui::locale::copy(self.received_celebration_wallet));
+        }
+        if let Some((label, id)) = &self.received_celebration_id {
+            use coincube_ui::component::payment_result::{short_id, ReceiptRow};
+            page = page.row(
+                ReceiptRow::new(coincube_ui::locale::copy(label), short_id(id))
+                    .mono()
+                    .on_copy(view::Message::CopyWithToast(
+                        id.clone(),
+                        format!("{label} copied to clipboard"),
+                    )),
+            );
         }
         page.into()
     }
@@ -16597,6 +16622,7 @@ mod hidden_liquid_receive_tests {
         drop(app.update(super::Message::ShowReceivedCelebration {
             context: "spark-receive".to_string(),
             amount_sat: 12_345,
+            payment_id: None,
         }));
         let _ = std::fs::remove_dir_all(&root);
         assert!(app.show_received_celebration);

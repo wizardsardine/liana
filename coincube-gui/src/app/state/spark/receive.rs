@@ -160,6 +160,9 @@ pub struct SparkReceive {
     pub displayed_invoice: Option<String>,
     /// Formatted amount string for the celebration screen.
     received_amount_display: String,
+    /// The received payment's ID for the receipt; `None` once several
+    /// payments add up on one receipt.
+    received_payment_id: Option<String>,
     /// Quote context key for the celebration screen (e.g. "lightning-receive").
     received_celebration_context: String,
     /// Quote and image handle for the celebration screen.
@@ -226,6 +229,7 @@ impl SparkReceive {
             pending_deposit_confirmations: HashMap::new(),
             displayed_invoice: None,
             received_amount_display: String::new(),
+            received_payment_id: None,
             received_celebration_context: "lightning-receive".to_string(),
             received_quote: coincube_ui::component::quote_display::random_quote(
                 "lightning-receive",
@@ -403,6 +407,7 @@ impl State for SparkReceive {
                 network: cache.network,
                 cube_name: &cache.cube_name,
                 received_amount_display: &self.received_amount_display,
+                received_payment_id: self.received_payment_id.as_deref(),
                 received_celebration_context: &self.received_celebration_context,
                 received_quote: &self.received_quote,
                 received_image_handle: &self.received_image_handle,
@@ -851,6 +856,7 @@ impl State for SparkReceive {
                 Task::none()
             }
             SparkReceiveMessage::PaymentReceived {
+                payment_id,
                 amount_sat,
                 bolt11,
                 token,
@@ -938,6 +944,10 @@ impl State for SparkReceive {
                     } => (prev.saturating_add(amount_sat), count.saturating_add(1)),
                     _ => (amount_sat, 1),
                 };
+                // One payment's receipt carries its ID; a running total of
+                // several has no single ID to show.
+                self.received_payment_id =
+                    (count == 1 && !payment_id.is_empty()).then_some(payment_id);
                 // The receipt shows how many payments the total covers.
                 self.received_amount_display = match &token {
                     Some(token) => format!(
@@ -1134,6 +1144,7 @@ impl State for SparkReceive {
                     tasks.push(Task::done(Message::ShowReceivedCelebration {
                         context: "spark-receive".to_string(),
                         amount_sat,
+                        payment_id: ok.payment_id.clone(),
                     }));
                 }
                 Task::batch(tasks)
@@ -2005,6 +2016,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 4_000,
                 bolt11: None,
                 token: None,
@@ -2016,6 +2028,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 9_000_000,
                 bolt11: None,
                 token: Some(coincube_spark_protocol::PaymentToken {
@@ -2031,6 +2044,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 12_500_000,
                 bolt11: None,
                 token: usdb_token(),
@@ -2051,6 +2065,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 12_500_000,
                 bolt11: None,
                 token: usdb_token(),
@@ -2066,6 +2081,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 100,
                 bolt11: None,
                 token: None,
@@ -2080,6 +2096,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: -100,
                 bolt11: Some("lnbc1invoice".to_string()),
                 token: None,
@@ -2090,6 +2107,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 100,
                 bolt11: Some("lnbc1other".to_string()),
                 token: None,
@@ -2109,6 +2127,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 321,
                 bolt11: Some("lnbc1invoice".to_string()),
                 token: None,
@@ -2123,6 +2142,7 @@ mod tests {
             }
         ));
         assert_eq!(panel.received_amount_display, "321 sats");
+        assert_eq!(panel.received_payment_id.as_deref(), Some("test-payment"));
         assert_eq!(panel.received_celebration_context, "lightning-receive");
         assert!(panel.qr_data.is_none());
         assert!(panel.displayed_invoice.is_none());
@@ -2140,6 +2160,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 100,
                 bolt11: None,
                 token: None,
@@ -2148,6 +2169,7 @@ mod tests {
         update(
             &mut panel,
             SparkReceiveMessage::PaymentReceived {
+                payment_id: "test-payment".to_string(),
                 amount_sat: 50,
                 bolt11: None,
                 token: None,
@@ -2162,6 +2184,8 @@ mod tests {
             }
         ));
         assert_eq!(panel.received_amount_display, "150 sats");
+        // A running total of two payments has no single ID to show.
+        assert_eq!(panel.received_payment_id, None);
         assert_eq!(panel.received_celebration_context, "spark-receive");
     }
 

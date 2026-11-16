@@ -1408,10 +1408,16 @@ fn route_card_style(theme: &theme::Theme) -> container::Style {
 pub fn received_celebration_page<'a>(
     context: &str,
     amount_display: &'a str,
+    tx_id: Option<&str>,
     quote: &'a coincube_ui::component::quote_display::Quote,
     image_handle: &'a iced::widget::image::Handle,
 ) -> Element<'a, LiquidReceiveMessage> {
-    use coincube_ui::component::payment_result::{payment_result, Outcome};
+    use coincube_ui::component::payment_result::{payment_result, short_id, Outcome, ReceiptRow};
+    let id_row = tx_id.map(|id| {
+        ReceiptRow::new(localized_copy("Transaction ID"), short_id(id))
+            .mono()
+            .on_copy(LiquidReceiveMessage::CopyReceivedTxId(id.to_string()))
+    });
     payment_result(
         Outcome::Received,
         amount_display,
@@ -1421,6 +1427,7 @@ pub fn received_celebration_page<'a>(
         LiquidReceiveMessage::DismissCelebration,
     )
     .detail(localized_copy("Into Liquid"))
+    .rows(id_row)
     .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
     .into()
 }
