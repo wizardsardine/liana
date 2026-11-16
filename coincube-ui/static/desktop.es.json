@@ -3303,5 +3303,12 @@
   "Review and confirm": "Revisar y confirmar",
   "Total you send": "Total que envías",
   "built in": "integrado",
-  "COINCUBE Desktop is open source under the BSD 3-Clause License.": "COINCUBE Desktop es de código abierto bajo la licencia BSD de 3 cláusulas."
+  "COINCUBE Desktop is open source under the BSD 3-Clause License.": "COINCUBE Desktop es de código abierto bajo la licencia BSD de 3 cláusulas.",
+  "Connected hardware wallets": "Carteras de hardware conectadas",
+  "None yet. Connect and unlock a device; it appears here with its fingerprint.": "Ninguna todavía. Conecta y desbloquea un dispositivo; aparecerá aquí con su huella.",
+  "locked; unlock it to read its fingerprint": "bloqueado; desbloquéalo para leer su huella",
+  "open the Bitcoin app on it": "abre la app de Bitcoin en él",
+  "set to a different network": "configurado para otra red",
+  "firmware too old; update it": "firmware demasiado antiguo; actualízalo",
+  "not supported": "no compatible"
 }

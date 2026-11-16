@@ -7,7 +7,7 @@
 
 use coincube_core::{
     imported_keys::ImportedAccount,
-    miniscript::{DescriptorPublicKey, ForEachKey},
+    miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey, ForEachKey},
     wallet_descriptor::ImportedWalletDescriptor,
 };
 use coincube_ui::{
@@ -51,6 +51,31 @@ impl KeySource {
     }
 }
 
+/// A connected hardware wallet, as the Keys step lists it so the user can
+/// tell which device holds which key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ListedDevice {
+    pub(super) name: String,
+    /// Unknown while the device is locked or cannot be read.
+    pub(super) fingerprint: Option<Fingerprint>,
+    /// Why the device cannot be checked yet, in English.
+    pub(super) problem: Option<&'static str>,
+}
+
+/// A device kind as people name it.
+pub(super) fn device_name(kind: &async_hwi::DeviceKind) -> &'static str {
+    use async_hwi::DeviceKind;
+    match kind {
+        DeviceKind::BitBox02 => "BitBox02",
+        DeviceKind::Coldcard => "Coldcard",
+        DeviceKind::Specter => "Specter",
+        DeviceKind::SpecterSimulator => "Specter simulator",
+        DeviceKind::Ledger => "Ledger",
+        DeviceKind::LedgerSimulator => "Ledger simulator",
+        DeviceKind::Jade => "Jade",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum KeyStatus {
     Missing,
@@ -84,12 +109,14 @@ pub(super) struct KeysState {
 }
 
 impl KeysState {
+    /// Every signer starts on a hardware wallet, the safer place for a key
+    /// (Robert, 2026-11-16).
     pub(super) fn new(descriptor: &ImportedWalletDescriptor) -> Self {
         let slots = signers(descriptor)
             .into_iter()
             .map(|account| KeySlot {
                 account,
-                source: KeySource::Words,
+                source: KeySource::Hardware,
                 words: Zeroizing::new(String::new()),
                 passphrase: Zeroizing::new(String::new()),
                 status: KeyStatus::Missing,
@@ -100,6 +127,15 @@ impl KeysState {
         Self { slots, threshold }
     }
 
+    /// Every signer starts on `source` instead, for when a device cannot be
+    /// used: adding words to an attached wallet, or no device access.
+    pub(super) fn starting_on(mut self, source: KeySource) -> Self {
+        for slot in &mut self.slots {
+            slot.source = source;
+        }
+        self
+    }
+
     pub(super) fn multisig(&self) -> bool {
         self.slots.len() > 1
     }
@@ -108,12 +144,16 @@ impl KeysState {
         self.slots.iter().filter(|slot| slot.provided()).count()
     }
 
-    /// Enough keys to sign, and every other signer settled.
+    /// Enough keys to sign, and none still checking. Every signer not
+    /// provided then signs elsewhere, whether or not it was marked so: the
+    /// threshold is all the wallet needs (Robert, 2026-11-16).
     pub(super) fn ready(&self) -> bool {
-        self.provided() >= self.threshold
-            && self.slots.iter().all(|slot| {
-                slot.provided() || (slot.source == KeySource::Elsewhere && self.multisig())
-            })
+        self.provided() >= self.threshold && !self.checking()
+    }
+
+    /// The signers this Cube cannot sign for.
+    pub(super) fn signs_elsewhere(&self) -> usize {
+        self.slots.iter().filter(|slot| !slot.provided()).count()
     }
 
     /// Adding words to an attached wallet: at least one verified set of
@@ -171,11 +211,7 @@ impl KeysState {
             self.slots.len(),
             sources.join(localized_copy(" and "))
         );
-        let elsewhere = self
-            .slots
-            .iter()
-            .filter(|slot| slot.source == KeySource::Elsewhere)
-            .count();
+        let elsewhere = self.signs_elsewhere();
         if elsewhere > 0 {
             line.push_str(&coincube_ui::localized_format!(
                 " · {elsewhere} signs elsewhere",
@@ -226,11 +262,60 @@ fn message(message: ImportMessage) -> view::Message {
     view::Message::ImportedBitcoin(message)
 }
 
+/// The connected hardware wallets with their fingerprints, each matched to
+/// the key it holds.
+fn devices_list<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<'a, view::Message> {
+    let mut list = Column::new()
+        .spacing(6)
+        .push(p1_bold(localized_copy("Connected hardware wallets")));
+    if devices.is_empty() {
+        list = list.push(
+            p2_regular(localized_copy(
+                "None yet. Connect and unlock a device; it appears here with its fingerprint.",
+            ))
+            .style(theme::text::secondary),
+        );
+    }
+    for device in devices {
+        let name = &device.name;
+        let line = match (device.problem, device.fingerprint) {
+            (Some(problem), _) => p2_regular(format!("{name} · {}", localized_copy(problem)))
+                .style(theme::text::warning),
+            (None, Some(fingerprint)) => match keys
+                .slots
+                .iter()
+                .position(|slot| slot.account.fingerprint == fingerprint)
+            {
+                Some(index) => p2_regular(coincube_ui::localized_format!(
+                    "{name} · fingerprint {fingerprint} · Key {} of {}",
+                    "{name} · huella {fingerprint} · clave {} de {}",
+                    index + 1,
+                    keys.slots.len()
+                ))
+                .style(theme::text::success),
+                None => p2_regular(coincube_ui::localized_format!(
+                    "{name} · fingerprint {fingerprint} · not a signer of this wallet",
+                    "{name} · huella {fingerprint} · no firma en esta cartera"
+                ))
+                .style(theme::text::secondary),
+            },
+            (None, None) => p2_regular(name.clone()).style(theme::text::secondary),
+        };
+        list = list.push(line);
+    }
+    coincube_ui::widget::Container::new(list)
+        .padding(16)
+        .width(Length::Fill)
+        .style(theme::card::simple)
+        .into()
+}
+
 /// The Keys step's form and action row.
 pub(super) fn step<'a>(
     keys: &'a KeysState,
     adding: bool,
     hardware_connected: impl Fn(&ImportedAccount) -> bool,
+    devices: &[ListedDevice],
     error: Option<&'a String>,
 ) -> (Element<'a, view::Message>, Element<'a, view::Message>) {
     let count = keys.slots.len();
@@ -240,10 +325,10 @@ pub(super) fn step<'a>(
     } else if keys.multisig() {
         coincube_ui::localized_format!(
             "The descriptor names {count} signers and needs {} to spend. Provide at least {} \
-             of them; mark the others as signing elsewhere. Each key is checked against its \
+             of them; the others sign elsewhere. Each key is checked against its \
              fingerprint before it is accepted.",
             "El descriptor indica {count} firmantes y se necesitan {} para gastar. Aporta al \
-             menos {} de sus claves; marca las demás como firma en otro lugar. Cada clave se \
+             menos {} de sus claves; las demás firman en otro lugar. Cada clave se \
              verifica con su huella antes de aceptarla.",
             keys.threshold,
             keys.threshold
@@ -256,6 +341,14 @@ pub(super) fn step<'a>(
         .spacing(20)
         .push(h3(localized_copy("Add the wallet's keys")))
         .push(p1_regular(lead).style(theme::text::secondary));
+    let awaiting_device = !adding
+        && keys
+            .slots
+            .iter()
+            .any(|slot| slot.source == KeySource::Hardware && !slot.provided());
+    if awaiting_device {
+        content = content.push(devices_list(keys, devices));
+    }
     let busy = keys.checking();
     for (index, slot) in keys.slots.iter().enumerate() {
         let mut card = Column::new()
@@ -291,13 +384,15 @@ pub(super) fn step<'a>(
         let mut sources = Row::new().spacing(8);
         // Adding to an attached wallet only stores words; a device needs
         // nothing stored.
-        let mut choices = vec![KeySource::Words];
-        if !adding {
-            choices.push(KeySource::Hardware);
+        let choices = if adding {
+            vec![KeySource::Words]
+        } else {
+            let mut choices = vec![KeySource::Hardware, KeySource::Words];
             if keys.multisig() {
                 choices.push(KeySource::Elsewhere);
             }
-        }
+            choices
+        };
         for source in choices {
             let pick = if slot.source == source {
                 button::primary(None, localized_copy(source.label()))
@@ -363,27 +458,38 @@ pub(super) fn step<'a>(
                             .then_some(message(ImportMessage::VerifyWords(index))),
                         ),
                 ),
-            KeySource::Hardware => {
-                let connected = hardware_connected(&slot.account);
-                card.push(
-                    caption(if connected {
-                        localized_copy(
-                            "The seed stays on the device. It signs whenever this wallet spends.",
-                        )
-                    } else {
-                        localized_copy("Connect and unlock the device with this fingerprint.")
-                    })
-                    .style(theme::text::secondary),
+            KeySource::Hardware if slot.status == KeyStatus::Verified => card.push(
+                caption(localized_copy(
+                    "The seed stays on the device. It signs whenever this wallet spends.",
+                ))
+                .style(theme::text::secondary),
+            ),
+            // The check is offered only once the matching device shows up,
+            // and then says so plainly.
+            KeySource::Hardware if hardware_connected(&slot.account) => card
+                .push(
+                    caption(coincube_ui::localized_format!(
+                        "The device with fingerprint {} is connected. Check it to confirm this key.",
+                        "El dispositivo con la huella {} está conectado. Compruébalo para confirmar esta clave.",
+                        slot.account.fingerprint
+                    ))
+                    .style(theme::text::success),
                 )
                 .push(
-                    button::secondary(None, localized_copy("Check device"))
+                    button::primary(None, localized_copy("Check device"))
                         .width(Length::Shrink)
                         .on_press_maybe(
-                            (!busy && connected && slot.status != KeyStatus::Verified)
-                                .then_some(message(ImportMessage::CheckDevice(index))),
+                            (!busy).then_some(message(ImportMessage::CheckDevice(index))),
                         ),
-                )
-            }
+                ),
+            KeySource::Hardware => card.push(
+                caption(coincube_ui::localized_format!(
+                    "Connect and unlock the device with fingerprint {}. You can check it here once it is connected.",
+                    "Conecta y desbloquea el dispositivo con la huella {}. Podrás comprobarlo aquí cuando esté conectado.",
+                    slot.account.fingerprint
+                ))
+                .style(theme::text::secondary),
+            ),
             KeySource::Elsewhere => card.push(
                 caption(localized_copy(
                     "Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.",
