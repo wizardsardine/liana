@@ -121,16 +121,16 @@ pub fn nickname_group<'a>(
 }
 
 /// The nickname field's status line. A typed nickname too long to save
-/// already shows its own error, so it is not "unsaved".
+/// already shows its own error, so it gets none.
 pub fn nickname_status(
     input: Option<&str>,
     saved: Option<&str>,
     save: crate::app::cache::NameSave,
 ) -> Option<(page::Status, &'static str)> {
     use crate::app::state::spark::settings::saved_nickname;
-    let unsaved = input
-        .is_some_and(|input| nickname_fits(input) && saved_nickname(input).as_deref() != saved);
-    page::local_name_status(unsaved, save)
+    let valid = input.is_none_or(nickname_fits);
+    let unsaved = input.is_some_and(|input| saved_nickname(input).as_deref() != saved);
+    page::local_name_status(valid, unsaved, save)
 }
 
 impl SparkSettingsView {

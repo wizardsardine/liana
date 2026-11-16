@@ -9044,6 +9044,9 @@ impl App {
                         &self.cube_settings.id,
                     )
                 {
+                    // What was asked for is what is saved: an earlier
+                    // failure no longer applies.
+                    self.settle_failed_spark_nickname();
                     return self.panels.spark_settings.update(
                         self.daemon.clone(),
                         &self.cache,
@@ -9092,6 +9095,7 @@ impl App {
                 // it, unless it is what is saved.
                 if let Some(next) = self.spark_nickname_queued.take() {
                     if next == self.cube_settings.spark_alias {
+                        self.settle_failed_spark_nickname();
                         tasks.push(self.panels.spark_settings.update(
                             self.daemon.clone(),
                             &self.cache,
@@ -10167,6 +10171,15 @@ impl App {
     /// answers. Callers start one only while none is running, so this App's
     /// requests are coalesced; the write itself follows every earlier one
     /// for this Cube, from any App.
+    /// A request that lands on the saved nickname without a write (the
+    /// shortcut, or a queued one) settles an earlier failed save: the field
+    /// then shows what is saved, not "Couldn't save".
+    fn settle_failed_spark_nickname(&mut self) {
+        if self.cache.spark_nickname_save == cache::NameSave::Failed {
+            self.cache.spark_nickname_save = cache::NameSave::Saved;
+        }
+    }
+
     fn start_spark_nickname_write(&mut self, nickname: Option<String>) -> Task<Message> {
         self.spark_nickname_in_flight = Some(nickname.clone());
         self.cache.spark_nickname_save = cache::NameSave::Saving;
@@ -16857,6 +16870,28 @@ mod settings_navigation_integration_tests {
             result: Err("synthetic disk failure".into()),
         }));
         assert_eq!(status(&app), Some(Status::Bad));
+
+        // Back to the saved name: nothing is written, and the failure no
+        // longer applies.
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameEdited(
+                "Daily".into(),
+            ))),
+        );
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameSubmitted(
+                "Daily".into(),
+            ))),
+        );
+        assert_eq!(status(&app), Some(Status::Ok));
+
+        // Too long to save: the field's own error, no status line.
+        drop(
+            app.update(nickname(view::SparkSettingsMessage::NicknameEdited(
+                "a".repeat(crate::app::settings::WALLET_ALIAS_MAXIMUM_LENGTH),
+            ))),
+        );
+        assert_eq!(status(&app), None);
         let _ = std::fs::remove_dir_all(root);
     }
 

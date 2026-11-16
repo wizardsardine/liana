@@ -298,12 +298,17 @@ pub fn status_glyph(kind: Status) -> (Text<'static>, Tone) {
 /// The status line under a name saved only on this device: a save in flight
 /// or a failed one first (the field keeps the submitted text until the save
 /// lands), then an unsaved edit, then the last save. `None` until the name
-/// is edited or saved this session.
+/// is edited or saved this session, and while the typed name is too long
+/// (`valid` false): the field shows its own error and Return does nothing.
 pub fn local_name_status(
+    valid: bool,
     unsaved: bool,
     save: crate::app::cache::NameSave,
 ) -> Option<(Status, &'static str)> {
     use crate::app::cache::NameSave;
+    if !valid {
+        return None;
+    }
     Some(match save {
         NameSave::Saving => (Status::Busy, "Saving…"),
         NameSave::Failed => (Status::Bad, "Couldn't save. Press Return to try again."),

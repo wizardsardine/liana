@@ -119,9 +119,6 @@ pub fn saved_nickname(input: &str) -> Option<String> {
 }
 
 impl SparkSettings {
-    /// A typed nickname that would change the saved one (`saved`), to save
-    /// when the user leaves Balances & conversion without pressing Return.
-    /// One too long to save stays in the field with its error instead.
     /// The nickname field's status line for this panel's typed text, the
     /// saved nickname and the App's save progress.
     pub fn nickname_status(
@@ -135,6 +132,9 @@ impl SparkSettings {
         )
     }
 
+    /// A typed nickname that would change the saved one (`saved`), to save
+    /// when the user leaves Balances & conversion without pressing Return.
+    /// One too long to save stays in the field with its error instead.
     pub fn pending_nickname(&self, saved: Option<&str>) -> Option<String> {
         self.nickname_input
             .as_deref()

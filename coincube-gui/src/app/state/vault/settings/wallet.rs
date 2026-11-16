@@ -123,10 +123,21 @@ impl WalletSettingsState {
     }
 
     /// The Vault name field's status line. A name too long to save already
-    /// shows its own error, so it is not "unsaved".
+    /// shows its own error, so it gets none.
     pub fn name_status(&self) -> Option<(crate::app::view::settings::page::Status, &'static str)> {
-        let unsaved = self.wallet_alias.valid && self.changed_alias().is_some();
-        crate::app::view::settings::page::local_name_status(unsaved, self.name_save)
+        crate::app::view::settings::page::local_name_status(
+            self.wallet_alias.valid,
+            self.changed_alias().is_some(),
+            self.name_save,
+        )
+    }
+
+    /// A save that leaves the Vault name alone means the saved name is the
+    /// one wanted, so an earlier failed name save no longer applies.
+    fn settle_failed_name(&mut self) {
+        if self.name_save == NameSave::Failed {
+            self.name_save = NameSave::Idle;
+        }
     }
 
     /// Whether Settings offers "Register on hardware device". It does on
@@ -202,16 +213,18 @@ impl State for WalletSettingsState {
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
+                // Before the modal check: a Register opened while the save
+                // ran takes the result, and the field must not stay Saving.
+                if self.name_save == NameSave::Saving {
+                    self.name_save = if res.is_ok() {
+                        NameSave::Saved
+                    } else {
+                        NameSave::Failed
+                    };
+                }
                 if let Modal::RegisterWallet(modal) = &mut self.modal {
                     modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
                 } else {
-                    if self.name_save == NameSave::Saving {
-                        self.name_save = if res.is_ok() {
-                            NameSave::Saved
-                        } else {
-                            NameSave::Failed
-                        };
-                    }
                     match res {
                         Ok(wallet) => {
                             self.keys_aliases = Self::keys_aliases(&wallet);
@@ -255,6 +268,8 @@ impl State for WalletSettingsState {
                 let alias = self.changed_alias();
                 if alias.is_some() {
                     self.name_save = NameSave::Saving;
+                } else {
+                    self.settle_failed_name();
                 }
                 Task::perform(
                     update_aliases(
@@ -318,6 +333,7 @@ impl State for WalletSettingsState {
             Message::View(view::Message::ImportExport(ImportExportMessage::UpdateAliases(
                 aliases,
             ))) => {
+                self.settle_failed_name();
                 self.processing = true;
                 self.updated = false;
                 Task::perform(
@@ -654,8 +670,8 @@ mod chain_tests {
     use iced::futures::StreamExt;
 
     /// The Vault name field says what happened: not saved yet while typed,
-    /// Saving after Return, then saved, or the failure. Saving signer names
-    /// alone leaves it alone.
+    /// Saving after Return, then saved, or the failure. A later save that
+    /// leaves the name alone (signer names only) clears the failure.
     #[tokio::test]
     async fn vault_name_field_shows_saving_then_saved_or_the_failure() {
         use crate::app::view::settings::page::Status;
@@ -705,6 +721,32 @@ mod chain_tests {
             Message::WalletUpdated(Err(Error::Unexpected("synthetic disk failure".into()))),
         );
         assert_eq!(kind(&state), Some(Status::Bad));
+
+        // Back to the saved name, and a signer name changed: the save leaves
+        // the Vault name alone and the failure no longer applies.
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited("Savings".into())),
+        );
+        let signer = state.keys_aliases[0].0;
+        send(
+            &mut state,
+            settings(view::SettingsMessage::FingerprintAliasEdited(
+                signer,
+                "Phone".into(),
+            )),
+        );
+        send(&mut state, settings(view::SettingsMessage::Save));
+        assert_eq!(kind(&state), None);
+
+        // Too long to save: the field's own error, no status line.
+        send(
+            &mut state,
+            settings(view::SettingsMessage::WalletAliasEdited(
+                "a".repeat(WALLET_ALIAS_MAXIMUM_LENGTH),
+            )),
+        );
+        assert_eq!(kind(&state), None);
         let _ = std::fs::remove_dir_all(dir.path());
     }
 
