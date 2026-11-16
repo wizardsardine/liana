@@ -28,12 +28,14 @@ impl From<reload::Error> for LoggerError {
 ///
 /// Zero-padded year-first fields keep names sorting by start time, `-` stands
 /// in for `:` (which NTFS rejects), and the `.log` extension is what
-/// Diagnostics counts in [`LOGS_DIR`].
+/// Diagnostics counts in [`LOGS_DIR`]. The UTC offset (`%z`, which has no `:`)
+/// tells apart two runs at the same wall-clock time in the hour repeated when
+/// DST ends, so the second run no longer truncates the first run's log.
 fn log_file_name<Tz: chrono::TimeZone>(started: chrono::DateTime<Tz>) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    started.format("%Y-%m-%dT%H-%M-%S.log").to_string()
+    started.format("%Y-%m-%dT%H-%M-%S%z.log").to_string()
 }
 
 pub fn setup_logger(
@@ -98,13 +100,32 @@ mod tests {
         // " 5-Nov-2026+04:03-02.log" here, with a leading space and two `:`.
         let started = chrono::Utc.with_ymd_and_hms(2026, 11, 5, 4, 3, 2).unwrap();
         let name = log_file_name(started);
-        assert_eq!(name, "2026-11-05T04-03-02.log");
+        assert_eq!(name, "2026-11-05T04-03-02+0000.log");
         assert!(
             !name.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*']),
             "{:?} holds a character Windows rejects in file names",
             name
         );
         assert!(!name.chars().any(|c| c.is_control() || c.is_whitespace()));
+    }
+
+    #[test]
+    fn log_file_name_carries_a_colon_free_offset() {
+        let west = chrono::FixedOffset::west_opt(5 * 3600 + 30 * 60).unwrap();
+        let started = west.with_ymd_and_hms(2026, 11, 5, 4, 3, 2).unwrap();
+        assert_eq!(log_file_name(started), "2026-11-05T04-03-02-0530.log");
+    }
+
+    #[test]
+    fn repeated_dst_hour_gives_distinct_names() {
+        // 01:30 local, once before and once after clocks go back an hour
+        // (CEST +0200 -> CET +0100): the same wall clock, an hour apart.
+        let summer = chrono::FixedOffset::east_opt(2 * 3600).unwrap();
+        let winter = chrono::FixedOffset::east_opt(3600).unwrap();
+        let before = summer.with_ymd_and_hms(2026, 10, 25, 1, 30, 0).unwrap();
+        let after = winter.with_ymd_and_hms(2026, 10, 25, 1, 30, 0).unwrap();
+        assert!(after > before);
+        assert_ne!(log_file_name(before), log_file_name(after));
     }
 
     #[test]
