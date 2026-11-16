@@ -4443,6 +4443,12 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        // The row sets the figure and its unit as separate text, like the BTC
+        // row above it ("250,000" / "SATS").
+        let shows_usdb_figure = |found: &capture::Inspection| -> bool {
+            let has = |want: &str| found.text.iter().any(|(value, _)| value == want);
+            has("50.00") && has("USDB")
+        };
 
         let mut valued_config = fixture.config(0, None, None);
         spark_only(&mut valued_config);
@@ -4450,7 +4456,7 @@ mod tests {
         valued_config.spark_balance_loaded = true;
         valued_config.btc_usd_price = Some(50_000.0);
         let valued = inspect(valued_config);
-        assert!(valued.contains("50.00 USDB"), "{}", words(&valued));
+        assert!(shows_usdb_figure(&valued), "{}", words(&valued));
         assert!(
             valued.contains("≈ 100,000"),
             "the row must show the sat equivalent, not the raw base units:\n{}",
@@ -4487,7 +4493,7 @@ mod tests {
             unvalued_config.btc_usd_price = price;
             let unvalued = inspect(unvalued_config);
             let shown = words(&unvalued);
-            assert!(unvalued.contains("50.00 USDB"), "{:?}: {}", price, shown);
+            assert!(shows_usdb_figure(&unvalued), "{:?}: {}", price, shown);
             assert!(
                 !unvalued.contains("≈"),
                 "no quote must not invent a sat line: {:?}: {}",
