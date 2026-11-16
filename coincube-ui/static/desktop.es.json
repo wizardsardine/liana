@@ -2142,7 +2142,7 @@
   "Saved": "Guardado",
   "Saved and synced to Connect.": "Guardado y sincronizado con Connect.",
   "Saved on this device.": "Guardado en este dispositivo.",
-  "Saved on this device. Connect sync will retry.": "Guardado en este dispositivo. La sincronización con Connect se reintentará.",
+  "Saved on this device. Connect will sync it next time you open COINCUBE.": "Guardado en este dispositivo. Connect lo sincronizará la próxima vez que abras COINCUBE.",
   "Saved on this device. Syncing to Connect…": "Guardado en este dispositivo. Sincronizando con Connect…",
   "Saved transactions": "Transacciones guardadas",
   "Saved when you press Return or leave the field.": "Se guarda al pulsar Intro o salir del campo.",
