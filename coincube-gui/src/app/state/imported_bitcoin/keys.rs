@@ -58,8 +58,15 @@ pub(super) struct ListedDevice {
     pub(super) name: String,
     /// Unknown while the device is locked or cannot be read.
     pub(super) fingerprint: Option<Fingerprint>,
-    /// Why the device cannot be checked yet, in English.
-    pub(super) problem: Option<&'static str>,
+    /// Why the device cannot be checked yet, already localized.
+    pub(super) problem: Option<String>,
+}
+
+impl ListedDevice {
+    /// A device whose fingerprint is known and can be checked.
+    fn readable(&self) -> Option<Fingerprint> {
+        self.fingerprint.filter(|_| self.problem.is_none())
+    }
 }
 
 /// A device kind as people name it.
@@ -278,17 +285,27 @@ fn devices_list<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<'a, v
     }
     for device in devices {
         let name = &device.name;
-        let line = match (device.problem, device.fingerprint) {
-            (Some(problem), _) => p2_regular(format!("{name} · {}", localized_copy(problem)))
-                .style(theme::text::warning),
+        let line = match (&device.problem, device.fingerprint) {
+            (Some(problem), _) => {
+                p2_regular(format!("{name} · {problem}")).style(theme::text::warning)
+            }
             (None, Some(fingerprint)) => match keys
                 .slots
                 .iter()
                 .position(|slot| slot.account.fingerprint == fingerprint)
             {
+                Some(index) if keys.slots[index].provided() => {
+                    p2_regular(coincube_ui::localized_format!(
+                        "{name} · fingerprint {fingerprint} · Key {} of {} · verified",
+                        "{name} · huella {fingerprint} · clave {} de {} · verificada",
+                        index + 1,
+                        keys.slots.len()
+                    ))
+                    .style(theme::text::success)
+                }
                 Some(index) => p2_regular(coincube_ui::localized_format!(
-                    "{name} · fingerprint {fingerprint} · Key {} of {}",
-                    "{name} · huella {fingerprint} · clave {} de {}",
+                    "{name} · fingerprint {fingerprint} · Key {} of {} · ready to check",
+                    "{name} · huella {fingerprint} · clave {} de {} · lista para comprobar",
                     index + 1,
                     keys.slots.len()
                 ))
@@ -308,6 +325,55 @@ fn devices_list<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<'a, v
         .width(Length::Fill)
         .style(theme::card::simple)
         .into()
+}
+
+/// What a hardware key still waits for, in step with the connected list: a
+/// device that cannot be read yet may be the one, so it is named.
+fn hardware_waiting<'a>(slot: &KeySlot, devices: &[ListedDevice]) -> Element<'a, view::Message> {
+    let fingerprint = slot.account.fingerprint;
+    let unread: Vec<String> = devices
+        .iter()
+        .filter_map(|device| {
+            device
+                .problem
+                .as_ref()
+                .filter(|_| device.fingerprint.is_none())
+                .map(|problem| format!("{} ({problem})", device.name))
+        })
+        .collect();
+    let others = devices
+        .iter()
+        .filter(|device| device.fingerprint.is_some_and(|other| other != fingerprint))
+        .count();
+    let (line, style): (String, fn(&theme::Theme) -> iced::widget::text::Style) = if !unread
+        .is_empty()
+    {
+        (
+            coincube_ui::localized_format!(
+                "No device with fingerprint {fingerprint} yet. It may be {}.",
+                "Aún no hay un dispositivo con la huella {fingerprint}. Puede ser {}.",
+                unread.join(localized_copy(" or "))
+            ),
+            theme::text::warning,
+        )
+    } else if others > 0 {
+        (
+                coincube_ui::localized_format!(
+                    "None of the connected devices has fingerprint {fingerprint}. Connect and unlock the one that does.",
+                    "Ninguno de los dispositivos conectados tiene la huella {fingerprint}. Conecta y desbloquea el que la tenga."
+                ),
+                theme::text::secondary,
+            )
+    } else {
+        (
+                coincube_ui::localized_format!(
+                    "Connect and unlock the device with fingerprint {fingerprint}. You can check it here once it is connected.",
+                    "Conecta y desbloquea el dispositivo con la huella {fingerprint}. Podrás comprobarlo aquí cuando esté conectado."
+                ),
+                theme::text::secondary,
+            )
+    };
+    caption(line).style(style).into()
 }
 
 /// The Keys step's form and action row.
@@ -466,12 +532,16 @@ pub(super) fn step<'a>(
             ),
             // The check is offered only once the matching device shows up,
             // and then says so plainly.
-            KeySource::Hardware if hardware_connected(&slot.account) => card
-                .push(
+            KeySource::Hardware if hardware_connected(&slot.account) => {
+                let fingerprint = slot.account.fingerprint;
+                let name = devices
+                    .iter()
+                    .find(|device| device.readable() == Some(fingerprint))
+                    .map_or_else(|| localized_copy("device").to_owned(), |device| device.name.clone());
+                card.push(
                     caption(coincube_ui::localized_format!(
-                        "The device with fingerprint {} is connected. Check it to confirm this key.",
-                        "El dispositivo con la huella {} está conectado. Compruébalo para confirmar esta clave.",
-                        slot.account.fingerprint
+                        "Found: {name} with fingerprint {fingerprint} is connected. Check it to confirm this key.",
+                        "Encontrado: {name} con la huella {fingerprint} está conectado. Compruébalo para confirmar esta clave."
                     ))
                     .style(theme::text::success),
                 )
@@ -481,15 +551,9 @@ pub(super) fn step<'a>(
                         .on_press_maybe(
                             (!busy).then_some(message(ImportMessage::CheckDevice(index))),
                         ),
-                ),
-            KeySource::Hardware => card.push(
-                caption(coincube_ui::localized_format!(
-                    "Connect and unlock the device with fingerprint {}. You can check it here once it is connected.",
-                    "Conecta y desbloquea el dispositivo con la huella {}. Podrás comprobarlo aquí cuando esté conectado.",
-                    slot.account.fingerprint
-                ))
-                .style(theme::text::secondary),
-            ),
+                )
+            }
+            KeySource::Hardware => card.push(hardware_waiting(slot, devices)),
             KeySource::Elsewhere => card.push(
                 caption(localized_copy(
                     "Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.",
