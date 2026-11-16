@@ -104,7 +104,7 @@ plan, deletes existing keys, or reuses an existing signer as a fresh fixture.
 runner so the suite starts it automatically when needed.
 
 Set `ios.qa_build.checkout` to an absolute clone of
-`coincubetech/keychain-app`, `revision` to the full reviewed commit SHA, and
+`coincubetech/coincube-mobile` (formerly `keychain-app`; either origin URL is accepted), `revision` to the full reviewed commit SHA, and
 `flutter` to the absolute Flutter executable matching that source's `.fvmrc`.
 The example's all-zero revision is a placeholder and cannot build. The source
 is exported from Git into the private run directory, so dirty caller files and
