@@ -2230,11 +2230,13 @@ async fn remove_phone_copy(
                 )
                 .await?;
             }
-            Err(e) => return Err(format!(
+            Err(e) => {
+                return Err(format!(
                 "Couldn't reach the copy sealed to your phone (COINCUBE Mobile) ({}). The phone \
                      copy may still be restorable — try Remove again.",
                 e
-            )),
+            ))
+            }
         }
     } else {
         // The cached overview showed no phone copy, so we skipped the keychain
