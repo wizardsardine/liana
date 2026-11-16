@@ -19,7 +19,9 @@ let
 
   lianaInfo = craneLib.crateNameFromCargoToml { cargoToml = rootPath + "/liana-gui/Cargo.toml"; };
 
-  x86_64-pc-windows-gnu = craneLib.buildPackage {
+  mkWindowsInstaller = import ./windows-installer.nix { inherit pkgs lib rootPath; };
+
+  x86_64-pc-windows-gnu-exe = craneLib.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -45,6 +47,14 @@ let
       mkdir -p $out/x86_64-pc-windows-gnu
       cp target/x86_64-pc-windows-gnu/release/liana-gui.exe $out/x86_64-pc-windows-gnu
     '';
+  };
+
+  x86_64-pc-windows-gnu = mkWindowsInstaller {
+    inherit (lianaInfo) pname version;
+    productName = "Liana";
+    exeName = "liana-gui.exe";
+    exePath = "${x86_64-pc-windows-gnu-exe}/x86_64-pc-windows-gnu/liana-gui.exe";
+    icon = rootPath + "/liana-ui/static/logos/liana.ico";
   };
 
   x86_64-apple-darwin = craneLib.buildPackage {
@@ -137,7 +147,7 @@ let
   '';
 
 in {
-  inherit x86_64-pc-windows-gnu x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
+  inherit x86_64-pc-windows-gnu x86_64-pc-windows-gnu-exe x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
   release = pkgs.buildEnv {
     name = "release";
     paths = [

@@ -13,15 +13,21 @@ through `nix/libdmg-hfsplus.nix` since it is not packaged in nixpkgs.
 
 `contrib/release/macos/create-dmg.sh` drives that pipeline: it stages the app bundle next to an
 `/Applications` symlink, writes a `.DS_Store` describing the Finder window layout
-(`dmg-ds-store.py`, using the `ds_store` Python package), then builds the image. It honours
-`SOURCE_DATE_EPOCH`, so the output is reproducible.
+(`dmg-ds-store.py`, using the `ds_store` Python package), then builds the image. Every timestamp it
+writes comes from `SOURCE_DATE_EPOCH`, so the output is reproducible as long as that variable is
+set; it otherwise falls back to the current time and warns. `release.sh` and `sign.sh` set it from
+the commit date.
 
 `release.sh` and `sign.sh` re-execute themselves inside that dev shell (guarded by
 `IN_LIANA_RELEASE_SHELL`), so they can be run straight from a checkout without installing `dpkg`,
 `unzip`, `rcodesign` or the disk image tools. To run the script on its own outside the shell:
 ```
-nix develop .#release --command ./contrib/release/macos/create-dmg.sh Liana.app liana.dmg "Liana 13.1"
+nix develop .#release --command env \
+    SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)" \
+    ./contrib/release/macos/create-dmg.sh Liana.app liana.dmg "Liana 13.1"
 ```
+(`nix develop` puts its own `SOURCE_DATE_EPOCH` in the environment, hence passing it through `env`
+rather than exporting it beforehand.)
 
 For the codesigned release we sign and notarize the app bundle first, and then sign and notarize the
 disk image containing it. Note `hdiutil imageinfo` reports an "internal error" on images produced by
