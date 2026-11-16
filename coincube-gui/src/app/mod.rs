@@ -9806,8 +9806,12 @@ impl App {
             Message::CubeNameSaved(result) => {
                 return self.route_cube_name_saved(result);
             }
-            Message::CubeNameSynced { cube_id, result } => {
-                return self.route_cube_name_synced(cube_id, result);
+            Message::CubeNameSynced {
+                cube_id,
+                name,
+                result,
+            } => {
+                return self.route_cube_name_synced(cube_id, name, result);
             }
             // Vault Recovery Alerts dispatch (Estate Notifications — PR 2).
             // Like the Recovery Kit above, the handler needs the
@@ -19111,6 +19115,57 @@ mod cube_name_routing_tests {
     }
 
     #[test]
+    fn rename_status_moves_from_saving_to_saved_on_this_device() {
+        use crate::app::cache::CubeNameSync;
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            app.panels.connect.cube.server_cube_id = None;
+            drop(app.update(Message::View(view::Message::Settings(
+                view::SettingsMessage::CubeNameSubmitted("New name".into()),
+            ))));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::Saving);
+            // Without a Connect registration there is nothing to sync.
+            drop(app.update(Message::CubeNameSaved(Ok("New name".into()))));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::LocalOnly);
+            drop(app.update(Message::CubeNameSaved(Err("disk".into()))));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::SaveFailed);
+        });
+    }
+
+    #[test]
+    fn rename_sync_reply_only_settles_the_current_name() {
+        use crate::app::cache::CubeNameSync;
+        with_session(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            let cube_id = app.cube_settings.id.clone();
+            app.cache.cube_name = "Current".into();
+            app.cache.cube_name_sync = CubeNameSync::Syncing;
+            // An older rename's reply leaves the newer one syncing.
+            drop(app.update(Message::CubeNameSynced {
+                cube_id: cube_id.clone(),
+                name: "Older".into(),
+                result: Ok(()),
+            }));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::Syncing);
+            drop(app.update(Message::CubeNameSynced {
+                cube_id: cube_id.clone(),
+                name: "Current".into(),
+                result: Err("offline".into()),
+            }));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::SyncFailed);
+            app.cache.cube_name_sync = CubeNameSync::Syncing;
+            drop(app.update(Message::CubeNameSynced {
+                cube_id,
+                name: "Current".into(),
+                result: Ok(()),
+            }));
+            assert_eq!(app.cache.cube_name_sync, CubeNameSync::Synced);
+        });
+    }
+
+    #[test]
     fn remote_name_completion_never_replaces_local_name_or_route() {
         with_session(async {
             let root = tempfile::tempdir().unwrap();
@@ -19122,6 +19177,7 @@ mod cube_name_routing_tests {
             for result in [Ok(()), Err("synthetic remote failure".into())] {
                 let task = app.update(Message::CubeNameSynced {
                     cube_id: "older-cube".into(),
+                    name: "Older name".into(),
                     result,
                 });
                 assert!(iced_runtime::task::into_stream(task).is_none());

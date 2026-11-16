@@ -128,6 +128,28 @@ pub struct LookupOrigin {
     pub chain: crate::chain::ChainId,
 }
 
+/// Progress of the last Cube rename, shown under the Cube name field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CubeNameSync {
+    /// No rename this session.
+    #[default]
+    Idle,
+    /// Writing the name to this device's Cube settings.
+    Saving,
+    /// Saved on this device; Connect has not answered yet.
+    Syncing,
+    /// Saved on this device and accepted by Connect.
+    Synced,
+    /// Saved on this device; this Cube has no Connect registration or the
+    /// account is signed out, so there is nothing to sync now.
+    LocalOnly,
+    /// Saved on this device; Connect refused or was unreachable. The
+    /// Launcher's catch-up retries it.
+    SyncFailed,
+    /// Could not be written on this device.
+    SaveFailed,
+}
+
 #[derive(Debug, Clone)]
 pub struct Cache {
     /// The `App` instance this cache belongs to. See [`AppGeneration`].
@@ -218,6 +240,9 @@ pub struct Cache {
     pub vault_lacks_keychain_key: bool,
     /// Display name of the current Cube
     pub cube_name: String,
+    /// How far the last rename on Settings › Display & appearance got:
+    /// written on this device, then accepted by Connect.
+    pub cube_name_sync: CubeNameSync,
     /// The wallet names the side panel shows after "Spark" and "Vault".
     /// Synced from the Cube settings and the loaded Vault by the App.
     pub wallet_names: WalletNames,
@@ -498,6 +523,7 @@ impl std::default::Default for Cache {
             has_imported_bitcoin: false,
             vault_lacks_keychain_key: false,
             cube_name: String::new(),
+            cube_name_sync: CubeNameSync::Idle,
             wallet_names: WalletNames::default(),
             cube_connect_owner: None,
             cube_owned_by_other_account: false,

@@ -1,5 +1,6 @@
 // Cube-name persistence and reconciliation remain one ordered hand-off.
 use super::*;
+use crate::app::cache::CubeNameSync;
 
 impl App {
     pub(super) fn route_cube_name_submitted(&mut self, name: String) -> Task<Message> {
@@ -14,6 +15,7 @@ impl App {
                 )),
             );
         }
+        self.cache.cube_name_sync = CubeNameSync::Saving;
         let network_dir = self.datadir.network_directory(self.cube_settings.network);
         let cube_id = self.cube_settings.id.clone();
         Task::perform(
@@ -41,6 +43,7 @@ impl App {
         let name = match result {
             Ok(name) => name,
             Err(e) => {
+                self.cache.cube_name_sync = CubeNameSync::SaveFailed;
                 return Task::done(Message::View(view::Message::ShowError(
                     coincube_ui::localized_format!(
                         "Couldn't save the Cube name: {}",
@@ -66,11 +69,14 @@ impl App {
             self.authenticated_coincube_client(),
             self.panels.connect.cube.server_cube_id,
         ) else {
+            self.cache.cube_name_sync = CubeNameSync::LocalOnly;
             return settle;
         };
+        self.cache.cube_name_sync = CubeNameSync::Syncing;
         let cube_id = self.cube_settings.id.clone();
         let network_dir = self.datadir.network_directory(self.cube_settings.network);
         let synced_name = name.clone();
+        let name_sent = name.clone();
         let request = crate::services::coincube::UpdateCubeRequest {
             name: Some(name),
             status: None,
@@ -106,6 +112,7 @@ impl App {
             },
             move |result| Message::CubeNameSynced {
                 cube_id: cube_id.clone(),
+                name: name_sent.clone(),
                 result,
             },
         );
@@ -115,11 +122,24 @@ impl App {
     pub(super) fn route_cube_name_synced(
         &mut self,
         cube_id: String,
+        name: String,
         result: Result<(), String>,
     ) -> Task<Message> {
         // Left unsynced on failure; the Launcher's catch-up retries it.
-        if let Err(e) = result {
+        if let Err(e) = &result {
             warn!("Cube {} rename not yet synced to Connect: {}", cube_id, e);
+        }
+        // Only the reply for this Cube's current name moves the status; an
+        // older rename's reply must not report a newer one as synced.
+        if cube_id == self.cube_settings.id
+            && name == self.cache.cube_name
+            && self.cache.cube_name_sync == CubeNameSync::Syncing
+        {
+            self.cache.cube_name_sync = if result.is_ok() {
+                CubeNameSync::Synced
+            } else {
+                CubeNameSync::SyncFailed
+            };
         }
         Task::none()
     }
