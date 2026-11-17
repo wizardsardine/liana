@@ -5827,6 +5827,169 @@ mod tests {
         );
     }
 
+    /// A plugged-in device is named for what it is. A key is offered for
+    /// checking only when that device is the signer. A phone is left out. A
+    /// device that cannot be read yet may still be the key, so it is named
+    /// before a readable stranger is treated as proof that the key is absent.
+    #[tokio::test]
+    async fn a_connected_device_is_checked_only_when_it_is_that_key() {
+        use crate::hw::{LAN_PHONE_ID_PREFIX, UnsupportedReason};
+        use async_hwi::DeviceKind;
+
+        let wallet = two_of_three();
+        let directory = NetworkDirectory::new(
+            std::env::temp_dir().join(format!("import-key-devices-{}", uuid::Uuid::new_v4())),
+        );
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let keys = KeysState::new(&wallet);
+        let signers: Vec<_> = keys
+            .slots
+            .iter()
+            .map(|slot| slot.account.fingerprint)
+            .collect();
+        let stranger =
+            coincube_core::miniscript::bitcoin::bip32::Fingerprint::from([0xab, 0xcd, 0x12, 0x34]);
+        assert!(!signers.contains(&stranger));
+
+        let phone = HardwareWallet::Unsupported {
+            id: format!("{LAN_PHONE_ID_PREFIX}abcd1234"),
+            kind: DeviceKind::Specter,
+            version: None,
+            reason: UnsupportedReason::Method("paired phone"),
+        };
+        let mut listing = HardwareWallets::new(
+            CoincubeDirectory::new(
+                std::env::temp_dir()
+                    .join(format!("import-key-devices-hw-{}", uuid::Uuid::new_v4())),
+            ),
+            Network::Bitcoin,
+        );
+        listing.list = vec![
+            phone.clone(),
+            HardwareWallet::Locked {
+                id: "jade-1".into(),
+                device: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                pairing_code: None,
+                kind: DeviceKind::Jade,
+            },
+            HardwareWallet::Unsupported {
+                id: "ledger-stranger".into(),
+                kind: DeviceKind::Ledger,
+                version: None,
+                reason: UnsupportedReason::NotPartOfWallet(stranger),
+            },
+            HardwareWallet::Unsupported {
+                id: "coldcard-old".into(),
+                kind: DeviceKind::Coldcard,
+                version: None,
+                reason: UnsupportedReason::Version {
+                    minimal_supported_version: "5.2.2",
+                    note: None,
+                },
+            },
+        ];
+        panel.hardware_wallets = Some(listing);
+        for slot in &keys.slots {
+            assert!(!panel.device_connected(&slot.account));
+        }
+
+        let devices = panel.key_devices();
+        assert_eq!(
+            devices
+                .iter()
+                .map(|device| device.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Jade", "Ledger", "Coldcard"]
+        );
+        assert_eq!(devices[0].fingerprint, None);
+        assert_eq!(
+            devices[0].problem.as_deref(),
+            Some("locked; unlock it to read its fingerprint")
+        );
+        assert_eq!(devices[1].fingerprint, Some(stranger));
+        assert!(devices[1].problem.is_none());
+        assert_eq!(devices[2].fingerprint, None);
+        assert_eq!(
+            devices[2].problem.as_deref(),
+            Some("firmware too old; update to 5.2.2 or later")
+        );
+
+        let (form, _) = keys::step(
+            &keys,
+            false,
+            |account| panel.device_connected(account),
+            &devices,
+            None,
+        );
+        let shown = rendered_labels(form).await;
+        for fingerprint in &signers {
+            let waiting = format!(
+                "No device with fingerprint {fingerprint} yet. It may be Jade (locked; unlock it to read its fingerprint) or Coldcard (firmware too old; update to 5.2.2 or later)."
+            );
+            assert!(
+                shown.iter().any(|text| text == &waiting),
+                "missing {} in {:?}",
+                waiting,
+                shown
+            );
+        }
+        assert_labels(
+            &shown,
+            &[
+                "Jade · locked; unlock it to read its fingerprint",
+                &format!("Ledger · fingerprint {stranger} · not a signer of this wallet"),
+                "Coldcard · firmware too old; update to 5.2.2 or later",
+            ],
+            &["Check device", "Specter · not supported"],
+        );
+        assert!(
+            shown
+                .iter()
+                .all(|text| !text.starts_with("None of the connected devices")),
+            "a device that cannot be read yet must stay a candidate: {:?}",
+            shown
+        );
+
+        // Every remaining device can be read, and none is a signer.
+        let mut listing = panel.hardware_wallets.take().unwrap();
+        listing.list.retain(|hw| hw.id() == "ledger-stranger");
+        listing.list.insert(0, phone);
+        panel.hardware_wallets = Some(listing);
+        let devices = panel.key_devices();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].fingerprint, Some(stranger));
+        let (form, _) = keys::step(
+            &keys,
+            false,
+            |account| panel.device_connected(account),
+            &devices,
+            None,
+        );
+        let shown = rendered_labels(form).await;
+        let mut present = vec![format!(
+            "Ledger · fingerprint {stranger} · not a signer of this wallet"
+        )];
+        for fingerprint in &signers {
+            present.push(format!(
+                "None of the connected devices has fingerprint {fingerprint}. Connect and unlock the one that does."
+            ));
+        }
+        let present_refs: Vec<&str> = present.iter().map(String::as_str).collect();
+        assert_labels(
+            &shown,
+            &present_refs,
+            &["Check device", "Specter · not supported"],
+        );
+        assert!(
+            shown
+                .iter()
+                .all(|text| !text.contains("It may be") && !text.contains("ready to check")),
+            "a readable stranger is not a candidate and not this key: {:?}",
+            shown
+        );
+    }
+
     #[tokio::test]
     async fn the_keys_step_sits_between_source_and_review() {
         let directory = NetworkDirectory::new(std::env::temp_dir().join("import-journey-keys"));
