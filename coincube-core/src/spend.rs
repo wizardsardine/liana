@@ -634,30 +634,14 @@ pub(crate) fn select_coins_for_spend(
             e
         );
 
-        selector.sort_candidates_by_descending_value_pwu();
-        // Select more coins until target is met and change condition satisfied.
-        loop {
-            let drain = selector.drain(target, change_policy);
-            if selector.is_target_met_with_drain(target, drain)
-                && (drain.is_some() || !must_have_change)
-            {
-                break;
-            }
-            if !selector.select_next() {
-                // If the solution must have change, we calculate how much is missing from the current
-                // selection in order for there to be a change output with the smallest possible value.
-                let drain = if must_have_change {
-                    bdk_coin_select::Drain {
-                        weights: drain_weights,
-                        value: min_change_sats,
-                    }
-                } else {
-                    drain
-                };
-                let missing = selector.excess(target, drain).unsigned_abs();
-                return Err(InsufficientFunds { missing });
-            }
-        }
+        select_remaining_coins(
+            &mut selector,
+            target,
+            change_policy,
+            drain_weights,
+            must_have_change,
+            min_change_sats,
+        )?;
     }
     // By now, selection is complete and we can check how much change to give according to our policy.
     let drain = selector.drain(target, change_policy);
@@ -971,34 +955,13 @@ fn create_spend_with_output_floor(
         input: Vec::with_capacity(candidate_coins.iter().filter(|c| c.must_select).count()),
         output: Vec::with_capacity(destinations.len()),
     };
-    // Add the destinations outputs to the transaction and PSBT. At the same time
-    // sanity check each output's value.
-    let mut psbt_outs = Vec::with_capacity(destinations.len());
-    for (address, amount) in destinations {
-        if network_dust_only {
-            check_network_output_value(*amount, &address.addr.script_pubkey())?;
-        } else {
-            check_output_value(*amount)?;
-        }
-
-        tx.output.push(bitcoin::TxOut {
-            value: *amount,
-            script_pubkey: address.addr.script_pubkey(),
-        });
-        // If it's an address of ours, signal it as change to signing devices by adding the
-        // BIP32 derivation path to the PSBT output.
-        let mut psbt_out = PsbtOut::default();
-        if let Some(AddrInfo { index, is_change }) = address.info {
-            let desc = if is_change {
-                main_descriptor.change_descriptor()
-            } else {
-                main_descriptor.receive_descriptor()
-            };
-            desc.derive(index, secp)
-                .update_change_psbt_out(&mut psbt_out)
-        }
-        psbt_outs.push(psbt_out);
-    }
+    let mut psbt_outs = add_spend_destinations(
+        &mut tx,
+        destinations,
+        main_descriptor,
+        secp,
+        network_dust_only,
+    )?;
     assert_eq!(tx.output.is_empty(), is_self_send);
     let poison_count = usize::from(poison.is_some());
     if let Some(script_pubkey) = poison {
@@ -1081,32 +1044,18 @@ fn create_spend_with_output_floor(
 
         // If the change address is ours, tell the signers by setting the BIP32 derivations in the
         // PSBT output.
-        let mut psbt_out = PsbtOut::default();
-        if let Some(AddrInfo { index, is_change }) = change_addr.info {
-            let desc = if is_change {
-                main_descriptor.change_descriptor()
-            } else {
-                main_descriptor.receive_descriptor()
-            };
-            desc.derive(index, secp)
-                .update_change_psbt_out(&mut psbt_out);
-        }
-
+        let psbt_out = change_output_metadata(main_descriptor, secp, change_addr.info);
         // TODO: shuffle once we have Taproot
         change_txo.value = change_amount;
         tx.output.push(change_txo);
         psbt_outs.push(psbt_out);
     } else if max_change_amount.to_sat() > 0 {
-        if network_dust_only {
-            warnings.push(CreateSpendWarning::NetworkDustChangeAddedToFee {
-                amount: max_change_amount.to_sat(),
-                minimum: min_change_sats,
-            });
-        } else {
-            warnings.push(CreateSpendWarning::ChangeAddedToFee(
-                max_change_amount.to_sat(),
-            ));
-        }
+        warn_omitted_change(
+            &mut warnings,
+            max_change_amount,
+            min_change_sats,
+            network_dust_only,
+        );
     }
 
     if fee_for_ancestors.to_sat() > 0 {
@@ -1115,9 +1064,148 @@ fn create_spend_with_output_floor(
         ));
     }
 
+    let psbt_ins = add_spend_inputs(&mut tx, &selected, main_descriptor, secp, tx_getter)?;
+
+    // Finally, create the PSBT with all inputs and outputs, sanity check it and return it.
+    let psbt = Psbt {
+        unsigned_tx: tx,
+        version: 0,
+        xpub: BTreeMap::new(),
+        proprietary: BTreeMap::new(),
+        unknown: BTreeMap::new(),
+        inputs: psbt_ins,
+        outputs: psbt_outs,
+    };
+    sanity_check_psbt(main_descriptor, &psbt, use_primary_path)?;
+    // TODO: maybe check for common standardness rules (max size, ..)?
+
+    Ok(CreateSpendRes {
+        psbt,
+        has_change,
+        warnings,
+    })
+}
+
+fn select_remaining_coins(
+    selector: &mut CoinSelector,
+    target: Target,
+    change_policy: ChangePolicy,
+    drain_weights: DrainWeights,
+    must_have_change: bool,
+    min_change_sats: u64,
+) -> Result<(), InsufficientFunds> {
+    selector.sort_candidates_by_descending_value_pwu();
+    // Select more coins until target is met and change condition satisfied.
+    loop {
+        let drain = selector.drain(target, change_policy);
+        if selector.is_target_met_with_drain(target, drain)
+            && (drain.is_some() || !must_have_change)
+        {
+            break;
+        }
+        if !selector.select_next() {
+            // If the solution must have change, we calculate how much is missing from the current
+            // selection in order for there to be a change output with the smallest possible value.
+            let drain = if must_have_change {
+                bdk_coin_select::Drain {
+                    weights: drain_weights,
+                    value: min_change_sats,
+                }
+            } else {
+                drain
+            };
+            let missing = selector.excess(target, drain).unsigned_abs();
+            return Err(InsufficientFunds { missing });
+        }
+    }
+    Ok(())
+}
+
+fn add_spend_destinations(
+    tx: &mut bitcoin::Transaction,
+    destinations: &[(SpendOutputAddress, bitcoin::Amount)],
+    main_descriptor: &descriptors::CoincubeDescriptor,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    network_dust_only: bool,
+) -> Result<Vec<PsbtOut>, SpendCreationError> {
+    // Add the destinations outputs to the transaction and PSBT. At the same time
+    // sanity check each output's value.
+    let mut psbt_outs = Vec::with_capacity(destinations.len());
+    for (address, amount) in destinations {
+        if network_dust_only {
+            check_network_output_value(*amount, &address.addr.script_pubkey())?;
+        } else {
+            check_output_value(*amount)?;
+        }
+
+        tx.output.push(bitcoin::TxOut {
+            value: *amount,
+            script_pubkey: address.addr.script_pubkey(),
+        });
+        // If it's an address of ours, signal it as change to signing devices by adding the
+        // BIP32 derivation path to the PSBT output.
+        let mut psbt_out = PsbtOut::default();
+        if let Some(AddrInfo { index, is_change }) = address.info {
+            let desc = if is_change {
+                main_descriptor.change_descriptor()
+            } else {
+                main_descriptor.receive_descriptor()
+            };
+            desc.derive(index, secp)
+                .update_change_psbt_out(&mut psbt_out)
+        }
+        psbt_outs.push(psbt_out);
+    }
+    Ok(psbt_outs)
+}
+
+fn change_output_metadata(
+    main_descriptor: &descriptors::CoincubeDescriptor,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    info: Option<AddrInfo>,
+) -> PsbtOut {
+    let mut psbt_out = PsbtOut::default();
+    if let Some(AddrInfo { index, is_change }) = info {
+        let desc = if is_change {
+            main_descriptor.change_descriptor()
+        } else {
+            main_descriptor.receive_descriptor()
+        };
+        desc.derive(index, secp)
+            .update_change_psbt_out(&mut psbt_out);
+    }
+
+    psbt_out
+}
+
+fn warn_omitted_change(
+    warnings: &mut Vec<CreateSpendWarning>,
+    max_change_amount: bitcoin::Amount,
+    min_change_sats: u64,
+    network_dust_only: bool,
+) {
+    if network_dust_only {
+        warnings.push(CreateSpendWarning::NetworkDustChangeAddedToFee {
+            amount: max_change_amount.to_sat(),
+            minimum: min_change_sats,
+        });
+    } else {
+        warnings.push(CreateSpendWarning::ChangeAddedToFee(
+            max_change_amount.to_sat(),
+        ));
+    }
+}
+
+fn add_spend_inputs(
+    tx: &mut bitcoin::Transaction,
+    selected: &[CandidateCoin],
+    main_descriptor: &descriptors::CoincubeDescriptor,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    tx_getter: &mut impl TxGetter,
+) -> Result<Vec<PsbtIn>, SpendCreationError> {
     // Iterate through selected coins and add necessary information to the PSBT inputs.
     let mut psbt_ins = Vec::with_capacity(selected.len());
-    for cand in &selected {
+    for cand in selected {
         let sequence = cand
             .sequence
             .unwrap_or(bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME);
@@ -1164,24 +1252,7 @@ fn create_spend_with_output_floor(
         psbt_ins.push(psbt_in);
     }
 
-    // Finally, create the PSBT with all inputs and outputs, sanity check it and return it.
-    let psbt = Psbt {
-        unsigned_tx: tx,
-        version: 0,
-        xpub: BTreeMap::new(),
-        proprietary: BTreeMap::new(),
-        unknown: BTreeMap::new(),
-        inputs: psbt_ins,
-        outputs: psbt_outs,
-    };
-    sanity_check_psbt(main_descriptor, &psbt, use_primary_path)?;
-    // TODO: maybe check for common standardness rules (max size, ..)?
-
-    Ok(CreateSpendRes {
-        psbt,
-        has_change,
-        warnings,
-    })
+    Ok(psbt_ins)
 }
 
 #[cfg(test)]
