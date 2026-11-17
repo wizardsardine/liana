@@ -458,6 +458,36 @@ mod seed_source_tests {
         let _ = std::fs::remove_dir_all(&datadir);
     }
 
+    /// The degrade above is only for an *absent* signer. A wrong PIN still
+    /// fails on mainnet: it must surface as an error, never as a signer-less
+    /// Cube that silently opens without P2P or Connect keys.
+    #[tokio::test]
+    async fn a_wrong_pin_still_errors_on_mainnet() {
+        let datadir = scratch_datadir("mainnet-wrong-pin");
+        let network = Network::Bitcoin;
+        let cube_id = "cube-wrong-pin";
+        let secp = Secp256k1::signing_only();
+        let signer = MasterSigner::generate(network).unwrap();
+        let fingerprint = signer.fingerprint(&secp);
+        signer
+            .store_encrypted(&datadir, network, &secp, None, "1234", cube_id, None)
+            .unwrap();
+
+        let result = load_breez_client(
+            &datadir,
+            network,
+            SeedSource::encrypted_file(fingerprint, "0000"),
+            cube_id,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(BreezError::SignerError(_))),
+            "a wrong PIN must be an error on mainnet"
+        );
+
+        let _ = std::fs::remove_dir_all(&datadir);
+    }
+
     /// A seed-less (watch-only) Cube degrades to a signer-less client on every
     /// network, mainnet included, instead of returning an error the caller
     /// has to paper over.

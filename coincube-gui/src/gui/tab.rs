@@ -2652,14 +2652,13 @@ impl Tab {
 
                             // Only the restore path needs to build a
                             // BreezClient up-front — the fresh-install
-                            // flow builds it at PIN entry. On `NetworkNotSupported`
-                            // (testnet/signet) we mirror the PIN-entry
-                            // branch (`BreezClientLoadedAfterPin`
-                            // handler) and hand back a disconnected
-                            // client: the Loader's Synced/App arms
-                            // treat a `None` BreezClient as an
-                            // architectural bug and error out, so
+                            // flow builds it at PIN entry. The Loader's
+                            // Synced/App arms treat a `None` BreezClient
+                            // as an architectural bug and error out, so
                             // pre-loaded-must-exist is the contract.
+                            // Since Liquid removal PR 1 the client is
+                            // always disconnected; what matters here is
+                            // that it carries the restored signer.
                             if chain.is_blake2b() {
                                 return Ok((cube, None, None));
                             }
@@ -2675,17 +2674,22 @@ impl Tab {
                                 )
                                 .await
                                 {
-                                    Ok(c) => Some(c),
-                                    Err(breez_liquid::BreezError::NetworkNotSupported(n)) => {
-                                        info!(
-                                            "BreezClient not loaded for restored Cube: \
-                                             network {} is not supported by Breez SDK; \
-                                             using disconnected client",
-                                            n
-                                        );
-                                        Some(Arc::new(breez_liquid::BreezClient::disconnected(
-                                            network,
-                                        )))
+                                    Ok(c) if c.liquid_signer().is_some() => Some(c),
+                                    Ok(_) => {
+                                        // A restore just wrote this seed,
+                                        // so a missing signer means the
+                                        // file is absent or mislabelled
+                                        // (`load_breez_client` maps both
+                                        // to a signer-less client for
+                                        // seed-less Cubes). Without the
+                                        // signer the Cube would open with
+                                        // no P2P identity or Connect key,
+                                        // so fail loudly instead.
+                                        return Err(format!(
+                                            "Failed to load the restored seed: no master \
+                                             signer found for {}",
+                                            seed.master_signer_fingerprint
+                                        ));
                                     }
                                     Err(e) => {
                                         // A non-network failure here
