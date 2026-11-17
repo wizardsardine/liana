@@ -3825,16 +3825,11 @@ impl App {
         cache_with_vault.has_vault = wallet.supports_inheritance();
         cache_with_vault.has_imported_bitcoin = wallet.is_imported();
         cache_with_vault.has_p2p = panels.p2p.is_some();
-        // Liquid sunset gate, local half. `load_breez_client` has already run its
-        // keep-or-discard policy (grandfathered wallet / server grant / a scan
-        // that found funds), leaving `storage.sql` on disk only for a wallet
-        // worth surfacing. Probe that on-disk state rather than the live
-        // connection: on a network without a Liquid backend (Testnet, regtest
-        // without Esplora) the SDK is returned *disconnected* even when a funded
-        // wallet exists on disk, so keying the gate off `is_connected()` there
-        // would hide the rail entirely instead of showing it network-gated. The
-        // probe is also what the discard's "failed delete → spurious nav entry"
-        // fallback assumes. The server half is mirrored in separately later.
+        // Liquid sunset gate, local half: whether a Liquid wallet exists on
+        // disk. Since Liquid removal PR 1 the SDK never connects, so this is
+        // the only local signal, and `LiquidGate::show()` ignores it anyway
+        // (constant `false` since v175). Both go in Liquid removal PR 5. The
+        // server half is mirrored in separately later.
         cache_with_vault.liquid_gate.local_state_exists = !cache_with_vault.chain().is_blake2b()
             && crate::app::breez_liquid::local_state_exists(
                 data_dir.path(),
@@ -8715,11 +8710,10 @@ impl App {
                     && self.panels.connect.account.liquid_server_enabled();
                 let grant_changed = self.cache.liquid_gate.server_enabled != liquid_granted;
                 self.cache.liquid_gate.server_enabled = liquid_granted;
-                // Persist the grant so the *next* cube open can act on it. The
-                // Liquid SDK connects at PIN entry, long before Connect signs
-                // in, so without this a newly-granted account would have its
-                // (empty) Liquid wallet discarded on every launch and could
-                // never actually get one. See `CubeSettings::liquid_granted`.
+                // Persist the grant. Since Liquid removal PR 1 nothing reads it
+                // at cube open (the SDK never connects); the launcher still
+                // feeds it to the constant-false gate. Removed in PR 5. See
+                // `CubeSettings::liquid_granted`.
                 let persist_grant = if grant_changed {
                     self.persist_liquid_grant(liquid_granted)
                 } else {

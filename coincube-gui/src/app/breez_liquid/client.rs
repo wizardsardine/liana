@@ -632,19 +632,15 @@ impl BreezClient {
     }
 
     /// Whether this client actually holds a live SDK, as opposed to being one
-    /// of the `disconnected*` placeholders. This is the on-machine half of the
-    /// Liquid sunset gate: the connect/discard policy in
-    /// [`super::load_breez_client`] decides whether a wallet is kept, and a
-    /// kept wallet is exactly a connected one. See
-    /// [`crate::app::features::LiquidGate`].
+    /// of the `disconnected*` placeholders. Since Liquid removal PR 1,
+    /// [`super::load_breez_client`] never connects, so this is always `false`
+    /// for clients built at unlock. See [`crate::app::features::LiquidGate`].
     pub fn is_connected(&self) -> bool {
         self.sdk.is_some()
     }
 
-    /// Disconnect the SDK, releasing its handle on `storage.sql`. Needed before
-    /// discarding a scratch working dir — deleting the DB out from under a live
-    /// SDK is asking for trouble. Consumes the client so no caller can keep
-    /// using a disconnected SDK.
+    /// Disconnect the SDK, releasing its handle on `storage.sql`. Consumes the
+    /// client so no caller can keep using a disconnected SDK.
     pub async fn disconnect(mut self) {
         if let Some(sdk) = self.sdk.take() {
             if let Err(e) = sdk.disconnect().await {
