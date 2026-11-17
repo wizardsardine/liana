@@ -699,11 +699,10 @@ fn key_line<'d>(
                 dimmed: true,
                 ..line(
                     localized_copy("Not added — not needed to spend").to_owned(),
-                    coincube_ui::localized_format!(
-                        "You've verified {} keys, which is enough to spend. Connect this device to add it too.",
-                        "Has verificado {} claves, suficientes para gastar. Conecta este dispositivo para añadirla también.",
-                        keys.threshold
-                    ),
+                    localized_copy(
+                        "Enough keys are verified to spend. Connect its hardware wallet to add it too.",
+                    )
+                    .to_owned(),
                 )
             },
             None => line(
@@ -810,14 +809,22 @@ pub(super) fn step<'a>(
     let lead = if adding {
         localized_copy("Enter the recovery words for any of this wallet's signers. Each set is checked against its signer's fingerprint, then stored on this device for this Cube.")
             .to_string()
+    } else if keys.multisig() && keys.threshold >= count {
+        // Every signer is needed, so there is nothing to skip.
+        coincube_ui::localized_format!(
+            "This wallet has {count} signers and all of them must sign to spend. \
+             Verify each key here; each is checked against its fingerprint.",
+            "Esta cartera tiene {count} claves de firma y todas deben firmar para gastar. \
+             Verifica cada clave aquí; cada una se verifica con su huella."
+        )
     } else if keys.multisig() {
         coincube_ui::localized_format!(
             "This wallet has {count} signers and any {} can spend. Verify at least {} here. \
              You can skip the rest; they can still sign from their own device or wallet. \
              Each key is checked against its fingerprint.",
-            "Esta cartera tiene {count} firmantes y bastan {} para gastar. Verifica al menos {} \
-             aquí. Puedes omitir las demás; pueden seguir firmando desde su propio dispositivo \
-             o cartera. Cada clave se verifica con su huella.",
+            "Esta cartera tiene {count} claves de firma y basta con {} para gastar. Verifica \
+             al menos {} aquí. Puedes omitir las demás; pueden seguir firmando desde su propio \
+             dispositivo o cartera. Cada clave se verifica con su huella.",
             keys.threshold,
             keys.threshold
         )
