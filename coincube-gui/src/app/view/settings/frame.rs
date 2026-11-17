@@ -172,14 +172,20 @@ fn section_routes(menu: &Menu, cache: &Cache) -> Vec<RouteChoice> {
         .iter()
         .copied()
         // A Vault without a Keychain key can never pair a phone, so it has
-        // no Keychain tab, except while that tab is the one open.
+        // no Keychain tab, except while that tab is the one open. An imported
+        // wallet never has one, and before its Wallet loads (an unfinished
+        // import) `vault_lacks_keychain_key` is not set yet, so it is hidden
+        // outright.
         .filter(|(section, _, _)| {
             *section != SettingsOption::LocalSigning
-                || !cache.vault_lacks_keychain_key
-                || matches!(
-                    menu,
-                    Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning)))
-                )
+                || (!cache.has_imported_bitcoin
+                    && (!cache.vault_lacks_keychain_key
+                        || matches!(
+                            menu,
+                            Menu::Vault(VaultSubMenu::Settings(Some(
+                                SettingsOption::LocalSigning
+                            )))
+                        )))
         })
         .map(|(section, label, id)| RouteChoice {
             id: match id {
@@ -334,6 +340,27 @@ mod tests {
         assert!(!labels.iter().any(|label| label == "Mobile"));
         for tab in ["Wallet & signers", "Node", "Connections", "Data & exports"] {
             assert!(labels.iter().any(|label| label == tab), "{}", tab);
+        }
+    }
+
+    /// Before an imported wallet loads (an unfinished import), the
+    /// no-Keychain flag is not set yet. The Mobile tab is still hidden, even
+    /// on its own route.
+    #[test]
+    fn an_unfinished_import_has_no_mobile_tab() {
+        let cache = Cache {
+            has_vault: false,
+            has_imported_bitcoin: true,
+            vault_lacks_keychain_key: false,
+            ..Cache::default()
+        };
+        for menu in [
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Wallet))),
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))),
+        ] {
+            assert!(!section_routes(&menu, &cache)
+                .iter()
+                .any(|choice| choice.label == "Mobile"));
         }
     }
 
