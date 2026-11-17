@@ -688,24 +688,19 @@ impl ImportedBitcoinPanel {
             && self.coins.is_some()
             && self.info.as_ref().is_some_and(|info| {
                 info.imported_wallet.as_ref().is_some_and(|status| {
-                    status.history_complete
-                        && info.chain_id == Some(self.chain())
+                    info.chain_id == Some(self.chain())
                         && info.network == self.chain().bitcoin_network()
                         && status.chain_id == self.chain()
                         && status.discovery_target >= status.initial_lookahead
                         && status.discovery_target <= 10_000
                         // The daemon attests to the initial/restored/wider full
                         // scan. A newly reserved address changes allocation,
-                        // not the completed historical discovery target.
-                        && status.receive_scanned >= status.discovery_target
-                        && status.change_scanned >= status.discovery_target
-                        && info.sync.is_finite()
-                        && info.sync >= 1.0
-                        && info.rescan_progress.is_none()
-                        && !info.history_sync.full_scan_in_progress
-                        && info.history_sync.last_failure.is_none()
-                        && !info.chain_divergence
-                        && info.refused_reorg_depth.is_none()
+                        // not the completed historical discovery target. The
+                        // durable Ready stage (`import.is_ready()`, checked
+                        // above) was reached under the strict first-scan rule;
+                        // from there a failing poll or catch-up sync shows as
+                        // the Vault's sync status, as for any Vault.
+                        && bitcoin_import::history_scan_complete(info, true)
                         && self.import.active_attachment().is_some_and(|wallet| {
                             wallet.wallet_id.descriptor_checksum
                                 == format!("imported-v1-{}", status.wallet_identity)
@@ -4903,9 +4898,68 @@ mod tests {
         assert!(panel.authoritative_balance().is_none());
     }
 
+    /// A completed import stays ready through what any Vault lives through,
+    /// and leaves it only when its history is incomplete again. A first scan
+    /// still has to finish cleanly.
+    #[test]
+    fn a_completed_import_stays_ready_through_sync_trouble() {
+        let mut panel = ready_import_panel();
+        assert!(panel.is_ready());
+        {
+            let info = panel.info.as_mut().unwrap();
+            info.history_sync.last_failure = Some(coincubed::commands::PollFailure {
+                message: "server unavailable".into(),
+                since: 1,
+                last_at: 1,
+                consecutive: 3,
+            });
+            info.sync = 0.5;
+            info.history_sync.full_scan_in_progress = true;
+        }
+        assert!(panel.is_ready(), "a failing poll or catch-up sync");
+        assert!(panel.authoritative_balance().is_some());
+        let info = panel.info.clone().unwrap();
+        assert!(bitcoin_import::history_scan_complete(&info, true));
+        assert!(
+            !bitcoin_import::history_scan_complete(&info, false),
+            "a first scan must finish cleanly"
+        );
+
+        let reset = |panel: &mut ImportedBitcoinPanel| {
+            let mut fresh = ready_import_panel();
+            std::mem::swap(&mut panel.info, &mut fresh.info);
+        };
+        let wider = |info: &mut model::GetInfoResult| {
+            let status = info.imported_wallet.as_mut().unwrap();
+            status.discovery_target += 200;
+        };
+        let incomplete = |info: &mut model::GetInfoResult| {
+            info.imported_wallet.as_mut().unwrap().history_complete = false;
+        };
+        let diverged = |info: &mut model::GetInfoResult| info.chain_divergence = true;
+        let refused = |info: &mut model::GetInfoResult| info.refused_reorg_depth = Some(3);
+        for (change, why) in [
+            (
+                &wider as &dyn Fn(&mut model::GetInfoResult),
+                "a wider address search",
+            ),
+            (&incomplete, "history incomplete"),
+            (&diverged, "chain divergence"),
+            (&refused, "a refused reorg"),
+        ] {
+            reset(&mut panel);
+            change(panel.info.as_mut().unwrap());
+            assert!(!panel.is_ready(), "{}", why);
+        }
+    }
+
     #[test]
     fn explicit_retry_wakes_sync_without_blocking_live_status_polling() {
         let mut panel = ready_import_panel();
+        // A scan that has not completed yet: a complete wallet stays ready
+        // through a failing poll, like any Vault.
+        let wallet = panel.import.active_attachment().unwrap().clone();
+        panel.import.stage = BitcoinImportStage::Syncing { wallet };
         panel.info.as_mut().unwrap().history_sync.last_failure =
             Some(coincubed::commands::PollFailure {
                 message: "server unavailable".into(),
