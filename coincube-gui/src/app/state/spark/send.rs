@@ -207,24 +207,43 @@ impl ReconcileOutcome {
 /// still far short of "some earlier payment of the same size".
 const RECONCILE_BACKDATE_SLACK_SECS: i64 = 60;
 
-/// Whether the payment history contains the send described by `pending`.
+/// What the payment history says about the send described by `pending`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryMatch {
+    /// A matching payment completed: this send landed.
+    Settled,
+    /// A matching payment exists but hasn't completed (pending, or a status
+    /// this build doesn't know). It may still land, so it is neither "paid"
+    /// nor "no trace".
+    InProgress,
+    /// Nothing that could be this send. A *failed* payment of the same size
+    /// counts as nothing: it is an earlier rejected attempt, not this one.
+    None,
+}
+
+/// Look for the send described by `pending` in the payment history.
 ///
 /// Deliberately conservative in the direction that matters: it errs towards
 /// *finding* a match (which blocks a resend) rather than missing one (which
 /// would enable one). An outgoing payment of the same size, no older than the
 /// dispatch minus [`RECONCILE_BACKDATE_SLACK_SECS`], is treated as this
-/// payment.
+/// payment — then its status decides. The bridge reports the SDK's
+/// `PaymentStatus` by its `Debug` name (`Completed`, `Pending`, `Failed`).
+/// Only `Completed` is "landed"; `Failed` is ignored, so an earlier rejected
+/// attempt can't pass for this one; anything else is still in progress.
 ///
 /// This is inference, not proof — the SDK has no "look up by idempotency key"
 /// call, so there is nothing better available. It is only ever used to decide
-/// between "definitely landed" and "no evidence"; the safety of acting on the
-/// latter rests on the idempotency key, not on this function being right.
-fn payment_matches_intent(
+/// between "definitely landed", "still in progress" and "no evidence"; the
+/// safety of acting on the last rests on the idempotency key, not on this
+/// function being right.
+fn history_match(
     payments: &[coincube_spark_protocol::PaymentSummary],
     pending: &PendingSend,
-) -> bool {
+) -> HistoryMatch {
     let floor = pending.dispatched_at - RECONCILE_BACKDATE_SLACK_SECS;
-    payments.iter().any(|p| {
+    let mut in_progress = false;
+    for p in payments.iter().filter(|p| {
         p.direction.eq_ignore_ascii_case("outgoing")
             && p.timestamp as i64 >= floor
             && match pending.token_amount {
@@ -232,7 +251,19 @@ fn payment_matches_intent(
                 Some(token_amount) => p.token_amount == Some(token_amount),
                 None => p.amount_sat.unsigned_abs() == pending.amount_sat,
             }
-    })
+    }) {
+        if p.status.eq_ignore_ascii_case("completed") {
+            return HistoryMatch::Settled;
+        }
+        if !p.status.eq_ignore_ascii_case("failed") {
+            in_progress = true;
+        }
+    }
+    if in_progress {
+        HistoryMatch::InProgress
+    } else {
+        HistoryMatch::None
+    }
 }
 
 /// Settle what happened to a send whose outcome is unknown.
@@ -258,13 +289,14 @@ pub(crate) async fn reconcile_pending_send(
     }
 
     match backend.list_payments(Some(50), None).await {
-        Ok(list) => {
-            if payment_matches_intent(&list.payments, pending) {
-                ReconcileOutcome::Landed
-            } else {
-                ReconcileOutcome::NoTrace
+        Ok(list) => match history_match(&list.payments, pending) {
+            HistoryMatch::Settled => ReconcileOutcome::Landed,
+            // Not paid yet, and not safe to repeat: keep it unconfirmed.
+            HistoryMatch::InProgress => {
+                ReconcileOutcome::Inconclusive("it is still in progress".to_string())
             }
-        }
+            HistoryMatch::None => ReconcileOutcome::NoTrace,
+        },
         Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
     }
 }
@@ -3526,13 +3558,19 @@ mod tests {
             method: "token".to_string(),
             ..payment(0, (now + 2) as u64, "outgoing")
         };
-        assert!(payment_matches_intent(&[token(2_500_000)], &pending));
-        assert!(!payment_matches_intent(&[token(1_000_000)], &pending));
+        assert_eq!(
+            HistoryMatch::Settled,
+            history_match(&[token(2_500_000)], &pending)
+        );
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[token(1_000_000)], &pending)
+        );
         // A zero-sats payment that moved no token is not this one.
-        assert!(!payment_matches_intent(
-            &[payment(0, (now + 2) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[payment(0, (now + 2) as u64, "outgoing")], &pending)
+        );
         assert!(!ReconcileOutcome::NoTrace.may_resend(pending.guard));
     }
 
@@ -5237,32 +5275,110 @@ mod tests {
         };
 
         // The payment itself, recorded a moment after dispatch.
-        assert!(payment_matches_intent(
-            &[payment(-1_000, (now + 2) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::Settled,
+            history_match(&[payment(-1_000, (now + 2) as u64, "outgoing")], &pending)
+        );
         // Recorded slightly *before* the gui's clock — still ours.
-        assert!(payment_matches_intent(
-            &[payment(-1_000, (now - 5) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::Settled,
+            history_match(&[payment(-1_000, (now - 5) as u64, "outgoing")], &pending)
+        );
         // An older payment of the same size is somebody else's.
-        assert!(!payment_matches_intent(
-            &[payment(-1_000, (now - 3_600) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(
+                &[payment(-1_000, (now - 3_600) as u64, "outgoing")],
+                &pending
+            )
+        );
         // A receive of the same size is not this send.
-        assert!(!payment_matches_intent(
-            &[payment(1_000, (now + 2) as u64, "incoming")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[payment(1_000, (now + 2) as u64, "incoming")], &pending)
+        );
         // A different amount is a different payment.
-        assert!(!payment_matches_intent(
-            &[payment(-2_000, (now + 2) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[payment(-2_000, (now + 2) as u64, "outgoing")], &pending)
+        );
         // Empty history is no evidence.
-        assert!(!payment_matches_intent(&[], &pending));
+        assert_eq!(HistoryMatch::None, history_match(&[], &pending));
+    }
+
+    /// A same-size outgoing payment only counts as this send once it has
+    /// completed. A failed one is an earlier rejected attempt, and a pending
+    /// one hasn't landed yet: neither may read as "paid", and a pending one
+    /// must not allow a repeat either.
+    #[tokio::test]
+    async fn history_matching_reads_the_payment_status() {
+        let now = chrono::Utc::now().timestamp();
+        let pending = PendingSend {
+            request_id: None,
+            dispatched_at: now,
+            amount_sat: 1_000,
+            token_amount: None,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let with_status = |status: &str| PaymentSummary {
+            status: status.to_string(),
+            ..payment(-1_000, (now + 2) as u64, "outgoing")
+        };
+
+        // The bridge sends the SDK's `PaymentStatus` Debug names.
+        assert_eq!(
+            history_match(&[with_status("Completed")], &pending),
+            HistoryMatch::Settled
+        );
+        assert_eq!(
+            history_match(&[with_status("Failed")], &pending),
+            HistoryMatch::None
+        );
+        assert_eq!(
+            history_match(&[with_status("Pending")], &pending),
+            HistoryMatch::InProgress
+        );
+        // An unknown status is treated as in progress, never as settled.
+        assert_eq!(
+            history_match(&[with_status("Refunding")], &pending),
+            HistoryMatch::InProgress
+        );
+        // A completed match wins over an earlier failed attempt.
+        assert_eq!(
+            history_match(&[with_status("Failed"), with_status("Completed")], &pending),
+            HistoryMatch::Settled
+        );
+
+        // Through the shared reconcile, as both the Send panel and Buy/Sell's
+        // sell fulfilment run it.
+        let reconcile = |payments: Vec<PaymentSummary>| {
+            let pending = pending.clone();
+            async move {
+                let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+                let backend = SparkBackend::new(Arc::new(client));
+                let (outcome, _) =
+                    tokio::join!(reconcile_pending_send(&backend, &pending), async {
+                        let request = requests.recv().await.expect("a history request");
+                        backend
+                            .client()
+                            .mock_reply(
+                                request.id,
+                                Some(coincube_spark_protocol::OkPayload::ListPayments(
+                                    coincube_spark_protocol::ListPaymentsOk { payments },
+                                )),
+                            )
+                            .await;
+                    });
+                outcome
+            }
+        };
+        let failed = reconcile(vec![with_status("Failed")]).await;
+        assert_eq!(failed, ReconcileOutcome::NoTrace);
+        let in_progress = reconcile(vec![with_status("Pending")]).await;
+        assert!(matches!(in_progress, ReconcileOutcome::Inconclusive(_)));
+        assert!(!in_progress.may_resend(RetryGuard::IdempotencyKey));
+        let landed = reconcile(vec![with_status("Completed")]).await;
+        assert_eq!(landed, ReconcileOutcome::Landed);
     }
 
     /// Every rail the panel can send on, with the guard each one gets and what
