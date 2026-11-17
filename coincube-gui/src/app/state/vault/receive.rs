@@ -76,6 +76,31 @@ fn zero_balance_eligible(
 /// One bounded settings read. A missing, changing, or unreadable record leaves
 /// an empty Vault balance unknown; the normal settings reader retries with
 /// sleeps and must not run from Iced's render path.
+/// A new receive address. An imported wallet allocates under its source's
+/// reservation lock, shared with a paired Bitcoin Blake2b import, so the two
+/// Cubes never hand out the same address.
+pub(crate) async fn next_receive_address(
+    data_dir: CoincubeDirectory,
+    wallet: &Wallet,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<(Address, ChildNumber), Error> {
+    if wallet.is_imported() {
+        return crate::app::state::imported_bitcoin::reserve_receive_address(
+            data_dir,
+            wallet.main_descriptor.clone(),
+            daemon,
+        )
+        .await
+        .map(|res| (res.address, res.derivation_index))
+        .map_err(Error::Unexpected);
+    }
+    daemon
+        .get_new_address()
+        .await
+        .map(|res| (res.address, res.derivation_index))
+        .map_err(|e| e.into())
+}
+
 fn no_pending_restore_rescan(data_dir: &CoincubeDirectory, wallet: &Wallet) -> bool {
     const MAX_SETTINGS_BYTES: u64 = 8 * 1024 * 1024;
     let path = data_dir
@@ -393,13 +418,10 @@ impl State for VaultReceivePanel {
                 }
                 self.generating = true;
                 let daemon = daemon.clone();
+                let (data_dir, wallet) = (self.data_dir.clone(), self.wallet.clone());
                 Task::perform(
                     async move {
-                        let res = daemon
-                            .get_new_address()
-                            .await
-                            .map(|res| (res.address, res.derivation_index))
-                            .map_err(|e| e.into());
+                        let res = next_receive_address(data_dir, &wallet, daemon.clone()).await;
                         // User just generated a fresh receive
                         // address — they're staring at the QR
                         // waiting for an incoming payment, so kick
