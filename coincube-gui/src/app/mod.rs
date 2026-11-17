@@ -604,10 +604,20 @@ impl Panels {
             )
         });
 
-        // Built from the Spark wallet, as in `Panels::new`.
-        self.buy_sell = spark_backend.map(|spark| {
-            crate::app::view::buysell::BuySellPanel::new(cache.network, wallet, spark)
-        });
+        // Built from the Spark wallet, as in `Panels::new`. A panel whose sell
+        // payment is with the bridge is kept: replacing it would drop the
+        // checkout waiting for the answer.
+        if self
+            .buy_sell
+            .as_ref()
+            .is_some_and(|panel| panel.sell_payment_in_flight())
+        {
+            log::warn!("[BUYSELL] Keeping the Buy/Sell panel: a sell payment is in flight");
+        } else {
+            self.buy_sell = spark_backend.map(|spark| {
+                crate::app::view::buysell::BuySellPanel::new(cache.network, wallet, spark)
+            });
+        }
     }
 
     fn current(&self) -> Option<&dyn State> {
@@ -12660,6 +12670,46 @@ pub(crate) mod tests {
         assert!(liquid_only.buy_sell.is_some());
         rebuild(&mut liquid_only, None);
         assert!(liquid_only.buy_sell.is_none());
+
+        // A panel whose sell payment is with the bridge survives a rebuild
+        // (e.g. the late imported-wallet load), checkout and all.
+        rebuild(&mut liquid_only, spark());
+        {
+            use crate::app::view::buysell::{
+                BuyOrSell, BuySellFlowState, MavapayFlowStep, MavapayState, SellFulfilment,
+                SellPayment,
+            };
+            let panel = liquid_only.buy_sell.as_mut().unwrap();
+            panel.step = BuySellFlowState::Mavapay(MavapayState::new(
+                BuyOrSell::Sell,
+                MavapayFlowStep::Checkout {
+                    quote: crate::app::view::buysell::mavapay::tests::sell_quote("quote-a"),
+                    fulfilled_order: None,
+                    invoice_qr_code_data: None,
+                    spark_balance: None,
+                    sell: SellPayment {
+                        fulfilment: SellFulfilment::Sending,
+                        ..SellPayment::default()
+                    },
+                    stream_order_id: None,
+                },
+                crate::services::coincube::get_countries()
+                    .iter()
+                    .find(|c| c.code == "NG")
+                    .unwrap(),
+                spark().unwrap(),
+            ));
+        }
+        rebuild(&mut liquid_only, spark());
+        assert!(liquid_only
+            .buy_sell
+            .as_ref()
+            .is_some_and(|panel| panel.sell_payment_in_flight()));
+        rebuild(&mut liquid_only, None);
+        assert!(liquid_only
+            .buy_sell
+            .as_ref()
+            .is_some_and(|panel| panel.sell_payment_in_flight()));
 
         let _ = std::fs::remove_dir_all(&root);
     }
