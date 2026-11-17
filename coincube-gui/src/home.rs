@@ -1665,6 +1665,7 @@ impl Home {
                         | ViewMessage::CreationBackup(_)
                         | ViewMessage::CreationBackupBypassRequested
                         | ViewMessage::CreationBackupChoiceRequested
+                        | ViewMessage::CreationBackupContinue
                         | ViewMessage::CreationBackupAcknowledgeBypass(_)
                         | ViewMessage::CreationBackupBypassConfirmed
                         | ViewMessage::CancelCreationBackup
@@ -9478,6 +9479,33 @@ mod tests {
                 .iter()
                 .any(|message| matches!(message, Message::Install(..)))
         );
+    }
+
+    #[test]
+    fn blake2b_verified_backup_continue_schedules_persistence() {
+        for chain in [ChainId::BitcoinBlake2b, ChainId::BitcoinBlake2bTestnet4] {
+            for confirmed in [false, true] {
+                let mut home = home();
+                enable_btcb2(&mut home);
+                home.network = chain;
+                home.state = State::CreationBackup(CreationBackupStep::Choice);
+                home.creation_backup_words = Some(
+                    bip39::Mnemonic::from_entropy(&[0; 16])
+                        .unwrap()
+                        .words()
+                        .map(str::to_owned)
+                        .collect(),
+                );
+                home.creation_seed_confirmed = confirmed;
+
+                let task = home.update(Message::View(ViewMessage::CreationBackupContinue));
+                // Inspect, but never poll, the real CubeCreated persistence
+                // task: this test must not access the OS keystore or disk.
+                assert_eq!(iced_runtime::task::into_stream(task).is_some(), confirmed);
+                assert_eq!(home.creating_cube, confirmed);
+                assert!(home.error.is_none());
+            }
+        }
     }
 
     #[test]
