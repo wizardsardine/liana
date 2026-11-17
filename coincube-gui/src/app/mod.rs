@@ -5,6 +5,7 @@ mod cube_name;
 mod daemon_cache;
 mod daemon_lifecycle;
 mod fiat_updates;
+mod node_sync;
 mod recovery_settings;
 
 pub mod breez_liquid;
@@ -6901,72 +6902,7 @@ impl App {
                 ]);
             }
             Message::PollBitcoindSync => {
-                if !self.bitcoind_sync_probe_in_progress {
-                    if let Some(pending_cfg) = self
-                        .daemon
-                        .as_ref()
-                        .and_then(|d| d.config())
-                        .and_then(local_node_sync_config)
-                        .cloned()
-                    {
-                        self.bitcoind_sync_probe_in_progress = true;
-                        let app = self.cache.app_generation;
-                        let history_epoch = self.node_history_epoch;
-                        let wallet = self.wallet.as_ref().map(|w| w.id());
-                        // Only a *pending* node is a switch target, so only then
-                        // is the Vault's history worth reading.
-                        let history_probe = match (&self.daemon, &self.wallet) {
-                            (Some(daemon), Some(wallet))
-                                if daemon
-                                    .config()
-                                    .is_some_and(|c| c.pending_bitcoind.is_some()) =>
-                            {
-                                Some(VaultHistoryProbe {
-                                    daemon: daemon.clone(),
-                                    data_dir: self.cache.datadir_path.clone(),
-                                    chain: self.cache.chain(),
-                                    wallet: wallet.clone(),
-                                })
-                            }
-                            _ => None,
-                        };
-                        return Task::perform(
-                            async move {
-                                let result =
-                                    check_bitcoind_sync_progress(pending_cfg.clone()).await;
-                                // Only a synced, pruned node needs it; an
-                                // unpruned one serves any history.
-                                let needs_history = result.as_ref().is_ok_and(|s| {
-                                    !s.ibd
-                                        && matches!(
-                                            s.pruning,
-                                            Some(local_switch::NodePruning::Pruned { .. })
-                                        )
-                                });
-                                let vault_history = match history_probe {
-                                    Some(probe) if needs_history => {
-                                        let pruning = result
-                                            .as_ref()
-                                            .ok()
-                                            .and_then(|s| s.pruning)
-                                            .expect("needs_history requires known pruning");
-                                        probe.read(&pending_cfg, pruning).await
-                                    }
-                                    _ => None,
-                                };
-                                Message::BitcoindSyncProgress {
-                                    app,
-                                    history_epoch,
-                                    wallet,
-                                    config: pending_cfg,
-                                    result,
-                                    vault_history,
-                                }
-                            },
-                            |message| message,
-                        );
-                    }
-                }
+                return self.poll_bitcoind_sync();
             }
             Message::UnsweptNotice {
                 app,
@@ -7352,129 +7288,14 @@ impl App {
                 result,
                 vault_history,
             } => {
-                // Wallet-history permission belongs to the App that asked.
-                // A delayed result must not authorize another Vault using the
-                // same managed node, or release its in-flight probe guard.
-                if app != self.cache.app_generation
-                    || wallet != self.wallet.as_ref().map(|w| w.id())
-                {
-                    return Task::none();
-                }
-                // A result from the previous node must not update or promote a new one.
-                if self
-                    .daemon
-                    .as_ref()
-                    .and_then(|d| d.config())
-                    .and_then(local_node_sync_config)
-                    != Some(&config)
-                {
-                    return Task::none();
-                }
-                self.bitcoind_sync_probe_in_progress = false;
-                match result {
-                    Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
-                    Ok(LocalNodeSync {
-                        progress,
-                        ibd,
-                        blocks,
-                        headers,
-                        subversion,
-                        pruning,
-                    }) => {
-                        self.cache.node_bitcoind_sync_progress = Some(progress);
-                        self.cache.node_bitcoind_pruning = pruning;
-                        self.cache.local_switch_history = if history_epoch
-                            == self.node_history_epoch
-                            && !self.node_history_in_progress
-                        {
-                            vault_history
-                        } else {
-                            None
-                        };
-                        self.cache.node_bitcoind_sync_heights = Some((blocks, headers));
-                        self.cache.node_bitcoind_ibd = Some(ibd);
-                        // Keep the last good answer if this poll couldn't read it.
-                        if subversion.is_some() {
-                            self.cache.node_bitcoind_subversion = subversion;
-                        }
-                        // Auto-switch to the pending node once it's synced, but
-                        // only if the user *adopted* it (`auto_switch_to_pending`).
-                        // This fires even for a node that reused an existing
-                        // chainstate and was therefore never observed in IBD —
-                        // while never reverting a node merely parked by a
-                        // switch-to-Connect or a Bitcoind-failure fallback (those
-                        // clear the flag). Skip while a switch is already in
-                        // flight, so we don't spawn overlapping switches every
-                        // tick (which raced to load — and corrupted — the wallet).
-                        if !ibd
-                            && !self.daemon_switch_in_progress
-                            && !self.auto_switch_suppressed
-                            && (!self.cache.node_history_switch_requested
-                                || self.cache.node_history.reconciled)
-                            && !self.node_history_in_progress
-                            && !self.cache.node_history.job.as_ref().is_some_and(|job| {
-                                !matches!(
-                                    job.phase,
-                                    crate::node::history::Phase::Complete
-                                        | crate::node::history::Phase::Cancelled
-                                )
-                            })
-                        {
-                            let switch =
-                                self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
-                                    // Promote unless the node was explicitly parked
-                                    // (`Some(false)`). An absent flag (`None`) is a
-                                    // legacy adopted node — the old build promoted it
-                                    // on sync with no flag — so it must promote too.
-                                    if c.auto_switch_to_pending == Some(false)
-                                        && !self.cache.node_history_switch_requested
-                                    {
-                                        return None;
-                                    }
-                                    let pending = c.pending_bitcoind.clone()?;
-                                    // Preserve the current Connect config as the new fallback.
-                                    let old_esplora = match &c.bitcoin_backend {
-                                        Some(coincubed::config::BitcoinBackend::Esplora(e)) => {
-                                            Some(e.clone())
-                                        }
-                                        _ => None,
-                                    };
-                                    let mut new_cfg = c.clone();
-                                    new_cfg.bitcoin_backend =
-                                        Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
-                                    new_cfg.pending_bitcoind = None;
-                                    new_cfg.auto_switch_to_pending = Some(false);
-                                    new_cfg.fallback_esplora = old_esplora;
-                                    if new_cfg.bitcoin_config.chain.is_blake2b() {
-                                        new_cfg.bitcoin_config.poll_interval_secs =
-                                            Duration::from_secs(
-                                                coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
-                                            );
-                                    }
-                                    Some(new_cfg)
-                                });
-                            if let Some(new_cfg) = switch {
-                                // Not while the Vault is scanning (the switch
-                                // would throw the scan away), and never to a
-                                // local wallet missing history it cannot rescan.
-                                // Deferred, not dropped: every probe re-asks.
-                                let hold = local_switch::auto_switch_hold(
-                                    self.running_vault_scan(),
-                                    pruning,
-                                    self.cache.local_switch_history,
-                                );
-                                if hold != self.local_switch_hold {
-                                    log_local_switch_hold(hold);
-                                }
-                                self.local_switch_hold = hold;
-                                if hold.is_none() {
-                                    info!("Switching to local Bitcoind — node synced");
-                                    return self.spawn_daemon_switch(new_cfg);
-                                }
-                            }
-                        }
-                    }
-                }
+                return self.handle_bitcoind_sync_progress(
+                    app,
+                    history_epoch,
+                    wallet,
+                    config,
+                    result,
+                    vault_history,
+                );
             }
             Message::SettingsSaved => {
                 // Settings saved - reload unit preference and fiat_price from cube settings
