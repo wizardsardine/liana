@@ -1063,6 +1063,7 @@ mod tests {
             app.cube_settings().clone(),
             None,
             None,
+            None,
         );
         drop(startup);
         loader.stop();
