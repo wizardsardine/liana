@@ -20,7 +20,7 @@ fn state(mode: BuyOrSell, step: MeldFlowStep) -> MeldState {
         country: get_countries().iter().find(|c| c.code == "US").unwrap(),
         network: Network::Bitcoin,
         sse_retries: 0,
-        webview_manager: iced_wry::IcedWebviewManager::new(),
+        webview_manager: super::super::WebviewManager::new(),
     }
 }
 fn inspect(content: coincube_ui::widget::Element<'_, view::Message>) -> capture::Inspection {
