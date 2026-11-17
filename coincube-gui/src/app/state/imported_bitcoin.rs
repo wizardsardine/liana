@@ -1374,6 +1374,10 @@ impl ImportedBitcoinPanel {
             ImportMessage::KeySourcePicked(index, source) => {
                 if let Some(keys) = &mut self.keys {
                     keys.menu = None;
+                    // Not offered where every key must sign here.
+                    if !keys.sources().contains(&source) {
+                        return Task::none();
+                    }
                 }
                 if let Some(slot) = self.key_slot(index) {
                     slot.source = source;
@@ -6022,6 +6026,54 @@ mod tests {
         assert_eq!(keys.slots[2].source, KeySource::Elsewhere);
     }
 
+    /// Every key of an n-of-n wallet must sign here, so its menu offers no
+    /// Skip and a stray pick of it changes nothing; a k-of-n wallet keeps it.
+    #[tokio::test]
+    async fn an_n_of_n_wallet_cannot_skip_a_key() {
+        assert!(KeysState::new(&two_of_three()).can_skip());
+        assert_eq!(
+            KeysState::new(&two_of_three()).sources(),
+            &[KeySource::Hardware, KeySource::Words, KeySource::Elsewhere]
+        );
+
+        let directory = NetworkDirectory::new(std::env::temp_dir().join("import-n-of-n-skip"));
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let wallet = ImportedWalletAttachment::new(two_of_two(), ChainId::Bitcoin, 0, 200).unwrap();
+        panel.keys = Some(KeysState::new(&wallet.descriptor));
+        panel.review = Some(wallet);
+        let keys = panel.keys.as_ref().unwrap();
+        assert_eq!(keys.threshold, 2);
+        assert!(keys.multisig());
+        assert!(!keys.can_skip());
+        assert_eq!(keys.sources(), &[KeySource::Hardware, KeySource::Words]);
+
+        let _ = panel.update_view(ImportMessage::KeySourceMenu(1), None, 0);
+        let cache = Cache::default();
+        let open = rendered_labels(panel.journey_view(&cache, false)).await;
+        assert_labels(
+            &open,
+            &[
+                "Checked on the device; the seed stays there.",
+                "Checked here, then stored encrypted for this Cube.",
+            ],
+            &[
+                "Skip this key",
+                "Another wallet or person signs; COINCUBE Desktop saves the PSBT for them.",
+            ],
+        );
+
+        let _ = panel.update_view(
+            ImportMessage::KeySourcePicked(1, KeySource::Elsewhere),
+            None,
+            0,
+        );
+        let keys = panel.keys.as_ref().unwrap();
+        assert_eq!(keys.menu, None);
+        assert_eq!(keys.slots[1].source, KeySource::Hardware);
+        assert_eq!(keys.slots[1].status, KeyStatus::Missing);
+    }
+
     /// A Bitcoin account from a known phrase: its descriptor key text and
     /// its public account.
     fn phrase_account(entropy: u8) -> (String, coincube_core::imported_keys::ImportedAccount) {
@@ -6048,6 +6100,13 @@ mod tests {
                 .unwrap()
                 .to_string(),
         )
+    }
+
+    /// A 2-of-2 wallet whose keys come from phrases 1 and 2.
+    fn two_of_two() -> ImportedWalletDescriptor {
+        let keys: Vec<String> = (1..=2).map(|entropy| phrase_account(entropy).0).collect();
+        let branch = |n: u8| format!("wsh(sortedmulti(2,{}/{n}/*,{}/{n}/*))", keys[0], keys[1]);
+        ImportedWalletDescriptor::parse(&branch(0), Some(&branch(1)), ChainId::Bitcoin).unwrap()
     }
 
     /// A 2-of-3 wallet whose keys come from phrases 1, 2 and 3.
