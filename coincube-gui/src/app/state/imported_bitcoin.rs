@@ -2104,7 +2104,8 @@ impl ImportedBitcoinPanel {
                 if self.import.active_attachment().is_none() {
                     self.journey = true;
                 }
-                Task::none()
+                // Back on Keys: a device connected meanwhile is checked now.
+                self.auto_check_devices()
             }
             ImportMessage::Abandon => {
                 if self.import.active_attachment().is_some() {
@@ -2966,9 +2967,21 @@ impl ImportedBitcoinPanel {
     /// checked once per connection of its device; a failed check waits for
     /// Check again or for the device to be reconnected.
     fn auto_check_devices(&mut self) -> Task<Message> {
-        if self.adding_keys || self.keys_confirmed || self.review.is_none() {
+        // Only while the Keys step is on screen: a device prompt with no
+        // row explaining it would be a surprise.
+        if self.adding_keys
+            || self.review.is_none()
+            || !self.journey_open()
+            || self.journey_step() != JourneyStep::Keys
+        {
             return Task::none();
         }
+        // Past the threshold a key is not needed: its device is checked
+        // only on Check device, so Review stays open.
+        let enough = self
+            .keys
+            .as_ref()
+            .is_some_and(|keys| keys.provided() >= keys.threshold);
         let connected: Vec<(
             String,
             coincube_core::miniscript::bitcoin::bip32::Fingerprint,
@@ -3010,7 +3023,7 @@ impl ImportedBitcoinPanel {
                     continue;
                 }
                 if let Some(id) = device {
-                    if !busy && due.is_none() && slot.auto_checked.as_ref() != Some(id) {
+                    if !busy && !enough && due.is_none() && slot.auto_checked.as_ref() != Some(id) {
                         slot.auto_checked = Some(id.clone());
                         due = Some(index);
                     }
@@ -6067,6 +6080,89 @@ mod tests {
             .push(connected("jade-1", first));
         let _ = panel.auto_check_devices();
         assert_eq!(status(&panel, 0), KeyStatus::Checking);
+    }
+
+    /// A Keys panel for the auto-check tests, with `devices` connected.
+    fn keys_panel_with(devices: &[(&str, usize)]) -> ImportedBitcoinPanel {
+        let directory = NetworkDirectory::new(std::env::temp_dir().join("import-auto-check"));
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let wallet =
+            ImportedWalletAttachment::new(two_of_three(), ChainId::Bitcoin, 0, 200).unwrap();
+        let keys = KeysState::new(&wallet.descriptor);
+        let mut listing = HardwareWallets::new(
+            crate::dir::CoincubeDirectory::new(std::env::temp_dir().join("import-auto-check")),
+            Network::Bitcoin,
+        );
+        listing.list = devices
+            .iter()
+            .map(|(id, index)| connected(id, keys.slots[*index].account.fingerprint))
+            .collect();
+        panel.keys = Some(keys);
+        panel.review = Some(wallet);
+        panel.hardware_wallets = Some(listing);
+        panel
+    }
+
+    /// Past the threshold a spare key's device waits for Check device, so
+    /// Review stays open and the key can still be set to sign elsewhere.
+    #[test]
+    fn a_spare_keys_device_is_not_checked_on_its_own() {
+        let mut panel = keys_panel_with(&[("coldcard-1", 2)]);
+        {
+            let keys = panel.keys.as_mut().unwrap();
+            keys.slots[0].status = KeyStatus::Verified;
+            keys.slots[1].status = KeyStatus::Verified;
+        }
+        let _ = panel.auto_check_devices();
+        let keys = panel.keys.as_ref().unwrap();
+        assert_eq!(keys.slots[2].status, KeyStatus::Missing);
+        assert!(keys.ready());
+    }
+
+    /// Nothing is checked while the Keys step is not on screen; returning
+    /// to it checks a device connected meanwhile.
+    #[test]
+    fn auto_check_waits_for_the_keys_step() {
+        let mut panel = keys_panel_with(&[("coldcard-1", 2)]);
+        panel.journey = false;
+        let _ = panel.auto_check_devices();
+        assert_eq!(
+            panel.keys.as_ref().unwrap().slots[2].status,
+            KeyStatus::Missing
+        );
+        let _ = panel.update_view(ImportMessage::ResumeJourney, None, 0);
+        assert_eq!(
+            panel.keys.as_ref().unwrap().slots[2].status,
+            KeyStatus::Checking
+        );
+    }
+
+    /// A signer's device whose key is set to recovery words is not lost:
+    /// it is listed below and says which key it holds.
+    #[tokio::test]
+    async fn a_device_for_a_words_key_says_which_key_it_holds() {
+        let wallet = two_of_three();
+        let mut keys = KeysState::new(&wallet);
+        keys.slots[1].source = KeySource::Words;
+        let second = keys.slots[1].account.fingerprint;
+        let devices = vec![keys::ListedDevice {
+            name: "Coldcard".into(),
+            fingerprint: Some(second),
+            problem: None,
+            pairing_code: None,
+        }];
+        let (form, _) = keys::step(&keys, false, &devices, None);
+        let shown = rendered_labels(form).await;
+        assert_labels(
+            &shown,
+            &[
+                "Connected, not matched to a key",
+                "Coldcard",
+                "Holds Key 2, which is set to recovery words. Choose Hardware wallet for it to check it here.",
+            ],
+            &["Not a signer of this wallet."],
+        );
     }
 
     #[tokio::test]

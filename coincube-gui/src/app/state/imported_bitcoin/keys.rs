@@ -442,15 +442,7 @@ fn unmatched_devices<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<
     let mut list = Column::new().spacing(10).push(
         p2_bold(localized_copy("Connected, not matched to a key")).style(theme::text::secondary),
     );
-    for device in devices {
-        let fingerprint = device.readable();
-        if fingerprint.is_some_and(|fingerprint| {
-            keys.slots
-                .iter()
-                .any(|slot| slot.account.fingerprint == fingerprint)
-        }) {
-            continue;
-        }
+    for device in devices.iter().filter(|device| !in_a_row(keys, device)) {
         let mut name = Row::new()
             .spacing(8)
             .align_y(Alignment::Center)
@@ -458,10 +450,28 @@ fn unmatched_devices<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<
         if let Some(fingerprint) = device.fingerprint {
             name = name.push(fingerprint_text(fingerprint, theme::text::secondary));
         }
+        // A signer's device whose key is set to words or signing elsewhere
+        // is not drawn in that row, so it says which key it holds.
+        let held = device.readable().and_then(|fingerprint| {
+            keys.slots
+                .iter()
+                .position(|slot| slot.account.fingerprint == fingerprint)
+        });
         let mut detail = Row::new().spacing(8).align_y(Alignment::Center);
-        detail = match &device.problem {
-            Some(problem) => detail.push(p2_regular(problem.clone()).style(theme::text::warning)),
-            None => detail.push(
+        detail = match (&device.problem, held) {
+            (Some(problem), _) => {
+                detail.push(p2_regular(problem.clone()).style(theme::text::warning))
+            }
+            (None, Some(index)) => detail.push(
+                p2_regular(coincube_ui::localized_format!(
+                    "Holds Key {}, which is set to {}. Choose Hardware wallet for it to check it here.",
+                    "Guarda la clave {}, configurada como {}. Elige Cartera de hardware para comprobarla aquí.",
+                    index + 1,
+                    keys.slots[index].source.to_string().to_lowercase()
+                ))
+                .style(theme::text::secondary),
+            ),
+            (None, None) => detail.push(
                 p2_regular(localized_copy("Not a signer of this wallet."))
                     .style(theme::text::secondary),
             ),
@@ -478,15 +488,18 @@ fn unmatched_devices<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<
     list.into()
 }
 
-fn has_unmatched(keys: &KeysState, devices: &[ListedDevice]) -> bool {
-    devices.iter().any(|device| {
-        device.readable().is_none_or(|fingerprint| {
-            !keys
-                .slots
-                .iter()
-                .any(|slot| slot.account.fingerprint == fingerprint)
+/// A readable device is drawn in a key's row only when that key is on a
+/// hardware wallet.
+fn in_a_row(keys: &KeysState, device: &ListedDevice) -> bool {
+    device.readable().is_some_and(|fingerprint| {
+        keys.slots.iter().any(|slot| {
+            slot.account.fingerprint == fingerprint && slot.source == KeySource::Hardware
         })
     })
+}
+
+fn has_unmatched(keys: &KeysState, devices: &[ListedDevice]) -> bool {
+    devices.iter().any(|device| !in_a_row(keys, device))
 }
 
 /// The Keys step's form and action row: one row per signer, with the
