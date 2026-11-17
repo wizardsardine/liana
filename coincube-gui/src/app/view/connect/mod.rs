@@ -9,6 +9,7 @@ pub mod cube_members;
 pub mod duress_contacts;
 pub mod duress_enroll;
 pub mod sign_in_prompt;
+mod two_factor;
 
 use coincube_ui::{
     color,
@@ -88,6 +89,17 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
             ..
         } => otp_ux(email, otp, *sending, *cooldown).map(ViewMessage::ConnectAccount),
 
+        ConnectFlowStep::TwoFactor {
+            email,
+            code,
+            backup,
+            sending,
+            failure,
+            lost_open,
+            ..
+        } => two_factor::sign_in_ux(email, &code.0, *backup, *sending, *failure, *lost_open)
+            .map(ViewMessage::ConnectAccount),
+
         ConnectFlowStep::CheckingDuress { status } => {
             checking_duress_ux(*status).map(ViewMessage::ConnectAccount)
         }
@@ -125,13 +137,16 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
         .align_x(col_align)
         .width(Length::Fill);
 
-    if let Some(step) = auth_step(&acct.step) {
-        col = col.push(crate::home::restore_frame::stepper(&AUTH_STEPS, step));
+    if let Some((steps, step)) = auth_rail_position(acct) {
+        col = col.push(crate::home::restore_frame::stepper(steps, step));
         col = col.push(iced::widget::Space::new().height(Length::Fixed(22.0)));
     }
 
     if let Some(e) = acct.error.as_ref() {
         col = col.push(account_error_card(e).map(ViewMessage::ConnectAccount));
+    }
+    if let (Some(left), ConnectFlowStep::Dashboard) = (acct.backup_codes_notice, &acct.step) {
+        col = col.push(two_factor::backup_codes_notice(left).map(ViewMessage::ConnectAccount));
     }
 
     col.push(body).into()
@@ -168,8 +183,8 @@ pub fn connect_account_panel<'a>(
         .spacing(0)
         .align_x(col_align)
         .width(Length::Fill);
-    if let Some(step) = auth_step(&acct.step) {
-        col = col.push(crate::home::restore_frame::stepper(&AUTH_STEPS, step));
+    if let Some((steps, step)) = auth_rail_position(acct) {
+        col = col.push(crate::home::restore_frame::stepper(steps, step));
         col = col.push(iced::widget::Space::new().height(Length::Fixed(22.0)));
     }
     col.push(body).into()
@@ -195,6 +210,8 @@ pub const CLOSE_ID: &str = "tenshu.connect.close";
 pub const CONTENT_SCROLL_ID: &str = "tenshu.connect.content-scroll";
 pub const EMAIL_INPUT_ID: &str = "tenshu.connect.auth.email";
 pub const OTP_INPUT_ID: &str = "tenshu.connect.auth.otp";
+pub const TWO_FACTOR_INPUT_ID: &str = "tenshu.connect.auth.authenticator";
+pub const TWO_FACTOR_SETTINGS_INPUT_ID: &str = "tenshu.connect.security.authenticator";
 
 /// Account-wide sections shown in the Connect sheet. Recovery
 /// services has its own section here without changing the older Home menu.
@@ -234,6 +251,7 @@ pub fn connect_sheet<'a>(
     let auth_in_progress = matches!(
         acct.step,
         ConnectFlowStep::OtpVerification { .. }
+            | ConnectFlowStep::TwoFactor { .. }
             | ConnectFlowStep::CheckingDuress { .. }
             | ConnectFlowStep::DuressRecovery { .. }
     );
@@ -323,6 +341,9 @@ pub fn connect_sheet<'a>(
         let mut column = Column::new().spacing(12);
         if let Some(error) = acct.error.as_ref() {
             column = column.push(account_error_card(error));
+        }
+        if let Some(left) = acct.backup_codes_notice {
+            column = column.push(two_factor::backup_codes_notice(left));
         }
         let content: Element<ConnectAccountMessage> = column.push(section_content).into();
         content.map(ConnectSheetMessage::Account)
@@ -454,8 +475,8 @@ pub fn connect_sheet<'a>(
 
     // The slot stays when there is no rail (a failed account check, duress
     // recovery) so the body keeps its place in the tree.
-    let rail: Element<ConnectSheetMessage> = match auth_step(&acct.step) {
-        Some(step) if show_auth && !blocked => auth_rail(step),
+    let rail: Element<ConnectSheetMessage> = match auth_rail_position(acct) {
+        Some((steps, step)) if show_auth && !blocked => auth_rail(steps, step),
         _ => iced::widget::Space::new().width(Length::Fill).into(),
     };
 
@@ -965,6 +986,15 @@ fn connect_account_body<'a>(acct: &'a ConnectAccountPanel) -> Element<'a, Connec
             cooldown,
             ..
         } => otp_ux(email, otp, *sending, *cooldown),
+        ConnectFlowStep::TwoFactor {
+            email,
+            code,
+            backup,
+            sending,
+            failure,
+            lost_open,
+            ..
+        } => two_factor::sign_in_ux(email, &code.0, *backup, *sending, *failure, *lost_open),
         ConnectFlowStep::CheckingDuress { status } => checking_duress_ux(*status),
         ConnectFlowStep::DuressRecovery {
             unlock_at,
@@ -1128,13 +1158,32 @@ fn connect_benefits<'a>(compact: bool) -> Element<'a, ConnectAccountMessage> {
 }
 
 const AUTH_STEPS: [&str; 3] = ["Email", "Token", "Done"];
+/// The rail for an account with an authenticator app, from the moment the
+/// email code reveals it until the post-sign-in account check ends.
+const AUTH_STEPS_AUTHENTICATOR: [&str; 4] = ["Email", "Token", "Authenticator", "Done"];
+
+/// Which rail to draw and where the user is on it.
+fn auth_rail_position(acct: &ConnectAccountPanel) -> Option<(&'static [&'static str], usize)> {
+    let step = auth_step(&acct.step)?;
+    if acct.signing_in_with_authenticator {
+        // Done moves one stop right of where the three-step rail has it.
+        let step = if matches!(acct.step, ConnectFlowStep::CheckingDuress { .. }) {
+            step + 1
+        } else {
+            step
+        };
+        Some((&AUTH_STEPS_AUTHENTICATOR, step))
+    } else {
+        Some((&AUTH_STEPS, step))
+    }
+}
 
 /// The sign-in step rail, in the same 52px band under the sheet header that
 /// Create Cube and Import or restore use, ruled off from the body.
-fn auth_rail<'a, M: 'a>(current: usize) -> Element<'a, M> {
+fn auth_rail<'a, M: 'a>(steps: &'static [&'static str], current: usize) -> Element<'a, M> {
     Column::new()
         .push(
-            container(crate::home::restore_frame::stepper(&AUTH_STEPS, current))
+            container(crate::home::restore_frame::stepper(steps, current))
                 .width(Length::Fill)
                 .center_y(Length::Fixed(52.0))
                 .padding([0, 28]),
@@ -1152,6 +1201,7 @@ fn auth_step(step: &ConnectFlowStep) -> Option<usize> {
     match step {
         ConnectFlowStep::Login { .. } | ConnectFlowStep::Register { .. } => Some(0),
         ConnectFlowStep::OtpVerification { .. } => Some(1),
+        ConnectFlowStep::TwoFactor { .. } => Some(2),
         ConnectFlowStep::CheckingDuress {
             status: DuressGateStatus::Checking,
         } => Some(2),
@@ -1795,6 +1845,10 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     Column::new()
         .push(sheet_title(localized_copy("Devices & security")))
         .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .push(group_title(localized_copy("Sign-in protection")))
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(two_factor::settings_ux(state))
+        .push(iced::widget::Space::new().height(Length::Fixed(32.0)))
         .push(group_title(localized_copy("Verified Devices")))
         .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
         .push(devices_section)
@@ -2834,6 +2888,178 @@ mod renewal_banner_tests {
             .as_widget_mut()
             .operate(&mut tree, Layout::new(&node), renderer, &mut labels);
         labels.0
+    }
+
+    /// The authenticator step and Devices & security's authenticator rows,
+    /// rendered in each state: the copy a user acts on is on screen, the rail
+    /// gains its Authenticator stop, and nothing secret is printed where it
+    /// shouldn't be.
+    #[tokio::test]
+    async fn authenticator_screens_render_their_copy() {
+        use crate::app::state::connect::account::{
+            TwoFactorNote, TwoFactorPanel, TwoFactorStatusView, TwoFactorStepFailure,
+        };
+        use crate::services::coincube::{
+            BackupCodes, SecondFactorChallenge, TotpSetup, TwoFactorStatus,
+        };
+        use iced::advanced::renderer::Headless;
+
+        let renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let has = |labels: &[String], needle: &str| labels.iter().any(|l| l.contains(needle));
+
+        // Sign-in: the authenticator step, then its failures.
+        let mut account = ConnectAccountPanel::new();
+        account.signing_in_with_authenticator = true;
+        let step = |backup, failure, lost_open| ConnectFlowStep::TwoFactor {
+            email: "founder@example.com".into(),
+            challenge: SecondFactorChallenge {
+                temp_token: zeroize::Zeroizing::new("challenge".into()),
+            },
+            code: crate::app::view::SecretInput::default(),
+            backup,
+            sending: false,
+            failure,
+            lost_open,
+        };
+        account.step = step(false, None, false);
+        let labels = visible_labels(
+            connect_sheet(&account, ConnectSheetPage::Authentication),
+            &renderer,
+        );
+        assert!(
+            has(&labels, "Enter your authenticator code"),
+            "{:?}",
+            labels
+        );
+        assert!(has(&labels, "COINCUBE (founder@example.com)"));
+        assert!(has(&labels, "Use a backup code instead"));
+        assert!(
+            labels.iter().any(|l| l == "Authenticator"),
+            "4-step rail: {:?}",
+            labels
+        );
+        assert!(!has(&labels, "challenge"));
+
+        account.step = step(true, Some(TwoFactorStepFailure::Wrong), true);
+        let labels = visible_labels(
+            connect_sheet(&account, ConnectSheetPage::Authentication),
+            &renderer,
+        );
+        assert!(has(&labels, "Enter a backup code"));
+        assert!(has(
+            &labels,
+            "That backup code is wrong or was already used."
+        ));
+        assert!(has(&labels, "Use your authenticator app instead"));
+        assert!(has(&labels, "turn the authenticator app off there"));
+
+        account.step = step(false, Some(TwoFactorStepFailure::Limited), false);
+        let labels = visible_labels(connect_account_panel(&account), &renderer);
+        assert!(has(&labels, "Too many tries."));
+
+        account.step = step(false, Some(TwoFactorStepFailure::Expired), false);
+        let labels = visible_labels(connect_account_panel(&account), &renderer);
+        assert!(has(&labels, "This sign-in timed out."));
+        assert!(
+            !has(&labels, "Verify"),
+            "an expired challenge offers only Start over"
+        );
+
+        // Devices & security.
+        let mut account = dashboard_panel();
+        let security = |a: &ConnectAccountPanel| {
+            visible_labels(
+                connect_sheet(
+                    a,
+                    ConnectSheetPage::Sections(ConnectSheetSection::DevicesSecurity),
+                ),
+                &renderer,
+            )
+        };
+        assert!(has(&security(&account), "Checking the authenticator app"));
+
+        account.two_factor.status = TwoFactorStatusView::Unsupported;
+        assert!(has(&security(&account), "Couldn't check whether"));
+
+        let status = |enabled, remaining| {
+            TwoFactorStatusView::Loaded(TwoFactorStatus {
+                enabled,
+                remaining,
+                total: 10,
+                generated_at: None,
+            })
+        };
+        account.two_factor.status = status(false, 0);
+        account.two_factor.note = Some(TwoFactorNote::TurnedOff);
+        let labels = security(&account);
+        assert!(has(&labels, "Turn on…"));
+        assert!(has(&labels, "Authenticator app turned off."));
+        assert!(!has(&labels, "Backup codes"), "no codes while it is off");
+
+        account.two_factor.note = None;
+        account.two_factor.panel = TwoFactorPanel::Setup {
+            setup: TotpSetup {
+                secret: "JBSWY3DPEHPK3PXP".into(),
+                otp_auth_url: "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP".into(),
+                qr: String::new(),
+            },
+            qr: iced::widget::qr_code::Data::new("otpauth://totp/x").ok(),
+        };
+        let labels = security(&account);
+        assert!(has(&labels, "Scan this with your authenticator app"));
+        assert!(has(&labels, "JBSW Y3DP EHPK 3PXP"));
+        assert!(has(&labels, "Turn on"));
+
+        account.two_factor.status = status(true, 10);
+        account.two_factor.panel = TwoFactorPanel::Codes {
+            codes: BackupCodes {
+                codes: vec!["abcd-efgh-jkmn".into(), "pqrs-tuvw-xyz2".into()],
+            },
+            regenerated: false,
+        };
+        let labels = security(&account);
+        assert!(has(&labels, "Save your backup codes"));
+        assert!(has(&labels, "abcd-efgh-jkmn"));
+        assert!(has(&labels, "I've saved them"));
+        assert!(
+            !has(&labels, "Turn off…"),
+            "no other action while codes are up"
+        );
+
+        account.two_factor.panel = TwoFactorPanel::Closed;
+        account.two_factor.status = status(true, 2);
+        account.backup_codes_notice = Some(2);
+        let labels = security(&account);
+        assert!(has(&labels, "2 of 10 left"));
+        assert!(has(&labels, "Make new codes…"));
+        assert!(has(&labels, "Turn off…"));
+        assert!(has(
+            &labels,
+            "Signed in with a backup code. 2 backup codes left."
+        ));
+        assert!(
+            !has(&labels, "abcd-efgh-jkmn"),
+            "codes are never shown again"
+        );
+
+        account.two_factor.panel = TwoFactorPanel::Regenerate;
+        assert!(has(&security(&account), "Make new backup codes?"));
+
+        account.two_factor.panel = TwoFactorPanel::Disable { backup: true };
+        account.two_factor.wrong = true;
+        let labels = security(&account);
+        assert!(has(&labels, "Turn off the authenticator app?"));
+        assert!(has(&labels, "Use a code from the app instead"));
+        assert!(has(
+            &labels,
+            "That backup code is wrong or was already used."
+        ));
     }
 
     #[tokio::test]

@@ -81,6 +81,7 @@ pub const CC_API_STREAM: &str = "CC-API-STREAM";
 // ── Auth ────────────────────────────────────────────────────────────────────
 pub const CC_AUTH_EXPIRED: &str = "CC-AUTH-EXPIRED";
 pub const CC_AUTH_RATELIMIT: &str = "CC-AUTH-RATELIMIT";
+pub const CC_AUTH_SECOND_FACTOR: &str = "CC-AUTH-2FA";
 
 // ── Vault daemon ────────────────────────────────────────────────────────────
 pub const CC_DMN_DOWN: &str = "CC-DMN-DOWN";

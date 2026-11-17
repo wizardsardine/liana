@@ -1733,6 +1733,64 @@ pub enum RetryAction {
     BillingHistory,
 }
 
+/// Text a user typed that is a secret (an authenticator or backup code). Its
+/// `Debug` is redacted, because messages are formatted into logs.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct SecretInput(pub String);
+
+impl std::fmt::Debug for SecretInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretInput(<redacted>)")
+    }
+}
+
+/// How `GET /auth/totp/backup-codes` went.
+#[derive(Debug, Clone)]
+pub enum TwoFactorStatusResult {
+    Loaded(crate::services::coincube::TwoFactorStatus),
+    /// The API predates the endpoint, so the status can't be read.
+    Unsupported,
+    Failed(UserError),
+}
+
+/// Devices & security › Authenticator app and Backup codes. Each async
+/// result carries the session generation it was started in.
+#[derive(Debug, Clone)]
+pub enum TwoFactorSettingsMessage {
+    StatusLoaded(TwoFactorStatusResult, u64),
+    /// "Turn on…": fetch a pending secret and its QR code.
+    StartSetup,
+    SetupLoaded(Result<crate::services::coincube::TotpSetup, UserError>, u64),
+    CodeChanged(SecretInput),
+    /// "Turn on" with the code from the new secret.
+    ConfirmSetup,
+    Enabled(
+        Result<crate::services::coincube::BackupCodes, crate::services::coincube::CodeFailure>,
+        u64,
+    ),
+    CopySetupKey,
+    CopyBackupCodes,
+    SaveBackupCodes,
+    /// The save dialog's outcome: `Ok(true)` saved, `Ok(false)` cancelled.
+    BackupCodesSaved(Result<bool, String>),
+    /// "I've saved them".
+    FinishBackupCodes,
+    /// "Make new codes…".
+    AskRegenerate,
+    ConfirmRegenerate,
+    Regenerated(
+        Result<crate::services::coincube::BackupCodes, crate::services::coincube::CodeFailure>,
+        u64,
+    ),
+    /// "Turn off…".
+    AskDisable,
+    /// Switch turning off between the app's code and a backup code.
+    ToggleDisableBackup,
+    ConfirmDisable,
+    Disabled(Result<(), crate::services::coincube::CodeFailure>, u64),
+    Cancel,
+}
+
 /// Account-level Connect messages (login/session, plan, security, etc.).
 #[derive(Debug, Clone)]
 pub enum ConnectAccountMessage {
@@ -1839,6 +1897,21 @@ pub enum ConnectAccountMessage {
     EmailNotVerified {
         email: String,
     },
+    /// The email code checked out, but the account also has an authenticator
+    /// app: the challenge to finish with, the auth epoch and OTP attempt.
+    TwoFactorRequired(crate::services::coincube::SecondFactorChallenge, u64, u64),
+    TwoFactorCodeChanged(SecretInput),
+    /// Switch the authenticator step between the app's code and a backup code.
+    TwoFactorToggleBackup,
+    /// Open or close "No app and no backup codes?".
+    TwoFactorToggleLost,
+    VerifyTwoFactor,
+    TwoFactorVerified(crate::services::coincube::TwoFactorLogin, u64, u64),
+    TwoFactorFailed(crate::services::coincube::CodeFailure, u64, u64),
+    /// Hide the "signed in with a backup code" reminder.
+    DismissBackupCodesNotice,
+    /// Devices & security › Authenticator app and Backup codes.
+    TwoFactorSettings(TwoFactorSettingsMessage),
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>, u64),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>, u64),
     DeleteVerifiedDevice(u32),

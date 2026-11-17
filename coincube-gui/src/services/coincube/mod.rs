@@ -6,7 +6,7 @@ pub mod network_anchor;
 pub mod network_status;
 pub mod vault_reconcile;
 pub mod worldview;
-pub use client::CoincubeClient;
+pub use client::{CoincubeClient, SecondFactorCode};
 
 #[derive(Debug)]
 pub enum CoincubeError {
@@ -39,6 +39,65 @@ pub enum CoincubeError {
     RateLimited {
         retry_after: std::time::Duration,
     },
+    /// `/auth/login/verify-otp` accepted the email code, but the account has
+    /// an authenticator app turned on: no session yet, only a short-lived
+    /// challenge to finish with [`CoincubeClient::login_verify_2fa`]. An
+    /// error rather than a second success shape so every sign-in screen
+    /// that cannot ask for the code yet stops with clear copy instead of
+    /// a decode failure.
+    SecondFactorRequired(SecondFactorChallenge),
+}
+
+/// Why a typed authenticator or backup code was refused.
+#[derive(Debug, Clone)]
+pub enum CodeFailure {
+    /// Wrong, stale or already used.
+    Wrong,
+    /// The sign-in challenge expired; only the email step can start a new one.
+    Expired,
+    /// Too many tries for now.
+    Limited,
+    /// Anything else, ready to show.
+    Other(crate::user_error::UserError),
+}
+
+impl CodeFailure {
+    /// Classifies a failed second-factor request. A 401 is a wrong code only
+    /// with `TWO_FACTOR_INVALID`, or the plain "Invalid TOTP code" message
+    /// that APIs before it sent; any other 401 is an expired challenge or
+    /// session.
+    pub fn classify(e: &CoincubeError) -> Self {
+        match e {
+            CoincubeError::RateLimited { .. } => Self::Limited,
+            CoincubeError::Unsuccessful(info) if info.status_code == 429 => Self::Limited,
+            CoincubeError::Unsuccessful(info) if info.status_code == 401 => {
+                let code = info.code();
+                if code.as_deref() == Some("TWO_FACTOR_INVALID")
+                    || (code.as_deref() == Some("UNAUTHORIZED")
+                        && info.message().as_deref() == Some("Invalid TOTP code"))
+                {
+                    Self::Wrong
+                } else {
+                    Self::Expired
+                }
+            }
+            other => Self::Other(other.into()),
+        }
+    }
+}
+
+/// The temporary token `verify-otp` returns for an account with an
+/// authenticator app. It proves the email step only and is redacted from
+/// `Debug` so a logged error never carries it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecondFactorChallenge {
+    pub temp_token: zeroize::Zeroizing<String>,
+}
+
+impl std::fmt::Debug for SecondFactorChallenge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecondFactorChallenge { temp_token: <redacted> }")
+    }
 }
 
 impl From<serde_json::Error> for CoincubeError {
@@ -118,6 +177,9 @@ impl std::fmt::Display for CoincubeError {
             CoincubeError::NotFound => write!(f, "Not found"),
             CoincubeError::RateLimited { retry_after } => {
                 write!(f, "Rate limited — retry after {}s", retry_after.as_secs())
+            }
+            CoincubeError::SecondFactorRequired(_) => {
+                write!(f, "This account needs a code from its authenticator app")
             }
         }
     }
@@ -344,6 +406,15 @@ impl From<&CoincubeError> for crate::user_error::UserError {
                 CC_AUTH_RATELIMIT,
                 true,
             ),
+
+            // Only a screen without the authenticator step sees this: the
+            // Connect account panel handles the challenge itself.
+            CoincubeError::SecondFactorRequired(_) => UserError::new(
+                "This account uses an authenticator app",
+                "This screen can't ask for the app's code yet. Sign in to Connect from the launcher first, then come back.",
+                CC_AUTH_SECOND_FACTOR,
+                false,
+            ),
         }
     }
 }
@@ -435,6 +506,7 @@ impl CoincubeError {
             | CoincubeError::Parse(_)
             | CoincubeError::SseError(_)
             | CoincubeError::VaultKeyholderLocked { .. }
+            | CoincubeError::SecondFactorRequired(_)
             | CoincubeError::NotFound => false,
         }
     }
@@ -566,6 +638,136 @@ pub struct LoginResponse {
     pub token: String,
     pub refresh_token: String,
     pub user: User,
+}
+
+/// Any body `verify-otp` or `verify-2fa` can answer with. An account with an
+/// authenticator app gets only `requires_2fa` and `temp_token` from
+/// `verify-otp`, so the session fields are optional here and checked by
+/// [`LoginReply::into_outcome`].
+#[derive(Deserialize)]
+pub(crate) struct LoginReply {
+    #[serde(default)]
+    requires_2fa: bool,
+    #[serde(default)]
+    temp_token: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    /// Parsed only for a session: the challenge reply carries an empty user.
+    #[serde(default)]
+    user: Option<serde_json::Value>,
+    /// Set by `verify-2fa` only when the sign-in spent a backup code.
+    #[serde(default)]
+    backup_codes_remaining: Option<u32>,
+}
+
+/// A finished second-factor sign-in.
+#[derive(Debug, Clone)]
+pub struct TwoFactorLogin {
+    pub login: LoginResponse,
+    /// How many backup codes are left, when this sign-in used one.
+    pub backup_codes_remaining: Option<u32>,
+}
+
+impl LoginReply {
+    /// A session, or the challenge for an account that still owes its
+    /// authenticator code. A reply with neither is a contract mismatch.
+    pub(crate) fn into_outcome(self) -> Result<TwoFactorLogin, CoincubeError> {
+        if self.requires_2fa {
+            return match self.temp_token.filter(|t| !t.is_empty()) {
+                Some(temp_token) => {
+                    Err(CoincubeError::SecondFactorRequired(SecondFactorChallenge {
+                        temp_token: zeroize::Zeroizing::new(temp_token),
+                    }))
+                }
+                None => Err(CoincubeError::Api(
+                    "authenticator step requested without a challenge".to_string(),
+                )),
+            };
+        }
+        let user = self
+            .user
+            .and_then(|u| serde_json::from_value::<User>(u).ok());
+        match (self.token, self.refresh_token, user) {
+            (Some(token), Some(refresh_token), Some(user)) if !token.is_empty() => {
+                Ok(TwoFactorLogin {
+                    login: LoginResponse {
+                        requires_2fa: false,
+                        token,
+                        refresh_token,
+                        user,
+                    },
+                    backup_codes_remaining: self.backup_codes_remaining,
+                })
+            }
+            _ => Err(CoincubeError::Api(
+                "sign-in reply carried no session".to_string(),
+            )),
+        }
+    }
+}
+
+/// `GET /auth/totp/generate`: a pending authenticator secret. It becomes
+/// active only once a code from it is confirmed with `enable`.
+#[derive(Deserialize, Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+pub struct TotpSetup {
+    pub secret: String,
+    #[serde(rename = "otpAuthURL")]
+    pub otp_auth_url: String,
+    /// The server's PNG of `otp_auth_url`. Unused: the app draws its own QR
+    /// code from the URL, like its other QR codes.
+    #[serde(default)]
+    pub qr: String,
+}
+
+impl std::fmt::Debug for TotpSetup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TotpSetup { <redacted> }")
+    }
+}
+
+impl TotpSetup {
+    /// The setup key in groups of four, as authenticator apps print it.
+    pub fn grouped_secret(&self) -> String {
+        group_secret(&self.secret)
+    }
+}
+
+pub fn group_secret(secret: &str) -> String {
+    let chars: Vec<char> = secret.chars().filter(|c| !c.is_whitespace()).collect();
+    chars
+        .chunks(4)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Backup codes as the server returns them once, at enable or regenerate.
+#[derive(Deserialize, Clone, Default, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+pub struct BackupCodes {
+    #[serde(rename = "backupCodes", default)]
+    pub codes: Vec<String>,
+}
+
+impl std::fmt::Debug for BackupCodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BackupCodes {{ {} codes }}", self.codes.len())
+    }
+}
+
+/// `GET /auth/totp/backup-codes`: whether the authenticator app is on and
+/// how many backup codes are left. Never the codes themselves.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TwoFactorStatus {
+    pub enabled: bool,
+    #[serde(default)]
+    pub remaining: u32,
+    #[serde(default)]
+    pub total: u32,
+    #[serde(default)]
+    pub generated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
@@ -5104,5 +5306,279 @@ mod lightning_address_tests {
         let parsed: LightningAddress =
             serde_json::from_str(r#"{"lightningAddress":"orangezebra"}"#).unwrap();
         assert_eq!(parsed.lightning_address.as_deref(), Some("orangezebra"));
+    }
+}
+
+#[cfg(test)]
+mod two_factor_tests {
+    use super::*;
+    use crate::services::coincube::client::CoincubeClient;
+    use crate::services::http::NotSuccessResponseInfo;
+    use httpmock::{Method, MockServer};
+
+    fn unsuccessful(status: u16, body: &str) -> CoincubeError {
+        CoincubeError::Unsuccessful(NotSuccessResponseInfo {
+            status_code: status,
+            text: body.to_string(),
+        })
+    }
+
+    const TWO_FACTOR_REPLY: &str =
+        r#"{"requires_2fa":true,"temp_token":"challenge-jwt","user":{}}"#;
+    const SESSION_REPLY: &str = r#"{"requires_2fa":false,"token":"access","refresh_token":"refresh","user":{"id":7,"email":"a@b.co"}}"#;
+
+    #[test]
+    fn a_two_factor_reply_becomes_a_redacted_challenge() {
+        let reply: LoginReply = serde_json::from_str(TWO_FACTOR_REPLY).unwrap();
+        let err = reply
+            .into_outcome()
+            .expect_err("no session without the second factor");
+        let CoincubeError::SecondFactorRequired(challenge) = &err else {
+            panic!("expected a challenge, got {:?}", err);
+        };
+        assert_eq!(challenge.temp_token.as_str(), "challenge-jwt");
+        // The challenge never reaches a log or the screen.
+        for rendered in [format!("{err:?}"), err.to_string()] {
+            assert!(!rendered.contains("challenge-jwt"), "{}", rendered);
+        }
+        let user: crate::user_error::UserError = (&err).into();
+        assert_eq!(user.reference, crate::user_error::CC_AUTH_SECOND_FACTOR);
+        assert!(!user.retryable);
+        assert!(!err.is_transient());
+    }
+
+    #[test]
+    fn a_session_reply_still_signs_in() {
+        let reply: LoginReply = serde_json::from_str(SESSION_REPLY).unwrap();
+        let login = reply.into_outcome().unwrap();
+        assert_eq!(login.login.token, "access");
+        assert_eq!(login.login.user.email, "a@b.co");
+        assert_eq!(login.backup_codes_remaining, None);
+    }
+
+    #[test]
+    fn replies_with_neither_a_session_nor_a_challenge_are_refused() {
+        for body in [
+            r#"{"requires_2fa":true}"#,
+            r#"{"requires_2fa":true,"temp_token":""}"#,
+            r#"{"requires_2fa":false,"token":"","refresh_token":"r","user":{"id":1,"email":"a@b.co"}}"#,
+            r#"{"requires_2fa":false}"#,
+        ] {
+            let reply: LoginReply = serde_json::from_str(body).unwrap();
+            assert!(
+                matches!(reply.into_outcome(), Err(CoincubeError::Api(_))),
+                "{}",
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn refused_codes_are_classified_by_error_code_not_status() {
+        let wrong = unsuccessful(
+            401,
+            r#"{"success":false,"error":{"code":"TWO_FACTOR_INVALID","message":"x"}}"#,
+        );
+        assert!(matches!(CodeFailure::classify(&wrong), CodeFailure::Wrong));
+        // What the API sent for a wrong code before TWO_FACTOR_INVALID.
+        let legacy = unsuccessful(
+            401,
+            r#"{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid TOTP code"}}"#,
+        );
+        assert!(matches!(CodeFailure::classify(&legacy), CodeFailure::Wrong));
+        let expired = unsuccessful(
+            401,
+            r#"{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid or expired token"}}"#,
+        );
+        assert!(matches!(
+            CodeFailure::classify(&expired),
+            CodeFailure::Expired
+        ));
+        assert!(matches!(
+            CodeFailure::classify(&unsuccessful(429, "{}")),
+            CodeFailure::Limited
+        ));
+        assert!(matches!(
+            CodeFailure::classify(&CoincubeError::RateLimited {
+                retry_after: std::time::Duration::from_secs(60)
+            }),
+            CodeFailure::Limited
+        ));
+        assert!(matches!(
+            CodeFailure::classify(&unsuccessful(500, "boom")),
+            CodeFailure::Other(_)
+        ));
+    }
+
+    #[test]
+    fn setup_key_is_grouped_and_secrets_are_redacted() {
+        assert_eq!(group_secret("JBSWY3DPEHPK3PXP"), "JBSW Y3DP EHPK 3PXP");
+        assert_eq!(group_secret("ABCDEF"), "ABCD EF");
+        let setup = TotpSetup {
+            secret: "JBSWY3DPEHPK3PXP".into(),
+            otp_auth_url: "otpauth://totp/COINCUBE:a@b.co?secret=JBSWY3DPEHPK3PXP".into(),
+            qr: String::new(),
+        };
+        assert!(!format!("{setup:?}").contains("JBSW"));
+        let codes = BackupCodes {
+            codes: vec!["abcd-efgh-jkmn".into()],
+        };
+        assert_eq!(format!("{codes:?}"), "BackupCodes { 1 codes }");
+    }
+
+    #[tokio::test]
+    async fn verify_otp_hands_back_the_challenge_for_an_authenticator_account() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/auth/login/verify-otp");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(TWO_FACTOR_REPLY);
+        });
+        let client = CoincubeClient::for_test(server.base_url());
+        let err = client
+            .login_verify_otp(OtpVerifyRequest {
+                email: "a@b.co".into(),
+                otp: "123456".into(),
+            })
+            .await
+            .expect_err("an authenticator account gets no session here");
+        mock.assert();
+        assert!(
+            matches!(err, CoincubeError::SecondFactorRequired(_)),
+            "{:?}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_2fa_sends_a_backup_code_and_reports_what_is_left() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/auth/login/verify-2fa")
+                .json_body(serde_json::json!({
+                    "temp_token": "challenge-jwt",
+                    "backup_code": "abcd-efgh-jkmn",
+                }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"requires_2fa":false,"token":"access","refresh_token":"refresh","user":{"id":7,"email":"a@b.co"},"backup_codes_remaining":2}"#);
+        });
+        let client = CoincubeClient::for_test(server.base_url());
+        let challenge = SecondFactorChallenge {
+            temp_token: zeroize::Zeroizing::new("challenge-jwt".to_string()),
+        };
+        let login = client
+            .login_verify_2fa(&challenge, SecondFactorCode::Backup(" abcd-efgh-jkmn "))
+            .await
+            .unwrap();
+        mock.assert();
+        assert_eq!(login.login.token, "access");
+        assert_eq!(login.backup_codes_remaining, Some(2));
+    }
+
+    #[tokio::test]
+    async fn verify_2fa_sends_an_app_code() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/auth/login/verify-2fa")
+                .json_body(serde_json::json!({"temp_token": "t", "code": "123456"}));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(SESSION_REPLY);
+        });
+        let client = CoincubeClient::for_test(server.base_url());
+        let challenge = SecondFactorChallenge {
+            temp_token: zeroize::Zeroizing::new("t".to_string()),
+        };
+        let login = client
+            .login_verify_2fa(&challenge, SecondFactorCode::App("123456"))
+            .await
+            .unwrap();
+        mock.assert();
+        assert_eq!(login.backup_codes_remaining, None);
+    }
+
+    #[tokio::test]
+    async fn settings_endpoints_round_trip() {
+        let server = MockServer::start();
+        let status = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/auth/totp/backup-codes");
+            then.status(200).header("content-type", "application/json").body(
+                r#"{"enabled":true,"remaining":3,"total":10,"generatedAt":"2026-11-16T10:00:00Z"}"#,
+            );
+        });
+        let generate = server.mock(|when, then| {
+            when.method(Method::GET).path("/api/v1/auth/totp/generate");
+            then.status(200).header("content-type", "application/json").body(
+                r#"{"secret":"JBSWY3DPEHPK3PXP","otpAuthURL":"otpauth://totp/x","qr":"data:image/png;base64,AA=="}"#,
+            );
+        });
+        let enable = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/auth/totp/enable")
+                .json_body(serde_json::json!({"code": "123456"}));
+            then.status(200).header("content-type", "application/json").body(
+                r#"{"message":"TOTP enabled","tempToken":"t","backupCodes":["aaaa-bbbb-cccc","dddd-eeee-ffff"]}"#,
+            );
+        });
+        let regen = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/auth/totp/backup-codes")
+                .json_body(serde_json::json!({"code": "654321"}));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"backupCodes":["gggg-hhhh-jjjj"]}"#);
+        });
+        let disable = server.mock(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v1/auth/totp/disable")
+                .json_body(serde_json::json!({"backup_code": "gggg-hhhh-jjjj"}));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"message":"TOTP disabled successfully"}"#);
+        });
+        let client = CoincubeClient::for_test(server.base_url());
+
+        let s = client.get_two_factor_status().await.unwrap();
+        assert!(s.enabled);
+        assert_eq!((s.remaining, s.total), (3, 10));
+        let setup = client.generate_totp().await.unwrap();
+        assert_eq!(setup.grouped_secret(), "JBSW Y3DP EHPK 3PXP");
+        assert_eq!(client.enable_totp("123456").await.unwrap().codes.len(), 2);
+        assert_eq!(
+            client
+                .regenerate_backup_codes("654321")
+                .await
+                .unwrap()
+                .codes,
+            vec!["gggg-hhhh-jjjj".to_string()]
+        );
+        client
+            .disable_totp(SecondFactorCode::Backup("gggg-hhhh-jjjj"))
+            .await
+            .unwrap();
+        for m in [status, generate, enable, regen, disable] {
+            m.assert();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_api_without_the_status_endpoint_reads_as_not_found() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v1/auth/totp/backup-codes");
+            then.status(404);
+        });
+        let client = CoincubeClient::for_test(server.base_url());
+        assert!(matches!(
+            client.get_two_factor_status().await,
+            Err(CoincubeError::NotFound)
+        ));
     }
 }

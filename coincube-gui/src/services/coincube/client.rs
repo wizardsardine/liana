@@ -15,6 +15,9 @@ use super::{
     UpdateLightningAddressRequest, UpsertRecoveryKitRequest, User, VaultMemberResponse,
     VerifiedDevice,
 };
+use super::{
+    BackupCodes, LoginReply, SecondFactorChallenge, TotpSetup, TwoFactorLogin, TwoFactorStatus,
+};
 use reqwest::{Client, Method};
 use serde::Deserialize;
 use std::time::Duration;
@@ -228,6 +231,41 @@ impl CoincubeClient {
     }
 }
 
+/// The second factor a user typed: the authenticator app's current code, or
+/// one of their backup codes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SecondFactorCode<'a> {
+    App(&'a str),
+    Backup(&'a str),
+}
+
+impl std::fmt::Debug for SecondFactorCode<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::App(_) => f.write_str("App(<redacted>)"),
+            Self::Backup(_) => f.write_str("Backup(<redacted>)"),
+        }
+    }
+}
+
+impl SecondFactorCode<'_> {
+    /// The request body: `code` or `backup_code`, plus `temp_token` on the
+    /// sign-in step. Surrounding whitespace is dropped; the server
+    /// normalises the rest of a backup code itself.
+    fn body(&self, temp_token: Option<&str>) -> serde_json::Map<String, serde_json::Value> {
+        let mut body = serde_json::Map::new();
+        if let Some(token) = temp_token {
+            body.insert("temp_token".into(), token.into());
+        }
+        let (key, value) = match self {
+            Self::App(code) => ("code", code.trim()),
+            Self::Backup(code) => ("backup_code", code.trim()),
+        };
+        body.insert(key.into(), value.into());
+        body
+    }
+}
+
 impl CoincubeClient {
     pub async fn refresh_login(&self, refresh_token: &str) -> Result<LoginResponse, CoincubeError> {
         let request = RefreshTokenRequest { refresh_token };
@@ -253,6 +291,9 @@ impl CoincubeClient {
         Ok(())
     }
 
+    /// Checks the email code. An account with an authenticator app gets
+    /// [`CoincubeError::SecondFactorRequired`] instead of a session; finish it
+    /// with [`Self::login_verify_2fa`].
     pub async fn login_verify_otp(
         &self,
         request: OtpVerifyRequest,
@@ -263,8 +304,89 @@ impl CoincubeClient {
         }
         .await?;
         let response = response.check_success().await?;
+        let body = response.text().await?;
+        let reply: LoginReply = serde_json::from_str(&body)?;
+        Ok(reply.into_outcome()?.login)
+    }
 
-        Ok(response.json().await?)
+    /// `POST /auth/login/verify-2fa`: finishes a sign-in that
+    /// [`Self::login_verify_otp`] left at the authenticator step, with either
+    /// the app's current code or one unused backup code.
+    pub async fn login_verify_2fa(
+        &self,
+        challenge: &SecondFactorChallenge,
+        code: SecondFactorCode<'_>,
+    ) -> Result<TwoFactorLogin, CoincubeError> {
+        let body = code.body(Some(challenge.temp_token.as_str()));
+        let url = format!("{}/api/v1/auth/login/verify-2fa", self.base_url);
+        let response = self.client.post(&url).json(&body).send().await?;
+        let response = response.check_success().await?;
+        let text = response.text().await?;
+        let reply: LoginReply = serde_json::from_str(&text)?;
+        match reply.into_outcome() {
+            // The server never asks for a second authenticator step.
+            Err(CoincubeError::SecondFactorRequired(_)) => Err(CoincubeError::Api(
+                "authenticator step requested twice".to_string(),
+            )),
+            other => other,
+        }
+    }
+
+    /// `GET /auth/totp/backup-codes`: whether the authenticator app is on and
+    /// how many backup codes are left.
+    pub async fn get_two_factor_status(&self) -> Result<TwoFactorStatus, CoincubeError> {
+        let url = format!("{}/api/v1/auth/totp/backup-codes", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        if res.status().as_u16() == 404 {
+            // An API from before backup codes: the status can't be read.
+            return Err(CoincubeError::NotFound);
+        }
+        let res = res.check_success().await?;
+        let text = res.text().await?;
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    /// `GET /auth/totp/generate`: a new pending secret and its QR code.
+    /// Nothing changes for sign-in until [`Self::enable_totp`] confirms it.
+    pub async fn generate_totp(&self) -> Result<TotpSetup, CoincubeError> {
+        let url = format!("{}/api/v1/auth/totp/generate", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let text = Zeroizing::new(res.text().await?);
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    /// `POST /auth/totp/enable`: turns the authenticator app on with a code
+    /// from the pending secret and returns the first backup codes. They are
+    /// shown once; the server keeps only digests.
+    pub async fn enable_totp(&self, code: &str) -> Result<BackupCodes, CoincubeError> {
+        let url = format!("{}/api/v1/auth/totp/enable", self.base_url);
+        let body = SecondFactorCode::App(code).body(None);
+        let res = self.client.post(&url).json(&body).send().await?;
+        let res = res.check_success().await?;
+        let text = Zeroizing::new(res.text().await?);
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    /// `POST /auth/totp/disable`: turns the authenticator app off with its
+    /// current code or one backup code.
+    pub async fn disable_totp(&self, code: SecondFactorCode<'_>) -> Result<(), CoincubeError> {
+        let url = format!("{}/api/v1/auth/totp/disable", self.base_url);
+        let body = code.body(None);
+        let res = self.client.post(&url).json(&body).send().await?;
+        res.check_success().await?;
+        Ok(())
+    }
+
+    /// `POST /auth/totp/backup-codes`: replaces the backup codes. Needs the
+    /// app's current code; a backup code is not accepted.
+    pub async fn regenerate_backup_codes(&self, code: &str) -> Result<BackupCodes, CoincubeError> {
+        let url = format!("{}/api/v1/auth/totp/backup-codes", self.base_url);
+        let body = SecondFactorCode::App(code).body(None);
+        let res = self.client.post(&url).json(&body).send().await?;
+        let res = res.check_success().await?;
+        let text = Zeroizing::new(res.text().await?);
+        Ok(serde_json::from_str(&text)?)
     }
 
     pub async fn signup_send_otp(&self, request: OtpRequest) -> Result<(), CoincubeError> {
