@@ -7,6 +7,9 @@ use iced::widget;
 
 use crate::{app::view, services::meld::api::*};
 
+#[cfg(test)]
+mod coverage_tests;
+
 pub(crate) fn not_supported_ux<'a>(
     country: &'static crate::services::coincube::Country,
 ) -> coincube_ui::widget::Element<'a, view::Message> {

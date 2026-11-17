@@ -14,6 +14,28 @@ fn panel() -> P2PPanel {
     p
 }
 
+struct ChatSessionFixture(std::path::PathBuf);
+impl Drop for ChatSessionFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn seed_chat_session(p: &P2PPanel) -> ChatSessionFixture {
+    // Production acknowledgement handling appends to an existing persisted trade.
+    let data = serde_json::json!({"last_trade_index":1,"trades":[{
+        "order_id":"synthetic-trade","trade_index":1,"kind":"buy",
+        "fiat_code":"USD","fiat_amount":100,"min_amount":null,"max_amount":null,
+        "amount":10000,"premium":0,"payment_method":"Cash","created_at":100,
+        "role":"taker","messages":[]
+    }]});
+    let path = super::super::mostro_dir()
+        .unwrap()
+        .join(format!("{}_mostro.json", p.cube_name()));
+    std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+    ChatSessionFixture(path)
+}
+
 fn enabled_cache() -> Cache {
     Cache {
         marketplace_flags: MarketplaceServerFlags {
@@ -754,4 +776,808 @@ fn buyer_confirmation_is_actionable_once_and_disabled_during_submission() {
     p.trade_action_loading = false;
     t.order_type = OrderType::Sell;
     assert!(!inspect(p.trade_detail_view(&t)).contains("Confirm Fiat Sent"));
+}
+
+#[test]
+fn node_info_refresh_resets_incompatible_currency_methods_and_limits() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.create_fiat_currency = "USD".into();
+    p.filter_currency = "USD".into();
+    p.create_payment_methods = vec!["Cash".into()];
+    p.filter_deselected_payment_methods.insert("Cash".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroNodeInfoReceived {
+            currencies: vec!["EUR".into()],
+            min_order_sats: Some(1000),
+            max_order_sats: Some(100000),
+        },
+    );
+    assert_eq!(p.create_fiat_currency, "EUR");
+    assert_eq!(p.filter_currency, "All");
+    assert!(p.create_payment_methods.is_empty());
+    assert!(p.filter_deselected_payment_methods.is_empty());
+    assert_eq!(
+        (p.node_min_order_sats, p.node_max_order_sats),
+        (Some(1000), Some(100000))
+    );
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroNodeInfoReceived {
+            currencies: vec![],
+            min_order_sats: None,
+            max_order_sats: None,
+        },
+    );
+    assert_eq!(p.node_currencies, ["EUR"]);
+    assert!(p.node_min_order_sats.is_none());
+}
+
+#[test]
+fn order_submission_results_clear_successful_forms_and_keep_failure_context() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.orders = vec![super::book_filter_tests::order(
+        "new",
+        OrderType::Sell,
+        "USD",
+        "Cash",
+    )];
+    p.create_min_amount.value = "100".into();
+    p.order_submitting = true;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::OrderSubmitResult(Err("synthetic rejection".into())),
+    );
+    assert!(!p.order_submitting);
+    assert_eq!(p.order_submit_error.as_deref(), Some("synthetic rejection"));
+    assert_eq!(p.create_min_amount.value, "100");
+    p.create_payment_methods = vec!["Cash".into()];
+    p.create_order_type = OrderType::Sell;
+    update(&mut p, &cache, P2PMessage::SubmitOrder);
+    assert!(p.order_submit_error.is_none());
+    update(&mut p, &cache, P2PMessage::ConfirmOrder);
+    assert!(p.order_submitting);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::OrderSubmitResult(Ok(super::super::mostro::OrderSubmitResponse::Success {
+            order_id: "new".into(),
+        })),
+    );
+    assert!(p.my_created_order_ids.contains("new"));
+    assert!(p.orders[0].is_mine);
+    assert!(p.create_min_amount.value.is_empty());
+    assert!(p.order_submit_error.is_none());
+    let mut refreshed = super::book_filter_tests::order("new", OrderType::Sell, "USD", "Cash");
+    refreshed.is_mine = false;
+    p.stream_error = Some("temporary relay failure".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroOrdersReceived(vec![refreshed]),
+    );
+    assert!(p.orders[0].is_mine);
+    assert!(p.stream_error.is_none());
+}
+
+#[test]
+fn trade_filters_are_exclusive_and_funded_missing_trades_survive_refresh() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeFilterChanged(TradeFilter::Active),
+    );
+    assert_eq!(p.trade_filters, [TradeFilter::Active]);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeFilterChanged(TradeFilter::Dispute),
+    );
+    assert_eq!(p.trade_filters.len(), 2);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeFilterChanged(TradeFilter::All),
+    );
+    assert_eq!(p.trade_filters, [TradeFilter::All]);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeFilterChanged(TradeFilter::Active),
+    );
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeFilterChanged(TradeFilter::Active),
+    );
+    assert_eq!(p.trade_filters, [TradeFilter::All]);
+    let funded = trade(TradeStatus::Active, OrderType::Sell);
+    let mut ordinary = funded.clone();
+    ordinary.id = "ordinary".into();
+    p.trades = vec![funded, ordinary];
+    p.spark_funded_order_ids.insert("synthetic-trade".into());
+    update(&mut p, &cache, P2PMessage::MostroTradesReceived(vec![]));
+    assert_eq!(p.trades.len(), 1);
+    assert_eq!(p.trades[0].id, "synthetic-trade");
+}
+
+#[test]
+fn spark_payment_completion_is_session_bound_and_clears_transient_state() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.spark_pay_session_id = Some("current".into());
+    p.spark_pay_phase = SparkPayPhase::Sending;
+    p.spark_balance_sat = Some(50000);
+    p.spark_pay_amount_sat = Some(10000);
+    p.show_qr_fallback = true;
+    p.invoice_copied = true;
+    let ok = coincube_spark_protocol::SendPaymentOk {
+        payment_id: "synthetic-payment".into(),
+        amount_sat: 10000,
+        fee_sat: 10,
+    };
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SparkPaySent {
+            order_id: "old".into(),
+            ok: ok.clone(),
+        },
+    );
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Sending));
+    assert!(p.spark_funded_order_ids.is_empty());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SparkPaySent {
+            order_id: "current".into(),
+            ok,
+        },
+    );
+    assert!(p.spark_funded_order_ids.contains("current"));
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Idle));
+    assert!(p.spark_balance_sat.is_none());
+    assert!(p.spark_pay_session_id.is_none());
+    assert!(!p.invoice_copied && !p.show_qr_fallback);
+}
+
+#[test]
+fn trade_close_and_modal_dismissal_cannot_interrupt_a_sending_payment() {
+    let cache = enabled_cache();
+    for message in [
+        P2PMessage::CloseTradeDetail,
+        P2PMessage::DismissPaymentInvoice,
+    ] {
+        let mut p = panel();
+        p.selected_trade = Some("synthetic-trade".into());
+        p.spark_pay_session_id = Some("synthetic-trade".into());
+        p.spark_pay_phase = SparkPayPhase::Sending;
+        update(&mut p, &cache, message);
+        assert_eq!(p.spark_pay_session_id.as_deref(), Some("synthetic-trade"));
+    }
+    let mut p = panel();
+    p.selected_trade = Some("synthetic-trade".into());
+    p.spark_pay_session_id = Some("synthetic-trade".into());
+    p.spark_pay_phase = SparkPayPhase::Error("synthetic".into());
+    p.spark_balance_sat = Some(10);
+    update(&mut p, &cache, P2PMessage::CloseTradeDetail);
+    assert!(p.selected_trade.is_none());
+    assert!(p.spark_pay_session_id.is_none());
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Idle));
+    p.invoice_copied = true;
+    update(&mut p, &cache, P2PMessage::ResetInvoiceCopied);
+    assert!(!p.invoice_copied);
+}
+
+#[test]
+fn relay_and_coordinator_settings_validate_deduplicate_and_persist_only_in_test_storage() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    for (url, warning) in [
+        (
+            "https://example.invalid",
+            "URL must start with wss:// or ws://",
+        ),
+        ("wss://", "Invalid relay URL — missing host"),
+    ] {
+        update(
+            &mut p,
+            &cache,
+            P2PMessage::MostroRelayInputEdited(url.into()),
+        );
+        update(&mut p, &cache, P2PMessage::MostroAddRelay);
+        assert_eq!(p.new_relay_input.warning, Some(warning));
+    }
+    let url = "wss://synthetic.example.invalid";
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroRelayInputEdited(url.into()),
+    );
+    update(&mut p, &cache, P2PMessage::MostroAddRelay);
+    assert!(p
+        .mostro_config
+        .settings_relays(p.network)
+        .contains(&url.into()));
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroRelayInputEdited(url.into()),
+    );
+    update(&mut p, &cache, P2PMessage::MostroAddRelay);
+    assert_eq!(p.new_relay_input.warning, Some("Relay already exists"));
+    update(&mut p, &cache, P2PMessage::MostroRemoveRelay(url.into()));
+    assert!(!p
+        .mostro_config
+        .settings_relays(p.network)
+        .contains(&url.into()));
+    update(&mut p, &cache, P2PMessage::MostroAddNode);
+    assert_eq!(p.new_node_name_input.warning, Some("Node name is required"));
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroNodeNameInputEdited("Synthetic coordinator".into()),
+    );
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroNodePubkeyInputEdited("invalid".into()),
+    );
+    update(&mut p, &cache, P2PMessage::MostroAddNode);
+    assert_eq!(p.new_node_pubkey_input.warning, Some("Invalid hex pubkey"));
+    let public = nostr_sdk::Keys::generate().public_key().to_hex();
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroNodePubkeyInputEdited(public.clone()),
+    );
+    update(&mut p, &cache, P2PMessage::MostroNodeNetworkToggled(true));
+    update(&mut p, &cache, P2PMessage::MostroAddNode);
+    assert!(p
+        .mostro_config
+        .nodes
+        .iter()
+        .any(|n| n.pubkey_hex == public && n.network == NetworkKind::Test));
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::MostroSelectActiveNode(public.clone()),
+    );
+    assert!(!p.coordinator_network_matches());
+    update(&mut p, &cache, P2PMessage::SubmitOrder);
+    assert_eq!(
+        p.order_submit_error.as_deref(),
+        Some(COORDINATOR_MISMATCH_MSG)
+    );
+    update(&mut p, &cache, P2PMessage::MostroRemoveNode(public.clone()));
+    assert!(!p.mostro_config.nodes.iter().any(|n| n.pubkey_hex == public));
+    assert!(p.coordinator_network_matches());
+}
+
+#[test]
+fn chat_failure_restores_only_the_originating_trade_and_accordions_are_exclusive() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.selected_trade = Some("synthetic-trade".into());
+    update(&mut p, &cache, P2PMessage::OpenChat);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::ChatInputEdited("  synthetic text  ".into()),
+    );
+    update(&mut p, &cache, P2PMessage::SendChatMessage);
+    assert!(p.pending_chat_message.is_some());
+    assert!(p.chat_input.value.is_empty());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::ChatMessageSent(Err("synthetic send failure".into())),
+    );
+    assert_eq!(p.chat_input.value, "synthetic text");
+    assert!(p.pending_chat_message.is_none());
+    update(&mut p, &cache, P2PMessage::SendChatMessage);
+    p.selected_trade = Some("another".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::ChatMessageSent(Err("late failure".into())),
+    );
+    assert!(p.chat_input.value.is_empty());
+    update(&mut p, &cache, P2PMessage::ToggleChatTradeInfo);
+    assert!(p.chat_show_trade_info && !p.chat_show_user_info);
+    update(&mut p, &cache, P2PMessage::ToggleChatUserInfo);
+    assert!(!p.chat_show_trade_info && p.chat_show_user_info);
+    update(&mut p, &cache, P2PMessage::CloseChat);
+    assert!(matches!(p.active_chat, ActiveChat::None));
+    update(&mut p, &cache, P2PMessage::OpenDisputeChat);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::DisputeChatInputEdited("Synthetic dispute".into()),
+    );
+    update(&mut p, &cache, P2PMessage::CloseDisputeChat);
+    assert!(matches!(p.active_chat, ActiveChat::None));
+}
+
+#[test]
+fn trade_updates_reconstruct_invoice_status_and_preserve_status_for_chat() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.trades = vec![trade(TradeStatus::Pending, OrderType::Sell)];
+    let payload = serde_json::to_string(&Some(mostro_core::message::Payload::PaymentRequest(
+        None,
+        "synthetic invoice".into(),
+        Some(10000),
+    )))
+    .unwrap();
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeUpdate {
+            order_id: "synthetic-trade".into(),
+            action: "PayInvoice".into(),
+            payload_json: payload,
+        },
+    );
+    assert_eq!(p.trades[0].status, TradeStatus::WaitingPayment);
+    assert!(p.trades[0].countdown_start_ts.is_some());
+    assert_eq!(
+        p.trades[0].hold_invoice.as_deref(),
+        Some("synthetic invoice")
+    );
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeUpdate {
+            order_id: "synthetic-trade".into(),
+            action: "SendDm".into(),
+            payload_json: "null".into(),
+        },
+    );
+    assert_eq!(p.trades[0].status, TradeStatus::WaitingPayment);
+    p.selected_trade = Some("synthetic-trade".into());
+    p.trade_action_loading = true;
+    p.trade_rating = 5;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeActionResult(Ok(super::super::mostro::TradeActionResponse::Success {
+            new_status: "FiatSent".into(),
+        })),
+    );
+    assert_eq!(p.trades[0].status, TradeStatus::FiatSent);
+    assert!(p.trades[0].countdown_start_ts.is_none());
+    assert!(!p.trade_action_loading);
+}
+
+#[test]
+fn every_p2p_route_renders_its_current_state_without_polling_subscriptions() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.trades = vec![trade(TradeStatus::Active, OrderType::Buy)];
+    for route in [
+        P2PSubMenu::Overview,
+        P2PSubMenu::MyTrades,
+        P2PSubMenu::Chat,
+        P2PSubMenu::CreateOrder,
+        P2PSubMenu::Settings,
+    ] {
+        let menu = Menu::Marketplace(MarketplaceSubMenu::P2P(route));
+        let view = capture::inspect_rendered_filled(
+            "p2p-route",
+            State::view(&p, &menu, &cache),
+            (1400, 1800),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(!view.text.is_empty());
+    }
+    p.selected_trade = Some("synthetic-trade".into());
+    let menu = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::MyTrades));
+    assert!(capture::inspect_rendered_filled(
+        "p2p-route",
+        State::view(&p, &menu, &cache),
+        (1400, 1800),
+        "dark",
+        theme::Theme::dark()
+    )
+    .contains("synthetic-trade"));
+    p.active_chat = ActiveChat::Peer;
+    assert!(capture::inspect_rendered_filled(
+        "p2p-route",
+        State::view(&p, &menu, &cache),
+        (1400, 1800),
+        "dark",
+        theme::Theme::dark()
+    )
+    .contains("No messages yet"));
+    p.active_chat = ActiveChat::Dispute;
+    assert!(capture::inspect_rendered_filled(
+        "p2p-route",
+        State::view(&p, &menu, &cache),
+        (1400, 1800),
+        "dark",
+        theme::Theme::dark()
+    )
+    .contains("Waiting for admin assignment"));
+}
+
+#[test]
+fn taking_range_orders_validates_amount_before_dispatch_and_cancellation_resets_inputs() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    let mut order = super::book_filter_tests::order("range", OrderType::Buy, "USD", "Cash");
+    order.min_amount = Some(50.0);
+    order.max_amount = Some(200.0);
+    p.orders = vec![order];
+    p.selected_order = Some("range".into());
+    update(&mut p, &cache, P2PMessage::TakeOrder);
+    assert!(p.taking_order && !p.take_order_submitting);
+    for amount in ["bad", "49", "201"] {
+        update(
+            &mut p,
+            &cache,
+            P2PMessage::TakeOrderAmountEdited(amount.into()),
+        );
+        update(&mut p, &cache, P2PMessage::ConfirmTakeOrder);
+        assert!(
+            !p.take_order_submitting,
+            "invalid {} must not dispatch",
+            amount
+        );
+    }
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TakeOrderAmountEdited("100".into()),
+    );
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TakeOrderInvoiceEdited(" synthetic invoice ".into()),
+    );
+    update(&mut p, &cache, P2PMessage::ConfirmTakeOrder);
+    assert!(p.take_order_submitting);
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TakeOrderResult(Err("synthetic refusal".into())),
+    );
+    assert!(!p.take_order_submitting && !p.taking_order);
+    update(&mut p, &cache, P2PMessage::CancelTakeOrder);
+    assert!(p.take_order_amount.value.is_empty());
+    assert!(p.take_order_invoice.value.is_empty());
+}
+
+#[test]
+fn take_results_start_a_clean_payment_session_and_dismissal_clears_its_state() {
+    use super::super::mostro::TakeOrderResponse;
+    let cache = enabled_cache();
+    let mut p = panel();
+    p.selected_order = Some("old".into());
+    p.spark_balance_sat = Some(90000);
+    p.spark_pay_phase = SparkPayPhase::Error("old failure".into());
+    p.show_qr_fallback = true;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TakeOrderResult(Ok(TakeOrderResponse::PaymentRequired {
+            order_id: "new-session".into(),
+            trade_index: 1,
+            invoice: "synthetic hold invoice".into(),
+            amount_sats: Some(1000),
+        })),
+    );
+    assert!(p.selected_order.is_none());
+    assert_eq!(p.spark_pay_session_id.as_deref(), Some("new-session"));
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Idle));
+    assert!(p.spark_balance_sat.is_none() && !p.show_qr_fallback);
+    assert!(
+        matches!(p.pending_payment_invoice.as_ref(), Some((id, invoice, Some(1000), _)) if id=="new-session" && invoice=="synthetic hold invoice")
+    );
+    p.invoice_copied = true;
+    update(&mut p, &cache, P2PMessage::DismissPaymentInvoice);
+    assert!(p.pending_payment_invoice.is_none() && p.spark_pay_session_id.is_none());
+    assert!(!p.invoice_copied);
+    p.selected_order = Some("filled".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TakeOrderResult(Ok(TakeOrderResponse::Success {
+            order_id: "filled".into(),
+            trade_index: 2,
+            status: "Active".into(),
+        })),
+    );
+    assert!(p.selected_order.is_none());
+}
+
+#[test]
+fn peer_and_dispute_chat_persist_only_after_acknowledgement_and_restore_failed_input() {
+    let mut p = panel();
+    let _session_fixture = seed_chat_session(&p);
+    let cache = enabled_cache();
+    p.selected_trade = Some("synthetic-trade".into());
+    p.trades = vec![trade(TradeStatus::Active, OrderType::Buy)];
+    for dispute in [false, true] {
+        let send = || {
+            if dispute {
+                P2PMessage::SendDisputeChatMessage
+            } else {
+                P2PMessage::SendChatMessage
+            }
+        };
+        let edit = |s: &str| {
+            if dispute {
+                P2PMessage::DisputeChatInputEdited(s.into())
+            } else {
+                P2PMessage::ChatInputEdited(s.into())
+            }
+        };
+        let result = |r| {
+            if dispute {
+                P2PMessage::DisputeChatMessageSent(r)
+            } else {
+                P2PMessage::ChatMessageSent(r)
+            }
+        };
+        update(&mut p, &cache, edit("   "));
+        update(&mut p, &cache, send());
+        assert!(p.pending_chat_message.is_none() && p.pending_dispute_chat_message.is_none());
+        update(&mut p, &cache, edit(" Synthetic message "));
+        update(&mut p, &cache, send());
+        let pending = if dispute {
+            &p.pending_dispute_chat_message
+        } else {
+            &p.pending_chat_message
+        };
+        assert_eq!(pending.as_ref().unwrap().original_text, "Synthetic message");
+        update(&mut p, &cache, send());
+        update(&mut p, &cache, result(Err("synthetic offline".into())));
+        let input = if dispute {
+            &p.dispute_chat_input
+        } else {
+            &p.chat_input
+        };
+        assert_eq!(input.value, "Synthetic message");
+        update(&mut p, &cache, send());
+        update(&mut p, &cache, result(Ok(())));
+        assert!(p.pending_chat_message.is_none() && p.pending_dispute_chat_message.is_none());
+        let messages = super::super::mostro::get_trade_messages(&p.cube_name(), "synthetic-trade");
+        assert!(messages
+            .iter()
+            .any(|m| m.is_own && m.action == if dispute { "AdminDm" } else { "SendDm" }));
+    }
+}
+
+#[test]
+fn attachment_completion_clears_busy_state_and_tracks_successful_and_failed_downloads() {
+    let mut p = panel();
+    let _session_fixture = seed_chat_session(&p);
+    let cache = enabled_cache();
+    p.selected_trade = Some("synthetic-trade".into());
+    p.attachment_sending = true;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::AttachmentSent(Ok((
+            "synthetic-trade".into(),
+            "synthetic attachment metadata".into(),
+        ))),
+    );
+    assert!(!p.attachment_sending);
+    assert!(
+        super::super::mostro::get_trade_messages(&p.cube_name(), "synthetic-trade")
+            .iter()
+            .any(|m| m.is_own && m.payload_json.contains("synthetic attachment metadata"))
+    );
+    for error in ["cancelled", "synthetic failure"] {
+        p.attachment_sending = true;
+        update(
+            &mut p,
+            &cache,
+            P2PMessage::AttachmentSent(Err(error.into())),
+        );
+        assert!(!p.attachment_sending);
+    }
+    p.image_downloads_in_flight.insert("synthetic-ready".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::AttachmentDownloaded {
+            order_id: "synthetic-trade".into(),
+            blossom_url: "synthetic-ready".into(),
+            data: Ok(vec![1, 2, 3]),
+        },
+    );
+    assert!(!p.image_downloads_in_flight.contains("synthetic-ready"));
+    assert!(matches!(
+        p.image_cache.get("synthetic-ready"),
+        Some(ImageCacheEntry::Ready(_))
+    ));
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::AttachmentDownloaded {
+            order_id: "synthetic-trade".into(),
+            blossom_url: "synthetic-failure".into(),
+            data: Err("not found".into()),
+        },
+    );
+    assert!(
+        matches!(p.image_cache.get("synthetic-failure"), Some(ImageCacheEntry::Failed(e)) if e=="not found")
+    );
+}
+
+#[test]
+fn create_order_previews_use_only_positive_prices_and_warn_outside_node_limits() {
+    let mut p = panel();
+    let mut cache = enabled_cache();
+    p.create_fiat_currency = "USD".into();
+    for price in [None, Some(0.0), Some(-1.0)] {
+        cache.btc_usd_price = price;
+        assert!(p.fiat_to_sats_estimate(100, &cache).is_none());
+        assert!(p.sats_to_fiat_estimate(100000, &cache).is_none());
+    }
+    cache.btc_usd_price = Some(100000.0);
+    assert_eq!(p.fiat_to_sats_estimate(100, &cache), Some(100000));
+    assert_eq!(p.sats_to_fiat_estimate(100000, &cache), Some(100.0));
+    assert!(p.fiat_to_sats_estimate(0, &cache).is_none());
+    assert!(p.sats_to_fiat_estimate(0, &cache).is_none());
+    p.node_min_order_sats = Some(50000);
+    p.node_max_order_sats = Some(200000);
+    for (sats, message) in [
+        (10000, "below trade minimum"),
+        (300000, "exceeds trade maximum"),
+        (100000, "100,000 sats"),
+    ] {
+        assert!(inspect(p.sats_preview_caption(sats)).contains(message));
+    }
+    p.create_order_type = OrderType::Sell;
+    p.create_payment_methods = vec!["Cash".into()];
+    p.create_min_amount.value = "100".into();
+    for mode in [PricingMode::Market, PricingMode::Fixed] {
+        p.create_pricing_mode = mode;
+        p.create_sats_amount.value = "100000".into();
+        let view = inspect(p.create_order_view(&cache));
+        assert!(view.contains("Cash"));
+        assert!(view.contains("100"));
+    }
+    p.range_order_mode = true;
+    p.create_max_amount.value = "200".into();
+    assert!(inspect(p.create_order_view(&cache)).contains("200"));
+    p.create_fiat_currency = "UNKNOWN".into();
+    assert!(p.btc_price_for_selected(&cache).is_none());
+}
+
+#[test]
+fn selecting_trades_resets_stale_previews_and_inflight_payment_blocks_navigation() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.trades = vec![trade(TradeStatus::WaitingPayment, OrderType::Buy)];
+    p.trades[0].hold_invoice = Some("synthetic invoice".into());
+    p.trade_rating = 5;
+    p.chat_selected_trade = Some("old-chat".into());
+    p.spark_pay_phase = SparkPayPhase::Error("old error".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SelectTrade("synthetic-trade".into()),
+    );
+    assert_eq!(p.selected_trade.as_deref(), Some("synthetic-trade"));
+    assert!(p.chat_selected_trade.is_none());
+    assert!(p.hold_invoice_qr.is_some());
+    assert_eq!(p.spark_pay_session_id.as_deref(), Some("synthetic-trade"));
+    assert_eq!(p.trade_rating, 0);
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Idle));
+    p.spark_pay_phase = SparkPayPhase::Sending;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SelectTrade("another-trade".into()),
+    );
+    assert_eq!(p.selected_trade.as_deref(), Some("synthetic-trade"));
+    p.spark_pay_phase = SparkPayPhase::Idle;
+    p.trades[0].hold_invoice = None;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SelectTrade("synthetic-trade".into()),
+    );
+    assert!(p.spark_pay_session_id.is_none() && p.hold_invoice_qr.is_none());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SparkPayPrepare {
+            order_id: "stale".into(),
+            invoice: "synthetic".into(),
+        },
+    );
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Idle));
+    p.spark_pay_session_id = Some("synthetic-trade".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::SparkPayPrepare {
+            order_id: "synthetic-trade".into(),
+            invoice: "synthetic".into(),
+        },
+    );
+    assert!(matches!(&p.spark_pay_phase, SparkPayPhase::Error(e) if e.contains("not available")));
+}
+
+#[test]
+fn acknowledged_conversations_appear_in_their_lists_and_open_with_the_right_context() {
+    let mut p = panel();
+    let _session_fixture = seed_chat_session(&p);
+    let cache = enabled_cache();
+    p.trades = vec![trade(TradeStatus::Dispute, OrderType::Sell)];
+    for (action, text) in [
+        ("SendDm", "Synthetic peer preview"),
+        ("AdminDm", "Synthetic admin preview"),
+    ] {
+        super::super::mostro::append_trade_message(
+            &p.cube_name(),
+            "synthetic-trade",
+            super::super::mostro::TradeMessage {
+                timestamp: 100,
+                action: action.into(),
+                payload_json: serde_json::to_string(&Some(
+                    mostro_core::message::Payload::TextMessage(text.into()),
+                ))
+                .unwrap(),
+                is_own: true,
+            },
+        );
+    }
+    let menu = Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Chat));
+    for dispute in [false, true] {
+        update(
+            &mut p,
+            &cache,
+            if dispute {
+                P2PMessage::ChatListTabDisputes
+            } else {
+                P2PMessage::ChatListTabMessages
+            },
+        );
+        let view = inspect(p.chat_list_view());
+        assert!(view.contains(if dispute {
+            "Synthetic admin preview"
+        } else {
+            "Synthetic peer preview"
+        }));
+        update(
+            &mut p,
+            &cache,
+            if dispute {
+                P2PMessage::OpenDisputeChatForTrade("synthetic-trade".into())
+            } else {
+                P2PMessage::OpenChatForTrade("synthetic-trade".into())
+            },
+        );
+        assert_eq!(p.chat_selected_trade.as_deref(), Some("synthetic-trade"));
+        let view = capture::inspect_rendered_filled(
+            "p2p-conversation",
+            State::view(&p, &menu, &cache),
+            (1400, 1800),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(view.contains("Back"));
+        assert!(view.contains(if dispute {
+            "Dispute Chat"
+        } else {
+            "SELL Order"
+        }));
+        update(&mut p, &cache, P2PMessage::CloseChat);
+        assert!(p.chat_selected_trade.is_none());
+    }
 }

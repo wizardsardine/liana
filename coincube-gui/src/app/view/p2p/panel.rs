@@ -6598,7 +6598,7 @@ mod book_filter_tests {
     use super::*;
     use crate::app::view::shared::landing::capture;
 
-    fn order(id: &str, order_type: OrderType, currency: &str, method: &str) -> P2POrder {
+    pub(super) fn order(id: &str, order_type: OrderType, currency: &str, method: &str) -> P2POrder {
         P2POrder {
             id: id.into(),
             order_type,

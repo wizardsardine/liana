@@ -336,10 +336,30 @@ pub(crate) mod capture {
         )
     }
 
+    /// Draw a screen with its own scrolling panes at a finite fill height.
+    pub fn inspect_rendered_filled<M: 'static>(
+        scenario: &str,
+        content: Element<'_, M>,
+        outer: (u32, u32),
+        appearance: &str,
+        theme: theme::Theme,
+    ) -> Inspection {
+        inspect_sized(
+            scenario,
+            content,
+            outer,
+            appearance,
+            theme,
+            outer,
+            InspectionMode::DrawFill,
+        )
+    }
+
     enum InspectionMode {
         LayoutScroll,
         LayoutFill,
         DrawScroll,
+        DrawFill,
     }
 
     /// Activity and payment forms use the wide dashboard body rather than the
@@ -419,14 +439,15 @@ pub(crate) mod capture {
             Some("tiny-skia"),
         ))
         .expect("software renderer for a synthetic R06a presenter");
-        let mut element: Element<'_, M> = if !matches!(mode, InspectionMode::LayoutFill) {
-            iced::widget::scrollable(content)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            content
-        };
+        let mut element: Element<'_, M> =
+            if !matches!(mode, InspectionMode::LayoutFill | InspectionMode::DrawFill) {
+                iced::widget::scrollable(content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                content
+            };
         let mut tree = Tree::new(element.as_widget());
         let node = element.as_widget_mut().layout(
             &mut tree,
@@ -455,7 +476,9 @@ pub(crate) mod capture {
             );
         }
         let capture_directory = std::env::var("R06A_CAPTURE_DIR").ok();
-        if matches!(mode, InspectionMode::DrawScroll) || capture_directory.is_some() {
+        if matches!(mode, InspectionMode::DrawScroll | InspectionMode::DrawFill)
+            || capture_directory.is_some()
+        {
             let viewport = Rectangle::with_size(size);
             element.as_widget_mut().update(
                 &mut tree,
@@ -486,6 +509,13 @@ pub(crate) mod capture {
                 theme.colors.general.background,
             );
             assert_eq!(pixels.len(), width as usize * height as usize * 4);
+            if matches!(mode, InspectionMode::DrawScroll | InspectionMode::DrawFill) {
+                assert!(
+                    pixels.chunks_exact(4).any(|pixel| pixel != &pixels[..4]),
+                    "{}: rendered screen is blank",
+                    scenario
+                );
+            }
             if let Some(directory) = capture_directory {
                 std::fs::create_dir_all(&directory).expect("create disposable capture directory");
                 let filename = format!(
