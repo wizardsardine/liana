@@ -117,6 +117,20 @@ impl BuySellPanel {
         }
     }
 
+    /// A sell checkout's Spark payment is with the bridge: the flow must not
+    /// be replaced until it answers.
+    pub fn sell_payment_in_flight(&self) -> bool {
+        matches!(
+            &self.step,
+            BuySellFlowState::Mavapay(state)
+                if matches!(
+                    state.steps.last(),
+                    Some(super::mavapay::MavapayFlowStep::Checkout { sell, .. })
+                        if sell.fulfilment.in_flight()
+                )
+        )
+    }
+
     pub fn view<'a>(&'a self, mask_amounts: bool) -> iced::Element<'a, ViewMessage, theme::Theme> {
         match &self.step {
             BuySellFlowState::DetectingLocation(..)

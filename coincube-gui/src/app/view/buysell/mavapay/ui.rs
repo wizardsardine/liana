@@ -1226,8 +1226,12 @@ fn checkout_form<'a>(
                     BuyOrSell::Sell => {
                         widget::column![
                             summary_card(quote),
+                            // Once a Spark payment of this invoice is under
+                            // way (or done), paying it again from another
+                            // wallet would pay twice: the QR goes away.
                             invoice_qr_code_data
                                 .as_ref()
+                                .filter(|_| sell.fulfilment == SellFulfilment::Idle)
                                 .map(|data| invoice_qr_code_display(
                                     localized_copy("Deposit into the following address to proceed"),
                                     quote.invoice.as_str(),
@@ -1239,7 +1243,12 @@ fn checkout_form<'a>(
                             spark_fulfilment(
                                 &sell.fulfilment,
                                 *spark_balance,
-                                quote.total_amount_in_source_currency
+                                // Mavapay's routing-fee estimate on top: a
+                                // balance that covers only the total would
+                                // fail at send.
+                                quote
+                                    .total_amount_in_source_currency
+                                    .saturating_add(quote.estimated_routing_fee.unwrap_or(0))
                             ),
                         ]
                         .spacing(10)
@@ -2114,7 +2123,8 @@ mod tests {
     /// the deposit QR. Nothing mentions Liquid any more.
     #[test]
     fn sell_checkout_offers_spark_fulfilment_when_spark_covers_the_order() {
-        let checkout = sell_checkout(Some(12_500), SellFulfilment::Idle);
+        // The quote's total (12_500) plus Mavapay's routing-fee estimate (4).
+        let checkout = sell_checkout(Some(12_504), SellFulfilment::Idle);
         let shown = inspect_sell("mavapay-sell-checkout-spark-funded", &checkout);
         assert!(shown.contains("Deposit into the following address to proceed"));
         assert!(shown.contains("Fulfil from Spark"));
@@ -2126,7 +2136,8 @@ mod tests {
     /// Spark payment.
     #[test]
     fn sell_checkout_falls_back_to_manual_payment_when_spark_is_short() {
-        let checkout = sell_checkout(Some(12_499), SellFulfilment::Idle);
+        // Covers the total but not the routing-fee estimate on top.
+        let checkout = sell_checkout(Some(12_503), SellFulfilment::Idle);
         let shown = inspect_sell("mavapay-sell-checkout-spark-short", &checkout);
         assert!(shown.contains("Deposit into the following address to proceed"));
         assert!(shown.contains("Spark balance too low. Pay the invoice manually"));
@@ -2154,7 +2165,15 @@ mod tests {
             );
             assert!(shown.contains("Paying from Spark"));
             assert!(!shown.contains("Fulfil from Spark"));
+            // No QR to pay the same invoice again from another wallet.
+            assert!(!shown.contains("Deposit into the following address"));
         }
+        let paid = inspect_sell(
+            "mavapay-sell-checkout-paid",
+            &sell_checkout(Some(50_000), SellFulfilment::Paid),
+        );
+        assert!(paid.contains("Paid from your Spark wallet"));
+        assert!(!paid.contains("Deposit into the following address"));
 
         let checking = inspect_sell(
             "mavapay-sell-checkout-checking",
@@ -2168,6 +2187,7 @@ mod tests {
             ),
         );
         assert!(checking.contains("Payment status unconfirmed"));
+        assert!(!checking.contains("Deposit into the following address"));
         assert!(!checking.contains("Fulfil from Spark"));
         assert!(!checking.contains("Send again"));
 

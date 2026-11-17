@@ -44,6 +44,26 @@ impl State for BuySellPanel {
             _ => return iced::Task::none(),
         };
 
+        // Replacing the flow while a sell payment is with the Spark bridge
+        // would drop the checkout that is waiting for its answer, and with it
+        // the only record of whether the order was paid. ("Start New
+        // Transaction" sends `ResetWidget`, which can arrive once Mavapay has
+        // already confirmed the order.)
+        if self.sell_payment_in_flight()
+            && matches!(
+                message,
+                view::BuySellMessage::ResetWidget
+                    | view::BuySellMessage::SetLoginState(..)
+                    | view::BuySellMessage::LogOut
+                    | view::BuySellMessage::CountryDetected(..)
+                    | view::BuySellMessage::StartSession
+                    | view::BuySellMessage::ViewHistory
+            )
+        {
+            log::warn!("[BUYSELL] Ignoring a flow change while a sell payment is in flight");
+            return iced::Task::none();
+        }
+
         match message {
             view::BuySellMessage::ResetWidget => {
                 if self.detected_country.is_none() {
@@ -1066,6 +1086,87 @@ mod tests {
                 ..
             } if otp == "123456"
         ));
+    }
+
+    fn sell_checkout(quote_id: &str, fulfilment: SellFulfilment) -> MavapayState {
+        let quote = crate::app::view::buysell::mavapay::tests::sell_quote(quote_id);
+        MavapayState::new(
+            BuyOrSell::Sell,
+            MavapayFlowStep::Checkout {
+                quote,
+                fulfilled_order: None,
+                invoice_qr_code_data: None,
+                spark_balance: Some(10_000_000),
+                sell: SellPayment {
+                    fulfilment,
+                    ..SellPayment::default()
+                },
+                stream_order_id: None,
+            },
+            country("NG"),
+            spark(),
+        )
+    }
+
+    fn checkout_fulfilment(panel: &BuySellPanel) -> Option<(&str, &SellFulfilment)> {
+        match &panel.step {
+            BuySellFlowState::Mavapay(state) => match state.steps.last() {
+                Some(MavapayFlowStep::Checkout { quote, sell, .. }) => {
+                    Some((quote.id.as_str(), &sell.fulfilment))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// "Start New Transaction" (and every other flow change) is refused while
+    /// a sell payment is with the bridge, and a late success for an earlier
+    /// order doesn't settle the checkout that replaced it.
+    #[test]
+    fn a_sell_payment_in_flight_survives_resets_and_late_answers_stay_with_their_order() {
+        let mut panel = panel();
+        panel.detected_country = Some(country("NG"));
+        panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-a", SellFulfilment::Sending));
+        assert!(panel.sell_payment_in_flight());
+        for change in [
+            view::BuySellMessage::ResetWidget,
+            view::BuySellMessage::StartSession,
+            view::BuySellMessage::ViewHistory,
+            view::BuySellMessage::LogOut,
+        ] {
+            let _ = panel.update(None, &Cache::default(), buysell_msg(change));
+            assert_eq!(
+                checkout_fulfilment(&panel),
+                Some(("quote-a", &SellFulfilment::Sending))
+            );
+        }
+
+        // Order A settled elsewhere and the user moved on to order B, whose
+        // own payment is now out. A's late success must not mark B paid.
+        panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-b", SellFulfilment::Sending));
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::SellInvoiceFulfilled {
+                    quote_id: "quote-a".to_string(),
+                    payment: coincube_spark_protocol::SendPaymentOk {
+                        payment_id: "pay-a".to_string(),
+                        amount_sat: 2_500_000,
+                        fee_sat: 3,
+                    },
+                },
+            )),
+        );
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-b", &SellFulfilment::Sending))
+        );
+
+        // At rest, a reset goes through as before.
+        panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-b", SellFulfilment::Idle));
+        assert!(!panel.sell_payment_in_flight());
     }
 
     #[test]
