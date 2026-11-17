@@ -7754,7 +7754,9 @@ impl App {
                     tracing::warn!("Attempted to load daemon config without vault");
                 }
             }
-            Message::DaemonRestarted(outcome) => self.handle_daemon_restarted(outcome),
+            Message::DaemonRestarted(outcome) => {
+                return self.handle_daemon_restarted(outcome);
+            }
             Message::WalletUpdated(Ok(wallet)) => {
                 // Check if we're transitioning from no-vault to has-vault state
                 let was_vaultless = self.wallet.is_none();
