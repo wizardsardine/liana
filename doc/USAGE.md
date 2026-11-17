@@ -185,7 +185,7 @@ on how to recover a Liana wallet backup with Bitcoin Core 25.0 and above](RECOVE
 
 ### Reproducible builds
 
-Releases of Liana are reproducibly built. See
+Releases of Liana are reproducibly built. The Linux and Windows binaries are also bootstrappable. See
 [`contrib/reproducible`](../contrib/reproducible) for details and instructions if you want to check a
 release.
 

@@ -1,4 +1,4 @@
-{ craneLib, pkgs, lib, lipo, rootPath }:
+{ craneLib, craneLibBootstrap, craneLibBootstrapApple, pkgs, lib, lipo, rootPath }:
 let
   commonBuildSettings = {
     src = lib.fileset.toSource {
@@ -50,13 +50,13 @@ let
   };
 
   # Build deps separately with LIANA_SKIP_GUI_ICON to ensure liana-gui doesn't set its icon
-  windowsDeps = craneLib.buildDepsOnly (windowsSettings // {
+  windowsDeps = craneLibBootstrap.buildDepsOnly (windowsSettings // {
     pname = "liana-business-deps";
     version = lianaBusinessInfo.version;
     doCheck = false;
   });
 
-  x86_64-pc-windows-gnu-exe = craneLib.buildPackage (windowsSettings // {
+  x86_64-pc-windows-gnu-exe = craneLibBootstrap.buildPackage (windowsSettings // {
     inherit (lianaBusinessInfo) pname version;
     doCheck = false;
 
@@ -78,7 +78,10 @@ let
     icon = rootPath + "/liana-ui/static/logos/liana-business.ico";
   };
 
-  x86_64-unknown-linux-gnu = craneLib.buildPackage {
+  # Linux and Windows use the bootstrapped toolchain, whose `std` is cross-compiled
+  # from source. The Apple targets use craneLibBootstrapApple: same compiler, plus
+  # an Apple `std` that needs the proprietary macOS SDK to link.
+  x86_64-unknown-linux-gnu = craneLibBootstrap.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaBusinessInfo) pname version;
 
@@ -112,7 +115,7 @@ let
     '';
   };
 
-  x86_64-apple-darwin = craneLib.buildPackage {
+  x86_64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaBusinessInfo) pname version;
 
@@ -147,7 +150,7 @@ let
     '';
   };
 
-  aarch64-apple-darwin = craneLib.buildPackage {
+  aarch64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaBusinessInfo) pname version;
 

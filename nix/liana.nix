@@ -1,4 +1,4 @@
-{ craneLib, pkgs, lib, lipo, rootPath }:
+{ craneLib, craneLibBootstrap, craneLibBootstrapApple, pkgs, lib, lipo, rootPath }:
 let
   commonBuildSettings = {
     src = lib.fileset.toSource {
@@ -23,7 +23,7 @@ let
 
   normalizeElf = import ./normalize-elf.nix { inherit pkgs; };
 
-  x86_64-pc-windows-gnu-exe = craneLib.buildPackage {
+  x86_64-pc-windows-gnu-exe = craneLibBootstrap.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -59,7 +59,10 @@ let
     icon = rootPath + "/liana-ui/static/logos/liana.ico";
   };
 
-  x86_64-unknown-linux-gnu = craneLib.buildPackage {
+  # Linux and Windows use the bootstrapped toolchain, whose `std` is cross-compiled
+  # from source. The Apple targets use craneLibBootstrapApple: same compiler, plus
+  # an Apple `std` that needs the proprietary macOS SDK to link.
+  x86_64-unknown-linux-gnu = craneLibBootstrap.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -98,7 +101,7 @@ let
     '';
   };
 
-  x86_64-apple-darwin = craneLib.buildPackage {
+  x86_64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -138,7 +141,7 @@ let
     '';
   };
 
-  aarch64-apple-darwin = craneLib.buildPackage {
+  aarch64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
