@@ -115,7 +115,8 @@ mod tests {
         app.cache.node_bitcoind_sync_heights = Some((30, 40));
         app.cache.node_bitcoind_ibd = Some(true);
         app.cache.node_bitcoind_subversion = Some("old node".into());
-        app.cache.node_bitcoind_pruning = Some(true);
+        app.cache.node_bitcoind_pruning =
+            Some(local_switch::NodePruning::Pruned { prune_height: 5 });
         app.cache.node_bitcoind_last_log = Some("old log".into());
         test(&mut app);
     }
@@ -200,7 +201,10 @@ mod tests {
                         app.cache.node_bitcoind_subversion.as_deref(),
                         Some("old node")
                     );
-                    assert_eq!(app.cache.node_bitcoind_pruning, Some(true));
+                    assert_eq!(
+                        app.cache.node_bitcoind_pruning,
+                        Some(local_switch::NodePruning::Pruned { prune_height: 5 })
+                    );
                     assert_eq!(app.cache.node_bitcoind_last_log.as_deref(), Some("old log"));
                 });
             }
