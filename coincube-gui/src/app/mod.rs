@@ -2,6 +2,7 @@ mod activity_routing;
 mod connect_auth;
 mod connect_stream;
 mod cube_name;
+mod daemon_cache;
 mod fiat_updates;
 mod recovery_settings;
 
@@ -7569,133 +7570,7 @@ impl App {
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
                 return self.handle_fiat_price(fiat_price);
             }
-            Message::UpdateDaemonCache(res) => {
-                if self.cache.has_imported_bitcoin {
-                    return Task::none();
-                }
-                match res {
-                    Ok(mut daemon_cache) => {
-                        // Apply optimistic-broadcast overrides before the
-                        // cache is published: reconcile drops entries the
-                        // daemon now reflects on its own, then any still-
-                        // pending broadcasts get synthetic `spend_info` so
-                        // `coins_summary` (Vault balance) and every other
-                        // `cache.coins()` consumer treats the inputs as
-                        // already spent.
-                        if let Some(wallet) = &self.wallet {
-                            wallet.reconcile_with_coins(&daemon_cache.coins);
-                            wallet.apply_coin_overrides(&mut daemon_cache.coins);
-                        }
-                        let retire_obligation = if full_scan_settles_rescan_obligation(
-                            &self.daemon_backend(),
-                            self.rescan_obligation_retired_by_scan
-                                || self.rescan_obligation_retire_in_flight,
-                            &daemon_cache.history_sync,
-                        ) {
-                            let task = self.retire_rescan_obligation_task();
-                            self.rescan_obligation_retire_in_flight = task.is_some();
-                            task
-                        } else {
-                            None
-                        };
-                        let vault_changed = overview_activity_vault_changed(
-                            &self.cache.daemon_cache,
-                            &daemon_cache,
-                        );
-                        self.cache.daemon_cache = daemon_cache;
-                        // The Vault page's rows follow its own reload
-                        // (`Message::Payments`).
-                        let recent = if vault_changed
-                            && matches!(
-                                self.panels.current,
-                                Menu::Cube(menu::CubeSubMenu::Overview)
-                            ) {
-                            self.panels.activity.refresh_wallet(
-                                view::activity::WalletFilter::Vault,
-                                self.daemon.clone(),
-                                self.wallet.clone(),
-                            )
-                        } else {
-                            Task::none()
-                        };
-                        // Fire-and-forget recovery heartbeat after the sync's
-                        // fresh tip lands (Estate Notifications — PR 2). Batched
-                        // alongside the normal cache cascade so it never delays
-                        // or blocks it.
-                        let heartbeat = self.recovery_heartbeat_task();
-                        // Same posture for the BTCB2 entangled-deposit lookups:
-                        // `Task::none()` on every Bitcoin-family Cube.
-                        let entangled = self.entangled_lookup_task();
-                        let chain_proofs = self.chain_proof_task();
-                        let splits = self.split_refresh_task();
-                        let unswept = self.unswept_notice_task();
-                        return Task::batch([
-                            heartbeat,
-                            entangled,
-                            chain_proofs,
-                            splits,
-                            unswept,
-                            retire_obligation.unwrap_or_else(Task::none),
-                            recent,
-                            Task::done(Message::CacheUpdated),
-                        ]);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to update daemon cache: {}", e);
-                        // If the active Bitcoind daemon has failed and a Connect
-                        // Esplora fallback is configured (set when IBD completed),
-                        // restart using Connect — but only on transport/stopped
-                        // errors, not transient RPC application-level responses.
-                        if is_daemon_unreachable(&e) {
-                            let fallback = self
-                                .daemon
-                                .as_ref()
-                                .filter(|d| {
-                                    matches!(
-                                        d.backend(),
-                                        DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
-                                    )
-                                })
-                                .and_then(|d| d.config())
-                                .and_then(|c| {
-                                    c.fallback_esplora.as_ref().map(|fb| {
-                                        let mut new_cfg = c.clone();
-                                        // Demote the current Bitcoind to
-                                        // `pending_bitcoind` so the syncing card
-                                        // reappears and the user can retry once
-                                        // the node is healthy. Without this the
-                                        // fallback strands the user on Connect
-                                        // with an empty pending slot, which
-                                        // surfaces the "Set up local node" prompt
-                                        // and forces a full re-install.
-                                        let preserved_bitcoind = match &c.bitcoin_backend {
-                                            Some(coincubed::config::BitcoinBackend::Bitcoind(
-                                                bc,
-                                            )) => Some(bc.clone()),
-                                            _ => None,
-                                        };
-                                        new_cfg.bitcoin_backend = Some(
-                                            coincubed::config::BitcoinBackend::Esplora(fb.clone()),
-                                        );
-                                        new_cfg.pending_bitcoind = preserved_bitcoind;
-                                        // Fell back to Connect after a Bitcoind
-                                        // failure — park the node but don't
-                                        // auto-revert to it on the next probe.
-                                        new_cfg.auto_switch_to_pending = Some(false);
-                                        new_cfg.fallback_esplora = None;
-                                        new_cfg
-                                    })
-                                });
-                            if let Some(new_cfg) = fallback {
-                                if !self.daemon_switch_in_progress {
-                                    info!("Switching to COINCUBE | Connect fallback after Bitcoind failure");
-                                    return self.spawn_daemon_switch(new_cfg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Message::UpdateDaemonCache(res) => return self.handle_daemon_cache(res),
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
