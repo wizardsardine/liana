@@ -5261,6 +5261,47 @@ mod tests {
         assert!(panel.pending_send.is_none());
     }
 
+    /// A same-key retry of a payment that ended `Failed`: the SDK hands back
+    /// the stored failed payment, and the bridge answers that as an error. The
+    /// client reports it as a definite rejection (not an unknown outcome), the
+    /// panel shows a failure rather than "Sent", and the key is retired.
+    #[tokio::test]
+    async fn a_same_key_retry_of_a_failed_payment_is_a_definite_failure() {
+        let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+        let backend = SparkBackend::new(Arc::new(client));
+        let (result, _) = tokio::join!(
+            backend.send_payment("h".to_string(), Some("key-1".to_string())),
+            async {
+                let request = requests.recv().await.expect("the send");
+                backend
+                    .client()
+                    .mock_refuse(
+                        request.id,
+                        ErrorKind::Sdk,
+                        "send_payment failed: the payment pay-1 failed",
+                    )
+                    .await;
+            }
+        );
+        let Err(err @ SparkClientError::BridgeError { .. }) = result else {
+            panic!("expected a definite bridge rejection, got {:?}", result);
+        };
+
+        // The resend after an unknown outcome keeps the original key…
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        panel.phase = SparkSendPhase::Sending;
+        assert_eq!(
+            panel.send_idempotency_key.as_deref(),
+            Some("key-from-the-first-attempt")
+        );
+        // …and its rejection is an ordinary failure, not "Sent".
+        let _ = send(&mut panel, SparkSendMessage::SendFailed(err.to_string()));
+        assert!(matches!(panel.phase, SparkSendPhase::Error(_)));
+        assert!(panel.pending_send.is_none());
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(panel.send_idempotency_key.is_none());
+    }
+
     /// History matching brackets on direction, amount and time, and errs
     /// towards *finding* the payment — the direction that blocks a resend.
     #[test]

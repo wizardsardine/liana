@@ -1800,4 +1800,47 @@ pub(crate) mod tests {
             );
         }
     }
+
+    /// A same-key repeat of a sell payment that ended `Failed`: the bridge
+    /// answers the SDK's stored failed payment with an error, so the checkout
+    /// goes back to rest with the key retired — never to Paid.
+    #[tokio::test]
+    async fn a_same_key_repeat_answered_with_a_failed_payment_is_a_definite_failure() {
+        let (spark, mut requests) = fake_spark();
+        let client = crate::services::coincube::CoincubeClient::new();
+        let mut state = sell_checkout(spark.clone());
+        set_sell(&mut state, |sell| {
+            sell.fulfilment = SellFulfilment::Sending;
+            sell.idempotency_key = Some("key-1".to_string());
+        });
+
+        let (outcome, _) = tokio::join!(
+            send_sell_payment(
+                &spark,
+                "quote-sell".to_string(),
+                "prepare-2".to_string(),
+                "key-1".to_string()
+            ),
+            async {
+                let request = requests.recv().await.expect("the send");
+                spark
+                    .client()
+                    .mock_refuse(
+                        request.id,
+                        coincube_spark_protocol::ErrorKind::Sdk,
+                        "send_payment failed: the payment pay-1 failed",
+                    )
+                    .await;
+            }
+        );
+        assert!(
+            matches!(outcome, MavapayMessage::SellSendFailed { .. }),
+            "{:?}",
+            outcome
+        );
+        assert!(state.update(outcome, &client).is_some());
+        assert_eq!(sell(&state).fulfilment, SellFulfilment::Idle);
+        assert!(sell(&state).idempotency_key.is_none());
+        assert!(sell(&state).pending.is_none());
+    }
 }
