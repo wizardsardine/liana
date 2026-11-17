@@ -89,24 +89,45 @@ fn amount_form_gates_next_on_the_paying_asset_and_valid_destination_amount() {
     });
     for from in [SendAsset::Lbtc, SendAsset::Usdt] {
         for to in [SendAsset::Lbtc, SendAsset::Usdt] {
-            for (text, valid, balance, enabled) in [
-                ("", true, 1000, false),
-                ("100", false, 1000, false),
-                ("100", true, 0, false),
-                ("100", true, 1000, true),
+            // Keep the unused balance and amount different so selecting the
+            // wrong field cannot accidentally satisfy the same assertion.
+            for (
+                paying_balance,
+                other_balance,
+                destination_text,
+                destination_valid,
+                other_text,
+                other_valid,
+                enabled,
+            ) in [
+                (1000, 0, "100", true, "", false, true),
+                (0, 1000, "100", true, "", false, false),
+                (1000, 0, "", true, "100", true, false),
+                (1000, 0, "100", false, "100", true, false),
+                (1000, 0, "   ", true, "100", true, false),
+                (1000, 0, "100", true, "100", false, true),
             ] {
-                let amount = value(text, valid);
+                let destination = value(destination_text, destination_valid);
+                let other = value(other_text, other_valid);
+                let (amount, usdt_amount) = match to {
+                    SendAsset::Lbtc => (&destination, &other),
+                    SendAsset::Usdt => (&other, &destination),
+                };
+                let (btc_balance, usdt_balance) = match from {
+                    SendAsset::Lbtc => (paying_balance, other_balance),
+                    SendAsset::Usdt => (other_balance, paying_balance),
+                };
                 let render = || {
                     amount_input_model(AmountInputConfig {
-                        amount: &amount,
-                        usdt_amount_input: &amount,
+                        amount,
+                        usdt_amount_input: usdt_amount,
                         to_asset: to,
                         from_asset: from,
                         uri_asset: None,
-                        usdt_balance: balance,
+                        usdt_balance,
                         comment: "Synthetic comment".into(),
                         has_fiat_converter: true,
-                        btc_balance: Amount::from_sat(balance),
+                        btc_balance: Amount::from_sat(btc_balance),
                         description: Some("Synthetic recipient"),
                         lightning_limits: Some((100, 10000)),
                         onchain_limits: Some((1000, 100000)),
@@ -127,7 +148,14 @@ fn amount_form_gates_next_on_the_paying_asset_and_valid_destination_amount() {
                         m,
                         LiquidSendMessage::PopupMessage(view::SendPopupMessage::Done)
                     )),
-                    enabled
+                    enabled,
+                    "from={:?}, to={:?}, paying={}, other={}, destination={:?}, valid={}",
+                    from,
+                    to,
+                    paying_balance,
+                    other_balance,
+                    destination_text,
+                    destination_valid
                 );
                 assert_eq!(view.contains("Paying with"), from != to);
                 assert_eq!(

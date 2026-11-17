@@ -223,7 +223,7 @@ fn add_to_cube_dialog_requires_loaded_selection_and_prevents_duplicate_submit() 
 
 #[test]
 fn expiry_labels_use_utc_calendar_days_and_invalid_dates_are_unknown() {
-    let today = chrono::Utc::now().date_naive();
+    let today = chrono::NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
     for (days, label) in [
         (-2, "Expired"),
         (0, "Expires today"),
@@ -233,10 +233,11 @@ fn expiry_labels_use_utc_calendar_days_and_invalid_dates_are_unknown() {
         let date = (today + chrono::Duration::days(days))
             .format("%Y-%m-%dT12:00:00Z")
             .to_string();
-        assert_eq!(compute_days_until(&date), Some(days));
-        assert!(inspect(expiry_element(&date)).contains(label));
+        let days_until = compute_days_until_at(&date, today);
+        assert_eq!(days_until, Some(days));
+        assert!(inspect(expiry_element_for_days(days_until)).contains(label));
     }
-    assert_eq!(compute_days_until("invalid"), None);
+    assert_eq!(compute_days_until_at("invalid", today), None);
     for role in [
         ContactRole::Keyholder,
         ContactRole::Beneficiary,

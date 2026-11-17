@@ -98,18 +98,31 @@ fn amount_form_rejects_nonfinite_out_of_range_and_malformed_values() {
         assert!(!view.contains("Select/Generate an Address for Deposit"));
     }
     for mode in [BuyOrSell::Buy, BuyOrSell::Sell] {
+        let (amount, limits, expected_amount) = match mode {
+            BuyOrSell::Buy => ("100", limits(), 100.0),
+            BuyOrSell::Sell => (
+                "0.0005",
+                CurrencyLimit {
+                    currency_code: "BTC".into(),
+                    default_amount: 0.0005,
+                    minimum_amount: 0.0001,
+                    maximum_amount: 0.001,
+                },
+                0.0005,
+            ),
+        };
         for processing in [false, true] {
             let s = state(
                 mode,
                 MeldFlowStep::AmountInputForm {
-                    amount: "100".into(),
-                    limits: limits(),
+                    amount: amount.into(),
+                    limits: limits.clone(),
                     btc_balance: Amount::from_sat(100000),
                     processing_request: processing,
                 },
             );
             let view = inspect(s.view());
-            assert!(view.contains("Input USD amount"));
+            assert!(view.contains(&format!("Input {} amount", limits.currency_code)));
             let label = if mode == BuyOrSell::Buy {
                 "Select/Generate an Address for Deposit"
             } else if processing {
@@ -119,7 +132,7 @@ fn amount_form_rejects_nonfinite_out_of_range_and_malformed_values() {
             };
             assert!(view.contains(label));
             let messages = capture::click_text(s.view(), label, 0, (1400, 1800));
-            assert_eq!(messages.iter().any(|m| matches!(m,view::Message::BuySell(view::BuySellMessage::Meld(MeldMessage::SubmitInputAmount(v))) if *v==100.0)),!processing);
+            assert_eq!(messages.iter().any(|m| matches!(m,view::Message::BuySell(view::BuySellMessage::Meld(MeldMessage::SubmitInputAmount(v))) if *v==expected_amount)),!processing);
         }
     }
 }

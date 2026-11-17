@@ -1306,7 +1306,16 @@ fn peer_and_dispute_chat_persist_only_after_acknowledgement_and_restore_failed_i
     let cache = enabled_cache();
     p.selected_trade = Some("synthetic-trade".into());
     p.trades = vec![trade(TradeStatus::Active, OrderType::Buy)];
+    let persisted = |p: &P2PPanel| {
+        serde_json::to_value(super::super::mostro::get_trade_messages(
+            &p.cube_name(),
+            "synthetic-trade",
+        ))
+        .unwrap()
+    };
     for dispute in [false, true] {
+        let before = persisted(&p);
+        let before_count = before.as_array().unwrap().len();
         let send = || {
             if dispute {
                 P2PMessage::SendDisputeChatMessage
@@ -1331,6 +1340,7 @@ fn peer_and_dispute_chat_persist_only_after_acknowledgement_and_restore_failed_i
         update(&mut p, &cache, edit("   "));
         update(&mut p, &cache, send());
         assert!(p.pending_chat_message.is_none() && p.pending_dispute_chat_message.is_none());
+        assert_eq!(persisted(&p), before);
         update(&mut p, &cache, edit(" Synthetic message "));
         update(&mut p, &cache, send());
         let pending = if dispute {
@@ -1339,7 +1349,9 @@ fn peer_and_dispute_chat_persist_only_after_acknowledgement_and_restore_failed_i
             &p.pending_chat_message
         };
         assert_eq!(pending.as_ref().unwrap().original_text, "Synthetic message");
+        assert_eq!(persisted(&p), before);
         update(&mut p, &cache, send());
+        assert_eq!(persisted(&p), before);
         update(&mut p, &cache, result(Err("synthetic offline".into())));
         let input = if dispute {
             &p.dispute_chat_input
@@ -1347,13 +1359,29 @@ fn peer_and_dispute_chat_persist_only_after_acknowledgement_and_restore_failed_i
             &p.chat_input
         };
         assert_eq!(input.value, "Synthetic message");
+        assert_eq!(persisted(&p), before);
         update(&mut p, &cache, send());
+        assert_eq!(persisted(&p), before);
         update(&mut p, &cache, result(Ok(())));
         assert!(p.pending_chat_message.is_none() && p.pending_dispute_chat_message.is_none());
         let messages = super::super::mostro::get_trade_messages(&p.cube_name(), "synthetic-trade");
-        assert!(messages
-            .iter()
-            .any(|m| m.is_own && m.action == if dispute { "AdminDm" } else { "SendDm" }));
+        assert_eq!(messages.len(), before_count + 1);
+        let action = if dispute { "AdminDm" } else { "SendDm" };
+        let (accepted, previous): (Vec<_>, Vec<_>) =
+            messages.iter().partition(|m| m.action == action);
+        assert_eq!(accepted.len(), 1);
+        assert!(accepted[0].is_own);
+        assert_eq!(
+            accepted[0].payload_json,
+            serde_json::to_string(&Some(mostro_core::message::Payload::TextMessage(
+                "Synthetic message".into()
+            )))
+            .unwrap()
+        );
+        assert_eq!(serde_json::to_value(previous).unwrap(), before);
+        let acknowledged = persisted(&p);
+        update(&mut p, &cache, result(Ok(())));
+        assert_eq!(persisted(&p), acknowledged);
     }
 }
 
