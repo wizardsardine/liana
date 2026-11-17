@@ -5026,6 +5026,8 @@ impl Home {
                 network_dir
                     .init()
                     .map_err(|e| format!("Failed to create network directory: {}", e))?;
+                crate::installer::ensure_gui_config(&network_dir, false)
+                    .map_err(|e| format!("Failed to initialize GUI configuration: {}", e))?;
 
                 // Passkey Cube: no encrypted seed file, no PIN, no device
                 // secret. The credential is the key.
@@ -5202,6 +5204,8 @@ impl Home {
                 network_dir
                     .init()
                     .map_err(|e| format!("Failed to create network directory: {}", e))?;
+                crate::installer::ensure_gui_config(&network_dir, false)
+                    .map_err(|e| format!("Failed to initialize GUI configuration: {}", e))?;
 
                 // **One** timestamp for the seed file and the Cube (X7).
                 //
@@ -14767,6 +14771,75 @@ mod tests {
             true,
         )));
         drain(home.update(Message::View(ViewMessage::CreationBackupBypassConfirmed)))
+    }
+
+    #[test]
+    fn passkey_creation_initializes_gui_config_before_opening_a_blake2b_cube() {
+        for chain in [ChainId::BitcoinBlake2b, ChainId::BitcoinBlake2bTestnet4] {
+            for existing in [false, true] {
+                let dir = tmp_datadir("passkey-gui-config");
+                let mut home = home_with_datadir(&dir);
+                enable_btcb2(&mut home);
+                home.network = chain;
+                let network_dir = home.datadir_path.network_directory(chain);
+                let config_path = network_dir.path().join(app::config::DEFAULT_FILE_NAME);
+                let original = existing.then(|| {
+                    network_dir.init().unwrap();
+                    app::Config::new(true).to_file(&config_path).unwrap();
+                    std::fs::read(&config_path).unwrap()
+                });
+                passkey_create_form(&mut home, "Config fixture");
+                assert!(drain(webview_registration(&mut home, "fixture", 31)).is_empty());
+                home.creation_seed_confirmed = true;
+                let output = drain(home.update(Message::View(ViewMessage::CreationBackupContinue)));
+                let [Message::CubeCreated(Ok(cube))] = output.as_slice() else {
+                    panic!("expected successful passkey persistence");
+                };
+                let config = app::Config::from_file(&config_path).expect("loadable GUI config");
+                assert_eq!(config.start_internal_bitcoind, existing);
+                if let Some(original) = original {
+                    assert_eq!(std::fs::read(&config_path).unwrap(), original);
+                }
+                home.state = State::Cubes {
+                    cubes: vec![cube.clone()],
+                    create_cube: false,
+                    source: chain,
+                };
+                let opened = drain(home.update(Message::View(ViewMessage::Run(0))));
+                assert!(
+                    matches!(opened.as_slice(), [Message::Run(_, _, source, _)] if *source == chain)
+                );
+                std::fs::remove_dir_all(dir).unwrap();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn passkey_creation_refuses_when_gui_config_cannot_be_written() {
+        let dir = tmp_datadir("passkey-gui-config-failure");
+        let mut home = home_with_datadir(&dir);
+        enable_btcb2(&mut home);
+        home.network = ChainId::BitcoinBlake2bTestnet4;
+        let network_dir = home.datadir_path.network_directory(home.network);
+        network_dir.init().unwrap();
+        let config_path = network_dir.path().join(app::config::DEFAULT_FILE_NAME);
+        // A deterministic write failure inside this test's private temp tree.
+        std::os::unix::fs::symlink(dir.join("absent-parent/gui.toml"), &config_path).unwrap();
+        passkey_create_form(&mut home, "Config failure fixture");
+        assert!(drain(webview_registration(&mut home, "fixture", 32)).is_empty());
+        home.creation_seed_confirmed = true;
+        let output = drain(home.update(Message::View(ViewMessage::CreationBackupContinue)));
+        assert!(
+            matches!(output.as_slice(), [Message::CubeCreated(Err(error))]
+            if error.starts_with("Failed to initialize GUI configuration:"))
+        );
+        assert!(!network_dir
+            .path()
+            .join(settings::SETTINGS_FILE_NAME)
+            .exists());
+        assert!(config_path.is_symlink());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// **The audited hole, as a test.** Registration alone must not put a Cube

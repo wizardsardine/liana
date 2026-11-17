@@ -32,6 +32,8 @@ fn code(error: &str) -> &'static str {
         "cube_master_signer_failed"
     } else if error.starts_with("Failed to create network directory:") {
         "cube_network_directory_failed"
+    } else if error.starts_with("Failed to initialize GUI configuration:") {
+        "cube_gui_configuration_failed"
     } else if error.starts_with("Failed to store master seed mnemonic:") {
         "cube_seed_storage_failed"
     } else if error == MISSING_ENTITLEMENT {
@@ -127,6 +129,10 @@ mod tests {
             (
                 "Failed to create network directory: detail",
                 "cube_network_directory_failed",
+            ),
+            (
+                "Failed to initialize GUI configuration: detail",
+                "cube_gui_configuration_failed",
             ),
             (
                 "Failed to store master seed mnemonic: detail",
