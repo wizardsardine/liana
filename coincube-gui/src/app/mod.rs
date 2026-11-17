@@ -5870,9 +5870,11 @@ impl App {
         tasks.push(price_task);
         tasks.push(local_feature_task);
 
-        // Imported policies use the same App daemon, with a generation-bound
-        // snapshot that also verifies discovery coverage and the Cube attachment.
-        if self.cache.has_imported_bitcoin {
+        // While an imported Vault's history scan runs, its import panel owns
+        // the snapshot (scan progress, discovery coverage, the Cube
+        // attachment). Once the scan is complete it polls like any Vault; the
+        // panel's own slower refresh still watches for a new scan.
+        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
             let client = self.authenticated_coincube_client();
             let epoch = self.panels.connect.account.session_generation();
             if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
@@ -6277,6 +6279,15 @@ impl App {
         };
     }
 
+    /// An imported Vault whose history scan is complete: the App's normal
+    /// cache poll feeds it, as for any Vault.
+    fn imported_vault_ready(&self) -> bool {
+        self.panels
+            .imported_bitcoin
+            .as_ref()
+            .is_some_and(|panel| panel.is_ready())
+    }
+
     /// Adopt an imported policy into the existing Vault wallet and App runtime.
     /// The import controller retains only a shared handle for its policy-specific
     /// signing and discovery work; the App owns the wallet and shutdown.
@@ -6322,16 +6333,23 @@ impl App {
         };
         let was_ready = self.panels.global_home.imported_balance.is_some();
         let before = self.cache.daemon_cache.clone();
-        let ready = panel.sync_cache(&mut self.cache);
-        if !ready {
-            self.cache.daemon_cache.coins.clear();
-            self.cache.daemon_cache.sync_progress = 0.0;
-        }
         let first_load = self.wallet.is_none();
         let runtime_changed = self
             .daemon
             .as_ref()
             .is_none_or(|previous| !Arc::ptr_eq(previous, &daemon));
+        // The panel's snapshot seeds the cache when the scan completes or the
+        // runtime changes. After that the App's normal poll owns the cache, so
+        // a later panel refresh does not overwrite it.
+        let ready = if first_load || !was_ready || runtime_changed {
+            panel.sync_cache(&mut self.cache)
+        } else {
+            panel.is_ready()
+        };
+        if !ready {
+            self.cache.daemon_cache.coins.clear();
+            self.cache.daemon_cache.sync_progress = 0.0;
+        }
         self.daemon = Some(daemon.clone());
         self.cache.has_vault = false;
         self.cache.has_imported_bitcoin = true;
@@ -6358,9 +6376,10 @@ impl App {
         }
         if ready {
             tasks.push(Task::done(Message::CacheUpdated));
-            // The imported runtime never sends `UpdateDaemonCache`: the
-            // Overview's Vault rows follow it here, once its history is in
-            // and whenever a refresh can have changed it.
+            // Until the scan completes the runtime sends no
+            // `UpdateDaemonCache`: the Overview's Vault rows follow it here
+            // when its history comes in or the runtime changes. After that
+            // the normal poll refreshes them.
             if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
                 && (first_load
                     || !was_ready
@@ -7568,7 +7587,8 @@ impl App {
                 return self.handle_fiat_price(fiat_price);
             }
             Message::UpdateDaemonCache(res) => {
-                if self.cache.has_imported_bitcoin {
+                // A scanning import's coins are not a balance yet.
+                if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
                     return Task::none();
                 }
                 match res {
@@ -11162,10 +11182,11 @@ pub(crate) mod tests {
         );
     }
 
-    /// The imported runtime never sends `UpdateDaemonCache`, so the Overview's
-    /// Vault rows follow its adoption: once the scan completes, then on each
-    /// refresh that moves a coin or a block, never while the scan runs, for
-    /// an unchanged snapshot, or on another page.
+    /// While the scan runs the imported runtime's poll results are ignored and
+    /// the Overview's Vault rows follow the panel's adoption once the scan
+    /// completes. From then on the normal poll owns the cache: a block it
+    /// reports refreshes the rows, an unchanged poll, a later panel refresh
+    /// or another page does not.
     #[test]
     fn the_overview_follows_the_imported_vaults_history() {
         let _guard = crate::app::session::test_guard();
@@ -11189,6 +11210,13 @@ pub(crate) mod tests {
                 .complete_scan_for_tests(block_height, Vec::new());
             drop(app.adopt_imported_runtime());
         };
+        let poll = |app: &mut App, block_height: i32| {
+            let polled = cache::DaemonCache {
+                blockheight: block_height,
+                ..app.cache.daemon_cache.clone()
+            };
+            drop(app.update(Message::UpdateDaemonCache(Ok(polled))));
+        };
         settle(&mut app);
 
         drop(app.adopt_imported_runtime());
@@ -11196,22 +11224,33 @@ pub(crate) mod tests {
             !app.panels.activity.vault_loading,
             "the scan is still running"
         );
+        poll(&mut app, 99);
+        assert_ne!(app.cache.blockheight(), 99, "a scanning poll is ignored");
 
         scanned(&mut app, 100);
         assert!(app.panels.activity.vault_loading, "the history is in");
         settle(&mut app);
 
-        scanned(&mut app, 100);
+        poll(&mut app, 100);
         assert!(!app.panels.activity.vault_loading, "nothing changed");
 
-        scanned(&mut app, 101);
+        poll(&mut app, 101);
+        assert_eq!(app.cache.blockheight(), 101);
         assert!(app.panels.activity.vault_loading, "a block arrived");
         settle(&mut app);
+
+        scanned(&mut app, 100);
+        assert_eq!(
+            app.cache.blockheight(),
+            101,
+            "a later panel refresh leaves the polled cache"
+        );
+        assert!(!app.panels.activity.vault_loading);
 
         app.panels.current = Menu::Cube(menu::CubeSubMenu::Settings(
             menu::CubeSettingsOption::General,
         ));
-        scanned(&mut app, 102);
+        poll(&mut app, 102);
         assert!(!app.panels.activity.vault_loading, "another page");
         let _ = std::fs::remove_dir_all(&root);
     }

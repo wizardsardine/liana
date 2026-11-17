@@ -996,6 +996,33 @@ pub async fn abandon_pending(
     Ok(())
 }
 
+/// Whether the daemon's report shows the imported wallet's history scan
+/// complete. The first completion is strict: synced, no scan or rescan under
+/// way and no failure. A wallet `already_ready` stays ready through what a
+/// Vault also lives through (a failing poll, a catch-up sync, a background
+/// scan) and leaves it only when its history is incomplete again, as after a
+/// wider address search, or on chain divergence or a refused reorg.
+pub fn history_scan_complete(
+    info: &coincubed::commands::GetInfoResult,
+    already_ready: bool,
+) -> bool {
+    let Some(status) = info.imported_wallet.as_ref() else {
+        return false;
+    };
+    let history = status.history_complete
+        && status.receive_scanned >= status.discovery_target
+        && status.change_scanned >= status.discovery_target
+        && !info.chain_divergence
+        && info.refused_reorg_depth.is_none();
+    history
+        && (already_ready
+            || (info.sync.is_finite()
+                && info.sync >= 1.0
+                && info.rescan_progress.is_none()
+                && !info.history_sync.full_scan_in_progress
+                && info.history_sync.last_failure.is_none()))
+}
+
 /// Reconcile durable setup readiness from a daemon positively identified as
 /// this Cube's wallet. Current backend errors remain separate UI freshness
 /// information; a different wallet/session cannot complete this operation.
@@ -1059,17 +1086,7 @@ pub async fn reconcile_sync(
                 "This synchronization result belongs to another wallet or setup operation.".into(),
             );
         }
-        let stage = if status.history_complete
-            && status.receive_scanned >= status.discovery_target
-            && status.change_scanned >= status.discovery_target
-            && info.sync.is_finite()
-            && info.sync >= 1.0
-            && info.rescan_progress.is_none()
-            && !info.history_sync.full_scan_in_progress
-            && info.history_sync.last_failure.is_none()
-            && !info.chain_divergence
-            && info.refused_reorg_depth.is_none()
-        {
+        let stage = if history_scan_complete(info, intent.is_ready()) {
             BitcoinImportStage::Ready { wallet }
         } else {
             BitcoinImportStage::Syncing { wallet }
