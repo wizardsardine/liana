@@ -2974,6 +2974,48 @@ impl Tab {
                         let cube_signer = restored_cube_signer.or_else(|| i.cube_signer.clone());
                         let spark = restored_spark_backend.or_else(|| i.spark_backend.clone());
 
+                        // The same fail-closed gate as the Loader's admission:
+                        // an installer that saved into a locked seed-backed
+                        // Cube it holds no signer for opens that Cube's unlock
+                        // screen rather than the App.
+                        if loader_admission_needs_unlock(
+                            &cube,
+                            cube_signer.as_ref(),
+                            i.datadir.path(),
+                        ) {
+                            tracing::warn!(
+                                "Installer saved into a Cube this session has not unlocked; \
+                                 routing to its unlock screen"
+                            );
+                            let datadir = i.datadir.clone();
+                            let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+                                datadir: datadir.clone(),
+                                config: cfg,
+                                network: i.network,
+                                internal_bitcoind: None,
+                                backup: None,
+                                wallet_settings: None,
+                                connect_client: i.context.coincube_client.clone(),
+                            };
+                            let duress_account_id =
+                                crate::services::duress::DuressLocalState::load(datadir.path())
+                                    .map(|st| st.account_id)
+                                    .unwrap_or(None);
+                            i.stop();
+                            self.state = unlock_state(
+                                cube,
+                                datadir.path().to_path_buf(),
+                                on_success,
+                                duress_account_id,
+                            );
+                            return match &self.state {
+                                State::PinEntry(_) => iced::widget::operation::focus(
+                                    crate::pin_input::first_digit_id(),
+                                ),
+                                _ => Task::none(),
+                            };
+                        }
+
                         let (app, command) = match app::App::new_without_wallet(
                             cube_signer,
                             spark,
@@ -3178,6 +3220,7 @@ impl Tab {
                     if loader_admission_needs_unlock(
                         &loader.cube_settings,
                         loader.cube_signer.as_ref(),
+                        loader.datadir_path.path(),
                     ) =>
                 {
                     tracing::warn!(
@@ -7284,39 +7327,53 @@ fn cube_signer_after_unlock(
 /// A Cube with a master-signer fingerprint is seed-backed and PIN- or
 /// passkey-protected; its unlock either hands the Loader a signer or leaves one
 /// in the session. A Loader holding neither was not reached through that
-/// unlock. Seed-less Cubes have nothing to unlock, and Bitcoin Blake2b Cubes
-/// deliberately carry no Cube signer (they open with a Cube encryption key), so
-/// both are admitted as before.
+/// unlock. A Cube from before the fingerprint was recorded has none until its
+/// first unlock backfills it, so for those the encrypted seed on disk under
+/// `datadir_root` decides (`CubeSettings::has_pin`, which also fails closed on
+/// an unreadable seed). Seed-less Cubes have nothing to unlock, and Bitcoin
+/// Blake2b Cubes deliberately carry no Cube signer (they open with a Cube
+/// encryption key), so both are admitted as before.
 fn loader_admission_needs_unlock(
     cube: &app::settings::CubeSettings,
     cube_signer: Option<&app::cube_signer::CubeSigner>,
+    datadir_root: &std::path::Path,
 ) -> bool {
     if cube.network.is_blake2b() || cube_signer.is_some() {
         return false;
     }
-    cube.master_signer_fingerprint
-        .is_some_and(|fp| app::session::unlocked_signer(&cube.id, fp).is_none())
+    match cube.master_signer_fingerprint {
+        Some(fp) => app::session::unlocked_signer(&cube.id, fp).is_none(),
+        None => cube.has_pin(datadir_root),
+    }
 }
 
 #[cfg(test)]
 mod loader_unlock_gate_tests {
     use super::*;
     use crate::app::settings::{CubeSettings, PasskeyMetadata};
-    use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
-    use coincube_core::signer::MasterSigner;
+    use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, secp256k1::Secp256k1};
+    use coincube_core::signer::{MasterSigner, MASTER_SEED_LABEL};
 
-    #[derive(Clone, Copy)]
+    /// Which admission site the fixture drives.
+    #[derive(Clone, Copy, Debug)]
     enum Arm {
+        /// The Loader's `Synced(Ok)` result.
         Synced,
+        /// The Loader's `App(Ok)` result (after a launch backup import).
         App,
+        /// The installer's seed-only `CubeSaved` exit, which opens the App
+        /// without a Loader.
+        SeedOnlySave,
     }
 
-    /// Drives a Loader for `adjust(fixture settings)` to `arm` and returns the
-    /// resulting tab state's name. `session_signer` parks the Cube's signer in
-    /// the session first, as a real unlock does.
-    fn finish_loader(
+    const ARMS: [Arm; 3] = [Arm::Synced, Arm::App, Arm::SeedOnlySave];
+
+    /// Drives `adjust(fixture settings, fingerprint, datadir root)` through
+    /// `arm` and returns the resulting tab state's name. `session_signer`
+    /// parks the Cube's signer in the session first, as a real unlock does.
+    fn finish(
         arm: Arm,
-        adjust: impl FnOnce(CubeSettings, Option<bitcoin::bip32::Fingerprint>) -> CubeSettings
+        adjust: impl FnOnce(CubeSettings, Fingerprint, &std::path::Path) -> CubeSettings
             + Send
             + 'static,
         session_signer: bool,
@@ -7338,7 +7395,7 @@ mod loader_unlock_gate_tests {
                 let (fixture, wallet) = crate::app::shell_tests::bitcoin_app(&path);
                 let signer = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
                 let fp = signer.fingerprint(&Secp256k1::signing_only());
-                let settings = adjust(fixture.cube_settings().clone(), Some(fp));
+                let settings = adjust(fixture.cube_settings().clone(), fp, &path);
                 let cache = fixture.cache().clone();
                 let daemon = crate::app::shell_tests::fixture_daemon(&fixture);
                 drop(fixture);
@@ -7349,33 +7406,63 @@ mod loader_unlock_gate_tests {
                     );
                     crate::app::session::store_unlocked_signer(&settings.id, fp, signer);
                 }
-                let (loader, startup) = Loader::new(
-                    root.clone(),
-                    app::Config::new(false),
-                    settings.network.bitcoin_network(),
-                    None,
-                    None,
-                    None,
-                    settings.clone(),
-                    None,
-                    None,
-                );
-                drop(startup);
-                let mut tab = Tab::new(1, State::Loader(loader));
-                let message = match arm {
-                    Arm::Synced => {
-                        loader::Message::Synced(Ok((wallet, cache, daemon, None, None, settings)))
+                let (mut tab, message) = match arm {
+                    Arm::Synced | Arm::App => {
+                        let (loader, startup) = Loader::new(
+                            root.clone(),
+                            app::Config::new(false),
+                            settings.network.bitcoin_network(),
+                            None,
+                            None,
+                            None,
+                            settings.clone(),
+                            None,
+                            None,
+                        );
+                        drop(startup);
+                        let message = if matches!(arm, Arm::Synced) {
+                            loader::Message::Synced(Ok((
+                                wallet, cache, daemon, None, None, settings,
+                            )))
+                        } else {
+                            loader::Message::App(Ok((
+                                cache,
+                                wallet,
+                                app::Config::new(false),
+                                daemon,
+                                root,
+                                None,
+                            )))
+                        };
+                        (Tab::new(1, State::Loader(loader)), Message::Load(message))
                     }
-                    Arm::App => loader::Message::App(Ok((
-                        cache,
-                        wallet,
-                        app::Config::new(false),
-                        daemon,
-                        root,
-                        None,
-                    ))),
+                    Arm::SeedOnlySave => {
+                        drop((wallet, cache, daemon));
+                        // Launched from Home: no Cube, no signer, no Spark.
+                        let (installer, startup) = Installer::try_new_for_chain(
+                            root,
+                            settings.network,
+                            UserFlow::AddWallet,
+                            false,
+                            None,
+                            None,
+                            None,
+                            false,
+                            None,
+                        )
+                        .unwrap();
+                        drop(startup);
+                        (
+                            Tab::new(1, State::Installer(Box::new(installer))),
+                            Message::Install(installer::Message::CubeSaved(
+                                Ok((settings, None, None)),
+                                None,
+                                None,
+                            )),
+                        )
+                    }
                 };
-                let mut queue = vec![Message::Load(message)];
+                let mut queue = vec![message];
                 // Synced/App(Ok) hand off through WalletsLoaded; follow it.
                 while let Some(message) = queue.pop() {
                     let task = tab.update(message);
@@ -7396,6 +7483,7 @@ mod loader_unlock_gate_tests {
                     State::PinEntry(_) => "PinEntry",
                     State::PasskeyUnlock(_) => "PasskeyUnlock",
                     State::Loader(_) => "Loader",
+                    State::Installer(_) => "Installer",
                     _ => "other",
                 };
                 drop(tab);
@@ -7408,12 +7496,12 @@ mod loader_unlock_gate_tests {
             .unwrap()
     }
 
-    fn seed_backed(cube: CubeSettings, fp: Option<bitcoin::bip32::Fingerprint>) -> CubeSettings {
-        cube.with_master_signer(fp.unwrap())
+    fn seed_backed(cube: CubeSettings, fp: Fingerprint, _: &std::path::Path) -> CubeSettings {
+        cube.with_master_signer(fp)
     }
 
-    fn passkey(cube: CubeSettings, fp: Option<bitcoin::bip32::Fingerprint>) -> CubeSettings {
-        seed_backed(cube, fp).with_passkey(PasskeyMetadata {
+    fn passkey(cube: CubeSettings, fp: Fingerprint, root: &std::path::Path) -> CubeSettings {
+        seed_backed(cube, fp, root).with_passkey(PasskeyMetadata {
             credential_id: "Y3JlZC1pZA==".to_string(),
             rp_id: "coincube.io".to_string(),
             created_at: 1_786_122_245,
@@ -7421,31 +7509,69 @@ mod loader_unlock_gate_tests {
         })
     }
 
+    /// A Cube from before `master_signer_fingerprint` was recorded: no
+    /// fingerprint in its settings, an encrypted seed found by its creation
+    /// window.
+    fn legacy_pin(cube: CubeSettings, _: Fingerprint, root: &std::path::Path) -> CubeSettings {
+        let secp = Secp256k1::signing_only();
+        MasterSigner::generate(bitcoin::Network::Bitcoin)
+            .unwrap()
+            .store_encrypted(
+                root,
+                bitcoin::Network::Bitcoin,
+                &secp,
+                Some((
+                    format!("{}{}", MASTER_SEED_LABEL, cube.created_at),
+                    cube.created_at,
+                )),
+                "1234",
+                &cube.id,
+                None,
+            )
+            .unwrap();
+        assert!(cube.master_signer_fingerprint.is_none());
+        assert!(cube.has_pin(root), "fixture must find its encrypted seed");
+        cube
+    }
+
+    fn seedless(cube: CubeSettings, _: Fingerprint, root: &std::path::Path) -> CubeSettings {
+        assert!(cube.master_signer_fingerprint.is_none());
+        assert!(!cube.has_pin(root), "fixture must have no seed file");
+        cube
+    }
+
     #[test]
     fn a_locked_seed_backed_cube_routes_to_pin_entry() {
-        for arm in [Arm::Synced, Arm::App] {
-            assert_eq!(finish_loader(arm, seed_backed, false), "PinEntry");
+        for arm in ARMS {
+            assert_eq!(finish(arm, seed_backed, false), "PinEntry", "{arm:?}");
+        }
+    }
+
+    #[test]
+    fn a_locked_cube_without_a_recorded_fingerprint_routes_to_pin_entry() {
+        for arm in ARMS {
+            assert_eq!(finish(arm, legacy_pin, false), "PinEntry", "{arm:?}");
         }
     }
 
     #[test]
     fn a_locked_passkey_cube_routes_to_passkey_unlock() {
-        for arm in [Arm::Synced, Arm::App] {
-            assert_eq!(finish_loader(arm, passkey, false), "PasskeyUnlock");
+        for arm in ARMS {
+            assert_eq!(finish(arm, passkey, false), "PasskeyUnlock", "{arm:?}");
         }
     }
 
     #[test]
     fn a_session_unlocked_seed_backed_cube_is_admitted() {
-        for arm in [Arm::Synced, Arm::App] {
-            assert_eq!(finish_loader(arm, seed_backed, true), "App");
+        for arm in ARMS {
+            assert_eq!(finish(arm, seed_backed, true), "App", "{arm:?}");
         }
     }
 
     #[test]
     fn a_seedless_cube_is_admitted() {
-        for arm in [Arm::Synced, Arm::App] {
-            assert_eq!(finish_loader(arm, |cube, _| cube, false), "App");
+        for arm in ARMS {
+            assert_eq!(finish(arm, seedless, false), "App", "{arm:?}");
         }
     }
 
@@ -7453,23 +7579,24 @@ mod loader_unlock_gate_tests {
     fn the_gate_exempts_blake2b_signer_holding_and_seedless_cubes() {
         let _guard = crate::app::session::test_guard();
         crate::app::session::close();
+        let root = std::env::temp_dir().join(format!("unlock-gate-{}", uuid::Uuid::new_v4()));
         let signer = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
         let fp = signer.fingerprint(&Secp256k1::signing_only());
         let bitcoin = CubeSettings::new("Seed".into(), bitcoin::Network::Bitcoin);
-        assert!(!loader_admission_needs_unlock(&bitcoin, None));
+        assert!(!loader_admission_needs_unlock(&bitcoin, None, &root));
         let seeded = bitcoin.with_master_signer(fp);
-        assert!(loader_admission_needs_unlock(&seeded, None));
+        assert!(loader_admission_needs_unlock(&seeded, None, &root));
         let fork = CubeSettings::new("Fork".into(), crate::chain::ChainId::BitcoinBlake2b)
             .with_master_signer(fp);
-        assert!(!loader_admission_needs_unlock(&fork, None));
+        assert!(!loader_admission_needs_unlock(&fork, None, &root));
         // A session signer for another fingerprint does not unlock this Cube.
         let other = MasterSigner::generate(bitcoin::Network::Bitcoin).unwrap();
         let other_fp = other.fingerprint(&Secp256k1::signing_only());
         crate::app::session::open(seeded.id.clone(), zeroize::Zeroizing::new("2468".into()));
         crate::app::session::store_unlocked_signer(&seeded.id, other_fp, other);
-        assert!(loader_admission_needs_unlock(&seeded, None));
+        assert!(loader_admission_needs_unlock(&seeded, None, &root));
         crate::app::session::store_unlocked_signer(&seeded.id, fp, signer);
-        assert!(!loader_admission_needs_unlock(&seeded, None));
+        assert!(!loader_admission_needs_unlock(&seeded, None, &root));
         crate::app::session::close();
     }
 }
