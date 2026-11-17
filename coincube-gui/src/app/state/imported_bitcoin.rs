@@ -386,6 +386,8 @@ pub enum ImportMessage {
     LeaveJourney,
     /// Keys: where signer `n`'s key is.
     KeySourcePicked(usize, KeySource),
+    /// Keys: open or close signer `n`'s "where is it" choices.
+    KeySourceMenu(usize),
     KeyWordsEdited(usize, SecretInput),
     KeyPassphraseEdited(usize, SecretInput),
     VerifyWords(usize),
@@ -1363,7 +1365,16 @@ impl ImportedBitcoinPanel {
                 self.error = None;
                 Task::none()
             }
+            ImportMessage::KeySourceMenu(index) => {
+                if let Some(keys) = &mut self.keys {
+                    keys.menu = (keys.menu != Some(index)).then_some(index);
+                }
+                Task::none()
+            }
             ImportMessage::KeySourcePicked(index, source) => {
+                if let Some(keys) = &mut self.keys {
+                    keys.menu = None;
+                }
                 if let Some(slot) = self.key_slot(index) {
                     slot.source = source;
                     slot.check = 0;
@@ -2908,6 +2919,7 @@ impl ImportedBitcoinPanel {
                         fingerprint: Some(*fingerprint),
                         problem: None,
                         pairing_code: None,
+                        locked: false,
                     },
                     // A BitBox02 waiting to be paired shows a code to confirm.
                     HardwareWallet::Locked { pairing_code, .. } => keys::ListedDevice {
@@ -2922,6 +2934,7 @@ impl ImportedBitcoinPanel {
                             .to_owned(),
                         ),
                         pairing_code: pairing_code.clone(),
+                        locked: true,
                     },
                     HardwareWallet::Unsupported { reason, .. } => {
                         let fixed = |problem: &str| Some(localized_copy(problem).to_owned());
@@ -2954,6 +2967,7 @@ impl ImportedBitcoinPanel {
                             fingerprint,
                             problem,
                             pairing_code: None,
+                            locked: false,
                         }
                     }
                 }
@@ -3133,12 +3147,24 @@ impl ImportedBitcoinPanel {
             self.error = Some("Connect and unlock the device with this fingerprint.".into());
             return Task::none();
         };
+        // This connection has now been checked, by hand or on its own: a
+        // failure waits for Check again or a reconnect, never an automatic
+        // retry.
+        let device_id = self.hardware_wallets.as_ref().and_then(|listing| {
+            listing.list.iter().find_map(|listed| match listed {
+                HardwareWallet::Supported {
+                    id, fingerprint, ..
+                } if *fingerprint == account.fingerprint => Some(id.clone()),
+                _ => None,
+            })
+        });
         let generation = self.generation;
         let gate = self.generation_gate.clone();
         let check = keys::next_check();
         if let Some(slot) = self.key_slot(index) {
             slot.check = check;
             slot.status = KeyStatus::Checking;
+            slot.auto_checked = device_id;
         }
         Task::perform(
             async move {
@@ -5759,6 +5785,243 @@ mod tests {
         }
     }
 
+    /// The Keys step in each state of the design (Keys step, impeccable
+    /// pass): no device, not ready, found and checking, found before the
+    /// check, verified, not a signer, threshold met. Opt-in, like
+    /// `import_journey_capture`: `LAUNCHER_CAPTURE_DIR=<dir> cargo test -p
+    /// coincube-gui --lib keys_step_capture -- --ignored`.
+    #[test]
+    #[ignore]
+    fn keys_step_capture() {
+        use crate::home::launcher_capture::{renderer, save};
+        use async_hwi::DeviceKind;
+        let Ok(directory) = std::env::var("LAUNCHER_CAPTURE_DIR") else {
+            return;
+        };
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut renderer = renderer().expect("wgpu headless renderer");
+        let size = iced::Size::new(1440.0, 900.0);
+        let palette = coincube_ui::theme::Theme::dark();
+        let cache = Cache {
+            cube_name: "Cold storage".into(),
+            ..Cache::default()
+        };
+        let supported =
+            |kind: DeviceKind, id: &str, fingerprint: Fingerprint| HardwareWallet::Supported {
+                id: id.into(),
+                device: Arc::new(SilentDevice),
+                kind,
+                fingerprint,
+                version: None,
+                registered: None,
+                alias: None,
+            };
+        let locked = |kind: DeviceKind, id: &str, code: Option<&str>| HardwareWallet::Locked {
+            id: id.into(),
+            device: Arc::new(std::sync::Mutex::new(None)),
+            pairing_code: code.map(str::to_owned),
+            kind,
+        };
+        let too_old = HardwareWallet::Unsupported {
+            id: "coldcard-old".into(),
+            kind: DeviceKind::Coldcard,
+            version: None,
+            reason: crate::hw::UnsupportedReason::Version {
+                minimal_supported_version: "v6.2.1",
+                note: None,
+            },
+        };
+        let stranger = Fingerprint::from([0x9d, 0x0e, 0x11, 0xaa]);
+        let multisig =
+            ImportedWalletAttachment::new(two_of_three(), ChainId::Bitcoin, 0, 200).unwrap();
+        let fingerprints: Vec<Fingerprint> = KeysState::new(&multisig.descriptor)
+            .slots
+            .iter()
+            .map(|slot| slot.account.fingerprint)
+            .collect();
+        type Setup = fn(&mut KeysState);
+        let scenarios: Vec<(&str, Vec<HardwareWallet>, Setup)> = vec![
+            ("1-none", vec![], |keys| keys.menu = Some(2)),
+            (
+                "2-not-ready",
+                vec![
+                    locked(DeviceKind::Jade, "jade", None),
+                    too_old.clone(),
+                    locked(DeviceKind::BitBox02, "bitbox", Some("7NQ3B Z4WKD")),
+                ],
+                |_| {},
+            ),
+            (
+                "3-found-checking",
+                vec![
+                    locked(DeviceKind::Jade, "jade", None),
+                    supported(DeviceKind::Coldcard, "coldcard", fingerprints[1]),
+                ],
+                |keys| keys.slots[1].status = KeyStatus::Checking,
+            ),
+            (
+                "3b-found",
+                vec![
+                    locked(DeviceKind::Jade, "jade", None),
+                    supported(DeviceKind::Coldcard, "coldcard", fingerprints[1]),
+                ],
+                |_| {},
+            ),
+            (
+                "4-verified",
+                vec![
+                    locked(DeviceKind::Jade, "jade", None),
+                    supported(DeviceKind::Coldcard, "coldcard", fingerprints[1]),
+                ],
+                |keys| keys.slots[1].status = KeyStatus::Verified,
+            ),
+            (
+                "5-not-signer",
+                vec![
+                    supported(DeviceKind::Coldcard, "coldcard", fingerprints[1]),
+                    supported(DeviceKind::Ledger, "ledger", stranger),
+                ],
+                |keys| keys.slots[1].status = KeyStatus::Verified,
+            ),
+            (
+                "6-threshold",
+                vec![
+                    supported(DeviceKind::Jade, "jade", fingerprints[0]),
+                    supported(DeviceKind::Coldcard, "coldcard", fingerprints[1]),
+                ],
+                |keys| {
+                    keys.slots[0].status = KeyStatus::Verified;
+                    keys.slots[1].status = KeyStatus::Verified;
+                },
+            ),
+        ];
+        for (name, devices, setup) in scenarios {
+            let mut panel = ImportedBitcoinPanel::new(
+                NetworkDirectory::new(std::env::temp_dir().join("keys-step-capture")),
+                "cube-1".into(),
+                BitcoinImport::pending(),
+            );
+            let mut keys = KeysState::new(&multisig.descriptor);
+            setup(&mut keys);
+            panel.keys = Some(keys);
+            panel.review = Some(multisig.clone());
+            let mut listing = HardwareWallets::new(
+                crate::dir::CoincubeDirectory::new(std::env::temp_dir().join("keys-step-capture")),
+                Network::Bitcoin,
+            );
+            listing.list = devices;
+            panel.hardware_wallets = Some(listing);
+            save(
+                &mut renderer,
+                panel.journey_view(&cache, false),
+                size,
+                &palette,
+                directory.join(format!("keys-{name}.png")),
+            );
+        }
+    }
+
+    /// Picking the source a key already has only closes the list, so a
+    /// verified key or typed words survive it.
+    #[test]
+    fn picking_the_current_source_only_closes_the_list() {
+        assert!(matches!(
+            keys::choice_message(1, KeySource::Hardware, KeySource::Hardware),
+            ImportMessage::KeySourceMenu(1)
+        ));
+        assert!(matches!(
+            keys::choice_message(1, KeySource::Words, KeySource::Hardware),
+            ImportMessage::KeySourcePicked(1, KeySource::Words)
+        ));
+        let directory = NetworkDirectory::new(std::env::temp_dir().join("import-source-repick"));
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let wallet =
+            ImportedWalletAttachment::new(two_of_three(), ChainId::Bitcoin, 0, 200).unwrap();
+        let mut keys = KeysState::new(&wallet.descriptor);
+        keys.slots[1].status = KeyStatus::Verified;
+        panel.keys = Some(keys);
+        panel.review = Some(wallet);
+        let _ = panel.update_view(ImportMessage::KeySourceMenu(1), None, 0);
+        let current = panel.keys.as_ref().unwrap().slots[1].source;
+        let _ = panel.update_view(keys::choice_message(1, current, current), None, 0);
+        let keys = panel.keys.as_ref().unwrap();
+        assert_eq!(keys.menu, None);
+        assert_eq!(keys.slots[1].status, KeyStatus::Verified);
+    }
+
+    /// A check started with Check device that fails is not retried on its
+    /// own; a reconnect checks the device afresh.
+    #[test]
+    fn a_failed_manual_check_waits_for_check_again_or_a_reconnect() {
+        let mut panel = keys_panel_with(&[]);
+        let third = panel.keys.as_ref().unwrap().slots[2].account.fingerprint;
+        panel.hardware_wallets.as_mut().unwrap().list = vec![connected("coldcard-1", third)];
+        let _ = panel.update_view(ImportMessage::CheckDevice(2), None, 0);
+        let slot = &panel.keys.as_ref().unwrap().slots[2];
+        assert_eq!(slot.status, KeyStatus::Checking);
+        assert_eq!(slot.auto_checked.as_deref(), Some("coldcard-1"));
+        let check = slot.check;
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::DeviceVerified(
+            generation,
+            2,
+            check,
+            Err("Rejected on the device.".into()),
+        ));
+        let status =
+            |panel: &ImportedBitcoinPanel| panel.keys.as_ref().unwrap().slots[2].status.clone();
+        assert_eq!(
+            status(&panel),
+            KeyStatus::Failed("Rejected on the device.".into())
+        );
+        let _ = panel.auto_check_devices();
+        assert_eq!(
+            status(&panel),
+            KeyStatus::Failed("Rejected on the device.".into())
+        );
+        // Unplugged and plugged back in: checked afresh.
+        panel.hardware_wallets.as_mut().unwrap().list.clear();
+        let _ = panel.auto_check_devices();
+        panel.hardware_wallets.as_mut().unwrap().list = vec![connected("coldcard-1", third)];
+        let _ = panel.auto_check_devices();
+        assert_eq!(status(&panel), KeyStatus::Checking);
+    }
+
+    /// The source button opens each choice with what it means, under its
+    /// row; picking one closes it.
+    #[tokio::test]
+    async fn the_source_choices_open_under_their_key() {
+        let directory = NetworkDirectory::new(std::env::temp_dir().join("import-source-menu"));
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let wallet =
+            ImportedWalletAttachment::new(two_of_three(), ChainId::Bitcoin, 0, 200).unwrap();
+        panel.keys = Some(KeysState::new(&wallet.descriptor));
+        panel.review = Some(wallet);
+        let descriptions = [
+            "Checked on the device; the seed stays there.",
+            "Checked here, then stored encrypted for this Cube.",
+            "Another wallet or person signs; COINCUBE Desktop saves the PSBT for them.",
+        ];
+        let cache = Cache::default();
+        let shut = rendered_labels(panel.journey_view(&cache, false)).await;
+        assert_labels(&shut, &["Hardware wallet"], &descriptions);
+        let _ = panel.update_view(ImportMessage::KeySourceMenu(2), None, 0);
+        assert_eq!(panel.keys.as_ref().unwrap().menu, Some(2));
+        let open = rendered_labels(panel.journey_view(&cache, false)).await;
+        assert_labels(&open, &descriptions, &[]);
+        let _ = panel.update_view(
+            ImportMessage::KeySourcePicked(2, KeySource::Elsewhere),
+            None,
+            0,
+        );
+        let keys = panel.keys.as_ref().unwrap();
+        assert_eq!(keys.menu, None);
+        assert_eq!(keys.slots[2].source, KeySource::Elsewhere);
+    }
+
     /// A Bitcoin account from a known phrase: its descriptor key text and
     /// its public account.
     fn phrase_account(entropy: u8) -> (String, coincube_core::imported_keys::ImportedAccount) {
@@ -5891,24 +6154,28 @@ mod tests {
                 fingerprint: None,
                 problem: Some("Locked. Unlock it to see which key it holds.".into()),
                 pairing_code: None,
+                locked: true,
             },
             keys::ListedDevice {
                 name: "BitBox02".into(),
                 fingerprint: None,
                 problem: Some("Confirm this pairing code on the device:".into()),
                 pairing_code: Some("7NQ3B Z4WKD".into()),
+                locked: false,
             },
             keys::ListedDevice {
                 name: "Coldcard".into(),
                 fingerprint: Some(third),
                 problem: None,
                 pairing_code: None,
+                locked: false,
             },
             keys::ListedDevice {
                 name: "Ledger".into(),
                 fingerprint: Some(stranger),
                 problem: None,
                 pairing_code: None,
+                locked: false,
             },
         ];
         let (form, actions) = keys::step(&keys, false, &devices, None);
@@ -6204,6 +6471,7 @@ mod tests {
             fingerprint: Some(second),
             problem: None,
             pairing_code: None,
+            locked: false,
         }];
         let (form, _) = keys::step(&keys, false, &devices, None);
         let shown = rendered_labels(form).await;
@@ -6241,7 +6509,7 @@ mod tests {
                 "Review wallet",
             ],
             // No device is connected, so no check is offered yet.
-            &["Import and scan wallet", "Check device", "Verify key"],
+            &["Import and scan wallet", "Check device", "Verify words"],
         );
         // Review stays shut, and so does importing.
         let _ = panel.update_view(ImportMessage::KeysDone, None, 0);

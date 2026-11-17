@@ -3318,5 +3318,9 @@
   "Confirm this pairing code on the device:": "Confirma este código de emparejamiento en el dispositivo:",
   "Open the Bitcoin app on it.": "Abre la app de Bitcoin en él.",
   "Set to a different network than this wallet.": "Configurado para una red distinta a la de esta cartera.",
-  "Can't read its key in COINCUBE Desktop.": "COINCUBE Desktop no puede leer su clave."
+  "Can't read its key in COINCUBE Desktop.": "COINCUBE Desktop no puede leer su clave.",
+  "Verify words": "Verificar palabras",
+  "Checked on the device; the seed stays there.": "Se verifica en el dispositivo; la semilla se queda allí.",
+  "Checked here, then stored encrypted for this Cube.": "Se verifica aquí y luego se guarda cifrada para este Cube.",
+  "Another wallet or person signs; COINCUBE Desktop saves the PSBT for them.": "Otra cartera o persona firma; COINCUBE Desktop guarda la PSBT para que firme."
 }
