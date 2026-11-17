@@ -631,7 +631,7 @@ impl ImportedBitcoinPanel {
             birthday_calendar_open: false,
             scan_from_beginning: true,
             lookahead: "200".into(),
-            provider: Provider::Public,
+            provider: Provider::Connect,
             provider_known: true,
             endpoint: String::new(),
             review,
