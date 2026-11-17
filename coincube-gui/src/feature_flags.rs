@@ -125,13 +125,15 @@ pub const RECOVER_VAULT_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_R
 /// Whether the Vault signer picker offers an imported wallet's keys stored in
 /// this Cube (the import's Keys step) as signers.
 ///
-/// Controlled by `COINCUBE_ENABLE_IMPORTED_KEY_SIGNING` at build time; off by
-/// default. Storing the keys already ships. Signing with them is staged behind
-/// the inventory anchor's release gate (`services/imported_keys.rs`: native
-/// signed-app restart and fault tests of the device anchor). Hardware wallets
-/// and PSBT files sign imported wallets either way.
+/// On by default; `COINCUBE_ENABLE_IMPORTED_KEY_SIGNING=false` at build time
+/// turns it off. Enabled once the inventory anchor's release gate passed:
+/// `contrib/release/macos/run-signed-imported-anchor-probe.sh`, signed with
+/// the profile's Developer ID certificate (SHA-256 `01e32b73…`), passed every
+/// restart and fault phase on 2026-11-17. That probe cannot show durability
+/// across sudden power loss. Hardware wallets and PSBT files sign imported
+/// wallets either way.
 pub const IMPORTED_KEY_SIGNING_ENABLED: bool =
-    is_truthy(option_env!("COINCUBE_ENABLE_IMPORTED_KEY_SIGNING"));
+    !is_falsy(option_env!("COINCUBE_ENABLE_IMPORTED_KEY_SIGNING"));
 
 /// Whether the **owner keychain recovery** surfaces (PLAN-owner-keychain-recovery)
 /// are shown. This is the "protect with my phone" Recovery-Kit branch: the owner

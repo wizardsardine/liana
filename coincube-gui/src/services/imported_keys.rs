@@ -4,10 +4,11 @@
 //! atomically replaced. The device-only inventory anchor is the admission
 //! authority. An undeclared ciphertext causes inventory and signing to fail
 //! closed; it is never deleted based on this unauthenticated public manifest.
-//! No mnemonic enters Cube Settings. Keys, ordinary Send, and Recovery Kit are
-//! separate integrations and do not consume this repository yet.
+//! No mnemonic enters Cube Settings. The import's Keys step admits keys here;
+//! the Vault signer picker signs with them (`services::imported_signer`).
+//! The native anchor's signed restart and fault probe passed on 2026-11-17.
 
-// Admission and signing are staged until the external inventory release gate.
+// Some repository operations are still used only by tests and recovery.
 #![allow(dead_code)]
 
 use std::{

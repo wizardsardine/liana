@@ -17,8 +17,8 @@ pub(crate) mod imported_inventory_anchor;
 pub mod imported_keys;
 #[cfg(not(all(target_os = "macos", debug_assertions, feature = "native-anchor-probe")))]
 pub(crate) mod imported_keys;
-// Stored-key signing for imported wallets; offered only behind
-// `feature_flags::IMPORTED_KEY_SIGNING_ENABLED`.
+// Stored-key signing for imported wallets, offered by the Vault signer
+// picker (`feature_flags::IMPORTED_KEY_SIGNING_ENABLED`).
 pub(crate) mod imported_signer;
 pub mod psbt_file;
 pub mod public_account_source;
