@@ -1757,6 +1757,7 @@ impl Home {
                         | ViewMessage::TogglePasskeyMode(_)
                         | ViewMessage::CreationBackup(_)
                         | ViewMessage::CreationBackupBypassConfirmed
+                        | ViewMessage::CreationBackupContinue
                         | ViewMessage::CreationKitRequested
                         | ViewMessage::CreationKit(_)
                 )
@@ -9489,13 +9490,13 @@ mod tests {
                 enable_btcb2(&mut home);
                 home.network = chain;
                 home.state = State::CreationBackup(CreationBackupStep::Choice);
-                home.creation_backup_words = Some(
+                home.creation_backup_words = Some(zeroize::Zeroizing::new(
                     bip39::Mnemonic::from_entropy(&[0; 16])
                         .unwrap()
                         .words()
                         .map(str::to_owned)
                         .collect(),
-                );
+                ));
                 home.creation_seed_confirmed = confirmed;
 
                 let task = home.update(Message::View(ViewMessage::CreationBackupContinue));
@@ -9505,6 +9506,26 @@ mod tests {
                 assert_eq!(home.creating_cube, confirmed);
                 assert!(home.error.is_none());
             }
+        }
+    }
+
+    #[test]
+    fn blake2b_backup_continue_refuses_a_now_unavailable_chain() {
+        for chain in [ChainId::BitcoinBlake2b, ChainId::BitcoinBlake2bTestnet4] {
+            let mut home = home();
+            enable_btcb2(&mut home);
+            home.network = chain;
+            home.state = State::CreationBackup(CreationBackupStep::Choice);
+            home.creation_seed_confirmed = true;
+            // Availability can change while the user is on the backup hub.
+            home.connect_account.bitcoin_blake2b_opt_in = false;
+            let task = home.update(Message::View(ViewMessage::CreationBackupContinue));
+            assert!(iced_runtime::task::into_stream(task).is_none());
+            assert!(!home.creating_cube);
+            assert_eq!(
+                home.error.as_deref(),
+                home.chain_availability(chain).reason()
+            );
         }
     }
 
