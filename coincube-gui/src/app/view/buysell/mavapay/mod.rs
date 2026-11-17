@@ -1170,13 +1170,20 @@ impl MavapayState {
                         order
                     );
 
+                    // Only this checkout's own order can settle its payment:
+                    // a fetch started for an earlier order can outlive that
+                    // checkout and land here.
+                    let this_order = quote.order_id.as_deref() == Some(order.order_id.as_str())
+                        || order.quote_id.as_deref() == Some(quote.id.as_str());
                     *fulfilled_order = Some(order);
                     *stream_order_id = None;
                     // Mavapay says this order is paid, so its invoice is: a
                     // sell payment whose outcome was unknown landed, and there
                     // is nothing left to repeat. One still awaiting an answer
                     // settles when that answer comes.
-                    if matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. }) {
+                    if this_order
+                        && matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. })
+                    {
                         log::info!("[MAVAPAY] Mavapay confirmed the order: sell payment settled");
                         sell.fulfilment = SellFulfilment::Paid;
                         sell.idempotency_key = None;
@@ -1955,6 +1962,16 @@ pub(crate) mod tests {
             updated_at: "2026-11-17T00:00:00Z".to_string(),
             order_data: None,
         };
+        // Another order's confirmation settles nothing here.
+        let other = GetOrderResponse {
+            order_id: "order-other".to_string(),
+            quote_id: Some("quote-other".to_string()),
+            ..order.clone()
+        };
+        let _ = state.update(MavapayMessage::QuoteFulfilled(other), &client);
+        assert!(state.sell_checkout_held());
+        assert!(sell(&state).idempotency_key.is_some());
+
         let _ = state.update(MavapayMessage::QuoteFulfilled(order), &client);
         assert_eq!(sell(&state).fulfilment, SellFulfilment::Paid);
         assert!(sell(&state).idempotency_key.is_none());
