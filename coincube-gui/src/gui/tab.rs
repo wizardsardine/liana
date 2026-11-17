@@ -7328,6 +7328,46 @@ mod breez_fallback_tests {
         session::close();
     }
 
+    /// Golden vector (Liquid removal PR 2, master I2): when the unlock's load
+    /// fails, the fallback built from the session's signer yields the same
+    /// Connect encryption key and P2P mnemonic as a successful load.
+    #[test]
+    fn fallback_yields_the_golden_key_and_mnemonic() {
+        use crate::app::cube_signer::golden;
+        let _g = session::test_guard();
+        for network in golden::NETWORKS {
+            for (signer, mnemonic, enc_key) in [
+                (
+                    golden::pin_signer(network),
+                    golden::PIN_MNEMONIC,
+                    golden::pin_enc_key(network),
+                ),
+                (
+                    golden::passkey_signer(network),
+                    golden::PASSKEY_MNEMONIC,
+                    golden::passkey_enc_key(network),
+                ),
+            ] {
+                session::close();
+                let fingerprint = signer.fingerprint(&Secp256k1::signing_only());
+                let cube = CubeSettings::new("Golden".to_string(), network)
+                    .with_master_signer(fingerprint);
+                session::store_unlocked_signer(&cube.id, fingerprint, signer);
+
+                let client = disconnected_breez_client_after_unlock(&cube, network);
+                let arc = client.liquid_signer().expect("the session's signer");
+                let guard = arc.lock().unwrap();
+                assert_eq!(guard.mnemonic_str().as_str(), mnemonic);
+                assert_eq!(
+                    crate::services::connect::crypto::CubeEncryptionKey::derive(&guard, network)
+                        .public_key_hex(),
+                    enc_key
+                );
+            }
+        }
+        session::close();
+    }
+
     /// A seed-less Cube (or a session closed since the unlock) has nothing to
     /// preserve, and the fallback stays the signer-less client it always was.
     #[test]

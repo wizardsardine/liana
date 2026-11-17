@@ -343,7 +343,7 @@ fn seal_to_cube_pubkey(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use coincube_core::miniscript::bitcoin::bip32::Xpub;
     use std::str::FromStr;
@@ -380,15 +380,15 @@ mod tests {
     const KAT_E: &str = "032c0b7cf95324a07d05398b240174dc0c2be444d96b159aa6c7f7b1e668680991";
     const KAT_NONCE: &str = "0000000000000000cafebabe";
     const KAT_AES_KEY: &str = "005e62e78a579622db37467321cfbff3774fbacb812bdd5c3f351ed931f0b4e5";
-    const KAT_CUBE_ID: u64 = 42;
-    const KAT_KEY_ID: u64 = 7;
+    pub(crate) const KAT_CUBE_ID: u64 = 42;
+    pub(crate) const KAT_KEY_ID: u64 = 7;
     /// The sealed plaintext: a real BIP-48 testnet account xpub
     /// (`m/48'/1'/0'/2'` of the same throwaway mnemonic) — exactly the shape a
     /// Keychain seals at enrolment.
-    const KAT_XPUB: &str = "tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
+    pub(crate) const KAT_XPUB: &str = "tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ";
     const KAT_CT: &str = "fc13b1b9639e00e163b3664b62f516ad49d7f19c5383a758706ca813fa8e236cf14a4189aa61ee94801d31cb26a14a999eb5ea2c90a53bc704c5b262ff2b4cf984e97d7c92d13069b829b972c501190db9eaba00b8df84a25c78125e602cff3b037c7db65974b063084596a64667d5f92d647067c3c5453237d7e9e3573a57";
 
-    fn kat_envelope() -> XpubEnvelope {
+    pub(crate) fn kat_envelope() -> XpubEnvelope {
         XpubEnvelope {
             scheme: SCHEME.to_string(),
             recipient: RECIPIENT_CUBE_OWNER.to_string(),

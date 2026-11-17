@@ -10,6 +10,7 @@ pub mod breez_spark;
 pub mod cache;
 pub mod config;
 pub mod connect_session;
+pub mod cube_signer;
 pub mod error;
 pub mod features;
 mod imported_kit_metadata;

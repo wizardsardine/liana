@@ -3015,6 +3015,55 @@ mod cube_signer_tests {
         }
     }
 
+    /// Golden vector (Liquid removal PR 2, master I2): a Vault flow that does
+    /// not mint its own key (here restoring a Vault descriptor into the open
+    /// Cube) gives the Vault builder the encryption key of the signer the
+    /// unlock loaded, byte-identical for the PIN and passkey fixtures.
+    #[test]
+    fn the_vault_builder_key_matches_the_golden_vectors() {
+        use crate::app::cube_signer::golden;
+        let _guard = crate::app::session::test_guard();
+        crate::app::session::close();
+        for network in golden::NETWORKS {
+            for (signer, expected) in [
+                (golden::pin_signer(network), golden::pin_enc_key(network)),
+                (
+                    golden::passkey_signer(network),
+                    golden::passkey_enc_key(network),
+                ),
+            ] {
+                let fp = signer.fingerprint(&bitcoin::secp256k1::Secp256k1::new());
+                let cube = CubeSettings::new("golden".into(), network).with_master_signer(fp);
+                let client = Arc::new(BreezClient::disconnected_with_signer(
+                    network,
+                    Arc::new(Mutex::new(signer)),
+                ));
+                let (installer, _) = Installer::new(
+                    CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
+                    network,
+                    UserFlow::RestoreVaultFromRecoveryKit,
+                    true,
+                    Some(cube),
+                    Some(client),
+                    None,
+                    false,
+                    None,
+                )
+                .unwrap();
+                assert_eq!(
+                    installer
+                        .context
+                        .cube_encryption_key
+                        .as_ref()
+                        .expect("the Vault builder has the Cube's key")
+                        .public_key_hex(),
+                    expected,
+                    "{network}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn creating_a_bitcoin_vault_without_a_cube_requires_creating_or_unlocking_one() {
         for network in [
