@@ -2,6 +2,199 @@
 use super::*;
 
 impl App {
+    /// Register the current Connect device and bring its signing stream online.
+    pub(super) fn ensure_connect_ready(&mut self) -> Task<Message> {
+        // The user is signed in to Connect but the signing stream
+        // isn't ready. Run the same device-registration + stream
+        // bootstrap the in-app login flow does, sourcing tokens
+        // from `connect.json`. The async block decides the next
+        // message itself so we can give accurate feedback: some
+        // networks (e.g. testnet4) have no `grpc_url` in their
+        // ServiceConfig, meaning Connect/Keychain relay signing is
+        // unavailable there no matter how often the user retries —
+        // we say so and point them at local Wi-Fi pairing instead.
+        let network = self.cache.network;
+        let datadir = self.cache.datadir_path.clone();
+        let expected_email = self
+            .connect_email
+            .clone()
+            .or_else(|| self.cache.connect_email.clone());
+        let shared_auth = if self.connect_email == expected_email {
+            self.connect_auth.clone()
+        } else {
+            None
+        };
+        let cube_uuid = if self.cube_settings.id.is_empty() {
+            None
+        } else {
+            Some(self.cube_settings.id.clone())
+        };
+        // The device/stream bootstrap below populates grpc_url /
+        // tokens / device_id but NOT the cube's server-side id. When
+        // that id is the missing Keychain prerequisite, register it
+        // here too — otherwise "Sign with Connect" can never resolve
+        // it. A live panel session registers through its authenticated
+        // client; a restored connect.json (or remote) session whose
+        // panel hasn't reached Dashboard has no panel client, so the
+        // panel path would no-op — register directly from the restored
+        // tokens (the same source the device bootstrap uses) and feed
+        // the result back through the normal `CubeRegistered` path so
+        // `current_cube_server_id` still populates.
+        let cube_registration = if self.cache.current_cube_server_id.is_some() {
+            Task::none()
+        } else if self.panels.connect.account.is_authenticated() {
+            self.panels.connect.ensure_cube_registered()
+        } else if let Some(generation) = self.panels.connect.cube.begin_external_registration() {
+            let datadir = datadir.clone();
+            let net_str = settings::network_to_api_string(network);
+            let cube_name = self.cube_settings.name.clone();
+            // Report this Cube's Vault presence so other devices can
+            // evaluate the duress vault gate (PLAN-duress-vault-gate
+            // PR 3). Monotonic upgrade-only: report `true` only when
+            // this device holds the Vault, else omit (never clobber a
+            // `true` reported by another device). Captured before the
+            // async move.
+            let cube_has_vault = self.cube_settings.vault_wallet_id.is_some().then_some(true);
+            // Same for this device's Spark Stable Balance decision:
+            // `None` is omitted, so it never clobbers another device's.
+            let cube_spark_stable_balance = self.cube_settings.spark_stable_balance;
+            let cube_uuid = cube_uuid.clone();
+            let registration_email = expected_email.clone();
+            Task::perform(
+                async move {
+                    use crate::services::coincube::{CoincubeClient, RegisterCubeRequest};
+                    use crate::services::connect::client::cache::Account;
+                    let uuid = cube_uuid.ok_or_else(|| "no cube uuid".to_string())?;
+                    let email = registration_email.ok_or_else(|| {
+                        "EnsureConnectReady: no active Connect email to register the cube"
+                            .to_string()
+                    })?;
+                    let account = Account::from_cache(&datadir.network_directory(network), &email)
+                        .ok()
+                        .flatten()
+                        .ok_or_else(|| {
+                            "EnsureConnectReady: no cached Connect session to \
+                                 register the cube"
+                                .to_string()
+                        })?;
+                    let mut client = CoincubeClient::new();
+                    client.set_token(&account.tokens.access_token);
+                    client
+                        .register_cube(RegisterCubeRequest {
+                            uuid,
+                            name: cube_name,
+                            network: net_str,
+                            has_vault: cube_has_vault,
+                            spark_stable_balance: cube_spark_stable_balance,
+                        }) // upgrade-only Option<bool>
+                        .await
+                        .map_err(|e| {
+                            crate::app::state::connect::cube::CubeRegistrationError::from(&e)
+                        })
+                },
+                move |r| {
+                    Message::View(view::Message::ConnectCube(
+                        view::ConnectCubeMessage::CubeRegistered {
+                            generation,
+                            result: r,
+                        },
+                    ))
+                },
+            )
+        } else {
+            // A registration is already in flight — claimed either by
+            // this branch on an earlier press or by the panel. Skip the
+            // duplicate; the bootstrap below still runs, which is the
+            // part a second press is actually asking for.
+            Task::none()
+        };
+        let bootstrap = Task::perform(
+            async move {
+                use crate::services::connect::client::cache::Account;
+                use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
+
+                let info_toast = |msg: &str| {
+                    Message::View(view::Message::ShowToast(log::Level::Info, msg.to_string()))
+                };
+
+                let network_dir = datadir.network_directory(network);
+                let Some(expected_email) = expected_email else {
+                    tracing::warn!(
+                        "EnsureConnectReady: no active Connect email to match connect.json"
+                    );
+                    return info_toast(
+                        "Couldn't find a Connect session. Sign in to Connect, or pair \
+                         a phone over Wi-Fi to sign locally.",
+                    );
+                };
+                let Some(account) = Account::from_cache(&network_dir, &expected_email)
+                    .ok()
+                    .flatten()
+                else {
+                    tracing::warn!(
+                        "EnsureConnectReady: no cached Connect account for active email"
+                    );
+                    return info_toast(
+                        "Couldn't find this Connect session. Sign in to Connect, or pair \
+                         a phone over Wi-Fi to sign locally.",
+                    );
+                };
+                let email = account.email.clone();
+                let tokens_arc =
+                    connect_registration_auth(shared_auth, account.tokens, &network_dir, &email)
+                        .await;
+
+                let Some(grpc_url) =
+                    crate::services::connect::client::resolve_connect_grpc_url().await
+                else {
+                    // No gRPC endpoint for this network — Connect
+                    // relay signing can't work here. Don't pretend
+                    // a retry will help.
+                    tracing::info!(
+                        "EnsureConnectReady: no Connect gRPC URL available for {network}"
+                    );
+                    return info_toast(
+                        "Mobile signing over Connect isn't available on this network. \
+                         Pair a phone over Wi-Fi to sign locally instead.",
+                    );
+                };
+
+                // Same helper as every other registration path — see
+                // the note on the in-app login path above.
+                let device_name = crate::utils::device::device_label();
+                let Some(_device_id) = ensure_device_registered_best_effort(
+                    &grpc_url,
+                    tokens_arc.clone(),
+                    &network_dir,
+                    &email,
+                    device_name,
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    std::env::consts::OS.to_string(),
+                )
+                .await
+                else {
+                    return info_toast(
+                        "Couldn't register this device with Connect. Try again, or pair a \
+                         phone over Wi-Fi to sign locally.",
+                    );
+                };
+
+                // gRPC is available and the device is registered —
+                // bring the stream up so the cache fields populate,
+                // then the user can retry Sign via Keychain.
+                Message::TriggerConnectStreamReady {
+                    network,
+                    datadir,
+                    tokens: tokens_arc,
+                    email,
+                    cube_uuid,
+                }
+            },
+            |m| m,
+        );
+        Task::batch([cube_registration, bootstrap])
+    }
+
     /// Top-level handler for `Message::ConnectStream`. PR A logs and
     /// persists the latest event seq; PR B's session-routing logic is
     /// folded in here when the per-modal dispatch lands.

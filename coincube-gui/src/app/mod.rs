@@ -2,6 +2,7 @@ mod activity_routing;
 mod connect_auth;
 mod connect_stream;
 mod cube_name;
+mod daemon_cache;
 mod fiat_updates;
 mod recovery_settings;
 
@@ -6276,210 +6277,7 @@ impl App {
                 return self
                     .trigger_connect_stream_ready(network, datadir, tokens, email, cube_uuid);
             }
-            Message::EnsureConnectReady => {
-                // The user is signed in to Connect but the signing stream
-                // isn't ready. Run the same device-registration + stream
-                // bootstrap the in-app login flow does, sourcing tokens
-                // from `connect.json`. The async block decides the next
-                // message itself so we can give accurate feedback: some
-                // networks (e.g. testnet4) have no `grpc_url` in their
-                // ServiceConfig, meaning Connect/Keychain relay signing is
-                // unavailable there no matter how often the user retries —
-                // we say so and point them at local Wi-Fi pairing instead.
-                let network = self.cache.network;
-                let datadir = self.cache.datadir_path.clone();
-                let expected_email = self
-                    .connect_email
-                    .clone()
-                    .or_else(|| self.cache.connect_email.clone());
-                let shared_auth = if self.connect_email == expected_email {
-                    self.connect_auth.clone()
-                } else {
-                    None
-                };
-                let cube_uuid = if self.cube_settings.id.is_empty() {
-                    None
-                } else {
-                    Some(self.cube_settings.id.clone())
-                };
-                // The device/stream bootstrap below populates grpc_url /
-                // tokens / device_id but NOT the cube's server-side id. When
-                // that id is the missing Keychain prerequisite, register it
-                // here too — otherwise "Sign with Connect" can never resolve
-                // it. A live panel session registers through its authenticated
-                // client; a restored connect.json (or remote) session whose
-                // panel hasn't reached Dashboard has no panel client, so the
-                // panel path would no-op — register directly from the restored
-                // tokens (the same source the device bootstrap uses) and feed
-                // the result back through the normal `CubeRegistered` path so
-                // `current_cube_server_id` still populates.
-                let cube_registration = if self.cache.current_cube_server_id.is_some() {
-                    Task::none()
-                } else if self.panels.connect.account.is_authenticated() {
-                    self.panels.connect.ensure_cube_registered()
-                } else if let Some(generation) =
-                    self.panels.connect.cube.begin_external_registration()
-                {
-                    let datadir = datadir.clone();
-                    let net_str = settings::network_to_api_string(network);
-                    let cube_name = self.cube_settings.name.clone();
-                    // Report this Cube's Vault presence so other devices can
-                    // evaluate the duress vault gate (PLAN-duress-vault-gate
-                    // PR 3). Monotonic upgrade-only: report `true` only when
-                    // this device holds the Vault, else omit (never clobber a
-                    // `true` reported by another device). Captured before the
-                    // async move.
-                    let cube_has_vault =
-                        self.cube_settings.vault_wallet_id.is_some().then_some(true);
-                    // Same for this device's Spark Stable Balance decision:
-                    // `None` is omitted, so it never clobbers another device's.
-                    let cube_spark_stable_balance = self.cube_settings.spark_stable_balance;
-                    let cube_uuid = cube_uuid.clone();
-                    let registration_email = expected_email.clone();
-                    Task::perform(
-                        async move {
-                            use crate::services::coincube::{CoincubeClient, RegisterCubeRequest};
-                            use crate::services::connect::client::cache::Account;
-                            let uuid = cube_uuid.ok_or_else(|| "no cube uuid".to_string())?;
-                            let email = registration_email.ok_or_else(|| {
-                                "EnsureConnectReady: no active Connect email to register the cube"
-                                    .to_string()
-                            })?;
-                            let account =
-                                Account::from_cache(&datadir.network_directory(network), &email)
-                                    .ok()
-                                    .flatten()
-                                    .ok_or_else(|| {
-                                        "EnsureConnectReady: no cached Connect session to \
-                                         register the cube"
-                                            .to_string()
-                                    })?;
-                            let mut client = CoincubeClient::new();
-                            client.set_token(&account.tokens.access_token);
-                            client
-                                .register_cube(RegisterCubeRequest {
-                                    uuid,
-                                    name: cube_name,
-                                    network: net_str,
-                                    has_vault: cube_has_vault,
-                                    spark_stable_balance: cube_spark_stable_balance,
-                                }) // upgrade-only Option<bool>
-                                .await
-                                .map_err(|e| {
-                                    crate::app::state::connect::cube::CubeRegistrationError::from(
-                                        &e,
-                                    )
-                                })
-                        },
-                        move |r| {
-                            Message::View(view::Message::ConnectCube(
-                                view::ConnectCubeMessage::CubeRegistered {
-                                    generation,
-                                    result: r,
-                                },
-                            ))
-                        },
-                    )
-                } else {
-                    // A registration is already in flight — claimed either by
-                    // this branch on an earlier press or by the panel. Skip the
-                    // duplicate; the bootstrap below still runs, which is the
-                    // part a second press is actually asking for.
-                    Task::none()
-                };
-                let bootstrap = Task::perform(
-                    async move {
-                        use crate::services::connect::client::cache::Account;
-                        use crate::services::connect::grpc::bootstrap::ensure_device_registered_best_effort;
-
-                        let info_toast = |msg: &str| {
-                            Message::View(view::Message::ShowToast(
-                                log::Level::Info,
-                                msg.to_string(),
-                            ))
-                        };
-
-                        let network_dir = datadir.network_directory(network);
-                        let Some(expected_email) = expected_email else {
-                            tracing::warn!(
-                                "EnsureConnectReady: no active Connect email to match connect.json"
-                            );
-                            return info_toast(
-                                "Couldn't find a Connect session. Sign in to Connect, or pair \
-                                 a phone over Wi-Fi to sign locally.",
-                            );
-                        };
-                        let Some(account) = Account::from_cache(&network_dir, &expected_email)
-                            .ok()
-                            .flatten()
-                        else {
-                            tracing::warn!(
-                                "EnsureConnectReady: no cached Connect account for active email"
-                            );
-                            return info_toast(
-                                "Couldn't find this Connect session. Sign in to Connect, or pair \
-                                 a phone over Wi-Fi to sign locally.",
-                            );
-                        };
-                        let email = account.email.clone();
-                        let tokens_arc = connect_registration_auth(
-                            shared_auth,
-                            account.tokens,
-                            &network_dir,
-                            &email,
-                        )
-                        .await;
-
-                        let Some(grpc_url) =
-                            crate::services::connect::client::resolve_connect_grpc_url().await
-                        else {
-                            // No gRPC endpoint for this network — Connect
-                            // relay signing can't work here. Don't pretend
-                            // a retry will help.
-                            tracing::info!(
-                                "EnsureConnectReady: no Connect gRPC URL available for {network}"
-                            );
-                            return info_toast(
-                                "Mobile signing over Connect isn't available on this network. \
-                                 Pair a phone over Wi-Fi to sign locally instead.",
-                            );
-                        };
-
-                        // Same helper as every other registration path — see
-                        // the note on the in-app login path above.
-                        let device_name = crate::utils::device::device_label();
-                        let Some(_device_id) = ensure_device_registered_best_effort(
-                            &grpc_url,
-                            tokens_arc.clone(),
-                            &network_dir,
-                            &email,
-                            device_name,
-                            env!("CARGO_PKG_VERSION").to_string(),
-                            std::env::consts::OS.to_string(),
-                        )
-                        .await
-                        else {
-                            return info_toast(
-                                "Couldn't register this device with Connect. Try again, or pair a \
-                                 phone over Wi-Fi to sign locally.",
-                            );
-                        };
-
-                        // gRPC is available and the device is registered —
-                        // bring the stream up so the cache fields populate,
-                        // then the user can retry Sign via Keychain.
-                        Message::TriggerConnectStreamReady {
-                            network,
-                            datadir,
-                            tokens: tokens_arc,
-                            email,
-                            cube_uuid,
-                        }
-                    },
-                    |m| m,
-                );
-                return Task::batch([cube_registration, bootstrap]);
-            }
+            Message::EnsureConnectReady => return self.ensure_connect_ready(),
             Message::InstallStats(_) => {
                 if let Some(panel) = self.panels.current_mut() {
                     return panel.update(self.daemon.clone(), &self.cache, message);
@@ -7438,133 +7236,7 @@ impl App {
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
                 return self.handle_fiat_price(fiat_price);
             }
-            Message::UpdateDaemonCache(res) => {
-                if self.cache.has_imported_bitcoin {
-                    return Task::none();
-                }
-                match res {
-                    Ok(mut daemon_cache) => {
-                        // Apply optimistic-broadcast overrides before the
-                        // cache is published: reconcile drops entries the
-                        // daemon now reflects on its own, then any still-
-                        // pending broadcasts get synthetic `spend_info` so
-                        // `coins_summary` (Vault balance) and every other
-                        // `cache.coins()` consumer treats the inputs as
-                        // already spent.
-                        if let Some(wallet) = &self.wallet {
-                            wallet.reconcile_with_coins(&daemon_cache.coins);
-                            wallet.apply_coin_overrides(&mut daemon_cache.coins);
-                        }
-                        let retire_obligation = if full_scan_settles_rescan_obligation(
-                            &self.daemon_backend(),
-                            self.rescan_obligation_retired_by_scan
-                                || self.rescan_obligation_retire_in_flight,
-                            &daemon_cache.history_sync,
-                        ) {
-                            let task = self.retire_rescan_obligation_task();
-                            self.rescan_obligation_retire_in_flight = task.is_some();
-                            task
-                        } else {
-                            None
-                        };
-                        let vault_changed = overview_activity_vault_changed(
-                            &self.cache.daemon_cache,
-                            &daemon_cache,
-                        );
-                        self.cache.daemon_cache = daemon_cache;
-                        // The Vault page's rows follow its own reload
-                        // (`Message::Payments`).
-                        let recent = if vault_changed
-                            && matches!(
-                                self.panels.current,
-                                Menu::Cube(menu::CubeSubMenu::Overview)
-                            ) {
-                            self.panels.activity.refresh_wallet(
-                                view::activity::WalletFilter::Vault,
-                                self.daemon.clone(),
-                                self.wallet.clone(),
-                            )
-                        } else {
-                            Task::none()
-                        };
-                        // Fire-and-forget recovery heartbeat after the sync's
-                        // fresh tip lands (Estate Notifications — PR 2). Batched
-                        // alongside the normal cache cascade so it never delays
-                        // or blocks it.
-                        let heartbeat = self.recovery_heartbeat_task();
-                        // Same posture for the BTCB2 entangled-deposit lookups:
-                        // `Task::none()` on every Bitcoin-family Cube.
-                        let entangled = self.entangled_lookup_task();
-                        let chain_proofs = self.chain_proof_task();
-                        let splits = self.split_refresh_task();
-                        let unswept = self.unswept_notice_task();
-                        return Task::batch([
-                            heartbeat,
-                            entangled,
-                            chain_proofs,
-                            splits,
-                            unswept,
-                            retire_obligation.unwrap_or_else(Task::none),
-                            recent,
-                            Task::done(Message::CacheUpdated),
-                        ]);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to update daemon cache: {}", e);
-                        // If the active Bitcoind daemon has failed and a Connect
-                        // Esplora fallback is configured (set when IBD completed),
-                        // restart using Connect — but only on transport/stopped
-                        // errors, not transient RPC application-level responses.
-                        if is_daemon_unreachable(&e) {
-                            let fallback = self
-                                .daemon
-                                .as_ref()
-                                .filter(|d| {
-                                    matches!(
-                                        d.backend(),
-                                        DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
-                                    )
-                                })
-                                .and_then(|d| d.config())
-                                .and_then(|c| {
-                                    c.fallback_esplora.as_ref().map(|fb| {
-                                        let mut new_cfg = c.clone();
-                                        // Demote the current Bitcoind to
-                                        // `pending_bitcoind` so the syncing card
-                                        // reappears and the user can retry once
-                                        // the node is healthy. Without this the
-                                        // fallback strands the user on Connect
-                                        // with an empty pending slot, which
-                                        // surfaces the "Set up local node" prompt
-                                        // and forces a full re-install.
-                                        let preserved_bitcoind = match &c.bitcoin_backend {
-                                            Some(coincubed::config::BitcoinBackend::Bitcoind(
-                                                bc,
-                                            )) => Some(bc.clone()),
-                                            _ => None,
-                                        };
-                                        new_cfg.bitcoin_backend = Some(
-                                            coincubed::config::BitcoinBackend::Esplora(fb.clone()),
-                                        );
-                                        new_cfg.pending_bitcoind = preserved_bitcoind;
-                                        // Fell back to Connect after a Bitcoind
-                                        // failure — park the node but don't
-                                        // auto-revert to it on the next probe.
-                                        new_cfg.auto_switch_to_pending = Some(false);
-                                        new_cfg.fallback_esplora = None;
-                                        new_cfg
-                                    })
-                                });
-                            if let Some(new_cfg) = fallback {
-                                if !self.daemon_switch_in_progress {
-                                    info!("Switching to COINCUBE | Connect fallback after Bitcoind failure");
-                                    return self.spawn_daemon_switch(new_cfg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Message::UpdateDaemonCache(res) => return self.handle_daemon_cache(res),
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
@@ -19006,6 +18678,98 @@ mod stream_startup_routing_tests {
             app.cache.connect_stream_status,
             ConnectionStatus::Connecting
         );
+    }
+
+    async fn readiness_outputs(app: &mut App) -> Vec<Message> {
+        let task = app.update(Message::EnsureConnectReady);
+        let mut stream = iced_runtime::task::into_stream(task).unwrap();
+        let mut messages = Vec::new();
+        while let Some(action) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+                .await
+                .expect("readiness task stalled")
+        {
+            if let iced_runtime::Action::Output(message) = action {
+                messages.push(message);
+            }
+        }
+        messages
+    }
+
+    #[test]
+    fn readiness_refuses_a_different_cached_account_without_mounting_stream() {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            seed_cached_session(&mut app, root.path());
+            let dir = app.cache.datadir_path.network_directory(app.cache.network);
+            // Positive fixture control: this is a valid populated cache, not a
+            // missing-file refusal masking the account ownership check.
+            assert!(
+                crate::services::connect::client::cache::Account::from_cache(
+                    &dir,
+                    "alice@example.invalid",
+                )
+                .unwrap()
+                .is_some()
+            );
+            app.connect_email = Some("bob@example.invalid".into());
+            app.cache.current_cube_server_id = Some(17);
+            let outputs = readiness_outputs(&mut app).await;
+            assert!(
+                matches!(&outputs[..], [Message::View(view::Message::ShowToast(
+            log::Level::Info, text,
+        ))] if text.contains("Couldn't find this Connect session"))
+            );
+            assert!(app.connect_stream_config.is_none());
+            assert!(app.cache.connect_device_id.is_none());
+            assert!(app.cache.connect_tokens.is_none());
+        });
+    }
+
+    #[test]
+    fn readiness_deduplicates_registration_but_keeps_bootstrap_and_rearms() {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let (mut app, _) = super::shell_tests::bitcoin_app(root.path());
+            app.cube_settings.id.clear(); // Fail locally before any API call.
+            app.connect_email = None;
+            app.cache.connect_email = None;
+            app.cache.current_cube_server_id = None;
+            let first = readiness_outputs(&mut app).await;
+            assert_eq!(first.len(), 2);
+            // The still-pending registration suppresses only its duplicate. A
+            // second press still returns bootstrap's missing-session feedback.
+            let second = readiness_outputs(&mut app).await;
+            assert!(
+                matches!(&second[..], [Message::View(view::Message::ShowToast(
+            log::Level::Info, text,
+        ))] if text.contains("Couldn't find a Connect session"))
+            );
+            let completion = first
+                .into_iter()
+                .find(|message| {
+                    matches!(
+                        message,
+                        Message::View(view::Message::ConnectCube(
+                            view::ConnectCubeMessage::CubeRegistered { result: Err(_), .. }
+                        ))
+                    )
+                })
+                .expect("registration must return a local failure");
+            drop(app.update(completion));
+            assert_eq!(readiness_outputs(&mut app).await.len(), 2);
+        });
     }
 
     #[tokio::test]
