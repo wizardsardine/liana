@@ -922,6 +922,7 @@ fn spark_payment_completion_is_session_bound_and_clears_transient_state() {
         payment_id: "synthetic-payment".into(),
         amount_sat: 10000,
         fee_sat: 10,
+        status: Some("Completed".to_string()),
     };
     update(
         &mut p,

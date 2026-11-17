@@ -1465,6 +1465,24 @@ pub struct SendPaymentOk {
     pub amount_sat: u64,
     /// Final fee paid (sats).
     pub fee_sat: u64,
+    /// The SDK's `PaymentStatus` for the payment, by its `Debug` name
+    /// (`Completed` or `Pending`; a `Failed` payment is answered as an error).
+    /// A send can be accepted and still be pending, so only `Completed` means
+    /// the payment has settled. `None` from a bridge older than this field:
+    /// callers must read that as "not known to have settled".
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+impl SendPaymentOk {
+    /// Whether the bridge reported this payment as settled. Fail-closed: a
+    /// pending payment, an unknown status, and an older bridge's missing one
+    /// are all "not settled".
+    pub fn is_completed(&self) -> bool {
+        self.status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("completed"))
+    }
 }
 
 /// Result of a successful [`Method::ReceiveBolt11`] or

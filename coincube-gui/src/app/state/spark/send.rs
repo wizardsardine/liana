@@ -221,6 +221,19 @@ enum HistoryMatch {
     None,
 }
 
+/// Whether a history row's direction is outgoing. The bridge reports the
+/// SDK's `PaymentType` by its `Debug` name (`Send` / `Receive`); `outgoing`
+/// is accepted too, as the wording other paths and older fixtures use.
+fn is_outgoing(direction: &str) -> bool {
+    direction.eq_ignore_ascii_case("send") || direction.eq_ignore_ascii_case("outgoing")
+}
+
+/// Whether two BOLT11 invoices are the same. Invoices are bech32, which is
+/// case-insensitive, so compare ignoring case.
+fn same_invoice(a: &str, b: &str) -> bool {
+    a.trim().eq_ignore_ascii_case(b.trim())
+}
+
 /// Look for the send described by `pending` in the payment history.
 ///
 /// Deliberately conservative in the direction that matters: it errs towards
@@ -231,6 +244,12 @@ enum HistoryMatch {
 /// `PaymentStatus` by its `Debug` name (`Completed`, `Pending`, `Failed`).
 /// Only `Completed` is "landed"; `Failed` is ignored, so an earlier rejected
 /// attempt can't pass for this one; anything else is still in progress.
+///
+/// When `pending` names its invoice, size alone is not enough to call it
+/// landed: a row naming a *different* invoice is somebody else's payment and
+/// is skipped, and a completed row that names no invoice (an older bridge)
+/// can't be confirmed as this one, so it counts as in progress — it still
+/// blocks a resend, but never settles the payment.
 ///
 /// This is inference, not proof — the SDK has no "look up by idempotency key"
 /// call, so there is nothing better available. It is only ever used to decide
@@ -244,15 +263,25 @@ fn history_match(
     let floor = pending.dispatched_at - RECONCILE_BACKDATE_SLACK_SECS;
     let mut in_progress = false;
     for p in payments.iter().filter(|p| {
-        p.direction.eq_ignore_ascii_case("outgoing")
+        is_outgoing(&p.direction)
             && p.timestamp as i64 >= floor
             && match pending.token_amount {
                 // A token payment's sats figure is zero: match its token amount.
                 Some(token_amount) => p.token_amount == Some(token_amount),
                 None => p.amount_sat.unsigned_abs() == pending.amount_sat,
             }
+            // Another invoice's payment is not this one.
+            && match (pending.invoice.as_deref(), p.details.invoice.as_deref()) {
+                (Some(ours), Some(theirs)) => same_invoice(ours, theirs),
+                _ => true,
+            }
     }) {
         if p.status.eq_ignore_ascii_case("completed") {
+            // Identity unconfirmed: the row names no invoice to compare.
+            if pending.invoice.is_some() && p.details.invoice.is_none() {
+                in_progress = true;
+                continue;
+            }
             return HistoryMatch::Settled;
         }
         if !p.status.eq_ignore_ascii_case("failed") {
@@ -279,7 +308,11 @@ pub(crate) async fn reconcile_pending_send(
 ) -> ReconcileOutcome {
     if let Some(request_id) = pending.request_id {
         match backend.client().take_late_outcome(request_id).await {
-            Some(Ok(_sent)) => return ReconcileOutcome::Landed,
+            // Only a settled payment is landed. A pending one was accepted
+            // and may still fail, so the history decides (it shows the row
+            // as in progress until it settles).
+            Some(Ok(sent)) if sent.is_completed() => return ReconcileOutcome::Landed,
+            Some(Ok(_pending)) => {}
             Some(Err(SparkClientError::BridgeError { message, .. })) => {
                 return ReconcileOutcome::DefinitelyFailed(message);
             }
@@ -351,6 +384,12 @@ pub struct PendingSend {
     /// in token base units, which history matching then compares instead of
     /// `amount_sat`.
     pub token_amount: Option<u64>,
+    /// The BOLT11 invoice this send pays, when it pays one and the caller
+    /// needs the history match to be *this* payment rather than any payment
+    /// of the same size. Set, a history row only counts as this send if it
+    /// names the same invoice; a row that names none can't be confirmed, so
+    /// it never reads as landed. `None` keeps the amount-and-time match.
+    pub invoice: Option<String>,
     pub guard: RetryGuard,
 }
 
@@ -1047,6 +1086,11 @@ impl SparkSend {
         // rails, where the key *is* the guard.
         let guard = retry_guard_for(&prepare);
         let amount_sat = prepare.amount_sat;
+        // A Lightning send names its invoice, so a state check can tell this
+        // payment from another of the same size.
+        let invoice = (prepare.method == "Bolt11Invoice")
+            .then(|| bolt11_of(&self.destination_input))
+            .flatten();
         let token_amount = self
             .prepared_token_payment
             .map(|payment| payment.amount.amount.min(u64::MAX as u128) as u64);
@@ -1065,6 +1109,7 @@ impl SparkSend {
             dispatched_at: chrono::Utc::now().timestamp(),
             amount_sat,
             token_amount,
+            invoice,
             guard,
         });
 
@@ -1920,6 +1965,7 @@ impl State for SparkSend {
                         dispatched_at: chrono::Utc::now().timestamp(),
                         amount_sat: 0,
                         token_amount: None,
+                        invoice: None,
                         guard: RetryGuard::None,
                     });
                 }
@@ -2165,6 +2211,21 @@ impl bech32::Checksum for Bolt11Bech32 {
 /// Grammar (BOLT11 §"Human-Readable Part"): `ln` + a currency prefix (`bc`,
 /// `tb`, `bcrt`, …) + an optional amount, which is a decimal followed by an
 /// optional multiplier — `m`/`u`/`n`/`p` for milli/micro/nano/pico-bitcoin.
+/// The bare BOLT11 invoice in a Send destination: the input without a
+/// `lightning:` scheme or BIP21-style parameters. `None` for anything that
+/// isn't one on its face (a BIP21 `bitcoin:` URI, an address), which leaves
+/// history matching on amount and time.
+///
+/// A wrong answer here only fails safe: a row whose invoice doesn't match is
+/// skipped, so the check reports no trace and a repeat runs under the same
+/// idempotency key, which the SDK dedups.
+fn bolt11_of(input: &str) -> Option<String> {
+    let s = input.trim().to_ascii_lowercase();
+    let s = s.strip_prefix("lightning:").unwrap_or(&s);
+    let s = s.split('?').next()?;
+    s.starts_with("ln").then(|| s.to_string())
+}
+
 pub(crate) fn bolt11_amount_sat(input: &str) -> Option<u64> {
     let s = input.trim().to_ascii_lowercase();
     // Wallets and QR codes hand out `lightning:`-scheme URIs as often as bare
@@ -3551,12 +3612,13 @@ mod tests {
             dispatched_at: now,
             amount_sat: 0,
             token_amount: Some(2_500_000),
+            invoice: None,
             guard: RetryGuard::None,
         };
         let token = |token_amount| PaymentSummary {
             token_amount: Some(token_amount),
             method: "token".to_string(),
-            ..payment(0, (now + 2) as u64, "outgoing")
+            ..payment(0, (now + 2) as u64, "Send")
         };
         assert_eq!(
             HistoryMatch::Settled,
@@ -3569,7 +3631,7 @@ mod tests {
         // A zero-sats payment that moved no token is not this one.
         assert_eq!(
             HistoryMatch::None,
-            history_match(&[payment(0, (now + 2) as u64, "outgoing")], &pending)
+            history_match(&[payment(0, (now + 2) as u64, "Send")], &pending)
         );
         assert!(!ReconcileOutcome::NoTrace.may_resend(pending.guard));
     }
@@ -4953,6 +5015,7 @@ mod tests {
                 payment_id: "payment-id".to_string(),
                 amount_sat: 42_000,
                 fee_sat: 17,
+                status: Some("Completed".to_string()),
             }),
         );
         panel
@@ -4991,6 +5054,7 @@ mod tests {
                 payment_id: "payment-id".to_string(),
                 amount_sat: 0,
                 fee_sat: 0,
+                status: Some("Completed".to_string()),
             }),
         );
         let usdb =
@@ -5052,6 +5116,7 @@ mod tests {
             dispatched_at: chrono::Utc::now().timestamp(),
             amount_sat: 1_000,
             token_amount: None,
+            invoice: None,
             guard,
         });
         panel.phase = SparkSendPhase::OutcomeUnknown {
@@ -5075,6 +5140,7 @@ mod tests {
             dispatched_at: chrono::Utc::now().timestamp(),
             amount_sat: 1_000,
             token_amount: None,
+            invoice: None,
             guard: RetryGuard::IdempotencyKey,
         });
         panel.phase = SparkSendPhase::Sending;
@@ -5312,39 +5378,133 @@ mod tests {
             dispatched_at: now,
             amount_sat: 1_000,
             token_amount: None,
+            invoice: None,
             guard: RetryGuard::IdempotencyKey,
         };
 
         // The payment itself, recorded a moment after dispatch.
         assert_eq!(
             HistoryMatch::Settled,
-            history_match(&[payment(-1_000, (now + 2) as u64, "outgoing")], &pending)
+            history_match(&[payment(-1_000, (now + 2) as u64, "Send")], &pending)
         );
         // Recorded slightly *before* the gui's clock — still ours.
         assert_eq!(
             HistoryMatch::Settled,
-            history_match(&[payment(-1_000, (now - 5) as u64, "outgoing")], &pending)
+            history_match(&[payment(-1_000, (now - 5) as u64, "Send")], &pending)
         );
         // An older payment of the same size is somebody else's.
         assert_eq!(
             HistoryMatch::None,
-            history_match(
-                &[payment(-1_000, (now - 3_600) as u64, "outgoing")],
-                &pending
-            )
+            history_match(&[payment(-1_000, (now - 3_600) as u64, "Send")], &pending)
         );
         // A receive of the same size is not this send.
         assert_eq!(
             HistoryMatch::None,
-            history_match(&[payment(1_000, (now + 2) as u64, "incoming")], &pending)
+            history_match(&[payment(1_000, (now + 2) as u64, "Receive")], &pending)
         );
         // A different amount is a different payment.
         assert_eq!(
             HistoryMatch::None,
-            history_match(&[payment(-2_000, (now + 2) as u64, "outgoing")], &pending)
+            history_match(&[payment(-2_000, (now + 2) as u64, "Send")], &pending)
         );
         // Empty history is no evidence.
         assert_eq!(HistoryMatch::None, history_match(&[], &pending));
+    }
+
+    /// The bridge reports a row's direction as the SDK's `PaymentType` Debug
+    /// name. Matching used to look only for "outgoing", which the bridge never
+    /// sends, so no send was ever found in the history.
+    #[test]
+    fn history_matching_reads_the_bridge_direction() {
+        let now = chrono::Utc::now().timestamp();
+        let pending = PendingSend {
+            request_id: None,
+            dispatched_at: now,
+            amount_sat: 1_000,
+            token_amount: None,
+            invoice: None,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let row = |direction: &str| payment(-1_000, (now + 2) as u64, direction);
+        for outgoing in ["Send", "send", "outgoing"] {
+            assert_eq!(
+                history_match(&[row(outgoing)], &pending),
+                HistoryMatch::Settled,
+                "{outgoing}"
+            );
+        }
+        for incoming in ["Receive", "incoming"] {
+            assert_eq!(
+                history_match(&[row(incoming)], &pending),
+                HistoryMatch::None,
+                "{incoming}"
+            );
+        }
+    }
+
+    /// A send that names its invoice is only settled by a row for that
+    /// invoice. Another invoice's payment of the same size is skipped, and a
+    /// completed row that names no invoice can't be confirmed: it blocks a
+    /// resend but never reads as landed.
+    #[test]
+    fn history_matching_confirms_the_invoice_when_it_has_one() {
+        let now = chrono::Utc::now().timestamp();
+        let pending = PendingSend {
+            request_id: None,
+            dispatched_at: now,
+            amount_sat: 1_000,
+            token_amount: None,
+            invoice: Some("lnbc10u1ours".to_string()),
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let for_invoice = |invoice: Option<&str>, status: &str| PaymentSummary {
+            status: status.to_string(),
+            details: coincube_spark_protocol::PaymentDetailSummary {
+                invoice: invoice.map(str::to_string),
+                ..Default::default()
+            },
+            ..payment(-1_000, (now + 2) as u64, "Send")
+        };
+
+        assert_eq!(
+            history_match(&[for_invoice(Some("LNBC10U1OURS"), "Completed")], &pending),
+            HistoryMatch::Settled,
+            "bech32 compares case-insensitively"
+        );
+        assert_eq!(
+            history_match(
+                &[for_invoice(Some("lnbc10u1theirs"), "Completed")],
+                &pending
+            ),
+            HistoryMatch::None,
+            "another invoice's payment is not this one"
+        );
+        assert_eq!(
+            history_match(&[for_invoice(None, "Completed")], &pending),
+            HistoryMatch::InProgress,
+            "an unconfirmed row never settles the payment"
+        );
+        assert_eq!(
+            history_match(
+                &[
+                    for_invoice(Some("lnbc10u1theirs"), "Completed"),
+                    for_invoice(Some("lnbc10u1ours"), "Pending"),
+                ],
+                &pending
+            ),
+            HistoryMatch::InProgress
+        );
+    }
+
+    #[test]
+    fn a_send_destination_names_its_invoice_only_when_it_is_one() {
+        assert_eq!(bolt11_of(" LNBC1ABC ").as_deref(), Some("lnbc1abc"));
+        assert_eq!(
+            bolt11_of("lightning:lnbc1abc?amount=1").as_deref(),
+            Some("lnbc1abc")
+        );
+        assert_eq!(bolt11_of("bitcoin:bc1qxyz?lightning=lnbc1abc"), None);
+        assert_eq!(bolt11_of("sp1qexampleaddress"), None);
     }
 
     /// A same-size outgoing payment only counts as this send once it has
@@ -5359,11 +5519,12 @@ mod tests {
             dispatched_at: now,
             amount_sat: 1_000,
             token_amount: None,
+            invoice: None,
             guard: RetryGuard::IdempotencyKey,
         };
         let with_status = |status: &str| PaymentSummary {
             status: status.to_string(),
-            ..payment(-1_000, (now + 2) as u64, "outgoing")
+            ..payment(-1_000, (now + 2) as u64, "Send")
         };
 
         // The bridge sends the SDK's `PaymentStatus` Debug names.

@@ -52,13 +52,37 @@ impl State for BuySellPanel {
         if self.sell_payment_in_flight() {
             match message {
                 // A refreshed token must still be stored and a logout still
-                // happen: hold them until the payment answers.
-                view::BuySellMessage::SetLoginState(..) | view::BuySellMessage::LogOut => {
+                // happen. While a request is with the bridge, hold them until
+                // it answers.
+                view::BuySellMessage::SetLoginState(..) | view::BuySellMessage::LogOut
+                    if self.sell_request_outstanding() =>
+                {
                     log::info!(
                         "[BUYSELL] Deferring a session change until the sell payment answers"
                     );
                     self.deferred_session.push(message);
                     return iced::Task::none();
+                }
+                // Unresolved, but nothing is due from the bridge: a check may
+                // never settle it, so the session change can't wait. Apply it
+                // (store or clear the credentials, tell Connect) and keep the
+                // checkout, with its key and "Check again", in place of the
+                // step the change would have moved to.
+                view::BuySellMessage::SetLoginState(..) | view::BuySellMessage::LogOut => {
+                    log::info!(
+                        "[BUYSELL] Applying a session change, keeping the unresolved sell checkout"
+                    );
+                    let checkout = std::mem::replace(
+                        &mut self.step,
+                        BuySellFlowState::DetectingLocation(false),
+                    );
+                    let task = self.update(
+                        daemon,
+                        cache,
+                        Message::View(view::Message::BuySell(message)),
+                    );
+                    self.step = checkout;
+                    return task;
                 }
                 view::BuySellMessage::ResetWidget
                 | view::BuySellMessage::CountryDetected(..)
@@ -682,10 +706,10 @@ impl State for BuySellPanel {
                         let task = state
                             .update(msg, &self.coincube_client)
                             .map(|task| task.map(Message::View));
-                        // Once the sell payment has answered, apply any
-                        // session change held back while it was in flight.
+                        // Once the sell payment is resolved, apply any
+                        // session change held back meanwhile, in order.
                         let deferred = self.take_deferred_session();
-                        if task.is_some() || !deferred.is_empty() {
+                        if task.is_some() || deferred.is_some() {
                             return iced::Task::batch(task.into_iter().chain(deferred));
                         }
                     }
@@ -1170,6 +1194,7 @@ mod tests {
                         payment_id: "pay-a".to_string(),
                         amount_sat: 2_500_000,
                         fee_sat: 3,
+                        status: Some("Completed".to_string()),
                     },
                 },
             )),
@@ -1213,6 +1238,97 @@ mod tests {
 
         // At rest, a reset goes through as before.
         panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-b", SellFulfilment::Idle));
+        assert!(!panel.sell_payment_in_flight());
+    }
+
+    /// Session changes wait only while a request is with the bridge. Once a
+    /// check has answered without settling the payment, they are applied
+    /// (a logout must not wait on a payment that may never settle), but the
+    /// unresolved checkout stays, with its key and "Check again".
+    #[test]
+    fn session_changes_apply_but_keep_an_unresolved_checkout() {
+        use crate::app::state::spark::send::{ReconcileOutcome, RetryGuard};
+        let mut panel = panel();
+        panel.detected_country = Some(country("NG"));
+        panel.step = BuySellFlowState::Mavapay(sell_checkout(
+            "quote-a",
+            SellFulfilment::OutcomeUnknown {
+                checking: true,
+                outcome: None,
+                guard: RetryGuard::IdempotencyKey,
+            },
+        ));
+        // A check is with the bridge: held.
+        assert!(panel.sell_request_outstanding());
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::LogOut),
+        );
+        assert_eq!(panel.deferred_session.len(), 1);
+        assert!(panel.take_deferred_session().is_none());
+
+        let checked = |outcome| {
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::SellPaymentChecked {
+                    quote_id: "quote-a".to_string(),
+                    outcome,
+                },
+            ))
+        };
+        // The check answers without a verdict: the payment is still
+        // unresolved, but nothing is due, so the held logout is released.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            checked(ReconcileOutcome::Inconclusive("still in progress".into())),
+        );
+        assert!(panel.sell_payment_in_flight());
+        assert!(!panel.sell_request_outstanding());
+        assert!(
+            panel.deferred_session.is_empty(),
+            "released, in one chained task"
+        );
+
+        // Applying it clears the session and keeps the checkout.
+        panel.login = None;
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::LogOut),
+        );
+        assert!(panel.login.is_none());
+        assert!(matches!(
+            checkout_fulfilment(&panel),
+            Some((
+                "quote-a",
+                SellFulfilment::OutcomeUnknown {
+                    checking: false,
+                    ..
+                }
+            ))
+        ));
+        // A flow change is still refused while it is unresolved.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::ResetWidget),
+        );
+        assert!(checkout_fulfilment(&panel).is_some());
+
+        // Checked again and found landed: at rest.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::CheckSellPayment,
+            )),
+        );
+        let _ = panel.update(None, &Cache::default(), checked(ReconcileOutcome::Landed));
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-a", &SellFulfilment::Paid))
+        );
         assert!(!panel.sell_payment_in_flight());
     }
 

@@ -85,12 +85,39 @@ pub enum SellFulfilment {
 }
 
 impl SellFulfilment {
-    /// A request is with the bridge, so leaving the checkout would orphan its
-    /// answer.
-    pub fn in_flight(&self) -> bool {
+    /// A request for this payment is with the bridge and its answer is due
+    /// (a send's or a check's answer arrives within the send deadline, or
+    /// as a made-up error when the bridge dies). Anything that would
+    /// replace the checkout before then orphans that answer.
+    pub fn awaiting_answer(&self) -> bool {
         matches!(
             self,
             Self::Preparing | Self::Sending | Self::OutcomeUnknown { checking: true, .. }
+        )
+    }
+
+    /// The payment is unresolved, so leaving the checkout (or replacing the
+    /// flow, or rebuilding the panel) would drop its idempotency key, its
+    /// recorded intent and the "Check again" path.
+    ///
+    /// True while a request is with the bridge, and after a check that could
+    /// not settle the payment: before the first verdict, or on an
+    /// inconclusive one ("still in progress", history unavailable, or a
+    /// repeat that can't be made safely). Only a verdict a user can act on
+    /// releases it: `NoTrace`, which says there is no sign the payment left
+    /// the wallet and is the state that offers a guarded retry. `Paid` and
+    /// `Idle` are at rest. See [`MavapayState::sell_checkout_held`] for the
+    /// one case that lets go of an unresolved payment.
+    pub fn in_flight(&self) -> bool {
+        matches!(
+            self,
+            Self::Preparing
+                | Self::Sending
+                | Self::OutcomeUnknown { checking: true, .. }
+                | Self::OutcomeUnknown {
+                    outcome: None | Some(ReconcileOutcome::Inconclusive(_)),
+                    ..
+                }
         )
     }
 
@@ -168,6 +195,21 @@ pub(crate) async fn prepare_sell_payment(
     Ok(prepare)
 }
 
+/// The most a sell payment's Lightning routing fee may be, in sats.
+///
+/// The checkout offers "Fulfil from Spark" without showing a fee, so the fee
+/// the SDK prepares must stay within what a user would expect a Lightning
+/// payment of this size to cost: 1% of the quoted total, and never less than
+/// [`SELL_FEE_FLOOR_SAT`] so a small order can still route. Mavapay's own
+/// `estimated_routing_fee` isn't used as the bound: its unit hasn't been
+/// confirmed against a live quote.
+fn max_sell_fee_sat(quoted_total_sat: u64) -> u64 {
+    (quoted_total_sat / 100).max(SELL_FEE_FLOOR_SAT)
+}
+
+/// See [`max_sell_fee_sat`].
+const SELL_FEE_FLOOR_SAT: u64 = 10;
+
 fn check_prepared_sell(prepare: &PrepareSendOk, quoted_total_sat: u64) -> Result<(), String> {
     if prepare.method != "Bolt11Invoice" || prepare.cross_chain.is_some() {
         return Err(format!(
@@ -179,6 +221,15 @@ fn check_prepared_sell(prepare: &PrepareSendOk, quoted_total_sat: u64) -> Result
         return Err(format!(
             "the order's invoice asks for {} sats, not the quoted {}",
             prepare.amount_sat, quoted_total_sat
+        ));
+    }
+    // Nothing else bounds the fee: `send_payment` spends whatever the
+    // preview prepared.
+    let max_fee = max_sell_fee_sat(quoted_total_sat);
+    if prepare.fee_sat > max_fee {
+        return Err(format!(
+            "paying the order's invoice would cost a {} sat routing fee, more than the {} sats allowed",
+            prepare.fee_sat, max_fee
         ));
     }
     Ok(())
@@ -271,6 +322,36 @@ fn sell_answer_quote(msg: &MavapayMessage) -> Option<&str> {
     }
 }
 
+impl MavapayState {
+    fn sell_fulfilment(&self) -> Option<&SellFulfilment> {
+        match self.steps.last() {
+            Some(MavapayFlowStep::Checkout { sell, .. }) => Some(&sell.fulfilment),
+            _ => None,
+        }
+    }
+
+    /// The checkout must stay: its payment is unresolved
+    /// ([`SellFulfilment::in_flight`]).
+    ///
+    /// Except when the Spark bridge is gone and no answer is due. A closed
+    /// client is never respawned, so every later check would come back
+    /// inconclusive and hold the checkout until the app restarts. Then the
+    /// checkout can be left; the payment, if it landed, is in Activity, and
+    /// Mavapay's own order status still reports the order.
+    pub fn sell_checkout_held(&self) -> bool {
+        self.sell_fulfilment().is_some_and(|fulfilment| {
+            fulfilment.awaiting_answer()
+                || (fulfilment.in_flight() && !self.spark.client().is_closed())
+        })
+    }
+
+    /// A request for the checkout's payment is with the bridge.
+    pub fn sell_awaiting_answer(&self) -> bool {
+        self.sell_fulfilment()
+            .is_some_and(SellFulfilment::awaiting_answer)
+    }
+}
+
 pub struct MavapayState {
     pub buy_or_sell: panel::BuyOrSell,
     pub steps: Vec<MavapayFlowStep>,
@@ -309,10 +390,8 @@ impl MavapayState {
                 // Leaving a checkout while its payment is with the bridge
                 // would drop the answer, and with it the only record of
                 // whether the order was paid.
-                if let Some(MavapayFlowStep::Checkout { sell, .. }) = self.steps.last() {
-                    if sell.fulfilment.in_flight() {
-                        return None;
-                    }
+                if self.sell_checkout_held() {
+                    return None;
                 }
                 match self.steps.len() {
                     1 => {
@@ -810,6 +889,9 @@ impl MavapayState {
                         dispatched_at: chrono::Utc::now().timestamp(),
                         amount_sat: prepare.amount_sat,
                         token_amount: None,
+                        // A state check may only settle the order on a
+                        // payment of *this* invoice.
+                        invoice: Some(quote.invoice.clone()),
                         guard,
                     });
                     sell.fulfilment = SellFulfilment::Sending;
@@ -823,23 +905,60 @@ impl MavapayState {
                     ));
                 }
                 MavapayMessage::SellPrepareFailed { error: err, .. } => {
-                    // Nothing was sent, so paying is offered again. The key, if
-                    // any, stays: a preview failing says nothing about an
-                    // earlier attempt it may be repeating.
-                    if sell.fulfilment == SellFulfilment::Preparing {
-                        sell.fulfilment = SellFulfilment::Idle;
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
-                        )));
+                    if sell.fulfilment != SellFulfilment::Preparing {
+                        return None;
                     }
+                    // A preview failing says nothing about an earlier attempt
+                    // it may be repeating. If one was dispatched, its outcome
+                    // is still unknown: keep the key and the intent, and
+                    // offer the check again rather than the manual invoice.
+                    if let Some(pending) = sell.pending.as_ref() {
+                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                            checking: false,
+                            outcome: Some(ReconcileOutcome::Inconclusive(format!(
+                                "the repeat couldn't be prepared: {err}"
+                            ))),
+                            guard: pending.guard,
+                        };
+                        return None;
+                    }
+                    // Nothing was ever sent, so paying is offered again.
+                    sell.fulfilment = SellFulfilment::Idle;
+                    return Some(iced::Task::done(view::Message::BuySell(
+                        view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
+                    )));
                 }
-                MavapayMessage::SellInvoiceFulfilled { .. } => {
+                MavapayMessage::SellInvoiceFulfilled { payment, .. } => {
                     // Only the send this checkout is waiting for can settle it.
                     if sell.fulfilment != SellFulfilment::Sending {
                         log::warn!(
                             "[MAVAPAY] Ignoring a sell payment result nobody is waiting for"
                         );
                         return None;
+                    }
+                    // Accepted is not paid: a pending payment may still fail.
+                    // Keep the key and the intent and check its state until
+                    // it settles one way or the other.
+                    if !payment.is_completed() {
+                        log::info!(
+                            "[MAVAPAY] Sell payment accepted but not settled ({:?})",
+                            payment.status
+                        );
+                        let guard = sell
+                            .pending
+                            .as_ref()
+                            .map(|p| p.guard)
+                            .unwrap_or(RetryGuard::None);
+                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                            checking: true,
+                            outcome: None,
+                            guard,
+                        };
+                        return Some(reconcile_sell_task(
+                            self.spark.clone(),
+                            quote.id.clone(),
+                            sell.pending.clone(),
+                        ));
                     }
                     sell.fulfilment = SellFulfilment::Paid;
                     sell.idempotency_key = None;
@@ -882,6 +1001,7 @@ impl MavapayState {
                         dispatched_at: chrono::Utc::now().timestamp(),
                         amount_sat: 0,
                         token_amount: None,
+                        invoice: None,
                         guard: RetryGuard::None,
                     });
                     pending.request_id = Some(request_id);
@@ -1050,8 +1170,25 @@ impl MavapayState {
                         order
                     );
 
+                    // Only this checkout's own order can settle its payment:
+                    // a fetch started for an earlier order can outlive that
+                    // checkout and land here.
+                    let this_order = quote.order_id.as_deref() == Some(order.order_id.as_str())
+                        || order.quote_id.as_deref() == Some(quote.id.as_str());
                     *fulfilled_order = Some(order);
                     *stream_order_id = None;
+                    // Mavapay says this order is paid, so its invoice is: a
+                    // sell payment whose outcome was unknown landed, and there
+                    // is nothing left to repeat. One still awaiting an answer
+                    // settles when that answer comes.
+                    if this_order
+                        && matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. })
+                    {
+                        log::info!("[MAVAPAY] Mavapay confirmed the order: sell payment settled");
+                        sell.fulfilment = SellFulfilment::Paid;
+                        sell.idempotency_key = None;
+                        sell.pending = None;
+                    }
                 }
 
                 #[cfg(debug_assertions)]
@@ -1313,11 +1450,17 @@ pub(crate) mod tests {
             token_decimals: None,
             token_ticker: None,
             timestamp: chrono::Utc::now().timestamp() as u64,
-            status: "completed".to_string(),
-            direction: "outgoing".to_string(),
+            // The bridge's wire values: the SDK's Debug names.
+            status: "Completed".to_string(),
+            direction: "Send".to_string(),
             method: "lightning".to_string(),
             description: None,
-            details: Default::default(),
+            // This order's invoice: a check settles the order only on a
+            // payment of it.
+            details: coincube_spark_protocol::PaymentDetailSummary {
+                invoice: Some(SPEC_VECTOR_25M.to_string()),
+                ..Default::default()
+            },
         }
     }
 
@@ -1418,6 +1561,7 @@ pub(crate) mod tests {
                     payment_id: "pay-1".to_string(),
                     amount_sat: INVOICE_SATS,
                     fee_sat: 3,
+                    status: Some("Completed".to_string()),
                 }))
             )
         );
@@ -1456,6 +1600,120 @@ pub(crate) mod tests {
 
     /// A definite rejection from the bridge returns to rest with a fresh key
     /// for the next attempt, as the Send panel does.
+    /// The prepared routing fee is bounded: `send_payment` spends whatever
+    /// the preview prepared, and the checkout shows no fee to approve.
+    #[test]
+    fn a_prepared_sell_fee_is_bounded() {
+        let cap = max_sell_fee_sat(INVOICE_SATS);
+        assert_eq!(cap, INVOICE_SATS / 100);
+        let with_fee = |fee_sat| PrepareSendOk {
+            fee_sat,
+            ..prepared(Some(false))
+        };
+        assert!(check_prepared_sell(&with_fee(cap), INVOICE_SATS).is_ok());
+        let err = check_prepared_sell(&with_fee(cap + 1), INVOICE_SATS).unwrap_err();
+        assert!(err.contains("routing fee"), "{}", err);
+        // A small order can still route: the cap never drops below the floor.
+        assert_eq!(max_sell_fee_sat(500), SELL_FEE_FLOOR_SAT);
+    }
+
+    /// `SendPaymentOk` for a payment the SDK still has pending is not "paid":
+    /// the checkout keeps the key and the intent and checks its state.
+    #[test]
+    fn a_pending_sell_send_is_checked_not_paid() {
+        let (spark, _requests) = fake_spark();
+        let client = crate::services::coincube::CoincubeClient::new();
+        for status in [Some("Pending"), None] {
+            let mut state = sell_checkout(spark.clone());
+            assert!(state
+                .update(MavapayMessage::FulfillSellInvoice, &client)
+                .is_some());
+            assert!(state
+                .update(sell_prepared(prepared(Some(false))), &client)
+                .is_some());
+            let key = sell(&state).idempotency_key.clone();
+            assert!(key.is_some());
+            assert_eq!(
+                sell(&state).pending.as_ref().unwrap().invoice.as_deref(),
+                Some(SPEC_VECTOR_25M),
+                "the check may only settle on this order's invoice"
+            );
+
+            let accepted = MavapayMessage::SellInvoiceFulfilled {
+                quote_id: "quote-sell".to_string(),
+                payment: coincube_spark_protocol::SendPaymentOk {
+                    payment_id: "pay-1".to_string(),
+                    amount_sat: INVOICE_SATS,
+                    fee_sat: 3,
+                    status: status.map(str::to_string),
+                },
+            };
+            // The state check starts straight away.
+            assert!(state.update(accepted, &client).is_some(), "{:?}", status);
+            assert!(
+                matches!(
+                    sell(&state).fulfilment,
+                    SellFulfilment::OutcomeUnknown { checking: true, .. }
+                ),
+                "{status:?}: {:?}",
+                sell(&state).fulfilment
+            );
+            assert_eq!(sell(&state).idempotency_key, key);
+            assert!(sell(&state).pending.is_some());
+            assert!(sell(&state).fulfilment.in_flight());
+        }
+    }
+
+    /// A payment whose state couldn't be settled keeps its checkout: until a
+    /// verdict the user can act on, leaving would drop the key and the
+    /// "Check again" path. `NoTrace`, `Paid` and `Idle` release it.
+    #[test]
+    fn an_unresolved_sell_payment_stays_in_flight() {
+        let unknown = |checking, outcome| SellFulfilment::OutcomeUnknown {
+            checking,
+            outcome,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        for held in [
+            SellFulfilment::Preparing,
+            SellFulfilment::Sending,
+            unknown(true, None),
+            unknown(false, None),
+            unknown(
+                false,
+                Some(ReconcileOutcome::Inconclusive("still in progress".into())),
+            ),
+        ] {
+            assert!(held.in_flight(), "{:?}", held);
+        }
+        for released in [
+            SellFulfilment::Idle,
+            SellFulfilment::Paid,
+            unknown(false, Some(ReconcileOutcome::NoTrace)),
+        ] {
+            assert!(!released.in_flight(), "{:?}", released);
+        }
+
+        // An inconclusive check no longer lets Back drop the checkout.
+        let (spark, _requests) = fake_spark();
+        let client = crate::services::coincube::CoincubeClient::new();
+        let mut state = sell_checkout(spark);
+        set_sell(&mut state, |sell| {
+            sell.idempotency_key = Some("key-1".to_string());
+            sell.fulfilment = unknown(true, None);
+        });
+        let _ = state.update(
+            checked_msg(ReconcileOutcome::Inconclusive("history unavailable".into())),
+            &client,
+        );
+        let steps = state.steps.len();
+        assert!(state
+            .update(MavapayMessage::NavigateBack, &client)
+            .is_none());
+        assert_eq!(state.steps.len(), steps);
+        assert_eq!(sell(&state).idempotency_key.as_deref(), Some("key-1"));
+    }
+
     #[test]
     fn a_rejected_sell_send_can_be_tried_again() {
         let rejected = sell_send_result(
@@ -1609,6 +1867,142 @@ pub(crate) mod tests {
         assert!(!sell(&state).fulfilment.may_resend());
     }
 
+    /// A repeat whose preview fails says nothing about the attempt it was
+    /// repeating: the checkout goes back to "outcome unknown" with the key
+    /// and the intent, not to the manual invoice.
+    #[test]
+    fn a_failed_repeat_preview_keeps_the_unknown_outcome() {
+        let (spark, _requests) = fake_spark();
+        let client = crate::services::coincube::CoincubeClient::new();
+        let mut state = sell_checkout(spark.clone());
+        set_sell(&mut state, |sell| {
+            sell.idempotency_key = Some("key-1".to_string());
+            sell.pending = Some(PendingSend {
+                request_id: Some(7),
+                dispatched_at: chrono::Utc::now().timestamp(),
+                amount_sat: INVOICE_SATS,
+                token_amount: None,
+                invoice: Some(SPEC_VECTOR_25M.to_string()),
+                guard: RetryGuard::IdempotencyKey,
+            });
+            sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                checking: false,
+                outcome: Some(ReconcileOutcome::NoTrace),
+                guard: RetryGuard::IdempotencyKey,
+            };
+        });
+        assert!(state
+            .update(MavapayMessage::RetrySellPayment, &client)
+            .is_some());
+        assert_eq!(sell(&state).fulfilment, SellFulfilment::Preparing);
+        let failed = MavapayMessage::SellPrepareFailed {
+            quote_id: "quote-sell".to_string(),
+            error: "no route".to_string(),
+        };
+        let _ = state.update(failed, &client);
+        assert!(
+            matches!(
+                sell(&state).fulfilment,
+                SellFulfilment::OutcomeUnknown {
+                    checking: false,
+                    outcome: Some(ReconcileOutcome::Inconclusive(_)),
+                    guard: RetryGuard::IdempotencyKey,
+                }
+            ),
+            "{:?}",
+            sell(&state).fulfilment
+        );
+        assert_eq!(sell(&state).idempotency_key.as_deref(), Some("key-1"));
+        assert!(sell(&state).pending.is_some());
+        // The check is still on offer.
+        assert!(state
+            .update(MavapayMessage::CheckSellPayment, &client)
+            .is_some());
+
+        // A first preview failing, with nothing ever sent, is a plain retry.
+        let mut state = sell_checkout(spark);
+        let _ = state.update(MavapayMessage::FulfillSellInvoice, &client);
+        let _ = state.update(
+            MavapayMessage::SellPrepareFailed {
+                quote_id: "quote-sell".to_string(),
+                error: "no route".to_string(),
+            },
+            &client,
+        );
+        assert_eq!(sell(&state).fulfilment, SellFulfilment::Idle);
+    }
+
+    /// Mavapay confirming the order settles a sell payment whose outcome was
+    /// unknown: the invoice is paid, so nothing is left to repeat.
+    #[test]
+    fn mavapay_confirming_the_order_settles_an_unknown_payment() {
+        let (spark, _requests) = fake_spark();
+        let client = crate::services::coincube::CoincubeClient::new();
+        let mut state = sell_checkout(spark);
+        set_sell(&mut state, |sell| {
+            sell.idempotency_key = Some("key-1".to_string());
+            sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                checking: false,
+                outcome: Some(ReconcileOutcome::Inconclusive("still in progress".into())),
+                guard: RetryGuard::IdempotencyKey,
+            };
+        });
+        assert!(state.sell_checkout_held());
+        let order = GetOrderResponse {
+            id: 1,
+            order_id: "order-sell".to_string(),
+            quote_id: Some("quote-sell".to_string()),
+            amount: INVOICE_SATS,
+            status: TransactionStatus::Paid,
+            currency: MavapayCurrency::Bitcoin,
+            payment_method: MavapayPaymentMethod::Lightning,
+            is_valid: Some(true),
+            payment_btc_detail: Some(SPEC_VECTOR_25M.to_string()),
+            created_at: "2026-11-17T00:00:00Z".to_string(),
+            updated_at: "2026-11-17T00:00:00Z".to_string(),
+            order_data: None,
+        };
+        // Another order's confirmation settles nothing here.
+        let other = GetOrderResponse {
+            order_id: "order-other".to_string(),
+            quote_id: Some("quote-other".to_string()),
+            ..order.clone()
+        };
+        let _ = state.update(MavapayMessage::QuoteFulfilled(other), &client);
+        assert!(state.sell_checkout_held());
+        assert!(sell(&state).idempotency_key.is_some());
+
+        let _ = state.update(MavapayMessage::QuoteFulfilled(order), &client);
+        assert_eq!(sell(&state).fulfilment, SellFulfilment::Paid);
+        assert!(sell(&state).idempotency_key.is_none());
+        assert!(!state.sell_checkout_held());
+    }
+
+    /// A dead bridge is never respawned, so its checks can't settle
+    /// anything: an unresolved checkout with no answer due lets go rather
+    /// than holding until the app restarts. One awaiting an answer still
+    /// holds; the dying bridge answers it.
+    #[test]
+    fn a_dead_bridge_lets_go_of_an_unresolved_checkout() {
+        let (spark, _requests) = fake_spark();
+        let mut state = sell_checkout(spark.clone());
+        set_sell(&mut state, |sell| {
+            sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                checking: false,
+                outcome: Some(ReconcileOutcome::Inconclusive("bridge gone".into())),
+                guard: RetryGuard::IdempotencyKey,
+            };
+        });
+        assert!(state.sell_checkout_held());
+
+        spark.client().mock_close();
+        assert!(spark.client().is_closed());
+        assert!(!state.sell_checkout_held());
+
+        set_sell(&mut state, |sell| sell.fulfilment = SellFulfilment::Sending);
+        assert!(state.sell_checkout_held(), "an answer is still due");
+    }
+
     fn set_sell(state: &mut MavapayState, f: impl FnOnce(&mut SellPayment)) {
         if let Some(MavapayFlowStep::Checkout { sell, .. }) = state.steps.last_mut() {
             f(sell);
@@ -1635,6 +2029,7 @@ pub(crate) mod tests {
                     payment_id: "pay-a".to_string(),
                     amount_sat: INVOICE_SATS,
                     fee_sat: 3,
+                    status: Some("Completed".to_string()),
                 },
             },
             MavapayMessage::SellInvoiceOutcomeUnknown {
@@ -1687,6 +2082,7 @@ pub(crate) mod tests {
                 payment_id: "pay-1".to_string(),
                 amount_sat: INVOICE_SATS,
                 fee_sat: 3,
+                status: Some("Completed".to_string()),
             },
         };
         assert!(state.update(paid.clone(), &client).is_none());
@@ -1750,6 +2146,7 @@ pub(crate) mod tests {
             dispatched_at: chrono::Utc::now().timestamp(),
             amount_sat: INVOICE_SATS,
             token_amount: None,
+            invoice: None,
             guard: RetryGuard::IdempotencyKey,
         };
         for (status, may_resend) in [("Failed", true), ("Pending", false)] {

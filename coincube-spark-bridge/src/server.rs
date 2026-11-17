@@ -2514,7 +2514,8 @@ async fn execute_regular_send(
 /// through when nothing was paid. A failed payment is answered as an error
 /// instead — the same definite rejection as any other send failure, which
 /// the gui treats as "nothing was sent" and retires the key for. Pending
-/// stays a success, as before.
+/// stays a success, but carries its status, so the gui can tell a payment
+/// that settled from one that was only accepted.
 fn sent_payment_response(
     id: u64,
     operation: &str,
@@ -2536,6 +2537,7 @@ fn sent_payment_response(
             payment_id,
             amount_sat,
             fee_sat,
+            status: Some(format!("{:?}", status)),
         }),
     )
 }
@@ -5970,6 +5972,9 @@ mod sent_payment_tests {
                 ResponseResult::Ok(OkPayload::SendPayment(sent)) => {
                     assert_eq!(sent.payment_id, "pay-2");
                     assert_eq!((sent.amount_sat, sent.fee_sat), (1_000, 3));
+                    // The gui reads only `Completed` as settled.
+                    assert_eq!(sent.status.as_deref(), Some(format!("{:?}", status).as_str()));
+                    assert_eq!(sent.is_completed(), status == PaymentStatus::Completed);
                 }
                 other => panic!("{:?} must stay a success, got {:?}", status, other),
             }
