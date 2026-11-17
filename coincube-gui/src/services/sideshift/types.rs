@@ -35,14 +35,6 @@ impl SideshiftNetwork {
         }
     }
 
-    /// Subtitle shown beneath external network options in the picker.
-    pub fn swap_subtitle(&self) -> Option<&'static str> {
-        match self {
-            Self::Liquid => None,
-            _ => Some("Swapped to Liquid USDt"),
-        }
-    }
-
     /// SideShift API `depositNetwork` / `settleNetwork` slug.
     pub fn network_slug(&self) -> &'static str {
         match self {
@@ -136,24 +128,6 @@ impl SideshiftNetwork {
 // ---------------------------------------------------------------------------
 // API request/response types
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShiftQuote {
-    pub id: String,
-    pub deposit_coin: String,
-    pub deposit_network: String,
-    pub settle_coin: String,
-    pub settle_network: String,
-    pub deposit_amount: Option<String>,
-    pub settle_amount: Option<String>,
-    pub rate: Option<String>,
-    pub affiliate_id: Option<String>,
-    pub created_at: Option<String>,
-    pub expires_at: Option<String>,
-    pub min: Option<String>,
-    pub max: Option<String>,
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
