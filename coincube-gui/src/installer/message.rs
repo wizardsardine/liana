@@ -35,6 +35,7 @@ pub type CubeSaveResult = Result<
     (
         CubeSettings,
         Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        Option<crate::app::cube_signer::CubeSigner>,
         Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
     ),
     String,

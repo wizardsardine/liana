@@ -166,8 +166,10 @@ pub(crate) mod golden {
     //!   It has no seed file.
     //!
     //! The constants were captured once from the pre-change code (the signer
-    //! read through `BreezClient::liquid_signer()` after `load_breez_client`)
-    //! and are hard-coded, so a later change to any derivation fails here.
+    //! read through `BreezClient::liquid_signer()` after `load_breez_client`,
+    //! commit "pin golden vectors for the Cube master signer's consumers"),
+    //! and are hard-coded: the same assertions passed there and pass here on
+    //! [`super::CubeSigner`], so a change to any derivation fails here.
 
     use coincube_core::miniscript::bitcoin::{secp256k1::Secp256k1, Network};
     use coincube_core::signer::MasterSigner;
@@ -295,14 +297,12 @@ pub(crate) mod golden {
         assert_eq!(actual, expected);
     }
 
-    /// The unlock loaders (PIN: encrypted seed file; passkey: in-memory seed)
-    /// produce the golden P2P mnemonic/identity and Connect encryption key.
-    // The session guard deliberately spans the loads: no other test may touch
-    // the global session while these resolve through it.
-    #[allow(clippy::await_holding_lock)]
-    #[tokio::test]
-    async fn unlock_paths_yield_the_golden_values() {
-        use crate::app::breez_liquid::load_breez_client;
+    /// The unlock resolution (PIN: encrypted seed file; passkey: in-memory
+    /// seed) produces the golden P2P mnemonic/identity and Connect encryption
+    /// key, through the exact expressions the App uses.
+    #[test]
+    fn unlock_paths_yield_the_golden_values() {
+        use super::CubeSigner;
         use crate::app::seed_source::SeedSource;
         use std::sync::Arc;
 
@@ -312,45 +312,42 @@ pub(crate) mod golden {
             let scratch = Scratch::new("golden");
             let cube_id = "cube-golden-pin";
             let fp = write_pin_seed(&scratch.0, network, cube_id);
-            let pin_client = load_breez_client(
+            let pin_signer = CubeSigner::resolve(
                 &scratch.0,
                 network,
-                SeedSource::encrypted_file(fp, PIN),
+                &SeedSource::encrypted_file(fp, PIN),
                 cube_id,
             )
-            .await
             .unwrap();
-            let passkey_client = load_breez_client(
+            let passkey_signer = CubeSigner::resolve(
                 &scratch.0,
                 network,
-                SeedSource::in_memory(Arc::new(passkey_signer(network))),
+                &SeedSource::in_memory(Arc::new(passkey_signer(network))),
                 "cube-golden-passkey",
             )
-            .await
             .unwrap();
 
-            for (client, mnemonic, identity, enc_key) in [
+            for (signer, mnemonic, identity, enc_key) in [
                 (
-                    &pin_client,
+                    &pin_signer,
                     PIN_MNEMONIC,
                     PIN_P2P_IDENTITY,
                     pin_enc_key(network),
                 ),
                 (
-                    &passkey_client,
+                    &passkey_signer,
                     PASSKEY_MNEMONIC,
                     PASSKEY_P2P_IDENTITY,
                     passkey_enc_key(network),
                 ),
             ] {
                 // The P2P panel's expression (`Panels::new`/`new_without_vault`).
-                let p2p = client
-                    .liquid_signer()
-                    .map(|s| s.lock().expect("signer lock").mnemonic_str())
-                    .unwrap();
+                let p2p = signer.as_ref().and_then(CubeSigner::p2p_mnemonic).unwrap();
                 assert_eq!(p2p.as_str(), mnemonic, "{network}");
                 assert_eq!(p2p_identity(&p2p), identity, "{network}");
-                let key = crate::app::derive_cube_encryption_key(client, network).unwrap();
+                // `App::new_inner` / `App::new_without_wallet`.
+                let key = crate::app::derive_cube_encryption_key(signer.as_ref().unwrap(), network)
+                    .unwrap();
                 assert_eq!(key.public_key_hex(), enc_key, "{network}");
             }
         }
@@ -358,12 +355,9 @@ pub(crate) mod golden {
 
     /// The existing Connect xpub-envelope known-answer fixture still opens with
     /// the key the PIN unlock path derives.
-    // The session guard deliberately spans the loads: no other test may touch
-    // the global session while these resolve through it.
-    #[allow(clippy::await_holding_lock)]
-    #[tokio::test]
-    async fn the_connect_envelope_fixture_opens_after_unlock() {
-        use crate::app::breez_liquid::load_breez_client;
+    #[test]
+    fn the_connect_envelope_fixture_opens_after_unlock() {
+        use super::CubeSigner;
         use crate::app::seed_source::SeedSource;
         use crate::services::connect::crypto::cube_enc_key::tests as kat;
 
@@ -373,15 +367,15 @@ pub(crate) mod golden {
         let scratch = Scratch::new("envelope");
         let cube_id = "cube-golden-envelope";
         let fp = write_pin_seed(&scratch.0, network, cube_id);
-        let client = load_breez_client(
+        let signer = CubeSigner::resolve(
             &scratch.0,
             network,
-            SeedSource::encrypted_file(fp, PIN),
+            &SeedSource::encrypted_file(fp, PIN),
             cube_id,
         )
-        .await
+        .unwrap()
         .unwrap();
-        let key = crate::app::derive_cube_encryption_key(&client, network).unwrap();
+        let key = crate::app::derive_cube_encryption_key(&signer, network).unwrap();
         let xpub = key
             .open(&kat::kat_envelope(), kat::KAT_CUBE_ID, kat::KAT_KEY_ID)
             .expect("the existing envelope fixture opens");

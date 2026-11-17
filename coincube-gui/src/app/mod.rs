@@ -65,6 +65,7 @@ use crate::{
     app::{
         breez_liquid::BreezClient,
         cache::{Cache, DaemonCache},
+        cube_signer::CubeSigner,
         error::Error,
         menu::{MarketplaceSubMenu, Menu},
         message::FiatMessage,
@@ -226,6 +227,7 @@ impl Panels {
     #[allow(clippy::too_many_arguments)]
     fn new_without_vault(
         breez_client: Option<Arc<BreezClient>>,
+        cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         wallet: Option<Arc<Wallet>>,
         datadir: &CoincubeDirectory,
@@ -323,22 +325,16 @@ impl Panels {
                 // `new_without_vault`: this Cube has no Vault wallet yet.
                 false,
             ),
-            p2p: match breez_client
-                .as_ref()
-                .and_then(|client| client.liquid_signer())
-                .map(|s| s.lock().expect("signer lock").mnemonic_str())
-            {
-                Some(mnemonic) if !mnemonic.is_empty() => {
-                    Some(crate::app::view::p2p::P2PPanel::new(
-                        None,
-                        spark_backend.clone(),
-                        mnemonic,
-                        default_fiat_currency,
-                        network,
-                    ))
-                }
+            p2p: match cube_signer.as_ref().and_then(CubeSigner::p2p_mnemonic) {
+                Some(mnemonic) => Some(crate::app::view::p2p::P2PPanel::new(
+                    None,
+                    spark_backend.clone(),
+                    mnemonic,
+                    default_fiat_currency,
+                    network,
+                )),
                 _ => {
-                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    log::warn!("P2P panel disabled: no mnemonic available from the Cube signer");
                     None
                 }
             },
@@ -348,6 +344,7 @@ impl Panels {
     #[allow(clippy::too_many_arguments)]
     fn new(
         breez_client: Option<Arc<BreezClient>>,
+        cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         cache: &Cache,
         wallet: Arc<Wallet>,
@@ -501,22 +498,16 @@ impl Panels {
                     client.clone(),
                 )
             }),
-            p2p: match breez_client
-                .as_ref()
-                .and_then(|client| client.liquid_signer())
-                .map(|s| s.lock().expect("signer lock").mnemonic_str())
-            {
-                Some(mnemonic) if !mnemonic.is_empty() => {
-                    Some(crate::app::view::p2p::P2PPanel::new(
-                        Some(wallet),
-                        spark_backend.clone(),
-                        mnemonic,
-                        default_fiat_currency,
-                        cache.network,
-                    ))
-                }
+            p2p: match cube_signer.as_ref().and_then(CubeSigner::p2p_mnemonic) {
+                Some(mnemonic) => Some(crate::app::view::p2p::P2PPanel::new(
+                    Some(wallet),
+                    spark_backend.clone(),
+                    mnemonic,
+                    default_fiat_currency,
+                    cache.network,
+                )),
                 _ => {
-                    log::warn!("P2P panel disabled: no mnemonic available from liquid signer");
+                    log::warn!("P2P panel disabled: no mnemonic available from the Cube signer");
                     None
                 }
             },
@@ -870,6 +861,10 @@ pub struct App {
     wallet: Option<Arc<Wallet>>,
     imported_kit_metadata: imported_kit_metadata::ImportedKitMetadata,
     breez_client: Option<Arc<BreezClient>>,
+    /// The Cube's master signer, for the seed-derived features (P2P identity,
+    /// Connect blinding, the Vault builder). `None` for a seed-less Cube and on
+    /// Bitcoin Blake2b, which gets its encryption key directly.
+    cube_signer: Option<CubeSigner>,
     fork_connect_client: Option<crate::services::coincube::CoincubeClient>,
     local_feature_valid: bool,
     local_feature_checked_at: Option<std::time::Instant>,
@@ -2863,24 +2858,19 @@ fn make_connect_stream(
 /// (`SPEC-cube-xpub-envelope-v1` §3) from the master signer the Cube was
 /// unlocked with, for [`Cache::cube_encryption_key`].
 ///
-/// The signer reached through the Breez client is the Cube's **master seed**
-/// signer — all wallets (Vault, Liquid, Spark) derive from it, and it's the
-/// same fingerprint recorded in `CubeSettings::master_signer_fingerprint`, so
-/// the key derived here is the one whose public half was registered with
-/// Connect at unlock.
+/// [`CubeSigner`] is the Cube's **master seed** signer — all wallets (Vault,
+/// Liquid, Spark) derive from it, and it's the same fingerprint recorded in
+/// `CubeSettings::master_signer_fingerprint`, so the key derived here is the
+/// one whose public half was registered with Connect at unlock.
 ///
 /// Returns `None` when there's no on-disk seed to derive from (watch-only /
 /// descriptor-only restores, passkey Cubes): blinded keys then surface as
 /// `KeyResolveError::Locked` rather than being wrongly reported invalid.
 fn derive_cube_encryption_key(
-    breez_client: &BreezClient,
+    cube_signer: &CubeSigner,
     network: coincube_core::miniscript::bitcoin::Network,
 ) -> Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>> {
-    let signer = breez_client.liquid_signer()?;
-    let guard = signer.lock().ok()?;
-    Some(Arc::new(
-        crate::services::connect::crypto::CubeEncryptionKey::derive(&guard, network),
-    ))
+    cube_signer.encryption_key(network)
 }
 
 /// Loads (minting on first use) this device's Connect signing-rail transport
@@ -3348,6 +3338,7 @@ impl App {
         cache: Cache,
         wallet: Arc<Wallet>,
         breez_client: Arc<BreezClient>,
+        cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -3368,6 +3359,7 @@ impl App {
             cache,
             wallet,
             Some(breez_client),
+            cube_signer,
             spark_backend,
             config,
             daemon,
@@ -3552,6 +3544,7 @@ impl App {
             wallet,
             None,
             None,
+            None,
             config,
             daemon,
             data_dir,
@@ -3648,6 +3641,7 @@ impl App {
         cache: Cache,
         wallet: Arc<Wallet>,
         breez_client: Option<Arc<BreezClient>>,
+        cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -3660,10 +3654,10 @@ impl App {
         )>,
     ) -> (App, Task<Message>) {
         let mut cache = cache;
-        let (breez_client, spark_backend) = if cube_settings.network.is_blake2b() {
-            (None, None)
+        let (breez_client, cube_signer, spark_backend) = if cube_settings.network.is_blake2b() {
+            (None, None, None)
         } else {
-            (breez_client, spark_backend)
+            (breez_client, cube_signer, spark_backend)
         };
         cache.fiat_chain = cube_settings.network;
         cache.has_vault = wallet.supports_inheritance();
@@ -3682,8 +3676,8 @@ impl App {
         // Connect blinding (PR D3): derive the Cube's encryption key once from
         // the master signer the unlock already loaded, so every surface that
         // opens a Connect-served key can do so without re-prompting for a PIN.
-        if let Some(client) = &breez_client {
-            cache.cube_encryption_key = derive_cube_encryption_key(client, cache.network);
+        if let Some(signer) = &cube_signer {
+            cache.cube_encryption_key = derive_cube_encryption_key(signer, cache.network);
         }
         // …and load (or mint) this device's signing-rail transport key. Not
         // seed-derived and not Cube-scoped — it comes up with the rail at login
@@ -3711,6 +3705,7 @@ impl App {
             .flatten();
         let mut panels = Panels::new(
             breez_client.clone(),
+            cube_signer.clone(),
             spark_backend.clone(),
             &cache,
             wallet.clone(),
@@ -3860,6 +3855,7 @@ impl App {
             local_mcp: Default::default(),
             imported_kit_metadata: Default::default(),
             breez_client,
+            cube_signer,
             fork_connect_client: None,
             local_feature_valid: true,
             local_feature_checked_at: None,
@@ -3937,6 +3933,7 @@ impl App {
 
     pub fn new_without_wallet(
         breez_client: Arc<BreezClient>,
+        cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
         datadir: CoincubeDirectory,
@@ -3948,9 +3945,12 @@ impl App {
                 coincubed::connect::AdmissionError::InvalidBackend.into(),
             )));
         }
-        let cube_encryption_key = derive_cube_encryption_key(&breez_client, network);
+        let cube_encryption_key = cube_signer
+            .as_ref()
+            .and_then(|signer| derive_cube_encryption_key(signer, network));
         Ok(Self::without_wallet(
             Some(breez_client),
+            cube_signer,
             spark_backend,
             config,
             datadir,
@@ -3980,6 +3980,7 @@ impl App {
         let (mut app, task) = Self::without_wallet(
             None,
             None,
+            None,
             config,
             datadir,
             network,
@@ -3999,8 +4000,10 @@ impl App {
         Ok((app, Task::batch([task, feature])))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn without_wallet(
         breez_client: Option<Arc<BreezClient>>,
+        cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
         datadir: CoincubeDirectory,
@@ -4009,10 +4012,10 @@ impl App {
         cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
     ) -> (App, Task<Message>) {
         let fork = cube_settings.network.is_blake2b();
-        let (breez_client, spark_backend) = if fork {
-            (None, None)
+        let (breez_client, cube_signer, spark_backend) = if fork {
+            (None, None, None)
         } else {
-            (breez_client, spark_backend)
+            (breez_client, cube_signer, spark_backend)
         };
         let config_arc = Arc::new(config);
         let wallet_registry = match &breez_client {
@@ -4068,6 +4071,7 @@ impl App {
 
         let mut panels = Panels::new_without_vault(
             breez_client.clone(),
+            cube_signer.clone(),
             spark_backend.clone(),
             None,
             &datadir,
@@ -4143,6 +4147,7 @@ impl App {
                 local_mcp: Default::default(),
                 imported_kit_metadata: Default::default(),
                 breez_client,
+                cube_signer,
                 fork_connect_client: None,
                 local_feature_valid: true,
                 local_feature_checked_at: None,
@@ -4230,6 +4235,11 @@ impl App {
 
     pub fn breez_client(&self) -> Option<Arc<BreezClient>> {
         self.breez_client.clone()
+    }
+
+    /// The open Cube's master signer (see [`CubeSigner`]).
+    pub fn cube_signer(&self) -> Option<CubeSigner> {
+        self.cube_signer.clone()
     }
 
     pub fn spark_backend(&self) -> Option<Arc<crate::app::wallets::SparkBackend>> {
@@ -11246,6 +11256,7 @@ pub(crate) mod tests {
             wallet,
             None,
             None,
+            None,
             Config::new(false),
             daemon.clone(),
             datadir,
@@ -12119,6 +12130,7 @@ pub(crate) mod tests {
             wallet,
             None,
             None,
+            None,
             Config::new(false),
             split_backend_daemon(root, true),
             datadir,
@@ -12553,6 +12565,7 @@ pub(crate) mod tests {
             ..Cache::default()
         };
         let mut panels = Panels::new(
+            None,
             None,
             None,
             &cache,
@@ -14381,6 +14394,7 @@ pub(crate) mod shell_tests {
         let (mut app, startup) = App::new_inner(
             cache,
             wallet.clone(),
+            None,
             None,
             None,
             Config::new(false),
