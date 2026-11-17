@@ -2904,23 +2904,33 @@ impl ImportedBitcoinPanel {
                     HardwareWallet::Locked { .. } => keys::ListedDevice {
                         name: kind.to_owned(),
                         fingerprint: None,
-                        problem: Some("locked; unlock it to read its fingerprint"),
+                        problem: Some(
+                            localized_copy("locked; unlock it to read its fingerprint").to_owned(),
+                        ),
                     },
                     HardwareWallet::Unsupported { reason, .. } => {
+                        let fixed = |problem: &str| Some(localized_copy(problem).to_owned());
                         let (fingerprint, problem) = match reason {
                             UnsupportedReason::NotPartOfWallet(fingerprint) => {
                                 (Some(*fingerprint), None)
                             }
                             UnsupportedReason::AppIsNotOpen => {
-                                (None, Some("open the Bitcoin app on it"))
+                                (None, fixed("open the Bitcoin app on it"))
                             }
                             UnsupportedReason::WrongNetwork => {
-                                (None, Some("set to a different network"))
+                                (None, fixed("set to a different network"))
                             }
-                            UnsupportedReason::Version { .. } => {
-                                (None, Some("firmware too old; update it"))
-                            }
-                            UnsupportedReason::Method(_) => (None, Some("not supported")),
+                            UnsupportedReason::Version {
+                                minimal_supported_version,
+                                ..
+                            } => (
+                                None,
+                                Some(coincube_ui::localized_format!(
+                                    "firmware too old; update to {minimal_supported_version} or later",
+                                    "firmware demasiado antiguo; actualiza a {minimal_supported_version} o posterior"
+                                )),
+                            ),
+                            UnsupportedReason::Method(_) => (None, fixed("not supported")),
                         };
                         keys::ListedDevice {
                             name: kind.to_owned(),
@@ -5769,6 +5779,52 @@ mod tests {
         // Not while a check is in flight.
         keys.slots[2].status = keys::KeyStatus::Checking;
         assert!(!keys.ready());
+    }
+
+    /// Each key card follows the connected list: a locked device may be the
+    /// one, a readable match offers the check and names the device, and the
+    /// list says which key each readable device holds.
+    #[tokio::test]
+    async fn key_cards_follow_the_connected_devices() {
+        let wallet = two_of_three();
+        let keys = KeysState::new(&wallet);
+        let first = keys.slots[0].account.fingerprint;
+        let third = keys.slots[2].account.fingerprint;
+        let devices = vec![
+            keys::ListedDevice {
+                name: "Jade".into(),
+                fingerprint: None,
+                problem: Some("locked; unlock it to read its fingerprint".into()),
+            },
+            keys::ListedDevice {
+                name: "Coldcard".into(),
+                fingerprint: Some(third),
+                problem: None,
+            },
+        ];
+        let (form, _) = keys::step(
+            &keys,
+            false,
+            |account| account.fingerprint == third,
+            &devices,
+            None,
+        );
+        let shown = rendered_labels(form).await;
+        assert_labels(
+            &shown,
+            &[
+                "Jade · locked; unlock it to read its fingerprint",
+                &format!("Coldcard · fingerprint {third} · Key 3 of 3 · ready to check"),
+                &format!(
+                    "No device with fingerprint {first} yet. It may be Jade (locked; unlock it to read its fingerprint)."
+                ),
+                &format!(
+                    "Found: Coldcard with fingerprint {third} is connected. Check it to confirm this key."
+                ),
+                "Check device",
+            ],
+            &[],
+        );
     }
 
     #[tokio::test]

@@ -3313,6 +3313,7 @@
   "locked; unlock it to read its fingerprint": "bloqueado; desbloquéalo para leer su huella",
   "open the Bitcoin app on it": "abre la app de Bitcoin en él",
   "set to a different network": "configurado para otra red",
-  "firmware too old; update it": "firmware demasiado antiguo; actualízalo",
-  "not supported": "no compatible"
+  "not supported": "no compatible",
+  "device": "dispositivo",
+  " or ": " o "
 }

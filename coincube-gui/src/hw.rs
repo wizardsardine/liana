@@ -215,6 +215,52 @@ pub struct HardwareWallets {
     /// The Split policy bound into Coldcard and BitBox02 handles at listing
     /// (#568 B4b-2); used only when no wallet is loaded.
     split_policy: Option<SplitPolicyBinding>,
+    /// Devices whose unlock failed, shared with the refresh stream. The
+    /// stream counts such a device as still connected and would never list
+    /// it again, so once its backoff ends the stream forgets it and pairs it
+    /// afresh, without restarting the scan for every other device.
+    unlock_retry: UnlockRetry,
+}
+
+/// When each device that failed to unlock may be picked up again (`None`
+/// once released, so it is released once per failure). Failures in a row
+/// back off from 2s to 60s; a successful unlock clears the count.
+#[derive(Clone, Default)]
+pub(crate) struct UnlockRetry(Arc<Mutex<HashMap<String, Retry>>>);
+
+/// When the device may be picked up again, and its failures in a row.
+type Retry = (Option<std::time::Instant>, u32);
+
+impl UnlockRetry {
+    const FIRST: std::time::Duration = std::time::Duration::from_secs(2);
+    const MAX: std::time::Duration = std::time::Duration::from_secs(60);
+
+    fn failed(&self, id: &str, now: std::time::Instant) {
+        let mut retries = self.0.lock().unwrap();
+        let failures = retries.get(id).map_or(1, |(_, failures)| failures + 1);
+        let delay = Self::FIRST
+            .saturating_mul(1 << (failures - 1).min(5))
+            .min(Self::MAX);
+        retries.insert(id.to_owned(), (Some(now + delay), failures));
+    }
+
+    fn unlocked(&self, id: &str) {
+        self.0.lock().unwrap().remove(id);
+    }
+
+    /// Drop the devices whose backoff has ended from `connected`, once, so
+    /// the scan finds them as new. Their failure count is kept for the next
+    /// backoff.
+    fn release_due(&self, connected: &mut Vec<String>, now: std::time::Instant) {
+        let mut retries = self.0.lock().unwrap();
+        connected.retain(|id| match retries.get_mut(id) {
+            Some((retry_at, _)) if retry_at.is_some_and(|at| at <= now) => {
+                *retry_at = None;
+                false
+            }
+            _ => true,
+        });
+    }
 }
 
 impl std::fmt::Debug for HardwareWallets {
@@ -233,6 +279,7 @@ impl HardwareWallets {
             datadir_path,
             persist_pairing: true,
             split_policy: None,
+            unlock_retry: UnlockRetry::default(),
         }
     }
 
@@ -391,8 +438,12 @@ impl HardwareWallets {
                     Err(e) => {
                         warn!("Pairing failed with an external device {}", e);
                         self.list.retain(|hw| hw.id() != &id);
+                        // E.g. a BitBox02 found while locked: once unlocked,
+                        // the scan pairs it again after a backoff.
+                        self.unlock_retry.failed(&id, std::time::Instant::now());
                     }
                     Ok(hw) => {
+                        self.unlock_retry.unlocked(hw.id());
                         if let Some(h) = self.list.iter_mut().find(|hw1| {
                             if let HardwareWallet::Locked { id, .. } = hw1 {
                                 id == hw.id()
@@ -416,15 +467,19 @@ impl HardwareWallets {
     }
 
     pub fn refresh(&self) -> iced::Subscription<HardwareWalletMessage> {
-        let state = RefreshState {
+        iced::Subscription::run_with(self.refresh_state(), make_refresh_stream)
+    }
+
+    fn refresh_state(&self) -> RefreshState {
+        RefreshState {
             network: self.network,
             keys_aliases: self.aliases.clone(),
             wallet: self.wallet.clone(),
             datadir_path: self.datadir_path.clone(),
             persist_pairing: self.persist_pairing,
             split_policy: self.split_policy.clone(),
-        };
-        iced::Subscription::run_with(state, make_refresh_stream)
+            unlock_retry: self.unlock_retry.clone(),
+        }
     }
 }
 
@@ -494,6 +549,8 @@ struct RefreshState {
     datadir_path: CoincubeDirectory,
     persist_pairing: bool,
     split_policy: Option<SplitPolicyBinding>,
+    /// Shared with the listing; not part of the stream's identity.
+    unlock_retry: UnlockRetry,
 }
 
 impl std::hash::Hash for RefreshState {
@@ -518,6 +575,7 @@ struct State {
     datadir_path: CoincubeDirectory,
     persist_pairing: bool,
     split_policy: Option<SplitPolicyBinding>,
+    unlock_retry: UnlockRetry,
     /// Per-phone retry cooldowns keyed by `fp8`. Set on a failed
     /// dial so the next refresh tick skips the phone (and pays no
     /// `CONNECT_TIMEOUT`) until the window has elapsed. Cleared on
@@ -546,6 +604,7 @@ fn make_refresh_stream(rs: &RefreshState) -> impl Stream<Item = HardwareWalletMe
         datadir_path: rs.datadir_path.clone(),
         persist_pairing: rs.persist_pairing,
         split_policy: rs.split_policy.clone(),
+        unlock_retry: rs.unlock_retry.clone(),
         phone_cooldowns: HashMap::new(),
         phone_signers: HashMap::new(),
     };
@@ -577,6 +636,12 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                 }
             }
         };
+
+        // A device whose unlock failed is found afresh once its backoff ends.
+        state.unlock_retry.release_due(
+            &mut state.connected_supported_hws,
+            std::time::Instant::now(),
+        );
 
         let mut hws: Vec<HardwareWallet> = Vec::new();
         let mut still: Vec<String> = Vec::new();
@@ -1527,10 +1592,78 @@ mod tests {
             datadir_path: CoincubeDirectory::new(root.into()),
             persist_pairing: true,
             split_policy,
+            unlock_retry: UnlockRetry::default(),
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         state.hash(&mut hasher);
         hasher.finish()
+    }
+
+    fn listing_hash(listing: &HardwareWallets) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        listing.refresh_state().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// A device that fails to unlock leaves the list and is found again
+    /// after a backoff (a BitBox02 plugged in while locked otherwise vanished
+    /// until replugged). The scan itself does not restart, so other devices
+    /// stay listed, and failures in a row wait longer.
+    #[test]
+    fn a_failed_unlock_is_retried_after_a_backoff() {
+        use std::time::{Duration, Instant};
+        let mut listing = HardwareWallets::new(
+            CoincubeDirectory::new("/synthetic/one".into()),
+            Network::Testnet4,
+        );
+        let before = listing_hash(&listing);
+        let fail = |listing: &mut HardwareWallets| {
+            let _ = listing.update(HardwareWalletMessage::Unlocked(
+                "bitbox-synthetic".into(),
+                Err(async_hwi::Error::Device(
+                    "error querying device info".into(),
+                )),
+            ));
+        };
+        let connected = || {
+            vec![
+                "bitbox-synthetic".to_string(),
+                "coldcard-synthetic".to_string(),
+            ]
+        };
+        let released = |listing: &HardwareWallets, after: Duration| {
+            let mut ids = connected();
+            listing
+                .unlock_retry
+                .release_due(&mut ids, Instant::now() + after);
+            ids
+        };
+
+        fail(&mut listing);
+        assert!(listing.list.is_empty());
+        assert_eq!(listing_hash(&listing), before, "the scan keeps running");
+        // Held back until the backoff ends; other devices are untouched.
+        assert_eq!(released(&listing, Duration::ZERO), connected());
+        assert_eq!(
+            released(&listing, Duration::from_secs(3)),
+            vec!["coldcard-synthetic".to_string()]
+        );
+        // Released once: the retry in flight is not started twice.
+        assert_eq!(released(&listing, Duration::from_secs(4)), connected());
+        // A second failure waits longer, and the wait is capped.
+        fail(&mut listing);
+        assert_eq!(released(&listing, Duration::from_secs(3)), connected());
+        assert_eq!(released(&listing, Duration::from_secs(5)).len(), 1);
+        for _ in 0..10 {
+            fail(&mut listing);
+        }
+        assert_eq!(released(&listing, Duration::from_secs(59)), connected());
+        assert_eq!(released(&listing, Duration::from_secs(61)).len(), 1);
+        // A successful unlock clears the count: the next failure waits 2s.
+        listing.unlock_retry.unlocked("bitbox-synthetic");
+        fail(&mut listing);
+        assert_eq!(released(&listing, Duration::from_secs(3)).len(), 1);
     }
 
     /// #568 B4b-2: the Split policy binding is part of the subscription
