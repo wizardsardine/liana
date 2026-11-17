@@ -6112,7 +6112,7 @@ mod tests {
     }
 
     #[test]
-    fn enough_keys_to_sign_lets_the_rest_sign_elsewhere() {
+    fn enough_keys_to_sign_lets_the_rest_go_unadded() {
         let wallet = two_of_three();
         let mut keys = KeysState::new(&wallet);
         assert!(!keys.ready());
@@ -6128,7 +6128,7 @@ mod tests {
         let summary = keys.summary();
         assert!(summary.contains("2 of 3 provided"), "{}", summary);
         assert!(summary.contains("1 not added here"), "{}", summary);
-        // A signer left unanswered signs elsewhere too: the threshold is met.
+        // A signer left unanswered is not added either: the threshold is met.
         keys.slots[2].source = KeySource::Hardware;
         keys.slots[2].status = keys::KeyStatus::Missing;
         assert!(keys.ready());
@@ -6207,9 +6207,9 @@ mod tests {
     }
 
     /// With the threshold met, a key nobody answered is not needed, and the
-    /// footer says it signs elsewhere.
+    /// footer says it is not added.
     #[tokio::test]
-    async fn a_spare_key_signs_elsewhere_once_the_threshold_is_met() {
+    async fn a_spare_key_is_not_added_once_the_threshold_is_met() {
         let wallet = two_of_three();
         let mut keys = KeysState::new(&wallet);
         keys.slots[0].status = KeyStatus::Verified;
@@ -6221,7 +6221,10 @@ mod tests {
             &shown,
             &[
                 "Not added — not needed to spend",
-                "You've verified 2 keys, which is enough to spend. Connect this device to add it too.",
+                "Enough keys are verified to spend. Connect its hardware wallet to add it too.",
+                "This wallet has 3 signers and any 2 can spend. Verify at least 2 here. \
+                 You can skip the rest; they can still sign from their own device or wallet. \
+                 Each key is checked against its fingerprint.",
             ],
             &[
                 "Waiting for its device",
@@ -6234,6 +6237,89 @@ mod tests {
             &["2 of 2 needed keys verified · Key 3 not added"],
             &[],
         );
+    }
+
+    /// A key the user chose to skip says so in its row, and the footer
+    /// counts it as not added.
+    #[tokio::test]
+    async fn a_skipped_key_says_it_is_not_added_here() {
+        let wallet = two_of_three();
+        let mut keys = KeysState::new(&wallet);
+        keys.slots[0].status = KeyStatus::Verified;
+        keys.slots[1].status = KeyStatus::Verified;
+        keys.slots[2].source = KeySource::Elsewhere;
+        keys.slots[2].status = KeyStatus::Verified;
+        let (form, actions) = keys::step(&keys, false, &[], None);
+        let shown = rendered_labels(form).await;
+        assert_labels(
+            &shown,
+            &[
+                "Skipped",
+                "Not added here. Another wallet or person signs with this key; \
+                 COINCUBE Desktop saves the PSBT for them.",
+            ],
+            &["Not added — not needed to spend"],
+        );
+        let footer = rendered_labels(actions).await;
+        assert_labels(
+            &footer,
+            &["2 of 2 needed keys verified · Key 3 not added"],
+            &[],
+        );
+    }
+
+    /// When every signer must sign there is nothing to skip, so the lead
+    /// asks for each key instead of "at least" some.
+    #[tokio::test]
+    async fn an_all_signers_wallet_asks_for_every_key() {
+        let keys: Vec<String> = (1..=2).map(|entropy| phrase_account(entropy).0).collect();
+        let branch = |n: u8| format!("wsh(sortedmulti(2,{}/{n}/*,{}/{n}/*))", keys[0], keys[1]);
+        let wallet =
+            ImportedWalletDescriptor::parse(&branch(0), Some(&branch(1)), ChainId::Bitcoin)
+                .unwrap();
+        let keys = KeysState::new(&wallet);
+        assert_eq!(keys.threshold, 2);
+        let (form, _) = keys::step(&keys, false, &[], None);
+        let shown = rendered_labels(form).await;
+        assert_labels(
+            &shown,
+            &[
+                "This wallet has 2 signers and all of them must sign to spend. \
+               Verify each key here; each is checked against its fingerprint.",
+            ],
+            &[],
+        );
+        assert!(
+            !shown.iter().any(|text| text.contains("skip the rest")),
+            "{:?}",
+            shown
+        );
+    }
+
+    /// On a Spanish screen the Keys step, with a skipped key and a spare
+    /// key, shows no English: every string has its Spanish copy.
+    #[tokio::test]
+    async fn the_keys_step_is_all_spanish_on_a_spanish_screen() {
+        use coincube_ui::locale::{english_leaks, render_in, Language};
+        let wallet = two_of_three();
+        let mut keys = KeysState::new(&wallet);
+        keys.slots[0].status = KeyStatus::Verified;
+        keys.slots[1].source = KeySource::Elsewhere;
+        keys.slots[1].status = KeyStatus::Verified;
+        keys.slots[2].status = KeyStatus::Verified;
+        let mut spare = KeysState::new(&wallet);
+        spare.slots[0].status = KeyStatus::Verified;
+        spare.slots[1].status = KeyStatus::Verified;
+        for keys in [&keys, &spare] {
+            let (form, actions) =
+                render_in(Language::Spanish, || keys::step(keys, false, &[], None));
+            let mut shown = rendered_labels(form).await;
+            shown.extend(rendered_labels(actions).await);
+            let leaks = english_leaks(shown.iter().map(String::as_str));
+            assert!(leaks.is_empty(), "English on a Spanish screen: {:?}", leaks);
+        }
+        let summary = render_in(Language::Spanish, || keys.summary());
+        assert!(summary.contains("1 sin añadir aquí"), "{}", summary);
     }
 
     /// A plugged-in device is named for what it is. A key is offered for

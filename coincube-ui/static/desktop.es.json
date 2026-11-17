@@ -3311,6 +3311,7 @@
   "Connect and unlock the hardware wallet with this fingerprint.": "Conecta y desbloquea la cartera de hardware con esta huella.",
   "Connected, and its fingerprint matches this key.": "Conectado, y su huella coincide con esta clave.",
   "Not added — not needed to spend": "Sin añadir: no hace falta para gastar",
+  "Enough keys are verified to spend. Connect its hardware wallet to add it too.": "Ya hay suficientes claves verificadas para gastar. Conecta su cartera de hardware para añadir también esta clave.",
   "Check again": "Comprobar de nuevo",
   "Verified": "Verificada",
   "Enter them below.": "Introdúcelas abajo.",
