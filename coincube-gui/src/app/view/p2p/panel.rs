@@ -51,6 +51,9 @@ const COORDINATOR_MISMATCH_MSG: &str =
     "Active Mostro coordinator doesn't match this wallet's network — select a matching \
      coordinator in P2P → Settings.";
 
+#[cfg(test)]
+mod coverage_tests;
+
 /// Per-field validation warnings for the order creation form.
 /// Which chat view is currently active (mutually exclusive).
 #[derive(Default, PartialEq)]
@@ -6595,7 +6598,7 @@ mod book_filter_tests {
     use super::*;
     use crate::app::view::shared::landing::capture;
 
-    fn order(id: &str, order_type: OrderType, currency: &str, method: &str) -> P2POrder {
+    pub(super) fn order(id: &str, order_type: OrderType, currency: &str, method: &str) -> P2POrder {
         P2POrder {
             id: id.into(),
             order_type,

@@ -20,6 +20,9 @@ const FETCH_INTERVAL_SECS: u64 = 60; // Fallback polling; primary updates via su
 const ORDER_LOOKBACK_SECS: u64 = 48 * 3600; // 48 hours, same as mobile
 const MOSTRO_INFO_EVENT_KIND: u16 = 38385;
 
+#[cfg(test)]
+mod coverage_tests;
+
 /// Check if the client has at least one connected relay.
 async fn has_connected_relay(client: &Client) -> bool {
     client.relays().await.values().any(|r| r.is_connected())
