@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// Supported external USDt networks (beyond native Liquid).
+/// Networks a SideShift deposit can come from (and a refund goes back to).
+/// Liquid is one of them: an external origin chain like the others, not a
+/// settle target. Spark receive shifts always settle as bitcoin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SideshiftNetwork {
     Liquid,
@@ -135,20 +137,6 @@ impl SideshiftNetwork {
 // API request/response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QuoteRequest {
-    pub deposit_coin: String,
-    pub deposit_network: String,
-    pub settle_coin: String,
-    pub settle_network: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deposit_amount: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub settle_amount: Option<String>,
-    pub affiliate_id: String,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShiftQuote {
@@ -169,14 +157,6 @@ pub struct ShiftQuote {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FixedShiftRequest {
-    pub quote_id: String,
-    pub settle_address: String,
-    pub affiliate_id: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct VariableShiftRequest {
     pub deposit_coin: String,
     pub deposit_network: String,
@@ -187,13 +167,12 @@ pub struct VariableShiftRequest {
     /// Where SideShift returns the deposit if the shift can't settle — the
     /// user's address **on the origin chain**, not on Bitcoin.
     ///
-    /// Optional to SideShift, mandatory in our flows. Without it, a shift that
-    /// fails, expires, or gets held for review has nowhere to send the money
-    /// back to, and the user's funds sit with a third party. It's collected up
-    /// front, before any deposit address is shown, precisely because it is
-    /// useless to ask for afterwards.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub refund_address: Option<String>,
+    /// Optional to SideShift, mandatory here (so not an `Option`). Without it,
+    /// a shift that fails, expires, or gets held for review has nowhere to send
+    /// the money back to, and the user's funds sit with a third party. It's
+    /// collected up front, before any deposit address is shown, precisely
+    /// because it is useless to ask for afterwards.
+    pub refund_address: String,
 }
 
 /// Response returned by both fixed and variable shift creation endpoints.
@@ -421,8 +400,9 @@ pub fn deposit_options() -> &'static [DepositOption] {
             label: "USDt on Solana (SPL)",
         },
         // Liquid USDt has no "-20" token standard — it's a native Liquid
-        // asset, so no parenthetical. Natural for users winding down a
-        // grandfathered Liquid wallet who want their USDt as Spark BTC.
+        // asset, so no parenthetical. A deposit network only: SideShift takes
+        // the USDt on Liquid and pays bitcoin into Spark, so it needs no
+        // Liquid wallet here and suits anyone holding Liquid USDt elsewhere.
         DepositOption {
             coin: "usdt",
             network: SideshiftNetwork::Liquid,
@@ -636,7 +616,7 @@ mod tests {
     #[test]
     fn liquid_usdt_is_offered_and_refund_validates_on_liquid() {
         // The Spark bridge accepts Liquid USDt in (settled as Spark BTC) — a
-        // natural exit for users winding down a grandfathered Liquid wallet.
+        // natural exit for anyone holding Liquid USDt in another wallet.
         let liquid_usdt = deposit_options()
             .iter()
             .find(|o| o.coin == "usdt" && o.network == SideshiftNetwork::Liquid)
