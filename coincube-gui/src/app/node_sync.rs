@@ -221,8 +221,11 @@ mod tests {
         cfg.pending_bitcoind = Some(pending.clone());
         cfg.auto_switch_to_pending = Some(true);
         app.daemon = Some(Arc::new(EmbeddedDaemon::unstarted_for_test(cfg, None)));
+        // Model a completed Connect scan, so positive controls may promote.
+        app.cache.daemon_cache.blockheight = 900_000;
         app.cache.last_poll_at_startup = Some(100);
         app.cache.daemon_cache.last_poll_timestamp = Some(200);
+        assert_eq!(app.running_vault_scan(), None);
         test(&mut app, pending);
     }
 
