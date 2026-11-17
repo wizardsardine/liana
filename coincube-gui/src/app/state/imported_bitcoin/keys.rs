@@ -51,6 +51,19 @@ impl KeySource {
     }
 }
 
+/// The source menu shows each choice in the current language.
+impl std::fmt::Display for KeySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(localized_copy(self.label()))
+    }
+}
+
+/// The source menu's choices: a single-signer wallet has no one else to
+/// sign, and adding to an attached wallet only stores words.
+const MULTISIG_SOURCES: [KeySource; 3] =
+    [KeySource::Hardware, KeySource::Words, KeySource::Elsewhere];
+const SINGLE_SOURCES: [KeySource; 2] = [KeySource::Hardware, KeySource::Words];
+
 /// A connected hardware wallet, as the Keys step lists it so the user can
 /// tell which device holds which key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +73,8 @@ pub(super) struct ListedDevice {
     pub(super) fingerprint: Option<Fingerprint>,
     /// Why the device cannot be checked yet, already localized.
     pub(super) problem: Option<String>,
+    /// The code a BitBox02 shows while it waits to be paired.
+    pub(super) pairing_code: Option<String>,
 }
 
 impl ListedDevice {
@@ -101,6 +116,10 @@ pub(super) struct KeySlot {
     pub(super) status: KeyStatus,
     /// The check in flight, if any; 0 when none.
     pub(super) check: u64,
+    /// The connected device this key was last checked on without a click.
+    /// It is checked on its own once per connection: a failed check waits
+    /// for Check again, or for the device to be reconnected.
+    pub(super) auto_checked: Option<String>,
 }
 
 impl KeySlot {
@@ -128,6 +147,7 @@ impl KeysState {
                 passphrase: Zeroizing::new(String::new()),
                 status: KeyStatus::Missing,
                 check: 0,
+                auto_checked: None,
             })
             .collect::<Vec<_>>();
         let threshold = signing_threshold(descriptor).clamp(1, slots.len().max(1));
@@ -183,6 +203,11 @@ impl KeysState {
             // A check in flight can no longer land, so nothing may stay
             // Checking: that would hold every control disabled.
             if slot.source == KeySource::Words || slot.status == KeyStatus::Checking {
+                // A cancelled device check never ran to the end: the
+                // device is checked again when the step is next shown.
+                if slot.status == KeyStatus::Checking {
+                    slot.auto_checked = None;
+                }
                 slot.status = KeyStatus::Missing;
             }
         }
@@ -269,118 +294,225 @@ fn message(message: ImportMessage) -> view::Message {
     view::Message::ImportedBitcoin(message)
 }
 
-/// The connected hardware wallets with their fingerprints, each matched to
-/// the key it holds.
-fn devices_list<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<'a, view::Message> {
-    let mut list = Column::new()
-        .spacing(6)
-        .push(p1_bold(localized_copy("Connected hardware wallets")));
-    if devices.is_empty() {
-        list = list.push(
-            p2_regular(localized_copy(
-                "None yet. Connect and unlock a device; it appears here with its fingerprint.",
-            ))
-            .style(theme::text::secondary),
-        );
-    }
-    for device in devices {
-        let name = &device.name;
-        let line = match (&device.problem, device.fingerprint) {
-            (Some(problem), _) => {
-                p2_regular(format!("{name} · {problem}")).style(theme::text::warning)
-            }
-            (None, Some(fingerprint)) => match keys
-                .slots
-                .iter()
-                .position(|slot| slot.account.fingerprint == fingerprint)
-            {
-                Some(index) if keys.slots[index].provided() => {
-                    p2_regular(coincube_ui::localized_format!(
-                        "{name} · fingerprint {fingerprint} · Key {} of {} · verified",
-                        "{name} · huella {fingerprint} · clave {} de {} · verificada",
-                        index + 1,
-                        keys.slots.len()
-                    ))
-                    .style(theme::text::success)
-                }
-                Some(index) => p2_regular(coincube_ui::localized_format!(
-                    "{name} · fingerprint {fingerprint} · Key {} of {} · ready to check",
-                    "{name} · huella {fingerprint} · clave {} de {} · lista para comprobar",
-                    index + 1,
-                    keys.slots.len()
-                ))
-                .style(theme::text::success),
-                None => p2_regular(coincube_ui::localized_format!(
-                    "{name} · fingerprint {fingerprint} · not a signer of this wallet",
-                    "{name} · huella {fingerprint} · no firma en esta cartera"
-                ))
-                .style(theme::text::secondary),
-            },
-            (None, None) => p2_regular(name.clone()).style(theme::text::secondary),
-        };
-        list = list.push(line);
-    }
-    coincube_ui::widget::Container::new(list)
-        .padding(16)
-        .width(Length::Fill)
-        .style(theme::card::simple)
+type TextStyle = fn(&theme::Theme) -> iced::widget::text::Style;
+
+fn fingerprint_text<'a>(fingerprint: Fingerprint, style: TextStyle) -> Element<'a, view::Message> {
+    iced::widget::text(fingerprint.to_string())
+        .font(coincube_ui::font::MONO_REGULAR)
+        .size(13)
+        .style(style)
         .into()
 }
 
-/// What a hardware key still waits for, in step with the connected list: a
-/// device that cannot be read yet may be the one, so it is named.
-fn hardware_waiting<'a>(slot: &KeySlot, devices: &[ListedDevice]) -> Element<'a, view::Message> {
-    let fingerprint = slot.account.fingerprint;
-    let unread: Vec<String> = devices
+/// The readable connected device that holds signer `slot`'s key, if any.
+fn matching_device<'d>(slot: &KeySlot, devices: &'d [ListedDevice]) -> Option<&'d ListedDevice> {
+    devices
         .iter()
-        .filter_map(|device| {
-            device
-                .problem
-                .as_ref()
-                .filter(|_| device.fingerprint.is_none())
-                .map(|problem| format!("{} ({problem})", device.name))
-        })
-        .collect();
-    let others = devices
-        .iter()
-        .filter(|device| device.fingerprint.is_some_and(|other| other != fingerprint))
-        .count();
-    let (line, style): (String, fn(&theme::Theme) -> iced::widget::text::Style) = if !unread
-        .is_empty()
-    {
-        (
-            coincube_ui::localized_format!(
-                "No device with fingerprint {fingerprint} yet. It may be {}.",
-                "Aún no hay un dispositivo con la huella {fingerprint}. Puede ser {}.",
-                unread.join(localized_copy(" or "))
-            ),
-            theme::text::warning,
-        )
-    } else if others > 0 {
-        (
-                coincube_ui::localized_format!(
-                    "None of the connected devices has fingerprint {fingerprint}. Connect and unlock the one that does.",
-                    "Ninguno de los dispositivos conectados tiene la huella {fingerprint}. Conecta y desbloquea el que la tenga."
-                ),
-                theme::text::secondary,
-            )
-    } else {
-        (
-                coincube_ui::localized_format!(
-                    "Connect and unlock the device with fingerprint {fingerprint}. You can check it here once it is connected.",
-                    "Conecta y desbloquea el dispositivo con la huella {fingerprint}. Podrás comprobarlo aquí cuando esté conectado."
-                ),
-                theme::text::secondary,
-            )
-    };
-    caption(line).style(style).into()
+        .find(|device| device.readable() == Some(slot.account.fingerprint))
 }
 
-/// The Keys step's form and action row.
+/// A row's status: a first line (with the matched device, if any), a
+/// second line, and the action the key is waiting on.
+struct KeyLine<'a> {
+    device: Option<&'a ListedDevice>,
+    title: String,
+    verified: bool,
+    detail: String,
+    detail_style: TextStyle,
+    dimmed: bool,
+    action: Option<(&'static str, ImportMessage)>,
+}
+
+fn key_line<'d>(
+    keys: &KeysState,
+    index: usize,
+    slot: &KeySlot,
+    devices: &'d [ListedDevice],
+) -> KeyLine<'d> {
+    let device = matching_device(slot, devices);
+    let line = |title: String, detail: String| KeyLine {
+        device: None,
+        title,
+        verified: false,
+        detail,
+        detail_style: theme::text::secondary,
+        dimmed: false,
+        action: None,
+    };
+    match (slot.source, &slot.status) {
+        (KeySource::Elsewhere, _) => line(
+            localized_copy("Signs elsewhere").to_owned(),
+            localized_copy("Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.").to_owned(),
+        ),
+        (KeySource::Words, KeyStatus::Verified) => KeyLine {
+            verified: true,
+            ..line(
+                localized_copy("Recovery words").to_owned(),
+                localized_copy("Stored encrypted for this Cube once the wallet is saved.")
+                    .to_owned(),
+            )
+        },
+        (KeySource::Words, KeyStatus::Checking) => line(
+            localized_copy("Recovery words").to_owned(),
+            localized_copy("Checking…").to_owned(),
+        ),
+        (KeySource::Words, KeyStatus::Failed(reason)) => KeyLine {
+            detail_style: theme::text::error,
+            ..line(
+                localized_copy("Recovery words").to_owned(),
+                super::shown_notice(reason),
+            )
+        },
+        (KeySource::Words, KeyStatus::Missing) => line(
+            localized_copy("Recovery words").to_owned(),
+            localized_copy("Enter them below.").to_owned(),
+        ),
+        (KeySource::Hardware, KeyStatus::Verified) => KeyLine {
+            device,
+            verified: true,
+            ..line(
+                device.map_or_else(
+                    || localized_copy("Hardware wallet").to_owned(),
+                    |device| device.name.clone(),
+                ),
+                localized_copy("The seed stays on the device. It signs whenever this wallet spends.")
+                    .to_owned(),
+            )
+        },
+        (KeySource::Hardware, KeyStatus::Checking) => {
+            let name = device.map_or_else(
+                || localized_copy("Hardware wallet").to_owned(),
+                |device| device.name.clone(),
+            );
+            KeyLine {
+                device,
+                ..line(
+                    name.clone(),
+                    coincube_ui::localized_format!(
+                        "Checking this key on the {name}… Approve on the device if it asks.",
+                        "Comprobando esta clave en el {name}… Apruébalo en el dispositivo si lo pide."
+                    ),
+                )
+            }
+        }
+        (KeySource::Hardware, KeyStatus::Failed(reason)) => match device {
+            Some(device) => KeyLine {
+                device: Some(device),
+                detail_style: theme::text::error,
+                action: Some(("Check again", ImportMessage::CheckDevice(index))),
+                ..line(device.name.clone(), super::shown_notice(reason))
+            },
+            None => KeyLine {
+                detail_style: theme::text::error,
+                ..line(
+                    localized_copy("Waiting for its device").to_owned(),
+                    super::shown_notice(reason),
+                )
+            },
+        },
+        // The check normally starts by itself once the device appears;
+        // the button covers the moment before it does.
+        (KeySource::Hardware, KeyStatus::Missing) => match device {
+            Some(device) => KeyLine {
+                device: Some(device),
+                action: Some(("Check device", ImportMessage::CheckDevice(index))),
+                ..line(
+                    device.name.clone(),
+                    localized_copy("Connected, and its fingerprint matches this key.").to_owned(),
+                )
+            },
+            None if keys.multisig() && keys.ready() => KeyLine {
+                dimmed: true,
+                ..line(
+                    localized_copy("Not needed to spend").to_owned(),
+                    coincube_ui::localized_format!(
+                        "{} keys are verified, so this one signs elsewhere. Connect its device to add it anyway.",
+                        "Hay {} claves verificadas, así que esta firma en otro lugar. Conecta su dispositivo para añadirla de todos modos.",
+                        keys.threshold
+                    ),
+                )
+            },
+            None => line(
+                localized_copy("Waiting for its device").to_owned(),
+                localized_copy("Connect and unlock the hardware wallet with this fingerprint.")
+                    .to_owned(),
+            ),
+        },
+    }
+}
+
+/// The devices that are connected but cannot be put on a key: locked, not
+/// ready, or not a signer. A matched device is shown in its key's row.
+fn unmatched_devices<'a>(keys: &KeysState, devices: &[ListedDevice]) -> Element<'a, view::Message> {
+    let mut list = Column::new().spacing(10).push(
+        p2_bold(localized_copy("Connected, not matched to a key")).style(theme::text::secondary),
+    );
+    for device in devices.iter().filter(|device| !in_a_row(keys, device)) {
+        let mut name = Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(p1_bold(device.name.clone()));
+        if let Some(fingerprint) = device.fingerprint {
+            name = name.push(fingerprint_text(fingerprint, theme::text::secondary));
+        }
+        // A signer's device whose key is set to words or signing elsewhere
+        // is not drawn in that row, so it says which key it holds.
+        let held = device.readable().and_then(|fingerprint| {
+            keys.slots
+                .iter()
+                .position(|slot| slot.account.fingerprint == fingerprint)
+        });
+        let mut detail = Row::new().spacing(8).align_y(Alignment::Center);
+        detail = match (&device.problem, held) {
+            (Some(problem), _) => {
+                detail.push(p2_regular(problem.clone()).style(theme::text::warning))
+            }
+            (None, Some(index)) => detail.push(
+                p2_regular(coincube_ui::localized_format!(
+                    "Holds Key {}, which is set to {}. Choose Hardware wallet for it to check it here.",
+                    "Guarda la clave {}, configurada como {}. Elige Cartera de hardware para comprobarla aquí.",
+                    index + 1,
+                    keys.slots[index].source.to_string().to_lowercase()
+                ))
+                .style(theme::text::secondary),
+            ),
+            (None, None) => detail.push(
+                p2_regular(localized_copy("Not a signer of this wallet."))
+                    .style(theme::text::secondary),
+            ),
+        };
+        if let Some(code) = &device.pairing_code {
+            detail = detail.push(
+                iced::widget::text(code.clone())
+                    .font(coincube_ui::font::MONO_REGULAR)
+                    .size(13),
+            );
+        }
+        list = list.push(Column::new().spacing(2).push(name).push(detail));
+    }
+    list.into()
+}
+
+/// A readable device is drawn in a key's row only when that key is on a
+/// hardware wallet.
+fn in_a_row(keys: &KeysState, device: &ListedDevice) -> bool {
+    device.readable().is_some_and(|fingerprint| {
+        keys.slots.iter().any(|slot| {
+            slot.account.fingerprint == fingerprint && slot.source == KeySource::Hardware
+        })
+    })
+}
+
+fn has_unmatched(keys: &KeysState, devices: &[ListedDevice]) -> bool {
+    devices.iter().any(|device| !in_a_row(keys, device))
+}
+
+/// The Keys step's form and action row: one row per signer, with the
+/// matching device shown in its key's row, then the devices that cannot be
+/// matched yet (design: Keys step, impeccable pass, 2026-11-16).
 pub(super) fn step<'a>(
     keys: &'a KeysState,
     adding: bool,
-    hardware_connected: impl Fn(&ImportedAccount) -> bool,
     devices: &[ListedDevice],
     error: Option<&'a String>,
 ) -> (Element<'a, view::Message>, Element<'a, view::Message>) {
@@ -390,12 +522,10 @@ pub(super) fn step<'a>(
             .to_string()
     } else if keys.multisig() {
         coincube_ui::localized_format!(
-            "The descriptor names {count} signers and needs {} to spend. Provide at least {} \
-             of them; the others sign elsewhere. Each key is checked against its \
-             fingerprint before it is accepted.",
-            "El descriptor indica {count} firmantes y se necesitan {} para gastar. Aporta al \
-             menos {} de sus claves; las demás firman en otro lugar. Cada clave se \
-             verifica con su huella antes de aceptarla.",
+            "This wallet has {count} signers and any {} can spend. Verify {} of them here; \
+             the others sign elsewhere. Each key is checked against its fingerprint.",
+            "Esta cartera tiene {count} firmantes y bastan {} para gastar. Verifica {} de \
+             ellas aquí; las demás firman en otro lugar. Cada clave se verifica con su huella.",
             keys.threshold,
             keys.threshold
         )
@@ -407,88 +537,120 @@ pub(super) fn step<'a>(
         .spacing(20)
         .push(h3(localized_copy("Add the wallet's keys")))
         .push(p1_regular(lead).style(theme::text::secondary));
-    let awaiting_device = !adding
-        && keys
-            .slots
-            .iter()
-            .any(|slot| slot.source == KeySource::Hardware && !slot.provided());
-    if awaiting_device {
-        content = content.push(devices_list(keys, devices));
-    }
     let busy = keys.checking();
+    let sources: &'static [KeySource] = if keys.multisig() {
+        &MULTISIG_SOURCES
+    } else {
+        &SINGLE_SOURCES
+    };
+    let mut rows = Column::new().push(iced::widget::rule::horizontal(1));
     for (index, slot) in keys.slots.iter().enumerate() {
-        let mut card = Column::new()
-            .spacing(12)
-            .push(p1_bold(coincube_ui::localized_format!(
-                "Key {} of {count} · fingerprint {} · path {}",
-                "Clave {} de {count} · huella {} · ruta {}",
-                index + 1,
+        let status = key_line(keys, index, slot, devices);
+        let matched = status.device.is_some() || status.verified;
+        let identity = Column::new()
+            .spacing(2)
+            .width(Length::Fixed(148.0))
+            .push(
+                p1_bold(coincube_ui::localized_format!(
+                    "Key {}",
+                    "Clave {}",
+                    index + 1
+                ))
+                .style(if status.dimmed {
+                    theme::text::secondary
+                } else {
+                    theme::text::default
+                }),
+            )
+            .push(fingerprint_text(
                 slot.account.fingerprint,
-                slot.account.origin
-            )));
-        card = card.push(match &slot.status {
-            KeyStatus::Verified if slot.source == KeySource::Elsewhere => {
-                p2_regular(localized_copy("Signs elsewhere")).style(theme::text::secondary)
-            }
-            KeyStatus::Verified => p2_regular(coincube_ui::localized_format!(
-                "Verified · matches {} · {}",
-                "Verificada · coincide con {} · {}",
-                slot.account.fingerprint,
-                localized_copy(slot.source.label()).to_lowercase()
+                if matched {
+                    theme::text::success
+                } else {
+                    theme::text::default
+                },
             ))
-            .style(theme::text::success),
-            KeyStatus::Checking => {
-                p2_regular(localized_copy("Checking…")).style(theme::text::secondary)
-            }
-            KeyStatus::Failed(reason) => {
-                p2_regular(super::shown_notice(reason)).style(theme::text::error)
-            }
-            KeyStatus::Missing => {
-                p2_regular(localized_copy("Not provided yet")).style(theme::text::secondary)
-            }
-        });
-        let mut sources = Row::new().spacing(8);
-        // Adding to an attached wallet only stores words; a device needs
-        // nothing stored.
-        let choices = if adding {
-            vec![KeySource::Words]
-        } else {
-            let mut choices = vec![KeySource::Hardware, KeySource::Words];
-            if keys.multisig() {
-                choices.push(KeySource::Elsewhere);
-            }
-            choices
-        };
-        for source in choices {
-            let pick = if slot.source == source {
-                button::primary(None, localized_copy(source.label()))
+            .push(
+                iced::widget::text(slot.account.origin.to_string())
+                    .font(coincube_ui::font::MONO_REGULAR)
+                    .size(12)
+                    .style(theme::text::secondary),
+            );
+        let mut title = Row::new().spacing(8).align_y(Alignment::Center).push(
+            p1_bold(status.title.clone()).style(if status.dimmed {
+                theme::text::secondary
             } else {
-                button::secondary(None, localized_copy(source.label()))
-            };
-            sources = sources.push(pick.width(Length::Shrink).on_press_maybe(
-                (!busy).then_some(message(ImportMessage::KeySourcePicked(index, source))),
-            ));
+                theme::text::default
+            }),
+        );
+        if let Some(device) = status.device {
+            if let Some(fingerprint) = device.fingerprint {
+                title = title.push(fingerprint_text(fingerprint, theme::text::success));
+            }
         }
-        card = card
-            .push(p2_regular(localized_copy("Where is this key?")).style(theme::text::secondary))
-            .push(sources);
-        card = match slot.source {
-            // Verified words leave the screen; changing them starts over.
-            KeySource::Words if slot.status == KeyStatus::Verified => card.push(
+        if status.verified {
+            title = title.push(p2_bold(localized_copy("Verified")).style(theme::text::success));
+        }
+        let mut row = Row::new()
+            .spacing(20)
+            .align_y(Alignment::Center)
+            .padding([12, 0])
+            .push(identity)
+            .push(
+                Column::new()
+                    .spacing(2)
+                    .width(Length::Fill)
+                    .push(title)
+                    .push(p2_regular(status.detail).style(status.detail_style)),
+            );
+        if let Some((label, action)) = status.action {
+            row = row.push(
+                button::primary(None, localized_copy(label))
+                    .width(Length::Shrink)
+                    .on_press_maybe((!busy).then_some(message(action))),
+            );
+        }
+        if slot.source == KeySource::Words && slot.status == KeyStatus::Verified {
+            row = row.push(
                 button::secondary(None, localized_copy("Enter different words"))
                     .width(Length::Shrink)
                     .on_press_maybe((!busy).then_some(message(ImportMessage::KeySourcePicked(
                         index,
                         KeySource::Words,
                     )))),
-            ),
-            KeySource::Words => card
-                .push(p1_bold(localized_copy("Recovery words")))
-                .push(
-                    text_input(
-                        localized_copy("12 or 24 words, separated by spaces"),
-                        slot.words.as_str(),
-                    )
+            );
+        }
+        // Adding to an attached wallet only stores words, so there is
+        // nothing to choose.
+        if !adding {
+            row = row.push(if busy {
+                Element::from(p2_regular(slot.source.to_string()).style(theme::text::secondary))
+            } else {
+                iced::widget::pick_list(sources, Some(slot.source), move |source| {
+                    message(ImportMessage::KeySourcePicked(index, source))
+                })
+                .style(theme::pick_list::primary)
+                .padding([6, 10])
+                .text_size(13)
+                .into()
+            });
+        }
+        let mut key = Column::new().push(row);
+        if slot.source == KeySource::Words && slot.status != KeyStatus::Verified {
+            key = key.push(
+                Column::new()
+                    .spacing(8)
+                    .padding(iced::Padding {
+                        top: 0.0,
+                        right: 0.0,
+                        bottom: 14.0,
+                        left: 168.0,
+                    })
+                    .push(
+                        text_input(
+                            localized_copy("12 or 24 words, separated by spaces"),
+                            slot.words.as_str(),
+                        )
                         .on_input(move |value| {
                             message(ImportMessage::KeyWordsEdited(
                                 index,
@@ -496,92 +658,109 @@ pub(super) fn step<'a>(
                             ))
                         })
                         .padding(10),
-                )
-                .push(
-                    caption(localized_copy("Words are checked here, then stored encrypted on this device for this Cube. They are not in the Recovery Kit yet, so keep your original backup."))
+                    )
+                    .push(
+                        Row::new()
+                            .spacing(12)
+                            .align_y(Alignment::Center)
+                            .push(
+                                text_input(
+                                    localized_copy("Passphrase (if the wallet used one)"),
+                                    slot.passphrase.as_str(),
+                                )
+                                .on_input(move |value| {
+                                    message(ImportMessage::KeyPassphraseEdited(
+                                        index,
+                                        super::SecretInput::new(value),
+                                    ))
+                                })
+                                .secure(true)
+                                .padding(10)
+                                .width(Length::Fixed(320.0)),
+                            )
+                            .push(iced::widget::Space::new().width(Length::Fill))
+                            .push(
+                                button::secondary(None, localized_copy("Verify key"))
+                                    .width(Length::Shrink)
+                                    .on_press_maybe(
+                                        (!busy
+                                            && slot.status != KeyStatus::Checking
+                                            && !slot.words.trim().is_empty())
+                                        .then_some(message(ImportMessage::VerifyWords(index))),
+                                    ),
+                            ),
+                    )
+                    .push(
+                        caption(localized_copy("Words are checked here, then stored encrypted on this device for this Cube. They are not in the Recovery Kit yet, so keep your original backup."))
+                        .style(theme::text::secondary),
+                    ),
+            );
+        }
+        rows = rows.push(key).push(iced::widget::rule::horizontal(1));
+    }
+    content = content.push(rows);
+    if !adding {
+        // Once the threshold is met no device is needed, so there is
+        // nothing to ask for.
+        let awaiting_device = !keys.ready()
+            && keys
+                .slots
+                .iter()
+                .any(|slot| slot.source == KeySource::Hardware && !slot.provided());
+        if devices.is_empty() && awaiting_device {
+            content = content.push(
+                coincube_ui::widget::Container::new(
+                    p2_regular(localized_copy(
+                        "No hardware wallet connected. Plug one in and unlock it; it appears beside the key it holds.",
+                    ))
                     .style(theme::text::secondary),
                 )
-                .push(p1_bold(localized_copy("Passphrase (if the wallet used one)")))
-                .push(
-                    text_input(localized_copy("Optional"), slot.passphrase.as_str())
-                        .on_input(move |value| {
-                            message(ImportMessage::KeyPassphraseEdited(
-                                index,
-                                super::SecretInput::new(value),
-                            ))
-                        })
-                        .secure(true)
-                        .padding(10)
-                        .width(Length::Fixed(320.0)),
-                )
-                .push(
-                    button::secondary(None, localized_copy("Verify key"))
-                        .width(Length::Shrink)
-                        .on_press_maybe(
-                            (!busy
-                                && slot.status != KeyStatus::Verified
-                                && !slot.words.trim().is_empty())
-                            .then_some(message(ImportMessage::VerifyWords(index))),
-                        ),
-                ),
-            KeySource::Hardware if slot.status == KeyStatus::Verified => card.push(
-                caption(localized_copy(
-                    "The seed stays on the device. It signs whenever this wallet spends.",
-                ))
-                .style(theme::text::secondary),
-            ),
-            // The check is offered only once the matching device shows up,
-            // and then says so plainly.
-            KeySource::Hardware if hardware_connected(&slot.account) => {
-                let fingerprint = slot.account.fingerprint;
-                let name = devices
-                    .iter()
-                    .find(|device| device.readable() == Some(fingerprint))
-                    .map_or_else(|| localized_copy("device").to_owned(), |device| device.name.clone());
-                card.push(
-                    caption(coincube_ui::localized_format!(
-                        "Found: {name} with fingerprint {fingerprint} is connected. Check it to confirm this key.",
-                        "Encontrado: {name} con la huella {fingerprint} está conectado. Compruébalo para confirmar esta clave."
-                    ))
-                    .style(theme::text::success),
-                )
-                .push(
-                    button::primary(None, localized_copy("Check device"))
-                        .width(Length::Shrink)
-                        .on_press_maybe(
-                            (!busy).then_some(message(ImportMessage::CheckDevice(index))),
-                        ),
-                )
-            }
-            KeySource::Hardware => card.push(hardware_waiting(slot, devices)),
-            KeySource::Elsewhere => card.push(
-                caption(localized_copy(
-                    "Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.",
-                ))
-                .style(theme::text::secondary),
-            ),
-        };
-        content = content.push(
-            coincube_ui::widget::Container::new(card)
-                .padding(16)
+                .padding(14)
                 .width(Length::Fill)
-                .style(theme::card::simple),
-        );
-    }
-    if !adding && keys.multisig() && keys.provided() < keys.threshold {
-        content = content.push(
-            p2_regular(coincube_ui::localized_format!(
-                "{} of {} keys needed to sign are provided.",
-                "Se aportaron {} de las {} claves necesarias para firmar.",
-                keys.provided(),
-                keys.threshold
-            ))
-            .style(theme::text::secondary),
-        );
+                .style(theme::card::border),
+            );
+        } else if has_unmatched(keys, devices) {
+            content = content.push(unmatched_devices(keys, devices));
+        }
     }
     if let Some(error) = error {
         content = content.push(p1_regular(super::shown_notice(error)).style(theme::text::error));
     }
+    // How far the keys are, beside the button they open.
+    let progress = (!adding && keys.multisig()).then(|| {
+        let provided = keys.provided().min(keys.threshold);
+        let mut line = coincube_ui::localized_format!(
+            "{provided} of {} needed keys verified",
+            "{provided} de {} claves necesarias verificadas",
+            keys.threshold
+        );
+        if keys.ready() {
+            let elsewhere: Vec<usize> = keys
+                .slots
+                .iter()
+                .enumerate()
+                .filter(|(_, slot)| !slot.provided())
+                .map(|(index, _)| index + 1)
+                .collect();
+            match elsewhere.as_slice() {
+                [] => {}
+                [only] => line.push_str(&coincube_ui::localized_format!(
+                    " · Key {only} signs elsewhere",
+                    " · la clave {only} firma en otro lugar"
+                )),
+                many => line.push_str(&coincube_ui::localized_format!(
+                    " · {} keys sign elsewhere",
+                    " · {} claves firman en otro lugar",
+                    many.len()
+                )),
+            }
+        }
+        p2_regular(line).style(if keys.ready() {
+            theme::text::success
+        } else {
+            theme::text::secondary
+        })
+    });
     let actions = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -591,6 +770,7 @@ pub(super) fn step<'a>(
                 .on_press_maybe((!busy).then_some(message(ImportMessage::Edit)))
         }))
         .push(iced::widget::Space::new().width(Length::Fill))
+        .push(progress)
         .push(
             button::primary(
                 None,
