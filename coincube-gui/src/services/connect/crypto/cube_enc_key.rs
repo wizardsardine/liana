@@ -135,7 +135,7 @@ impl CubeEncryptionKey {
     ///
     /// `signer` must be the Cube's **master seed** signer (the one behind
     /// `CubeSettings::master_signer_fingerprint`), not a Vault hot signer or
-    /// the Liquid/Spark signer — a different seed derives a different key and
+    /// another wallet's signer — a different seed derives a different key and
     /// every envelope sealed to the registered pubkey would fail to open.
     pub fn derive(signer: &MasterSigner, network: Network) -> Self {
         let secp = Secp256k1::new();

@@ -11,7 +11,7 @@ use coincube_ui::widget::Element;
 
 use crate::{
     app::{
-        self, breez_liquid,
+        self,
         cache::Cache,
         settings::{update_settings_file, VaultIdentity, WalletSettings},
         wallet::Wallet,
@@ -132,8 +132,8 @@ impl State {
 /// and the launch-time reconcile must agree on this set.
 ///
 /// Per network directory:
-/// - `data/` — wallet databases (BDK, plus breez/spark per-Cube working data
-///   under `data/<wallet_id>/`),
+/// - `data/` — wallet databases (BDK, plus Spark per-Cube working data under
+///   `data/<wallet_id>/`, and any legacy Liquid `breez/` working data),
 /// - `mnemonics/` — the master seed phrases (the crown jewels),
 /// - `imported-local-keys/` — encrypted independent imported roots, public
 ///   account inventory and operation tombstones,
@@ -456,16 +456,16 @@ pub enum Message {
     /// launcher, or a duress activation.
     ///
     /// Its own message rather than an `Err` through
-    /// [`Message::BreezClientLoadedAfterPin`]: that handler treats every Breez
-    /// error as "carry on with a disconnected client", which would drop the
-    /// user *inside* a Cube that is supposed to be locked, with no Liquid, no
-    /// Spark and no P2P, and the explanation only in the log.
+    /// [`Message::WalletsLoadedAfterUnlock`]: that handler treats every signer
+    /// error as "carry on with the session's signer", which would drop the
+    /// user *inside* a Cube that is supposed to be locked, with no Spark and
+    /// no P2P, and the explanation only in the log.
     ///
     /// Carries nothing — the tab is still in [`State::PasskeyUnlock`] at this
     /// point (nothing mutates it between the assertion and the load), so the
     /// screen just returns to its prompt.
     PasskeyRelocked,
-    BreezClientLoadedAfterPin {
+    WalletsLoadedAfterUnlock {
         connect_client: Option<crate::services::coincube::CoincubeClient>,
         /// Set when the post-unlock seed-file migration aborted. The Cube still
         /// opens and its files are untouched, but the upgrade did not happen and
@@ -480,8 +480,7 @@ pub enum Message {
         enc_key_error: Option<String>,
         /// The Cube master signer the unlock resolved (`Ok(None)` for a
         /// seed-less Cube). On `Err` the handler falls back to the signer the
-        /// unlock parked in the session ([`app::cube_signer::CubeSigner::after_failed_unlock_load`]);
-        /// the disconnected Liquid client is built around whichever it gets.
+        /// unlock parked in the session ([`app::cube_signer::CubeSigner::after_failed_unlock_load`]).
         cube_signer:
             Result<Option<app::cube_signer::CubeSigner>, app::cube_signer::CubeSignerError>,
         /// Spark backend loaded in the same task as the Cube signer.
@@ -517,7 +516,7 @@ pub enum Message {
     /// broadcast a session re-check to every open Cube tab.
     ConnectSignedIn,
     /// Re-lock the open Cube: drop the `App` (and with it the decrypted signer,
-    /// the Liquid client and the Spark bridge subprocess), zeroize the session
+    /// and the Spark bridge subprocess), zeroize the session
     /// PIN, and return to the PIN screen for the same Cube.
     ///
     /// Fired by the idle timer and by the explicit "Lock" control. Before this
@@ -576,7 +575,7 @@ pub(crate) fn discard_closed_loader_result(message: Message) {
                 node.stop();
             }
         }
-        Message::Load(loader::Message::BreezLoaded {
+        Message::Load(loader::Message::WalletsLoaded {
             daemon, bitcoind, ..
         }) => {
             stop_embedded(&daemon);
@@ -587,7 +586,7 @@ pub(crate) fn discard_closed_loader_result(message: Message) {
         Message::Load(loader::Message::Loaded(Ok((daemon, _)))) => {
             stop_embedded(&daemon);
         }
-        Message::BreezClientLoadedAfterPin {
+        Message::WalletsLoadedAfterUnlock {
             internal_bitcoind: Some(node),
             ..
         } => node.stop(),
@@ -647,9 +646,6 @@ mod admitted_app_startup_tests {
                 let cache = fixture.cache().clone();
                 let daemon = crate::app::shell_tests::fixture_daemon(&fixture);
                 drop(fixture);
-                let breez = Arc::new(app::breez_liquid::BreezClient::disconnected(
-                    settings.network.bitcoin_network(),
-                ));
                 let make_loader = || {
                     let (loader, startup) = Loader::new(
                         root.clone(),
@@ -659,7 +655,6 @@ mod admitted_app_startup_tests {
                         None,
                         None,
                         settings.clone(),
-                        Some(breez.clone()),
                         None,
                         None,
                     );
@@ -672,8 +667,7 @@ mod admitted_app_startup_tests {
                         settings.network,
                         settings.id.clone(),
                     ));
-                    tab.update(Message::Load(loader::Message::BreezLoaded {
-                        breez: breez.clone(),
+                    tab.update(Message::Load(loader::Message::WalletsLoaded {
                         cube_signer: None,
                         spark_backend: None,
                         cache: cache.clone(),
@@ -1199,7 +1193,7 @@ impl Tab {
     ///
     /// Open a Bitcoin Blake2b Cube that has no Vault yet. It lands where a
     /// Bitcoin Cube without a Vault lands, with Create Vault next, and never
-    /// starts Liquid or Spark. The caller has already opened the session; a
+    /// starts Spark. The caller has already opened the session; a
     /// refusal closes it and returns the reason for the unlock screen.
     fn open_fork_without_vault(
         &mut self,
@@ -1734,7 +1728,7 @@ impl Tab {
                 self.sync_opening(Instant::now());
                 return Task::none();
             }
-            message @ Message::BreezClientLoadedAfterPin { .. } if self.opening_cancelled => {
+            message @ Message::WalletsLoadedAfterUnlock { .. } if self.opening_cancelled => {
                 // A load the user cancelled finished anyway: drop it and
                 // stop anything it started, as for a closed loader.
                 discard_closed_loader_result(message);
@@ -1996,7 +1990,6 @@ impl Tab {
             user_flow,
             true,
             Some(app.cube_settings().clone()),
-            app.breez_client(),
             app.cube_signer(),
             app.spark_backend(),
             GlobalSettings::load_developer_mode(&GlobalSettings::path(app.datadir())),
@@ -2126,7 +2119,7 @@ impl Tab {
             (State::App(app), Message::LockCube) => {
                 // Order matters. Zeroize the session PIN first, then drop the
                 // `App`: dropping it takes the decrypted `MasterSigner` (which
-                // now scrubs itself), the Liquid client, and the Spark backend —
+                // now scrubs itself) and the Spark backend —
                 // whose `Drop` sends `Method::Shutdown` to the bridge
                 // subprocess, so the child process holding the plaintext
                 // mnemonic exits too.
@@ -2207,7 +2200,6 @@ impl Tab {
                         network,
                         init,
                         false,
-                        None,
                         None,
                         None,
                         None,
@@ -2487,10 +2479,9 @@ impl Tab {
                 }
                 if let installer::Message::Exit(settings_opt, internal_bitcoind) = msg {
                     // Associate wallet with cube, and — for the Recovery
-                    // Kit restore flow specifically — build the
-                    // BreezClient in the same async task so the loader
-                    // doesn't hit the "missing pre-loaded BreezClient"
-                    // error path and hang on "Starting daemon…".
+                    // Kit restore flow specifically — resolve the Cube
+                    // signer and the Spark backend in the same async task,
+                    // so the restored Cube opens with them.
                     let chain = i.context.bitcoin_config.chain;
                     let network_dir = i.datadir.network_directory(chain);
                     let datadir = i.datadir.clone();
@@ -2660,18 +2651,12 @@ impl Tab {
                             }
 
                             // Only the restore path needs to resolve the
-                            // Cube signer (and the Liquid client built
-                            // around it) up-front — the fresh-install flow
-                            // does it at PIN entry. The Loader's Synced/App
-                            // arms treat a `None` BreezClient as an
-                            // architectural bug and error out, so
-                            // pre-loaded-must-exist is the contract. The
-                            // client is always disconnected; what matters is
-                            // the restored signer.
+                            // Cube signer up-front — the fresh-install flow
+                            // does it at PIN entry.
                             if chain.is_blake2b() {
-                                return Ok((cube, None, None, None));
+                                return Ok((cube, None, None));
                             }
-                            let (breez_client, cube_signer) = if let Some(seed) = &restore_seed {
+                            let cube_signer = if let Some(seed) = &restore_seed {
                                 match app::cube_signer::CubeSigner::resolve(
                                     datadir.path(),
                                     network,
@@ -2681,13 +2666,7 @@ impl Tab {
                                     ),
                                     &cube.id,
                                 ) {
-                                    Ok(Some(signer)) => (
-                                        Some(breez_liquid::client_for_cube_signer(
-                                            network,
-                                            Some(&signer),
-                                        )),
-                                        Some(signer),
-                                    ),
+                                    Ok(Some(signer)) => Some(signer),
                                     Ok(None) => {
                                         // A restore just wrote this seed,
                                         // so a missing signer means the
@@ -2712,13 +2691,13 @@ impl Tab {
                                         // actionable rather than silently
                                         // landing on a broken Loader.
                                         return Err(format!(
-                                            "Failed to load BreezClient after restore: {}",
+                                            "Failed to load the restored Cube's signer: {}",
                                             e
                                         ));
                                     }
                                 }
                             } else {
-                                (None, None)
+                                None
                             };
 
                             // Mirror the PIN-entry path (tab.rs Spark
@@ -2759,7 +2738,7 @@ impl Tab {
                                 None
                             };
 
-                            Ok((cube, breez_client, cube_signer, spark_backend))
+                            Ok((cube, cube_signer, spark_backend))
                         },
                         move |result| {
                             let msg = installer::Message::CubeSaved(
@@ -2788,18 +2767,17 @@ impl Tab {
                 ) = msg
                 {
                     // Handle cube save failure
-                    let (cube, restored_breez_client, restored_cube_signer, restored_spark_backend) =
-                        match result {
-                            Ok(saved) => saved,
-                            Err(err) => {
-                                error!("Aborting loader transition due to cube save failure");
-                                #[cfg(feature = "mcp-proposals")]
+                    let (cube, restored_cube_signer, restored_spark_backend) = match result {
+                        Ok(saved) => saved,
+                        Err(err) => {
+                            error!("Aborting loader transition due to cube save failure");
+                            #[cfg(feature = "mcp-proposals")]
                             i.finish_proposal_failure("The wallet/Cube setup could not be saved completely. Partial local data is retained. Return to the launcher and inspect the outcome before retrying.");
-                                return i
-                                    .update(installer::Message::CubeSaveFailed(err))
-                                    .map(Message::Install);
-                            }
-                        };
+                            return i
+                                .update(installer::Message::CubeSaveFailed(err))
+                                .map(Message::Install);
+                        }
+                    };
 
                     // An imported Recovery Kit attaches its wallet inside the
                     // durable import journal after the installer handed us a
@@ -2943,7 +2921,6 @@ impl Tab {
                                 i.context.backup.clone(),
                                 *settings,
                                 cube.clone(),
-                                restored_breez_client.or_else(|| i.breez_client.clone()),
                                 restored_cube_signer.or_else(|| i.cube_signer.clone()),
                                 restored_spark_backend.or_else(|| i.spark_backend.clone()),
                                 i.context.coincube_client.clone(),
@@ -2957,11 +2934,9 @@ impl Tab {
                                 i.context.backup.clone(),
                                 Some(*settings),
                                 cube.clone(),
-                                // The restored BreezClient (built against
+                                // The restored Cube signer (resolved against
                                 // the user's new PIN) wins over the
                                 // installer-launched one.
-                                restored_breez_client.or_else(|| i.breez_client.clone()),
-                                // The restored Cube signer likewise.
                                 restored_cube_signer.or_else(|| i.cube_signer.clone()),
                                 // Spark backend built against the user's
                                 // new PIN during the restore async block.
@@ -2996,14 +2971,10 @@ impl Tab {
                         )
                         .unwrap_or_else(|_| app::Config::new(false));
 
-                        let breez = restored_breez_client
-                            .or_else(|| i.breez_client.clone())
-                            .expect("BreezClient must exist for Seed-Only cube");
                         let cube_signer = restored_cube_signer.or_else(|| i.cube_signer.clone());
                         let spark = restored_spark_backend.or_else(|| i.spark_backend.clone());
 
                         let (app, command) = match app::App::new_without_wallet(
-                            breez,
                             cube_signer,
                             spark,
                             cfg,
@@ -3054,8 +3025,8 @@ impl Tab {
                             }
                         }
                     }
-                    // A Bitcoin Blake2b Cube has no Breez client: go back to it
-                    // from its session, which still holds its master signer.
+                    // A Bitcoin Blake2b Cube is given no Cube signer: go back to
+                    // it from its session, which still holds its master signer.
                     if let Some(cube) = i
                         .cube_settings
                         .clone()
@@ -3100,53 +3071,41 @@ impl Tab {
                         self.state = State::Home(home);
                         return command.map(Message::Launch);
                     }
-                    // Go back to app without vault using stored cube settings and breez_client
+                    // Go back to the app without a Vault, using the stored
+                    // Cube settings and the Cube signer and Spark backend the
+                    // installer was launched with (no PIN re-entry needed).
                     if let Some(cube) = &i.cube_settings {
-                        if let Some(breez) = &i.breez_client {
-                            // Use the pre-loaded BreezClient (no PIN re-entry needed)
-                            let cfg = app::Config::from_file(
-                                &i.datadir
-                                    .network_directory(network)
-                                    .path()
-                                    .join(app::config::DEFAULT_FILE_NAME),
-                            )
-                            .expect("A gui configuration file must be present");
+                        let cfg = app::Config::from_file(
+                            &i.datadir
+                                .network_directory(network)
+                                .path()
+                                .join(app::config::DEFAULT_FILE_NAME),
+                        )
+                        .expect("A gui configuration file must be present");
 
-                            let (app, command) = match app::App::new_without_wallet(
-                                breez.clone(),
-                                i.cube_signer.clone(),
-                                i.spark_backend.clone(),
-                                cfg,
-                                i.datadir.clone(),
-                                network,
-                                cube.clone(),
-                            ) {
-                                Ok(app) => app,
-                                Err(error) => {
-                                    let error = match error {
-                                        app::error::Error::Daemon(error) => {
-                                            loader::Error::Daemon(error)
-                                        }
-                                        error => loader::Error::Unexpected(
-                                            crate::user_error::report(&error),
-                                        ),
-                                    };
-                                    return Task::done(Message::Load(loader::Message::App(Err(
-                                        error,
-                                    ))));
-                                }
-                            };
-                            self.state = State::App(app);
-                            command.map(Message::Run)
-                        } else {
-                            error!(
-                                "BackToApp called but no BreezClient stored - should not happen"
-                            );
-                            // Fallback: go to home
-                            let (home, command) = Home::new(i.destination_path(), Some(network));
-                            self.state = State::Home(home);
-                            command.map(Message::Launch)
-                        }
+                        let (app, command) = match app::App::new_without_wallet(
+                            i.cube_signer.clone(),
+                            i.spark_backend.clone(),
+                            cfg,
+                            i.datadir.clone(),
+                            network,
+                            cube.clone(),
+                        ) {
+                            Ok(app) => app,
+                            Err(error) => {
+                                let error = match error {
+                                    app::error::Error::Daemon(error) => {
+                                        loader::Error::Daemon(error)
+                                    }
+                                    error => {
+                                        loader::Error::Unexpected(crate::user_error::report(&error))
+                                    }
+                                };
+                                return Task::done(Message::Load(loader::Message::App(Err(error))));
+                            }
+                        };
+                        self.state = State::App(app);
+                        command.map(Message::Run)
                     } else {
                         // No cube settings stored, go to home, on the Import
                         // or restore path a restore's path list left for.
@@ -3194,7 +3153,6 @@ impl Tab {
                         UserFlow::CreateWallet,
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
-                        loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
                         loader.cube_signer.clone(), // and the Cube signer, for the Vault builder
                         None, // spark_backend not available from loader path
                         GlobalSettings::load_developer_mode(&GlobalSettings::path(
@@ -3288,65 +3246,36 @@ impl Tab {
                             },
                         )
                     } else {
-                        // Check if BreezClient is already loaded
-                        if let Some(breez) = loader.breez_client.clone() {
-                            // Use pre-loaded BreezClient (came from PIN entry path)
-                            return Task::done(Message::Load(loader::Message::BreezLoaded {
-                                breez,
-                                cube_signer: loader.cube_signer.clone(),
-                                spark_backend: loader.spark_backend.clone(),
-                                cache,
-                                wallet,
-                                config: loader.gui_config.clone(),
-                                daemon,
-                                datadir: loader.datadir_path.clone(),
-                                bitcoind,
-                                cube_settings,
-                            }));
-                        }
-
-                        // ERROR: BreezClient should have been pre-loaded after PIN entry
-                        // With mandatory PINs, this path should never execute
-                        error!("Loader Synced missing pre-loaded BreezClient - architectural bug");
-                        Task::done(Message::Load(loader::Message::App(
-                            Err(loader::Error::Unexpected(
-                                "BreezClient missing - should have been pre-loaded after PIN entry. \
-                                 Liquid wallet is encrypted and cannot be loaded without PIN.".to_string()
-                            )),
-                        )))
-                    }
-                }
-                loader::Message::App(Ok((cache, wallet, config, daemon, datadir, bitcoind))) => {
-                    // Check if BreezClient is already loaded
-                    if let Some(breez) = loader.breez_client.clone() {
-                        // Use pre-loaded BreezClient (came from PIN entry path)
-                        return Task::done(Message::Load(loader::Message::BreezLoaded {
-                            breez,
+                        // The Cube signer and Spark backend were resolved at
+                        // unlock (either may be absent: a seed-less Cube, or a
+                        // Spark bridge that failed to start).
+                        Task::done(Message::Load(loader::Message::WalletsLoaded {
                             cube_signer: loader.cube_signer.clone(),
                             spark_backend: loader.spark_backend.clone(),
                             cache,
                             wallet,
-                            config,
+                            config: loader.gui_config.clone(),
                             daemon,
-                            datadir,
+                            datadir: loader.datadir_path.clone(),
                             bitcoind,
-                            cube_settings: loader.cube_settings.clone(),
-                        }));
+                            cube_settings,
+                        }))
                     }
-
-                    // ERROR: BreezClient should have been pre-loaded after PIN entry
-                    // With mandatory PINs, this path should never execute
-                    error!("Loader App missing pre-loaded BreezClient - architectural bug");
-                    Task::done(Message::Load(loader::Message::App(Err(
-                        loader::Error::Unexpected(
-                            "BreezClient missing - should have been pre-loaded after PIN entry. \
-                             Liquid wallet is encrypted and cannot be loaded without PIN."
-                                .to_string(),
-                        ),
-                    ))))
                 }
-                loader::Message::BreezLoaded {
-                    breez,
+                loader::Message::App(Ok((cache, wallet, config, daemon, datadir, bitcoind))) => {
+                    Task::done(Message::Load(loader::Message::WalletsLoaded {
+                        cube_signer: loader.cube_signer.clone(),
+                        spark_backend: loader.spark_backend.clone(),
+                        cache,
+                        wallet,
+                        config,
+                        daemon,
+                        datadir,
+                        bitcoind,
+                        cube_settings: loader.cube_settings.clone(),
+                    }))
+                }
+                loader::Message::WalletsLoaded {
                     cube_signer,
                     spark_backend,
                     cache,
@@ -3384,7 +3313,6 @@ impl Tab {
                     let admitted_app = App::new(
                         cache,
                         wallet,
-                        breez,
                         cube_signer,
                         spark_backend,
                         config,
@@ -3447,7 +3375,6 @@ impl Tab {
                             UserFlow::CreateWallet,
                             true,
                             Some(app.cube_settings().clone()),
-                            app.breez_client(),
                             app.cube_signer(),
                             app.spark_backend(),
                             false,
@@ -3561,8 +3488,8 @@ impl Tab {
                         Task::done(Message::LockCubeToLauncher)
                     }
                     app::Message::View(app::view::Message::DeleteUnfinishedCube) => {
-                        // Deleting the Cube would leave its Spark or Liquid
-                        // funds without it. A balance still loading does not
+                        // Deleting the Cube would leave its Spark funds
+                        // without it. A balance still loading does not
                         // stop it; the Launcher still asks for the PIN.
                         if app.holds_loaded_wallet_funds() {
                             Task::done(Message::Run(app::Message::View(
@@ -3672,7 +3599,8 @@ impl Tab {
             }
             (State::PinEntry(pin_entry), Message::PinEntry(msg)) => match msg {
                 crate::pin_entry::Message::PinVerified => {
-                    // After PIN verification, load BreezClient before routing to App/Loader/Login
+                    // After PIN verification, resolve the Cube signer and load
+                    // Spark before routing to App/Loader/Login
                     match &pin_entry.on_success {
                         crate::pin_entry::PinEntrySuccess::LoadApp {
                             datadir,
@@ -3787,7 +3715,7 @@ impl Tab {
                             let fingerprint = signer.fingerprint(&secp);
                             app::session::store_unlocked_signer(&cube.id, fingerprint, signer);
 
-                            // ALWAYS load BreezClient (Liquid wallet) with PIN first
+                            // Resolve the Cube's wallets with the PIN first
                             let config_clone = config.clone();
                             let datadir_clone = datadir.clone();
                             let network_val = *network;
@@ -3898,7 +3826,7 @@ impl Tab {
 
                                     // Backfill `master_signer_fingerprint` for
                                     // Cubes minted before the field existed —
-                                    // without it, the Liquid + Spark loaders
+                                    // without it, the Cube signer + Spark loaders
                                     // below silently skip and the Connect
                                     // Lightning Address claim flow / Spark
                                     // panels stay disabled. Only the cube's
@@ -3948,9 +3876,9 @@ impl Tab {
                                         }
                                     }
 
-                                    // Both Breez SDKs (Liquid + Spark) load
-                                    // from the same master seed fingerprint.
-                                    let breez_signer_fingerprint = cube.master_signer_fingerprint;
+                                    // The Cube signer and Spark load from the
+                                    // same master seed fingerprint.
+                                    let master_signer_fingerprint = cube.master_signer_fingerprint;
 
                                     // Connect blinding (PLAN-connect-blinding
                                     // PR D2): the Cube's encryption *public*
@@ -3962,7 +3890,7 @@ impl Tab {
                                     // private half is never stored and is
                                     // re-derived on demand at decrypt time.
                                     if cube.connect_encryption_pubkey.is_none() {
-                                        if let Some(fp) = breez_signer_fingerprint {
+                                        if let Some(fp) = master_signer_fingerprint {
                                             use app::settings::ConnectEncryptionKey as CEK;
                                             match app::settings::derive_connect_encryption_pubkey(
                                                 datadir_clone.path(),
@@ -4047,7 +3975,7 @@ impl Tab {
                                     }
 
                                     let signer_result =
-                                        if let Some(fingerprint) = breez_signer_fingerprint {
+                                        if let Some(fingerprint) = master_signer_fingerprint {
                                             app::cube_signer::CubeSigner::resolve(
                                                 datadir_clone.path(),
                                                 network_val,
@@ -4063,16 +3991,16 @@ impl Tab {
                                             ))
                                         };
 
-                                    // Load Spark backend alongside Liquid. Failures
-                                    // here are non-fatal — we log + return None so
-                                    // the gui can continue with Liquid-only and the
+                                    // Load the Spark backend alongside the signer.
+                                    // Failures here are non-fatal — we log + return
+                                    // None so the gui can continue without it and the
                                     // Spark panels surface a placeholder. The load
                                     // path spawns the bridge subprocess
                                     // (coincube-spark-bridge), performs the init
                                     // handshake with the cube's mnemonic, and
                                     // returns an Arc<SparkClient> on success.
                                     let spark_backend =
-                                        if let Some(fingerprint) = breez_signer_fingerprint {
+                                        if let Some(fingerprint) = master_signer_fingerprint {
                                             match app::breez_spark::load_spark_client(
                                                 datadir_clone.path(),
                                                 network_val,
@@ -4129,7 +4057,7 @@ impl Tab {
                                     migration_error,
                                     enc_key_error,
                                 )| {
-                                    Message::BreezClientLoadedAfterPin {
+                                    Message::WalletsLoadedAfterUnlock {
                                         cube_signer: signer_result,
                                         spark_backend,
                                         config,
@@ -4224,7 +4152,7 @@ impl Tab {
                         // A Bitcoin Blake2b copy of a passkey Cube unlocks with
                         // the same passkey (decision 2026-10-29). It has a
                         // Vault only: open it through the fork loader, as the
-                        // PIN path does, and never start Liquid or Spark.
+                        // PIN path does, and never start Spark.
                         let crate::pin_entry::PinEntrySuccess::LoadApp {
                             datadir,
                             config,
@@ -4235,7 +4163,7 @@ impl Tab {
                         let cube = unlock.cube().clone();
                         if wallet_settings.is_none() {
                             // No Vault yet: open the Cube itself, as a Bitcoin
-                            // Cube without one opens, minus Liquid and Spark.
+                            // Cube without one opens, minus Spark.
                             let Some(signer) =
                                 crate::app::session::unlocked_signer(&cube.id, fingerprint)
                             else {
@@ -4499,7 +4427,7 @@ impl Tab {
                                 }
                             };
 
-                            Message::BreezClientLoadedAfterPin {
+                            Message::WalletsLoadedAfterUnlock {
                                 cube_signer: signer_result,
                                 spark_backend,
                                 config: config_clone,
@@ -4650,7 +4578,7 @@ impl Tab {
             }
             (
                 _,
-                Message::BreezClientLoadedAfterPin {
+                Message::WalletsLoadedAfterUnlock {
                     cube_signer,
                     spark_backend,
                     config,
@@ -4682,10 +4610,8 @@ impl Tab {
                 // A failure to resolve the signer here does not stop the Cube
                 // opening: fall back to the signer the unlock parked in the
                 // session, so P2P, Connect blinding and the Vault builder keep
-                // it. The Liquid client is always disconnected and is built
-                // around the same signer.
+                // it.
                 let cube_signer = cube_signer_after_unlock(cube_signer, &cube);
-                let breez = breez_liquid::client_for_cube_signer(network, cube_signer.as_ref());
                 if let Some(wallet_settings) = wallet_settings {
                     if let Some(auth) = &wallet_settings.remote_backend_auth {
                         let (mut home, command) = Home::new(datadir.clone(), Some(network));
@@ -4706,7 +4632,6 @@ impl Tab {
                                 backup.clone(),
                                 wallet_settings.clone(),
                                 cube,
-                                Some(breez),
                                 cube_signer,
                                 spark_backend,
                                 connect_client,
@@ -4720,7 +4645,6 @@ impl Tab {
                                 backup.clone(),
                                 Some(wallet_settings.clone()),
                                 cube,
-                                Some(breez),
                                 cube_signer,
                                 spark_backend,
                             )
@@ -4730,7 +4654,6 @@ impl Tab {
                     }
                 } else {
                     let (app, command) = match App::new_without_wallet(
-                        breez,
                         cube_signer,
                         spark_backend,
                         config,
@@ -5314,7 +5237,6 @@ fn reopen_claim_source(
         None,
         wallet_settings,
         source.settings.clone(),
-        source.breez_client.clone(),
         source.cube_signer.clone(),
         source.spark_backend.clone(),
     );
@@ -6014,8 +5936,8 @@ mod migration_warning_tests {
     }
 
     /// A persisted Bitcoin Blake2b Cube is refused at the open gate: the tab
-    /// stays on Home, and no unlock screen — the step that loads the Liquid
-    /// SDK and reads seed files — is ever built. The fork route is admitted
+    /// stays on Home, and no unlock screen — the step that resolves the Cube
+    /// signer and reads seed files — is ever built. The fork route is admitted
     /// only through an authenticated Connect account whose feature flag is
     /// on; this fixture has neither, so the refusal names the account gate
     /// (the same reason `home::a_dormant_chain_record_in_its_own_directory_is_refused_for_the_runtime`
@@ -7333,12 +7255,6 @@ mod breez_fallback_tests {
             cube_signer_after_unlock(failed(), &cube).is_some(),
             "the fallback must carry the session's signer"
         );
-        // And the Liquid client built around it still carries it too.
-        let signer = cube_signer_after_unlock(failed(), &cube);
-        let client =
-            crate::app::breez_liquid::client_for_cube_signer(Network::Bitcoin, signer.as_ref());
-        assert!(!client.is_connected());
-        assert!(client.liquid_signer().is_some());
         session::close();
     }
 
@@ -7349,15 +7265,17 @@ mod breez_fallback_tests {
     fn fallback_yields_the_golden_key_and_mnemonic() {
         let _g = session::test_guard();
         for network in golden::NETWORKS {
-            for (signer, mnemonic, enc_key) in [
+            for (signer, mnemonic, identity, enc_key) in [
                 (
                     golden::pin_signer(network),
                     golden::PIN_MNEMONIC,
+                    golden::PIN_P2P_IDENTITY,
                     golden::pin_enc_key(network),
                 ),
                 (
                     golden::passkey_signer(network),
                     golden::PASSKEY_MNEMONIC,
+                    golden::PASSKEY_P2P_IDENTITY,
                     golden::passkey_enc_key(network),
                 ),
             ] {
@@ -7370,7 +7288,9 @@ mod breez_fallback_tests {
                 let signer = cube_signer_after_unlock(failed(), &cube).expect("session signer");
                 let p2p = signer.p2p_mnemonic().unwrap();
                 assert_eq!(p2p.as_str(), mnemonic);
-                assert_eq!(golden::p2p_identity(&p2p), golden::p2p_identity(mnemonic));
+                // Against the pinned identity, not a second derivation of the
+                // same mnemonic: a change to the derivation must fail here.
+                assert_eq!(golden::p2p_identity(&p2p), identity);
                 assert_eq!(
                     signer.encryption_key(network).unwrap().public_key_hex(),
                     enc_key
@@ -7391,9 +7311,6 @@ mod breez_fallback_tests {
         );
 
         assert!(cube_signer_after_unlock(failed(), &cube).is_none());
-        let client = crate::app::breez_liquid::client_for_cube_signer(Network::Bitcoin, None);
-        assert!(!client.is_connected());
-        assert!(client.liquid_signer().is_none());
     }
 
     /// A resolution that *succeeded* without a signer (a seed-less Cube) is
@@ -7663,7 +7580,6 @@ mod unlock_routing_tests {
             ),
             None,
             None,
-            None,
         );
         super::State::Loader(loader)
     }
@@ -7909,7 +7825,6 @@ mod fork_completion_tests {
             None,
             None,
             None,
-            None,
             false,
             None,
         )
@@ -8121,7 +8036,6 @@ mod mcp_proposal_routing_tests {
             Some(cube),
             None,
             None,
-            None,
             false,
             None,
         )
@@ -8142,7 +8056,7 @@ mod mcp_proposal_routing_tests {
             installer.proposal_install_dispatched = true;
             let cube = installer.cube_settings.clone().unwrap();
             let _ = tab.update(Message::Install(installer::Message::CubeSaved(
-                Ok((cube, None, None, None)),
+                Ok((cube, None, None)),
                 None,
                 None,
             )));
@@ -8338,7 +8252,7 @@ mod mcp_proposal_routing_tests {
         )));
         assert!(matches!(tab.state, State::Installer(_)));
         let _ = tab.update(Message::Install(installer::Message::CubeSaved(
-            Ok((cube, None, None, None)),
+            Ok((cube, None, None)),
             None,
             None,
         )));
@@ -8751,7 +8665,6 @@ mod opening_tests {
             CubeSettings::new("Everyday".into(), ChainId::Bitcoin),
             None,
             None,
-            None,
         );
         // Not polled: no daemon starts in this test.
         drop(startup);
@@ -8816,9 +8729,6 @@ mod opening_tests {
             crate::app::breez_spark::SparkClient::disconnected_for_test(),
         )));
         let (app, _load) = crate::app::App::new_without_wallet(
-            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-                Network::Bitcoin,
-            )),
             None,
             Some(spark),
             crate::app::Config::new(false),
@@ -8950,7 +8860,7 @@ mod opening_tests {
 
 /// Why an unfinished import's Cube was kept rather than deleted.
 const UNFINISHED_CUBE_HOLDS_FUNDS: &str =
-    "This Cube holds Spark or Liquid funds, so it was not deleted. Move them to another wallet first.";
+    "This Cube holds Spark funds, so it was not deleted. Move them to another wallet first.";
 
 #[cfg(test)]
 mod lock_to_delete_tests {

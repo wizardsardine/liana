@@ -1,7 +1,7 @@
 //! Where a wallet loader gets its master seed from.
 //!
-//! Both wallet backends — Liquid ([`crate::app::breez_liquid::load_breez_client`])
-//! and Spark ([`crate::app::breez_spark::load_spark_client`]) — need the Cube's
+//! The Cube signer ([`crate::app::cube_signer::CubeSigner::resolve`]) and the
+//! Spark loader ([`crate::app::breez_spark::load_spark_client`]) need the Cube's
 //! [`MasterSigner`]. Until now they each took `(fingerprint, password)` and
 //! resolved it the same implicit way: check the session cache, else decrypt the
 //! seed file. That pair of parameters encodes an assumption a passkey Cube
@@ -20,8 +20,8 @@
 //! # Why the fingerprint is carried, not derived
 //!
 //! Callers need it for more than loading: the Spark loader namespaces its
-//! SDK storage directory by fingerprint, and the Liquid loader reports
-//! `SignerNotFound(fp)`. Recomputing it from the signer means a fresh
+//! SDK storage directory by fingerprint, and the Cube signer reports
+//! `NotFound(fp)`. Recomputing it from the signer means a fresh
 //! `Secp256k1` context per call, so [`SeedSource::in_memory`] computes it once
 //! at construction and every later read is a copy.
 

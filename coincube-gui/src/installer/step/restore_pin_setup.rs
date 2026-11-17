@@ -4,7 +4,7 @@
 //!
 //! Fresh-install Cubes always persist their master mnemonic in the
 //! AES-encrypted, password-protected layout (see `MasterSigner::
-//! store_encrypted`). The Liquid / Spark BreezClient then decrypts the
+//! store_encrypted`). The Cube signer and Spark then decrypt the
 //! blob via the user's PIN at Cube-open time. Before this step
 //! existed, the restore flow wrote the restored mnemonic **unencrypted**,
 //! then tried to boot the app without constructing a BreezClient at

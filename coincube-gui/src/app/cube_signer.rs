@@ -3,19 +3,16 @@
 //! Every non-wallet feature that hangs off the Cube's master seed — the
 //! P2P/Mostro identity, the Connect-blinding [`CubeEncryptionKey`] and the
 //! Vault builder's copy of that key — used to borrow the signer from the
-//! Liquid client (`BreezClient::liquid_signer()`). Liquid removal (desktop
-//! PR 2; plan `company-brain/plans/liquid-removal/`) moves it here so those
-//! features no longer depend on Liquid. Key derivation is unchanged:
+//! since-removed Liquid client. Liquid removal (desktop PR 2; plan
+//! `company-brain/plans/liquid-removal/`) moved it here so those features
+//! never depended on Liquid again. Key derivation is unchanged:
 //! `coincube-core` is not touched (master invariant I1), and the golden
 //! vectors in [`golden`] pin every derived value (I2).
 //!
 //! A [`CubeSigner`] is resolved once at unlock from the same
 //! [`SeedSource::resolve`] call the wallet loaders make, so a PIN Cube keeps
 //! the session-cache fast path and a passkey Cube uses its in-memory seed. A
-//! seed-less (watch-only) Cube has none. The Liquid client, while it still
-//! exists, is built from the *same* shared signer
-//! ([`crate::app::breez_liquid::client_for_cube_signer`]), so nothing decrypts
-//! the seed twice.
+//! seed-less (watch-only) Cube has none.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -64,7 +61,7 @@ impl CubeSigner {
 
     /// Resolves the Cube's master signer at unlock.
     ///
-    /// Same call and same error mapping the Liquid loader used: a genuinely
+    /// Same call and same error mapping the former Liquid loader used: a genuinely
     /// absent signer (no seed file for the fingerprint, or no signer with it)
     /// is `Ok(None)`, so a seed-less Cube still opens without P2P or a Connect
     /// key; every other failure — wrong PIN, decryption, IO, missing device
@@ -131,12 +128,6 @@ impl CubeSigner {
     pub fn encryption_key(&self, network: Network) -> Option<Arc<CubeEncryptionKey>> {
         let guard = self.0.lock().ok()?;
         Some(Arc::new(CubeEncryptionKey::derive(&guard, network)))
-    }
-
-    /// The shared signer, for building the Liquid client around the same
-    /// instance. Liquid-only; PR 5 removes it with the client.
-    pub(crate) fn liquid_handle(&self) -> Arc<Mutex<MasterSigner>> {
-        self.0.clone()
     }
 }
 
@@ -473,19 +464,6 @@ mod tests {
         session::close();
     }
 
-    #[test]
-    fn the_liquid_client_shares_the_cube_signer() {
-        let signer = CubeSigner::new(golden::pin_signer(Network::Bitcoin));
-        let client =
-            crate::app::breez_liquid::client_for_cube_signer(Network::Bitcoin, Some(&signer));
-        assert!(Arc::ptr_eq(
-            &client.liquid_signer().unwrap(),
-            &signer.liquid_handle()
-        ));
-        let seedless = crate::app::breez_liquid::client_for_cube_signer(Network::Bitcoin, None);
-        assert!(seedless.liquid_signer().is_none());
-    }
-
     /// The App opens a seed-less Cube with P2P disabled and no Connect key,
     /// and a Cube with a signer with both, its key matching the golden vector.
     #[test]
@@ -495,9 +473,7 @@ mod tests {
         let network = Network::Bitcoin;
         let scratch = Scratch::new("app-open");
         let open = |signer: Option<CubeSigner>| {
-            let breez = crate::app::breez_liquid::client_for_cube_signer(network, signer.as_ref());
             let (app, _task) = crate::app::App::new_without_wallet(
-                breez,
                 signer,
                 None,
                 crate::app::Config::new(false),
@@ -528,6 +504,271 @@ mod tests {
                 .public_key_hex(),
             golden::PIN_ENC_KEY_MAINNET
         );
+    }
+
+    /// The equivalence passkey unlock rests on (moved here from the removed
+    /// Liquid loader's tests): a signer handed in as `SeedSource::InMemory`
+    /// and the *same* seed read back out of its encrypted file resolve to the
+    /// same wallet. Compares xpubs, not mnemonics — it is the xpub that
+    /// decides whether the user's coins are there.
+    #[test]
+    fn in_memory_and_encrypted_file_resolve_the_same_xpubs() {
+        use coincube_core::miniscript::bitcoin::bip32::DerivationPath;
+        use std::str::FromStr;
+        let _g = session::test_guard();
+        session::close();
+        let scratch = Scratch::new("equivalence");
+        let network = Network::Testnet;
+        let cube_id = "cube-equivalence";
+        let secp = Secp256k1::signing_only();
+        let signer = MasterSigner::generate(network).unwrap();
+        let fingerprint = signer.fingerprint(&secp);
+        signer
+            .store_encrypted(&scratch.0, network, &secp, None, "1234", cube_id, None)
+            .unwrap();
+        let path = DerivationPath::from_str("m/84'/0'/0'").unwrap();
+        let xpub_of = |source: SeedSource<'_>| {
+            let resolved = CubeSigner::resolve(&scratch.0, network, &source, cube_id)
+                .unwrap()
+                .expect("the signer resolves");
+            let guard = resolved.0.lock().unwrap();
+            guard.xpub_at(&path, &secp)
+        };
+        let from_file = xpub_of(SeedSource::encrypted_file(fingerprint, "1234"));
+        let from_memory = xpub_of(SeedSource::in_memory(Arc::new(signer.try_clone().unwrap())));
+        assert_eq!(from_file, from_memory);
+        assert_eq!(from_file, signer.xpub_at(&path, &secp));
+    }
+
+    /// Passkey unlock: the in-memory arm never touches the datadir, so a Cube
+    /// with no seed file on disk still resolves its signer.
+    #[test]
+    fn the_in_memory_arm_resolves_with_no_seed_file_on_disk() {
+        let scratch = Scratch::new("no-seed-file");
+        let network = Network::Testnet;
+        let signer = MasterSigner::generate(network).unwrap();
+        let resolved = CubeSigner::resolve(
+            &scratch.0,
+            network,
+            &SeedSource::in_memory(Arc::new(signer)),
+            "cube-passkey",
+        )
+        .expect("a passkey Cube has no seed file and must still resolve");
+        assert!(resolved.is_some());
+        assert!(std::fs::read_dir(&scratch.0).unwrap().next().is_none());
+    }
+
+    /// Restore completion opens a PIN-only session before resolving the signer.
+    /// Exercise that actual loader with a v3 seed and no cached master, rather
+    /// than testing only the lower-level unlock helper.
+    #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "needs a code-signed binary (data-protection keychain returns -34018 unsigned)"
+    )]
+    fn restored_v3_pin_only_session_loads_without_cached_signer() {
+        use crate::app::session;
+        use crate::services::unlock::device_secret;
+        use coincube_core::miniscript::bitcoin::bip32::DerivationPath;
+        use coincube_core::signer::SignerError;
+        use std::str::FromStr;
+
+        struct Fixture {
+            root: std::path::PathBuf,
+            cube_id: String,
+            other_id: String,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                session::close();
+                device_secret::delete(&self.cube_id).expect("remove disposable device secret");
+                device_secret::delete(&self.other_id).expect("remove other disposable secret");
+                std::fs::remove_dir_all(&self.root).expect("remove disposable seed files");
+            }
+        }
+
+        let _guard = session::test_guard();
+        for network in [Network::Bitcoin, Network::Testnet4] {
+            let fixture = Fixture {
+                root: {
+                    let root = std::env::temp_dir()
+                        .join(format!("coincube-restored-v3-{}", uuid::Uuid::new_v4()));
+                    std::fs::create_dir_all(&root).unwrap();
+                    root
+                },
+                cube_id: format!("seed-source-restore-{}", uuid::Uuid::new_v4()),
+                other_id: format!("seed-source-other-{}", uuid::Uuid::new_v4()),
+            };
+            session::close();
+            let pin = "9753";
+            let secp = Secp256k1::signing_only();
+            let master = MasterSigner::generate(network).unwrap();
+            let fp = master.fingerprint(&secp);
+            let secret = device_secret::get_or_create(&fixture.root, &fixture.cube_id).unwrap();
+            master
+                .store_encrypted(
+                    &fixture.root,
+                    network,
+                    &secp,
+                    None,
+                    pin,
+                    &fixture.cube_id,
+                    Some(&secret),
+                )
+                .unwrap();
+            // Core cannot obtain the device secret; routing here recreates the
+            // pre-fix GUI failure, even though the Keychain item exists.
+            assert!(matches!(
+                MasterSigner::from_datadir_by_fingerprint(
+                    &fixture.root,
+                    network,
+                    fp,
+                    Some(pin),
+                    &fixture.cube_id,
+                ),
+                Err(SignerError::DeviceSecretRequired)
+            ));
+            session::open(&fixture.cube_id, zeroize::Zeroizing::new(pin.into()));
+            assert!(session::unlocked_signer(&fixture.cube_id, fp).is_none());
+            let source = SeedSource::encrypted_file(fp, pin);
+            let path = DerivationPath::from_str("m/48'/0'/0'/2'").unwrap();
+            assert_eq!(
+                source
+                    .resolve(&fixture.root, network, &fixture.cube_id)
+                    .expect("restore must load the v3 root without a restart")
+                    .xpub_at(&path, &secp),
+                master.xpub_at(&path, &secp),
+            );
+            // Both networks take the same restore-completion resolver.
+            {
+                let resolved =
+                    CubeSigner::resolve(&fixture.root, network, &source, &fixture.cube_id)
+                        .expect("restore completion must carry the restored v3 signer")
+                        .expect("the restored signer");
+                assert_eq!(
+                    resolved.0.lock().unwrap().xpub_at(&path, &secp),
+                    master.xpub_at(&path, &secp),
+                );
+            }
+            assert!(session::unlocked_signer(&fixture.cube_id, fp).is_none());
+            assert!(matches!(
+                SeedSource::encrypted_file(fp, "0000").resolve(
+                    &fixture.root,
+                    network,
+                    &fixture.cube_id
+                ),
+                Err(SignerError::InvalidPassword)
+            ));
+            device_secret::get_or_create(&fixture.root, &fixture.other_id).unwrap();
+            assert!(matches!(
+                source.resolve(&fixture.root, network, &fixture.other_id),
+                Err(SignerError::InvalidPassword)
+            ));
+            assert!(matches!(
+                SeedSource::encrypted_file(Fingerprint::default(), pin).resolve(
+                    &fixture.root,
+                    network,
+                    &fixture.cube_id
+                ),
+                Err(SignerError::SignerNotFound(_))
+            ));
+            assert!(
+                device_secret::load(&fixture.cube_id).unwrap() == secret,
+                "loading must not replace the device secret",
+            );
+            device_secret::delete(&fixture.cube_id).unwrap();
+            assert!(matches!(
+                source.resolve(&fixture.root, network, &fixture.cube_id),
+                Err(SignerError::DeviceSecretRequired)
+            ));
+            assert!(device_secret::load_optional(&fixture.cube_id)
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    /// Liquid removal, master invariant I3: a Cube whose datadir still holds
+    /// the old Liquid SDK working directory and a seed file under the legacy
+    /// `-liquid_` label opens — its signer resolves from that file — and both
+    /// are left exactly as they were.
+    #[test]
+    fn a_cube_with_legacy_liquid_data_opens_and_keeps_it() {
+        let _g = session::test_guard();
+        session::close();
+        let network = Network::Bitcoin;
+        let scratch = Scratch::new("legacy-liquid");
+        let cube_id = "cube-legacy-liquid";
+        let fp = golden::write_pin_seed(&scratch.0, network, cube_id);
+
+        // Relabel the seed file the way alpha builds named it.
+        fn files(dir: &Path) -> Vec<std::path::PathBuf> {
+            let mut out = Vec::new();
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    out.extend(files(&path));
+                } else {
+                    out.push(path);
+                }
+            }
+            out
+        }
+        let master = files(&scratch.0)
+            .into_iter()
+            .find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.contains(&fp.to_string()))
+            })
+            .expect("the seed file");
+        // `mnemonic-<fp>-<label><checksum>-<timestamp>.txt`, as the Liquid
+        // signer's seed file was named (`LEGACY_LIQUID_SEED_LABEL`).
+        let legacy = master.with_file_name(format!("mnemonic-{}-liquid_cube-1700000000.txt", fp));
+        std::fs::rename(&master, &legacy).unwrap();
+        let legacy_bytes = std::fs::read(&legacy).unwrap();
+
+        // The Liquid SDK's working directory, as an alpha build left it.
+        let wallet_dir = scratch.0.join("breez/mainnet/legacy-signer");
+        std::fs::create_dir_all(&wallet_dir).unwrap();
+        std::fs::write(wallet_dir.join("storage.sql"), b"alpha liquid wallet").unwrap();
+
+        let signer = CubeSigner::resolve(
+            &scratch.0,
+            network,
+            &SeedSource::encrypted_file(fp, golden::PIN),
+            cube_id,
+        )
+        .unwrap()
+        .expect("the legacy-labelled seed file still resolves");
+        let mut cube = CubeSettings::new("Legacy".into(), crate::chain::ChainId::Bitcoin)
+            .with_master_signer(fp);
+        cube.id = cube_id.to_string();
+        let (app, _task) = crate::app::App::new_without_wallet(
+            Some(signer),
+            None,
+            crate::app::Config::new(false),
+            crate::dir::CoincubeDirectory::new(scratch.0.clone()),
+            network,
+            cube,
+        )
+        .expect("the Cube opens");
+        assert!(app.cache().has_p2p);
+        assert_eq!(
+            app.cache()
+                .cube_encryption_key
+                .as_ref()
+                .unwrap()
+                .public_key_hex(),
+            golden::PIN_ENC_KEY_MAINNET
+        );
+        drop(app);
+
+        assert_eq!(std::fs::read(&legacy).unwrap(), legacy_bytes);
+        assert_eq!(
+            std::fs::read(wallet_dir.join("storage.sql")).unwrap(),
+            b"alpha liquid wallet"
+        );
+        session::close();
     }
 
     #[test]

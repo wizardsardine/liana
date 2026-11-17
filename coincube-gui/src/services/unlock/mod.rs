@@ -25,7 +25,8 @@
 //!
 //! For that to be true the caller has to *keep* the signer
 //! [`unlock_blocking`] hands back. It goes into [`crate::app::session`], where
-//! the Liquid and Spark loaders pick it up instead of re-reading the seed file.
+//! the Cube signer and the Spark loader pick it up instead of re-reading the
+//! seed file.
 //! Dropping it costs two further ~831 ms derivations — one per loader — which
 //! is worse than the code this replaced.
 //!

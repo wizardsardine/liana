@@ -184,7 +184,6 @@ impl Display for Error {
 #[derive(Debug, Clone)]
 pub enum ImportExportType {
     Transactions,
-    LiquidPayments,
     ExportPsbt(String),
     ExportXpub(String),
     ExportEncryptedDescriptor(Box<CoincubeDescriptor>),
@@ -207,7 +206,6 @@ impl ImportExportType {
     pub fn end_message(&self) -> &str {
         match self {
             ImportExportType::Transactions
-            | ImportExportType::LiquidPayments
             | ImportExportType::ExportPsbt(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
@@ -297,7 +295,6 @@ pub struct Export {
     pub sender: Option<UnboundedSender<Progress>>,
     pub handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    pub breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     pub path: Box<PathBuf>,
     pub export_type: ImportExportType,
 }
@@ -305,7 +302,6 @@ pub struct Export {
 impl Export {
     pub fn new(
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
         path: Box<PathBuf>,
         export_type: ImportExportType,
     ) -> Self {
@@ -315,7 +311,6 @@ impl Export {
             sender: Some(sender),
             handle: None,
             daemon,
-            breez_client,
             path,
             export_type,
         }
@@ -326,15 +321,9 @@ impl Export {
         sender: UnboundedSender<Progress>,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: PathBuf,
-        breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     ) {
         if let Err(e) = match export_type {
             ImportExportType::Transactions => export_transactions(&sender, daemon, path).await,
-            ImportExportType::LiquidPayments => {
-                let breez_client =
-                    breez_client.expect("BreezClient required for LiquidPayments export");
-                export_liquid_payments(&sender, breez_client, path).await
-            }
             ImportExportType::ExportPsbt(str) => export_string(&sender, path, str).await,
             ImportExportType::Descriptor(descriptor) => {
                 export_descriptor(&sender, path, descriptor).await
@@ -374,13 +363,12 @@ impl Export {
     pub async fn start(&mut self) {
         if let (true, Some(sender)) = (self.handle.is_none(), self.sender.take()) {
             let daemon = self.daemon.clone();
-            let breez_client = self.breez_client.clone();
             let path = self.path.clone();
 
             let cloned_sender = sender.clone();
             let export_type = self.export_type.clone();
             let handle = tokio::spawn(async move {
-                Self::export_logic(export_type, cloned_sender, daemon, *path, breez_client).await;
+                Self::export_logic(export_type, cloned_sender, daemon, *path).await;
             });
             let handle = Arc::new(Mutex::new(handle));
 
@@ -407,7 +395,6 @@ impl Export {
 /// Subscription identity is based on `export_type` discriminant and `path`.
 pub struct ExportSubscriptionData {
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    pub breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     pub path: PathBuf,
     pub export_type: ImportExportType,
 }
@@ -424,7 +411,6 @@ impl std::hash::Hash for ExportSubscriptionData {
 pub fn make_export_stream(data: &ExportSubscriptionData) -> impl Stream<Item = Progress> {
     export_subscription(
         data.daemon.clone(),
-        data.breez_client.clone(),
         data.path.clone(),
         data.export_type.clone(),
     )
@@ -432,12 +418,11 @@ pub fn make_export_stream(data: &ExportSubscriptionData) -> impl Stream<Item = P
 
 pub fn export_subscription(
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-    breez_client: Option<Arc<crate::app::breez_liquid::BreezClient>>,
     path: PathBuf,
     export_type: ImportExportType,
 ) -> impl Stream<Item = Progress> {
     iced::stream::channel(100, async move |mut output| {
-        let mut state = Export::new(daemon, breez_client, Box::new(path), export_type);
+        let mut state = Export::new(daemon, Box::new(path), export_type);
         loop {
             match state.state() {
                 Status::Init => {
@@ -517,9 +502,8 @@ pub async fn export_transactions(
 
 /// Export the Spark wallet's payment history as CSV.
 ///
-/// Spark has exactly one asset (BTC), no swap lifecycle, and a
-/// simpler payment shape than Liquid, so the columns differ from
-/// [`export_liquid_payments`]:
+/// Spark has exactly one asset (BTC) and no swap lifecycle, so the columns
+/// are:
 ///
 /// `Date,PaymentType,Method,Description,Amount (sats),Fees (sats),Net (sats)`
 ///
@@ -622,39 +606,6 @@ pub async fn export_spark_payments(
     }
 
     send_progress!(sender, Progress(100.0));
-    send_progress!(sender, Ended);
-    Ok(())
-}
-
-pub async fn export_liquid_payments(
-    sender: &UnboundedSender<Progress>,
-    breez_client: Arc<crate::app::breez_liquid::BreezClient>,
-    path: PathBuf,
-) -> Result<(), Error> {
-    use crate::app::breez_liquid::assets::usdt_asset_id;
-    use crate::app::wallets::LiquidBackend;
-
-    let usdt_id = usdt_asset_id(breez_client.network()).unwrap_or("");
-
-    let mut file = open_file_write(&path).await?;
-
-    let header =
-        "Date,PaymentType,Asset,Sending/Receiving Address,Amount,Fees (L-BTC),Net Amount\n";
-    file.write_all(header.as_bytes())?;
-
-    // Upstream callers (Installer, Loader, Login, etc.) still pass raw
-    // `Arc<BreezClient>` through the `Export` struct, so wrap it here into a
-    // short-lived `LiquidBackend` just to get the domain read API.
-    let backend = LiquidBackend::new(breez_client);
-    let payments = backend
-        .list_payments(None, None, None)
-        .await
-        .map_err(|e| Error::Daemon(e.to_string()))?;
-
-    for payment in payments {
-        write_liquid_payment_csv_row(&mut file, payment, usdt_id)?;
-    }
-
     send_progress!(sender, Ended);
     Ok(())
 }
@@ -1459,80 +1410,6 @@ fn write_transaction_csv_row(file: &mut File, mut tx: HistoryTransaction) -> Res
     Ok(())
 }
 
-fn write_liquid_payment_csv_row(
-    file: &mut File,
-    payment: crate::app::wallets::DomainPayment,
-    usdt_id: &str,
-) -> Result<(), Error> {
-    use crate::app::wallets::DomainPaymentDetails;
-
-    let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
-        .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
-        .map(|dt| {
-            dt.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string()
-        })
-        .unwrap_or_default();
-
-    let is_send = !payment.is_incoming();
-    let payment_type = if is_send { "SEND" } else { "RECEIVE" };
-
-    let address = payment
-        .destination
-        .as_ref()
-        .map(|d| format!("\"{}\"", d))
-        .unwrap_or_default();
-
-    let fees_btc = payment.fees_sat as f64 / 100_000_000.0;
-
-    // Detect USDt asset payments — real amount is carried in asset_info, not amount_sat.
-    let usdt_amount_float: Option<f64> = match &payment.details {
-        DomainPaymentDetails::LiquidAsset {
-            asset_id,
-            asset_info,
-            ..
-        } if asset_id == usdt_id => asset_info
-            .as_ref()
-            .map(|info| info.amount_minor as f64 / 10_f64.powi(info.precision as i32)),
-        _ => None,
-    };
-
-    let line = if usdt_amount_float.is_some()
-        || matches!(
-            &payment.details,
-            DomainPaymentDetails::LiquidAsset { asset_id, .. } if asset_id == usdt_id
-        ) {
-        let usdt_amount = usdt_amount_float.map(|v| v.to_string()).unwrap_or_default();
-        let net = match (usdt_amount_float, is_send) {
-            (Some(v), true) => format!("-{}", v),
-            (Some(v), false) => v.to_string(),
-            (None, _) => String::new(),
-        };
-        format!(
-            "{},{},USDt,{},{},{:.8},{}\n",
-            date_time, payment_type, address, usdt_amount, fees_btc, net
-        )
-    } else {
-        let amount_btc = if is_send {
-            payment.amount_sat as f64 / 100_000_000.0
-        } else {
-            (payment.amount_sat + payment.fees_sat) as f64 / 100_000_000.0
-        };
-        let total = if is_send {
-            -(amount_btc + fees_btc)
-        } else {
-            amount_btc - fees_btc
-        };
-        format!(
-            "{},{},L-BTC,{},{:.8},{:.8},{:.8}\n",
-            date_time, payment_type, address, amount_btc, fees_btc, total
-        )
-    };
-    file.write_all(line.as_bytes())?;
-    Ok(())
-}
-
 async fn backup_labels_for_import(
     account: &backup::Account,
     daemon: &(dyn Daemon + Sync + Send),
@@ -1998,10 +1875,6 @@ mod tests {
             "Export successful!"
         );
         assert_eq!(
-            ImportExportType::LiquidPayments.end_message(),
-            "Export successful!"
-        );
-        assert_eq!(
             ImportExportType::ExportPsbt("psbt".to_string()).end_message(),
             "Export successful!"
         );
@@ -2032,7 +1905,6 @@ mod tests {
 
         let mut export = Export::new(
             None,
-            None,
             Box::new(PathBuf::from("out.txt")),
             ImportExportType::ExportPsbt("psbt".to_string()),
         );
@@ -2042,7 +1914,6 @@ mod tests {
 
         let data = ExportSubscriptionData {
             daemon: None,
-            breez_client: None,
             path: PathBuf::from("out.txt"),
             export_type: ImportExportType::ExportPsbt("psbt-a".to_string()),
         };

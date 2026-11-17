@@ -1,10 +1,8 @@
 //! Spark SDK configuration — read at **compile time** from env vars.
 //!
-//! Mirrors the pattern used by [`crate::app::breez_liquid::config`]:
-//! the API key is baked into the binary via `env!(...)` so the packaged
+//! The API key is baked into the binary via `env!(...)` so the packaged
 //! app doesn't need a runtime `.env` to connect. Set `BREEZ_API_KEY`
-//! before running `cargo build` — a single Breez key covers both the
-//! Liquid and Spark SDKs.
+//! before running `cargo build`.
 
 use coincube_core::miniscript::bitcoin;
 use coincube_spark_protocol::Network as ProtocolNetwork;
@@ -27,8 +25,7 @@ impl SparkConfig {
     /// API key from the compile-time environment.
     ///
     /// Returns `Err` for networks Spark doesn't support (testnet/signet)
-    /// so callers can fall back to a disconnected placeholder, matching
-    /// the behavior of the Liquid loader for unsupported networks.
+    /// so callers can fall back to a disconnected placeholder.
     pub fn for_network(
         network: bitcoin::Network,
         storage_dir: std::path::PathBuf,
@@ -50,8 +47,7 @@ impl SparkConfig {
 
 /// The compile-time API key value — reads `BREEZ_API_KEY`.
 ///
-/// Uses `env!` so a missing key is a hard compile error, matching
-/// the Liquid config at [`crate::app::breez_liquid::config`].
+/// Uses `env!` so a missing key is a hard compile error.
 fn api_key_from_env() -> String {
     env!("BREEZ_API_KEY").to_string()
 }

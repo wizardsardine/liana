@@ -5,7 +5,7 @@
 //!
 //! The signer is here because verifying a PIN *is* decrypting the seed file, so
 //! by the time unlock succeeds the plaintext is already in hand. Dropping it
-//! meant the Liquid and Spark loaders each re-ran Argon2id at 256 MiB
+//! meant the wallet loaders each re-ran Argon2id at 256 MiB
 //! immediately afterwards — three ~831 ms derivations per unlock where one will
 //! do. Caching it is what makes `services::unlock`'s "we do not pay 831 ms
 //! twice" true rather than aspirational.
@@ -72,8 +72,8 @@ struct Session {
     /// belongs to.
     ///
     /// Verifying the PIN *is* decrypting the seed file, so by the time unlock
-    /// succeeds the signer is in hand. Throwing it away meant the Liquid and
-    /// Spark loaders each re-ran Argon2id at 256 MiB — three full derivations
+    /// succeeds the signer is in hand. Throwing it away meant the wallet
+    /// loaders each re-ran Argon2id at 256 MiB — three full derivations
     /// per unlock (~2.5 s) where one will do. Keeping it here is what makes the
     /// "we don't pay 831 ms twice" claim in `services::unlock` true.
     ///
@@ -189,7 +189,7 @@ pub fn unlocked_signer(cube_id: &str, fingerprint: Fingerprint) -> Option<Master
 /// This is the seed-*reveal* surfaces' door to the cache — `load_mnemonic_words`
 /// and its three callers (Backup Master Seed, Recovery Kit, Full-Cube escrow).
 /// [`unlocked_signer`] is not usable there: it asks only "is this the open
-/// Cube?", which is the right question for the Liquid and Spark loaders (they
+/// Cube?", which is the right question for the Cube signer and Spark loader (they
 /// run *because* an unlock just succeeded) and the wrong one for a screen that
 /// puts the permanent secret in front of the user. Those screens have their own
 /// PIN prompt, and it has to actually mean something.
@@ -621,8 +621,8 @@ mod tests {
 
         let got = unlocked_signer("cube-a", fp).expect("the unlock's signer is reusable");
         assert_eq!(got.words(), words);
-        // And again — it is a cache, not a one-shot handoff. Liquid and Spark
-        // both need one.
+        // And again — it is a cache, not a one-shot handoff. The Cube signer
+        // and Spark both need one.
         assert_eq!(unlocked_signer("cube-a", fp).unwrap().words(), words);
         close();
     }
