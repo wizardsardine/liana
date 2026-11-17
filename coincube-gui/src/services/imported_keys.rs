@@ -1772,6 +1772,19 @@ impl<'a> LocalKeyRepository<'a> {
         Ok(manifest.records)
     }
 
+    /// The records this computer can sign with on its own. Restored keys need
+    /// current Connect authorization for each signature, so none are offered.
+    pub fn local_signing_records(&self) -> Result<Vec<LocalKeyRecord>, String> {
+        let restored = {
+            let lock = self.lock()?;
+            self.read_manifest_recoverable(&lock)?.restored.is_some()
+        };
+        if restored {
+            return Ok(vec![]);
+        }
+        self.records()
+    }
+
     pub fn remove(
         &self,
         record_id: Uuid,
@@ -5172,6 +5185,23 @@ mod tests {
             .unwrap();
         clear_intent(&path, &intent).unwrap();
         assert!(!path.exists());
+        app::session::close();
+    }
+
+    #[test]
+    fn restored_keys_are_not_offered_for_local_signing() {
+        let _session_guard = app::session::test_guard();
+        let fixture = Fixture::new();
+        fixture.save_cube(fixture.cube.clone());
+        app::session::open(
+            fixture.cube.id.clone(),
+            Zeroizing::new("synthetic PIN".into()),
+        );
+        let repository = fixture.repository();
+        let device = Zeroizing::new([95u8; 32]);
+        checkpoint_test_ready_restored(&fixture, &device);
+        assert!(!repository.read_manifest().unwrap().records.is_empty());
+        assert!(repository.local_signing_records().unwrap().is_empty());
         app::session::close();
     }
 

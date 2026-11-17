@@ -21,12 +21,28 @@ pub(crate) fn sign_imported_psbt(
 }
 
 /// The imported wallet's keys stored in the unlocked Cube, as the Vault's
-/// signer picker offers them. Reads only public records.
+/// signer picker offers them. Reads only public records. Restored keys are
+/// left out: they sign only with current Connect authorization.
 pub(crate) fn cube_key_records(
     datadir: &crate::dir::CoincubeDirectory,
     chain: crate::chain::ChainId,
 ) -> Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String> {
-    with_repository(datadir, chain, |repository| repository.records())
+    with_repository(datadir, chain, |repository| {
+        repository.local_signing_records()
+    })
+}
+
+/// Sign `current` with each of `records` in turn: every stored account
+/// behind one master fingerprint.
+pub(crate) fn sign_with_cube_keys(
+    datadir: &crate::dir::CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    records: &[crate::services::imported_keys::LocalKeyRecord],
+    current: &Psbt,
+) -> Result<Psbt, String> {
+    records.iter().try_fold(current.clone(), |psbt, record| {
+        sign_with_cube_key(datadir, chain, record, &psbt)
+    })
 }
 
 /// Sign `current` with one stored key. The unsigned construction is `current`
