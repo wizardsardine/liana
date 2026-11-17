@@ -561,21 +561,7 @@ fn satisfy_preferring_unified(
                 subset.insert(**key, legacy[*key].clone());
             }
         }
-        if let Ok((w, r)) = satisfy_input(input_index, context, &subset, locks) {
-            if r.unified_used == 0 {
-                continue;
-            }
-            let better = match &best {
-                None => true,
-                Some((bw, br)) => {
-                    r.unified_used > br.unified_used
-                        || (r.unified_used == br.unified_used && w.size() < bw.size())
-                }
-            };
-            if better {
-                best = Some((w, r));
-            }
-        }
+        consider_unified_satisfaction(input_index, context, &subset, locks, &mut best);
     }
     Ok(best.unwrap_or((witness, report)))
 }
@@ -843,6 +829,30 @@ pub fn spent_amount(psbt: &UnifiedPsbt, input_index: usize) -> Option<Amount> {
     )
     .ok()
     .map(|o| o.value)
+}
+
+fn consider_unified_satisfaction(
+    input_index: usize,
+    context: &InputContext,
+    subset: &BTreeMap<PublicKey, AvailableSignature>,
+    locks: InputLocks,
+    best: &mut Option<(Witness, InputWitnessReport)>,
+) {
+    if let Ok((w, r)) = satisfy_input(input_index, context, subset, locks) {
+        if r.unified_used == 0 {
+            return;
+        }
+        let better = match &*best {
+            None => true,
+            Some((bw, br)) => {
+                r.unified_used > br.unified_used
+                    || (r.unified_used == br.unified_used && w.size() < bw.size())
+            }
+        };
+        if better {
+            *best = Some((w, r));
+        }
+    }
 }
 
 #[cfg(test)]
