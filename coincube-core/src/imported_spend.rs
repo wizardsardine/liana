@@ -808,6 +808,63 @@ mod tests {
         }
     }
 
+    /// Every supported shape reads as a Vault policy with one path and no
+    /// recovery paths, and its signature progress counts like a Vault's.
+    #[test]
+    fn imported_shapes_read_as_a_primary_only_policy() {
+        use crate::descriptors::PathInfo;
+        for (kind, threshold, keys) in [
+            ("pkh", 1, 1),
+            ("sh(wpkh)", 1, 1),
+            ("wpkh", 1, 1),
+            ("wsh(multi)", 2, 3),
+            ("wsh(sortedmulti)", 2, 3),
+        ] {
+            let (wallet, signers, created) = draft(kind);
+            let policy = wallet.policy().unwrap();
+            assert!(policy.recovery_paths().is_empty(), "{}", kind);
+            let (k, origins) = policy.primary_path().thresh_origins();
+            assert_eq!((k, origins.len()), (threshold, keys), "{}", kind);
+            match (policy.primary_path(), keys) {
+                (PathInfo::Single(_), 1) | (PathInfo::Multi(..), 3) => {}
+                (path, _) => panic!("{}: {:?}", kind, path),
+            }
+
+            let unsigned = wallet.partial_spend_info(&created.psbt).unwrap();
+            assert_eq!(unsigned.primary_path().threshold, threshold, "{}", kind);
+            assert_eq!(unsigned.primary_path().sigs_count, 0, "{}", kind);
+            assert!(unsigned.recovery_paths().is_empty());
+
+            let mut signed = created.psbt.clone();
+            add_signature(&mut signed, &signers[0]);
+            let info = wallet.partial_spend_info(&signed).unwrap();
+            assert_eq!(info.primary_path().sigs_count, 1, "{}", kind);
+            assert_eq!(info.primary_path().signed_pubkeys.len(), 1, "{}", kind);
+
+            assert_eq!(wallet.change_indexes(&created.psbt), vec![1], "{}", kind);
+            let vbytes = wallet.unsigned_tx_max_vbytes(&created.psbt.unsigned_tx);
+            let fee = created.psbt.fee().unwrap().to_sat();
+            // Built at 5 sat/vB against the same size estimate.
+            assert!(
+                fee >= 5 * vbytes && fee <= 5 * vbytes + 10,
+                "{}: {} vs {}",
+                kind,
+                fee,
+                vbytes
+            );
+        }
+    }
+
+    #[test]
+    fn imported_multipath_descriptor_derives_both_branches() {
+        let (wallet, _, _) = draft("wsh(sortedmulti)");
+        let multipath = wallet.multipath_descriptor();
+        let branches = multipath.into_single_descriptors().unwrap();
+        assert_eq!(branches.len(), 2);
+        assert_eq!(&branches[0], wallet.receive_descriptor());
+        assert_eq!(&branches[1], wallet.change_descriptor());
+    }
+
     #[test]
     fn all_supported_shapes_construct_with_authenticated_prevtx_and_own_change() {
         for kind in ["pkh", "sh(wpkh)", "wpkh", "wsh(multi)", "wsh(sortedmulti)"] {

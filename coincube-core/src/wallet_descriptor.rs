@@ -400,6 +400,241 @@ impl<'de> Deserialize<'de> for WalletDescriptor {
     }
 }
 
+/// An imported wallet seen through the Vault's policy and signing-status
+/// types, so the Vault screens can show, sign and track it. It has one
+/// spending path and no recovery paths.
+impl ImportedWalletDescriptor {
+    /// Both branches as one `<0;1>/*` descriptor, the form a Vault keeps and a
+    /// hardware wallet registers. Every key was checked at construction to be
+    /// an origin-tagged xpub on its `/0/*` (receive) branch.
+    pub fn multipath_descriptor(&self) -> Descriptor<DescriptorPublicKey> {
+        use miniscript::{
+            bitcoin::bip32::{ChildNumber, DerivationPath},
+            descriptor::{DerivPaths, DescriptorMultiXKey},
+            translate_hash_clone, TranslatePk, Translator,
+        };
+        struct Merge;
+        impl Translator<DescriptorPublicKey, DescriptorPublicKey, ()> for Merge {
+            fn pk(&mut self, pk: &DescriptorPublicKey) -> Result<DescriptorPublicKey, ()> {
+                let DescriptorPublicKey::XPub(xkey) = pk else {
+                    return Err(());
+                };
+                let branch = |index| DerivationPath::from(vec![ChildNumber::Normal { index }]);
+                Ok(DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+                    origin: xkey.origin.clone(),
+                    xkey: xkey.xkey,
+                    derivation_paths: DerivPaths::new(vec![branch(0), branch(1)]).ok_or(())?,
+                    wildcard: Wildcard::Unhardened,
+                }))
+            }
+            translate_hash_clone!(DescriptorPublicKey, DescriptorPublicKey, ());
+        }
+        self.receive
+            .translate_pk(&mut Merge)
+            .expect("imported keys are origin-tagged xpubs, checked at construction")
+    }
+
+    /// The wallet's policy: its single key or its k-of-n keys as the primary
+    /// path, with no recovery paths.
+    pub fn policy(
+        &self,
+    ) -> Result<crate::descriptors::CoincubePolicy, crate::descriptors::CoincubePolicyError> {
+        use miniscript::policy::Liftable;
+        let lifted = self
+            .multipath_descriptor()
+            .lift()
+            .map_err(|_| crate::descriptors::CoincubePolicyError::IncompatibleDesc)?;
+        crate::descriptors::PathInfo::from_primary_path(lifted)
+            .map(crate::descriptors::CoincubePolicy::primary_only)
+    }
+
+    /// Signatures claimed in `psbt`, as the Vault counts them: per key origin,
+    /// against the primary path's threshold. Every input must claim the same
+    /// signers. This is progress only; [`crate::imported_spend::finalize_imported_spend`]
+    /// verifies signatures before a broadcast.
+    pub fn partial_spend_info(
+        &self,
+        psbt: &bitcoin::Psbt,
+    ) -> Result<crate::descriptors::PartialSpendInfo, crate::descriptors::CoincubeDescError> {
+        use crate::descriptors::CoincubeDescError;
+        if psbt.inputs.len() != psbt.unsigned_tx.input.len()
+            || psbt.outputs.len() != psbt.unsigned_tx.output.len()
+            || psbt.inputs.is_empty()
+            || psbt.outputs.is_empty()
+        {
+            return Err(CoincubeDescError::InsanePsbt);
+        }
+        let policy = self.policy().map_err(|_| CoincubeDescError::InsanePsbt)?;
+        let mut infos = psbt.inputs.iter().map(|input| {
+            policy.primary_path().spend_info(
+                input
+                    .partial_sigs
+                    .keys()
+                    .filter_map(|key| input.bip32_derivation.get(&key.inner)),
+            )
+        });
+        let first = infos.next().expect("checked at least one input");
+        if infos.any(|info| info != first) {
+            return Err(CoincubeDescError::InconsistentPsbt);
+        }
+        Ok(crate::descriptors::PartialSpendInfo::primary_only(first))
+    }
+
+    /// Outputs of `psbt` paying this wallet (its change or receive branch).
+    /// Construction sets a BIP32 derivation on each; an output counts only if
+    /// the script derived at that index matches.
+    pub fn change_indexes(&self, psbt: &bitcoin::Psbt) -> Vec<usize> {
+        psbt.outputs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, output)| {
+                let path = output
+                    .bip32_derivation
+                    .values()
+                    .map(|(_, path)| path)
+                    .next()?;
+                let child = match path.into_iter().last()? {
+                    bitcoin::bip32::ChildNumber::Normal { index } => *index,
+                    bitcoin::bip32::ChildNumber::Hardened { .. } => return None,
+                };
+                let script = &psbt.unsigned_tx.output.get(index)?.script_pubkey;
+                [&self.change, &self.receive]
+                    .iter()
+                    .any(|branch| {
+                        branch
+                            .at_derivation_index(child)
+                            .is_ok_and(|derived| &derived.script_pubkey() == script)
+                    })
+                    .then_some(index)
+            })
+            .collect()
+    }
+
+    /// Largest size in vbytes `tx` can reach once every input, all from this
+    /// wallet, is satisfied. Mirrors the Vault's estimate for fee rates.
+    pub fn unsigned_tx_max_vbytes(&self, tx: &bitcoin::Transaction) -> u64 {
+        let witness_factor = bitcoin::constants::WITNESS_SCALE_FACTOR as u64;
+        let inputs = tx.input.len() as u64;
+        let segwit = !matches!(self.receive, Descriptor::Pkh(_));
+        // As `imported_spend` sizes its inputs: the satisfaction plus, for
+        // segwit, the witness item count.
+        let satisfaction = self
+            .receive
+            .max_weight_to_satisfy()
+            .map(|weight| weight.to_wu())
+            .unwrap_or(0)
+            + u64::from(segwit);
+        let segwit_marker =
+            if inputs > 0 && segwit && tx.input.iter().all(|txin| txin.witness.is_empty()) {
+                2
+            } else {
+                0
+            };
+        let weight = tx.weight().to_wu() + satisfaction * inputs + segwit_marker;
+        weight.div_ceil(witness_factor)
+    }
+}
+
+/// What a saved transaction needs from the wallet that spends it: its own
+/// outputs, a size estimate for the fee rate, and signature progress. A Vault
+/// answers from its inheritance policy, an imported wallet from its single
+/// primary path, so one transaction view serves both.
+pub trait SpendAnalysis {
+    fn spend_change_indexes(
+        &self,
+        psbt: &bitcoin::Psbt,
+        secp: &bitcoin::secp256k1::Secp256k1<impl bitcoin::secp256k1::Verification>,
+    ) -> Vec<usize>;
+    fn spend_max_vbytes(&self, tx: &bitcoin::Transaction, use_primary_path: bool) -> u64;
+    fn spend_info(
+        &self,
+        psbt: &bitcoin::Psbt,
+    ) -> Result<crate::descriptors::PartialSpendInfo, crate::descriptors::CoincubeDescError>;
+}
+
+impl SpendAnalysis for CoincubeDescriptor {
+    fn spend_change_indexes(
+        &self,
+        psbt: &bitcoin::Psbt,
+        secp: &bitcoin::secp256k1::Secp256k1<impl bitcoin::secp256k1::Verification>,
+    ) -> Vec<usize> {
+        self.change_indexes(psbt, secp)
+            .into_iter()
+            .map(|change| change.index())
+            .collect()
+    }
+    fn spend_max_vbytes(&self, tx: &bitcoin::Transaction, use_primary_path: bool) -> u64 {
+        self.unsigned_tx_max_vbytes(tx, use_primary_path)
+    }
+    fn spend_info(
+        &self,
+        psbt: &bitcoin::Psbt,
+    ) -> Result<crate::descriptors::PartialSpendInfo, crate::descriptors::CoincubeDescError> {
+        self.partial_spend_info(psbt)
+    }
+}
+
+impl SpendAnalysis for ImportedWalletDescriptor {
+    fn spend_change_indexes(
+        &self,
+        psbt: &bitcoin::Psbt,
+        _secp: &bitcoin::secp256k1::Secp256k1<impl bitcoin::secp256k1::Verification>,
+    ) -> Vec<usize> {
+        self.change_indexes(psbt)
+    }
+    /// An imported wallet has one path, so `use_primary_path` changes nothing.
+    fn spend_max_vbytes(&self, tx: &bitcoin::Transaction, _use_primary_path: bool) -> u64 {
+        self.unsigned_tx_max_vbytes(tx)
+    }
+    fn spend_info(
+        &self,
+        psbt: &bitcoin::Psbt,
+    ) -> Result<crate::descriptors::PartialSpendInfo, crate::descriptors::CoincubeDescError> {
+        self.partial_spend_info(psbt)
+    }
+}
+
+impl SpendAnalysis for WalletDescriptor {
+    fn spend_change_indexes(
+        &self,
+        psbt: &bitcoin::Psbt,
+        secp: &bitcoin::secp256k1::Secp256k1<impl bitcoin::secp256k1::Verification>,
+    ) -> Vec<usize> {
+        match self {
+            Self::Vault(vault) => vault.spend_change_indexes(psbt, secp),
+            Self::Imported(imported) => imported.spend_change_indexes(psbt, secp),
+        }
+    }
+    fn spend_max_vbytes(&self, tx: &bitcoin::Transaction, use_primary_path: bool) -> u64 {
+        match self {
+            Self::Vault(vault) => vault.spend_max_vbytes(tx, use_primary_path),
+            Self::Imported(imported) => imported.spend_max_vbytes(tx, use_primary_path),
+        }
+    }
+    fn spend_info(
+        &self,
+        psbt: &bitcoin::Psbt,
+    ) -> Result<crate::descriptors::PartialSpendInfo, crate::descriptors::CoincubeDescError> {
+        match self {
+            Self::Vault(vault) => vault.spend_info(psbt),
+            Self::Imported(imported) => imported.spend_info(psbt),
+        }
+    }
+}
+
+impl WalletDescriptor {
+    /// The wallet's spending policy: a Vault's inheritance policy, or an
+    /// imported wallet's single primary path.
+    pub fn policy(
+        &self,
+    ) -> Result<crate::descriptors::CoincubePolicy, crate::descriptors::CoincubePolicyError> {
+        match self {
+            Self::Vault(vault) => Ok(vault.policy()),
+            Self::Imported(imported) => imported.policy(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
