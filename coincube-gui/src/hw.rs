@@ -1351,11 +1351,17 @@ async fn handle_jade_device(
                 if let Some(wallet) = &wallet {
                     if wallet.descriptor_keys().contains(&fingerprint) {
                         let Some(descriptor) = wallet.inheritance_descriptor() else {
-                            return Ok(HardwareWallet::Unsupported {
+                            // An imported wallet registers its own device
+                            // policy when it signs (`split_hardware`), so
+                            // whether it is registered is not known here.
+                            return Ok(HardwareWallet::Supported {
                                 id: id.clone(),
                                 kind,
+                                fingerprint,
+                                device: Arc::new(device),
                                 version,
-                                reason: UnsupportedReason::NotPartOfWallet(fingerprint),
+                                registered: None,
+                                alias,
                             });
                         };
                         let desc = descriptor.to_string();

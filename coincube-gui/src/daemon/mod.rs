@@ -213,11 +213,8 @@ pub trait Daemon: Debug {
         txids: Option<&[Txid]>,
     ) -> Result<Vec<model::SpendTx>, DaemonError> {
         let info = self.get_info().await?;
-        let descriptor = info.descriptors.main.as_vault().ok_or_else(|| {
-            DaemonError::Unexpected(
-                "Vault transaction views are unavailable for an imported Bitcoin wallet.".into(),
-            )
-        })?;
+        // A Vault or an imported wallet: both answer the same spend analysis.
+        let descriptor = &info.descriptors.main;
         let mut spend_txs = Vec::new();
         let curve = secp256k1::Secp256k1::verification_only();
         // TODO: Use filters in `list_spend_txs` command.

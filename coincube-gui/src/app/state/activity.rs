@@ -914,10 +914,7 @@ impl State for Activity {
         self.refundables.clear();
         let generation = self.generation;
         self.vault_loading = daemon.is_some();
-        self.psbt_loading = daemon.is_some()
-            && wallet
-                .as_ref()
-                .is_some_and(|wallet| wallet.supports_inheritance());
+        self.psbt_loading = daemon.is_some() && wallet.is_some();
         self.spark_loading = self.spark_backend.is_some();
         let liquid = self.liquid();
         self.liquid_loading = liquid.is_some();

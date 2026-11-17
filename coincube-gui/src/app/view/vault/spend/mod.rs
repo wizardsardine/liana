@@ -1,6 +1,3 @@
-mod imported;
-pub use imported::{imported_review_view, ImportedReview, ImportedSigner};
-
 use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::localized_format;
 use std::collections::HashMap;
@@ -261,7 +258,7 @@ pub(crate) fn review_step(saved: bool, status: &SpendStatus) -> usize {
 }
 
 /// A Vault Send head with its steps on the rule.
-pub(crate) fn send_head<'a>(
+fn send_head<'a>(
     cache: &Cache,
     title: &'a str,
     step: usize,

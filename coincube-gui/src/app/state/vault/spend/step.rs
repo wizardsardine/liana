@@ -11,6 +11,7 @@ use std::{
 };
 
 use crate::services::branta::{self, LookupRequest, LookupResult, LookupTicket};
+use coincube_core::wallet_descriptor::SpendAnalysis;
 use coincube_core::{
     miniscript::bitcoin::{
         address,
@@ -1039,29 +1040,11 @@ impl Step for DefineSpend {
                         self.generating = true;
                         self.preparation_id = PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed);
                         let generation = self.preparation_id;
-                        if !self.wallet.supports_inheritance() {
-                            // An imported wallet: build and save the PSBT here,
-                            // then its own review signs it with the wallet's
-                            // original signers. No Vault `SpendTx` is built.
-                            let recipients = self.recipients.clone();
-                            return Task::perform(async move {
-                                let psbt = match daemon.create_spend_tx(&inputs, &outputs, feerate_vb, None).await
-                                    .map_err(Error::from)? {
-                                    CreateSpendResult::Success { psbt, warnings } => (psbt, warnings),
-                                    CreateSpendResult::InsufficientFunds { missing } => return Err(SpendCreationError::CoinSelection(
-                                        coincube_core::spend::InsufficientFunds { missing }).into()),
-                                };
-                                validate_requested_amounts(&recipients, &psbt.0)?;
-                                daemon.update_spend_tx(&psbt.0).await.map_err(Error::from)?;
-                                Ok(psbt)
-                            }, move |result| Message::ImportedSpendPrepared { generation, result });
-                        }
                         self.lookup_ticket = if self.recipients.is_empty() { None } else { branta::begin(self.network) };
                         let ticket = self.lookup_ticket.clone();
                         let recipients = self.recipients.clone();
-                        let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
-                            return Task::none();
-                        };
+                        // A Vault or an imported wallet: both say which outputs are their own.
+                        let descriptor = self.wallet.main_descriptor.clone();
                         let requests: Vec<_> = self.recipients.iter().enumerate().filter_map(|(row, recipient)| {
                             let address = recipient.destination().ok()?.require_network(self.network).ok()?;
                             LookupRequest::bitcoin(&recipient.address.value, &address).map(|request| (row, request))
@@ -1092,8 +1075,8 @@ impl Step for DefineSpend {
                                     // can legitimately differ from the earlier redraft snapshot.
                                     return (result, Vec::new());
                                 };
-                                let owned: HashSet<_> = descriptor.change_indexes(psbt, &secp256k1::Secp256k1::verification_only())
-                                    .into_iter().map(|output| output.index()).collect();
+                                let owned: HashSet<_> = descriptor.spend_change_indexes(psbt, &secp256k1::Secp256k1::verification_only())
+                                    .into_iter().collect();
                                 let requests = requests.into_iter().filter(|(row, _)|
                                     association.get(*row).is_some_and(|output| !owned.contains(output))).collect();
                                 ticket.lookup_many(requests).await
@@ -1138,20 +1121,6 @@ impl Step for DefineSpend {
                 let redraft_task = self.schedule_redraft();
                 self.check_valid();
                 return redraft_task;
-            }
-            Message::ImportedSpendPrepared { generation, result } => {
-                if !self.generating || generation != self.preparation_id {
-                    return Task::none();
-                }
-                self.generating = false;
-                match result {
-                    Ok((psbt, warnings)) => {
-                        return Task::done(Message::View(view::Message::ImportedBitcoin(
-                            crate::app::state::imported_bitcoin::ImportMessage::OpenPrepared(psbt, warnings),
-                        )));
-                    }
-                    Err(error) => self.warning = Some(error),
-                }
             }
             Message::VaultSpendPrepared { generation, result, identities } => {
                 if !self.generating || generation != self.preparation_id {
@@ -1436,8 +1405,8 @@ impl DefineSpend {
 
     /// The primary path's threshold and key count, for the Send footer.
     fn threshold(&self) -> Option<(usize, usize)> {
-        let descriptor = self.wallet.inheritance_descriptor()?;
-        Some(match descriptor.policy().primary_path() {
+        let policy = self.wallet.policy()?;
+        Some(match policy.primary_path() {
             coincube_core::descriptors::PathInfo::Single(_) => (1, 1),
             coincube_core::descriptors::PathInfo::Multi(threshold, keys) => {
                 (*threshold, keys.len())
@@ -1839,15 +1808,11 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
-        let Some(descriptor) = self.wallet.inheritance_descriptor() else {
-            self.spend = None;
-            return;
-        };
         let mut tx = SpendTx::new(
             None,
             psbt,
             draft.inputs.clone(),
-            descriptor,
+            &self.wallet.main_descriptor,
             &self.curve,
             draft.network,
         );
@@ -1923,7 +1888,7 @@ impl Step for SaveSpend {
         let (psbt_state, warnings) = self.spend.as_ref().unwrap();
         let Some(policy) = psbt_state.desc_policy.as_ref() else {
             return iced::widget::text(coincube_ui::locale::copy(
-                "Use the imported wallet Send screen for this account.",
+                "This wallet's spending policy can't be shown.",
             ))
             .into();
         };

@@ -1737,6 +1737,8 @@ pub enum SigningKeyKind {
 /// What clicking an available key row does.
 pub enum SigningKeyAction {
     Master,
+    /// An imported wallet's key stored in this Cube.
+    CubeKey,
     Hardware(usize),
     BorderWallet,
     Keychain,
@@ -1963,6 +1965,10 @@ fn signing_key_row(
                 SigningKeyAction::Master => {
                     (Message::Spend(SpendTxMessage::SelectMasterSigner), "Sign")
                 }
+                SigningKeyAction::CubeKey => (
+                    Message::Spend(SpendTxMessage::SelectCubeKey(row.fingerprint)),
+                    "Sign",
+                ),
                 SigningKeyAction::Hardware(_) => {
                     (Message::SelectPsbtHardwareWallet(row.fingerprint), "Sign")
                 }

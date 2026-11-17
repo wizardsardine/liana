@@ -430,9 +430,8 @@ impl Panels {
             ),
             split_hub: Some(state::vault::split_hub::SplitHubPanel::new(wallet.clone())),
             transactions: Some(VaultTransactionsPanel::new(wallet.clone())),
-            psbts: wallet
-                .supports_inheritance()
-                .then(|| PsbtsPanel::new(wallet.clone())),
+            // Vaults and imported wallets share the PSBT list and review.
+            psbts: Some(PsbtsPanel::new(wallet.clone())),
             recovery: wallet.supports_inheritance().then(|| {
                 new_recovery_panel(
                     wallet.clone(),
@@ -448,9 +447,8 @@ impl Panels {
                 )
             }),
             receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
-            // An imported wallet composes in the same Send form; its
-            // own panel then reviews and signs the PSBT.
-            create_spend: (wallet.supports_inheritance() || wallet.is_imported()).then(|| {
+            // Vaults and imported wallets share the Send flow.
+            create_spend: Some({
                 let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                     cache.coins(),
                     cache.blockheight().max(0) as u32,
@@ -557,9 +555,7 @@ impl Panels {
         );
         self.split_hub = Some(state::vault::split_hub::SplitHubPanel::new(wallet.clone()));
         self.transactions = Some(VaultTransactionsPanel::new(wallet.clone()));
-        self.psbts = wallet
-            .supports_inheritance()
-            .then(|| PsbtsPanel::new(wallet.clone()));
+        self.psbts = Some(PsbtsPanel::new(wallet.clone()));
         self.recovery = wallet.supports_inheritance().then(|| {
             new_recovery_panel(
                 wallet.clone(),
@@ -575,7 +571,7 @@ impl Panels {
             )
         });
         self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
-        self.create_spend = (wallet.supports_inheritance() || wallet.is_imported()).then(|| {
+        self.create_spend = Some({
             let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                 cache.coins(),
                 cache.blockheight() as u32,

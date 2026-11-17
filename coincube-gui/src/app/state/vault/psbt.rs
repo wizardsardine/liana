@@ -271,19 +271,17 @@ impl PsbtState {
         let replay = wallet.chain.is_blake2b().then(|| {
             // `SpendTx::new` counted `partial_sigs` only; on BTCB2 the unified
             // records count too (see `replay::spend_info_for_chain`).
-            if let Some(descriptor) = wallet.inheritance_descriptor() {
-                if let Ok(sigs) = replay::spend_info_for_chain(wallet.chain, descriptor, &tx.psbt) {
-                    tx.sigs = sigs;
-                }
+            if let Ok(sigs) =
+                replay::spend_info_for_chain(wallet.chain, &wallet.main_descriptor, &tx.psbt)
+            {
+                tx.sigs = sigs;
             }
             ReplayReview::new(&tx.psbt, &secp256k1::Secp256k1::verification_only())
         });
         Self {
             action_scope: NEXT_PSBT_ACTION_SCOPE.fetch_add(1, Ordering::Relaxed),
             signer_focus_return: false,
-            desc_policy: wallet
-                .inheritance_descriptor()
-                .map(|descriptor| descriptor.policy()),
+            desc_policy: wallet.policy(),
             wallet,
             labels_edited: LabelsEdited::default(),
             recipient_identities: None,
@@ -732,8 +730,26 @@ impl PsbtState {
             }
         }
         let secp = secp256k1::Secp256k1::verification_only();
-        let mut candidate = self.tx.psbt.clone();
-        let ready = candidate.finalize_mut(&secp).is_ok() && candidate.extract(&secp).is_ok();
+        let ready = if let Some(imported) = self.wallet.main_descriptor.as_imported() {
+            // The daemon's own check for an imported wallet: every signature
+            // verified against the unsigned construction, then finalized.
+            let mut original = self.tx.psbt.clone();
+            for input in &mut original.inputs {
+                input.partial_sigs.clear();
+                input.final_script_sig = None;
+                input.final_script_witness = None;
+            }
+            coincube_core::imported_spend::finalize_imported_spend(
+                imported,
+                &original,
+                &self.tx.psbt,
+                &secp,
+            )
+            .is_ok()
+        } else {
+            let mut candidate = self.tx.psbt.clone();
+            candidate.finalize_mut(&secp).is_ok() && candidate.extract(&secp).is_ok()
+        };
         *cached = Some((digest, ready));
         ready
     }
@@ -782,12 +798,12 @@ impl PsbtState {
     /// sessions drained). Idempotent — safe to call after every signature
     /// merge, decoupled from the persist round-trip.
     fn reconcile_and_maybe_close(&mut self, cache: &Cache) -> Task<Message> {
-        if let Some(descriptor) = self.wallet.inheritance_descriptor() {
-            if let Ok(sigs) =
-                replay::spend_info_for_chain(self.wallet.chain, descriptor, &self.tx.psbt)
-            {
-                self.tx.sigs = sigs;
-            }
+        if let Ok(sigs) = replay::spend_info_for_chain(
+            self.wallet.chain,
+            &self.wallet.main_descriptor,
+            &self.tx.psbt,
+        ) {
+            self.tx.sigs = sigs;
         }
         self.refresh_replay();
         let recheck = self.revalidate_entanglement(cache);
@@ -871,6 +887,7 @@ impl PsbtState {
             Message::View(view::Message::SelectPsbtHardwareWallet(_))
                 | Message::View(view::Message::Spend(
                     view::SpendTxMessage::SelectMasterSigner
+                        | view::SpendTxMessage::SelectCubeKey(_)
                         | view::SpendTxMessage::SelectBorderWallet(_)
                         | view::SpendTxMessage::SelectKeychainSigner(_)
                         | view::SpendTxMessage::RequestFromEveryone
@@ -1359,14 +1376,12 @@ impl PsbtState {
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
-                let Some(descriptor) = self.wallet.inheritance_descriptor() else {
-                    return Task::done(Message::View(view::Message::ShowError(
-                        "Use the imported wallet signer for this PSBT.".to_string(),
-                    )));
-                };
-                self.tx.sigs =
-                    replay::spend_info_for_chain(self.wallet.chain, descriptor, &self.tx.psbt)
-                        .expect("already checked in PSBT import logic");
+                self.tx.sigs = replay::spend_info_for_chain(
+                    self.wallet.chain,
+                    &self.wallet.main_descriptor,
+                    &self.tx.psbt,
+                )
+                .expect("already checked in PSBT import logic");
                 self.refresh_replay();
             }
             // Final dispatch is gated on the **current** cache, not on the
@@ -1410,7 +1425,7 @@ impl PsbtState {
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let Some(policy) = self.desc_policy.as_ref() else {
             return iced::widget::text(localized_copy(
-                "Use the imported wallet signing screen for this PSBT.",
+                "This wallet's spending policy can't be shown.",
             ))
             .into();
         };
@@ -2076,6 +2091,10 @@ pub struct SignModal {
     action_scope: u64,
     wallet: Arc<Wallet>,
     hws: HardwareWallets,
+    /// Where this Cube's files are, to reach an imported wallet's stored keys.
+    datadir: CoincubeDirectory,
+    /// An imported wallet's keys stored in this Cube, by fingerprint.
+    cube_keys: HashMap<Fingerprint, crate::services::imported_keys::LocalKeyRecord>,
     network: Network,
     error: Option<Error>,
     /// A signer-specific limitation that should be visible inside the picker.
@@ -2128,7 +2147,9 @@ impl SignModal {
         Self {
             action_scope: NEXT_PSBT_ACTION_SCOPE.fetch_add(1, Ordering::Relaxed),
             signing: HashSet::new(),
-            hws: HardwareWallets::new(datadir_path, network).with_wallet(wallet.clone()),
+            hws: HardwareWallets::new(datadir_path.clone(), network).with_wallet(wallet.clone()),
+            datadir: datadir_path,
+            cube_keys: HashMap::new(),
             wallet,
             network,
             error: None,
@@ -2323,10 +2344,9 @@ impl SignModal {
     /// vault-creation "Set keys" layout: one card per descriptor path (primary
     /// + each recovery), each listing its keys with per-key signability.
     fn signing_paths(&self) -> Vec<view::vault::psbt::SigningPath> {
-        let Some(descriptor) = self.wallet.inheritance_descriptor() else {
+        let Some(policy) = self.wallet.policy() else {
             return Vec::new();
         };
-        let policy = descriptor.policy();
         let mut paths = Vec::new();
         // The transaction spends through exactly one path: the primary when it
         // has no recovery timelock, else the recovery path matching that
@@ -2459,6 +2479,10 @@ impl SignModal {
         // Master signer on this computer.
         if master_fp == Some(fp) {
             return (kind, St::Available(Act::Master));
+        }
+        // An imported wallet's key stored in this Cube.
+        if self.cube_keys.contains_key(&fp) {
+            return (kind, St::Available(Act::CubeKey));
         }
         // Border wallet key.
         if self.wallet.border_wallet_fingerprints.contains(&fp) {
@@ -2631,7 +2655,7 @@ impl SignModal {
         keychain: Option<super::keychain_sign::PendingSessionStatus>,
     ) -> view::vault::psbt::SigningKeyKind {
         use view::vault::psbt::SigningKeyKind as Kind;
-        if master_fp == Some(fp) {
+        if master_fp == Some(fp) || self.cube_keys.contains_key(&fp) {
             Kind::Master
         } else if self.wallet.border_wallet_fingerprints.contains(&fp) {
             Kind::BorderWallet
@@ -2752,7 +2776,79 @@ impl Drop for SignModal {
     }
 }
 
+impl SignModal {
+    /// An imported wallet signs on a hardware wallet through the device
+    /// policy built from its descriptor, registering it where the device
+    /// needs that first. The daemon verifies the signatures when they are
+    /// saved.
+    fn sign_imported_with_device(
+        &mut self,
+        imported: &coincube_core::wallet_descriptor::ImportedWalletDescriptor,
+        fingerprint: Fingerprint,
+        tx: &SpendTx,
+    ) -> Task<Message> {
+        use crate::split_hardware::{
+            bind::ProductionBinder, policy::imported_policy, sign::SigningSession,
+        };
+        let Some(device) = self
+            .hws
+            .list
+            .iter()
+            .find(|hw| {
+                hw.fingerprint() == Some(fingerprint) && hw.is_supported() && !hw.is_lan_phone()
+            })
+            .cloned()
+        else {
+            let reason =
+                "This signing device is no longer ready. Reconnect or unlock it, then try again.";
+            self.signer_notice = Some(reason.to_string());
+            return Task::done(Message::View(view::Message::ShowError(reason.to_string())));
+        };
+        let policy = match imported_policy(imported) {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.signer_notice = Some(error.to_string());
+                return Task::done(Message::View(view::Message::ShowError(error.to_string())));
+            }
+        };
+        let binder = Arc::new(ProductionBinder::from_listing(&self.hws));
+        self.signing.insert(fingerprint);
+        let psbt = tx.psbt.clone();
+        Task::perform(
+            async move {
+                let failed = |error: crate::split_hardware::sign::SignError| {
+                    Error::from(WalletError::MasterSigner(error.to_string()))
+                };
+                let mut session = SigningSession::from_listed(&device, policy, binder)
+                    .await
+                    .map_err(failed)?;
+                session.register().await.map_err(failed)?;
+                Ok(session.sign(&psbt).await.map_err(failed)?.into_psbt())
+            },
+            move |result| Message::Signed(fingerprint, result),
+        )
+    }
+}
+
 impl Modal for SignModal {
+    /// An imported wallet's stored keys are read once the picker opens.
+    fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        if !self.wallet.is_imported() || !crate::feature_flags::IMPORTED_KEY_SIGNING_ENABLED {
+            return Task::none();
+        }
+        let (datadir, chain) = (self.datadir.clone(), self.wallet.chain);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::services::imported_signer::cube_key_records(&datadir, chain)
+                })
+                .await
+                .unwrap_or_else(|_| Err("Reading this Cube's keys stopped.".into()))
+            },
+            Message::CubeKeys,
+        )
+    }
+
     fn subscription(&self) -> Subscription<Message> {
         // Local device refresh plus, when a Keychain flow is active, its
         // poll-fallback subscription so missed realtime `SessionEvent`s still
@@ -2794,6 +2890,9 @@ impl Modal for SignModal {
                 }
                 self.error = None;
                 self.signer_notice = None;
+                if let Some(imported) = self.wallet.main_descriptor.as_imported().cloned() {
+                    return self.sign_imported_with_device(&imported, requested_fp, tx);
+                }
                 let selected = self
                     .hws
                     .list
@@ -2838,6 +2937,48 @@ impl Modal for SignModal {
                 let reason = "This signing device is no longer ready. Reconnect or unlock it, then try again.";
                 self.signer_notice = Some(reason.to_string());
                 return Task::done(Message::View(view::Message::ShowError(reason.to_string())));
+            }
+            Message::CubeKeys(result) => match result {
+                Ok(records) => {
+                    self.cube_keys = records
+                        .into_iter()
+                        .filter_map(|record| {
+                            record
+                                .fingerprint
+                                .parse::<Fingerprint>()
+                                .ok()
+                                .map(|fingerprint| (fingerprint, record))
+                        })
+                        .collect();
+                }
+                // No stored keys to offer; every other signer still works.
+                Err(error) => log::info!("Imported wallet keys unavailable: {error}"),
+            },
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectCubeKey(
+                fingerprint,
+            ))) => {
+                if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+                    return refused;
+                }
+                let Some(record) = self.cube_keys.get(&fingerprint).cloned() else {
+                    return Task::none();
+                };
+                self.signing.insert(fingerprint);
+                let (datadir, chain, psbt) =
+                    (self.datadir.clone(), self.wallet.chain, tx.psbt.clone());
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::services::imported_signer::sign_with_cube_key(
+                                &datadir, chain, &record, &psbt,
+                            )
+                        })
+                        .await
+                        .unwrap_or_else(|_| Err("Signing stopped unexpectedly.".into()))
+                        .map_err(|error| Error::from(WalletError::MasterSigner(error)))
+                    },
+                    move |result| Message::Signed(fingerprint, result),
+                );
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectMasterSigner)) => {
                 if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
@@ -3011,14 +3152,7 @@ impl Modal for SignModal {
             Message::Updated(res) => match res {
                 Ok(()) => match replay::spend_info_for_chain(
                     self.wallet.chain,
-                    match self.wallet.inheritance_descriptor() {
-                        Some(descriptor) => descriptor,
-                        None => {
-                            return Task::done(Message::View(view::Message::ShowError(
-                                "Use the imported wallet signing screen for this PSBT.".into(),
-                            )));
-                        }
-                    },
+                    &self.wallet.main_descriptor,
                     &tx.psbt,
                 ) {
                     Ok(sigs) => tx.sigs = sigs,
@@ -3331,13 +3465,13 @@ async fn sign_psbt(
     // We prune a *clone* and merge the returned signatures back into the
     // original PSBT, so its full derivations are preserved in the daemon's
     // stored copy.
-    let mut pruned_psbt = wallet
-        .inheritance_descriptor()
-        .ok_or_else(|| {
-            Error::Unexpected("Use the imported wallet signer for this account.".into())
-        })?
-        .prune_bip32_derivs_last_avail(psbt.clone())
-        .map_err(Error::Desc)?;
+    // An imported wallet has one spending path: nothing to prune.
+    let mut pruned_psbt = match wallet.inheritance_descriptor() {
+        Some(descriptor) => descriptor
+            .prune_bip32_derivs_last_avail(psbt.clone())
+            .map_err(Error::Desc)?,
+        None => psbt.clone(),
+    };
     hw.sign_tx(&mut pruned_psbt).await.map_err(Error::from)?;
     for (i, psbt_in) in psbt.inputs.iter_mut().enumerate() {
         if let Some(pruned_psbt_in) = pruned_psbt.inputs.get_mut(i) {
@@ -3383,6 +3517,86 @@ mod tests {
 
     fn fingerprint(hex: &str) -> Fingerprint {
         Fingerprint::from_str(hex).expect("fingerprint")
+    }
+
+    /// An imported 2-of-3 wallet signs on one path with its three keys. A key
+    /// stored in this Cube is offered as a signer on this computer.
+    #[test]
+    fn an_imported_wallet_signs_on_one_path_and_offers_its_stored_keys() {
+        use coincube_core::{
+            miniscript::bitcoin::bip32::{DerivationPath, Xpriv, Xpub},
+            wallet_descriptor::{ImportedWalletDescriptor, WalletDescriptor},
+        };
+        use view::vault::psbt::{SigningKeyAction, SigningKeyKind, SigningKeyState};
+        let secp = secp256k1::Secp256k1::new();
+        let accounts: Vec<(Fingerprint, String)> = (1..=3u8)
+            .map(|seed| {
+                let master = Xpriv::new_master(Network::Bitcoin, &[seed; 32]).unwrap();
+                let account = master
+                    .derive_priv(&secp, &DerivationPath::from_str("m/48'/0'/0'/2'").unwrap())
+                    .unwrap();
+                let fingerprint = master.fingerprint(&secp);
+                (
+                    fingerprint,
+                    format!(
+                        "[{}/48'/0'/0'/2']{}",
+                        fingerprint,
+                        Xpub::from_priv(&secp, &account)
+                    ),
+                )
+            })
+            .collect();
+        let branch = |n: u8| {
+            format!(
+                "wsh(sortedmulti(2,{}/{n}/*,{}/{n}/*,{}/{n}/*))",
+                accounts[0].1, accounts[1].1, accounts[2].1
+            )
+        };
+        let imported = ImportedWalletDescriptor::parse(
+            &branch(0),
+            Some(&branch(1)),
+            crate::chain::ChainId::Bitcoin,
+        )
+        .unwrap();
+        let wallet = Arc::new(Wallet::new(WalletDescriptor::Imported(imported)));
+        let mut modal = SignModal::new(
+            HashSet::new(),
+            wallet,
+            CoincubeDirectory::new(PathBuf::new()),
+            Network::Bitcoin,
+            true,
+            None,
+            None,
+            false,
+        );
+
+        let paths = modal.signing_paths();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].is_primary && paths[0].active);
+        assert_eq!((paths[0].threshold, paths[0].total), (2, 3));
+
+        let stored = accounts[0].0;
+        modal.cube_keys.insert(
+            stored,
+            crate::services::imported_keys::LocalKeyRecord {
+                record_id: uuid::Uuid::nil(),
+                revision: uuid::Uuid::nil(),
+                fingerprint: stored.to_string(),
+                origin: "m/48'/0'/0'/2'".into(),
+                xpub: String::new(),
+            },
+        );
+        let paths = modal.signing_paths();
+        let row = paths[0]
+            .keys
+            .iter()
+            .find(|row| row.fingerprint == stored)
+            .unwrap();
+        assert!(matches!(row.kind, SigningKeyKind::Master));
+        assert!(matches!(
+            row.state,
+            SigningKeyState::Available(SigningKeyAction::CubeKey)
+        ));
     }
 
     fn wallet() -> Wallet {

@@ -436,6 +436,8 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectMasterSigner,
+    /// An imported wallet's key stored in this Cube.
+    SelectCubeKey(Fingerprint),
     SelectBorderWallet(Fingerprint),
     BorderWalletRecon(BorderWalletReconMessage),
     EditPsbt,

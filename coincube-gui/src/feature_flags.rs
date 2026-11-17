@@ -122,6 +122,17 @@ pub const CUBE_MEMBERS_UI_ENABLED: bool = is_truthy(option_env!("COINCUBE_CUBE_M
 /// is hidden; the panel code still compiles but is unreachable via UI.
 pub const RECOVER_VAULT_ENABLED: bool = is_truthy(option_env!("COINCUBE_ENABLE_RECOVER_VAULT"));
 
+/// Whether the Vault signer picker offers an imported wallet's keys stored in
+/// this Cube (the import's Keys step) as signers.
+///
+/// Controlled by `COINCUBE_ENABLE_IMPORTED_KEY_SIGNING` at build time; off by
+/// default. Storing the keys already ships. Signing with them is staged behind
+/// the inventory anchor's release gate (`services/imported_keys.rs`: native
+/// signed-app restart and fault tests of the device anchor). Hardware wallets
+/// and PSBT files sign imported wallets either way.
+pub const IMPORTED_KEY_SIGNING_ENABLED: bool =
+    is_truthy(option_env!("COINCUBE_ENABLE_IMPORTED_KEY_SIGNING"));
+
 /// Whether the **owner keychain recovery** surfaces (PLAN-owner-keychain-recovery)
 /// are shown. This is the "protect with my phone" Recovery-Kit branch: the owner
 /// mints an `owner-self` recovery key on their Keychain, seals their own seed /

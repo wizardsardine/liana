@@ -43,9 +43,6 @@ pub struct CreateSpendPanel {
     /// so a later re-entry doesn't clobber a feerate they set.
     initial_feerate_requested: bool,
     mcp_prepared: bool,
-    /// An imported wallet's PSBT went to its own review: the next Send
-    /// starts a new form.
-    handed_off: bool,
 }
 
 impl CreateSpendPanel {
@@ -86,7 +83,6 @@ impl CreateSpendPanel {
             tip_height: blockheight.try_into().expect("i32 by consensus"),
             initial_feerate_requested: false,
             mcp_prepared: false,
-            handed_off: false,
         }
     }
 
@@ -137,7 +133,6 @@ impl CreateSpendPanel {
             tip_height: blockheight.try_into().expect("i32 by consensus"),
             initial_feerate_requested: false,
             mcp_prepared: false,
-            handed_off: false,
         }
     }
 
@@ -182,7 +177,6 @@ impl CreateSpendPanel {
             tip_height: blockheight.try_into().expect("i32 by consensus"),
             initial_feerate_requested: false,
             mcp_prepared: false,
-            handed_off: false,
         }
     }
 
@@ -225,7 +219,6 @@ impl CreateSpendPanel {
             tip_height: blockheight.try_into().expect("i32 by consensus"),
             initial_feerate_requested: false,
             mcp_prepared: false,
-            handed_off: false,
         }
     }
 
@@ -250,12 +243,11 @@ impl CreateSpendPanel {
             tip_height,
             initial_feerate_requested: true,
             mcp_prepared: true,
-            handed_off: false,
         }
     }
 
     pub fn keep_state(&self) -> bool {
-        if self.mcp_prepared || self.handed_off {
+        if self.mcp_prepared {
             return false;
         }
         if self.draft.is_recovery() {
@@ -327,13 +319,6 @@ impl State for CreateSpendPanel {
                     step.load(&self.coins, self.tip_height, &self.draft);
                 }
             }
-        }
-
-        if matches!(
-            message,
-            Message::ImportedSpendPrepared { result: Ok(_), .. }
-        ) {
-            self.handed_off = true;
         }
 
         if let Message::CoinsTipHeight(Ok(coins), Ok(tip)) = &message {

@@ -271,6 +271,13 @@ impl Wallet {
         self.inheritance_descriptor().is_some()
     }
 
+    /// The spending policy the Vault screens show and sign against: a
+    /// Vault's inheritance policy, or an imported wallet's single path.
+    /// `None` only for an imported shape the policy view cannot express.
+    pub fn policy(&self) -> Option<coincube_core::descriptors::CoincubePolicy> {
+        self.main_descriptor.policy().ok()
+    }
+
     /// No inheritance clock exists for a public descriptor import.
     pub fn recovery_timelock(&self) -> Option<u16> {
         self.inheritance_descriptor()

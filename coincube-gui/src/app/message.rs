@@ -81,11 +81,6 @@ pub enum Message {
     /// stored key and the label.
     ActivityLabelSaved(u64, Result<(String, String, Option<String>), String>),
     ImportedBitcoin(Box<super::state::imported_bitcoin::ImportEvent>),
-    /// An imported wallet's composed PSBT, built and saved by its daemon.
-    ImportedSpendPrepared {
-        generation: u64,
-        result: Result<(Psbt, Vec<String>), Error>,
-    },
     VaultSpendPrepared {
         generation: u64,
         result: Result<(Psbt, Vec<String>), Error>,
@@ -163,6 +158,8 @@ pub enum Message {
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
+    /// An imported wallet's keys stored in this Cube, for the signer picker.
+    CubeKeys(Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
     Updated(Result<(), Error>),
     /// UI-only signal to recompute collected signatures and re-evaluate the
