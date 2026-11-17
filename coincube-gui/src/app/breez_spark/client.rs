@@ -1290,9 +1290,8 @@ impl SparkClient {
     /// When the bridge dies, the writer and reader tasks answer every request
     /// still in flight with an [`ErrorKind::NotConnected`] error they make up
     /// themselves, so that error, not a closed channel, is what a caller
-    /// usually sees. A swap and an auto-convert change read it as
-    /// [`SparkClientError::OutcomeUnknown`]. A send still reads it as a
-    /// definite [`SparkClientError::BridgeError`]; that is tracked on #950.
+    /// usually sees. A send, a swap and an auto-convert change all read it as
+    /// [`SparkClientError::OutcomeUnknown`] (see [`payment_error`]).
     async fn request_with(
         &self,
         method: Method,
@@ -1366,10 +1365,13 @@ impl SparkClient {
 
         match response.result {
             ResponseResult::Ok(payload) => Ok(payload),
-            ResponseResult::Err(ErrorPayload { kind, message }) => Err(match handover {
-                Handover::Payment => SparkClientError::BridgeError { kind, message },
-                Handover::Swap => swap_error(id, kind, message),
-                Handover::AutoConvert => auto_convert_error(id, kind, message),
+            ResponseResult::Err(ErrorPayload {
+                kind: error_kind,
+                message,
+            }) => Err(match handover {
+                Handover::Payment => payment_error(id, kind, error_kind, message),
+                Handover::Swap => swap_error(id, error_kind, message),
+                Handover::AutoConvert => auto_convert_error(id, error_kind, message),
             }),
         }
     }
@@ -1423,6 +1425,36 @@ impl SparkClient {
             }
         })
     }
+}
+
+/// A send's (or any other non-swap request's) error answer.
+///
+/// [`ErrorKind::NotConnected`] on a state-changing request is not a refusal:
+/// it is what the writer and reader tasks make up for every request still in
+/// flight when the bridge dies (see [`SparkClient::request_with`]), and the
+/// SDK may have finished the payment first. Reporting it as a definite
+/// failure is how a payment gets made twice, because a definite failure
+/// retires the idempotency key and offers a fresh attempt. So it is
+/// [`SparkClientError::OutcomeUnknown`], as for a swap. No late answer will
+/// come from a dead bridge; reconciliation falls through to the payment
+/// history. Every other kind is the bridge's own answer, and definite.
+fn payment_error(
+    request_id: u64,
+    request: RequestKind,
+    kind: ErrorKind,
+    message: String,
+) -> SparkClientError {
+    if kind == ErrorKind::NotConnected && request == RequestKind::StateChanging {
+        warn!(
+            "Spark send id {} lost its bridge mid-request, so it may have completed: {}",
+            request_id, message
+        );
+        return SparkClientError::OutcomeUnknown {
+            request_id,
+            message: Handover::Payment.bridge_gone(),
+        };
+    }
+    SparkClientError::BridgeError { kind, message }
 }
 
 /// A swap's error answer. Only the bridge's refusals before submission are
@@ -3010,8 +3042,9 @@ mod p0_contract_tests {
     /// When the bridge dies, the writer and reader answer every request still
     /// in flight with a `NotConnected` error they make up. The swap or the
     /// auto-convert change may already have been made, so both read it as
-    /// unknown, with copy that says how to reconcile. A send still reads it
-    /// as a definite `BridgeError`, unchanged (#950 follow-up).
+    /// unknown, with copy that says how to reconcile. So does a send: the SDK
+    /// may have paid before the bridge went, and a definite failure would
+    /// retire the key and offer a second payment (#950).
     #[tokio::test]
     async fn a_made_up_not_connected_answer_is_unknown_for_a_swap_or_auto_convert() {
         let (client, mut requests) = fake_client();
@@ -3055,17 +3088,14 @@ mod p0_contract_tests {
             err
         );
 
-        let (result, _) = tokio::join!(
+        let (result, id) = tokio::join!(
             client.send_payment("send-h".to_string(), Some("key".to_string())),
             bridge_exits(&client, &mut requests)
         );
         assert!(
             matches!(
                 result,
-                Err(SparkClientError::BridgeError {
-                    kind: ErrorKind::NotConnected,
-                    ..
-                })
+                Err(SparkClientError::OutcomeUnknown { request_id, .. }) if request_id == id
             ),
             "{:?}",
             result
@@ -3431,6 +3461,7 @@ mod p0_contract_tests {
                     payment_id: "p".to_string(),
                     amount_sat: 1,
                     fee_sat: 0,
+                    status: Some("Completed".to_string()),
                 }),
             ),
         );

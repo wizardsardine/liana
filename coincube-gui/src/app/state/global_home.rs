@@ -7836,6 +7836,7 @@ mod tests {
                     payment_id: "archive-payment".into(),
                     amount_sat: 100_000,
                     fee_sat: 800,
+                    status: Some("Completed".to_string()),
                 }),
             );
             assert!(

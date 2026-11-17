@@ -122,8 +122,11 @@ impl BuySellPanel {
         }
     }
 
-    /// A sell checkout's Spark payment is with the bridge: the flow must not
-    /// be replaced until it answers.
+    /// A sell checkout's Spark payment is unresolved (with the bridge, or
+    /// checked without a verdict): the flow must not be replaced, nor a held
+    /// session change applied, until it is. See [`SellFulfilment::in_flight`].
+    ///
+    /// [`SellFulfilment::in_flight`]: super::mavapay::SellFulfilment::in_flight
     pub fn sell_payment_in_flight(&self) -> bool {
         matches!(
             &self.step,
@@ -136,11 +139,17 @@ impl BuySellPanel {
         )
     }
 
-    /// The held-back session changes, re-dispatched, once no sell payment is
-    /// in flight. Empty while one still is.
-    pub fn take_deferred_session(&mut self) -> Vec<iced::Task<crate::app::message::Message>> {
+    /// The held-back session changes, re-dispatched in the order they were
+    /// held, once no sell payment is unresolved. `None` while one still is,
+    /// or when nothing was held.
+    ///
+    /// One chained task, not a batch: `Task::batch` runs its tasks
+    /// concurrently with no ordering guarantee, so a held `LogOut` could be
+    /// applied before a `SetLoginState` queued ahead of it, or the other way
+    /// round, and leave the session in the state the user didn't end in.
+    pub fn take_deferred_session(&mut self) -> Option<iced::Task<crate::app::message::Message>> {
         if self.sell_payment_in_flight() {
-            return Vec::new();
+            return None;
         }
         std::mem::take(&mut self.deferred_session)
             .into_iter()
@@ -149,7 +158,7 @@ impl BuySellPanel {
                     crate::app::view::Message::BuySell(msg),
                 ))
             })
-            .collect()
+            .reduce(iced::Task::chain)
     }
 
     pub fn view<'a>(&'a self, mask_amounts: bool) -> iced::Element<'a, ViewMessage, theme::Theme> {

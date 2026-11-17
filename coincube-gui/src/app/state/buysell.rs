@@ -682,10 +682,10 @@ impl State for BuySellPanel {
                         let task = state
                             .update(msg, &self.coincube_client)
                             .map(|task| task.map(Message::View));
-                        // Once the sell payment has answered, apply any
-                        // session change held back while it was in flight.
+                        // Once the sell payment is resolved, apply any
+                        // session change held back meanwhile, in order.
                         let deferred = self.take_deferred_session();
-                        if task.is_some() || !deferred.is_empty() {
+                        if task.is_some() || deferred.is_some() {
                             return iced::Task::batch(task.into_iter().chain(deferred));
                         }
                     }
@@ -1170,6 +1170,7 @@ mod tests {
                         payment_id: "pay-a".to_string(),
                         amount_sat: 2_500_000,
                         fee_sat: 3,
+                        status: Some("Completed".to_string()),
                     },
                 },
             )),
@@ -1214,6 +1215,62 @@ mod tests {
         // At rest, a reset goes through as before.
         panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-b", SellFulfilment::Idle));
         assert!(!panel.sell_payment_in_flight());
+    }
+
+    /// A check that can't settle the payment doesn't release the held
+    /// session changes: they would replace the checkout and drop its key and
+    /// "Check again". Only a settled payment does, and the held changes come
+    /// back as one ordered task.
+    #[test]
+    fn held_session_changes_wait_for_a_settled_payment() {
+        use crate::app::state::spark::send::{ReconcileOutcome, RetryGuard};
+        let mut panel = panel();
+        panel.detected_country = Some(country("NG"));
+        panel.step = BuySellFlowState::Mavapay(sell_checkout(
+            "quote-a",
+            SellFulfilment::OutcomeUnknown {
+                checking: true,
+                outcome: None,
+                guard: RetryGuard::IdempotencyKey,
+            },
+        ));
+        for change in [view::BuySellMessage::LogOut, view::BuySellMessage::LogOut] {
+            let _ = panel.update(None, &Cache::default(), buysell_msg(change));
+        }
+        assert_eq!(panel.deferred_session.len(), 2);
+
+        let checked = |outcome| {
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::SellPaymentChecked {
+                    quote_id: "quote-a".to_string(),
+                    outcome,
+                },
+            ))
+        };
+        // Inconclusive: still unresolved, so nothing is released.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            checked(ReconcileOutcome::Inconclusive("still in progress".into())),
+        );
+        assert!(panel.sell_payment_in_flight());
+        assert_eq!(panel.deferred_session.len(), 2);
+        assert!(panel.take_deferred_session().is_none());
+
+        // Checked again and found landed: released, in one chained task.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::CheckSellPayment,
+            )),
+        );
+        let _ = panel.update(None, &Cache::default(), checked(ReconcileOutcome::Landed));
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-a", &SellFulfilment::Paid))
+        );
+        assert!(panel.deferred_session.is_empty());
     }
 
     #[test]
