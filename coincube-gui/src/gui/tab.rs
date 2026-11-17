@@ -2672,14 +2672,6 @@ impl Tab {
                                         seed.pin.as_str(),
                                     ),
                                     &cube.id,
-                                    // Restore-from-seed: there is no persisted
-                                    // grant yet (the cube is being created right
-                                    // now), so let the on-chain scan decide.
-                                    // That's the whole point of the probe — a
-                                    // restore with real L-BTC keeps its wallet
-                                    // even though the flag is off, and an empty
-                                    // one is discarded.
-                                    false,
                                 )
                                 .await
                                 {
@@ -4036,13 +4028,6 @@ impl Tab {
                                                     &pin,
                                                 ),
                                                 &cube.id,
-                                                // Last-seen `liquidEnabled` grant.
-                                                // Connect hasn't signed in yet at
-                                                // this point (and may never), so
-                                                // the persisted copy is the only
-                                                // one available — see
-                                                // `CubeSettings::liquid_granted`.
-                                                cube.liquid_granted.unwrap_or(false),
                                             )
                                             .await
                                         } else {
@@ -4464,7 +4449,6 @@ impl Tab {
                                 network_val,
                                 app::seed_source::SeedSource::in_memory(signer.clone()),
                                 &cube.id,
-                                cube.liquid_granted.unwrap_or(false),
                             )
                             .await;
 

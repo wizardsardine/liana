@@ -833,20 +833,13 @@ pub struct CubeSettings {
     pub pending_spark_shift: Option<PendingSparkShift>,
     /// Last-seen value of the account's `liquidEnabled` grant (Liquid sunset).
     ///
-    /// A cache of server state, persisted because of an ordering problem: the
-    /// cube (and with it the Liquid SDK) opens at PIN entry, but the grant is
-    /// only known after Connect signs in — later, and not at all on a
-    /// local-daemon install. Without a persisted copy, an ungranted-looking
-    /// fresh wallet gets its scratch state discarded before the grant ever
-    /// arrives, and a granted user would never get a Liquid wallet.
-    ///
-    /// So: the grant is written here whenever `/connect/features` reports it,
-    /// and read back at the *next* cube open to decide whether to keep a fresh
-    /// Liquid wallet. The practical consequence is that a newly-granted user
-    /// gets their Liquid wallet on the next launch, not mid-session.
-    ///
-    /// Never consulted to *hide* an existing wallet — see
-    /// [`crate::app::features::LiquidGate`].
+    /// The account's last-seen `liquidEnabled` grant, written whenever
+    /// `/connect/features` reports it. It used to decide, at cube open,
+    /// whether a fresh Liquid wallet was kept; since Liquid removal PR 1 the
+    /// Liquid SDK never connects and this is only fed to the constant-false
+    /// [`crate::app::features::LiquidGate`]. Kept so existing settings files
+    /// round-trip; removed (with a serde-compatible load) in Liquid removal
+    /// PR 5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquid_granted: Option<bool>,
     /// Passkey metadata for passkey-derived master keys (None for random-generated keys)
