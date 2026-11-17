@@ -46,7 +46,7 @@ impl KeySource {
         match self {
             Self::Words => "Recovery words",
             Self::Hardware => "Hardware wallet",
-            Self::Elsewhere => "Signs elsewhere",
+            Self::Elsewhere => "Skip this key",
         }
     }
 }
@@ -254,8 +254,8 @@ impl KeysState {
         let elsewhere = self.signs_elsewhere();
         if elsewhere > 0 {
             line.push_str(&coincube_ui::localized_format!(
-                " · {elsewhere} signs elsewhere",
-                " · {elsewhere} con firma externa"
+                " · {elsewhere} not added here",
+                " · {elsewhere} sin añadir aquí"
             ));
         }
         line
@@ -600,8 +600,8 @@ fn key_line<'d>(
         (KeySource::Elsewhere, _) => KeyLine {
             mark: Mark::Elsewhere,
             ..line(
-                localized_copy("Signs elsewhere").to_owned(),
-                localized_copy("Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.").to_owned(),
+                localized_copy("Skipped").to_owned(),
+                localized_copy("Not added here. Another wallet or person signs with this key; COINCUBE Desktop saves the PSBT for them.").to_owned(),
             )
         },
         (KeySource::Words, KeyStatus::Verified) => KeyLine {
@@ -698,10 +698,10 @@ fn key_line<'d>(
                 mark: Mark::Elsewhere,
                 dimmed: true,
                 ..line(
-                    localized_copy("Not needed to spend").to_owned(),
+                    localized_copy("Not added — not needed to spend").to_owned(),
                     coincube_ui::localized_format!(
-                        "{} keys are verified, so this one signs elsewhere. Connect its device to add it anyway.",
-                        "Hay {} claves verificadas, así que esta firma en otro lugar. Conecta su dispositivo para añadirla de todos modos.",
+                        "You've verified {} keys, which is enough to spend. Connect this device to add it too.",
+                        "Has verificado {} claves, suficientes para gastar. Conecta este dispositivo para añadirla también.",
                         keys.threshold
                     ),
                 )
@@ -812,10 +812,12 @@ pub(super) fn step<'a>(
             .to_string()
     } else if keys.multisig() {
         coincube_ui::localized_format!(
-            "This wallet has {count} signers and any {} can spend. Verify {} of them here; \
-             the others sign elsewhere. Each key is checked against its fingerprint.",
-            "Esta cartera tiene {count} firmantes y bastan {} para gastar. Verifica {} de \
-             ellas aquí; las demás firman en otro lugar. Cada clave se verifica con su huella.",
+            "This wallet has {count} signers and any {} can spend. Verify at least {} here. \
+             You can skip the rest; they can still sign from their own device or wallet. \
+             Each key is checked against its fingerprint.",
+            "Esta cartera tiene {count} firmantes y bastan {} para gastar. Verifica al menos {} \
+             aquí. Puedes omitir las demás; pueden seguir firmando desde su propio dispositivo \
+             o cartera. Cada clave se verifica con su huella.",
             keys.threshold,
             keys.threshold
         )
@@ -1110,12 +1112,12 @@ pub(super) fn step<'a>(
             match elsewhere.as_slice() {
                 [] => {}
                 [only] => line.push_str(&coincube_ui::localized_format!(
-                    " · Key {only} signs elsewhere",
-                    " · la clave {only} firma en otro lugar"
+                    " · Key {only} not added",
+                    " · clave {only} sin añadir"
                 )),
                 many => line.push_str(&coincube_ui::localized_format!(
-                    " · {} keys sign elsewhere",
-                    " · {} claves firman en otro lugar",
+                    " · {} keys not added",
+                    " · {} claves sin añadir",
                     many.len()
                 )),
             }

@@ -2855,8 +2855,8 @@ impl ImportedBitcoinPanel {
         }
         if elsewhere > 0 {
             parts.push(coincube_ui::localized_format!(
-                "{elsewhere} signs elsewhere",
-                "{elsewhere} con firma externa"
+                "{elsewhere} not added here",
+                "{elsewhere} sin añadir aquí"
             ));
         }
         (!parts.is_empty()).then(|| {
@@ -6127,12 +6127,12 @@ mod tests {
         assert_eq!(keys.provided(), 2);
         let summary = keys.summary();
         assert!(summary.contains("2 of 3 provided"), "{}", summary);
-        assert!(summary.contains("1 signs elsewhere"), "{}", summary);
+        assert!(summary.contains("1 not added here"), "{}", summary);
         // A signer left unanswered signs elsewhere too: the threshold is met.
         keys.slots[2].source = KeySource::Hardware;
         keys.slots[2].status = keys::KeyStatus::Missing;
         assert!(keys.ready());
-        assert!(keys.summary().contains("1 signs elsewhere"));
+        assert!(keys.summary().contains("1 not added here"));
         // Not while a check is in flight.
         keys.slots[2].status = keys::KeyStatus::Checking;
         assert!(!keys.ready());
@@ -6220,8 +6220,8 @@ mod tests {
         assert_labels(
             &shown,
             &[
-                "Not needed to spend",
-                "2 keys are verified, so this one signs elsewhere. Connect its device to add it anyway.",
+                "Not added — not needed to spend",
+                "You've verified 2 keys, which is enough to spend. Connect this device to add it too.",
             ],
             &[
                 "Waiting for its device",
@@ -6231,7 +6231,7 @@ mod tests {
         let footer = rendered_labels(actions).await;
         assert_labels(
             &footer,
-            &["2 of 2 needed keys verified · Key 3 signs elsewhere"],
+            &["2 of 2 needed keys verified · Key 3 not added"],
             &[],
         );
     }
