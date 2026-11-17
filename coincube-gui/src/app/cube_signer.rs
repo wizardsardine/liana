@@ -486,6 +486,50 @@ mod tests {
         assert!(seedless.liquid_signer().is_none());
     }
 
+    /// The App opens a seed-less Cube with P2P disabled and no Connect key,
+    /// and a Cube with a signer with both, its key matching the golden vector.
+    #[test]
+    fn the_app_opens_with_and_without_a_cube_signer() {
+        let _g = session::test_guard();
+        session::close();
+        let network = Network::Bitcoin;
+        let scratch = Scratch::new("app-open");
+        let open = |signer: Option<CubeSigner>| {
+            let breez = crate::app::breez_liquid::client_for_cube_signer(network, signer.as_ref());
+            let (app, _task) = crate::app::App::new_without_wallet(
+                breez,
+                signer,
+                None,
+                crate::app::Config::new(false),
+                crate::dir::CoincubeDirectory::new(scratch.0.clone()),
+                network,
+                CubeSettings::new("Golden".into(), crate::chain::ChainId::Bitcoin),
+            )
+            .unwrap();
+            app
+        };
+
+        let seedless = open(None);
+        assert!(
+            !seedless.cache().has_p2p,
+            "a seed-less Cube has P2P disabled"
+        );
+        assert!(seedless.cache().cube_encryption_key.is_none());
+        drop(seedless);
+
+        let with_signer = open(Some(CubeSigner::new(golden::pin_signer(network))));
+        assert!(with_signer.cache().has_p2p);
+        assert_eq!(
+            with_signer
+                .cache()
+                .cube_encryption_key
+                .as_ref()
+                .unwrap()
+                .public_key_hex(),
+            golden::PIN_ENC_KEY_MAINNET
+        );
+    }
+
     #[test]
     fn debug_never_prints_the_seed() {
         let rendered = format!(
