@@ -1362,6 +1362,7 @@ impl PsbtState {
                 }
             },
             Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
+                let previous = self.tx.psbt.clone();
                 if let Err(e) =
                     merge_signatures_for_chain(self.wallet.chain, &mut self.tx.psbt, &psbt)
                 {
@@ -1376,12 +1377,21 @@ impl PsbtState {
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
-                self.tx.sigs = replay::spend_info_for_chain(
+                match replay::spend_info_for_chain(
                     self.wallet.chain,
                     &self.wallet.main_descriptor,
                     &self.tx.psbt,
-                )
-                .expect("already checked in PSBT import logic");
+                ) {
+                    Ok(sigs) => self.tx.sigs = sigs,
+                    // An unreadable result is refused, never half-applied.
+                    Err(e) => {
+                        self.tx.psbt = previous;
+                        let e = Error::Desc(e);
+                        let err_msg = crate::user_error::report(&e);
+                        self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
+                }
                 self.refresh_replay();
             }
             // Final dispatch is gated on the **current** cache, not on the

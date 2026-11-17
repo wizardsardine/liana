@@ -449,9 +449,11 @@ impl ImportedWalletDescriptor {
     }
 
     /// Signatures claimed in `psbt`, as the Vault counts them: per key origin,
-    /// against the primary path's threshold. Every input must claim the same
-    /// signers. This is progress only; [`crate::imported_spend::finalize_imported_spend`]
-    /// verifies signatures before a broadcast.
+    /// against the primary path's threshold. A signer counts only where it
+    /// signed every input, so a PSBT signed on some inputs reads as less
+    /// signed rather than failing. This is progress only;
+    /// [`crate::imported_spend::finalize_imported_spend`] verifies signatures
+    /// before a broadcast.
     pub fn partial_spend_info(
         &self,
         psbt: &bitcoin::Psbt,
@@ -473,11 +475,17 @@ impl ImportedWalletDescriptor {
                     .filter_map(|key| input.bip32_derivation.get(&key.inner)),
             )
         });
-        let first = infos.next().expect("checked at least one input");
-        if infos.any(|info| info != first) {
-            return Err(CoincubeDescError::InconsistentPsbt);
+        let mut common = infos.next().expect("checked at least one input");
+        for info in infos {
+            common.signed_pubkeys.retain(|fingerprint, count| {
+                info.signed_pubkeys.get(fingerprint).is_some_and(|other| {
+                    *count = (*count).min(*other);
+                    true
+                })
+            });
         }
-        Ok(crate::descriptors::PartialSpendInfo::primary_only(first))
+        common.sigs_count = common.signed_pubkeys.values().sum();
+        Ok(crate::descriptors::PartialSpendInfo::primary_only(common))
     }
 
     /// Outputs of `psbt` paying this wallet (its change or receive branch).

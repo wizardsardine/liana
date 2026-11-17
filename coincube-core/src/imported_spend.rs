@@ -855,6 +855,30 @@ mod tests {
         }
     }
 
+    /// A signer counts only where it signed every input: a PSBT signed on
+    /// some inputs reads as less signed instead of failing.
+    #[test]
+    fn imported_spend_info_counts_only_signers_on_every_input() {
+        let (wallet, signers, created) = draft("wsh(sortedmulti)");
+        let mut psbt = created.psbt.clone();
+        let mut second = psbt.unsigned_tx.input[0].clone();
+        second.previous_output.vout += 1;
+        psbt.unsigned_tx.input.push(second);
+        psbt.inputs.push(psbt.inputs[0].clone());
+
+        add_signature(&mut psbt, &signers[0]);
+        let partial = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial.primary_path().sigs_count, 0);
+        assert!(partial.primary_path().signed_pubkeys.is_empty());
+
+        let sigs = psbt.inputs[0].partial_sigs.clone();
+        psbt.inputs[1].partial_sigs = sigs;
+        let both = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(both.primary_path().sigs_count, 1);
+        assert_eq!(both.primary_path().signed_pubkeys.len(), 1);
+        assert_eq!(both.primary_path().threshold, 2);
+    }
+
     #[test]
     fn imported_multipath_descriptor_derives_both_branches() {
         let (wallet, _, _) = draft("wsh(sortedmulti)");
