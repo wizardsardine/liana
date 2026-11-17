@@ -1,4 +1,3 @@
-use breez_sdk_liquid::{bitcoin::Denomination, model::PreparePayOnchainResponse};
 use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::locale::Text as CopyText;
 use coincube_ui::localized_format;
@@ -11,8 +10,8 @@ use coincube_ui::{
     font::MEDIUM,
     icon::{
         arrow_right, check_circle_icon, clipboard_icon, clock_icon, dash_circle_icon,
-        droplet_fill_icon, exclamation_circle_icon, eye_icon, eye_slash_icon, key_icon, lock_icon,
-        spark_icon, usd_icon, vault_icon, warning_icon,
+        exclamation_circle_icon, eye_icon, eye_slash_icon, key_icon, lock_icon, spark_icon,
+        vault_icon, warning_icon,
     },
     theme,
     widget::{action::Action, *},
@@ -22,7 +21,6 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::breez_liquid::assets::format_usdt_display;
 use crate::app::transfer_destination_loader::CubeChoice;
 use crate::app::view::shared::landing::{
     amount_cell, landing_button, landing_card_style, landing_control_id, AmountCell, AmountTier,
@@ -30,41 +28,32 @@ use crate::app::view::shared::landing::{
 use crate::app::view::wallet_header::{wallet_header, HeaderVariant, SyncState, WalletHeaderProps};
 use crate::app::{menu::Menu, view::FiatAmountConverter};
 use crate::app::{
-    menu::{LiquidSubMenu, VaultSubMenu},
+    menu::VaultSubMenu,
     view::message::{HomeMessage, Message},
 };
 use crate::chain::ChainId;
-use coincube_core::miniscript::bitcoin::Amount;
+use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
 enum WalletType {
-    Liquid,
-    Usdt { balance: u64, error: bool },
     Vault,
 }
 
 /// Stages a transfer passes through between `Initiated` and `Completed`.
 ///
-/// All six directed pairs land on `PendingDeposit` from the UI's perspective —
+/// Every direction lands on `PendingDeposit` from the UI's perspective —
 /// the Done page (`done_page`) renders the "Pending Deposit"
 /// treatment at that point and the flow exits. The home-page pending indicators
 /// clear asynchronously once the destination's confirmation requirements are met.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferStage {
     Initiated,
-    SwappingLbtcToBtc,
-    /// Used by any→Liquid leg: after the on-chain tx confirms at the Breez
-    /// peg-in swap address, Breez credits L-BTC and we transition to `Completed`.
-    SwappingBtcToLbtc,
     /// The source wallet is broadcasting its on-chain tx. Short-lived — flips to
     /// `PendingDeposit` as soon as we have a txid.
     BroadcastingOnChain,
     /// The on-chain tx is broadcast and awaiting confirmations at the destination.
     /// This is the terminal state for the success-screen UX.
     PendingDeposit,
-    /// Breez is forwarding the swapped BTC to the Vault address (L-BTC→Vault leg).
-    SendingToVault,
     Completed,
 }
 
@@ -139,7 +128,6 @@ fn wallet_card<'a>(
     show_recovery_path: bool,
     import_pending: bool,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
-    pending_vault_incoming: Option<PendingTransfer>,
     pending_send_sats: u64,
     pending_receive_sats: u64,
     display_mode: crate::app::settings::display::DisplayMode,
@@ -155,18 +143,6 @@ fn wallet_card<'a>(
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
     let (icon, title, send_action, receive_action) = match wallet_type {
-        WalletType::Liquid => (
-            droplet_fill_icon().style(theme::text::secondary),
-            "Liquid",
-            Message::Menu(Menu::Liquid(LiquidSubMenu::Send)),
-            Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)),
-        ),
-        WalletType::Usdt { .. } => (
-            usd_icon().style(theme::text::secondary),
-            "USDt",
-            Message::Menu(Menu::Liquid(LiquidSubMenu::Send)),
-            Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)),
-        ),
         WalletType::Vault => (
             vault_icon().style(theme::text::secondary),
             "Vault",
@@ -176,120 +152,7 @@ fn wallet_card<'a>(
     };
     let overview_action = match wallet_type {
         WalletType::Vault => Message::Menu(Menu::Vault(VaultSubMenu::Overview)),
-        WalletType::Liquid | WalletType::Usdt { .. } => {
-            Message::Menu(Menu::Liquid(LiquidSubMenu::Overview))
-        }
     };
-
-    // USDt card renders its own balance display (not Amount-based)
-    if let WalletType::Usdt {
-        balance: usdt_bal,
-        error: usdt_error,
-    } = wallet_type
-    {
-        let content = Column::new()
-            .spacing(12)
-            .push(
-                Row::new()
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .push(usd_icon().color(color::ORANGE).size(16))
-                    .push(text("USDt").color(color::ORANGE).size(14)),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        Column::new()
-                            .spacing(4)
-                            .push(if balance_masked {
-                                Row::new().push(text("********").size(H2_SIZE))
-                            } else if usdt_error {
-                                Row::new().push(
-                                    text(localized_copy("Balance unavailable"))
-                                        .size(P1_SIZE)
-                                        .color(color::RED),
-                                )
-                            } else {
-                                Row::new()
-                                    .spacing(10)
-                                    .align_y(Alignment::Center)
-                                    .push(text(format_usdt_display(usdt_bal)).size(H2_SIZE).bold())
-                                    .push(text("USDt").size(H2_SIZE).color(color::GREY_3))
-                            })
-                            .push(
-                                text("Liquid Network")
-                                    .size(P1_SIZE)
-                                    .style(theme::text::secondary),
-                            )
-                            .push_maybe(
-                                (!balance_masked && !usdt_error && pending_send_sats > 0).then(
-                                    || {
-                                        Row::new()
-                                            .spacing(6)
-                                            .align_y(Alignment::Center)
-                                            .push(
-                                                warning_icon()
-                                                    .size(12)
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .push(
-                                                text(localized_format!(
-                                                    "-{} USDt pending",
-                                                    "-{} USDt pendiente",
-                                                    format_usdt_display(pending_send_sats)
-                                                ))
-                                                .size(P2_SIZE)
-                                                .style(theme::text::secondary),
-                                            )
-                                    },
-                                ),
-                            )
-                            .push_maybe(
-                                (!balance_masked && !usdt_error && pending_receive_sats > 0).then(
-                                    || {
-                                        Row::new()
-                                            .spacing(6)
-                                            .align_y(Alignment::Center)
-                                            .push(
-                                                warning_icon()
-                                                    .size(12)
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .push(
-                                                text(localized_format!(
-                                                    "+{} USDt pending",
-                                                    "+{} USDt pendiente",
-                                                    format_usdt_display(pending_receive_sats)
-                                                ))
-                                                .size(P2_SIZE)
-                                                .style(theme::text::secondary),
-                                            )
-                                    },
-                                ),
-                            )
-                            .width(Length::Fill),
-                    )
-                    .push(Space::new().width(Length::Fixed(8.0)))
-                    .push(
-                        button::primary(None, localized_copy("Send"))
-                            .width(Length::Fixed(120.0))
-                            .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Send))),
-                    )
-                    .push(Space::new().width(Length::Fixed(8.0)))
-                    .push(
-                        button::orange_outline(None, "Receive")
-                            .width(Length::Fixed(120.0))
-                            .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Receive))),
-                    ),
-            );
-        return openable_card(
-            Container::new(content)
-                .padding(20)
-                .style(landing_card_style),
-            overview_action,
-        );
-    }
 
     let content = match wallet_type {
         WalletType::Vault if import_pending => Column::new().spacing(12).push(
@@ -357,7 +220,7 @@ fn wallet_card<'a>(
                 ),
         ),
         _ => {
-            // BTC currency row mirrors Spark's BTC row / Liquid's L-BTC row,
+            // BTC currency row mirrors Spark's BTC row,
             // so Vault's Send/Receive lives at the row level rather than as
             // duplicate card-level buttons. Vault's send/receive actions
             // route through Menu navigation (`send_action`/`receive_action`).
@@ -534,24 +397,6 @@ fn wallet_card<'a>(
         }
     };
 
-    let content = if matches!(wallet_type, WalletType::Vault) && loaded {
-        if let Some(pending_transfer) = pending_vault_incoming {
-            if pending_transfer.stage != TransferStage::Completed {
-                content.push(pending_deposit_card(
-                    pending_transfer,
-                    bitcoin_unit,
-                    balance_masked,
-                ))
-            } else {
-                content
-            }
-        } else {
-            content
-        }
-    } else {
-        content
-    };
-
     openable_card(
         Container::new(content)
             .padding(20)
@@ -643,8 +488,6 @@ struct TransferCtx<'a> {
     direction: TransferDirection,
     has_vault: bool,
     has_spark: bool,
-    has_liquid: bool,
-    liquid_balance: Amount,
     spark_balance: Amount,
     vault_balance: Amount,
     fiat_converter: Option<FiatAmountConverter>,
@@ -661,7 +504,6 @@ struct TransferCtx<'a> {
 impl TransferCtx<'_> {
     fn balance(&self, kind: WalletKind) -> Amount {
         match kind {
-            WalletKind::Liquid => self.liquid_balance,
             WalletKind::Spark => self.spark_balance,
             WalletKind::Vault => self.vault_balance,
         }
@@ -1016,13 +858,11 @@ const MAX_NOTE: &str = "Sends the whole balance. Fees come out of this amount.";
 const TRANSFER_FROM_TILE_ID: &str = "transfer-from-tile";
 const TRANSFER_TO_TILE_ID: &str = "transfer-to-tile";
 
-/// The wallets this Cube offers, in menu order. Liquid only where the Cube
-/// still has a usable Liquid wallet.
+/// The wallets this Cube offers, in menu order.
 fn cube_wallets(ctx: &TransferCtx<'_>) -> Vec<WalletKind> {
     [
         (WalletKind::Spark, ctx.has_spark),
         (WalletKind::Vault, ctx.has_vault),
-        (WalletKind::Liquid, ctx.has_liquid),
     ]
     .iter()
     .filter_map(|&(kind, available)| available.then_some(kind))
@@ -1036,7 +876,6 @@ fn wallet_logo<'a>(kind: WalletKind, size: f32) -> Element<'a, Message> {
         match kind {
             WalletKind::Spark => "spark",
             WalletKind::Vault => "bitcoin",
-            WalletKind::Liquid => "liquid",
         },
         size,
     )
@@ -1046,7 +885,6 @@ fn from_option_id(kind: WalletKind) -> &'static str {
     match kind {
         WalletKind::Spark => "transfer-from-spark",
         WalletKind::Vault => "transfer-from-vault",
-        WalletKind::Liquid => "transfer-from-liquid",
     }
 }
 
@@ -1054,7 +892,6 @@ fn to_option_id(kind: WalletKind) -> &'static str {
     match kind {
         WalletKind::Spark => "transfer-to-spark",
         WalletKind::Vault => "transfer-to-vault",
-        WalletKind::Liquid => "transfer-to-liquid",
     }
 }
 
@@ -1432,22 +1269,16 @@ fn unlock_section<'a>(ctx: &TransferCtx<'a>) -> Element<'a, Message> {
 /// The fee a direction's quote reported, if there is one yet.
 fn quoted_fees(
     direction: TransferDirection,
-    prepare_onchain_send_response: Option<&PreparePayOnchainResponse>,
     vault_fees: Option<Amount>,
     spark_send_fee_sat: Option<u64>,
 ) -> Option<Amount> {
     match direction {
-        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-            prepare_onchain_send_response.map(|response| Amount::from_sat(response.total_fees_sat))
-        }
-        TransferDirection::VaultToLiquid
-        | TransferDirection::VaultToSpark
+        TransferDirection::VaultToSpark
         | TransferDirection::VaultToOtherSpark
         | TransferDirection::VaultToOtherCube => vault_fees,
         // Spark-sourced: `spark.prepare_send` quoted a `fee_sat` at step
         // 1→2 and the state layer stashed it on `spark_send_fee_sat`.
-        TransferDirection::SparkToLiquid
-        | TransferDirection::SparkToVault
+        TransferDirection::SparkToVault
         | TransferDirection::SparkToOtherSpark
         | TransferDirection::SparkToOtherCube => spark_send_fee_sat.map(Amount::from_sat),
     }
@@ -1656,8 +1487,6 @@ fn details_page<'a>(
     ctx: &TransferCtx<'a>,
     page: TransferPage,
     amount: &'a form::Value<String>,
-    onchain_send_limit: Option<(u64, u64)>,
-    onchain_receive_limit: Option<(u64, u64)>,
 ) -> TransferScreen<'a> {
     let direction = ctx.direction;
     let source = direction.from_kind();
@@ -1666,16 +1495,8 @@ fn details_page<'a>(
     let amount_open = page == TransferPage::Amount || !other;
     let parsed = parse_amount(amount, ctx.unit).filter(|_| amount.valid && amount_open);
 
-    let effective_min = crate::app::state::effective_transfer_min_sat(
-        direction,
-        onchain_send_limit,
-        onchain_receive_limit,
-    );
-    let effective_max = crate::app::state::effective_transfer_max_sat(
-        direction,
-        onchain_send_limit,
-        onchain_receive_limit,
-    );
+    let effective_min = crate::app::state::effective_transfer_min_sat(direction);
+    let effective_max = crate::app::state::effective_transfer_max_sat(direction);
     let limit = |sat| bitcoin_text(Amount::from_sat(sat), ctx.unit, false);
     let limits = match (effective_min, effective_max) {
         (Some(min), Some(max)) => format!("Minimum {} · Maximum {}", limit(min), limit(max)),
@@ -1837,12 +1658,6 @@ fn details_page<'a>(
 /// The route a direction takes, for Review.
 fn route_text(direction: TransferDirection) -> &'static str {
     match direction {
-        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-            "Liquid → Bitcoin swap, then on-chain"
-        }
-        TransferDirection::VaultToLiquid | TransferDirection::SparkToLiquid => {
-            "Bitcoin on-chain, then swap to Liquid"
-        }
         TransferDirection::VaultToSpark
         | TransferDirection::SparkToVault
         | TransferDirection::VaultToOtherCube
@@ -1973,7 +1788,6 @@ fn review_page<'a>(
     address_expanded: bool,
     is_sending: bool,
     is_tx_signed: bool,
-    prepare_onchain_send_response: Option<&'a PreparePayOnchainResponse>,
     vault_fees: Option<Amount>,
     transfer_feerate: &'a form::Value<String>,
     transfer_feerate_loading: Option<crate::app::view::shared::feerate_picker::FeeratePreset>,
@@ -1982,12 +1796,7 @@ fn review_page<'a>(
     let direction = ctx.direction;
     let unit = ctx.unit;
     let parsed = parse_amount(amount, unit);
-    let fees = quoted_fees(
-        direction,
-        prepare_onchain_send_response,
-        vault_fees,
-        spark_send_fee_sat,
-    );
+    let fees = quoted_fees(direction, vault_fees, spark_send_fee_sat);
     let with_fiat = |value: Amount| -> String {
         let bitcoin = bitcoin_text(value, unit, ctx.balance_masked);
         match fiat_estimate(value, ctx.fiat_converter).filter(|_| !ctx.balance_masked) {
@@ -2088,9 +1897,8 @@ fn review_page<'a>(
 
     let primary = match direction {
         // Vault-sourced: sign the on-chain tx first, then broadcast. Shared
-        // signer path handles Liquid, Spark and another Cube's Vault.
-        TransferDirection::VaultToLiquid
-        | TransferDirection::VaultToSpark
+        // signer path handles Spark and another Cube's Vault.
+        TransferDirection::VaultToSpark
         | TransferDirection::VaultToOtherSpark
         | TransferDirection::VaultToOtherCube => {
             if is_tx_signed {
@@ -2106,23 +1914,14 @@ fn review_page<'a>(
                     coincube_ui::locale::copy("Sign transaction"),
                     is_sending,
                     (transfer_feerate.valid && destination_ready)
-                        .then_some(Message::Home(HomeMessage::SignVaultToLiquidTx)),
+                        .then_some(Message::Home(HomeMessage::SignVaultTransferTx)),
                 )
             }
-        }
-        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-            button::primary_loading(
-                None,
-                coincube_ui::locale::copy("Confirm transfer"),
-                is_sending,
-                transfer_action_ready.then_some(Message::Home(HomeMessage::ConfirmTransfer)),
-            )
         }
         // Spark-sourced: the prepare handle was fetched at step 1→2. Confirm
         // calls `spark.send_payment(handle)` synchronously from the UI's
         // perspective; stage flips to PendingDeposit on success.
-        TransferDirection::SparkToLiquid
-        | TransferDirection::SparkToVault
+        TransferDirection::SparkToVault
         | TransferDirection::SparkToOtherSpark
         | TransferDirection::SparkToOtherCube => button::primary_loading(
             None,
@@ -2298,7 +2097,6 @@ fn done_page<'a>(ctx: &TransferCtx<'a>, amount: &'a form::Value<String>) -> Tran
                             coincube_ui::locale::copy(match ctx.origin {
                                 Some(WalletKind::Spark) => "Back to Spark",
                                 Some(WalletKind::Vault) => "Back to Vault",
-                                Some(WalletKind::Liquid) => "Back to Liquid",
                                 None => "Back to Overview",
                             }),
                             None,
@@ -2321,7 +2119,6 @@ fn done_page<'a>(ctx: &TransferCtx<'a>, amount: &'a form::Value<String>) -> Tran
 /// of a transfer independently of which specific `TransferDirection` is active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WalletKind {
-    Liquid,
     Spark,
     Vault,
 }
@@ -2329,17 +2126,14 @@ pub enum WalletKind {
 impl WalletKind {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Liquid => "Liquid",
             Self::Spark => "Spark",
             Self::Vault => "Vault",
         }
     }
 
-    /// The uppercase network badge rendered in the wallet picker rows (matching the
-    /// "LIQUID"/"BITCOIN" badges used by the Liquid Send picker).
+    /// The uppercase network badge rendered in the wallet picker rows.
     pub fn badge(&self) -> &'static str {
         match self {
-            Self::Liquid => "LIQUID",
             Self::Spark => "SPARK",
             Self::Vault => "VAULT",
         }
@@ -2459,10 +2253,6 @@ pub enum PickerSide {
 /// exhaustiveness in match arms and keeps same-Cube and cross-Cube routes distinct.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferDirection {
-    LiquidToVault,
-    VaultToLiquid,
-    LiquidToSpark,
-    SparkToLiquid,
     VaultToSpark,
     SparkToVault,
     /// This Cube's Vault to the Vault of another local Bitcoin mainnet Cube,
@@ -2478,10 +2268,6 @@ pub enum TransferDirection {
 impl TransferDirection {
     pub fn pair(&self) -> (WalletKind, WalletKind) {
         match self {
-            Self::LiquidToVault => (WalletKind::Liquid, WalletKind::Vault),
-            Self::VaultToLiquid => (WalletKind::Vault, WalletKind::Liquid),
-            Self::LiquidToSpark => (WalletKind::Liquid, WalletKind::Spark),
-            Self::SparkToLiquid => (WalletKind::Spark, WalletKind::Liquid),
             Self::VaultToSpark | Self::VaultToOtherSpark => (WalletKind::Vault, WalletKind::Spark),
             Self::SparkToVault | Self::SparkToOtherCube => (WalletKind::Spark, WalletKind::Vault),
             Self::VaultToOtherCube => (WalletKind::Vault, WalletKind::Vault),
@@ -2533,10 +2319,6 @@ impl TransferDirection {
     /// Availability of each wallet on the current cube is the caller's concern.
     pub fn try_from_pair(from: WalletKind, to: WalletKind) -> Option<Self> {
         Some(match (from, to) {
-            (WalletKind::Liquid, WalletKind::Vault) => Self::LiquidToVault,
-            (WalletKind::Vault, WalletKind::Liquid) => Self::VaultToLiquid,
-            (WalletKind::Liquid, WalletKind::Spark) => Self::LiquidToSpark,
-            (WalletKind::Spark, WalletKind::Liquid) => Self::SparkToLiquid,
             (WalletKind::Vault, WalletKind::Spark) => Self::VaultToSpark,
             (WalletKind::Spark, WalletKind::Vault) => Self::SparkToVault,
             _ => return None,
@@ -2561,7 +2343,6 @@ impl TransferDirection {
 
 pub struct GlobalViewConfig<'a> {
     pub cube_id: &'a str,
-    pub liquid_balance: Amount,
     /// Spark wallet BTC balance in sats. Defaults to `ZERO` while
     /// the first `get_info` round-trip is in flight or if the
     /// bridge subprocess is currently down.
@@ -2569,12 +2350,6 @@ pub struct GlobalViewConfig<'a> {
     pub spark_btc_balance: Amount,
     pub spark_usdb_balance: Option<&'a coincube_spark_protocol::UsdbBalanceSnapshot>,
     pub spark_balance_error: bool,
-    pub usdt_balance: u64,
-    pub usdt_balance_error: bool,
-    pub pending_liquid_send_sats: u64,
-    pub pending_usdt_send_sats: u64,
-    pub pending_liquid_receive_sats: u64,
-    pub pending_usdt_receive_sats: u64,
     pub vault_pending_send_sats: u64,
     pub vault_pending_receive_sats: u64,
     pub vault_balance: Amount,
@@ -2594,16 +2369,6 @@ pub struct GlobalViewConfig<'a> {
     /// placeholder — avoids flashing a stale pre-sync value (e.g. zero
     /// before the session's incoming payments have landed).
     pub spark_balance_loaded: bool,
-    /// True once the Liquid bridge has reported its first L-BTC
-    /// balance. Drives the L-BTC row's animated-dots placeholder.
-    pub liquid_balance_loaded: bool,
-    /// A balance fetch failed, so the row shows "Balance unavailable" rather
-    /// than the zero it never managed to overwrite.
-    pub liquid_balance_error: bool,
-    /// True once the Liquid bridge has reported USDt balance (or an
-    /// explicit error, captured in `usdt_balance_error`). Drives the
-    /// USDt row's animated-dots placeholder.
-    pub usdt_balance_loaded: bool,
     /// True once the Vault daemon has produced its first cache poll
     /// (`blockheight > 0`). Drives the Vault card's animated-dots
     /// placeholder and suppresses pending indicators until the
@@ -2623,13 +2388,6 @@ pub struct GlobalViewConfig<'a> {
     /// `spark_backend.is_some()` in the state layer. Drives the Spark card
     /// visibility and feeds [`transfer_available`].
     pub has_spark: bool,
-    /// Whether the Liquid wallet is shown at all — the sunset gate AND a
-    /// Liquid backend on the current network
-    /// ([`features::liquid_wallet_usable`](crate::app::features::liquid_wallet_usable)).
-    /// Drives the Liquid card, the Liquid row in the wallet picker, and
-    /// Liquid's contribution to the Total Balance. Liquid used to be
-    /// unconditional on every cube; it no longer is.
-    pub has_liquid: bool,
     pub current_view: HomeView,
     pub transfer_direction: Option<TransferDirection>,
     pub transfer_from: Option<WalletKind>,
@@ -2647,11 +2405,8 @@ pub struct GlobalViewConfig<'a> {
     pub labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     pub address_expanded: bool,
     pub bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
-    pub onchain_send_limit: Option<(u64, u64)>,
-    pub onchain_receive_limit: Option<(u64, u64)>,
     pub is_sending: bool,
     pub is_tx_signed: bool,
-    pub prepare_onchain_send_response: Option<&'a PreparePayOnchainResponse>,
     pub spend_tx_fees: Option<Amount>,
     /// Vault-sourced transfers expose a sats/vbyte input on the confirm screen.
     /// Ignored on all other directions (SDK picks the fee).
@@ -2662,12 +2417,12 @@ pub struct GlobalViewConfig<'a> {
     /// Spark-quoted on-chain fee for the prepared send (Spark-sourced
     /// directions only). Rendered in the Fees row on the confirm screen.
     pub spark_send_fee_sat: Option<u64>,
-    /// Mirror of `pending_vault_incoming` for the Spark card. Populated by the
-    /// state layer when a transfer into Spark has broadcast on-chain and is
-    /// awaiting maturity + claim on the Spark side.
+    /// The Spark card's pending indicator. Populated by the state layer when
+    /// a transfer into Spark has broadcast on-chain and is awaiting
+    /// maturity + claim on the Spark side.
     pub pending_spark_incoming: Option<PendingTransfer>,
-    pub pending_vault_incoming: Option<PendingTransfer>,
-    /// BTC price in USD for accurate USDt→sats conversion regardless of user's fiat currency.
+    /// BTC price in USD, for valuing Spark's USD stable balance whatever the
+    /// user's fiat currency.
     pub btc_usd_price: Option<f64>,
     /// This Cube's name and chain, for Overview and the transfer dialog.
     pub cube_name: &'a str,
@@ -2714,17 +2469,10 @@ pub fn global_home_view<'a>(
 ) -> (Element<'a, Message>, Option<TransferScreen<'a>>) {
     let GlobalViewConfig {
         cube_id,
-        liquid_balance,
         spark_balance,
         spark_btc_balance,
         spark_usdb_balance,
         spark_balance_error,
-        usdt_balance,
-        usdt_balance_error,
-        pending_liquid_send_sats,
-        pending_usdt_send_sats,
-        pending_liquid_receive_sats,
-        pending_usdt_receive_sats,
         vault_pending_send_sats,
         vault_pending_receive_sats,
         vault_balance,
@@ -2736,9 +2484,6 @@ pub fn global_home_view<'a>(
         overview_wallets_hidden,
         total_balance_loading,
         spark_balance_loaded,
-        liquid_balance_loaded,
-        liquid_balance_error,
-        usdt_balance_loaded,
         vault_loaded,
         recovery_available,
         vault_stale,
@@ -2746,7 +2491,6 @@ pub fn global_home_view<'a>(
         has_vault,
         has_imported_bitcoin,
         has_spark,
-        has_liquid,
         current_view,
         transfer_direction,
         transfer_from: _,
@@ -2761,16 +2505,12 @@ pub fn global_home_view<'a>(
         labels_editing,
         address_expanded,
         bitcoin_unit,
-        onchain_send_limit,
-        onchain_receive_limit,
         is_sending,
         is_tx_signed,
-        prepare_onchain_send_response,
         spend_tx_fees,
         transfer_feerate,
         transfer_feerate_loading,
         spark_send_fee_sat,
-        pending_vault_incoming,
         pending_spark_incoming,
         btc_usd_price,
         cube_name,
@@ -2799,7 +2539,6 @@ pub fn global_home_view<'a>(
     //   2 — Review
     //   3 — Done
     // Steps 1–3 are a dialog the state layer lays over the overview.
-    let _ = pending_vault_incoming;
     let transfer = transfer_direction.and_then(|direction| {
         let ctx = TransferCtx {
             cube_id,
@@ -2808,8 +2547,6 @@ pub fn global_home_view<'a>(
             direction,
             has_vault,
             has_spark,
-            has_liquid,
-            liquid_balance,
             spark_balance,
             vault_balance,
             fiat_converter,
@@ -2821,13 +2558,7 @@ pub fn global_home_view<'a>(
             origin: transfer_origin,
         };
         match current_view.step {
-            1 => Some(details_page(
-                &ctx,
-                transfer_page,
-                entered_amount,
-                onchain_send_limit,
-                onchain_receive_limit,
-            )),
+            1 => Some(details_page(&ctx, transfer_page, entered_amount)),
             2 => Some(review_page(
                 &ctx,
                 entered_amount,
@@ -2839,7 +2570,6 @@ pub fn global_home_view<'a>(
                 address_expanded,
                 is_sending,
                 is_tx_signed,
-                prepare_onchain_send_response,
                 spend_tx_fees,
                 transfer_feerate,
                 transfer_feerate_loading,
@@ -2850,29 +2580,11 @@ pub fn global_home_view<'a>(
         }
     });
 
-    // --- Combined Liquid card (L-BTC + USDt) ---
-    // USDt is pegged to USD, so always use BTC/USD price for conversion.
-    // When the user's fiat currency is USD, btc_usd_price == converter.price_per_btc().
-    // When it differs (e.g. EUR), we must use the dedicated USD price to avoid mispricing.
+    // USDB (Spark's Stable Balance) is pegged to USD, so it converts at the
+    // BTC/USD price whatever the user's fiat currency.
     let usable_usd_quote = btc_usd_price.filter(|price| *price > 0.0 && price.is_finite());
-    let usdt_fiat_value = usdt_balance as f64 / 1e8; // USDt base units → dollars
-    let usdt_as_sats = usable_usd_quote
-        .map(|btc_price_usd| (usdt_fiat_value / btc_price_usd * 1e8) as u64)
-        .unwrap_or(0);
-    // A gated-off Liquid wallet contributes nothing to the aggregate. Its
-    // balances are zero in that state anyway (the state layer skips the
-    // loaders), but stating it here keeps the Total Balance honest even if a
-    // stale value ever survived the gate flipping.
-    let total_sats = if has_liquid {
-        liquid_balance.to_sat().saturating_add(usdt_as_sats)
-    } else {
-        0
-    };
-    let total_amount = Amount::from_sat(total_sats);
-    let total_fiat = fiat_converter.as_ref().map(|c| c.convert(total_amount));
-    let lbtc_fiat = fiat_converter.as_ref().map(|c| c.convert(liquid_balance));
 
-    // Global Total Balance: aggregate across Spark + Liquid (L-BTC + USDt-as-sats) + Vault.
+    // Global Total Balance: aggregate across Spark + Vault.
     // Callers pass `has_spark`/`has_vault` to gate visibility, but zero-balance
     // default values for absent wallets don't skew the total.
     // An imported Vault can report coins before its bounded history search is
@@ -2908,17 +2620,12 @@ pub fn global_home_view<'a>(
     let spark_valuation_partial = spark_usdb_held && usable_usd_quote.is_none();
     let global_total_sats = spark_display_balance
         .to_sat()
-        .saturating_add(total_sats)
         .saturating_add(display_vault_balance.to_sat());
     let global_total_amount = Amount::from_sat(global_total_sats);
     let global_total_fiat = fiat_converter
         .as_ref()
         .map(|c| c.convert(global_total_amount));
-    let total_partial = (has_spark && (spark_balance_error || spark_valuation_partial))
-        || (has_liquid
-            && (liquid_balance_error
-                || usdt_balance_error
-                || (usdt_balance > 0 && usable_usd_quote.is_none())));
+    let total_partial = has_spark && (spark_balance_error || spark_valuation_partial);
 
     let orange_outline_btn =
         |wallet: &'static str, control: &'static str, msg: Message| -> Element<'a, Message> {
@@ -2934,288 +2641,8 @@ pub fn global_home_view<'a>(
             .into()
         };
 
-    // L-BTC asset row
-    let lbtc_row = Column::new()
-        .spacing(4)
-        .push(
-            Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(coincube_ui::image::asset_network_logo::<Message>(
-                    "lbtc", "liquid", 32.0,
-                ))
-                .push(
-                    text("L-BTC")
-                        .size(P1_SIZE)
-                        .bold()
-                        .width(Length::Fixed(60.0)),
-                )
-                .push(if wallet_balance_masked {
-                    Row::new().push(text("********").size(P1_SIZE))
-                } else if liquid_balance_error {
-                    Row::new().push(
-                        text(localized_copy("Balance unavailable"))
-                            .size(P1_SIZE)
-                            .color(color::RED),
-                    )
-                } else if !liquid_balance_loaded {
-                    Row::new().push(spinner::typing_text_carousel(
-                        "...",
-                        false,
-                        Duration::from_millis(400),
-                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
-                    ))
-                } else {
-                    amount_with_size_and_unit(&liquid_balance, P1_SIZE, bitcoin_unit)
-                })
-                .push_maybe(
-                    (!wallet_balance_masked && liquid_balance_loaded && !liquid_balance_error)
-                        .then(|| {
-                            lbtc_fiat
-                                .map(|f| f.to_text().size(P2_SIZE).style(theme::text::secondary))
-                        })
-                        .flatten(),
-                )
-                .push(Space::new().width(Length::Fill))
-                .push(
-                    landing_button(
-                        landing_control_id(cube_id, "Liquid", "send-lbtc"),
-                        localized_copy("Send"),
-                        None,
-                        Message::FocusAction,
-                        Some(Message::Home(HomeMessage::SendAsset(
-                            crate::app::state::liquid::send::SendAsset::Lbtc,
-                        ))),
-                        theme::button::primary,
-                    )
-                    .width(Length::Fixed(90.0)),
-                )
-                .push(orange_outline_btn(
-                    "Liquid",
-                    "receive-lbtc",
-                    Message::Home(HomeMessage::ReceiveAsset(
-                        crate::app::state::liquid::send::SendAsset::Lbtc,
-                    )),
-                )),
-        )
-        .push_maybe(
-            (!wallet_balance_masked
-                && liquid_balance_loaded
-                && !liquid_balance_error
-                && pending_liquid_send_sats > 0)
-                .then(|| {
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(warning_icon().size(12).style(theme::text::secondary))
-                        .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                        .push(amount_with_size_and_unit(
-                            &Amount::from_sat(pending_liquid_send_sats),
-                            P2_SIZE,
-                            bitcoin_unit,
-                        ))
-                        .push(
-                            text(localized_copy("pending"))
-                                .size(P2_SIZE)
-                                .style(theme::text::secondary),
-                        )
-                }),
-        )
-        .push_maybe(
-            (!wallet_balance_masked
-                && liquid_balance_loaded
-                && !liquid_balance_error
-                && pending_liquid_receive_sats > 0)
-                .then(|| {
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(warning_icon().size(12).style(theme::text::secondary))
-                        .push(text("+").size(P2_SIZE).style(theme::text::secondary))
-                        .push(amount_with_size_and_unit(
-                            &Amount::from_sat(pending_liquid_receive_sats),
-                            P2_SIZE,
-                            bitcoin_unit,
-                        ))
-                        .push(
-                            text(localized_copy("pending"))
-                                .size(P2_SIZE)
-                                .style(theme::text::secondary),
-                        )
-                }),
-        );
-
-    // USDt asset row
-    let usdt_row = Column::new()
-        .spacing(4)
-        .push(
-            Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(coincube_ui::image::asset_network_logo::<Message>(
-                    "usdt", "liquid", 32.0,
-                ))
-                .push(text("USDt").size(P1_SIZE).bold().width(Length::Fixed(60.0)))
-                .push(if wallet_balance_masked {
-                    Row::new().push(text("********").size(P1_SIZE))
-                } else if usdt_balance_error {
-                    Row::new().push(
-                        text(localized_copy("Balance unavailable"))
-                            .size(P1_SIZE)
-                            .color(color::RED),
-                    )
-                } else if !usdt_balance_loaded {
-                    Row::new().push(spinner::typing_text_carousel(
-                        "...",
-                        false,
-                        Duration::from_millis(400),
-                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
-                    ))
-                } else {
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(text(format_usdt_display(usdt_balance)).size(P1_SIZE).bold())
-                        .push(text("USDt").size(P2_SIZE).color(color::GREY_3))
-                })
-                .push(Space::new().width(Length::Fill))
-                .push(
-                    landing_button(
-                        landing_control_id(cube_id, "Liquid", "send-usdt"),
-                        localized_copy("Send"),
-                        None,
-                        Message::FocusAction,
-                        Some(Message::Home(HomeMessage::SendAsset(
-                            crate::app::state::liquid::send::SendAsset::Usdt,
-                        ))),
-                        theme::button::primary,
-                    )
-                    .width(Length::Fixed(90.0)),
-                )
-                .push(orange_outline_btn(
-                    "Liquid",
-                    "receive-usdt",
-                    Message::Home(HomeMessage::ReceiveAsset(
-                        crate::app::state::liquid::send::SendAsset::Usdt,
-                    )),
-                )),
-        )
-        .push_maybe(
-            (!wallet_balance_masked
-                && usdt_balance_loaded
-                && !usdt_balance_error
-                && pending_usdt_send_sats > 0)
-                .then(|| {
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(warning_icon().size(12).style(theme::text::secondary))
-                        .push(
-                            text(localized_format!(
-                                "-{} USDt pending",
-                                "-{} USDt pendiente",
-                                format_usdt_display(pending_usdt_send_sats)
-                            ))
-                            .size(P2_SIZE)
-                            .style(theme::text::secondary),
-                        )
-                }),
-        )
-        .push_maybe(
-            (!wallet_balance_masked
-                && usdt_balance_loaded
-                && !usdt_balance_error
-                && pending_usdt_receive_sats > 0)
-                .then(|| {
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(warning_icon().size(12).style(theme::text::secondary))
-                        .push(
-                            text(localized_format!(
-                                "+{} USDt pending",
-                                "+{} USDt pendiente",
-                                format_usdt_display(pending_usdt_receive_sats)
-                            ))
-                            .size(P2_SIZE)
-                            .style(theme::text::secondary),
-                        )
-                }),
-        );
-
-    // Combined Liquid headline (L-BTC + USDt-as-sats). Both component
-    // balances must be loaded — a partial sum would be misleading.
-    let liquid_card_header_loaded = liquid_balance_loaded && usdt_balance_loaded;
-    let liquid_card_header: Element<'a, Message> = if liquid_card_header_loaded
-        && (liquid_balance_error
-            || usdt_balance_error
-            || (usdt_balance > 0 && usable_usd_quote.is_none()))
-    {
-        amount_cell::<Message>(
-            AmountCell::unavailable(coincube_ui::locale::copy(
-                "Combined Liquid valuation is partial; asset amounts are below",
-            )),
-            AmountTier::Card,
-        )
-    } else if liquid_card_header_loaded {
-        wallet_header::<Message>(
-            WalletHeaderProps::new(
-                total_amount,
-                total_fiat,
-                wallet_balance_masked,
-                bitcoin_unit,
-                HeaderVariant::Card,
-                display_mode,
-                Some(Message::FlipDisplayMode),
-            )
-            .with_swap_focus(
-                landing_control_id(cube_id, "Liquid", "flip-balance"),
-                Message::FocusAction,
-            ),
-        )
-        .into()
-    } else {
-        Column::new()
-            .spacing(4)
-            .push(spinner::typing_text_carousel(
-                "...",
-                false,
-                Duration::from_millis(400),
-                |content| text(content).size(H2_SIZE).bold(),
-            ))
-            .push(spinner::typing_text_carousel(
-                "...",
-                false,
-                Duration::from_millis(400),
-                |content| text(content).size(P1_SIZE).style(theme::text::secondary),
-            ))
-            .into()
-    };
-
-    let liquid_card_content = Column::new()
-        .spacing(12)
-        .push(landing_button(
-            landing_control_id(cube_id, "Liquid", "open"),
-            "Liquid",
-            Some(droplet_fill_icon().size(16).style(theme::text::secondary)),
-            Message::FocusAction,
-            Some(Message::Menu(Menu::Liquid(LiquidSubMenu::Overview))),
-            theme::button::transparent,
-        ))
-        .push(liquid_card_header)
-        .push(lbtc_row)
-        .push(usdt_row);
-
-    let liquid_card = openable_card(
-        Container::new(liquid_card_content)
-            .padding(20)
-            .style(landing_card_style),
-        Message::Menu(Menu::Liquid(LiquidSubMenu::Overview)),
-    );
-
-    // --- Spark card (BTC row only, mirrors the Liquid layout) ---
-    // Rendered above the Liquid card because Spark is the default
-    // wallet for everyday Lightning UX post-Phase 5. The card only
+    // --- Spark card (BTC row only) ---
+    // Spark is the default wallet for everyday Lightning UX. The card only
     // surfaces when `has_spark` is true — cubes without a Spark
     // signer hide it entirely, so the entire widget tree is built
     // lazily inside `then(..)` to avoid wasted work on every render.
@@ -3469,7 +2896,6 @@ pub fn global_home_view<'a>(
             has_vault && recovery_available,
             has_imported_bitcoin && !imported_installed,
             bitcoin_unit,
-            pending_vault_incoming,
             vault_pending_send_sats,
             vault_pending_receive_sats,
             display_mode,
@@ -3488,9 +2914,6 @@ pub fn global_home_view<'a>(
     // a wallet balance. A failed first read without any known component is
     // unavailable; with known components, the sum is explicitly partial.
     let any_known_balance = (has_spark && spark_balance_loaded)
-        || (has_liquid
-            && ((liquid_balance_loaded && !liquid_balance_error)
-                || (usdt_balance_loaded && !usdt_balance_error)))
         || imported_balance_loaded
         || (has_vault && !has_imported_bitcoin && vault_loaded);
     // The Cube and network line is in the page head (`view::page_head`).
@@ -3588,7 +3011,7 @@ pub fn global_home_view<'a>(
 
     // A Cube with no wallet yet has nothing to total; the Wallets cards
     // carry the create/restore actions on their own.
-    let has_any_wallet = has_spark || has_liquid || has_vault || has_imported_bitcoin;
+    let has_any_wallet = has_spark || has_vault || has_imported_bitcoin;
 
     let overview = Container::new(
         Column::new()
@@ -3613,7 +3036,6 @@ pub fn global_home_view<'a>(
             .push(coincube_ui::component::tenshu::cards(
                 spark_card
                     .into_iter()
-                    .chain(has_liquid.then_some(liquid_card))
                     .chain(std::iter::once(vault_card_element)),
             )),
     )
@@ -3652,26 +3074,21 @@ pub fn overview_page<'a>(
 /// Transfer pre-load would surface a misleading zero / stale cap for
 /// whichever wallet hasn't finished syncing.
 pub fn transfer_head_action<'a>(config: &GlobalViewConfig<'_>) -> Option<Element<'a, Message>> {
-    crate::app::state::default_transfer_direction(
-        config.has_liquid,
-        config.has_vault,
-        config.has_spark,
-        config.chain,
-    )
-    .map(|_| {
-        coincube_ui::component::tenshu::transfer_action(
-            landing_control_id(config.cube_id, "Hub", "transfer"),
-            Message::FocusAction,
-            transfer_balance_ready(
-                config.total_balance_loading,
-                config.has_spark,
-                config.spark_balance_loaded,
+    crate::app::state::default_transfer_direction(config.has_vault, config.has_spark, config.chain)
+        .map(|_| {
+            coincube_ui::component::tenshu::transfer_action(
+                landing_control_id(config.cube_id, "Hub", "transfer"),
+                Message::FocusAction,
+                transfer_balance_ready(
+                    config.total_balance_loading,
+                    config.has_spark,
+                    config.spark_balance_loaded,
+                )
+                .then_some(Message::Home(HomeMessage::NextStep)),
             )
-            .then_some(Message::Home(HomeMessage::NextStep)),
-        )
-        .compact()
-        .into()
-    })
+            .compact()
+            .into()
+        })
 }
 
 /// Whether a wallet page's Transfer can start (see
@@ -3924,17 +3341,10 @@ mod tests {
         ) -> GlobalViewConfig<'_> {
             GlobalViewConfig {
                 cube_id: "test-cube",
-                liquid_balance: Amount::from_sat(125_000),
                 spark_balance: Amount::from_sat(250_000),
                 spark_btc_balance: Amount::from_sat(250_000),
                 spark_usdb_balance: None,
                 spark_balance_error: false,
-                usdt_balance: 100_000_000,
-                usdt_balance_error: false,
-                pending_liquid_send_sats: 1_000,
-                pending_usdt_send_sats: 2_000,
-                pending_liquid_receive_sats: 3_000,
-                pending_usdt_receive_sats: 4_000,
                 vault_pending_send_sats: 5_000,
                 vault_pending_receive_sats: 6_000,
                 vault_balance: Amount::from_sat(375_000),
@@ -3946,9 +3356,6 @@ mod tests {
                 overview_wallets_hidden: false,
                 total_balance_loading: false,
                 spark_balance_loaded: true,
-                liquid_balance_loaded: true,
-                liquid_balance_error: false,
-                usdt_balance_loaded: true,
                 vault_loaded: true,
                 recovery_available: true,
                 vault_stale: None,
@@ -3956,7 +3363,6 @@ mod tests {
                 has_vault: true,
                 has_imported_bitcoin: false,
                 has_spark: true,
-                has_liquid: true,
                 current_view: HomeView { step },
                 transfer_direction: direction,
                 transfer_from: direction.map(|d| d.from_kind()),
@@ -3971,21 +3377,14 @@ mod tests {
                 labels_editing: &self.labels_editing,
                 address_expanded: false,
                 bitcoin_unit: BitcoinDisplayUnit::Sats,
-                onchain_send_limit: Some((25_000, 5_000_000)),
-                onchain_receive_limit: Some((25_000, 5_000_000)),
                 is_sending: false,
                 is_tx_signed: false,
-                prepare_onchain_send_response: None,
                 spend_tx_fees: None,
                 transfer_feerate: &self.transfer_feerate,
                 transfer_feerate_loading: None,
                 spark_send_fee_sat: None,
                 pending_spark_incoming: Some(PendingTransfer {
                     amount: Amount::from_sat(31_000),
-                    stage: TransferStage::PendingDeposit,
-                }),
-                pending_vault_incoming: Some(PendingTransfer {
-                    amount: Amount::from_sat(41_000),
                     stage: TransferStage::PendingDeposit,
                 }),
                 btc_usd_price: Some(50_000.0),
@@ -4002,16 +3401,9 @@ mod tests {
         }
     }
 
-    fn directions() -> [TransferDirection; 6] {
+    fn directions() -> [TransferDirection; 2] {
         use TransferDirection::*;
-        [
-            LiquidToVault,
-            VaultToLiquid,
-            LiquidToSpark,
-            SparkToLiquid,
-            VaultToSpark,
-            SparkToVault,
-        ]
+        [VaultToSpark, SparkToVault]
     }
 
     #[test]
@@ -4064,8 +3456,6 @@ mod tests {
                     ("Spark", "open"),
                     ("Spark", "send-btc"),
                     ("Spark", "receive-btc"),
-                    ("Liquid", "open"),
-                    ("Liquid", "send-lbtc"),
                     ("Vault", "open"),
                     ("Vault", "send-btc"),
                 ] {
@@ -4159,10 +3549,8 @@ mod tests {
                 );
 
                 let mut known_zero = fixture.config(0, None, None);
-                known_zero.liquid_balance = Amount::ZERO;
                 known_zero.spark_btc_balance = Amount::ZERO;
                 known_zero.spark_balance = Amount::ZERO;
-                known_zero.usdt_balance = 0;
                 known_zero.vault_balance = Amount::ZERO;
                 let zero = capture::inspect(
                     "hub-known-zero",
@@ -4176,7 +3564,6 @@ mod tests {
                 let mut empty = fixture.config(0, None, None);
                 empty.has_vault = false;
                 empty.has_spark = false;
-                empty.has_liquid = false;
                 empty.has_imported_bitcoin = false;
                 let no_wallets =
                     capture::inspect("hub-no-wallets", overview(empty), outer, appearance, theme);
@@ -4205,7 +3592,6 @@ mod tests {
             let mut config = fixture.config(0, None, None);
             config.has_vault = false;
             config.has_spark = false;
-            config.has_liquid = false;
             config.has_imported_bitcoin = true;
             config.imported_installed = true;
             config.imported_balance = Some(Amount::from_sat(375_000));
@@ -4256,13 +3642,10 @@ mod tests {
         use crate::app::view::shared::landing::capture;
         let fixture = ViewFixture::new();
         for pointer in [false, true] {
-            for (wallet, menu) in [
-                (
-                    "Spark",
-                    Menu::Spark(crate::app::menu::SparkSubMenu::Overview),
-                ),
-                ("Liquid", Menu::Liquid(LiquidSubMenu::Overview)),
-            ] {
+            for (wallet, menu) in [(
+                "Spark",
+                Menu::Spark(crate::app::menu::SparkSubMenu::Overview),
+            )] {
                 let messages = capture::activate(
                     overview(fixture.config(0, None, None)),
                     landing_control_id("test-cube", wallet, "open"),
@@ -4297,14 +3680,13 @@ mod tests {
         use crate::app::view::shared::landing::capture;
         let fixture = ViewFixture::new();
         // Plain labels on each card's surface, not on any Action: Spark's
-        // and the Vault's "BTC" rows (in card order) and Liquid's "L-BTC".
+        // and the Vault's "BTC" rows (in card order).
         for (needle, nth, menu) in [
             (
                 "BTC",
                 0,
                 Menu::Spark(crate::app::menu::SparkSubMenu::Overview),
             ),
-            ("L-BTC", 0, Menu::Liquid(LiquidSubMenu::Overview)),
             ("BTC", 1, Menu::Vault(VaultSubMenu::Overview)),
         ] {
             let messages = capture::click_text(
@@ -4414,17 +3796,13 @@ mod tests {
             ..usdb.clone()
         };
         let spark_only = |config: &mut GlobalViewConfig<'_>| {
-            config.has_liquid = false;
             config.has_vault = false;
-            config.liquid_balance = Amount::ZERO;
-            config.usdt_balance = 0;
             config.vault_balance = Amount::ZERO;
             config.spark_btc_balance = Amount::from_sat(250_000);
             config.spark_balance = Amount::from_sat(250_000);
             config.spark_balance_error = false;
             config.total_balance_loading = false;
             config.pending_spark_incoming = None;
-            config.pending_vault_incoming = None;
         };
         let inspect = |config| {
             capture::inspect(
@@ -4760,7 +4138,6 @@ mod tests {
             // feed this installed-Spark pure presenter without fabricating a
             // backend or claiming that State::view had a live Spark route.
             config.has_spark = snapshot.has_spark;
-            config.has_liquid = !snapshot.has_spark;
             config.has_vault = true;
             config.spark_balance = snapshot.spark_balance;
             config.spark_btc_balance = snapshot.spark_balance;
@@ -4796,7 +4173,6 @@ mod tests {
             ] {
                 let mut config = fixture.config(0, None, None);
                 config.has_spark = snapshot.has_spark;
-                config.has_liquid = !snapshot.has_spark;
                 config.has_vault = true;
                 config.spark_balance = snapshot.spark_balance;
                 config.spark_btc_balance = snapshot.spark_balance;
@@ -4845,7 +4221,7 @@ mod tests {
         use crate::app::view::shared::landing::capture;
 
         let fixture = ViewFixture::new();
-        let direction = Some(TransferDirection::LiquidToSpark);
+        let direction = Some(TransferDirection::VaultToSpark);
         let render_amount = |masked| {
             let mut config = fixture.config(1, direction, None);
             config.balance_masked = masked;
@@ -4859,10 +4235,10 @@ mod tests {
         };
         let hidden = render_amount(true);
         assert!(hidden.contains("••••••"));
-        assert!(!hidden.contains("125,000"));
+        assert!(!hidden.contains("375,000"));
         assert!(!hidden.contains("250,000"));
         let shown = render_amount(false);
-        assert!(shown.contains("125,000"));
+        assert!(shown.contains("375,000"));
         assert!(shown.contains("250,000"));
 
         let render_source_rows = |masked| {
@@ -4873,7 +4249,7 @@ mod tests {
         };
         let hidden_picker = render_source_rows(true);
         assert!(hidden_picker.contains("••••••"));
-        for balance in ["125,000", "250,000", "375,000"] {
+        for balance in ["250,000", "375,000"] {
             assert!(
                 !hidden_picker.contains(balance),
                 "hidden picker balance {}",
@@ -4881,7 +4257,7 @@ mod tests {
             );
         }
         let shown_picker = render_source_rows(false);
-        for balance in ["125,000", "250,000", "375,000"] {
+        for balance in ["250,000", "375,000"] {
             assert!(
                 shown_picker.contains(balance),
                 "shown picker balance {}",
@@ -4989,7 +4365,7 @@ mod tests {
     /// `TransferDirection`, and same-wallet pairs must map to `None`.
     #[test]
     fn try_from_pair_is_total_over_distinct_pairs() {
-        let kinds = [WalletKind::Liquid, WalletKind::Spark, WalletKind::Vault];
+        let kinds = [WalletKind::Spark, WalletKind::Vault];
         for from in kinds {
             for to in kinds {
                 match TransferDirection::try_from_pair(from, to) {
@@ -5012,14 +4388,7 @@ mod tests {
     #[test]
     fn pair_roundtrip_for_all_variants() {
         use TransferDirection::*;
-        for direction in [
-            LiquidToVault,
-            VaultToLiquid,
-            LiquidToSpark,
-            SparkToLiquid,
-            VaultToSpark,
-            SparkToVault,
-        ] {
+        for direction in [VaultToSpark, SparkToVault] {
             let (from, to) = direction.pair();
             assert_eq!(
                 TransferDirection::try_from_pair(from, to),
@@ -5033,14 +4402,7 @@ mod tests {
     #[test]
     fn from_to_kind_agrees_with_pair() {
         use TransferDirection::*;
-        for direction in [
-            LiquidToVault,
-            VaultToLiquid,
-            LiquidToSpark,
-            SparkToLiquid,
-            VaultToSpark,
-            SparkToVault,
-        ] {
+        for direction in [VaultToSpark, SparkToVault] {
             let (from, to) = direction.pair();
             assert_eq!(direction.from_kind(), from);
             assert_eq!(direction.to_kind(), to);
@@ -5048,17 +4410,15 @@ mod tests {
     }
 
     /// Picker rows render a network badge — the uppercase label must be
-    /// stable across changes (copy contract with the Liquid Send picker).
+    /// stable across changes.
     #[test]
     fn wallet_kind_badges_are_uppercase() {
-        assert_eq!(WalletKind::Liquid.badge(), "LIQUID");
         assert_eq!(WalletKind::Spark.badge(), "SPARK");
         assert_eq!(WalletKind::Vault.badge(), "VAULT");
     }
 
     #[test]
     fn wallet_kind_labels_and_direction_display_are_stable() {
-        assert_eq!(WalletKind::Liquid.label(), "Liquid");
         assert_eq!(WalletKind::Spark.label(), "Spark");
         assert_eq!(WalletKind::Vault.label(), "Vault");
 
@@ -5152,8 +4512,7 @@ mod tests {
         ] {
             for outer in [(1024, 768), (1440, 900)] {
                 let width = overview_column(outer.0 as f32).floor();
-                let mut config = fixture.config(0, None, None);
-                config.has_liquid = false;
+                let config = fixture.config(0, None, None);
                 let shown = capture::inspect_wide_content(
                     "overview-cards",
                     overview(config),
@@ -5244,7 +4603,6 @@ mod tests {
             ("light", theme::Theme::light()),
         ] {
             let mut config = fixture.config(0, None, None);
-            config.has_liquid = false;
             config.spark_balance = most;
             config.spark_btc_balance = most;
             config.vault_balance = most;
@@ -5415,7 +4773,7 @@ mod tests {
             )
         };
         let cache = crate::app::cache::Cache::default();
-        let mut activity = crate::app::state::activity::Activity::new(None, None);
+        let mut activity = crate::app::state::activity::Activity::new(None);
         drop(activity.update(
             None,
             &cache,
@@ -5478,9 +4836,7 @@ mod tests {
                 || {
                     let mut config = fixture.config(0, None, None);
                     config.light_theme = light;
-                    config.has_liquid = false;
                     config.pending_spark_incoming = None;
-                    config.pending_vault_incoming = None;
                     let transfer = transfer_head_action(&config);
                     overview_page(
                         &menu,
@@ -5653,9 +5009,7 @@ mod tests {
                             coincube_ui::worldview_copy::render_in(mode, || {
                                 let mut config = fixture.config(0, None, None);
                                 config.light_theme = light;
-                                config.has_liquid = false;
                                 config.pending_spark_incoming = None;
-                                config.pending_vault_incoming = None;
                                 let transfer = transfer_head_action(&config);
                                 overview_page(
                                     &menu,
@@ -5691,22 +5045,10 @@ mod tests {
         let mut loading = fixture.config(0, None, None);
         loading.total_balance_loading = true;
         loading.spark_balance_loaded = false;
-        loading.liquid_balance_loaded = false;
-        loading.usdt_balance_loaded = false;
         loading.vault_loaded = false;
-        loading.usdt_balance_error = true;
         let _ = overview(loading);
 
-        // A failed fetch: loaded (so the aggregate settles) but flagged, so the
-        // row says "Balance unavailable" rather than rendering the zero it
-        // never managed to overwrite.
-        let mut liquid_failed = fixture.config(0, None, None);
-        liquid_failed.liquid_balance_loaded = true;
-        liquid_failed.liquid_balance_error = true;
-        let _ = overview(liquid_failed);
-
         let mut spark_only = fixture.config(0, None, None);
-        spark_only.has_liquid = false;
         spark_only.has_vault = false;
         spark_only.has_spark = true;
         spark_only.pending_spark_incoming = Some(PendingTransfer {
@@ -5724,23 +5066,13 @@ mod tests {
             let _ = transfer_dialog_for(fixture.config(1, Some(direction), None));
         }
 
-        let mut no_liquid = fixture.config(1, Some(TransferDirection::VaultToSpark), None);
-        no_liquid.has_liquid = false;
-        let _ = transfer_dialog_for(no_liquid);
+        let vault_to_spark = fixture.config(1, Some(TransferDirection::VaultToSpark), None);
+        let _ = transfer_dialog_for(vault_to_spark);
     }
 
     #[test]
     fn global_home_confirm_step_builds_address_fee_and_sending_variants() {
         let fixture = ViewFixture::new();
-
-        let mut liquid_to_vault = fixture.config(2, Some(TransferDirection::LiquidToVault), None);
-        let liquid_prepare = PreparePayOnchainResponse {
-            receiver_amount_sat: 49_000,
-            claim_fees_sat: 100,
-            total_fees_sat: 1_000,
-        };
-        liquid_to_vault.prepare_onchain_send_response = Some(&liquid_prepare);
-        let _ = transfer_dialog_for(liquid_to_vault);
 
         let mut vault_to_spark = fixture.config(2, Some(TransferDirection::VaultToSpark), None);
         vault_to_spark.address_expanded = true;
@@ -5748,20 +5080,19 @@ mod tests {
         vault_to_spark.transfer_feerate_loading = Some(FeeratePreset::Fast);
         let _ = transfer_dialog_for(vault_to_spark);
 
-        let mut vault_to_liquid_signed =
-            fixture.config(2, Some(TransferDirection::VaultToLiquid), None);
-        vault_to_liquid_signed.is_tx_signed = true;
-        vault_to_liquid_signed.is_sending = true;
-        vault_to_liquid_signed.spend_tx_fees = Some(Amount::from_sat(900));
-        let _ = transfer_dialog_for(vault_to_liquid_signed);
+        let mut vault_to_spark_signed =
+            fixture.config(2, Some(TransferDirection::VaultToSpark), None);
+        vault_to_spark_signed.is_tx_signed = true;
+        vault_to_spark_signed.is_sending = true;
+        vault_to_spark_signed.spend_tx_fees = Some(Amount::from_sat(900));
+        let _ = transfer_dialog_for(vault_to_spark_signed);
 
-        let mut spark_to_liquid = fixture.config(2, Some(TransferDirection::SparkToLiquid), None);
-        spark_to_liquid.spark_send_fee_sat = Some(222);
-        spark_to_liquid.receive_address = None;
-        let _ = transfer_dialog_for(spark_to_liquid);
+        let mut spark_to_vault = fixture.config(2, Some(TransferDirection::SparkToVault), None);
+        spark_to_vault.spark_send_fee_sat = Some(222);
+        spark_to_vault.receive_address = None;
+        let _ = transfer_dialog_for(spark_to_vault);
 
-        let mut invalid_vault_send =
-            fixture.config(2, Some(TransferDirection::VaultToLiquid), None);
+        let mut invalid_vault_send = fixture.config(2, Some(TransferDirection::VaultToSpark), None);
         invalid_vault_send.entered_amount = &fixture.invalid_amount;
         invalid_vault_send.transfer_feerate = &fixture.invalid_feerate;
         let _ = transfer_dialog_for(invalid_vault_send);
@@ -5776,7 +5107,7 @@ mod tests {
         }
 
         assert!(
-            global_home_view(fixture.config(99, Some(TransferDirection::LiquidToVault), None))
+            global_home_view(fixture.config(99, Some(TransferDirection::VaultToSpark), None))
                 .1
                 .is_none()
         );
@@ -5802,8 +5133,6 @@ mod tests {
             direction: config.transfer_direction.expect("a direction"),
             has_vault: config.has_vault,
             has_spark: config.has_spark,
-            has_liquid: config.has_liquid,
-            liquid_balance: config.liquid_balance,
             spark_balance: config.spark_balance,
             vault_balance: config.vault_balance,
             fiat_converter: config.fiat_converter,
@@ -6273,7 +5602,6 @@ mod tests {
     fn spark_only_mainnet_cube_can_open_cross_cube_transfer() {
         let fixture = ViewFixture::new();
         let mut config = fixture.config(1, Some(TransferDirection::SparkToOtherCube), None);
-        config.has_liquid = false;
         config.has_vault = false;
         assert!(transfer_head_action(&config).is_some());
         config.chain = ChainId::Regtest;

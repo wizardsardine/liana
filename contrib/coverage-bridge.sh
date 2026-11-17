@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Rust coverage for the standalone Spark bridge workspace. The bridge is
 # intentionally excluded from the root workspace so its Breez Spark dependency
-# graph can stay isolated from the GUI's Breez Liquid dependency graph.
+# graph can stay isolated from the root workspace's (coincubed's rusqlite 0.38
+# fork links a different sqlite3).
 #
 # Common local usage:
 #   ./contrib/coverage-bridge.sh

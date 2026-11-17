@@ -42,10 +42,10 @@ jobs:
       # Coverage (including the doctest pass) needs a single nightly toolchain:
       # doctest coverage requires nightly, and running the lib/bins/tests and
       # --doc passes under one toolchain keeps their profraw in one coherent set
-      # for the merged report. Pinned BEFORE rust-lang/rust#148922: that nightly
-      # changed the never-type fallback from `()` to `!`, which breaks the
-      # transitive `lightning 0.0.118` (via lightning-invoice/sdk-common) TLV
-      # read macro. Bump this date only to another pre-#148922 nightly.
+      # for the merged report. The date was first pinned before
+      # rust-lang/rust#148922 for the transitive `lightning 0.0.118`, which
+      # left with breez-sdk-liquid; it stays pinned so coverage runs on a known
+      # toolchain. Moving it to a newer nightly is a separate, tested change.
       CARGO_TOOLCHAIN: nightly-2026-05-15
       COVERAGE_DOCTESTS: 1
       # Current full-workspace baseline is ~26.8%. Keep the gate non-breaking
@@ -57,8 +57,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Pinned before rust-lang/rust#148922 so the transitive `lightning 0.0.118`
-      # still builds; see the CARGO_TOOLCHAIN note above.
+      # Pinned; see the CARGO_TOOLCHAIN note above.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:

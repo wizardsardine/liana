@@ -3,7 +3,6 @@ pub mod buysell;
 pub mod connect;
 mod global_home;
 pub mod imported_bitcoin;
-pub mod liquid;
 pub mod preferences;
 pub mod settings;
 pub mod spark;
@@ -29,12 +28,6 @@ pub use global_home::GlobalHome;
 pub(crate) use global_home::{
     default_transfer_direction, effective_transfer_max_sat, effective_transfer_min_sat,
 };
-pub use liquid::overview::LiquidOverview;
-pub use liquid::receive::LiquidReceive;
-pub use liquid::send::LiquidSend;
-pub use liquid::settings::LiquidSettings;
-pub use liquid::swap::LiquidSwap;
-pub use liquid::transactions::LiquidTransactions;
 pub use spark::{SparkOverview, SparkReceive, SparkSend, SparkSettings, SparkTransactions};
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;

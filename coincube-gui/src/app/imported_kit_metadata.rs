@@ -280,7 +280,6 @@ mod tests {
                 wallet,
                 None,
                 None,
-                None,
                 Config::new(false),
                 Arc::new(EmbeddedDaemon::unstarted_for_test(config, None)),
                 self.root.clone(),

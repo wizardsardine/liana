@@ -132,26 +132,6 @@ impl App {
                 );
                 return Task::batch([load, select]);
             }
-            state::activity::ActivityTarget::Liquid(payment) => {
-                if let Some(panel) = self.panels.liquid_transactions.as_mut() {
-                    self.panels.current = Menu::Liquid(menu::LiquidSubMenu::Transactions(None));
-                    let load = panel.reload(self.daemon.clone(), self.wallet.clone());
-                    let select = panel.update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::View(view::Message::PreselectPayment(payment)),
-                    );
-                    return Task::batch([load, select]);
-                }
-            }
-            state::activity::ActivityTarget::Refundable(refundable) => {
-                if let Some(panel) = self.panels.liquid_transactions.as_mut() {
-                    let load = panel.reload(self.daemon.clone(), self.wallet.clone());
-                    panel.preselect_refundable(refundable);
-                    self.panels.current = Menu::Liquid(menu::LiquidSubMenu::Transactions(None));
-                    return load;
-                }
-            }
         }
         Task::none()
     }

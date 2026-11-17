@@ -1,9 +1,7 @@
 //! Spark overview panel.
 //!
-//! Mirrors [`crate::app::state::liquid::overview::LiquidOverview`] — the
-//! layout is the same Liquid-style unified portfolio card + recent
-//! transactions list, minus the USDt asset row (Spark doesn't hold
-//! Liquid assets) and with BTC branding instead of L-BTC. A
+//! A unified portfolio card + recent transactions list, with BTC
+//! branding. A
 //! [`SparkOverviewView::stable_balance_active`] flag drives a small
 //! "Stable" badge on the balance header when the SDK reports an
 //! active Stable Balance token (Phase 6).

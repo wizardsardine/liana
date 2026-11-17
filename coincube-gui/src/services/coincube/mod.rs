@@ -1112,22 +1112,6 @@ pub struct FeaturesResponse {
     /// `marketplace_enabled` is on. Fails closed (absent → off).
     #[serde(default, alias = "p2pEnabled", alias = "p2p_enabled")]
     pub p2p_enabled: Option<bool>,
-    /// Account-scoped grandfather flag for the Liquid wallet (sunset phase 1).
-    /// `Some(true)` means this account may create/see a Liquid wallet on a
-    /// fresh install; absent/`Some(false)` means it may not.
-    ///
-    /// **Only meaningful on an authenticated call.** `/connect/features` is
-    /// wrapped in *optional* JWT auth, so an anonymous request returns
-    /// `false` silently rather than erroring — there is no way to distinguish
-    /// "not granted" from "we forgot the bearer token". The desktop only ever
-    /// fetches features after `set_token` (see
-    /// `ConnectAccountPanel::post_login_tasks`), which is what makes this
-    /// readable at all.
-    ///
-    /// A `false` here never hides an *existing* Liquid wallet — see
-    /// [`crate::app::features::LiquidGate`], which OR's this with local state.
-    #[serde(default, alias = "liquidEnabled", alias = "liquid_enabled")]
-    pub liquid_enabled: Option<bool>,
     /// Per-user launch flag for the Duress Mode surface (`duressEnabled`).
     /// `Some(true)` means the server permits this account to see the duress
     /// enrollment/management UI; absent/`Some(false)` means it doesn't.
@@ -1136,8 +1120,9 @@ pub struct FeaturesResponse {
     /// unreachable API all read as *off*, so the public launch build ships
     /// duress dark and never surfaces the untested setup on a stale response.
     ///
-    /// The same authenticated-only caveat as `liquid_enabled` applies — the
-    /// desktop only fetches features after `set_token` (see
+    /// **Only meaningful on an authenticated call.** `/connect/features` is
+    /// wrapped in *optional* JWT auth, so an anonymous request returns `false`
+    /// silently. The desktop only fetches features after `set_token` (see
     /// `ConnectAccountPanel::post_login_tasks`), so this is only meaningful on
     /// a signed-in call.
     ///
@@ -4560,7 +4545,7 @@ mod cube_has_vault_tests {
 #[cfg(test)]
 mod features_response_duress_tests {
     //! `duressEnabled` transport (PLAN-feature-flags PR 1). Mirrors the
-    //! `liquidEnabled`/`marketplaceEnabled` shape: absent → `None` (treated
+    //! `marketplaceEnabled` shape: absent → `None` (treated
     //! false, fail-closed), and both the camelCase wire key and the snake_case
     //! alias parse to the same field.
     use super::FeaturesResponse;
@@ -4592,6 +4577,17 @@ mod features_response_duress_tests {
         let off: FeaturesResponse =
             serde_json::from_value(features_json(json!({ "duressEnabled": false }))).unwrap();
         assert_eq!(off.duress_enabled, Some(false));
+    }
+
+    /// Liquid removal: the client no longer reads `liquidEnabled`, and the
+    /// API still sends it. An unknown key must be ignored, not refused.
+    #[test]
+    fn a_retired_liquid_enabled_key_is_ignored() {
+        let resp: FeaturesResponse = serde_json::from_value(features_json(
+            json!({ "liquidEnabled": false, "duressEnabled": true }),
+        ))
+        .expect("the retired liquidEnabled key still parses");
+        assert_eq!(resp.duress_enabled, Some(true));
     }
 
     #[test]

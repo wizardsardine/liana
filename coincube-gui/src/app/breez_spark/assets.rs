@@ -21,8 +21,7 @@ pub enum SparkAsset {
     Bitcoin,
     /// Lightning payments (BOLT11 / BOLT12 / LNURL). Rendered as a
     /// separate asset even though it's routed over Bitcoin under the
-    /// hood, matching how the UI already treats Liquid's Lightning
-    /// method.
+    /// hood.
     Lightning,
 }
 
@@ -51,8 +50,7 @@ pub fn list_assets() -> Vec<SparkAsset> {
 pub(crate) const MAX_TOKEN_DECIMALS_U64: u32 = 19;
 
 /// Format a token base-unit amount with two decimal places of
-/// fractional precision. Mirrors [`crate::app::breez_liquid::assets::format_usdt_display`]
-/// but parameterized on the token's own decimals (USDB ships at 6,
+/// fractional precision, parameterized on the token's own decimals (USDB ships at 6,
 /// future tokens may differ). Half-up rounding with carry to keep the
 /// output stable when the fractional rounds up to ten.
 pub fn format_token_display(amount: u64, decimals: u32) -> String {
@@ -118,8 +116,7 @@ fn group_thousands(value: u128) -> String {
 
 /// Convert a USDB-style stable token holding (a 1:1 USD peg) into its
 /// sat-equivalent at the supplied BTC/USD price. Used by the overview
-/// to fold Stable Balance into the unified portfolio total — same
-/// pattern as Liquid's `usdt_balance` → `usdt_as_sats` calculation.
+/// to fold Stable Balance into the unified portfolio total.
 /// Returns `0` when there's no price reference yet.
 pub fn stable_token_as_sats(amount: u64, decimals: u32, btc_usd_price: Option<f64>) -> u64 {
     stable_token_as_sats_u128(u128::from(amount), decimals, btc_usd_price)

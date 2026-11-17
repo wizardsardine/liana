@@ -196,7 +196,7 @@ pub struct Context {
     /// Downstream consumers:
     /// - `install_local_wallet` branches on this to call
     ///   `Signer::store_encrypted(..., &pin)` rather than the
-    ///   unencrypted `store(...)` so the Liquid/Spark BreezClient can
+    ///   unencrypted `store(...)` so the Cube signer and Spark can
     ///   decrypt the mnemonic on subsequent Cube opens.
     /// - `gui::tab::find_or_create_cube` / the `CubeSaved` handler use
     ///   the value to populate `CubeSettings.security_pin_hash` and

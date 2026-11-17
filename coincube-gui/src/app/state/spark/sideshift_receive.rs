@@ -1,10 +1,9 @@
 //! "Receive from another network" — deposit any supported asset, receive
 //! **Bitcoin** in the Spark wallet.
 //!
-//! Deliberately a close copy of [`crate::app::state::liquid::sideshift_receive`]:
-//! same phases, same affiliate → shift → poll sequence, same 10s poll cadence.
-//! Three things differ, and each of them is the reason this isn't just a
-//! parameter on the Liquid flow:
+//! It began as a copy of the since-removed Liquid wallet's SideShift receive
+//! flow (same phases, same affiliate → shift → poll sequence, same 10s poll
+//! cadence) and differs from it in three ways:
 //!
 //! 1. **The settle leg is on-chain Bitcoin.** SideShift has no Lightning rail,
 //!    so shifts settle to the Spark wallet's *static* on-chain deposit address
@@ -64,8 +63,8 @@ pub enum RestoredSettle {
     Unknown,
 }
 
-/// Where the flow is. Mirrors the Liquid flow's `ReceivePhase`, minus the
-/// fixed-rate quote step: a BTC settle is always variable-rate here, because
+/// Where the flow is. No fixed-rate quote step: a BTC settle is always
+/// variable-rate here, because
 /// the user is depositing an arbitrary amount of some other asset and we can't
 /// meaningfully pre-commit a rate to it.
 #[derive(Debug, Clone, PartialEq, Eq)]

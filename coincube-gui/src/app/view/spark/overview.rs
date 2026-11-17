@@ -80,9 +80,8 @@ pub enum SparkPaymentMethod {
 }
 
 /// Row data the overview renderer needs for each recent payment.
-/// Mirrors `view::liquid::RecentTransaction` plus a `token_display`
-/// override that the Stable Balance USDB rows use the same way Liquid
-/// uses `usdt_display` — when set, the row shows that string in place
+/// Carries a `token_display` override for the Stable Balance USDB rows —
+/// when set, the row shows that string in place
 /// of the BTC amount and skips the BTC pending-sums.
 ///
 /// Carries the Spark payment `id` and raw `timestamp` so the detail
@@ -736,7 +735,7 @@ mod tests {
         for (appearance, palette) in capture_tests::themes() {
             let mut cache = capture_tests::cache(appearance == "light", BalancePrivacy::Shown);
             cache.wallet_names.spark = Some("Daily spending".into());
-            let mut activity = crate::app::state::activity::Activity::new(None, None);
+            let mut activity = crate::app::state::activity::Activity::new(None);
             drop(crate::app::state::State::update(
                 &mut activity,
                 None,

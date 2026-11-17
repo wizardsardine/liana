@@ -27,11 +27,6 @@ branta = { path = "../vendor/branta", version = "=4.0.0", default-features = fal
 percent-encoding = "2.3"
 async-trait = "0.1"
 async-hwi = "0.0.32"
-# Build-only adaptation of the mirrored SDK 0.12.2 revision 94e1e184.
-# Removes an unavailable upstream regtest swapproxy submodule that Cargo tries
-# to fetch even for SDK consumers. SDK Rust source and manifests are unchanged.
-# See COINCUBE_BUILD_PATCH.md at the pinned dependency revision.
-breez-sdk-liquid = { git = "https://github.com/coincubetech/breez-sdk-liquid", rev = "4ac5017c18dd3bb174cb3f193570c0d8b6ef3afa" }
 coincube-mcp = { path = "../coincube-mcp", default-features = false }
 coincube-core = { path = "../coincube-core" }
 coincube-spark-protocol = { path = "../coincube-spark-protocol" }

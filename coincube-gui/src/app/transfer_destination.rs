@@ -25,8 +25,7 @@ pub(crate) struct Source {
 pub(crate) enum WalletIdentity {
     Vault(WalletId),
     /// A backend identity, checked after its restricted loader has opened.
-    /// Cube metadata alone is insufficient to identify a Liquid/Spark wallet.
-    Liquid(String),
+    /// Cube metadata alone is insufficient to identify a Spark wallet.
     Spark(String),
 }
 
@@ -396,7 +395,7 @@ mod tests {
                 }
                 Refusal::BackendUnavailable => evidence.ready = false,
                 Refusal::UnsupportedWallet => {
-                    destination.wallet = WalletIdentity::Liquid("liquid-synthetic".into());
+                    destination.wallet = WalletIdentity::Spark("spark-synthetic".into());
                     evidence.identity = destination.clone();
                 }
                 Refusal::SourceChanged => current_source.app = AppGeneration::next(),

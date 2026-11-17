@@ -21,7 +21,7 @@ pub const RAIL_WIDTH: f32 = 72.0;
 /// currently resolves to, one [`render_item_row`] per [`super::SubItem`].
 ///
 /// The per-section item lists live in the sibling modules (`cube`,
-/// `spark`, `liquid`, `vault`, `marketplace`); this function only picks
+/// `spark`, `vault`, `marketplace`); this function only picks
 /// the right one and lays it out.
 ///
 /// Like [`super::primary::rail`], the column is sized to its content and
@@ -35,7 +35,6 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let items = match current {
         TopLevel::Cube => super::cube::items(ctx),
         TopLevel::Spark => super::spark::items(ctx),
-        TopLevel::Liquid => super::liquid::items(ctx),
         TopLevel::Vault => super::vault::items(ctx),
         TopLevel::Marketplace => super::marketplace::items(ctx),
     };

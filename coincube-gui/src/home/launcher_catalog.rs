@@ -1633,11 +1633,7 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
                 connect,
                 sync_warning,
                 open: open_cube.as_deref() == Some(cube.id.as_str()),
-                // The Liquid probe reads the current network's data only.
-                wallets: super::launcher_presenter::local_wallets(
-                    cube,
-                    chain == network && home.liquid_on_disk,
-                ),
+                wallets: super::launcher_presenter::local_wallets(cube),
                 vault: vault_subtitle(cube),
                 connect_off: home
                     .connect_off_cubes
@@ -3074,7 +3070,7 @@ mod tests {
     #[test]
     fn list_facts_report_lock_backup_and_wallets_from_recorded_metadata() {
         use super::super::launcher_presenter::{local_wallets, lock_state};
-        let wallets = |cube: &CubeSettings| local_wallets(cube, false);
+        let wallets = |cube: &CubeSettings| local_wallets(cube);
         let mut home = home_with(&[("a", "Alpha")]);
         assert_eq!(lock_state(project(&home).locals[0].open), "Locked");
         let cube = &mut cubes_mut(&mut home)[0];
@@ -3089,12 +3085,8 @@ mod tests {
         cube.backed_up = true;
         assert_eq!(backup_caption(cube), (Tone::Good, "Confirmed"));
 
-        // Spark comes with every mainnet Cube; Liquid only behind its gate.
+        // Spark comes with every mainnet Cube.
         assert_eq!(wallets(cube), "Spark");
-        cube.liquid_granted = Some(true);
-        assert_eq!(wallets(cube), "Spark");
-        cube.liquid_granted = None;
-        assert_eq!(local_wallets(cube, true), "Spark");
         cube.vault_wallet_id = Some(crate::app::settings::WalletId::new(
             "test".to_string(),
             None,
@@ -3102,10 +3094,9 @@ mod tests {
         assert_eq!(wallets(cube), "Spark, Vault");
         let mut testnet = cube.clone();
         testnet.network = ChainId::Testnet4;
-        testnet.liquid_granted = Some(true);
-        assert_eq!(local_wallets(&testnet, true), "Vault");
+        assert_eq!(local_wallets(&testnet), "Vault");
         testnet.vault_wallet_id = None;
-        assert_eq!(local_wallets(&testnet, true), "No wallets yet");
+        assert_eq!(local_wallets(&testnet), "No wallets yet");
 
         cube.vault_wallet_id = None;
         cube.bitcoin_import = Some(Box::new(settings::BitcoinImport::pending()));

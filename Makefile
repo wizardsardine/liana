@@ -1,8 +1,8 @@
 # Convenience targets for building coincube alongside its Spark bridge.
 #
 # coincube-spark-bridge is a standalone Cargo workspace (see the root
-# Cargo.toml `exclude` entry) because breez-sdk-spark and breez-sdk-liquid
-# can't share a dep graph. `cargo run -p coincube-gui` therefore does NOT
+# Cargo.toml `exclude` entry) because breez-sdk-spark's sqlite can't share a
+# dep graph with coincubed's rusqlite 0.38 fork. `cargo run -p coincube-gui` therefore does NOT
 # build the bridge, and at runtime the gui will log
 # "Spark bridge unavailable" and render "Spark is not configured" until
 # the bridge binary exists at its expected path. Use these targets

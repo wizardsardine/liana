@@ -4,10 +4,8 @@ use coincube_core::miniscript::bitcoin::{OutPoint, Txid};
 pub enum Menu {
     /// "Cube" section — identity / dashboard / cube-level settings.
     Cube(CubeSubMenu),
-    /// Spark wallet — default for everyday Lightning UX. Listed above
-    /// Liquid in the sidebar because it's the default wallet.
+    /// Spark wallet — default for everyday Lightning UX.
     Spark(SparkSubMenu),
-    Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
     Marketplace(MarketplaceSubMenu),
 }
@@ -86,25 +84,8 @@ pub enum P2PSubMenu {
     Settings,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LiquidSubMenu {
-    Overview,
-    Send,
-    /// Cross-asset swap (L-BTC ↔ USDt) via SideSwap. Mainnet only — the
-    /// nav item and Overview entry point are hidden off-mainnet because
-    /// SideSwap is unavailable there (see `LiquidSwap::swap_supported`).
-    Swap,
-    Receive,
-    Transactions(Option<Txid>),
-    Settings(Option<SettingsOption>),
-}
-
-/// Spark wallet sub-panels.
-///
-/// Closely mirrors [`LiquidSubMenu`] — the Phase 4 plan copied the
-/// Liquid panels into `state/spark/` and `view/spark/`. Settings
-/// diverges: Spark Settings has its own tertiary rail driven by
-/// [`SparkSettingsOption`] (General / Lightning Address).
+/// Spark wallet sub-panels. Spark Settings has its own tertiary rail
+/// driven by [`SparkSettingsOption`] (General / Lightning Address).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparkSubMenu {
     Overview,
@@ -168,7 +149,6 @@ pub enum SettingsOption {
 pub enum TopLevel {
     Cube,
     Spark,
-    Liquid,
     Vault,
     Marketplace,
 }
@@ -177,7 +157,6 @@ impl TopLevel {
     pub const ALL: &'static [TopLevel] = &[
         TopLevel::Cube,
         TopLevel::Spark,
-        TopLevel::Liquid,
         TopLevel::Vault,
         TopLevel::Marketplace,
     ];
@@ -186,7 +165,6 @@ impl TopLevel {
         match self {
             TopLevel::Cube => "Cube",
             TopLevel::Spark => "Spark",
-            TopLevel::Liquid => "Liquid",
             TopLevel::Vault => "Vault",
             TopLevel::Marketplace => "Marketplace",
         }
@@ -197,7 +175,6 @@ impl TopLevel {
         match self {
             TopLevel::Cube => Menu::Cube(CubeSubMenu::Overview),
             TopLevel::Spark => Menu::Spark(SparkSubMenu::Overview),
-            TopLevel::Liquid => Menu::Liquid(LiquidSubMenu::Overview),
             TopLevel::Vault => Menu::Vault(VaultSubMenu::Overview),
             TopLevel::Marketplace => {
                 Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Overview))
@@ -211,7 +188,6 @@ impl From<&Menu> for TopLevel {
         match m {
             Menu::Cube(_) => TopLevel::Cube,
             Menu::Spark(_) => TopLevel::Spark,
-            Menu::Liquid(_) => TopLevel::Liquid,
             Menu::Vault(_) => TopLevel::Vault,
             Menu::Marketplace(_) => TopLevel::Marketplace,
         }

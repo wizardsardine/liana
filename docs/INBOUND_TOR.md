@@ -6,8 +6,7 @@ exposure. A reachable node validates and relays blocks and transactions for
 peers instead of only consuming them — the node serves the network as well as
 serving you.
 
-This doc covers only the **Vault**'s managed native-Bitcoin node. It is unrelated
-to the Liquid wallet (see [BREEZ_BTC_RECEIVE.md](BREEZ_BTC_RECEIVE.md)).
+This doc covers only the **Vault**'s managed native-Bitcoin node.
 
 ## What it does
 

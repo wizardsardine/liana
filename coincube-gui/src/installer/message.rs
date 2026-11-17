@@ -34,7 +34,6 @@ use crate::{
 pub type CubeSaveResult = Result<
     (
         CubeSettings,
-        Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
         Option<crate::app::cube_signer::CubeSigner>,
         Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
     ),
@@ -88,12 +87,12 @@ pub enum Message {
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
     /// Post-install orchestration completed. The first field pairs the
-    /// saved/found `CubeSettings` with an optional pre-loaded
-    /// `BreezClient` and `SparkBackend`.
+    /// saved/found `CubeSettings` with an optional pre-loaded Cube signer
+    /// and `SparkBackend`.
     ///
-    /// Both wallet-client slots are populated only for the Recovery Kit
-    /// restore flow, where the new PIN-setup step lets us build the
-    /// clients up-front against the just-encrypted mnemonic — matching
+    /// Both slots are populated only for the Recovery Kit restore flow,
+    /// where the new PIN-setup step lets us build them up-front against the
+    /// just-encrypted mnemonic — matching
     /// what fresh-install + pre-existing-Cube opens already do. Without
     /// this, the Loader landed on the post-install screen with
     /// `spark_backend = None` and the Spark panels stayed empty until
@@ -119,8 +118,8 @@ pub enum Message {
     /// (`UserFlow::RestoreFromRecoveryKit`). Collects a 4-digit PIN
     /// used to AES-encrypt the restored mnemonic on disk and to seed
     /// `CubeSettings.security_pin_hash`, bringing the restore flow in
-    /// line with fresh-install Cubes so the Liquid/Spark BreezClient
-    /// can decrypt the mnemonic on later opens.
+    /// line with fresh-install Cubes so the Cube signer and the Spark
+    /// wallet can decrypt the mnemonic on later opens.
     RestorePinSetup(RestorePinSetupMsg),
     /// Cube Recovery Kit restore step (W13 / W14 / W15).
     RecoveryKitRestore(RecoveryKitRestoreMsg),
