@@ -472,7 +472,8 @@ impl Panels {
                     cache.bitcoin_unit,
                 )
             }),
-            vault_settings: wallet.supports_inheritance().then(|| {
+            // Vaults and imported wallets share Vault Settings.
+            vault_settings: Some({
                 VaultSettingsState::new(
                     data_dir.clone(),
                     wallet.clone(),
@@ -595,7 +596,7 @@ impl Panels {
                 cache.bitcoin_unit,
             )
         });
-        self.vault_settings = wallet.supports_inheritance().then(|| {
+        self.vault_settings = Some({
             VaultSettingsState::new(
                 data_dir.clone(),
                 wallet.clone(),
@@ -6281,6 +6282,11 @@ impl App {
     /// The import controller retains only a shared handle for its policy-specific
     /// signing and discovery work; the App owns the wallet and shutdown.
     fn adopt_imported_runtime(&mut self) -> Task<Message> {
+        self.cache.imported_stored_keys = self
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .and_then(|panel| panel.stored_keys());
         if self
             .cube_settings
             .bitcoin_import
@@ -6335,7 +6341,7 @@ impl App {
         self.daemon = Some(daemon.clone());
         self.cache.has_vault = false;
         self.cache.has_imported_bitcoin = true;
-        self.cache.vault_lacks_keychain_key = false;
+        self.cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
         self.panels.global_home.imported_installed = true;
         self.panels.global_home.imported_balance = panel.authoritative_balance();
         let mut tasks = Vec::new();

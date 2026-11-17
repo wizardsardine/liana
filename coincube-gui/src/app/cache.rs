@@ -248,6 +248,9 @@ pub struct Cache {
     pub has_vault: bool,
     /// This Cube owns a pending or installed public Bitcoin wallet import.
     pub has_imported_bitcoin: bool,
+    /// Keys from recovery words stored in this Cube for its imported wallet,
+    /// once read. Vault Settings shows them.
+    pub imported_stored_keys: Option<usize>,
     /// The loaded Vault records which of its keys came from the COINCUBE
     /// Keychain, and none did. A Keychain key can only enter a Vault when it
     /// is created, so no phone can ever pair for it and Settings hides the
@@ -538,6 +541,7 @@ impl std::default::Default for Cache {
             restorable_connect_session: false,
             has_vault: false,
             has_imported_bitcoin: false,
+            imported_stored_keys: None,
             vault_lacks_keychain_key: false,
             cube_name: String::new(),
             cube_name_sync: CubeNameSync::Idle,
