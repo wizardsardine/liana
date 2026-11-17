@@ -1754,8 +1754,8 @@ pub enum TwoFactorStatusResult {
 }
 
 /// Devices & security › Authenticator app and Backup codes. `StatusLoaded`
-/// carries the session generation it was started in; the other results carry
-/// the panel request token (`TwoFactorSettings::op`).
+/// carries its status-load token (`TwoFactorSettings::begin_status_load`); the
+/// other results carry the panel request token (`TwoFactorSettings::op`).
 #[derive(Debug, Clone)]
 pub enum TwoFactorSettingsMessage {
     StatusLoaded(TwoFactorStatusResult, u64),
@@ -1772,8 +1772,9 @@ pub enum TwoFactorSettingsMessage {
     CopySetupKey,
     CopyBackupCodes,
     SaveBackupCodes,
-    /// The save dialog's outcome: `Ok(true)` saved, `Ok(false)` cancelled.
-    BackupCodesSaved(Result<bool, String>),
+    /// The save dialog's outcome (`Ok(true)` saved, `Ok(false)` cancelled)
+    /// for the set shown under that panel request token.
+    BackupCodesSaved(Result<bool, String>, u64),
     /// "I've saved them".
     FinishBackupCodes,
     /// "Make new codes…".

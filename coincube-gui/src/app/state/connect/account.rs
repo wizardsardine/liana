@@ -1142,6 +1142,10 @@ pub struct TwoFactorSettings {
     /// lose backup codes the server has already issued. Only leaving the
     /// account (`reset`) or starting another request retires a token.
     op: u64,
+    /// Identifies the current status load. Advanced when a load starts and
+    /// when a change made here lands, so a status read before that change
+    /// (an older load, or one racing it) can't undo what the screen shows.
+    status_seq: u64,
 }
 
 impl TwoFactorSettings {
@@ -1155,8 +1159,21 @@ impl TwoFactorSettings {
         self.clear_entry();
         // Keep counting so a result started before the reset never matches.
         let op = self.op.wrapping_add(1);
+        let status_seq = self.status_seq.wrapping_add(1);
         *self = Self::default();
         self.op = op;
+        self.status_seq = status_seq;
+    }
+
+    /// Starts a status load and returns the token its result must carry.
+    pub fn begin_status_load(&mut self) -> u64 {
+        self.status_seq = self.status_seq.wrapping_add(1);
+        self.status_seq
+    }
+
+    /// A change made here supersedes any status load already in flight.
+    fn supersede_status_loads(&mut self) {
+        self.status_seq = self.status_seq.wrapping_add(1);
     }
 
     /// Starts a panel request and returns the token its result must carry.
@@ -1857,6 +1874,11 @@ impl ConnectAccountPanel {
         self.user = None;
         self.plan = None;
         self.features = None;
+        // The adopted session may be another account: nothing about the old
+        // one's authenticator (an open setup key, codes on screen) carries over.
+        self.two_factor.reset();
+        self.backup_codes_notice = None;
+        self.signing_in_with_authenticator = false;
         self.step = ConnectFlowStep::CheckingSession;
     }
 
@@ -2044,6 +2066,13 @@ impl ConnectAccountPanel {
     /// Fetch the Account Overview summary counts (contacts + cubes) on
     /// demand when the Overview tab is opened. Cheap and best-effort —
     /// a failed fetch just leaves the count `None` and the row hidden.
+    /// Devices & security: verified devices, login activity and the
+    /// authenticator status.
+    pub fn reload_security(&mut self) -> iced::Task<Message> {
+        let status_seq = self.two_factor.begin_status_load();
+        load_security_data(&self.client, self.session_generation, status_seq)
+    }
+
     pub fn reload_overview(&mut self) -> iced::Task<Message> {
         self.recovery_services = RecoveryServicesState::Loading;
         self.overview_seq = self.overview_seq.wrapping_add(1);
@@ -4251,9 +4280,7 @@ impl ConnectAccountPanel {
                         // is in flight.
                         self.update_message(ConnectAccountMessage::Init)
                     }
-                    RetryAction::SecurityData => {
-                        load_security_data(&self.client, self.session_generation)
-                    }
+                    RetryAction::SecurityData => self.reload_security(),
                     RetryAction::UserProfile => {
                         let gen = self.session_generation;
                         let client = self.client.clone();
@@ -4578,7 +4605,6 @@ impl ConnectAccountPanel {
     }
 
     fn update_two_factor(&mut self, msg: TwoFactorSettingsMessage) -> iced::Task<Message> {
-        let gen = self.session_generation;
         let wrap = |m: TwoFactorSettingsMessage| {
             Message::View(view::Message::ConnectAccount(
                 ConnectAccountMessage::TwoFactorSettings(m),
@@ -4586,8 +4612,8 @@ impl ConnectAccountPanel {
         };
         let tf = &mut self.two_factor;
         match msg {
-            TwoFactorSettingsMessage::StatusLoaded(result, g) => {
-                if g != gen {
+            TwoFactorSettingsMessage::StatusLoaded(result, seq) => {
+                if seq != tf.status_seq {
                     return iced::Task::none();
                 }
                 // A failed refresh keeps a status already known: replacing it
@@ -4689,6 +4715,7 @@ impl ConnectAccountPanel {
                 match res {
                     Ok(codes) => {
                         tf.clear_entry();
+                        tf.supersede_status_loads();
                         let total = codes.codes.len() as u32;
                         tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
                             enabled: true,
@@ -4728,6 +4755,7 @@ impl ConnectAccountPanel {
                     .map(|u| u.email.clone())
                     .unwrap_or_default();
                 let contents = backup_codes_file(&email, codes);
+                let op = tf.op;
                 return iced::Task::perform(
                     async move {
                         let Some(handle) = rfd::AsyncFileDialog::new()
@@ -4739,17 +4767,18 @@ impl ConnectAccountPanel {
                         else {
                             return Ok(false);
                         };
-                        tokio::fs::write(handle.path(), contents.as_bytes())
+                        write_private_file(handle.path(), contents.as_bytes())
                             .await
                             .map(|()| true)
                             .map_err(|e| e.to_string())
                     },
-                    move |res| wrap(TwoFactorSettingsMessage::BackupCodesSaved(res)),
+                    move |res| wrap(TwoFactorSettingsMessage::BackupCodesSaved(res, op)),
                 );
             }
 
-            TwoFactorSettingsMessage::BackupCodesSaved(res) => {
-                if matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
+            TwoFactorSettingsMessage::BackupCodesSaved(res, op) => {
+                // Only for the set it saved: a later set is not in that file.
+                if op == tf.op && matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
                     match res {
                         Ok(true) => tf.saved_to_file = Some(Ok(())),
                         Ok(false) => {}
@@ -4807,6 +4836,7 @@ impl ConnectAccountPanel {
                 match res {
                     Ok(codes) => {
                         tf.clear_entry();
+                        tf.supersede_status_loads();
                         let total = codes.codes.len() as u32;
                         if let TwoFactorStatusView::Loaded(status) = &mut tf.status {
                             status.remaining = total;
@@ -4878,6 +4908,7 @@ impl ConnectAccountPanel {
                 match res {
                     Ok(()) => {
                         tf.clear_entry();
+                        tf.supersede_status_loads();
                         tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
                             enabled: false,
                             remaining: 0,
@@ -7548,7 +7579,11 @@ fn load_add_to_cube_candidates(
 }
 
 /// Load Security tab data (verified devices + login activity).
-pub fn load_security_data(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+pub fn load_security_data(
+    client: &CoincubeClient,
+    generation: u64,
+    status_seq: u64,
+) -> iced::Task<Message> {
     let c1 = client.clone();
     let c2 = client.clone();
     iced::Task::batch([
@@ -7574,14 +7609,15 @@ pub fn load_security_data(client: &CoincubeClient, generation: u64) -> iced::Tas
                 )),
             },
         ),
-        load_two_factor_status(client, generation),
+        load_two_factor_status(client, status_seq),
     ])
 }
 
 /// Devices & security › Authenticator app: is it on, and how many backup
 /// codes are left. A failure only marks the rows unavailable; it never
 /// raises the panel's error card over the devices list.
-pub fn load_two_factor_status(client: &CoincubeClient, generation: u64) -> iced::Task<Message> {
+/// `status_seq` comes from [`TwoFactorSettings::begin_status_load`].
+pub fn load_two_factor_status(client: &CoincubeClient, status_seq: u64) -> iced::Task<Message> {
     let client = client.clone();
     iced::Task::perform(
         async move { client.get_two_factor_status().await },
@@ -7595,11 +7631,31 @@ pub fn load_two_factor_status(client: &CoincubeClient, generation: u64) -> iced:
             };
             Message::View(view::Message::ConnectAccount(
                 ConnectAccountMessage::TwoFactorSettings(TwoFactorSettingsMessage::StatusLoaded(
-                    result, generation,
+                    result, status_seq,
                 )),
             ))
         },
     )
+}
+
+/// Writes `contents` readable by this OS user only (0600 on Unix), so
+/// another account on the computer can't read the backup codes.
+async fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path).await?;
+    // An existing file keeps its mode on open; tighten it as well.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .await?;
+    }
+    file.write_all(contents).await?;
+    file.flush().await
 }
 
 /// The backup codes as a text file: a heading, the account, then one code
@@ -13217,7 +13273,7 @@ mod two_factor_tests {
     #[test]
     fn turning_the_authenticator_on_shows_codes_once() {
         let mut panel = ConnectAccountPanel::new();
-        let gen = panel.session_generation();
+        let status_seq = panel.two_factor.begin_status_load();
         settings(
             &mut panel,
             TwoFactorSettingsMessage::StatusLoaded(
@@ -13227,7 +13283,7 @@ mod two_factor_tests {
                     total: 0,
                     generated_at: None,
                 }),
-                gen,
+                status_seq,
             ),
         );
         // Turning off or making codes needs it on first.
@@ -13315,8 +13371,8 @@ mod two_factor_tests {
     #[test]
     fn making_new_codes_and_turning_off() {
         let mut panel = ConnectAccountPanel::new();
-        let gen = panel.session_generation();
         panel.backup_codes_notice = Some(1);
+        let status_seq = panel.two_factor.begin_status_load();
         settings(
             &mut panel,
             TwoFactorSettingsMessage::StatusLoaded(
@@ -13326,7 +13382,7 @@ mod two_factor_tests {
                     total: 10,
                     generated_at: None,
                 }),
-                gen,
+                status_seq,
             ),
         );
 
@@ -13405,10 +13461,10 @@ mod two_factor_tests {
     #[test]
     fn an_old_api_marks_the_rows_unavailable_without_an_error_card() {
         let mut panel = ConnectAccountPanel::new();
-        let gen = panel.session_generation();
+        let status_seq = panel.two_factor.begin_status_load();
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::StatusLoaded(TwoFactorStatusResult::Unsupported, gen),
+            TwoFactorSettingsMessage::StatusLoaded(TwoFactorStatusResult::Unsupported, status_seq),
         );
         assert!(matches!(
             panel.two_factor.status,
@@ -13425,6 +13481,7 @@ mod two_factor_tests {
         let mut panel = ConnectAccountPanel::new();
         panel.user = Some(login().user);
         let gen = panel.session_generation();
+        let status_seq = panel.two_factor.begin_status_load();
         settings(
             &mut panel,
             TwoFactorSettingsMessage::StatusLoaded(
@@ -13434,7 +13491,7 @@ mod two_factor_tests {
                     total: 10,
                     generated_at: None,
                 }),
-                gen,
+                status_seq,
             ),
         );
         settings(&mut panel, TwoFactorSettingsMessage::AskRegenerate);
@@ -13465,12 +13522,12 @@ mod two_factor_tests {
         ));
 
         // A failed status refresh keeps the codes on screen.
-        let gen_now = panel.session_generation();
+        let status_seq = panel.two_factor.begin_status_load();
         settings(
             &mut panel,
             TwoFactorSettingsMessage::StatusLoaded(
                 TwoFactorStatusResult::Failed(UserError::new("x", "y", "z", true)),
-                gen_now,
+                status_seq,
             ),
         );
         assert!(panel.two_factor.status.enabled());
@@ -13481,7 +13538,7 @@ mod two_factor_tests {
         let mut panel = ConnectAccountPanel::new();
         panel.user = Some(login().user);
         panel.backup_codes_notice = Some(3);
-        let gen = panel.session_generation();
+        let status_seq = panel.two_factor.begin_status_load();
         settings(
             &mut panel,
             TwoFactorSettingsMessage::StatusLoaded(
@@ -13491,7 +13548,7 @@ mod two_factor_tests {
                     total: 0,
                     generated_at: None,
                 }),
-                gen,
+                status_seq,
             ),
         );
         settings(&mut panel, TwoFactorSettingsMessage::StartSetup);
@@ -13514,6 +13571,131 @@ mod two_factor_tests {
             TwoFactorSettingsMessage::SetupLoaded(Ok(setup()), op),
         );
         assert!(matches!(panel.two_factor.panel, TwoFactorPanel::Closed));
+    }
+
+    #[test]
+    fn a_status_read_before_a_change_cannot_undo_it() {
+        let mut panel = ConnectAccountPanel::new();
+        let status_seq = panel.two_factor.begin_status_load();
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::StatusLoaded(
+                TwoFactorStatusResult::Loaded(TwoFactorStatus {
+                    enabled: true,
+                    remaining: 5,
+                    total: 10,
+                    generated_at: None,
+                }),
+                status_seq,
+            ),
+        );
+        // A reload starts, then the user turns the app off before it lands.
+        let in_flight = panel.two_factor.begin_status_load();
+        settings(&mut panel, TwoFactorSettingsMessage::AskDisable);
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::CodeChanged(input("123456")),
+        );
+        settings(&mut panel, TwoFactorSettingsMessage::ConfirmDisable);
+        let op = panel.two_factor.op;
+        settings(&mut panel, TwoFactorSettingsMessage::Disabled(Ok(()), op));
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::StatusLoaded(
+                TwoFactorStatusResult::Loaded(TwoFactorStatus {
+                    enabled: true,
+                    remaining: 5,
+                    total: 10,
+                    generated_at: None,
+                }),
+                in_flight,
+            ),
+        );
+        assert!(
+            !panel.two_factor.status.enabled(),
+            "the stale read is dropped"
+        );
+    }
+
+    #[test]
+    fn a_save_reports_only_on_the_set_it_saved() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.two_factor.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
+            enabled: true,
+            remaining: 10,
+            total: 10,
+            generated_at: None,
+        });
+        panel.two_factor.panel = TwoFactorPanel::Codes {
+            codes: codes(10),
+            regenerated: false,
+        };
+        let saved_for = panel.two_factor.op;
+        settings(&mut panel, TwoFactorSettingsMessage::FinishBackupCodes);
+        settings(&mut panel, TwoFactorSettingsMessage::AskRegenerate);
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::CodeChanged(input("123456")),
+        );
+        settings(&mut panel, TwoFactorSettingsMessage::ConfirmRegenerate);
+        let op = panel.two_factor.op;
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::Regenerated(Ok(codes(10)), op),
+        );
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::BackupCodesSaved(Ok(true), saved_for),
+        );
+        assert_eq!(panel.two_factor.saved_to_file, None);
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::BackupCodesSaved(Ok(true), op),
+        );
+        assert_eq!(panel.two_factor.saved_to_file, Some(Ok(())));
+    }
+
+    #[test]
+    fn adopting_a_session_drops_the_old_accounts_authenticator_state() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.user = Some(login().user);
+        panel.backup_codes_notice = Some(2);
+        panel.two_factor.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
+            enabled: true,
+            remaining: 10,
+            total: 10,
+            generated_at: None,
+        });
+        panel.two_factor.panel = TwoFactorPanel::Codes {
+            codes: codes(10),
+            regenerated: true,
+        };
+        panel.install_admitted_client(CoincubeClient::for_test("http://127.0.0.1:1"));
+        assert!(matches!(panel.two_factor.panel, TwoFactorPanel::Closed));
+        assert!(matches!(
+            panel.two_factor.status,
+            TwoFactorStatusView::Loading
+        ));
+        assert_eq!(panel.backup_codes_notice, None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn saved_codes_are_readable_by_this_user_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("cc-backup-codes-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("codes.txt");
+        // A file that already exists with a wide mode is tightened too.
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_file(&path, b"abcd-efgh-jkmn\n")
+            .await
+            .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"abcd-efgh-jkmn\n");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

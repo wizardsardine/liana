@@ -665,12 +665,22 @@ pub(crate) struct LoginReply {
     backup_codes_remaining: Option<u32>,
 }
 
-/// A finished second-factor sign-in.
-#[derive(Debug, Clone)]
+/// A finished second-factor sign-in. Its `Debug` hides the session tokens:
+/// it travels in a message, and messages are formatted into logs.
+#[derive(Clone)]
 pub struct TwoFactorLogin {
     pub login: LoginResponse,
     /// How many backup codes are left, when this sign-in used one.
     pub backup_codes_remaining: Option<u32>,
+}
+
+impl std::fmt::Debug for TwoFactorLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TwoFactorLogin")
+            .field("user_id", &self.login.user.id)
+            .field("backup_codes_remaining", &self.backup_codes_remaining)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LoginReply {
@@ -5480,6 +5490,12 @@ mod two_factor_tests {
         mock.assert();
         assert_eq!(login.login.token, "access");
         assert_eq!(login.backup_codes_remaining, Some(2));
+        let shown = format!("{:?}", login);
+        assert!(
+            !shown.contains("access") && !shown.contains("refresh"),
+            "{}",
+            shown
+        );
     }
 
     #[tokio::test]

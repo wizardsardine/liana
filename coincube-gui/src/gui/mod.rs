@@ -1947,7 +1947,7 @@ impl GUI {
         origin: &OverlayOrigin,
         section: ConnectSheetSection,
     ) -> Task<Message> {
-        use crate::app::{menu::ConnectSubMenu, state::connect::account::load_security_data};
+        use crate::app::menu::ConnectSubMenu;
         let Some(tab) = self
             .panes
             .get_mut(origin.pane)
@@ -1986,9 +1986,7 @@ impl GUI {
                 }
                 ConnectSheetSection::PlanBilling => account.reload_plan_billing(),
                 ConnectSheetSection::Contacts => account.reload_contacts(),
-                ConnectSheetSection::DevicesSecurity => {
-                    load_security_data(&account.client, account.session_generation())
-                }
+                ConnectSheetSection::DevicesSecurity => account.reload_security(),
                 ConnectSheetSection::Duress => Task::batch([
                     account.reload_duress_contacts(),
                     account.reload_duress_cubes(),
@@ -2642,6 +2640,11 @@ impl GUI {
                         }
                         crate::app::view::ConnectAccountMessage::SetSession(login, epoch)
                         | crate::app::view::ConnectAccountMessage::OtpVerified(login, epoch, _)
+                        | crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                            crate::services::coincube::TwoFactorLogin { login, .. },
+                            epoch,
+                            _,
+                        )
                         | crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
                             login,
                             epoch,
@@ -2652,9 +2655,15 @@ impl GUI {
                                 .get(*pane_id)
                                 .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
                                 .is_some_and(|tab| matches!(&tab.state, tab::State::Home(_)));
-                            let eligible = !matches!(
+                            // A Home panel adopts a verified login directly; an
+                            // App panel commits it first and announces it with
+                            // `AuthCommitAccepted`. The authenticator step
+                            // finishes a login the same way the email code does.
+                            let eligible =
+                                !matches!(
                                 msg,
                                 crate::app::view::ConnectAccountMessage::OtpVerified(..)
+                                    | crate::app::view::ConnectAccountMessage::TwoFactorVerified(..)
                             ) || origin_is_home;
                             let origin_epoch = self
                                 .panes
@@ -2718,6 +2727,11 @@ impl GUI {
                 match connect_account_message(inner) {
                     Some(crate::app::view::ConnectAccountMessage::SetSession(login, _))
                     | Some(crate::app::view::ConnectAccountMessage::OtpVerified(login, _, _))
+                    | Some(crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                        crate::services::coincube::TwoFactorLogin { login, .. },
+                        _,
+                        _,
+                    ))
                     | Some(crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
                         login,
                         refreshed: false,
@@ -6026,6 +6040,267 @@ mod fork_auth_dispatch_tests {
                     "logout must withdraw the candidate"
                 );
                 assert!(pin.take_fork_signer().is_none());
+                drop(gui);
+                std::fs::remove_dir_all(root_path).unwrap();
+            })
+            .unwrap()
+            .join();
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn accepted_home_authenticator_login_reaches_an_already_open_fork_pin() {
+        // GUI updates reach teardown paths that close the process-global session.
+        let _guard = crate::app::session::test_guard();
+        let result = std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let _enter = runtime.enter();
+                let root_path = std::env::temp_dir()
+                    .join(format!("pin-session-2fa-handoff-{}", uuid::Uuid::new_v4()));
+                let root = CoincubeDirectory::new(root_path.clone());
+                std::fs::create_dir_all(&root_path).unwrap();
+                let (mut home, startup) = home::Home::new_for_chain(root.clone(), None);
+                drop(startup);
+                let mut client =
+                    crate::services::coincube::CoincubeClient::for_test("http://127.0.0.1:1");
+                client.set_token("old-session");
+                home.connect_account.client = client.clone();
+                home.connect_account.step =
+                    crate::app::state::connect::account::ConnectFlowStep::TwoFactor {
+                        email: "fixture@example.invalid".into(),
+                        challenge: crate::services::coincube::SecondFactorChallenge {
+                            temp_token: zeroize::Zeroizing::new("challenge".into()),
+                        },
+                        code: crate::app::view::SecretInput("123456".into()),
+                        backup: false,
+                        sending: true,
+                        failure: None,
+                        lost_open: false,
+                    };
+                let pin = crate::pin_entry::PinEntry::new(
+                    crate::app::settings::CubeSettings::new(
+                        "Pending fork".into(),
+                        ChainId::BitcoinBlake2b,
+                    ),
+                    root_path.clone(),
+                    crate::pin_entry::PinEntrySuccess::LoadApp {
+                        datadir: root.clone(),
+                        config: crate::app::Config::new(false),
+                        network: bitcoin::Network::Bitcoin,
+                        internal_bitcoind: None,
+                        backup: None,
+                        wallet_settings: None,
+                        connect_client: Some(client),
+                    },
+                    None,
+                );
+                let mut pane = pane::Pane::new_with_tab(tab::State::Home(home));
+                pane.tabs.push(tab::Tab::new(2, tab::State::PinEntry(pin)));
+                let (panes, pane_id) = pane_grid::State::new(pane);
+                let mut gui = GUI {
+                    panes,
+                    focus: Some(pane_id),
+                    config: Config::new(root, None),
+                    window_id: None,
+                    window_init: None,
+                    window_config: None,
+                    global_cache: GlobalCache::default(),
+                    theme_mode: Default::default(),
+                    system_theme: None,
+                    system_reduces_motion: None,
+                    preferences_sheet: None,
+                    connect_sheet: None,
+                    preferences: unresolved_test_preferences(),
+                    zoom: ZoomState::default(),
+                    worldview_sharing: worldview::Sharing::default(),
+                };
+                let login = LoginResponse {
+                    requires_2fa: false,
+                    token: "new-session".into(),
+                    refresh_token: "new-refresh".into(),
+                    user: User {
+                        id: 42,
+                        email: "fixture@example.invalid".into(),
+                        email_verified: Some(true),
+                    },
+                };
+                drop(gui.update(Message::Pane(
+                    pane_id,
+                    pane::Message::tab(
+                        1,
+                        tab::Message::Launch(home::Message::View(
+                            home::ViewMessage::ConnectAccount(
+                                crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                                    crate::services::coincube::TwoFactorLogin {
+                                        login: login.clone(),
+                                        backup_codes_remaining: None,
+                                    },
+                                    0,
+                                    99, // old attempt, same auth epoch
+                                ),
+                            ),
+                        )),
+                    ),
+                )));
+                let tab::State::PinEntry(pin) = &gui.panes.get(pane_id).unwrap().tabs[1].state
+                else {
+                    unreachable!()
+                };
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &pin.on_success;
+                assert_eq!(
+                    connect_client.as_ref().and_then(|client| client.token()),
+                    Some("old-session"),
+                    "rejected authenticator attempt must not broadcast SignIn to the PIN tab"
+                );
+                drop(gui.update(Message::Pane(
+                    pane_id,
+                    pane::Message::tab(
+                        1,
+                        tab::Message::Launch(home::Message::View(
+                            home::ViewMessage::ConnectAccount(
+                                crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                                    crate::services::coincube::TwoFactorLogin {
+                                        login,
+                                        backup_codes_remaining: Some(4),
+                                    },
+                                    0,
+                                    0,
+                                ),
+                            ),
+                        )),
+                    ),
+                )));
+                let account = |message| {
+                    Message::Pane(
+                        pane_id,
+                        pane::Message::tab(
+                            1,
+                            tab::Message::Launch(home::Message::View(
+                                home::ViewMessage::ConnectAccount(message),
+                            )),
+                        ),
+                    )
+                };
+                let ready = || {
+                    Message::Pane(
+                        pane_id,
+                        pane::Message::tab(
+                            1,
+                            tab::Message::Launch(home::Message::ConnectSignedInBubble),
+                        ),
+                    )
+                };
+                // A token response is not admission: the account gate has not run.
+                drop(gui.update(ready()));
+                let tab::State::PinEntry(pin) = &gui.panes.get(pane_id).unwrap().tabs[1].state
+                else {
+                    unreachable!()
+                };
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &pin.on_success;
+                assert!(
+                    connect_client.is_none(),
+                    "login token alone grants no PIN candidate"
+                );
+                drop(gui.update(account(
+                    crate::app::view::ConnectAccountMessage::SessionLoaded {
+                        user: User {
+                            id: 42,
+                            email: "fixture@example.invalid".into(),
+                            email_verified: Some(true),
+                        },
+                        plan: None,
+                        epoch: 0,
+                    },
+                )));
+                let tab::State::Home(home) = &gui.panes.get(pane_id).unwrap().tabs[0].state else {
+                    unreachable!()
+                };
+                let generation = home.connect_account.session_generation();
+                drop(gui.update(ready()));
+                let tab::State::PinEntry(pin) = &gui.panes.get(pane_id).unwrap().tabs[1].state
+                else {
+                    unreachable!()
+                };
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &pin.on_success;
+                assert!(
+                    connect_client.is_none(),
+                    "checking account grants no PIN candidate"
+                );
+                for outcome in [
+                    crate::services::coincube::DuressCheckOutcome::Unreachable,
+                    crate::services::coincube::DuressCheckOutcome::Ok(
+                        crate::services::coincube::DuressState {
+                            active: true,
+                            unlock_at: None,
+                            enrolled: false,
+                            this_device_registered: false,
+                        },
+                    ),
+                ] {
+                    drop(gui.update(account(
+                        crate::app::view::ConnectAccountMessage::DuressStateChecked(
+                            outcome, generation, 2,
+                        ),
+                    )));
+                    drop(gui.update(ready()));
+                    let tab::State::PinEntry(pin) = &gui.panes.get(pane_id).unwrap().tabs[1].state
+                    else {
+                        unreachable!()
+                    };
+                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                        &pin.on_success;
+                    assert!(
+                        connect_client.is_none(),
+                        "closed account gate grants no PIN candidate"
+                    );
+                }
+                drop(gui.update(account(
+                    crate::app::view::ConnectAccountMessage::DuressStateChecked(
+                        crate::services::coincube::DuressCheckOutcome::Ok(
+                            crate::services::coincube::DuressState {
+                                active: false,
+                                unlock_at: None,
+                                enrolled: false,
+                                this_device_registered: false,
+                            },
+                        ),
+                        generation,
+                        0,
+                    ),
+                )));
+                drop(gui.update(ready()));
+                let pending = gui
+                    .panes
+                    .get(pane_id)
+                    .unwrap()
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == 2)
+                    .unwrap();
+                let tab::State::PinEntry(pin) = &pending.state else {
+                    panic!("unlock must remain at PIN")
+                };
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &pin.on_success;
+                assert_eq!(
+                    connect_client.as_ref().and_then(|client| client.token()),
+                    Some("new-session"),
+                    "a Home login finished with the authenticator must reach the pending fork PIN"
+                );
+                assert!(
+                    pin.take_fork_signer().is_none(),
+                    "session propagation must not unlock the seed"
+                );
                 drop(gui);
                 std::fs::remove_dir_all(root_path).unwrap();
             })

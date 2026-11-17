@@ -3670,12 +3670,7 @@ impl Home {
                     HomeSection::Connect(app::menu::ConnectSubMenu::Security)
                 ) && self.connect_account.is_authenticated()
                 {
-                    return map_connect_task(
-                        crate::app::state::connect::account::load_security_data(
-                            &self.connect_account.client,
-                            self.connect_account.session_generation(),
-                        ),
-                    );
+                    return map_connect_task(self.connect_account.reload_security());
                 }
                 // Load Overview summary counts on demand
                 if matches!(
