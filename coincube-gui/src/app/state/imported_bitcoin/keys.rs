@@ -396,6 +396,17 @@ fn mark_tile<'a>(mark: Mark) -> Element<'a, view::Message> {
     }
 }
 
+/// What picking `source` for key `index` does. The current choice only
+/// closes the list: picking it again would reset the key, clearing typed
+/// words or a verified device.
+pub(super) fn choice_message(index: usize, source: KeySource, current: KeySource) -> ImportMessage {
+    if source == current {
+        ImportMessage::KeySourceMenu(index)
+    } else {
+        ImportMessage::KeySourcePicked(index, source)
+    }
+}
+
 /// A radio mark: an empty ring, filled with the accent when picked.
 fn radio_mark<'a>(picked: bool) -> Element<'a, view::Message> {
     coincube_ui::widget::Container::new(
@@ -975,7 +986,11 @@ pub(super) fn step<'a>(
                     .width(Length::Fill)
                     .padding([8, 12])
                     .style(move |theme: &theme::Theme, status| choice_style(theme, status, picked))
-                    .on_press(message(ImportMessage::KeySourcePicked(index, source))),
+                    .on_press(message(choice_message(
+                        index,
+                        source,
+                        slot.source,
+                    ))),
                 );
             }
             key = key.push(choices);

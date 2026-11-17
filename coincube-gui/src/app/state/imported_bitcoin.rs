@@ -3147,12 +3147,24 @@ impl ImportedBitcoinPanel {
             self.error = Some("Connect and unlock the device with this fingerprint.".into());
             return Task::none();
         };
+        // This connection has now been checked, by hand or on its own: a
+        // failure waits for Check again or a reconnect, never an automatic
+        // retry.
+        let device_id = self.hardware_wallets.as_ref().and_then(|listing| {
+            listing.list.iter().find_map(|listed| match listed {
+                HardwareWallet::Supported {
+                    id, fingerprint, ..
+                } if *fingerprint == account.fingerprint => Some(id.clone()),
+                _ => None,
+            })
+        });
         let generation = self.generation;
         let gate = self.generation_gate.clone();
         let check = keys::next_check();
         if let Some(slot) = self.key_slot(index) {
             slot.check = check;
             slot.status = KeyStatus::Checking;
+            slot.auto_checked = device_id;
         }
         Task::perform(
             async move {
@@ -5908,6 +5920,73 @@ mod tests {
                 directory.join(format!("keys-{name}.png")),
             );
         }
+    }
+
+    /// Picking the source a key already has only closes the list, so a
+    /// verified key or typed words survive it.
+    #[test]
+    fn picking_the_current_source_only_closes_the_list() {
+        assert!(matches!(
+            keys::choice_message(1, KeySource::Hardware, KeySource::Hardware),
+            ImportMessage::KeySourceMenu(1)
+        ));
+        assert!(matches!(
+            keys::choice_message(1, KeySource::Words, KeySource::Hardware),
+            ImportMessage::KeySourcePicked(1, KeySource::Words)
+        ));
+        let directory = NetworkDirectory::new(std::env::temp_dir().join("import-source-repick"));
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let wallet =
+            ImportedWalletAttachment::new(two_of_three(), ChainId::Bitcoin, 0, 200).unwrap();
+        let mut keys = KeysState::new(&wallet.descriptor);
+        keys.slots[1].status = KeyStatus::Verified;
+        panel.keys = Some(keys);
+        panel.review = Some(wallet);
+        let _ = panel.update_view(ImportMessage::KeySourceMenu(1), None, 0);
+        let current = panel.keys.as_ref().unwrap().slots[1].source;
+        let _ = panel.update_view(keys::choice_message(1, current, current), None, 0);
+        let keys = panel.keys.as_ref().unwrap();
+        assert_eq!(keys.menu, None);
+        assert_eq!(keys.slots[1].status, KeyStatus::Verified);
+    }
+
+    /// A check started with Check device that fails is not retried on its
+    /// own; a reconnect checks the device afresh.
+    #[test]
+    fn a_failed_manual_check_waits_for_check_again_or_a_reconnect() {
+        let mut panel = keys_panel_with(&[]);
+        let third = panel.keys.as_ref().unwrap().slots[2].account.fingerprint;
+        panel.hardware_wallets.as_mut().unwrap().list = vec![connected("coldcard-1", third)];
+        let _ = panel.update_view(ImportMessage::CheckDevice(2), None, 0);
+        let slot = &panel.keys.as_ref().unwrap().slots[2];
+        assert_eq!(slot.status, KeyStatus::Checking);
+        assert_eq!(slot.auto_checked.as_deref(), Some("coldcard-1"));
+        let check = slot.check;
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::DeviceVerified(
+            generation,
+            2,
+            check,
+            Err("Rejected on the device.".into()),
+        ));
+        let status =
+            |panel: &ImportedBitcoinPanel| panel.keys.as_ref().unwrap().slots[2].status.clone();
+        assert_eq!(
+            status(&panel),
+            KeyStatus::Failed("Rejected on the device.".into())
+        );
+        let _ = panel.auto_check_devices();
+        assert_eq!(
+            status(&panel),
+            KeyStatus::Failed("Rejected on the device.".into())
+        );
+        // Unplugged and plugged back in: checked afresh.
+        panel.hardware_wallets.as_mut().unwrap().list.clear();
+        let _ = panel.auto_check_devices();
+        panel.hardware_wallets.as_mut().unwrap().list = vec![connected("coldcard-1", third)];
+        let _ = panel.auto_check_devices();
+        assert_eq!(status(&panel), KeyStatus::Checking);
     }
 
     /// The source button opens each choice with what it means, under its
