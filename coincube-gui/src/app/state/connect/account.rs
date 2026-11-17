@@ -4739,7 +4739,8 @@ impl ConnectAccountPanel {
                         else {
                             return Ok(false);
                         };
-                        std::fs::write(handle.path(), contents.as_bytes())
+                        tokio::fs::write(handle.path(), contents.as_bytes())
+                            .await
                             .map(|()| true)
                             .map_err(|e| e.to_string())
                     },
