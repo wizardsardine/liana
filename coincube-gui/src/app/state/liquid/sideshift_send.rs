@@ -17,6 +17,14 @@ use crate::services::sideshift::{
 
 use view::{SideshiftSendMessage, SideshiftShiftType};
 
+/// The SideShift client no longer creates shifts that settle to Liquid: the
+/// Liquid wallet is being removed and is hidden for everyone
+/// (`LiquidGate::show()` is false), so this flow is unreachable. It keeps
+/// compiling, failing at the quote/shift step with this message, until the
+/// Liquid modules are deleted.
+const LIQUID_SHIFTS_RETIRED: &str =
+    "SideShift swaps for the Liquid wallet are no longer available. Use Receive in the Spark wallet.";
+
 // ---------------------------------------------------------------------------
 // Send phase
 // ---------------------------------------------------------------------------
@@ -176,71 +184,16 @@ impl SideshiftSendFlow {
         )
     }
 
-    fn fetch_quote(&self, affiliate_id: &str) -> Task<Message> {
-        let client = self.sideshift_client.clone();
-        let settle_network = self
-            .selected_network
-            .as_ref()
-            .map(|n| n.network_slug().to_string())
-            .unwrap_or_default();
-        let affiliate_id = affiliate_id.to_string();
-        let deposit_amount = if self.amount_input.trim().is_empty() {
-            None
-        } else {
-            Some(self.amount_input.trim().to_string())
-        };
-
-        Task::perform(
-            async move {
-                client
-                    .get_quote(
-                        "liquid",
-                        &settle_network,
-                        None,
-                        deposit_amount.as_deref(),
-                        &affiliate_id,
-                    )
-                    .await
-            },
-            |result| {
-                Message::View(view::Message::SideshiftSend(
-                    SideshiftSendMessage::QuoteFetched(result),
-                ))
-            },
-        )
+    fn fetch_quote(&self, _affiliate_id: &str) -> Task<Message> {
+        Task::done(Message::View(view::Message::SideshiftSend(
+            SideshiftSendMessage::QuoteFetched(Err(LIQUID_SHIFTS_RETIRED.to_string())),
+        )))
     }
 
-    fn create_shift(&self, affiliate_id: &str, quote: Option<&ShiftQuote>) -> Task<Message> {
-        let client = self.sideshift_client.clone();
-        let settle_network = self
-            .selected_network
-            .as_ref()
-            .map(|n| n.network_slug().to_string())
-            .unwrap_or_default();
-        let settle_address = self.recipient_address.clone();
-        let affiliate_id = affiliate_id.to_string();
-        let is_fixed = self.shift_type == SideshiftShiftType::Fixed && quote.is_some();
-        let quote_id = quote.map(|q| q.id.clone());
-
-        Task::perform(
-            async move {
-                if is_fixed {
-                    let qid = quote_id.ok_or("Missing quote ID for fixed shift")?;
-                    client
-                        .create_fixed_shift(&qid, &settle_address, &affiliate_id)
-                        .await
-                } else {
-                    client
-                        .create_variable_send_shift(&settle_network, &settle_address, &affiliate_id)
-                        .await
-                }
-            },
-            |result| {
-                Message::View(view::Message::SideshiftSend(
-                    SideshiftSendMessage::ShiftCreated(result),
-                ))
-            },
-        )
+    fn create_shift(&self, _affiliate_id: &str, _quote: Option<&ShiftQuote>) -> Task<Message> {
+        Task::done(Message::View(view::Message::SideshiftSend(
+            SideshiftSendMessage::ShiftCreated(Err(LIQUID_SHIFTS_RETIRED.to_string())),
+        )))
     }
 
     fn poll_shift_status(&self) -> Task<Message> {

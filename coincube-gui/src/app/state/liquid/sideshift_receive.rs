@@ -4,7 +4,6 @@ use std::time::Duration;
 use coincube_ui::widget::Element;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
-use crate::app::breez_liquid::assets::usdt_asset_id;
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::message::Message;
@@ -16,6 +15,14 @@ use crate::services::sideshift::{
 };
 
 use view::{SideshiftReceiveMessage, SideshiftShiftType};
+
+/// The SideShift client no longer creates shifts that settle to Liquid: the
+/// Liquid wallet is being removed and is hidden for everyone
+/// (`LiquidGate::show()` is false), so this flow is unreachable. It keeps
+/// compiling, failing at the quote/shift step with this message, until the
+/// Liquid modules are deleted.
+const LIQUID_SHIFTS_RETIRED: &str =
+    "SideShift swaps for the Liquid wallet are no longer available. Use Receive in the Spark wallet.";
 
 // ---------------------------------------------------------------------------
 // State machine phases
@@ -44,7 +51,6 @@ pub enum ReceivePhase {
 // ---------------------------------------------------------------------------
 
 pub struct SideshiftReceiveFlow {
-    breez_client: Arc<LiquidBackend>,
     coincube_client: CoincubeClient,
     sideshift_client: SideshiftClient,
 
@@ -64,9 +70,8 @@ pub struct SideshiftReceiveFlow {
 }
 
 impl SideshiftReceiveFlow {
-    pub fn new(breez_client: Arc<LiquidBackend>) -> Self {
+    pub fn new(_breez_client: Arc<LiquidBackend>) -> Self {
         Self {
-            breez_client,
             coincube_client: CoincubeClient::new(),
             sideshift_client: SideshiftClient::new(),
             phase: ReceivePhase::NetworkSelection,
@@ -154,85 +159,16 @@ impl SideshiftReceiveFlow {
         )
     }
 
-    fn fetch_quote(&self, affiliate_id: &str) -> Task<Message> {
-        let client = self.sideshift_client.clone();
-        let deposit_network = self.selected_network.network_slug().to_string();
-        let affiliate_id = affiliate_id.to_string();
-        let settle_amount = if self.amount_input.trim().is_empty() {
-            None
-        } else {
-            Some(self.amount_input.trim().to_string())
-        };
-
-        Task::perform(
-            async move {
-                client
-                    .get_quote(
-                        &deposit_network,
-                        "liquid",
-                        settle_amount.as_deref(),
-                        None,
-                        &affiliate_id,
-                    )
-                    .await
-            },
-            |result| {
-                Message::View(view::Message::SideshiftReceive(
-                    SideshiftReceiveMessage::QuoteFetched(result),
-                ))
-            },
-        )
+    fn fetch_quote(&self, _affiliate_id: &str) -> Task<Message> {
+        Task::done(Message::View(view::Message::SideshiftReceive(
+            SideshiftReceiveMessage::QuoteFetched(Err(LIQUID_SHIFTS_RETIRED.to_string())),
+        )))
     }
 
-    fn create_shift(&self, affiliate_id: &str, quote: Option<&ShiftQuote>) -> Task<Message> {
-        let client = self.sideshift_client.clone();
-        let breez = self.breez_client.clone();
-        let network = self.breez_client.network();
-        let deposit_network = self.selected_network.network_slug().to_string();
-        let affiliate_id = affiliate_id.to_string();
-        let is_fixed = self.shift_type == SideshiftShiftType::Fixed && quote.is_some();
-        let quote_id = quote.map(|q| q.id.clone());
-
-        Task::perform(
-            async move {
-                let usdt_id = usdt_asset_id(network).ok_or("USDt not available on network")?;
-                let destination = breez
-                    .receive_usdt(usdt_id, None, 8)
-                    .await
-                    .map(|r| r.destination)
-                    .map_err(|e| e.to_string())?;
-                // Breez returns a BIP21 URI (e.g. "liquidnetwork:VJL…?assetid=…").
-                // SideShift needs just the raw address.
-                let liquid_address = destination
-                    .split(':')
-                    .next_back()
-                    .unwrap_or(&destination)
-                    .split('?')
-                    .next()
-                    .unwrap_or(&destination)
-                    .to_string();
-
-                if is_fixed {
-                    let qid = quote_id.ok_or("Missing quote ID for fixed shift")?;
-                    client
-                        .create_fixed_shift(&qid, &liquid_address, &affiliate_id)
-                        .await
-                } else {
-                    client
-                        .create_variable_receive_shift(
-                            &deposit_network,
-                            &liquid_address,
-                            &affiliate_id,
-                        )
-                        .await
-                }
-            },
-            |result| {
-                Message::View(view::Message::SideshiftReceive(
-                    SideshiftReceiveMessage::ShiftCreated(result),
-                ))
-            },
-        )
+    fn create_shift(&self, _affiliate_id: &str, _quote: Option<&ShiftQuote>) -> Task<Message> {
+        Task::done(Message::View(view::Message::SideshiftReceive(
+            SideshiftReceiveMessage::ShiftCreated(Err(LIQUID_SHIFTS_RETIRED.to_string())),
+        )))
     }
 
     fn poll_shift_status(&self) -> Task<Message> {

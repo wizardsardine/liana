@@ -1602,4 +1602,191 @@ mod tests {
         assert_eq!(live.shift_status(), Some(&ShiftStatusKind::Waiting));
         assert!(live.restored);
     }
+
+    // ── USDt on Liquid: a deposit network into Spark ────────────────────
+    //
+    // The Liquid *wallet* is gone from SideShift (no shift settles to
+    // Liquid), but USDt on Liquid held anywhere else is still a deposit that
+    // SideShift converts to bitcoin for Spark. These walk that option through
+    // the whole lifecycle.
+
+    const LIQUID_REFUND: &str = "lq1qqwsq50k0h9y4rmwjr8t6dhtxcuyj8kn9h9lyqfaj2ple62rk3rgc46t6ck7mpstf7z6htg8p8vnac9c6k5xhntw5r0z3s7q8";
+    const SPARK_DEPOSIT_ADDRESS: &str = "bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg";
+
+    fn liquid_usdt() -> DepositOption {
+        deposit_option_by_key("usdt:liquid").expect("USDt on Liquid is offered")
+    }
+
+    /// A shift as SideShift creates it for a USDt-on-Liquid deposit: Liquid
+    /// in, bitcoin out to the Spark wallet's deposit address.
+    fn liquid_usdt_shift() -> ShiftResponse {
+        ShiftResponse {
+            id: "d97d3994cd95e54364b6".to_string(),
+            deposit_address: "lq1qqdepositaddress".to_string(),
+            deposit_coin: Some("USDT".to_string()),
+            deposit_network: Some("liquid".to_string()),
+            settle_address: Some(SPARK_DEPOSIT_ADDRESS.to_string()),
+            settle_coin: Some("BTC".to_string()),
+            settle_network: Some("bitcoin".to_string()),
+            deposit_min: Some("10".to_string()),
+            deposit_max: Some("20000".to_string()),
+            deposit_amount: None,
+            settle_amount: None,
+            rate: None,
+            expires_at: None,
+            created_at: Some("2026-11-13T00:00:00.000Z".to_string()),
+            status: Some("waiting".to_string()),
+            affiliate_fee_percent: None,
+            network_fee_usd: None,
+        }
+    }
+
+    /// A fresh USDt-on-Liquid flow taken through refund address → affiliate →
+    /// shift created, so it sits `Active` and `Waiting` like a real one.
+    fn created_liquid_usdt_flow() -> SparkSideshiftReceiveFlow {
+        let mut flow = SparkSideshiftReceiveFlow::new_preselected(backend(), liquid_usdt());
+        let _ = flow.update(&Msg::RefundAddressEdited(LIQUID_REFUND.to_string()));
+        assert_eq!(flow.refund_error(), None, "a Liquid refund address fits");
+        assert!(flow.can_generate());
+
+        let _ = flow.update(&Msg::Generate);
+        assert_eq!(flow.phase(), &SparkShiftPhase::FetchingAffiliate);
+        let _ = flow.update(&Msg::AffiliateFetched(Ok("affiliate".to_string())));
+        assert_eq!(flow.phase(), &SparkShiftPhase::CreatingShift);
+        let _ = flow.update(&Msg::ShiftCreated(Ok(liquid_usdt_shift())));
+        flow
+    }
+
+    fn polling(flow: &SparkSideshiftReceiveFlow) -> bool {
+        polls_status(
+            flow.phase(),
+            flow.shift_status()
+                .is_some_and(ShiftStatusKind::is_terminal),
+            flow.restored,
+        )
+    }
+
+    /// Created: the shift is live, waiting for the deposit, polled, and
+    /// stored as `usdt:liquid` with the Liquid refund address, settling as
+    /// bitcoin to the Spark deposit address.
+    #[test]
+    fn a_usdt_on_liquid_shift_is_created_live_and_stored() {
+        let flow = created_liquid_usdt_flow();
+        assert_eq!(flow.phase(), &SparkShiftPhase::Active);
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Waiting));
+        assert!(flow.qr_data().is_some());
+        assert!(polling(&flow));
+
+        let record = flow.record().expect("a live shift is stored");
+        assert_eq!(record.deposit_option, "usdt:liquid");
+        assert_eq!(record.refund_address, LIQUID_REFUND);
+        assert_eq!(
+            record.shift.settle_address.as_deref(),
+            Some(SPARK_DEPOSIT_ADDRESS)
+        );
+        assert_eq!(record.shift.settle_network.as_deref(), Some("bitcoin"));
+    }
+
+    /// Deposited → settled: the deposit is seen, the poller keeps going
+    /// until the bitcoin is sent, then stops and watches for the claim.
+    #[test]
+    fn a_usdt_on_liquid_shift_settles_as_bitcoin() {
+        let mut flow = created_liquid_usdt_flow();
+
+        let _ = flow.update(&status("pending", None));
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Pending));
+        assert_eq!(flow.deposit_amount(), Some("20"));
+        assert!(polling(&flow), "a deposited shift is still moving");
+
+        let _ = flow.update(&status("settling", None));
+        assert!(polling(&flow));
+
+        let _ = flow.update(&status("settled", Some("abc")));
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Settled));
+        assert_eq!(flow.settle_hash(), Some("abc"));
+        assert_eq!(flow.settle_amount_sat(), Some(27_961));
+        assert!(!polling(&flow), "settled is terminal for the poller");
+        assert!(flow.awaiting_claim, "the arrival is watched for its claim");
+        assert!(!flow.arrival_unconfirmed);
+    }
+
+    /// Deposited → refunded: the deposit goes back to the Liquid refund
+    /// address, and the poller stops once it has.
+    #[test]
+    fn a_usdt_on_liquid_shift_can_be_refunded() {
+        let mut flow = created_liquid_usdt_flow();
+        let _ = flow.update(&status("pending", None));
+        let _ = flow.update(&status("refunding", None));
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Refunding));
+        assert!(polling(&flow), "a refund in flight is still moving");
+
+        let _ = flow.update(&status("refunded", None));
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Refunded));
+        assert!(!polling(&flow));
+        assert!(!flow.awaiting_claim, "no bitcoin is coming");
+        assert_eq!(flow.refund_address(), LIQUID_REFUND);
+    }
+
+    /// Deposited → flagged: a held shift stops the poller and asks the user
+    /// to act, rather than spinning.
+    #[test]
+    fn a_flagged_usdt_on_liquid_shift_stops_and_asks_the_user_to_act() {
+        let mut flow = created_liquid_usdt_flow();
+        let _ = flow.update(&status("pending", None));
+        let _ = flow.update(&status("review", None));
+        let kind = flow.shift_status().expect("a status");
+        assert_eq!(kind, &ShiftStatusKind::Review);
+        assert!(kind.needs_user_action());
+        assert!(!polling(&flow));
+        assert!(!flow.awaiting_claim);
+    }
+
+    /// A `usdt:liquid` shift stored before the Liquid wallet was removed (in
+    /// the stored format, written out here rather than produced by today's
+    /// code) still loads and comes back live, polling SideShift.
+    #[test]
+    fn a_stored_usdt_on_liquid_shift_still_resumes() {
+        let stored = format!(
+            r#"{{
+                "shift": {{
+                    "id": "d97d3994cd95e54364b6",
+                    "depositAddress": "lq1qqdepositaddress",
+                    "depositCoin": "USDT",
+                    "depositNetwork": "liquid",
+                    "settleAddress": "{SPARK_DEPOSIT_ADDRESS}",
+                    "settleCoin": "BTC",
+                    "settleNetwork": "bitcoin",
+                    "depositMin": "10",
+                    "depositMax": "20000",
+                    "depositAmount": null,
+                    "settleAmount": null,
+                    "rate": null,
+                    "expiresAt": null,
+                    "createdAt": "2026-11-13T00:00:00.000Z",
+                    "status": "waiting",
+                    "affiliateFeePercent": null,
+                    "networkFeeUsd": null
+                }},
+                "deposit_option": "usdt:liquid",
+                "refund_address": "{LIQUID_REFUND}"
+            }}"#
+        );
+        let record: PendingSparkShift = serde_json::from_str(&stored).unwrap();
+        assert_eq!(record.shift, liquid_usdt_shift());
+
+        let mut flow = SparkSideshiftReceiveFlow::restored(backend(), &record)
+            .expect("USDt on Liquid is still offered, so its shift resumes");
+        assert_eq!(flow.selected(), liquid_usdt());
+        assert_eq!(flow.selected().network, SideshiftNetwork::Liquid);
+        assert_eq!(flow.phase(), &SparkShiftPhase::Active);
+        assert_eq!(flow.refund_address(), LIQUID_REFUND);
+        assert!(polling(&flow), "a resumed shift asks SideShift where it is");
+        assert_eq!(flow.record(), Some(record));
+
+        // And it carries on from there.
+        let _ = flow.update(&status("pending", None));
+        assert_eq!(flow.shift_status(), Some(&ShiftStatusKind::Pending));
+        assert!(!flow.restored);
+        assert!(polling(&flow));
+    }
 }
