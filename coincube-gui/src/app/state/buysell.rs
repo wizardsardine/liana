@@ -49,19 +49,28 @@ impl State for BuySellPanel {
         // the only record of whether the order was paid. ("Start New
         // Transaction" sends `ResetWidget`, which can arrive once Mavapay has
         // already confirmed the order.)
-        if self.sell_payment_in_flight()
-            && matches!(
-                message,
+        if self.sell_payment_in_flight() {
+            match message {
+                // A refreshed token must still be stored and a logout still
+                // happen: hold them until the payment answers.
+                view::BuySellMessage::SetLoginState(..) | view::BuySellMessage::LogOut => {
+                    log::info!(
+                        "[BUYSELL] Deferring a session change until the sell payment answers"
+                    );
+                    self.deferred_session.push(message);
+                    return iced::Task::none();
+                }
                 view::BuySellMessage::ResetWidget
-                    | view::BuySellMessage::SetLoginState(..)
-                    | view::BuySellMessage::LogOut
-                    | view::BuySellMessage::CountryDetected(..)
-                    | view::BuySellMessage::StartSession
-                    | view::BuySellMessage::ViewHistory
-            )
-        {
-            log::warn!("[BUYSELL] Ignoring a flow change while a sell payment is in flight");
-            return iced::Task::none();
+                | view::BuySellMessage::CountryDetected(..)
+                | view::BuySellMessage::StartSession
+                | view::BuySellMessage::ViewHistory => {
+                    log::warn!(
+                        "[BUYSELL] Ignoring a flow change while a sell payment is in flight"
+                    );
+                    return iced::Task::none();
+                }
+                _ => {}
+            }
         }
 
         match message {
@@ -670,8 +679,14 @@ impl State for BuySellPanel {
                         }
                     },
                     (BuySellFlowState::Mavapay(state), view::BuySellMessage::Mavapay(msg)) => {
-                        if let Some(task) = state.update(msg, &self.coincube_client) {
-                            return task.map(Message::View);
+                        let task = state
+                            .update(msg, &self.coincube_client)
+                            .map(|task| task.map(Message::View));
+                        // Once the sell payment has answered, apply any
+                        // session change held back while it was in flight.
+                        let deferred = self.take_deferred_session();
+                        if task.is_some() || !deferred.is_empty() {
+                            return iced::Task::batch(task.into_iter().chain(deferred));
                         }
                     }
                     (BuySellFlowState::Meld(state), view::BuySellMessage::Meld(msg)) => {
@@ -1162,6 +1177,38 @@ mod tests {
         assert_eq!(
             checkout_fulfilment(&panel),
             Some(("quote-b", &SellFulfilment::Sending))
+        );
+
+        // A logout (or a refreshed login) arriving mid-payment is held, not
+        // dropped, and applied once the payment answers.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::LogOut),
+        );
+        // Two held: this one and the `LogOut` from the loop above.
+        assert_eq!(panel.deferred_session.len(), 2);
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-b", &SellFulfilment::Sending))
+        );
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::SellSendFailed {
+                    quote_id: "quote-b".to_string(),
+                    error: "no route".to_string(),
+                },
+            )),
+        );
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-b", &SellFulfilment::Idle))
+        );
+        assert!(
+            panel.deferred_session.is_empty(),
+            "the held logout was re-dispatched once the payment answered"
         );
 
         // At rest, a reset goes through as before.

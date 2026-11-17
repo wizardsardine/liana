@@ -96,6 +96,10 @@ pub struct BuySellPanel {
 
     // only really useful for address generation
     pub wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+
+    /// Session changes (`SetLoginState`, `LogOut`) that arrived while a sell
+    /// payment was in flight, applied in order once it answers.
+    pub deferred_session: Vec<crate::app::view::BuySellMessage>,
 }
 
 impl BuySellPanel {
@@ -114,6 +118,7 @@ impl BuySellPanel {
             spark,
             detected_country: None,
             login: None,
+            deferred_session: Vec::new(),
         }
     }
 
@@ -129,6 +134,22 @@ impl BuySellPanel {
                         if sell.fulfilment.in_flight()
                 )
         )
+    }
+
+    /// The held-back session changes, re-dispatched, once no sell payment is
+    /// in flight. Empty while one still is.
+    pub fn take_deferred_session(&mut self) -> Vec<iced::Task<crate::app::message::Message>> {
+        if self.sell_payment_in_flight() {
+            return Vec::new();
+        }
+        std::mem::take(&mut self.deferred_session)
+            .into_iter()
+            .map(|msg| {
+                iced::Task::done(crate::app::message::Message::View(
+                    crate::app::view::Message::BuySell(msg),
+                ))
+            })
+            .collect()
     }
 
     pub fn view<'a>(&'a self, mask_amounts: bool) -> iced::Element<'a, ViewMessage, theme::Theme> {
