@@ -19610,7 +19610,7 @@ mod stream_startup_routing_tests {
                 .is_some()
             );
             app.connect_email = Some("bob@example.invalid".into());
-            app.cache.current_cube_server_id = Some("already-registered".into());
+            app.cache.current_cube_server_id = Some(17);
             let outputs = readiness_outputs(&mut app).await;
             assert!(
                 matches!(&outputs[..], [Message::View(view::Message::ShowToast(
