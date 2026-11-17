@@ -102,7 +102,7 @@ Whether your are building the whole wallet or only the daemon, make sure not to 
 
 The Spark wallet's SDK runs in a sibling process, [`coincube-spark-bridge`](../coincube-spark-bridge),
 which is a **standalone Cargo workspace** — the root [`Cargo.toml`](../Cargo.toml) excludes it,
-because `breez-sdk-spark` and `breez-sdk-liquid` cannot share a dependency graph. The practical
+because `breez-sdk-spark` cannot share a dependency graph with `coincubed`'s rusqlite 0.38 fork. The practical
 consequence is short and easy to trip over:
 
 > `cargo build` at the root does **not** build the Spark bridge. A wallet built that way starts
