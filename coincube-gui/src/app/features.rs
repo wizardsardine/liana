@@ -7,7 +7,7 @@
 //! out with a hover popover whose text comes from [`Availability::reason`].
 //!
 //! Everything that needs to know "is feature X usable on network Y" asks
-//! this module — the nav rails, the Liquid SDK loader, etc. — so the
+//! this module — the nav rails, the route guard, etc. — so the
 //! matrix lives in exactly one place. See `plans/PLAN-network-feature-gating.md`.
 
 use crate::app::menu::{MarketplaceSubMenu, Menu, P2PSubMenu};
@@ -112,89 +112,9 @@ fn marketplace_off() -> Availability {
     }
 }
 
-/// Whether the Liquid wallet is shown at all. This is the sunset gate. Since
-/// Tenshu v175 it hides Liquid for everyone ([`Self::show`] is always
-/// `false`); the rest of this comment describes the inputs it would use if
-/// Liquid were reopened.
-///
-/// Two independent inputs, OR'd — and note this deliberately does **not**
-/// behave like [`MarketplaceServerFlags`]:
-///
-/// - `server_enabled` — the account-scoped `liquidEnabled` grandfather flag
-///   from `GET /connect/features`. Only meaningful on an *authenticated* call;
-///   pre-login the API silently reports `false`, so this stays `false` until
-///   features load for a signed-in user.
-/// - `local_state_exists` — a Liquid wallet has already been initialized on
-///   this machine (see [`crate::app::breez_liquid::local_state_exists`]).
-///
-/// **Fails open on the local dimension, by design.** Marketplace is a launch
-/// kill-switch and fails closed: hiding it costs a user nothing. Liquid holds
-/// *funds*. If Connect is unreachable, the token expired, or the user never
-/// made a Connect account at all, an existing Liquid wallet must still show —
-/// otherwise the gate strands real L-BTC/L-USDt behind a network outage. So
-/// local state alone is sufficient to surface the wallet, and the server flag
-/// only ever *adds* visibility (for a fresh install the operator has
-/// grandfathered).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct LiquidGate {
-    /// `liquidEnabled` from `/connect/features` (authenticated). Defaults
-    /// `false`: a fresh install gets no Liquid unless the server grants it.
-    pub server_enabled: bool,
-    /// A Liquid wallet has been initialized on this machine. Never cleared by
-    /// an API response — funds access must not depend on Connect.
-    pub local_state_exists: bool,
-}
-
-impl LiquidGate {
-    /// Nothing granted, nothing on disk — a fresh install before features
-    /// load. The starting value everywhere.
-    pub const HIDDEN: Self = Self {
-        server_enabled: false,
-        local_state_exists: false,
-    };
-
-    /// The single source of truth for "should the Liquid surface exist".
-    /// Consulted by the nav rails, the route guard, global home, Activity and
-    /// the Launcher.
-    ///
-    /// Always `false`: Liquid is hidden for everyone, including grandfathered
-    /// accounts and Cubes with a Liquid wallet on disk (Robert, 2026-10-29,
-    /// Tenshu v175 master §3 decision 2). Both inputs are still recorded, and
-    /// the Liquid signer still derives from the Cube seed, so reopening Liquid
-    /// is a change to this function alone.
-    pub fn show(&self) -> bool {
-        false
-    }
-}
-
-/// Whether the Liquid wallet is usable *right now*: granted by the sunset
-/// gate **and** backed on the current network. The sunset gate on its own only
-/// answers "does this account have Liquid at all" — on a testnet/signet cube
-/// there is no Liquid backend, so a granted wallet still has nothing behind it.
-///
-/// The nav rail deliberately renders that state greyed-with-a-reason, but
-/// surfaces that would otherwise offer live actions (the Cube home wallet card,
-/// the transfer picker) hide Liquid entirely instead — an inert Send/Receive
-/// pair reads as a wallet that's merely empty, not one that can't work here.
-pub fn liquid_wallet_usable<C: Into<ChainId>>(chain: C, gate: LiquidGate) -> bool {
-    gate.show() && liquid(chain).is_available()
-}
-
-/// Reason shown for a Liquid route reached while the wallet is gated off —
-/// a restored or deep-linked route, since the nav hides Liquid entirely in
-/// this state. Not a per-network message: Liquid is sunset for new wallets.
-pub const LIQUID_ACCOUNT_UNAVAILABLE_REASON: &str =
-    "The Liquid wallet isn't available on this account.";
-
-fn liquid_sunset() -> Availability {
-    Availability::Unavailable {
-        reason: LIQUID_ACCOUNT_UNAVAILABLE_REASON.to_string(),
-    }
-}
-
-/// Whether the Duress Mode surface is shown at all — the third server-flag
-/// dimension, structurally the [`LiquidGate`] shape (two inputs OR'd) but with
-/// the Marketplace *hidden-not-greyed* kill-switch semantics.
+/// Whether the Duress Mode surface is shown at all — a server-flag dimension
+/// with two inputs OR'd, and the Marketplace *hidden-not-greyed* kill-switch
+/// semantics.
 ///
 /// Two independent inputs, OR'd:
 ///
@@ -209,8 +129,8 @@ fn liquid_sunset() -> Availability {
 ///   during beta keeps every duress surface — manage, trigger, clear — even
 ///   when prod later serves `duressEnabled: false` or Connect is unreachable.
 ///
-/// Unlike [`LiquidGate`], the gated inputs both live in server / account state,
-/// not on disk: enrollment is the durable half and the enrolled client learns
+/// The gated inputs both live in server / account state, not on disk:
+/// enrollment is the durable half and the enrolled client learns
 /// it (via account state) long before it could ever need the surface. So this
 /// gate is recomputed live from the account panel and is **not** mirrored into
 /// [`crate::app::cache::Cache`] or persisted to per-cube settings. An
@@ -275,19 +195,6 @@ pub fn spark<C: Into<ChainId>>(chain: C) -> Availability {
     }
 }
 
-/// Liquid wallet. Mainnet only. The Breez Liquid SDK (0.12.2) connects
-/// solely on `LiquidNetwork::Mainnet` and `Regtest` — it hard-rejects
-/// `LiquidNetwork::Testnet` at `connect_with_signer`, which is what
-/// testnet *and* signet map to. Regtest would point Breez at a localhost
-/// Esplora normal users don't run. So mainnet is the only network with a
-/// usable Liquid backend.
-pub fn liquid<C: Into<ChainId>>(chain: C) -> Availability {
-    match chain.into() {
-        ChainId::Bitcoin => Availability::Available,
-        other => unavailable("Liquid", other),
-    }
-}
-
 /// Buy/Sell (fiat on/off-ramp). Real fiat ↔ real BTC, so mainnet only —
 /// and BTC only: a Bitcoin Blake2b Cube holds BTCB2, which no on-ramp sells.
 pub fn buy_sell<C: Into<ChainId>>(chain: C) -> Availability {
@@ -332,20 +239,10 @@ pub fn route_availability<C: Into<ChainId>>(
     chain: C,
     p2p_test_coordinator: bool,
     flags: MarketplaceServerFlags,
-    liquid_gate: LiquidGate,
 ) -> Availability {
     let net = chain.into();
     match menu {
         Menu::Spark(_) => spark(net),
-        // Sunset gate first, then the per-network gate — a gated-off Liquid
-        // reads as "not on this account", not "not on this network".
-        Menu::Liquid(_) => {
-            if liquid_gate.show() {
-                liquid(net)
-            } else {
-                liquid_sunset()
-            }
-        }
         // Buy/Sell: hidden entirely when the server switch is off, otherwise
         // subject to the per-network gate.
         Menu::Marketplace(MarketplaceSubMenu::BuySell) => {
@@ -586,18 +483,17 @@ mod tests {
     /// this is the one place to update alongside the matching `fn`.
     #[test]
     fn support_matrix() {
-        // (network, spark, liquid, buy_sell, p2p_without_coordinator)
+        // (network, spark, buy_sell, p2p_without_coordinator)
         let expected = [
-            (Network::Bitcoin, true, true, true, true),
-            (Network::Testnet, false, false, false, false),
-            (Network::Testnet4, false, false, false, false),
-            (Network::Signet, false, false, false, false),
-            (Network::Regtest, true, false, false, false),
+            (Network::Bitcoin, true, true, true),
+            (Network::Testnet, false, false, false),
+            (Network::Testnet4, false, false, false),
+            (Network::Signet, false, false, false),
+            (Network::Regtest, true, false, false),
         ];
 
-        for (net, spark_ok, liquid_ok, buy_sell_ok, p2p_ok) in expected {
+        for (net, spark_ok, buy_sell_ok, p2p_ok) in expected {
             assert_eq!(spark(net).is_available(), spark_ok, "spark on {}", net);
-            assert_eq!(liquid(net).is_available(), liquid_ok, "liquid on {}", net);
             assert_eq!(
                 buy_sell(net).is_available(),
                 buy_sell_ok,
@@ -643,20 +539,10 @@ mod tests {
         Menu::Marketplace(MarketplaceSubMenu::P2P(P2PSubMenu::Settings))
     }
 
-    /// Marketplace/Spark route checks; Liquid is granted here so these stay
-    /// about the flag under test. Liquid's own gate has its own tests below.
+    /// Marketplace/Spark route checks.
     fn avail<C: Into<ChainId>>(menu: &Menu, net: C, flags: MarketplaceServerFlags) -> bool {
-        route_availability(menu, net, false, flags, LIQUID_GRANTED).is_available()
+        route_availability(menu, net, false, flags).is_available()
     }
-
-    const LIQUID_GRANTED: LiquidGate = LiquidGate {
-        server_enabled: true,
-        local_state_exists: false,
-    };
-    const LIQUID_LOCAL_ONLY: LiquidGate = LiquidGate {
-        server_enabled: false,
-        local_state_exists: true,
-    };
 
     #[test]
     fn server_flags_default_and_off_are_fail_closed() {
@@ -757,78 +643,6 @@ mod tests {
         assert!(!avail(&spark_route, Network::Signet, ALL_ON));
     }
 
-    // ── Liquid sunset gate ──────────────────────────────────────────────
-    //
-    // Tenshu v175 hides Liquid for everyone (master §3 decision 2). Neither
-    // the account grant nor a Liquid wallet on this machine shows it.
-
-    const LIQUID_GRANTED_AND_LOCAL: LiquidGate = LiquidGate {
-        server_enabled: true,
-        local_state_exists: true,
-    };
-
-    #[test]
-    fn liquid_is_hidden_whatever_the_gate_records() {
-        assert_eq!(LiquidGate::default(), LiquidGate::HIDDEN);
-        for gate in [
-            LiquidGate::HIDDEN,
-            LIQUID_GRANTED,
-            LIQUID_LOCAL_ONLY,
-            LIQUID_GRANTED_AND_LOCAL,
-        ] {
-            assert!(!gate.show(), "{:?}", gate);
-            assert!(!avail_liquid(Network::Bitcoin, gate), "{:?}", gate);
-            // The Cube-home cards, the transfer picker and the Launcher.
-            assert!(!liquid_wallet_usable(Network::Bitcoin, gate), "{:?}", gate);
-        }
-    }
-
-    #[test]
-    fn network_gate_still_applies_to_a_granted_liquid_wallet() {
-        // Being grandfathered in doesn't conjure a Liquid backend on signet.
-        assert!(!avail_liquid(Network::Signet, LIQUID_GRANTED));
-        assert!(!avail_liquid(Network::Regtest, LIQUID_LOCAL_ONLY));
-    }
-
-    #[test]
-    fn gated_off_liquid_route_reads_as_account_scoped_not_network_scoped() {
-        // A restored or deep-linked Liquid route, even with the grant and a
-        // local wallet, gets the account reason rather than a live panel.
-        for gate in [LiquidGate::HIDDEN, LIQUID_GRANTED_AND_LOCAL] {
-            assert_eq!(
-                route_availability(
-                    &Menu::Liquid(crate::app::menu::LiquidSubMenu::Overview),
-                    Network::Bitcoin,
-                    false,
-                    MarketplaceServerFlags::OFF,
-                    gate,
-                )
-                .reason(),
-                Some(LIQUID_ACCOUNT_UNAVAILABLE_REASON),
-                "{gate:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn wallet_card_hides_liquid_off_mainnet_even_when_granted() {
-        assert!(!liquid_wallet_usable(Network::Testnet, LIQUID_GRANTED));
-        assert!(!liquid_wallet_usable(Network::Testnet4, LIQUID_LOCAL_ONLY));
-        assert!(!liquid_wallet_usable(Network::Signet, LIQUID_GRANTED));
-        assert!(!liquid_wallet_usable(Network::Regtest, LIQUID_GRANTED));
-    }
-
-    fn avail_liquid<C: Into<ChainId>>(net: C, gate: LiquidGate) -> bool {
-        route_availability(
-            &Menu::Liquid(crate::app::menu::LiquidSubMenu::Overview),
-            net,
-            false,
-            MarketplaceServerFlags::OFF,
-            gate,
-        )
-        .is_available()
-    }
-
     // ── Duress gate ─────────────────────────────────────────────────────
     //
     // The launch/visibility half of the duress show-rule (PLAN-feature-flags).
@@ -868,10 +682,6 @@ mod tests {
         assert_eq!(
             spark(Network::Testnet4).reason(),
             Some("Spark isn't available on Testnet4.")
-        );
-        assert_eq!(
-            liquid(Network::Regtest).reason(),
-            Some("Liquid isn't available on Regtest.")
         );
         assert_eq!(
             buy_sell(Network::Signet).reason(),
@@ -919,21 +729,13 @@ mod tests {
     fn every_network_feature_is_unavailable_on_both_blake2b_chains() {
         for chain in [ChainId::BitcoinBlake2b, ChainId::BitcoinBlake2bTestnet4] {
             assert!(!spark(chain).is_available(), "{:?}", chain);
-            assert!(!liquid(chain).is_available(), "{:?}", chain);
             assert!(!buy_sell(chain).is_available(), "{:?}", chain);
             // Even a configured test coordinator does not lift P2P here.
             assert!(!p2p(chain, true).is_available(), "{:?}", chain);
             assert!(!p2p(chain, false).is_available(), "{:?}", chain);
-            assert!(!liquid_wallet_usable(chain, LIQUID_GRANTED), "{:?}", chain);
-            assert!(
-                !liquid_wallet_usable(chain, LIQUID_LOCAL_ONLY),
-                "{:?}",
-                chain
-            );
             // The reasons name the chain, not "Mainnet".
             for reason in [
                 spark(chain).reason().unwrap().to_string(),
-                liquid(chain).reason().unwrap().to_string(),
                 buy_sell(chain).reason().unwrap().to_string(),
                 p2p(chain, true).reason().unwrap().to_string(),
             ] {
@@ -943,7 +745,6 @@ mod tests {
         }
         // …and the encoding twin is untouched by the new arms.
         assert!(spark(ChainId::Bitcoin).is_available());
-        assert!(liquid(ChainId::Bitcoin).is_available());
         assert!(buy_sell(ChainId::Bitcoin).is_available());
     }
 
@@ -954,7 +755,6 @@ mod tests {
             assert!(!avail(&spark_route, chain, ALL_ON), "{:?}", chain);
             assert!(!avail(&buy_sell_route(), chain, ALL_ON), "{:?}", chain);
             assert!(!avail(&p2p_route(), chain, ALL_ON), "{:?}", chain);
-            assert!(!avail_liquid(chain, LIQUID_GRANTED), "{:?}", chain);
         }
     }
 

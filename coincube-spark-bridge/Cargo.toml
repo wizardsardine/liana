@@ -8,7 +8,8 @@ description = "Sibling process that hosts breez-sdk-spark and exposes it to coin
 # Standalone single-member workspace with its own Cargo.lock — deliberately
 # isolated from the main coincube workspace so that breez-sdk-spark's dep
 # graph (tokio_with_wasm ^0.8.7, rusqlite 0.32.1 + libsqlite3-sys) doesn't
-# have to be unified with breez-sdk-liquid's. See the main Cargo.toml
+# have to be unified with the main workspace's, where coincubed links its own
+# rusqlite 0.38 fork (`links = "sqlite3"` allows one). See the main Cargo.toml
 # `exclude = ["coincube-spark-bridge"]` entry for the paired side of this
 # setup.
 [workspace]

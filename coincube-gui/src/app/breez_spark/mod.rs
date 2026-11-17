@@ -1,14 +1,14 @@
 //! Spark wallet backend — gui-side surface.
 //!
 //! The actual [`breez-sdk-spark`] integration runs in a sibling binary
-//! (`coincube-spark-bridge`) because the Liquid and Spark SDKs can't be
+//! (`coincube-spark-bridge`) because the Spark SDK and `coincubed` can't be
 //! linked into the same process (incompatible `rusqlite` / `libsqlite3-sys`
 //! dep graphs). See [`coincube-spark-bridge/Cargo.toml`] for the
 //! accompanying standalone workspace.
 //!
 //! Public API:
 //! - [`config::SparkConfig`]: reads `BREEZ_API_KEY` from env at build
-//!   time (same key covers both Liquid and Spark).
+//!   time.
 //! - [`assets::SparkAsset`]: placeholder asset registry — BTC and
 //!   Lightning only for now.
 //! - [`client::SparkClient`]: cloneable subprocess handle, async
@@ -36,8 +36,8 @@ use crate::app::seed_source::SeedSource;
 
 /// Load the Spark backend for a cube, taking its master seed from `seed`.
 ///
-/// Mirrors [`crate::app::breez_liquid::load_breez_client`], including its
-/// [`SeedSource`] parameter — a passkey Cube has no seed file, so the source
+/// Takes a [`SeedSource`], as [`crate::app::cube_signer::CubeSigner::resolve`]
+/// does — a passkey Cube has no seed file, so the source
 /// has to be explicit rather than "fingerprint plus PIN". The Spark SDK needs
 /// the raw mnemonic on `connect`, so this function:
 /// 1. resolves the [`coincube_core::signer::MasterSigner`] from `seed`;
@@ -65,7 +65,7 @@ pub async fn load_spark_client(
     let spark_signer_fingerprint = seed.fingerprint();
 
     // `resolve` prefers the signer the unlock already decrypted — same
-    // reasoning as the Liquid loader. Spark runs immediately after it, so
+    // reasoning as `CubeSigner::resolve`. Spark runs immediately after it, so
     // without that a single unlock paid three full Argon2id derivations
     // instead of one.
     let signer = seed

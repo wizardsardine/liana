@@ -12,12 +12,13 @@ members = [
     "vendor/async-hwi",
 ]
 # coincube-spark-bridge is deliberately NOT a member of this workspace.
-# It links breez-sdk-spark 0.13.1, whose `tokio_with_wasm ^0.8.7` and
-# `rusqlite ^0.32.1 (links = "sqlite3")` dep requirements are unresolvable
-# together with breez-sdk-liquid 0.12.2. Making the bridge a standalone
-# workspace (with its own Cargo.lock) gives it an isolated dep graph and
-# lets it coexist with the Liquid-linked gui at runtime via stdin/stdout
-# IPC. See coincube-spark-bridge/Cargo.toml for its own [workspace] block.
+# It links breez-sdk-spark, whose `rusqlite` (`links = "sqlite3"`) requirement
+# can't be unified with coincubed's rusqlite 0.38 fork (breez/rusqlite,
+# branch rusqlite-v0.38.0): Cargo allows one `sqlite3` link per graph. Making
+# the bridge a standalone workspace (with its own Cargo.lock) gives it an
+# isolated dep graph and lets it run beside the gui via stdin/stdout IPC.
+# (This exclusion first existed because of breez-sdk-liquid, since removed.)
+# See coincube-spark-bridge/Cargo.toml for its own [workspace] block.
 exclude = ["coincube-spark-bridge", "vendor/branta"]
 default-members = [
     "coincube-mcp",
@@ -29,33 +30,10 @@ default-members = [
     "coincube-spark-protocol",
 ]
 
-# Patch to resolve dependency conflicts with Breez SDK
 [patch.crates-io]
 # async-hwi 0.0.32 pins bitbox-api 0.9, which cannot sign OP_RETURN outputs.
 # Vendor it with only the BitBox client updated to 0.11 (firmware >=9.24).
 async-hwi = { path = "vendor/async-hwi" }
-# lightning 0.0.118 (pinned exactly by breez-sdk's sdk-common via
-# lightning-invoice 0.26) relies on never-type fallback in
-# `CommitmentTransaction::read`, which rustc newer than 1.97 rejects
-# (rust-lang/rust#148922). coincubetech/rust-lightning is upstream v0.0.118
-# plus the two commits in contrib/patches/rust-lightning-0.0.118-never-type-fallback.patch
-# (the one-line type fix, and dropping a cfg(taproot) git dep crates.io strips).
-# Drop this once breez-sdk moves to a lightning-invoice built on lightning >= 0.1.
-lightning = { git = "https://github.com/coincubetech/rust-lightning", rev = "06401561c3aa9732eb02f757a89cce73b0489a21" }
-# Resolve secp256k1-zkp MuSig2 types needed by boltz-client (Breez SDK dependency)
-secp256k1-zkp = { git = "https://github.com/breez/rust-secp256k1-zkp.git", rev = "eac2e479255a6e32b5588bc25ee53c642fdd8395" }
-
-# breez/breez-sdk was deleted upstream in 2026, but breez-sdk-liquid still pins
-# sdk-common/sdk-macros to rev 113749fd from it (0.12.2 through current main),
-# so every from-source build fails to fetch it. coincubetech/breez-sdk is a
-# byte-identical mirror of that commit (MIT, full history) pushed from a local
-# cargo cache. Drop this block if upstream restores the repo or repoints the dep.
-[patch."https://github.com/breez/breez-sdk"]
-sdk-common = { git = "https://github.com/coincubetech/breez-sdk", rev = "113749fd36dd7a20358dc40526c4a30147f8c1a8" }
-sdk-macros = { git = "https://github.com/coincubetech/breez-sdk", rev = "113749fd36dd7a20358dc40526c4a30147f8c1a8" }
-
-[patch."https://github.com/breez/rusqlite_migration"]
-rusqlite_migration = { git = "https://github.com/sokorototo/rusqlite_migration", branch = "rusqlite-v0.38.0" }
 
 [profile.minimal]
 inherits = "release"

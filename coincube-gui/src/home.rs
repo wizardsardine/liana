@@ -543,10 +543,6 @@ pub struct Home {
     pub(crate) connect_light_dim: bool,
     /// Last native accessibility observation used by Follow system motion.
     system_reduces_motion: Option<bool>,
-    /// A Liquid wallet exists on this device (the sunset gate's local half),
-    /// probed when the Cube list loads so the Launcher can list Liquid
-    /// without touching the disk on every frame.
-    liquid_on_disk: bool,
     /// Whether the user has chosen to create a passkey-derived Cube (no PIN).
     passkey_mode: bool,
     /// A registered passkey credential awaiting the creation-backup step. See
@@ -762,7 +758,6 @@ impl Home {
                 reduce_motion: false,
                 connect_light_dim: false,
                 system_reduces_motion,
-                liquid_on_disk: false,
                 // Recomputed whenever the Create Cube form opens — see
                 // `Home::default_passkey_mode`. A freshly constructed `Home`
                 // has no Connect session, so this is PIN.
@@ -3245,12 +3240,6 @@ impl Home {
                         }
                     }
                     self.state = state;
-                    self.liquid_on_disk = matches!(self.state, State::Cubes { .. })
-                        && !self.network.is_blake2b()
-                        && crate::app::breez_liquid::local_state_exists(
-                            self.datadir_path.path(),
-                            self.network.bitcoin_network(),
-                        );
                     // Taken before the import's own Open returns early, so
                     // a pending pick never outlives this checked list.
                     let pending = self.catalog.pending_select.take();
@@ -12256,7 +12245,6 @@ mod tests {
             pricing_schema_version: None,
             purchasing_enabled: None,
             marketplace_enabled: None,
-            liquid_enabled: None,
             buy_sell_enabled: None,
             p2p_enabled: None,
             duress_enabled: Some(false),

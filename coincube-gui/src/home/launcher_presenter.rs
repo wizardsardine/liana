@@ -180,14 +180,8 @@ fn floor_style() -> impl Fn(&theme::Theme, iced_button::Status) -> iced_button::
 
 /// The wallets a Cube holds, read without unlocking it, in the order the
 /// Cube's sidebar lists them. Spark comes with every Cube on a network it
-/// supports. Liquid follows the same sunset gate as the sidebar
-/// ([`crate::app::features::LiquidGate`]), which hides it for everyone since
-/// Tenshu v175; the gate still records this Cube's persisted grant and a
-/// Liquid wallet already on this device (`liquid_on_disk`).
-pub(super) fn wallet_kinds(
-    cube: &crate::app::settings::CubeSettings,
-    liquid_on_disk: bool,
-) -> Vec<&'static str> {
+/// supports.
+pub(super) fn wallet_kinds(cube: &crate::app::settings::CubeSettings) -> Vec<&'static str> {
     use crate::app::{features, settings::BitcoinImportStage};
     let mut kinds = Vec::new();
     if features::spark(cube.network).is_available() {
@@ -203,21 +197,11 @@ pub(super) fn wallet_kinds(
             _ => "Bitcoin (importing)",
         });
     }
-    let gate = features::LiquidGate {
-        server_enabled: cube.liquid_granted == Some(true),
-        local_state_exists: liquid_on_disk,
-    };
-    if features::liquid_wallet_usable(cube.network, gate) {
-        kinds.push("Liquid");
-    }
     kinds
 }
 
-pub(super) fn local_wallets(
-    cube: &crate::app::settings::CubeSettings,
-    liquid_on_disk: bool,
-) -> String {
-    let kinds = wallet_kinds(cube, liquid_on_disk);
+pub(super) fn local_wallets(cube: &crate::app::settings::CubeSettings) -> String {
+    let kinds = wallet_kinds(cube);
     if kinds.is_empty() {
         "No wallets yet".into()
     } else {
@@ -2150,9 +2134,7 @@ fn lone_cube<'a, M: 'a>(
 ) -> Element<'a, M> {
     let light = matches!(mode, coincube_ui::theme::palette::ThemeMode::Light);
     let cube = cube.clone();
-    // No Launcher behind this screen, so no probe of Liquid on disk: the
-    // persisted grant alone decides, for the moment the face is in view.
-    let wallets = local_wallets(&cube, false);
+    let wallets = local_wallets(&cube);
     responsive(move |size: Size| {
         let layout = launcher_scene::Layout::new(size.width, size.height);
         let name = crate::cube_display::name(&cube.name);

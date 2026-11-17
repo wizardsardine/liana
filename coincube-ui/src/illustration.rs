@@ -730,35 +730,7 @@ mod tests {
                 art.payment = Some(rail);
             }
         }
-        assert!(PaymentArt::from_context("liquid-send").is_none());
-        assert!(PaymentArt::from_context("liquid-receive").is_none());
         assert!(PaymentArt::from_context("transaction-sent").is_none());
-    }
-
-    #[test]
-    fn artwork_keeps_liquid_on_existing_art() {
-        use crate::component::quote_display::image_handle_for_context;
-
-        for mode in [WorldviewMode::Suitcoiner, WorldviewMode::Luke] {
-            let theme = Theme::dark()
-                .with_worldview(mode)
-                .with_artwork(ArtworkStyle::Scene);
-            let mut art = Illustration::new(
-                Some(Slot::Sent),
-                image_handle_for_context("liquid-send"),
-                Length::Shrink,
-                Length::Fixed(160.0),
-                ContentFit::ScaleDown,
-            );
-            art.existing_only = true;
-
-            for slot in [Slot::Sent, Slot::Received, Slot::EmptyHistory] {
-                art.slot = Some(slot);
-                let (liquid, full_scene) = art.choice(&theme).unwrap();
-                assert!(!full_scene);
-                assert_eq!(liquid.id(), alternate(mode, slot).unwrap().id());
-            }
-        }
     }
 
     #[test]

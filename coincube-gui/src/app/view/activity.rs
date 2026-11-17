@@ -19,14 +19,9 @@ use iced::{
 };
 
 use crate::app::{
-    breez_liquid::assets::{format_usdt_display, USDT_ASSET_ID_MAINNET},
     breez_spark::assets::format_token_display,
     cache::Cache,
     state::activity::{Activity, ActivityTarget},
-    wallets::{
-        DomainPayment, DomainPaymentDetails, DomainPaymentDirection, DomainPaymentStatus,
-        DomainRefundableSwap,
-    },
 };
 use crate::daemon::model::{HistoryTransaction, LabelItem, SpendTx};
 
@@ -38,7 +33,6 @@ pub enum WalletFilter {
     All,
     Vault,
     Spark,
-    Liquid,
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DirectionFilter {
@@ -66,7 +60,6 @@ impl std::fmt::Display for WalletFilter {
                 Self::All => "All wallets",
                 Self::Vault => "Vault",
                 Self::Spark => "Spark",
-                Self::Liquid => "Liquid",
             })
         )
     }
@@ -416,44 +409,6 @@ fn spark_entry_facts(
     facts
 }
 
-fn liquid_entry_amount(payment: &DomainPayment) -> (String, String, String) {
-    match &payment.details {
-        DomainPaymentDetails::LiquidAsset {
-            asset_id,
-            asset_info,
-            ..
-        } => {
-            let usdt = asset_id == USDT_ASSET_ID_MAINNET;
-            match asset_info {
-                Some(info) => (
-                    format_token_display(info.amount_minor, u32::from(info.precision)),
-                    if usdt { "USDt" } else { asset_id.as_str() }.to_owned(),
-                    if usdt {
-                        "USDt on Liquid".to_owned()
-                    } else {
-                        asset_id.clone()
-                    },
-                ),
-                None if usdt => (
-                    format_usdt_display(payment.amount_sat),
-                    "USDt".to_owned(),
-                    "USDt on Liquid".to_owned(),
-                ),
-                None => (
-                    grouped(payment.amount_sat),
-                    format!("base units · {asset_id}"),
-                    asset_id.clone(),
-                ),
-            }
-        }
-        _ => (
-            grouped(payment.amount_sat),
-            "SATS".to_owned(),
-            "L-BTC".to_owned(),
-        ),
-    }
-}
-
 impl Entry {
     fn display_title(&self) -> &str {
         if self.generated_vault_title {
@@ -716,161 +671,6 @@ impl Entry {
             signer_status: None,
         }
     }
-
-    pub fn liquid(payment: DomainPayment) -> Self {
-        let source_id = payment
-            .stable_identity()
-            .map(|identity| format!("{identity:?}"))
-            .or_else(|| payment.tx_id.clone())
-            .unwrap_or_else(|| {
-                format!(
-                    "unidentified:{}:{}:{:?}:{}",
-                    payment.timestamp,
-                    payment.amount_sat,
-                    payment.direction,
-                    payment.destination.as_deref().unwrap_or("")
-                )
-            });
-        let swap_id = match &payment.details {
-            DomainPaymentDetails::Lightning { swap_id, .. }
-            | DomainPaymentDetails::OnChainBitcoin { swap_id, .. } => swap_id.clone(),
-            _ => None,
-        };
-        let mut identifiers = Vec::new();
-        identifiers.extend(non_empty(payment.tx_id.as_deref()).map(|txid| ("Txid", txid)));
-        identifiers.extend(non_empty(swap_id.as_deref()).map(|swap| ("Swap ID", swap)));
-        let direction = if payment.direction == DomainPaymentDirection::Receive {
-            DirectionFilter::Received
-        } else {
-            DirectionFilter::Sent
-        };
-        let status = match payment.status {
-            DomainPaymentStatus::Complete => StatusFilter::Confirmed,
-            DomainPaymentStatus::Failed
-            | DomainPaymentStatus::TimedOut
-            | DomainPaymentStatus::Refundable => StatusFilter::Failed,
-            _ => StatusFilter::Pending,
-        };
-        let status_label = match payment.status {
-            DomainPaymentStatus::Complete => "Confirmed",
-            DomainPaymentStatus::Created => "Created",
-            DomainPaymentStatus::Pending => "Pending",
-            DomainPaymentStatus::Failed => "Failed",
-            DomainPaymentStatus::TimedOut => "Timed out",
-            DomainPaymentStatus::Refundable => "Refundable",
-            DomainPaymentStatus::RefundPending => "Refund pending",
-            DomainPaymentStatus::WaitingFeeAcceptance => "Awaiting fee",
-        };
-        let (amount, unit, asset) = liquid_entry_amount(&payment);
-        let (rail, details_title) = match &payment.details {
-            DomainPaymentDetails::Lightning { .. } => ("Lightning on Liquid", "Lightning details"),
-            DomainPaymentDetails::OnChainBitcoin { .. } => ("Bitcoin swap", "Swap details"),
-            DomainPaymentDetails::LiquidAsset { .. } => ("Liquid asset", "Liquid details"),
-        };
-        let mut facts = Vec::new();
-        match &payment.details {
-            DomainPaymentDetails::Lightning {
-                description,
-                payer_note,
-                ..
-            } => {
-                facts.extend(non_empty(Some(description)).map(|value| ("Description", value)));
-                facts.extend(non_empty(payer_note.as_deref()).map(|value| ("Payer note", value)));
-            }
-            DomainPaymentDetails::OnChainBitcoin {
-                bitcoin_address,
-                lockup_tx_id,
-                claim_tx_id,
-                refund_tx_id,
-                refund_tx_amount_sat,
-                ..
-            } => {
-                facts.extend(
-                    non_empty(bitcoin_address.as_deref()).map(|value| ("Swap address", value)),
-                );
-                facts.extend(
-                    non_empty(lockup_tx_id.as_deref())
-                        .map(|value| ("Lockup txid", short_identifier(&value))),
-                );
-                facts.extend(
-                    non_empty(claim_tx_id.as_deref())
-                        .map(|value| ("Claim txid", short_identifier(&value))),
-                );
-                facts.extend(
-                    non_empty(refund_tx_id.as_deref())
-                        .map(|value| ("Refund txid", short_identifier(&value))),
-                );
-                facts.extend(refund_tx_amount_sat.map(|value| ("Refund amount", sats(value))));
-            }
-            DomainPaymentDetails::LiquidAsset { .. } => facts.push(("Asset", asset)),
-        }
-        let title = payment
-            .details
-            .description()
-            .trim()
-            .chars()
-            .take(100)
-            .collect::<String>();
-        let title = if title.is_empty() {
-            rail.to_owned()
-        } else {
-            title
-        };
-        let peer = (direction == DirectionFilter::Sent)
-            .then(|| non_empty(payment.destination.as_deref()))
-            .flatten()
-            .map(|destination| ("Destination", short_identifier(&destination)));
-        let fee = match (payment.fees_sat, direction) {
-            (0, DirectionFilter::Received) => "Paid by sender".to_owned(),
-            (fee, _) => sats(fee),
-        };
-        Self {
-            id: format!("liquid:{source_id}"),
-            wallet: WalletFilter::Liquid,
-            rail,
-            timestamp: payment.timestamp as u64,
-            direction,
-            status,
-            status_label: status_label.into(),
-            status_note: None,
-            title,
-            amount,
-            unit,
-            fee: Some(fee),
-            peer,
-            identifiers,
-            rail_details: (!facts.is_empty()).then_some((details_title, facts)),
-            label_key: None,
-            generated_vault_title: false,
-            target: ActivityTarget::Liquid(payment),
-            signer_status: None,
-        }
-    }
-
-    pub fn refundable(swap: DomainRefundableSwap) -> Self {
-        let address = swap.swap_address.clone();
-        Self {
-            id: format!("liquid:refund:{address}"),
-            wallet: WalletFilter::Liquid,
-            rail: "Bitcoin swap refund",
-            timestamp: swap.timestamp as u64,
-            direction: DirectionFilter::Received,
-            status: StatusFilter::Failed,
-            status_label: "Refundable".into(),
-            status_note: Some("refund it from the Liquid wallet"),
-            title: "Refund available".into(),
-            amount: grouped(swap.amount_sat),
-            unit: "SATS".into(),
-            fee: None,
-            peer: None,
-            identifiers: vec![("Swap address", address)],
-            rail_details: None,
-            label_key: None,
-            generated_vault_title: false,
-            target: ActivityTarget::Refundable(swap),
-            signer_status: None,
-        }
-    }
 }
 
 const MASK: &str = "••••••";
@@ -1023,8 +823,6 @@ fn signed_amount(entry: &Entry, masked: bool) -> String {
         return "••••••".to_owned();
     }
     let sign = match (&entry.target, entry.direction) {
-        // A refundable swap is available to reclaim; the user has not received it yet.
-        (ActivityTarget::Refundable(_), _) => "",
         (_, DirectionFilter::Received) => "+",
         (_, DirectionFilter::Sent) => "−",
         (_, DirectionFilter::Transfers | DirectionFilter::All) => "",
@@ -1036,7 +834,6 @@ fn wallet_glyph(wallet: WalletFilter) -> Option<&'static str> {
     match wallet {
         WalletFilter::Vault => Some(glyph::SHIELD),
         WalletFilter::Spark => Some(glyph::SPARK_STROKE),
-        WalletFilter::Liquid => Some(glyph::DROPLET),
         WalletFilter::All => None,
     }
 }
@@ -1262,26 +1059,16 @@ fn link_button<'a>(
     .into()
 }
 
-/// The wallet filter's options. Liquid is one only while the Liquid gate
-/// shows it.
-fn wallet_filters(activity: &Activity) -> Vec<WalletFilter> {
-    [
-        WalletFilter::All,
-        WalletFilter::Spark,
-        WalletFilter::Vault,
-        WalletFilter::Liquid,
-    ]
-    .iter()
-    .copied()
-    .filter(|wallet| *wallet != WalletFilter::Liquid || activity.liquid_shown())
-    .collect()
+/// The wallet filter's options.
+fn wallet_filters() -> Vec<WalletFilter> {
+    vec![WalletFilter::All, WalletFilter::Spark, WalletFilter::Vault]
 }
 
 fn filters_bar<'a>(activity: &'a Activity, frame: Frame) -> Element<'a, Message> {
     let wallet = tenshu::select(
         "tenshu.activity.filter.wallet",
         coincube_ui::locale::copy("Wallet"),
-        wallet_filters(activity)
+        wallet_filters()
             .into_iter()
             .map(|value| (value, value.to_string())),
         Some(activity.filters.wallet),
@@ -1428,7 +1215,7 @@ fn header<'a>(
                 Message::Activity(ActivityMessage::Clear),
             ));
     }
-    let more = activity.vault_has_more || activity.spark_has_more || activity.liquid_has_more;
+    let more = activity.vault_has_more || activity.spark_has_more;
     actions = actions.push(words(
         if more {
             localized_format!(
@@ -1631,7 +1418,6 @@ impl RecentScope {
             Self::Cube => &[WalletFilter::Spark, WalletFilter::Vault],
             Self::Wallet(WalletFilter::Spark) => &[WalletFilter::Spark],
             Self::Wallet(WalletFilter::Vault) => &[WalletFilter::Vault],
-            Self::Wallet(WalletFilter::Liquid) => &[WalletFilter::Liquid],
             Self::Wallet(WalletFilter::All) => &[],
         }
     }
@@ -1664,17 +1450,6 @@ fn wallet_history_state(
                 .spark_error
                 .as_deref()
                 .map(|error| ("Spark history", error)),
-        ),
-        WalletFilter::Liquid => (
-            activity.liquid_loading,
-            activity
-                .liquid_error
-                .as_deref()
-                .map(|error| ("Liquid history", error))
-                .or(activity
-                    .refundables_error
-                    .as_deref()
-                    .map(|error| ("Liquid refunds", error))),
         ),
         WalletFilter::All => (false, None),
     }
@@ -1972,12 +1747,11 @@ fn identifier_row<'a>(index: usize, name: &'static str, value: &str) -> Element<
 }
 
 /// What a row asks of the user next, handed to the owning wallet's screen,
-/// which keeps its signing, refund and replacement safeguards. Settled rows
+/// which keeps its signing and replacement safeguards. Settled rows
 /// ask nothing; a PSBT still collecting signatures shows "Continue signing"
 /// with its signers instead.
 fn next_step(entry: &Entry, replaceable: bool) -> Option<&'static str> {
     match &entry.target {
-        ActivityTarget::Refundable(_) => Some("Refund"),
         ActivityTarget::Psbt(tx) => {
             let path = tx.sigs.primary_path();
             (path.sigs_count >= path.threshold).then_some("Review and broadcast")
@@ -1987,7 +1761,7 @@ fn next_step(entry: &Entry, replaceable: bool) -> Option<&'static str> {
         // coins may be missing).
         ActivityTarget::Vault(tx) => (replaceable && tx.time.is_none() && tx.fee_amount.is_some())
             .then_some("Bump fee or cancel"),
-        ActivityTarget::Spark(_) | ActivityTarget::Liquid(_) => None,
+        ActivityTarget::Spark(_) => None,
     }
 }
 
@@ -2507,7 +2281,7 @@ fn activity_feed_surface<'a>(
     beside: bool,
     selected_detail: Option<Column<'a, Message>>,
 ) -> Row<'a, Message> {
-    if activity.vault_has_more || activity.spark_has_more || activity.liquid_has_more {
+    if activity.vault_has_more || activity.spark_has_more {
         let mut more = Action::new(
             Id::from("tenshu.activity.more"),
             text(localized_copy("Load older activity"))
@@ -2581,11 +2355,7 @@ fn render_at_width<'a>(
     let beside = detail_beside_list(width);
     let frame = column_frame(width, beside && selected.is_some());
     let shown = visible.len();
-    let loading = activity.vault_loading
-        || activity.psbt_loading
-        || activity.spark_loading
-        || activity.liquid_loading
-        || activity.refundables_loading;
+    let loading = activity.vault_loading || activity.psbt_loading || activity.spark_loading;
 
     let mut list = Column::new().spacing(0);
     if cutoff.is_some() {
@@ -2599,20 +2369,10 @@ fn render_at_width<'a>(
             .padding([10, 12]),
         );
     }
-    // Liquid's banners only while the Liquid gate shows it.
-    let liquid = activity.liquid_shown();
     let history_errors = [
         ("Vault", activity.vault_error.as_deref()),
         ("Vault proposals", activity.psbt_error.as_deref()),
         ("Spark", activity.spark_error.as_deref()),
-        (
-            "Liquid",
-            activity.liquid_error.as_deref().filter(|_| liquid),
-        ),
-        (
-            "Liquid refunds",
-            activity.refundables_error.as_deref().filter(|_| liquid),
-        ),
     ];
     let has_history_error = history_errors.iter().any(|(_, error)| error.is_some());
     for (wallet, error) in history_errors {
@@ -2742,7 +2502,6 @@ fn conversion_amounts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::wallets::DomainLiquidAssetInfo;
     use crate::app::{
         state::{
             preferences::{BalancePrivacy, BalancePrivacyChrome},
@@ -2956,59 +2715,6 @@ mod tests {
             ("1.58", "USDB")
         );
         assert_eq!(spark.fee, None, "the bridge reports no token fees");
-
-        let liquid = DomainPayment {
-            tx_id: Some("liquid-tx".into()),
-            destination: None,
-            timestamp: 1_760_000_000,
-            amount_sat: 0,
-            fees_sat: 0,
-            direction: DomainPaymentDirection::Receive,
-            status: DomainPaymentStatus::Complete,
-            details: DomainPaymentDetails::LiquidAsset {
-                asset_id: USDT_ASSET_ID_MAINNET.into(),
-                asset_info: Some(DomainLiquidAssetInfo {
-                    amount_minor: 500_000_000,
-                    precision: 8,
-                }),
-                description: String::new(),
-                payer_note: None,
-            },
-        };
-        let liquid = Entry::liquid(liquid);
-        assert_eq!(
-            (liquid.amount.as_str(), liquid.unit.as_str()),
-            ("5.00", "USDt")
-        );
-        assert_eq!(liquid.fee.as_deref(), Some("Paid by sender"));
-    }
-
-    #[test]
-    fn liquid_asset_without_metadata_never_invents_sats() {
-        let mut payment = DomainPayment {
-            tx_id: Some("liquid-tx".into()),
-            destination: None,
-            timestamp: 1_760_000_000,
-            amount_sat: 500_000_000,
-            fees_sat: 0,
-            direction: DomainPaymentDirection::Receive,
-            status: DomainPaymentStatus::Complete,
-            details: DomainPaymentDetails::LiquidAsset {
-                asset_id: USDT_ASSET_ID_MAINNET.into(),
-                asset_info: None,
-                description: String::new(),
-                payer_note: None,
-            },
-        };
-        assert_eq!(Entry::liquid(payment.clone()).amount, "5.00");
-        if let DomainPaymentDetails::LiquidAsset { asset_id, .. } = &mut payment.details {
-            *asset_id = "unknown-asset-id".into();
-        }
-        let unknown = Entry::liquid(payment);
-        assert_eq!(
-            (unknown.amount.as_str(), unknown.unit.as_str()),
-            ("500,000,000", "base units · unknown-asset-id")
-        );
     }
 
     #[test]
@@ -3088,7 +2794,7 @@ mod tests {
     #[test]
     fn activity_title_sits_where_every_page_head_puts_it() {
         let cache = Cache::default();
-        let activity = Activity::new(None, None);
+        let activity = Activity::new(None);
         let line = |inspection: &capture::Inspection, value: &str| {
             inspection
                 .text
@@ -3194,7 +2900,7 @@ mod tests {
     #[test]
     fn opening_a_row_leaves_the_header_and_filters_on_their_rows() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let payment = spark_payment();
         let id = Entry::spark(payment.clone()).id;
         drop(activity.update(
@@ -3317,7 +3023,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let payment = spark_payment();
         let id = Entry::spark(payment.clone()).id;
         drop(activity.update(
@@ -3372,7 +3078,7 @@ mod tests {
     #[test]
     fn compact_detail_follows_a_deep_selected_row_in_focus_order() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let payments: Vec<_> = (0..30)
             .map(|index| {
                 let mut payment = spark_payment();
@@ -3449,7 +3155,7 @@ mod tests {
         }
 
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let payments: Vec<_> = (0..30)
             .map(|index| {
                 let mut payment = spark_payment();
@@ -3611,7 +3317,7 @@ mod tests {
     #[test]
     fn detail_actions_follow_the_visible_row_across_filter_changes() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let payment = spark_payment();
         let id = Entry::spark(payment.clone()).id;
         drop(activity.update(
@@ -3718,7 +3424,7 @@ mod tests {
         .includes(&entry));
 
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         drop(activity.update(
             None,
             &cache,
@@ -3856,7 +3562,7 @@ mod tests {
             assert_eq!(shown_title(&labelled, false), "Incoming Bitcoin");
             assert_eq!(labelled.id, entry.id);
         });
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         drop(activity.update(
             None,
             &cache,
@@ -4005,7 +3711,7 @@ mod tests {
     #[test]
     fn saving_a_label_writes_the_key_the_title_reads_and_retitles_the_row() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let tx = outgoing_vault_payment();
         let key = format!("{}:1", tx.txid);
         let id = Entry::vault(tx.clone()).id;
@@ -4058,7 +3764,7 @@ mod tests {
             Some(txid)
         );
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         drop(activity.update(
             None,
             &cache,
@@ -4070,7 +3776,7 @@ mod tests {
     #[test]
     fn a_label_save_never_strands_the_field() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let tx = outgoing_vault_payment();
         let id = Entry::vault(tx.clone()).id;
         let load = |activity: &mut Activity, tx: HistoryTransaction| {
@@ -4141,7 +3847,7 @@ mod tests {
     #[test]
     fn a_failed_save_survives_moving_to_another_row() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         let tx = outgoing_vault_payment();
         let id = Entry::vault(tx.clone()).id;
         drop(activity.update(
@@ -4198,7 +3904,7 @@ mod tests {
     }
 
     fn spark_activity(cache: &Cache, count: u64) -> Activity {
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         drop(activity.update(
             None,
             cache,
@@ -4210,29 +3916,18 @@ mod tests {
         activity
     }
 
-    /// Tenshu v175 hides Liquid, even for an account with the grant and a
-    /// Liquid wallet on disk: no Liquid wallet filter and no Liquid banner.
+    /// Liquid is gone: no Liquid wallet filter, and nothing on the page
+    /// names it.
     #[test]
-    fn activity_offers_no_liquid_while_liquid_is_hidden() {
-        let gate = crate::app::features::LiquidGate {
-            server_enabled: true,
-            local_state_exists: true,
-        };
-        let cache = Cache {
-            liquid_gate: gate,
-            ..Default::default()
-        };
-        let mut activity = Activity::new(None, None);
-        activity.set_liquid_shown(gate.show());
+    fn activity_offers_no_liquid() {
+        let cache = Cache::default();
+        let activity = Activity::new(None);
         assert_eq!(
-            wallet_filters(&activity),
+            wallet_filters(),
             [WalletFilter::All, WalletFilter::Spark, WalletFilter::Vault]
         );
-        // An error left from before Liquid was hidden draws no banner.
-        activity.liquid_error = Some("synthetic".into());
-        activity.refundables_error = Some("synthetic".into());
         let page = mount(
-            "activity-liquid-hidden",
+            "activity-no-liquid",
             render(&activity, &cache),
             (1440, 900),
             "dark",
@@ -4241,20 +3936,6 @@ mod tests {
         );
         assert!(!page.contains("Liquid"));
         assert!(page.contains("Wallet"), "the filter bar is drawn");
-
-        // Shown, both come back, so their absence above is the gate's doing.
-        activity.set_liquid_shown(true);
-        assert!(wallet_filters(&activity).contains(&WalletFilter::Liquid));
-        activity.liquid_error = Some("synthetic".into());
-        let page = mount(
-            "activity-liquid-shown",
-            render(&activity, &cache),
-            (1440, 900),
-            "dark",
-            coincube_ui::theme::Theme::dark(),
-            1440 - crate::app::view::nav::shell::FULL_WIDTH as u32,
-        );
-        assert!(page.contains("Liquid history couldn't load"));
     }
 
     #[test]
@@ -4339,7 +4020,7 @@ mod tests {
     /// Activity holding `spark` and `vault`, as their first pages left it.
     fn loaded(spark: Vec<PaymentSummary>, vault: Vec<HistoryTransaction>) -> Activity {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         drop(activity.update(
             None,
             &cache,
@@ -4720,7 +4401,7 @@ mod tests {
     #[test]
     fn an_unknown_wallet_history_never_reads_as_no_transactions() {
         let cache = Cache::default();
-        let activity = Activity::new(None, None);
+        let activity = Activity::new(None);
         let note = "Transactions appear once the Vault's history has loaded";
         let mounted = mount(
             "wallet-recent-activity-history-unknown",
@@ -4742,7 +4423,7 @@ mod tests {
     #[test]
     fn vault_proposals_neither_hold_nor_fail_the_vault_history() {
         let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         // History answered empty; proposals still loading.
         activity.psbt_loading = true;
         let mounted = |activity: &Activity, scenario: &str| {
@@ -4948,12 +4629,6 @@ mod tests {
 
     #[test]
     fn rows_that_need_the_user_offer_their_next_step() {
-        let refund = Entry::refundable(DomainRefundableSwap {
-            swap_address: "bc1qsyntheticswapaddress".into(),
-            timestamp: 1_760_000_000,
-            amount_sat: 20_000,
-        });
-        assert_eq!(next_step(&refund, false), Some("Refund"));
         let mut unconfirmed = outgoing_vault_payment();
         unconfirmed.time = None;
         let unconfirmed = Entry::vault(unconfirmed);
@@ -4965,34 +4640,5 @@ mod tests {
             None
         );
         assert_eq!(next_step(&Entry::spark(spark_payment()), true), None);
-
-        let cache = Cache::default();
-        let mut activity = Activity::new(None, None);
-        // A refundable swap is a Liquid row, listed only while the Liquid
-        // gate shows Liquid (hidden since Tenshu v175).
-        activity.set_liquid_shown(true);
-        drop(activity.update(
-            None,
-            &cache,
-            AppMessage::ActivityRefundablesLoaded(
-                0,
-                Ok(vec![DomainRefundableSwap {
-                    swap_address: "bc1qsyntheticswapaddress".into(),
-                    timestamp: 1_760_000_000,
-                    amount_sat: 20_000,
-                }]),
-            ),
-        ));
-        activity.selected_id = Some(refund.id.clone());
-        let mounted = mount(
-            "r09-activity-refundable-detail",
-            render_at_width(&activity, &cache, 1192.0),
-            (1440, 900),
-            "dark",
-            coincube_ui::theme::Theme::dark(),
-            1192,
-        );
-        assert!(mounted.has_focus(Id::from(DETAIL_NEXT_STEP_ID)));
-        assert!(mounted.contains("Refund"));
     }
 }

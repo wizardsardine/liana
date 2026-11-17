@@ -3130,7 +3130,6 @@ mod tests {
             wallet,
             None,
             None,
-            None,
             super::super::Config::new(false),
             daemon.clone(),
             super::super::CoincubeDirectory::new(root.clone()),

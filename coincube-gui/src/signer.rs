@@ -97,9 +97,8 @@ impl Signer {
     /// longer expressible.
     ///
     /// The PIN-encrypted layout is also what the rest of the app expects: the
-    /// Liquid / Spark BreezClient decrypts via the Cube's PIN on every open,
-    /// and `load_breez_client` refuses to decrypt an unencrypted blob with a
-    /// password — a restored Cube written in the clear used to hang the app on
+    /// Cube signer and the Spark loader decrypt via the Cube's PIN on every
+    /// open, and refuse to decrypt an unencrypted blob with a password — a restored Cube written in the clear used to hang the app on
     /// "Starting daemon…".
     ///
     /// `cube_id` binds the file to its Cube through the AEAD's AAD; pass `""`
@@ -151,8 +150,8 @@ impl Signer {
     }
 
     /// Variant of [`Signer::store_encrypted`] for Seed-Only Cubes that
-    /// do not have a Vault Descriptor. The BreezClient still requires the
-    /// seed to be saved in the datadir so it can connect to the Liquid/Spark networks.
+    /// do not have a Vault Descriptor. The Cube signer and Spark still need the
+    /// seed saved in the datadir.
     pub fn store_encrypted_seed_only(
         &self,
         datadir_root: &CoincubeDirectory,

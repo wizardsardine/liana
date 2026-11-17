@@ -43,8 +43,8 @@ cargo build --manifest-path ../coincube-spark-bridge/Cargo.toml
 ### Spark bridge
 
 The Spark wallet is powered by [`breez-sdk-spark`](https://github.com/breez/spark-sdk),
-which cannot share a dependency graph with `breez-sdk-liquid` (incompatible
-`tokio_with_wasm` and `rusqlite` requirements). The SDK therefore runs in a
+whose `rusqlite` (`links = "sqlite3"`) requirement cannot share a dependency
+graph with `coincubed`'s rusqlite 0.38 fork. The SDK therefore runs in a
 sibling subprocess — [`coincube-spark-bridge`](../coincube-spark-bridge) — that
 the gui spawns on Cube open and speaks to over stdin/stdout JSON-RPC. The
 bridge lives in its own Cargo workspace so its dep graph stays isolated.
@@ -66,9 +66,6 @@ networks the bridge is skipped and the Spark panels stay disconnected.
   Addresses against via the Breez-hosted LNURL server. Defaults to
   `coincube.io`, the only Lightning Address domain; an override must be a
   domain allowlisted with Breez.
-
-## Regtest
-In order to test out the "Liquid" wallet which utilizes the Breez Liquid SDK, please follow these directions [Breez SDK Regtest Setup](/docs/BREEZ_SDK_REGTEST.md)
 
 ## Usage
 

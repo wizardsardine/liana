@@ -13,7 +13,7 @@ use crate::app::{
 };
 use coincube_ui::{
     color,
-    icon::{cube_icon, droplet_outline_icon, shield_plus_icon, shop_icon, spark_icon, vault_icon},
+    icon::{cube_icon, shield_plus_icon, shop_icon, spark_icon, vault_icon},
     theme,
     widget::{Button, Column, Element, Row, Text},
 };
@@ -31,12 +31,10 @@ const LABEL_SIZE: f32 = 10.0;
 /// Primary rail: one icon+label button per visible [`TopLevel`] section,
 /// with the active section highlighted.
 ///
-/// Which sections appear depends on `ctx` — Liquid is hidden unless the
-/// account is grandfathered or a Liquid wallet already exists, the Vault
-/// slot becomes a "setup vault" action when the cube has no vault, and
-/// Marketplace is hidden entirely unless the server permits one of its
-/// children. Spark and Liquid are greyed out (not hidden) on networks
-/// where they have no backend.
+/// Which sections appear depends on `ctx` — the Vault slot becomes a
+/// "setup vault" action when the cube has no vault, and Marketplace is
+/// hidden entirely unless the server permits one of its children. Spark is
+/// greyed out (not hidden) on networks where it has no backend.
 ///
 /// The returned column is only as tall as its items: [`super::sidebar`]
 /// wraps both rails in a single scrollable, full-height container that
@@ -46,25 +44,16 @@ pub fn rail<'a>(menu: &Menu, ctx: &NavContext<'a>) -> Element<'a, Message> {
     let current: TopLevel = menu.into();
 
     let mut top: Column<Message> = Column::new().width(Length::Fixed(RAIL_WIDTH)).spacing(0);
-    // Liquid is being sunset: it only appears for accounts the server has
-    // grandfathered, or on machines that already have a Liquid wallet. When
-    // neither holds it is *hidden*, like Marketplace below — a wallet this
-    // account will never have is not a "coming soon on this network" state, so
-    // greying it with a popover would be a lie. Once shown, it's network-gated
-    // like Spark.
     let rails: &[TopLevel] = if ctx.network.is_blake2b() {
         &[TopLevel::Cube]
-    } else if ctx.liquid_gate.show() {
-        &[TopLevel::Cube, TopLevel::Spark, TopLevel::Liquid]
     } else {
         &[TopLevel::Cube, TopLevel::Spark]
     };
     for &t in rails {
-        // Spark and Liquid are network-gated: greyed out with a popover
-        // on networks where they have no backend. Cube is always enabled.
+        // Spark is network-gated: greyed out with a popover on networks
+        // where it has no backend. Cube is always enabled.
         let disabled_reason = match t {
             TopLevel::Spark => features::spark(ctx.network).reason().map(str::to_string),
-            TopLevel::Liquid => features::liquid(ctx.network).reason().map(str::to_string),
             _ => None,
         };
         top = top.push(item(t, current == t, disabled_reason));
@@ -236,7 +225,6 @@ fn icon_for<'a>(t: TopLevel) -> Text<'a> {
     match t {
         TopLevel::Cube => cube_icon(),
         TopLevel::Spark => spark_icon(),
-        TopLevel::Liquid => droplet_outline_icon(),
         TopLevel::Vault => vault_icon(),
         TopLevel::Marketplace => shop_icon(),
     }

@@ -1,14 +1,14 @@
 # Spark Wallet
 
-The Spark wallet is COINCUBE's default backend for everyday Lightning UX. It runs alongside the existing Liquid wallet: Spark handles BOLT11, LNURL-pay, and incoming Lightning Address invoices; Liquid remains the advanced wallet for L-BTC, USDt, and Liquid-specific flows.
+The Spark wallet is COINCUBE's backend for everyday Lightning UX: BOLT11, LNURL-pay, and incoming Lightning Address invoices. It sits beside the Vault in each Cube. (The former Liquid wallet has been removed; see [WALLETS.md](./WALLETS.md).)
 
 ## Networks
 
-Spark ships **mainnet only**. The bridge pins upstream `breez-sdk-spark` tag 0.28.1 (`coincube-spark-bridge/Cargo.toml`). That SDK does not publish a regtest flow, and COINCUBE uses real mainnet sats in small amounts for end-to-end testing. Liquid's regtest flow (`docs/BREEZ_SDK_REGTEST.md`) is untouched and still works.
+Spark ships **mainnet only**. The bridge pins upstream `breez-sdk-spark` tag 0.28.1 (`coincube-spark-bridge/Cargo.toml`). That SDK does not publish a regtest flow, and COINCUBE uses real mainnet sats in small amounts for end-to-end testing.
 
 ## Architecture
 
-The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k1_tr`, Spark tree primitives) is incompatible with the Breez Liquid SDK's dep graph at the `links = "sqlite3"` level. Instead of forking and patching the two SDKs to coexist in a single binary, COINCUBE runs Spark in a sibling process and talks to it over a minimal JSON-RPC protocol.
+The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k1_tr`, Spark tree primitives) is incompatible with the gui's at the `links = "sqlite3"` level: `coincubed` links its own rusqlite 0.38 fork. (This conflict was first with the since-removed Breez Liquid SDK.) Instead of forking and patching the two to coexist in a single binary, COINCUBE runs Spark in a sibling process and talks to it over a minimal JSON-RPC protocol.
 
 ```text
 ┌──────────────┐         stdin/stdout           ┌──────────────────────┐
@@ -16,11 +16,11 @@ The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k
 │   (iced UI)  │                                │  (breez-sdk-spark)    │
 └──────────────┘                                └──────────────────────┘
        │                                                    │
-       │ links: breez-sdk-liquid                            │ links: spark-sdk
+       │ links: coincubed (rusqlite 0.38 fork)              │ links: spark-sdk
        │                                                    │
        ▼                                                    ▼
 ┌──────────────┐                                   ┌──────────────────┐
-│  Liquid SDK  │                                   │    Spark SDK     │
+│ Vault engine │                                   │    Spark SDK     │
 └──────────────┘                                   └──────────────────┘
 ```
 
@@ -30,7 +30,7 @@ The Spark SDK's dependency graph (`rusqlite`, `tokio_with_wasm`, `frost_secp256k
 - **`coincube-spark-bridge`** — standalone binary (own Cargo workspace, excluded from the main workspace via `[workspace.exclude]`). Owns the `breez_sdk_spark::BreezSdk` handle, exposes handlers for every protocol method, and forwards `SdkEvent` frames as `Event::*` messages on an async broadcast channel.
 - **`coincube-gui/src/app/breez_spark/`** — gui-side subprocess client. `SparkClient` spawns the bridge binary, frames JSON-RPC requests/responses over line-delimited JSON on stdio, and surfaces an iced `Subscription` over the bridge's event stream.
 - **`coincube-gui/src/app/wallets/spark.rs`** — `SparkBackend` wrapper that exposes the panel-facing read/write surface (`get_info`, `list_payments`, `prepare_send`, `send_payment`, `receive_bolt11`, `receive_onchain`, `list_unclaimed_deposits`, `claim_deposit`, `get_user_settings`, `set_stable_balance`, …). Panels never talk to `SparkClient` directly.
-- **`coincube-gui/src/app/state/spark/`** and **`coincube-gui/src/app/view/spark/`** — panel state machines and renderers for Overview, Send, Receive, Transactions, and Settings. Structure mirrors `state/liquid/` and `view/liquid/` to keep both wallets navigable at a glance.
+- **`coincube-gui/src/app/state/spark/`** and **`coincube-gui/src/app/view/spark/`** — panel state machines and renderers for Overview, Send, Receive, Transactions, and Settings.
 
 ### Bridge lifecycle
 
@@ -67,11 +67,11 @@ A cleaner alternative — Breez Spark's `ExternalSigner` trait, which lets the S
 ## Setting up a Spark wallet
 
 1. **Create a cube** the usual way.
-2. **The Spark wallet is provisioned automatically.** Both the Liquid and Spark SDKs share a single MasterSigner (`CubeSettings::master_signer_fingerprint`). New cubes set this at creation time; existing cubes are migrated on first unlock (legacy field names are mapped via serde aliases). No separate "Spark signer" setup step is needed.
-3. **Set `BREEZ_API_KEY`** in the environment (or `.env`). A single Breez API key covers both the Liquid and Spark SDKs.
+2. **The Spark wallet is provisioned automatically.** Spark and the Cube's other seed-derived features share a single MasterSigner (`CubeSettings::master_signer_fingerprint`). New cubes set this at creation time; existing cubes are migrated on first unlock (legacy field names are mapped via serde aliases). No separate "Spark signer" setup step is needed.
+3. **Set `BREEZ_API_KEY`** in the environment (or `.env`). The Breez API key is passed to the bridge in its `Init` message.
 4. **Restart the cube.** The first launch spawns the bridge subprocess, runs `init`, and unlocks the Spark wallet for the session.
 
-When you open the cube, the sidebar shows the **Spark** submenu above the **Liquid** submenu. Spark hosts Overview, Send, Receive, Transactions, and Settings panels.
+When you open the cube, the sidebar shows **Spark**. Spark hosts Overview, Send, Receive, Transactions, and Settings panels.
 
 ## Features
 
@@ -92,7 +92,7 @@ Spark uses a deposit-address model: the user sends BTC to a static address, the 
 
 ### Receive from another network (SideShift)
 
-Spark → Receive → **From another network** deposits a supported stablecoin and receives bitcoin. The flow is `coincube-gui/src/app/state/spark/sideshift_receive.rs` (a close copy of the Liquid receive flow, with three differences that are load-bearing):
+Spark → Receive → **From another network** deposits a supported stablecoin and receives bitcoin. The flow is `coincube-gui/src/app/state/spark/sideshift_receive.rs` (it began as a copy of the removed Liquid wallet's receive flow; three differences are load-bearing):
 
 - SideShift has no Lightning rail. The shift settles to the Spark wallet's **static** on-chain deposit address (`receive_onchain(new_address = false)`), which is reusable and therefore safe for a variable amount. Bitcoin shows up after confirmation, not when SideShift reports `Settled`. The rate is variable; there is no fixed-rate quote step.
 - The user deposits the other asset and receives BTC. Copy must not say they receive the deposited coin.
@@ -108,11 +108,11 @@ The offered deposit assets are the stablecoin list in `deposit_options`. Ether, 
 
 ### Lightning Address routing (Phase 5)
 
-`@coincube.io` Lightning Addresses are fulfilled by whichever backend the cube's `default_lightning_backend` setting prefers. New cubes default to Spark; users can flip to Liquid in **Settings → Lightning**.
+`@coincube.io` Lightning Addresses are fulfilled by Spark (`WalletRegistry::route_lightning_address`). A Cube without a running Spark bridge has no route.
 
 Because Spark SDK 0.13.1's `ReceivePaymentMethod::Bolt11Invoice` only accepts a plain `description` (not a `description_hash`), the coincube-api sends the raw LNURL metadata preimage in each invoice-request event. Spark mints the invoice with that preimage as its `d` tag — the payer's wallet recomputes `SHA256(description)` and compares it against the `descriptionHash` the callback advertised. They match by construction because the API produces both from the same source.
 
-NIP-57 zap requests frequently exceed BOLT11's 639-byte description cap. The stream handler detects this and falls back to Liquid, which commits via `description_hash` directly. Falling back is silent — no user-visible error.
+NIP-57 zap requests frequently exceed BOLT11's 639-byte description cap. Liquid used to take those (it commits via `description_hash` directly); with Liquid removed there is no fallback for them.
 
 ### Stable Balance / auto-convert (Phase 6, S2b)
 
@@ -143,7 +143,7 @@ Four things the switch does *not* control, and how the app handles them:
 - **A SideShift receive stays on "Arriving in Spark" after the settle tx is claimed** — the page finishes when a completed deposit payment's `tx_id` matches SideShift's settle hash, or when that hash is still in the unclaimed list. Matching on amount, or treating "the unclaimed list is empty" as claimed, leaves the flow waiting. A restored shift that cannot see the hash yet stays unconfirmed and looks again; it does not register the arrival with Home. See [Receive from another network](#receive-from-another-network-sideshift).
 - **"sats … waiting to be recovered on-chain" under Spark → Settings → Connections** — the SDK (0.28.0+) reports funds that left the Spark balance and wait for an on-chain `recover_funds` (`GetInfoOk::recoverable_funds_sats`; the bridge also logs a warning on the SDK's `RecoverableFunds` event). COINCUBE Desktop has no recovery flow yet, so it only shows the figure.
 - **"insufficient funds" on a send well under the shown balance** — the balance on the Send and Home cards is bitcoin *plus* USDB valued at the BTC/USD price. The `connected — identity …, balance N sats` line at bridge startup is bitcoin only. The bridge should cover the gap from USDB automatically; if it didn't, check whether `get_info` reports the USDB token balance.
-- **Incoming Lightning Address payments land on Liquid, not Spark** — either the cube's `default_lightning_backend` is still set to Liquid (check **Settings → Lightning**), the bridge is down for this cube (check the bridge-status card in **Spark → Settings**), the API hasn't been updated to send the `description` field over SSE yet, or the payer is sending a NIP-57 zap (description exceeds 639 bytes → automatic fallback).
+- **Incoming Lightning Address payments don't arrive** — the bridge is down for this cube (check the bridge-status card in **Spark → Settings**), the API hasn't been updated to send the `description` field over SSE yet, or the payer is sending a NIP-57 zap (description exceeds 639 bytes, which Spark can't commit to).
 - **Lost Spark balance after restarting the cube** — `storage_dir` may have moved between restarts. The SDK stores its local database there; pointing at a different directory on the next launch looks like an empty wallet until the SDK re-syncs. Ensure the `datadir` passed to `load_spark_client` is stable per cube.
 
 ## Testing
@@ -152,7 +152,7 @@ Four things the switch does *not* control, and how the app handles them:
 - **Unit tests**: the bridge is its own workspace, so a bare `cargo test` at the root does not reach it. Run `make test`, or `cargo test --manifest-path coincube-spark-bridge/Cargo.toml`. CI does this in the `bridge_tests` job.
 - **Smoke test**: `coincube-spark-bridge --smoke-test` (Phase 2 test harness) connects to Spark mainnet, runs `init` + `get_info` + `list_payments`, and prints the balance/pubkey. It reads `BREEZ_API_KEY`, `COINCUBE_SPARK_MNEMONIC` and `COINCUBE_SPARK_STORAGE_DIR` from the environment — the one place the bridge reads the API key from the environment rather than the `Init` message — and it transacts against mainnet, so it is a local tool, not a CI check.
 - **Liveness check**: `echo '{"type":"request","id":1,"method":"shutdown"}' | coincube-spark-bridge` prints a `shutdown` response and exits 0. No key, no mnemonic, no network — this is what the release workflows run against the packaged binary.
-- **End-to-end journey**: create a cube → load Spark and Liquid → receive sats via `@coincube.io` (should land on Spark) → send a BOLT11 payment → send L-BTC from Liquid → turn auto-convert on and off → verify everything in Transactions.
+- **End-to-end journey**: create a cube → load Spark → receive sats via `@coincube.io` (should land on Spark) → send a BOLT11 payment → turn auto-convert on and off → verify everything in Transactions.
 
 ## References
 

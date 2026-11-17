@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-COINCUBE Desktop (formerly COINCUBE | Tenshu; the OS shows it as "COINCUBE") — a desktop Bitcoin wallet (Rust, iced GUI) hard-forked from Wizardsardine's Liana (v13). Each **Cube** (PIN- or passkey-encrypted container) holds up to three wallets: a **Vault** (miniscript multisig with time-locked recovery paths, served by the `coincubed` daemon), a **Liquid** wallet (Breez Liquid SDK, in-process) and a **Spark** wallet (Breez Spark SDK, out-of-process). A server-side **Connect** account (the sibling `coincube-api` repo) adds auth/OTP, billing, Cube registration, multi-signer Keychain phone signing over gRPC, duress and recovery features.
+COINCUBE Desktop (formerly COINCUBE | Tenshu; the OS shows it as "COINCUBE") — a desktop Bitcoin wallet (Rust, iced GUI) hard-forked from Wizardsardine's Liana (v13). Each **Cube** (PIN- or passkey-encrypted container) holds up to two wallets: a **Vault** (miniscript multisig with time-locked recovery paths, served by the `coincubed` daemon) and a **Spark** wallet (Breez Spark SDK, out-of-process). The former Liquid wallet has been removed; its on-disk data is left untouched (see `docs/WALLETS.md`). A server-side **Connect** account (the sibling `coincube-api` repo) adds auth/OTP, billing, Cube registration, multi-signer Keychain phone signing over gRPC, duress and recovery features.
 
 ## Build, lint, test
 
@@ -26,7 +26,7 @@ cargo test -p coincubed <name>                                                # 
 cargo test --manifest-path coincube-spark-bridge/Cargo.toml
 ```
 
-**`coincube-spark-bridge` is NOT in the root workspace** (`exclude` in `Cargo.toml`, own `Cargo.lock`): `breez-sdk-spark` and `breez-sdk-liquid` can't share a dep graph, so the Spark SDK runs in a sibling process. A bare `cargo build`/`cargo run -p coincube-gui` never builds it and the GUI then shows "Spark is not configured for this cube". The gui finds the binary via `COINCUBE_SPARK_BRIDGE_PATH`, next to its own exe, or `coincube-spark-bridge/target/{debug,release}/`.
+**`coincube-spark-bridge` is NOT in the root workspace** (`exclude` in `Cargo.toml`, own `Cargo.lock`): `breez-sdk-spark`'s `rusqlite`/`libsqlite3-sys` requirement can't share a dep graph with `coincubed`'s rusqlite 0.38 fork, so the Spark SDK runs in a sibling process. A bare `cargo build`/`cargo run -p coincube-gui` never builds it and the GUI then shows "Spark is not configured for this cube". The gui finds the binary via `COINCUBE_SPARK_BRIDGE_PATH`, next to its own exe, or `coincube-spark-bridge/target/{debug,release}/`.
 
 ### Functional (pytest) tests
 
@@ -61,7 +61,7 @@ Other test surfaces: `cargo test -p coincube-gui --features integration-tests` h
 | `coincube-spark-protocol` | Serde wire types (`Request`/`Response`/`Event`/`Frame`) shared by gui and bridge. `u128` amounts travel as decimal strings. |
 | `coincube-spark-bridge` | Standalone workspace; hosts breez-sdk-spark, speaks newline-delimited JSON on stdin/stdout. `Init` must be the first request. |
 
-Root `Cargo.toml` carries several `[patch]` blocks (forked `lightning`, `secp256k1-zkp`, a mirror of the deleted `breez/breez-sdk`, `rusqlite_migration`) — read the comments there before touching Breez-related deps. `coincubed`/`coincube-core` are still edition 2018.
+Root `Cargo.toml` carries one `[patch.crates-io]` entry, the vendored `async-hwi` (BitBox client) — read the comments there before touching dependencies. `coincubed`/`coincube-core` are still edition 2018.
 
 ### coincubed
 
@@ -70,10 +70,10 @@ Root `Cargo.toml` carries several `[patch]` blocks (forked `lightning`, `secp256
 ### coincube-gui
 
 - **Shell**: `gui/mod.rs` owns a pane-grid of tabs; each tab is `gui/tab.rs::State { Home, Installer, Loader, PinEntry, PasskeyUnlock, App, DuressActive }`. Pre-app screens live at crate root (`home.rs` = Cube launcher, `loader.rs`, `pin_entry.rs`, `passkey_unlock.rs`, `installer/`).
-- **Elm split by layer, not screen**: `app/state/**` implements `trait State { view, update, subscription, reload, close }` (`app/state/mod.rs`); `app/view/**` is pure render functions. Subtrees mirror each other: `state/vault` ↔ `view/vault`, `liquid`, `spark`, `connect`. `app/message.rs::Message` (async results) wraps `app/view/message.rs::Message` (user intents). `app/mod.rs` holds `App` and the `Panels` registry; `app/menu.rs::Menu` is navigation. A Cube may have no Vault — vault panels are `Option`.
+- **Elm split by layer, not screen**: `app/state/**` implements `trait State { view, update, subscription, reload, close }` (`app/state/mod.rs`); `app/view/**` is pure render functions. Subtrees mirror each other: `state/vault` ↔ `view/vault`, `spark`, `connect`. `app/message.rs::Message` (async results) wraps `app/view/message.rs::Message` (user intents). `app/mod.rs` holds `App` and the `Panels` registry; `app/menu.rs::Menu` is navigation. A Cube may have no Vault — vault panels are `Option`.
 - **Daemon**: `daemon/mod.rs::trait Daemon` with `DaemonBackend::{EmbeddedCoincubed, ExternalCoincubed}`. `loader.rs` first tries to connect to an already-running daemon's socket (`daemon/client/jsonrpc.rs`), else starts the embedded one (and optionally a managed bitcoind/Knots node under `node/`).
-- **Wallets**: `app/wallets/registry.rs::WalletRegistry` owns the Liquid backend and optional Spark backend, routes Lightning-address payments (Spark preferred), and exposes SDK-agnostic types (`wallets/types.rs`) so panels never see SDK types. `app/breez_liquid/` is in-process; `app/breez_spark/client.rs` spawns the bridge (`kill_on_drop`), with writer/reader/stderr tasks and an id→oneshot pending map. See `docs/WALLETS.md` for adding a wallet.
-- **Cube & unlock**: `CubeSettings` in `app/settings/mod.rs`. There is no PIN hash: `services/unlock/` verifies a PIN by trial-decrypting the seed file (Argon2id m=256 MiB), with a timing-matched duress marker. Passkey Cubes have no seed file — the seed is re-derived from a WebAuthn PRF assertion (`services/passkey/`, macOS native; RP ID must match `coincube.io` entitlements). `app/seed_source.rs::SeedSource` abstracts both for the Liquid/Spark loaders; `app/session.rs` caches the unlocked signer.
+- **Wallets**: `app/wallets/registry.rs::WalletRegistry` owns the optional Spark backend, routes Lightning-address payments to it, and exposes SDK-agnostic types (`wallets/types.rs`) so panels never see SDK types. `app/cube_signer.rs::CubeSigner` is the Cube master signer the seed-derived features (P2P identity, Connect blinding, Vault builder) read. `app/breez_spark/client.rs` spawns the bridge (`kill_on_drop`), with writer/reader/stderr tasks and an id→oneshot pending map. See `docs/WALLETS.md` for adding a wallet.
+- **Cube & unlock**: `CubeSettings` in `app/settings/mod.rs`. There is no PIN hash: `services/unlock/` verifies a PIN by trial-decrypting the seed file (Argon2id m=256 MiB), with a timing-matched duress marker. Passkey Cubes have no seed file — the seed is re-derived from a WebAuthn PRF assertion (`services/passkey/`, macOS native; RP ID must match `coincube.io` entitlements). `app/seed_source.rs::SeedSource` abstracts both for the Cube signer and the Spark loader; `app/session.rs` caches the unlocked signer.
 - **Connect / API**: `services/coincube/client.rs` is the REST client for coincube-api (auth, plans, Cubes, vault members, recovery kits, duress, Lightning addresses); `services/connect/grpc/` is the tonic client generated from `grpc/connect.proto` (streams signing sessions and duress events into iced subscriptions); `services/connect/crypto/` handles the encryption envelopes. `grpc/local_envelope.proto` is the LAN phone-signer transport (`phone_signer/`, `coincube-gui/PAIRING_PROTOCOL.md`). `grpc/connect.proto` is a vendored copy — `coincube-api` is the source of truth (`make sync-proto`). `docs/SIGNING_FLOW.md` covers the multi-signer flow end to end.
 - **Datadir**: `~/.coincube` (Linux) or `<config_dir>/Coincube`; layout `<datadir>/<network>/data/<wallet_id>/`, `WalletId = "<descriptor_checksum>-<unix_ts>"` (legacy wallets without a timestamp sit directly in the network dir).
 
@@ -88,4 +88,4 @@ Identifiers were bulk-renamed (`LianaDescriptor`→`CoincubeDescriptor`, `lianad
 - Windows CI runs `cargo test --no-default-features`; `coincubed`/`coincube-cli` are Unix-only (Unix socket).
 - Ubuntu unit tests need a Secret Service (gnome-keyring under `dbus-run-session`) for the device-secret tests; on macOS the `keychain-access-groups` entitlement means an unsigned/unprovisioned bundle is SIGKILLed at launch (`docs/MACOS_KEYCHAIN_ENTITLEMENT.md`).
 - `plans/` (design docs for in-flight features) and `.claude/` are gitignored — don't expect them on other checkouts.
-- Docs to open first: `docs/WALLETS.md` (three-wallet abstraction), `docs/SPARK_WALLET.md` (bridge lifecycle/packaging), `docs/SIGNING_FLOW.md` (Keychain signing), `docs/API.md` (daemon RPC), `docs/RELEASE.md` (release/verification), `docs/BREEZ_SDK_REGTEST.md` (Liquid regtest).
+- Docs to open first: `docs/WALLETS.md` (wallet abstraction), `docs/SPARK_WALLET.md` (bridge lifecycle/packaging), `docs/SIGNING_FLOW.md` (Keychain signing), `docs/API.md` (daemon RPC), `docs/RELEASE.md` (release/verification).

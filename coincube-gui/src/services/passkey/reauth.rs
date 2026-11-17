@@ -11,7 +11,7 @@
 //! # Why re-authenticate at all
 //!
 //! The signer is already in [`crate::app::session`] — the assertion at unlock
-//! put it there, and the Liquid client and the Spark bridge have held a copy
+//! put it there, and the Cube signer and the Spark bridge have held a copy
 //! ever since. So a second Touch ID prompt is not buying secret hygiene; it is
 //! buying **consent**. Exporting your master seed to a server-side Kit, or
 //! putting it on screen, is not the same act as opening your wallet, and it

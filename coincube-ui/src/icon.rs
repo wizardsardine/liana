@@ -287,16 +287,6 @@ pub fn droplet_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F30C}')
 }
 
-pub fn droplet_fill_icon<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F30B}')
-}
-
-/// Outline (non-filled) droplet — the `droplet` twin of the filled
-/// [`droplet_fill_icon`]. Used in the sidebar nav so all rail icons read as outline.
-pub fn droplet_outline_icon<'a>() -> Text<'a> {
-    bootstrap_icon('\u{F30D}')
-}
-
 pub fn eye_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F33E}')
 }

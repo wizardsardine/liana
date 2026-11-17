@@ -384,7 +384,6 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
                 Some(cube),
                 None,
                 None,
-                None,
                 false,
                 None,
             )
@@ -470,7 +469,7 @@ fn stdio_client_unsigned_transaction_reaches_native_review_on_every_chain() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             let cube = CubeSettings::new_with_raw_id(CUBE.into(), "Disposable".into(), chain);
-            let (mut app, startup) = App::new_inner(crate::app::Cache::default(), wallet.clone(), None, None, None,
+            let (mut app, startup) = App::new_inner(crate::app::Cache::default(), wallet.clone(), None, None,
                 crate::app::Config::new(false), daemon.clone(), CoincubeDirectory::new(root.clone()), None, cube, None);
             drop(startup);
             session::open_without_pin(CUBE);

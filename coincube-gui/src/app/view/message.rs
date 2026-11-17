@@ -3,9 +3,7 @@ use crate::{
         menu::Menu,
         settings::unit::BitcoinDisplayUnit,
         view::{
-            global_home::{
-                PickerSide, TransferDirection, TransferError, TransferStage, WalletKind,
-            },
+            global_home::{PickerSide, TransferDirection, TransferError, WalletKind},
             FiatAmountConverter,
         },
     },
@@ -13,7 +11,7 @@ use crate::{
     node::bitcoind::{Bitcoind, NodeFlavor, RpcAuthType},
     services::{
         fiat::{Currency, PriceSource},
-        sideshift::{ShiftQuote, ShiftResponse, ShiftStatus, SideshiftNetwork},
+        sideshift::{ShiftResponse, ShiftStatus},
     },
     user_error::UserError,
 };
@@ -85,16 +83,6 @@ impl std::fmt::Debug for EscrowPin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FeeratePriority {
-    Low,
-    Medium,
-    High,
-}
-
-use breez_sdk_liquid::prelude::{InputType, PreparePayOnchainResponse, PrepareSendResponse};
-
-use crate::app::wallets::DomainPayment;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
@@ -191,30 +179,6 @@ pub enum Message {
     CoinControl(CoinControlMessage),
     /// Go to Coin control and open the Split coins overlay.
     SplitFirst,
-    SelectRefundable(usize),
-    RefundAddressEdited(String),
-    RefundAddressValidated(bool),
-    RefundFeerateEdited(String),
-    RefundFeeratePrioritySelected(FeeratePriority),
-    RefundFeeratePriorityFailed(String),
-    /// Result of the async fee-rate fetch spawned by
-    /// `RefundFeeratePrioritySelected`. Carries the originating priority so
-    /// the handler can ignore stale responses — e.g. when the user typed a
-    /// custom feerate or picked a different priority before this one
-    /// returned. `Some(rate)` = success, `None` = fetch failed.
-    RefundFeeratePriorityResolved(FeeratePriority, Option<usize>),
-    SubmitRefund,
-    /// Pull a fresh native-Bitcoin receive address from the Vault wallet and
-    /// drop it into the refund address input. This routes through the existing
-    /// `daemon.get_new_address()` path so no address-derivation logic is
-    /// duplicated here.
-    GenerateVaultRefundAddress,
-    /// Result of the async `daemon.get_new_address()` call spawned by
-    /// `GenerateVaultRefundAddress`. Carries the request id so the handler
-    /// can ignore stale responses — e.g. when the user typed their own
-    /// address (clearing the pending id) before the Vault lookup returned,
-    /// or clicked the button twice. `Ok` = address, `Err` = error message.
-    VaultRefundAddressResolved(u64, Result<String, String>),
     /// Dismiss the "pick a date to rescan from" prompt for this session.
     HideRescanPrompt,
     SelectPayment(OutPoint),
@@ -249,25 +213,13 @@ pub enum Message {
     /// the device fingerprint and the advisory id; the badge itself stays.
     DismissHwAdvisory(Fingerprint, &'static str),
     Home(HomeMessage),
-    LiquidOverview(LiquidOverviewMessage),
-    LiquidTransactions(LiquidTransactionsMessage),
     SparkOverview(crate::app::view::spark::SparkOverviewMessage),
     SparkTransactions(crate::app::view::spark::SparkTransactionsMessage),
     SparkSettings(crate::app::view::spark::SparkSettingsMessage),
     SparkSend(crate::app::view::spark::SparkSendMessage),
     SparkReceive(crate::app::view::spark::SparkReceiveMessage),
     SparkSwap(crate::app::view::spark::SparkSwapMessage),
-    LiquidReceive(LiquidReceiveMessage),
     VaultReceive(VaultReceiveMessage),
-    LiquidSend(LiquidSendMessage),
-    LiquidSwap(LiquidSwapMessage),
-    LiquidSettings(LiquidSettingsMessage),
-    PreselectPayment(DomainPayment),
-    SetAssetFilter(crate::app::state::liquid::transactions::AssetFilter),
-    /// Liquid Transactions: navigate to previous page.
-    LiquidPrevPage,
-    /// Liquid Transactions: navigate to next page.
-    LiquidNextPage,
     /// Vault Transactions: navigate to previous page.
     VaultPrevPage,
     /// Vault Transactions: navigate to next page.
@@ -275,17 +227,7 @@ pub enum Message {
     ShowError(String),
     ShowSuccess(String),
     ShowToast(log::Level, String),
-    /// Keep the incoming amount structured until the toast is rendered, so an
-    /// already-visible notice follows the current device privacy choice.
-    ShowIncomingLiquidWaitingToast(u64),
     DismissToast(usize),
-    SideshiftReceive(SideshiftReceiveMessage),
-    SideshiftSend(SideshiftSendMessage),
-    /// Spark's "receive from another network" bridge — deposit any supported
-    /// asset, receive Bitcoin. Kept separate from [`Self::SideshiftReceive`]
-    /// (the Liquid USDt flow) rather than shared: that flow settles Liquid USDt
-    /// and is being sunset, this one settles on-chain BTC and collects a refund
-    /// address. Folding them together would couple the survivor to the corpse.
     SparkSideshiftReceive(SparkSideshiftReceiveMessage),
     ConnectAccount(ConnectAccountMessage),
     ConnectCube(ConnectCubeMessage),
@@ -543,7 +485,7 @@ pub enum SettingsMessage {
     InstallStats(InstallStatsViewMessage),
     ToggleDirectionBadges(bool),
     ToggleRecipientIdentityChecks(bool),
-    /// Master seed backup flow (moved from Liquid Settings to Cube/General Settings).
+    /// Master seed backup flow (Cube/General Settings).
     BackupMasterSeed(BackupWalletMessage),
     BackupMasterSeedUpdated,
     /// Cube Recovery Kit — Connect-hosted encrypted backup of the seed
@@ -899,29 +841,6 @@ pub enum FiatMessage {
     CurrencyEdited(Currency),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SideshiftShiftType {
-    Fixed,
-    Variable,
-}
-
-#[derive(Debug, Clone)]
-pub enum SideshiftReceiveMessage {
-    SelectNetwork(SideshiftNetwork),
-    AmountInput(String),
-    Generate,
-    AffiliateFetched(Result<String, String>),
-    QuoteFetched(Result<ShiftQuote, String>),
-    ShiftCreated(Result<ShiftResponse, String>),
-    PollStatus,
-    StatusUpdated(Result<ShiftStatus, String>),
-    Copy,
-    /// Go back one step, preserving entered data.
-    Back,
-    Reset,
-    Error(String),
-}
-
 /// Messages for the Spark "receive from another network" bridge.
 #[derive(Debug, Clone)]
 pub enum SparkSideshiftReceiveMessage {
@@ -972,385 +891,6 @@ pub enum SparkSideshiftReceiveMessage {
     },
     Back,
     Reset,
-}
-
-#[derive(Debug, Clone)]
-pub enum SideshiftSendMessage {
-    /// Address input changed — triggers network auto-detection.
-    RecipientAddressEdited(String),
-    /// User picks a network when address is ambiguous (0x → ETH/BSC).
-    DisambiguateNetwork(SideshiftNetwork),
-    /// Proceed from address screen to amount screen.
-    Next,
-    /// Amount input changed.
-    AmountInput(String),
-    /// Start the shift creation pipeline.
-    Generate,
-    AffiliateFetched(Result<String, String>),
-    QuoteFetched(Result<ShiftQuote, String>),
-    ShiftCreated(Result<ShiftResponse, String>),
-    ConfirmSend,
-    /// Breez prepare_send_asset succeeded — ready to execute payment.
-    PaymentPrepared(breez_sdk_liquid::prelude::PrepareSendResponse),
-    /// Breez send_payment completed.
-    PaymentSent,
-    /// Breez payment failed.
-    PaymentFailed(String),
-    PollStatus,
-    StatusUpdated(String, Result<ShiftStatus, String>),
-    /// Go back one step, preserving entered data.
-    Back,
-    Reset,
-    Error(String),
-    Copy,
-}
-
-/// View-level messages for the Liquid Transactions panel. Currently
-/// only carries the SDK-event-driven background refresh signal; the
-/// rest of the panel's interactions still go through the generic
-/// `view::Message::{Reload, Close, Select, ...}` because most of the
-/// state changes were wired before this enum was introduced.
-#[derive(Debug, Clone)]
-pub enum LiquidTransactionsMessage {
-    /// Refresh payments in place without disturbing the user's current
-    /// view (selection, refund modal, pagination). The handler gates
-    /// the fetch to fire only when the panel is idle on page 0, and
-    /// uses `fetch_page(0)` directly rather than the heavy `reload()`
-    /// — so a freshly-confirmed Liquid tx surfaces from SDK events
-    /// without kicking the user out of any drill-down.
-    BackgroundRefresh,
-}
-
-#[derive(Debug, Clone)]
-pub enum LiquidOverviewMessage {
-    SendLbtc,
-    ReceiveLbtc,
-    SendUsdt,
-    ReceiveUsdt,
-    /// Navigate to the Liquid Swap screen. Only emitted on mainnet (the
-    /// button is hidden off-mainnet, where SideSwap is unavailable).
-    Swap,
-    History,
-    SelectTransaction(crate::app::wallets::types::DomainPaymentIdentity),
-    /// Request whole-tree focus after a pointer interaction with a landing action.
-    FocusAction(iced::advanced::widget::Id),
-    /// Forwarded to the top-level handler to flip the global
-    /// fiat-native ↔ bitcoin-native display mode.
-    FlipDisplayMode,
-    DataLoaded {
-        balance: Amount,
-        usdt_balance: u64,
-        recent_payment: Vec<DomainPayment>,
-    },
-    Error(String),
-    RefreshRequested,
-}
-
-#[derive(Debug, Clone)]
-pub enum LiquidSendMessage {
-    FocusAction(iced::advanced::widget::Id),
-    PresetAsset(crate::app::state::liquid::send::SendAsset),
-    /// Asset choice within the current Send draft. Selecting the current
-    /// segment keeps the typed destination and amount.
-    SelectMasterAsset(crate::app::state::liquid::send::SendAsset),
-    InputEdited(String),
-    /// Carries (original_input, validation_result) so stale async results are discarded.
-    InputValidated(String, Option<InputType>),
-    Send,
-    History,
-    SelectTransaction(usize),
-    DataLoaded {
-        balance: Amount,
-        usdt_balance: u64,
-        recent_payment: Vec<DomainPayment>,
-    },
-    Error(String),
-    ClearError,
-    // Send flow popup messages
-    PopupMessage(SendPopupMessage),
-    /// A completed regular/asset prepare, carrying the [`PrepareContext`] it was
-    /// dispatched under. The context's generation is what lets the state drop a
-    /// response for a payment the user has already abandoned, and its snapshot
-    /// is what the confirmation screen renders — never the live input fields,
-    /// which may by now describe a different payment.
-    ///
-    /// [`PrepareContext`]: crate::app::state::liquid::send::PrepareContext
-    PrepareResponseReceived(
-        Box<crate::app::state::liquid::send::PrepareContext>,
-        PrepareSendResponse,
-    ),
-    /// A completed on-chain prepare. Carries the destination address resolved at
-    /// dispatch time alongside the context, so execution never re-reads the
-    /// address from an input the user may have edited since.
-    PrepareOnChainResponseReceived {
-        context: Box<crate::app::state::liquid::send::PrepareContext>,
-        address: String,
-        response: PreparePayOnchainResponse,
-    },
-    SendMaxPrepared(Result<PrepareSendResponse, String>),
-    SendMaxOnChainResult(u64),
-    ConfirmSend,
-    SendComplete,
-    BackToHome,
-    LightningLimitsFetched {
-        min_sat: u64,
-        max_sat: u64,
-    },
-    OnChainLimitsFetched {
-        min_sat: u64,
-        max_sat: u64,
-    },
-    RefreshRequested,
-    /// Open the "You Send" asset picker modal.
-    OpenSendPicker,
-    /// Open the "They Receive" asset+network picker modal.
-    OpenReceivePicker,
-    /// Close any open picker modal.
-    ClosePicker,
-    /// Set the "You Send" asset (from the picker).
-    SetSendAsset(crate::app::state::liquid::send::SendAsset),
-    /// Set the "They Receive" asset + network (from the picker).
-    SetReceiveTarget(
-        crate::app::state::liquid::send::SendAsset,
-        crate::app::state::liquid::send::ReceiveNetwork,
-    ),
-}
-
-/// Messages for the Liquid cross-asset Swap panel.
-///
-/// The input is the amount the user wants to *receive* (the `to` asset);
-/// the SideSwap quote returns the `from`-asset cost. See
-/// [`crate::app::state::liquid::swap`].
-#[derive(Debug, Clone)]
-pub enum LiquidSwapMessage {
-    /// Focus a keyboard action after pointer activation.
-    FocusAction(iced::advanced::widget::Id),
-    /// Balances + recorded-swap payments loaded for the Swap screen.
-    DataLoaded {
-        btc_balance: Amount,
-        usdt_balance: u64,
-        recent_swaps: Vec<DomainPayment>,
-    },
-    /// Balance/transaction load failed.
-    Error(String),
-    /// Re-fetch balances on a confirmed SDK `Synced` event (also clears the
-    /// sync gate).
-    RefreshRequested,
-    /// Re-fetch balances only, without asserting sync readiness (e.g. the
-    /// post-settlement refresh, whose sync may fail).
-    RefreshBalances,
-    /// The sync kicked on screen entry finished (`ok` = succeeded). Drives
-    /// the sync gate directly so Confirm can't get stuck disabled when no
-    /// separate `Synced` event follows (or the sync errored). Tagged with the
-    /// reload generation so a stale older sync can't re-gate a newer entry.
-    SyncFinished(u64, bool),
-    /// A "Last swaps" row was tapped — open it in Transactions.
-    SelectSwap(usize),
-    /// Self-targeted Liquid receive address generated (or failed) — the
-    /// destination every cross-asset prepare/send is pointed at.
-    SelfAddressReady(Result<String, String>),
-    /// Background rate probe finished — carries the SideSwap rate
-    /// (`to`-base per `from`-base) so the rate chip + "Swap All" work
-    /// before the user has entered an amount. Failures are ignored. Tagged
-    /// with the probe generation so a stale probe (from a prior direction or
-    /// session) can't apply its rate.
-    RateProbeReady(u64, Result<f64, String>),
-    /// "You pay" (from-asset) amount edited — the receive side is derived
-    /// from the rate and the quote re-fetched.
-    AmountEditedPay(String),
-    /// "You receive" (to-asset) amount edited — quoted directly.
-    AmountEditedReceive(String),
-    /// Swap the `from` / `to` assets and invalidate the stale quote.
-    FlipAssets,
-    /// Pre-fill the max receivable amount from the current rate, netting
-    /// fees, then re-quote (resolves the "cross-asset max needs a quote"
-    /// gap noted in send.rs).
-    SwapAll,
-    /// Debounced trigger to request a quote. Carries the sequence number
-    /// it was issued for so stale debounce timers are discarded.
-    QuoteRequested(u64),
-    /// Quote (or quote error) returned. Tagged with the sequence number
-    /// so stale async responses are discarded.
-    QuoteReady(u64, Result<PrepareSendResponse, String>),
-    /// Advance from the input screen to the locked-quote review.
-    Continue,
-    /// Return from review to the input screen.
-    BackToInput,
-    /// Execute the locked quote via `send_payment`.
-    Confirm,
-    /// Re-fetch the quote (e.g. after expiry on the review screen).
-    RefreshQuote,
-    /// Per-second countdown tick for the quote-expiry timer.
-    QuoteTick,
-    /// Swap settled — transition to the success screen. Carries the send
-    /// leg's tx id + timestamp so the swap can be recorded locally.
-    SwapComplete {
-        tx_id: Option<String>,
-        timestamp: u32,
-    },
-    /// `send_payment` failed — surface the error, drop the now-stale
-    /// committed quote, and (on review) re-fetch so a retry is fresh.
-    SwapFailed(String),
-    /// Dismiss the success screen and return to a fresh input.
-    Done,
-}
-
-#[derive(Debug, Clone)]
-pub enum SendPopupMessage {
-    AmountEdited(String),
-    CommentEdited(String),
-    FiatConvert,
-    FiatInputEdited(String),
-    FiatCurrencySelected(Currency),
-    FiatPricesLoaded(std::collections::HashMap<Currency, FiatAmountConverter>),
-    FiatDone,
-    FiatClose,
-    Done,
-    Close,
-    ToggleSendAsset,
-    ToggleFeeAsset,
-    SendMax,
-    UsdtAmountEdited(String),
-}
-
-#[derive(Debug, Clone)]
-pub enum LiquidReceiveMessage {
-    FocusAction(iced::advanced::widget::Id),
-    BackToOverview,
-    ToggleMethod(ReceiveMethod),
-    Copy,
-    ShowQrCode,
-    CloseQrCode,
-    DismissCelebration,
-    /// Copy the received payment's transaction ID from its receipt.
-    CopyReceivedTxId(String),
-    GenerateAddress,
-    /// Carries the SDK error itself, not its `to_string()`: the receive panel
-    /// renders this, and the raw Breez string is a GraphQL/swap-service trace.
-    /// `crate::user_error` turns it into copy at the point of display.
-    AddressGenerated(
-        ReceiveMethod,
-        Result<String, crate::app::breez_liquid::BreezError>,
-    ),
-    AmountInput(String),
-    UsdtAmountInput(String),
-    DescriptionInput(String),
-    Error(String),
-    ClearError,
-    OnChainLimitsFetched {
-        min_sat: u64,
-        max_sat: u64,
-    },
-    LightningLimitsFetched {
-        min_sat: u64,
-        max_sat: u64,
-    },
-    /// Open the "You Receive" asset picker modal.
-    OpenReceivePicker,
-    /// Open the "They Send" network picker modal.
-    OpenSenderPicker,
-    /// Close any open picker modal.
-    ClosePicker,
-    /// Set the "You Receive" asset (from the picker).
-    SetReceiveAsset(crate::app::state::liquid::send::SendAsset),
-    /// Set the "They Send" network (from the picker).
-    SetSenderNetwork(SenderNetwork),
-    /// Balance and recent transactions loaded from Breez.
-    DataLoaded {
-        btc_balance: coincube_core::miniscript::bitcoin::Amount,
-        usdt_balance: u64,
-        recent_payment: Vec<DomainPayment>,
-    },
-    /// User tapped a recent transaction row.
-    SelectTransaction(usize),
-    /// User tapped "View All Transactions".
-    History,
-    /// Refresh balance and recent transactions (e.g. after a payment event).
-    RefreshRequested,
-}
-
-/// Network the sender is sending from (receive flow).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SenderNetwork {
-    /// BTC via Lightning
-    Lightning,
-    /// L-BTC on Liquid
-    Liquid,
-    /// BTC on-chain
-    Bitcoin,
-    /// USDt on Ethereum (SideShift)
-    Ethereum,
-    /// USDt on Tron (SideShift)
-    Tron,
-    /// USDt on Binance Smart Chain (SideShift)
-    Binance,
-    /// USDt on Solana (SideShift)
-    Solana,
-}
-
-impl SenderNetwork {
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Lightning => "Lightning",
-            Self::Liquid => "Liquid",
-            Self::Bitcoin => "Bitcoin",
-            Self::Ethereum => "Ethereum",
-            Self::Tron => "Tron",
-            Self::Binance => "Binance",
-            Self::Solana => "Solana",
-        }
-    }
-
-    pub fn is_sideshift(&self) -> bool {
-        matches!(
-            self,
-            Self::Ethereum | Self::Tron | Self::Binance | Self::Solana
-        )
-    }
-
-    pub fn to_sideshift_network(&self) -> Option<SideshiftNetwork> {
-        match self {
-            Self::Ethereum => Some(SideshiftNetwork::Ethereum),
-            Self::Tron => Some(SideshiftNetwork::Tron),
-            Self::Binance => Some(SideshiftNetwork::Binance),
-            Self::Solana => Some(SideshiftNetwork::Solana),
-            _ => None,
-        }
-    }
-
-    /// Valid "They Send" networks for a given "You Receive" asset.
-    pub fn options_for_receive_asset(
-        asset: crate::app::state::liquid::send::SendAsset,
-    ) -> Vec<SenderNetwork> {
-        use crate::app::state::liquid::send::SendAsset;
-        match asset {
-            SendAsset::Lbtc => vec![
-                SenderNetwork::Lightning,
-                SenderNetwork::Liquid,
-                SenderNetwork::Bitcoin,
-            ],
-            SendAsset::Usdt => vec![
-                SenderNetwork::Liquid,
-                SenderNetwork::Ethereum,
-                SenderNetwork::Tron,
-                SenderNetwork::Binance,
-                SenderNetwork::Solana,
-            ],
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReceiveMethod {
-    Lightning,
-    Liquid,
-    OnChain,
-    Usdt,
-}
-
-#[derive(Debug, Clone)]
-pub enum LiquidSettingsMessage {
-    ExportPayments,
 }
 
 #[derive(Clone)]
@@ -2580,10 +2120,6 @@ pub enum HomeMessage {
     ToggleTotalBalance,
     /// Toggle only the Overview wallet cards; the global privacy setting still wins.
     ToggleWalletBalances,
-    /// Navigate to Liquid Send with asset preset.
-    SendAsset(crate::app::state::liquid::send::SendAsset),
-    /// Navigate to Liquid Receive with asset preset.
-    ReceiveAsset(crate::app::state::liquid::send::SendAsset),
     /// Navigate to Spark Send.
     SendSparkBtc,
     /// Navigate to Spark Receive.
@@ -2660,18 +2196,6 @@ pub enum HomeMessage {
     /// which wallet is unwell and whether anything was sent — see
     /// [`TransferError`].
     Error(TransferError),
-    LiquidBalanceUpdated(Amount),
-    /// A dashboard balance refresh failed. Separate from [`Self::Error`]
-    /// because it is not a transfer: it fires on every home-screen reload, and
-    /// routing it through the transfer copy told users "nothing was sent" when
-    /// they had not tried to send anything.
-    LiquidBalanceFetchFailed(String),
-    UsdtBalanceUpdated(u64),
-    UsdtBalanceFetchFailed,
-    OnChainLimitsFetched {
-        send: (u64, u64),    // (min_sat, max_sat)
-        receive: (u64, u64), // (min_sat, max_sat)
-    },
     /// The user edited the feerate input on the Transfer confirm screen
     /// (only rendered for Vault-sourced directions — `direction.from_kind() == Vault`).
     SetTransferFeerate(String),
@@ -2717,16 +2241,15 @@ pub enum HomeMessage {
         error: TransferError,
     },
     /// Result of the async step-1→2 prep for Spark-sourced transfers: we
-    /// fetched a fresh Vault address (for SparkToVault) or a Breez peg-in
-    /// address (for SparkToLiquid) and called `spark.prepare_send(addr, amt)`
+    /// fetched a fresh Vault address (for SparkToVault) and called
+    /// `spark.prepare_send(addr, amt)`
     /// on it. Handler stores the destination address + prepare handle so
     /// the confirm screen can render it and `ConfirmSparkSend` can broadcast.
     SparkPrepareSendReady {
         generation: u64,
         direction: TransferDirection,
-        /// The destination address Spark will send to. For SparkToVault this
-        /// is a fresh Vault BIP-32 address; for SparkToLiquid it's Breez's
-        /// on-chain peg-in swap address.
+        /// The destination address Spark will send to: a fresh Vault BIP-32
+        /// address.
         destination: String,
         /// Single-use handle returned by `spark.prepare_send`.
         prepare_handle: String,
@@ -2749,27 +2272,13 @@ pub enum HomeMessage {
     /// Deposit success screen and mark the destination wallet's pending
     /// indicator. Fired from:
     ///   - `spark.send_payment` success
-    ///   - `breez.pay_onchain` success (LiquidToSpark — the LiquidToVault path
-    ///     still uses the richer `LiquidToVaultSubmitted` for swap persistence)
     ///   - Vault PSBT broadcast success routed here for VaultToSpark
     TransferBroadcast {
         amount_sat: u64,
         destination_kind: WalletKind,
-        /// Breez peg-out swap id when this broadcast came from `pay_onchain`
-        /// (currently only LiquidToSpark). Stored against the Spark pending
-        /// indicator so an async `PaymentFailed` for the same swap can clear
-        /// the Spark card's badge — without it, a failed LiquidToSpark leaves
-        /// the badge stuck permanently because no Spark deposit ever arrives.
-        swap_id: Option<String>,
-    },
-    PrepareOnChainResponseReceived {
-        generation: u64,
-        direction: TransferDirection,
-        response: PreparePayOnchainResponse,
     },
     TransferSuccessful,
     BackToHome,
-    RefreshLiquidBalance,
     RefreshSparkBalance,
     /// Bridge has emitted `Event::Synced`. The next (or already
     /// in-flight) Spark `get_info` response can be trusted — until
@@ -2789,7 +2298,9 @@ pub enum HomeMessage {
     /// refresh / retry can fire. Soft-fail: the previously displayed
     /// balance, if any, is left intact.
     SparkLoadFailed,
-    SignVaultToLiquidTx,
+    /// Sign the Vault-sourced transfer's on-chain transaction (every
+    /// Vault-sourced direction shares this signer path).
+    SignVaultTransferTx,
     TransferPsbtReady {
         request_id: u64,
         generation: u64,
@@ -2805,25 +2316,6 @@ pub enum HomeMessage {
         direction: TransferDirection,
     },
     ConfirmTransfer,
-    LiquidToVaultSubmitted {
-        amount: Amount,
-        swap_id: Option<String>,
-    },
-    LiquidToVaultPending(Option<String>),
-    LiquidToVaultWaitingConfirmation(Option<String>),
-    LiquidToVaultSucceeded(Option<String>),
-    LiquidToVaultFailed(Option<String>),
-    PendingTransferRestored {
-        amount_sat: u64,
-        stage: TransferStage,
-        swap_id: String,
-    },
-    PendingAmountsUpdated {
-        liquid_send_sats: u64,
-        usdt_send_sats: u64,
-        liquid_receive_sats: u64,
-        usdt_receive_sats: u64,
-    },
     /// Fired by the SideShift-swap flow the moment its shift settles: bitcoin
     /// is now en route to the Spark wallet's static on-chain deposit address.
     /// The Home state registers it as a pending incoming Spark deposit so the
@@ -2871,12 +2363,6 @@ pub enum HomeMessage {
     /// of `amount_sat`. Home only acts on it while an auto-claim is waiting
     /// for its asynchronous settlement (see [`Self::AutoClaimSparkResult`]).
     SparkPaymentSucceeded {
-        amount_sat: u64,
-    },
-    /// Fired when a Breez peg-in swap completes (BTC on-chain → L-BTC).
-    /// The state handler decrements `pending_liquid_receive_sats` and re-runs
-    /// `load_pending_sends` for full self-heal.
-    LiquidPeginCompleted {
         amount_sat: u64,
     },
 }

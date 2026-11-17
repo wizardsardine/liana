@@ -6,7 +6,6 @@ mod daemon_cache;
 mod fiat_updates;
 mod recovery_settings;
 
-pub mod breez_liquid;
 pub mod breez_spark;
 pub mod cache;
 pub mod config;
@@ -35,7 +34,7 @@ pub mod view;
 pub mod wallet;
 pub mod wallets;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
@@ -56,15 +55,13 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    CoinsPanel, ConnectPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive,
-    LiquidSend, LiquidSettings, LiquidSwap, LiquidTransactions, PsbtsPanel, State, VaultOverview,
+    CoinsPanel, ConnectPanel, CreateSpendPanel, GlobalHome, PsbtsPanel, State, VaultOverview,
     VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{
-        breez_liquid::BreezClient,
         cache::{Cache, DaemonCache},
         cube_signer::CubeSigner,
         error::Error,
@@ -72,7 +69,6 @@ use crate::{
         message::FiatMessage,
         settings::WalletId,
         wallet::Wallet,
-        wallets::LiquidBackend,
     },
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend, DaemonError},
     dir::CoincubeDirectory,
@@ -80,7 +76,6 @@ use crate::{
         bitcoind::{internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind},
         NodeType,
     },
-    utils::truncate_middle,
 };
 
 use self::state::settings::SettingsState as GeneralSettingsState;
@@ -88,26 +83,12 @@ use self::state::vault::settings::SettingsState as VaultSettingsState;
 
 enum ToastContent {
     Text(String),
-    IncomingLiquidWaiting { amount_sat: u64 },
 }
 
 impl ToastContent {
-    fn display(&self, unit: settings::unit::BitcoinDisplayUnit, masked: bool) -> String {
+    fn display(&self, _unit: settings::unit::BitcoinDisplayUnit, _masked: bool) -> String {
         match self {
             Self::Text(message) => message.clone(),
-            Self::IncomingLiquidWaiting { amount_sat } => {
-                let amount = if masked {
-                    "••••••".to_owned()
-                } else {
-                    use coincube_ui::component::amount::DisplayAmount;
-                    bitcoin::Amount::from_sat(*amount_sat).to_formatted_string_with_unit(unit)
-                };
-                coincube_ui::localized_format!(
-                    "Incoming payment of {} — swapping to L-BTC, awaiting confirmation",
-                    "Pago entrante de {} — intercambiando a L-BTC, esperando confirmación",
-                    amount
-                )
-            }
         }
     }
 }
@@ -118,12 +99,6 @@ struct Panels {
     imported_bitcoin: Option<Box<state::imported_bitcoin::ImportedBitcoinPanel>>,
     // Always available panels
     global_home: GlobalHome,
-    liquid_overview: Option<LiquidOverview>,
-    liquid_send: Option<LiquidSend>,
-    liquid_swap: Option<LiquidSwap>,
-    liquid_receive: Option<LiquidReceive>,
-    liquid_transactions: Option<LiquidTransactions>,
-    liquid_settings: Option<LiquidSettings>,
     /// Spark wallet Overview — Phase 3 placeholder. Always present so
     /// `current()` / `current_mut()` have a target; internally the
     /// panel checks whether the [`SparkBackend`] is wired and shows an
@@ -166,15 +141,6 @@ struct Panels {
 }
 
 impl Panels {
-    /// Hand the Liquid gate to the panels that load Liquid data from a
-    /// `reload`, which gets no cache: Activity and the Cube home. Called
-    /// wherever the App sets [`Cache::liquid_gate`].
-    fn show_liquid(&mut self, gate: crate::app::features::LiquidGate) {
-        let shown = gate.show();
-        self.activity.set_liquid_shown(shown);
-        self.global_home.set_liquid_shown(shown);
-    }
-
     /// Read the cube's fiat currency preference from the settings file.
     fn default_fiat_currency(
         datadir: &CoincubeDirectory,
@@ -191,20 +157,6 @@ impl Panels {
                     .and_then(|c| c.fiat_price.as_ref())
                     .map(|fp| fp.currency.to_string())
             })
-    }
-
-    /// Path to this cube's local swap-history log (the SDK doesn't mark
-    /// swaps, so we keep our own record). Lives alongside the cube's other
-    /// per-network state.
-    fn swaps_path(
-        datadir: &CoincubeDirectory,
-        network: impl Into<crate::chain::ChainId>,
-        cube_id: &str,
-    ) -> std::path::PathBuf {
-        datadir
-            .network_directory(network)
-            .path()
-            .join(format!("liquid-swaps-{cube_id}.json"))
     }
 
     /// Read the cube's persisted `balance_masked` eye-icon preference.
@@ -227,7 +179,6 @@ impl Panels {
 
     #[allow(clippy::too_many_arguments)]
     fn new_without_vault(
-        breez_client: Option<Arc<BreezClient>>,
         cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         wallet: Option<Arc<Wallet>>,
@@ -239,20 +190,15 @@ impl Panels {
         cube_network: String,
         bitcoin_import: Option<Box<settings::BitcoinImport>>,
     ) -> Panels {
-        // NO VAULT - All vault panels are None. Liquid panels work whenever
-        // the Cube has a Breez client; a Bitcoin Blake2b Cube has none.
+        // NO VAULT - All vault panels are None.
         // The UI layer prevents navigation to vault panels when has_vault=false
 
         let default_fiat_currency = Self::default_fiat_currency(datadir, chain, &cube_id);
-        let liquid_backend = breez_client
-            .as_ref()
-            .map(|client| Arc::new(LiquidBackend::new(client.clone())));
-        let swaps_path = Self::swaps_path(datadir, chain, &cube_id);
         let initial_balance_masked = Self::initial_balance_masked(datadir, chain, &cube_id);
 
         Self {
             current: Menu::Cube(crate::app::menu::CubeSubMenu::Overview),
-            activity: state::activity::Activity::new(liquid_backend.clone(), spark_backend.clone()),
+            activity: state::activity::Activity::new(spark_backend.clone()),
             imported_bitcoin: bitcoin_import.map(|import| {
                 let mut panel = state::imported_bitcoin::ImportedBitcoinPanel::new(
                     datadir.network_directory(chain),
@@ -262,11 +208,9 @@ impl Panels {
                 panel.set_hardware_root(datadir.clone());
                 Box::new(panel)
             }),
-            // Liquid panels always available (use LiquidBackend, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
                     w.clone(),
-                    liquid_backend.clone(),
                     spark_backend.clone(),
                     datadir.clone(),
                     chain,
@@ -275,7 +219,6 @@ impl Panels {
                 )
             } else {
                 GlobalHome::new_without_wallet(
-                    liquid_backend.clone(),
                     spark_backend.clone(),
                     datadir.clone(),
                     chain,
@@ -283,18 +226,6 @@ impl Panels {
                     initial_balance_masked,
                 )
             },
-            liquid_overview: liquid_backend
-                .clone()
-                .map(|backend| LiquidOverview::new(backend, swaps_path.clone())),
-            liquid_send: liquid_backend.clone().map(LiquidSend::new),
-            liquid_swap: liquid_backend
-                .clone()
-                .map(|backend| LiquidSwap::new(backend, swaps_path.clone())),
-            liquid_receive: liquid_backend.clone().map(LiquidReceive::new),
-            liquid_transactions: liquid_backend
-                .clone()
-                .map(|backend| LiquidTransactions::new(backend, swaps_path.clone())),
-            liquid_settings: liquid_backend.clone().map(LiquidSettings::new),
             spark_overview: state::SparkOverview::new(spark_backend.clone()),
             spark_send: state::SparkSend::new(spark_backend.clone()),
             spark_receive: state::SparkReceive::new(spark_backend.clone()),
@@ -344,7 +275,6 @@ impl Panels {
 
     #[allow(clippy::too_many_arguments)]
     fn new(
-        breez_client: Option<Arc<BreezClient>>,
         cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         cache: &Cache,
@@ -361,20 +291,15 @@ impl Panels {
             needs_rescan_date(&data_dir, cache.chain(), &wallet, &daemon_backend);
 
         let default_fiat_currency = Self::default_fiat_currency(&data_dir, cache.chain(), &cube_id);
-        let liquid_backend = breez_client
-            .as_ref()
-            .map(|client| Arc::new(LiquidBackend::new(client.clone())));
-        let swaps_path = Self::swaps_path(&data_dir, cache.chain(), &cube_id);
         let initial_balance_masked =
             Self::initial_balance_masked(&data_dir, cache.chain(), &cube_id);
 
         Self {
             current: Menu::Cube(crate::app::menu::CubeSubMenu::Overview),
-            activity: state::activity::Activity::new(liquid_backend.clone(), spark_backend.clone()),
+            activity: state::activity::Activity::new(spark_backend.clone()),
             imported_bitcoin: None,
             global_home: GlobalHome::new(
                 wallet.clone(),
-                liquid_backend.clone(),
                 spark_backend.clone(),
                 data_dir.clone(),
                 cache.chain(),
@@ -395,24 +320,6 @@ impl Panels {
                 cache.blockheight(),
                 needs_rescan_date,
             )),
-            liquid_overview: liquid_backend
-                .as_ref()
-                .map(|backend| LiquidOverview::new(backend.clone(), swaps_path.clone())),
-            liquid_send: liquid_backend
-                .as_ref()
-                .map(|backend| LiquidSend::new(backend.clone())),
-            liquid_swap: liquid_backend
-                .as_ref()
-                .map(|backend| LiquidSwap::new(backend.clone(), swaps_path.clone())),
-            liquid_receive: liquid_backend
-                .as_ref()
-                .map(|backend| LiquidReceive::new(backend.clone())),
-            liquid_transactions: liquid_backend
-                .as_ref()
-                .map(|backend| LiquidTransactions::new(backend.clone(), swaps_path.clone())),
-            liquid_settings: liquid_backend
-                .as_ref()
-                .map(|backend| LiquidSettings::new(backend.clone())),
             spark_overview: state::SparkOverview::new(spark_backend.clone()),
             spark_send: state::SparkSend::new(spark_backend.clone()),
             spark_receive: state::SparkReceive::new(spark_backend.clone()),
@@ -635,30 +542,6 @@ impl Panels {
             Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_)) => {
                 Some(&self.global_settings as &dyn State)
             }
-            Menu::Liquid(submenu) => match submenu {
-                crate::app::menu::LiquidSubMenu::Overview => self
-                    .liquid_overview
-                    .as_ref()
-                    .map(|panel| panel as &dyn State),
-                crate::app::menu::LiquidSubMenu::Send => {
-                    self.liquid_send.as_ref().map(|panel| panel as &dyn State)
-                }
-                crate::app::menu::LiquidSubMenu::Swap => {
-                    self.liquid_swap.as_ref().map(|panel| panel as &dyn State)
-                }
-                crate::app::menu::LiquidSubMenu::Receive => self
-                    .liquid_receive
-                    .as_ref()
-                    .map(|panel| panel as &dyn State),
-                crate::app::menu::LiquidSubMenu::Transactions(_) => self
-                    .liquid_transactions
-                    .as_ref()
-                    .map(|panel| panel as &dyn State),
-                crate::app::menu::LiquidSubMenu::Settings(_) => self
-                    .liquid_settings
-                    .as_ref()
-                    .map(|panel| panel as &dyn State),
-            },
             // Phase 4c ships all five real Spark panels. Send/Receive
             // use the bridge write-path RPCs added in this phase;
             // Overview/Transactions/Settings are unchanged from 4b.
@@ -731,32 +614,6 @@ impl Panels {
             Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_)) => {
                 Some(&mut self.global_settings as &mut dyn State)
             }
-            Menu::Liquid(submenu) => match submenu {
-                crate::app::menu::LiquidSubMenu::Overview => self
-                    .liquid_overview
-                    .as_mut()
-                    .map(|panel| panel as &mut dyn State),
-                crate::app::menu::LiquidSubMenu::Send => self
-                    .liquid_send
-                    .as_mut()
-                    .map(|panel| panel as &mut dyn State),
-                crate::app::menu::LiquidSubMenu::Swap => self
-                    .liquid_swap
-                    .as_mut()
-                    .map(|panel| panel as &mut dyn State),
-                crate::app::menu::LiquidSubMenu::Receive => self
-                    .liquid_receive
-                    .as_mut()
-                    .map(|panel| panel as &mut dyn State),
-                crate::app::menu::LiquidSubMenu::Transactions(_) => self
-                    .liquid_transactions
-                    .as_mut()
-                    .map(|panel| panel as &mut dyn State),
-                crate::app::menu::LiquidSubMenu::Settings(_) => self
-                    .liquid_settings
-                    .as_mut()
-                    .map(|panel| panel as &mut dyn State),
-            },
             Menu::Spark(submenu) => match submenu {
                 crate::app::menu::SparkSubMenu::Overview => {
                     Some(&mut self.spark_overview as &mut dyn State)
@@ -814,49 +671,6 @@ impl Panels {
             }
         }
     }
-
-    /// Returns the refresh message for the currently visible liquid-related panel, if any.
-    /// Used to avoid refreshing all liquid panels when only one is visible.
-    /// When `exclude_home` is true, skips the Home panel (useful when the caller
-    /// already sends a separate RefreshLiquidBalance message).
-    fn active_liquid_refresh(&self, exclude_home: bool) -> Option<Message> {
-        match &self.current {
-            Menu::Cube(crate::app::menu::CubeSubMenu::Overview) if !exclude_home => Some(
-                Message::View(view::Message::Home(view::HomeMessage::RefreshLiquidBalance)),
-            ),
-            Menu::Liquid(sub) => match sub {
-                crate::app::menu::LiquidSubMenu::Overview => Some(Message::View(
-                    view::Message::LiquidOverview(view::LiquidOverviewMessage::RefreshRequested),
-                )),
-                crate::app::menu::LiquidSubMenu::Send => Some(Message::View(
-                    view::Message::LiquidSend(view::LiquidSendMessage::RefreshRequested),
-                )),
-                crate::app::menu::LiquidSubMenu::Swap => Some(Message::View(
-                    view::Message::LiquidSwap(view::LiquidSwapMessage::RefreshRequested),
-                )),
-                crate::app::menu::LiquidSubMenu::Receive => Some(Message::View(
-                    view::Message::LiquidReceive(view::LiquidReceiveMessage::RefreshRequested),
-                )),
-                // Route to a dedicated `BackgroundRefresh` rather than
-                // the generic `Reload` — `Reload` would call the
-                // panel's `reload()` which clears `selected_payment`,
-                // `selected_refundable`, the refund modal and form
-                // state. SDK events fire frequently (Synced,
-                // PaymentSucceeded, etc.), so a Reload arm would kick
-                // the user out of any drill-down they're in.
-                // `BackgroundRefresh` is gated to only fire when the
-                // panel is idle and uses `fetch_page(0)` to replace
-                // payments atomically without disturbing state.
-                crate::app::menu::LiquidSubMenu::Transactions(_) => {
-                    Some(Message::View(view::Message::LiquidTransactions(
-                        view::LiquidTransactionsMessage::BackgroundRefresh,
-                    )))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 }
 
 /// Interval between bitcoind sync progress polls (in seconds).
@@ -874,7 +688,6 @@ pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
     imported_kit_metadata: imported_kit_metadata::ImportedKitMetadata,
-    breez_client: Option<Arc<BreezClient>>,
     /// The Cube's master signer, for the seed-derived features (P2P identity,
     /// Connect blinding, the Vault builder). `None` for a seed-less Cube and on
     /// Bitcoin Blake2b, which gets its encryption key directly.
@@ -887,12 +700,10 @@ pub struct App {
     /// answer reaches whichever App now holds the tab.
     local_feature_check: Option<u64>,
     /// Wallet registry — owns the concrete wallet backends and exposes
-    /// routing hooks. Holds a [`LiquidBackend`] and an optional
-    /// [`SparkBackend`] (present when the cube has a Spark signer and
-    /// the bridge subprocess came up). The LNURL subscription hand-off
-    /// reads [`WalletRegistry::route_lightning_address`] so incoming
-    /// Lightning Address invoices route through Spark when available
-    /// and fall back to Liquid otherwise.
+    /// routing hooks. Holds an optional [`SparkBackend`] (present when the
+    /// cube has a Spark signer and the bridge subprocess came up).
+    /// [`WalletRegistry::route_lightning_address`] routes incoming Lightning
+    /// Address invoices through Spark when it is available.
     wallet_registry: crate::app::wallets::WalletRegistry,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     internal_bitcoind: Option<Bitcoind>,
@@ -996,7 +807,7 @@ pub struct App {
     /// later update under another one revokes every Connect-session read.
     seen_session: Option<crate::app::connect_session::ConnectSession>,
     /// Global "payment received" celebration overlay — shown for incoming
-    /// Liquid payments (e.g. LNURL) regardless of which panel is active.
+    /// payments regardless of which panel is active.
     show_received_celebration: bool,
     /// One-time "turn on recovery alerts?" consent prompt overlay
     /// (PLAN-recovery-alerts-cleanup PR 3). Set once per session when a Vault
@@ -1023,21 +834,6 @@ pub struct App {
     received_celebration_id: Option<(&'static str, String)>,
     received_celebration_quote: coincube_ui::component::quote_display::Quote,
     received_celebration_image: iced::widget::image::Handle,
-    /// tx_ids of recent incoming payments we've already toasted for in
-    /// PaymentWaitingConfirmation. Breez fires this event multiple times for
-    /// the same swap; bounded FIFO so concurrent incoming swaps don't evict
-    /// each other and re-toast.
-    toasted_incoming_waiting_tx_ids: VecDeque<String>,
-    /// Debounces event-driven `list_refundables()` polls. Breez fires `Synced`
-    /// and payment events frequently; without a debounce window the GUI would
-    /// hammer the SDK several times a minute. 30s is short enough that a
-    /// freshly-refundable swap surfaces without user action but long enough to
-    /// avoid noisy churn.
-    last_refundables_fetch: Option<std::time::Instant>,
-    /// True while a `refresh_refundables_task()` poll is awaiting its result.
-    /// Prevents duplicate concurrent SDK calls when several BreezEvents arrive
-    /// in quick succession. Cleared in the `RefundablesLoaded` handler.
-    refundables_fetch_in_flight: bool,
     /// Set when the user clicked "Switch to COINCUBE | Connect" on Vault →
     /// Settings → Node while not signed in to Connect. We routed them to the
     /// Connect tab to sign in; on the next auth transition (false → true) we
@@ -2872,8 +2668,8 @@ fn make_connect_stream(
 /// (`SPEC-cube-xpub-envelope-v1` §3) from the master signer the Cube was
 /// unlocked with, for [`Cache::cube_encryption_key`].
 ///
-/// [`CubeSigner`] is the Cube's **master seed** signer — all wallets (Vault,
-/// Liquid, Spark) derive from it, and it's the same fingerprint recorded in
+/// [`CubeSigner`] is the Cube's **master seed** signer — the Cube's wallets
+/// (Vault, Spark) derive from it, and it's the same fingerprint recorded in
 /// `CubeSettings::master_signer_fingerprint`, so the key derived here is the
 /// one whose public half was registered with Connect at unlock.
 ///
@@ -3351,7 +3147,6 @@ impl App {
     pub fn new(
         cache: Cache,
         wallet: Arc<Wallet>,
-        breez_client: Arc<BreezClient>,
         cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
@@ -3372,7 +3167,6 @@ impl App {
         let (mut app, task) = Self::new_inner(
             cache,
             wallet,
-            Some(breez_client),
             cube_signer,
             spark_backend,
             config,
@@ -3558,7 +3352,6 @@ impl App {
             wallet,
             None,
             None,
-            None,
             config,
             daemon,
             data_dir,
@@ -3654,7 +3447,6 @@ impl App {
     fn new_inner(
         cache: Cache,
         wallet: Arc<Wallet>,
-        breez_client: Option<Arc<BreezClient>>,
         cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
@@ -3668,10 +3460,10 @@ impl App {
         )>,
     ) -> (App, Task<Message>) {
         let mut cache = cache;
-        let (breez_client, cube_signer, spark_backend) = if cube_settings.network.is_blake2b() {
-            (None, None, None)
+        let (cube_signer, spark_backend) = if cube_settings.network.is_blake2b() {
+            (None, None)
         } else {
-            (breez_client, cube_signer, spark_backend)
+            (cube_signer, spark_backend)
         };
         cache.fiat_chain = cube_settings.network;
         cache.has_vault = wallet.supports_inheritance();
@@ -3700,13 +3492,7 @@ impl App {
             load_connect_transport_key(&data_dir.network_directory(cache.chain()));
         let cache = cache;
         let config_arc = Arc::new(config);
-        let wallet_registry = match &breez_client {
-            Some(client) => crate::app::wallets::WalletRegistry::with_spark(
-                Arc::new(LiquidBackend::new(client.clone())),
-                spark_backend.clone(),
-            ),
-            None => crate::app::wallets::WalletRegistry::vault_only(),
-        };
+        let wallet_registry = crate::app::wallets::WalletRegistry::new(spark_backend.clone());
 
         // A Vault restored from a Recovery Kit lands its descriptors in a
         // watchonly wallet that has never scanned them, so it owes a rescan from
@@ -3718,7 +3504,6 @@ impl App {
             .then(|| pending_rescan(&data_dir, cache.chain(), &wallet))
             .flatten();
         let mut panels = Panels::new(
-            breez_client.clone(),
             cube_signer.clone(),
             spark_backend.clone(),
             &cache,
@@ -3835,17 +3620,6 @@ impl App {
         cache_with_vault.has_vault = wallet.supports_inheritance();
         cache_with_vault.has_imported_bitcoin = wallet.is_imported();
         cache_with_vault.has_p2p = panels.p2p.is_some();
-        // Liquid sunset gate, local half: whether a Liquid wallet exists on
-        // disk. Since Liquid removal PR 1 the SDK never connects, so this is
-        // the only local signal, and `LiquidGate::show()` ignores it anyway
-        // (constant `false` since v175). Both go in Liquid removal PR 5. The
-        // server half is mirrored in separately later.
-        cache_with_vault.liquid_gate.local_state_exists = !cache_with_vault.chain().is_blake2b()
-            && crate::app::breez_liquid::local_state_exists(
-                data_dir.path(),
-                cache_with_vault.network,
-            );
-        panels.show_liquid(cache_with_vault.liquid_gate);
         cache_with_vault.connect_tokens = connect_auth_arc.clone();
         cache_with_vault.connect_email = connect_email.clone();
         // A restored on-disk session means
@@ -3868,7 +3642,6 @@ impl App {
             wallet: Some(wallet),
             local_mcp: Default::default(),
             imported_kit_metadata: Default::default(),
-            breez_client,
             cube_signer,
             fork_connect_client: None,
             local_feature_valid: true,
@@ -3921,9 +3694,6 @@ impl App {
                 coincube_ui::component::quote_display::image_handle_for_context(
                     "transaction-received",
                 ),
-            toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
-            last_refundables_fetch: None,
-            refundables_fetch_in_flight: false,
             pending_switch_to_connect_after_login: false,
             connect_auth: connect_auth_arc,
             connect_email,
@@ -3946,7 +3716,6 @@ impl App {
     }
 
     pub fn new_without_wallet(
-        breez_client: Arc<BreezClient>,
         cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
@@ -3963,7 +3732,6 @@ impl App {
             .as_ref()
             .and_then(|signer| derive_cube_encryption_key(signer, network));
         Ok(Self::without_wallet(
-            Some(breez_client),
             cube_signer,
             spark_backend,
             config,
@@ -3994,7 +3762,6 @@ impl App {
         let (mut app, task) = Self::without_wallet(
             None,
             None,
-            None,
             config,
             datadir,
             network,
@@ -4016,7 +3783,6 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn without_wallet(
-        breez_client: Option<Arc<BreezClient>>,
         cube_signer: Option<CubeSigner>,
         spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
         config: Config,
@@ -4026,19 +3792,13 @@ impl App {
         cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
     ) -> (App, Task<Message>) {
         let fork = cube_settings.network.is_blake2b();
-        let (breez_client, cube_signer, spark_backend) = if fork {
-            (None, None, None)
+        let (cube_signer, spark_backend) = if fork {
+            (None, None)
         } else {
-            (breez_client, cube_signer, spark_backend)
+            (cube_signer, spark_backend)
         };
         let config_arc = Arc::new(config);
-        let wallet_registry = match &breez_client {
-            Some(client) => crate::app::wallets::WalletRegistry::with_spark(
-                Arc::new(LiquidBackend::new(client.clone())),
-                spark_backend.clone(),
-            ),
-            None => crate::app::wallets::WalletRegistry::vault_only(),
-        };
+        let wallet_registry = crate::app::wallets::WalletRegistry::new(spark_backend.clone());
         // Load bitcoin_unit and display_mode from settings if available
         let network_dir = datadir.network_directory(cube_settings.network);
         let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -4084,7 +3844,6 @@ impl App {
         };
 
         let mut panels = Panels::new_without_vault(
-            breez_client.clone(),
             cube_signer.clone(),
             spark_backend.clone(),
             None,
@@ -4126,14 +3885,6 @@ impl App {
         cache.connect_transport_key =
             load_connect_transport_key(&datadir.network_directory(cube_settings.network));
         cache.has_p2p = panels.p2p.is_some();
-        // See the sibling assignment in `App::new`: probe the on-disk Liquid
-        // state (not the live connection) for the "wallet exists on this machine"
-        // half of the sunset gate — a backend-gated network returns the SDK
-        // disconnected even for a funded on-disk wallet, which would wrongly
-        // hide the rail.
-        cache.liquid_gate.local_state_exists =
-            !fork && crate::app::breez_liquid::local_state_exists(datadir.path(), network);
-        panels.show_liquid(cache.liquid_gate);
         cache.p2p_test_coordinator = panels
             .p2p
             .as_ref()
@@ -4160,7 +3911,6 @@ impl App {
                 wallet: None,
                 local_mcp: Default::default(),
                 imported_kit_metadata: Default::default(),
-                breez_client,
                 cube_signer,
                 fork_connect_client: None,
                 local_feature_valid: true,
@@ -4213,9 +3963,6 @@ impl App {
                     coincube_ui::component::quote_display::image_handle_for_context(
                         "transaction-received",
                     ),
-                toasted_incoming_waiting_tx_ids: VecDeque::with_capacity(16),
-                last_refundables_fetch: None,
-                refundables_fetch_in_flight: false,
                 pending_switch_to_connect_after_login: false,
                 connect_auth: None,
                 connect_email: None,
@@ -4247,10 +3994,6 @@ impl App {
         &mut self.cache
     }
 
-    pub fn breez_client(&self) -> Option<Arc<BreezClient>> {
-        self.breez_client.clone()
-    }
-
     /// The open Cube's master signer (see [`CubeSigner`]).
     pub fn cube_signer(&self) -> Option<CubeSigner> {
         self.cube_signer.clone()
@@ -4260,7 +4003,7 @@ impl App {
         self.wallet_registry.spark().cloned()
     }
 
-    /// A loaded Spark or Liquid balance is not zero. Deleting the Cube
+    /// A loaded Spark balance is not zero. Deleting the Cube
     /// would leave those funds without it.
     pub fn holds_loaded_wallet_funds(&self) -> bool {
         self.panels.global_home.holds_loaded_funds()
@@ -5165,38 +4908,6 @@ impl App {
         running_vault_scan(self.daemon_backend(), &self.cache)
     }
 
-    /// Write the account's latest `liquidEnabled` grant to this cube's settings
-    /// so the next cube open can act on it (see `CubeSettings::liquid_granted`
-    /// for why a persisted copy is needed at all).
-    ///
-    /// Best-effort: a failed write only costs the user a relaunch before a new
-    /// grant takes effect, and it can never hide an existing Liquid wallet —
-    /// that is decided by whether the wallet is on disk, not by this flag.
-    fn persist_liquid_grant(&self, granted: bool) -> Task<Message> {
-        let network_dir = self
-            .cache
-            .datadir_path
-            .network_directory(self.cache.chain());
-        let cube_id = self.cache.cube_id.clone();
-        Task::perform(
-            async move {
-                settings::update_settings_file(&network_dir, move |mut current| {
-                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
-                        cube.liquid_granted = Some(granted);
-                    }
-                    Some(current)
-                })
-                .await
-            },
-            |res| {
-                if let Err(e) = res {
-                    log::warn!("Failed to persist the Liquid grant: {}", e);
-                }
-                Message::Tick
-            },
-        )
-    }
-
     /// On a wallet page the pane belongs to a row it shows: once a load moves
     /// the selected row out of the five, nothing is selected, so it cannot
     /// reopen by itself when a later load brings the row back.
@@ -5262,11 +4973,7 @@ impl App {
                     .map_or_else(Task::none, |panel| panel.enter_route(&menu));
             }
         }
-        if self.cache.chain().is_blake2b()
-            && matches!(
-                menu,
-                Menu::Liquid(_) | Menu::Spark(_) | Menu::Marketplace(_)
-            )
+        if self.cache.chain().is_blake2b() && matches!(menu, Menu::Spark(_) | Menu::Marketplace(_))
         {
             return Task::none();
         }
@@ -5527,10 +5234,6 @@ impl App {
                     }
                 }
             }
-            menu::Menu::Liquid(_submenu) => {
-                // Liquid transaction preselection is handled via PreselectPayment message
-                // since Payment objects are passed directly instead of fetching by ID
-            }
             _ => {
                 tracing::debug!(
                     "Menu variant {:?} has no special handling in set_current_panel",
@@ -5557,8 +5260,7 @@ impl App {
                 .refresh_scope(scope, self.daemon.clone(), self.wallet.clone())
         });
 
-        // Call reload with optional daemon/wallet
-        // Liquid panels don't need them (use BreezClient), Vault panels do
+        // Call reload with optional daemon/wallet (Vault panels need them)
         let reload = if let Some(panel) = self.panels.current_mut() {
             panel.reload(self.daemon.clone(), self.wallet.clone())
         } else {
@@ -5569,11 +5271,6 @@ impl App {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![];
-
-        // Always subscribe to Breez events (handles fee acceptance globally)
-        if let Some(client) = &self.breez_client {
-            subscriptions.push(client.subscription().map(Message::BreezEvent));
-        }
 
         // Subscribe to Spark bridge events when a Spark backend is
         // active. The backend is optional (cubes without a Spark signer
@@ -5984,49 +5681,6 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Kick off a background `list_refundables()` poll, debounced so that
-    /// SDK events (which can fire several times a second during sync) don't
-    /// hammer the SDK. Result comes back as `Message::RefundablesPolled` —
-    /// a variant distinct from `RefundablesLoaded` (which manual panel
-    /// reloads produce) so that only poll responses touch the App's
-    /// debounce and in-flight fields.
-    ///
-    /// The Transactions panel itself fetches refundables on every reload()
-    /// too — this debounced helper covers the case where the user is sitting
-    /// on a non-Transactions screen while a swap becomes refundable, so they
-    /// still see it the next time they navigate or glance at the app.
-    fn refresh_refundables_task(&mut self) -> Task<Message> {
-        const DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(30);
-        // Skip if a previous fetch is still in flight — otherwise a burst of
-        // BreezEvents would launch several concurrent `list_refundables()`
-        // calls before any of them returned.
-        if self.refundables_fetch_in_flight {
-            return Task::none();
-        }
-        // Debounce against the timestamp of the last *successful* fetch. On
-        // failure we leave `last_refundables_fetch` unchanged so the next
-        // event can retry immediately instead of being suppressed for 30s.
-        if let Some(prev) = self.last_refundables_fetch {
-            if std::time::Instant::now().duration_since(prev) < DEBOUNCE {
-                return Task::none();
-            }
-        }
-        self.refundables_fetch_in_flight = true;
-        let Some(client) = self.breez_client.clone() else {
-            return Task::none();
-        };
-        Task::perform(
-            async move {
-                client.list_refundables().await.map(|v| {
-                    v.into_iter()
-                        .map(crate::app::wallets::DomainRefundableSwap::from)
-                        .collect()
-                })
-            },
-            Message::RefundablesPolled,
-        )
-    }
-
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.update_connect_chrome(message);
         self.refresh_vault_alert();
@@ -6272,8 +5926,6 @@ impl App {
         // renamed mid-session, an imported wallet adopted, a settings reload).
         self.cache.wallet_names =
             cache::WalletNames::new(&self.cube_settings, self.wallet.as_deref());
-        // The Connect grant (one gate input) can change on any message.
-        self.panels.show_liquid(self.cache.liquid_gate);
 
         // The Kit fingerprint must include the imported wallet's durable
         // address-allocation state. A Cube seed cannot stand in for its
@@ -6578,16 +6230,6 @@ impl App {
                 // Show toast with specified level
                 self.errors
                     .push((self.current_error_id, None, level, ToastContent::Text(msg)));
-                self.current_error_id += 1;
-                return self.arm_toast_timers();
-            }
-            Message::View(view::Message::ShowIncomingLiquidWaitingToast(amount_sat)) => {
-                self.errors.push((
-                    self.current_error_id,
-                    None,
-                    log::Level::Info,
-                    ToastContent::IncomingLiquidWaiting { amount_sat },
-                ));
                 self.current_error_id += 1;
                 return self.arm_toast_timers();
             }
@@ -8095,8 +7737,6 @@ impl App {
             | Message::ActivityPsbtLoaded(..)
             | Message::ActivitySparkLoaded(..)
             | Message::ActivitySparkRefreshed(..)
-            | Message::ActivityLiquidLoaded(..)
-            | Message::ActivityRefundablesLoaded(..)
             | Message::ActivityLabelSaved(..)) => {
                 return self.route_activity_result(msg);
             }
@@ -8398,23 +8038,6 @@ impl App {
                 if self.cache.chain().is_blake2b() {
                     self.cache.marketplace_flags = Default::default();
                 }
-                // Same mirror for the Liquid sunset grant. Only the server half
-                // is refreshed here — `local_state_exists` reflects whether the
-                // Liquid SDK actually connected at cube-open, and must survive a
-                // logout: losing the session must never hide an existing wallet.
-                let liquid_granted = !self.cache.chain().is_blake2b()
-                    && self.panels.connect.account.liquid_server_enabled();
-                let grant_changed = self.cache.liquid_gate.server_enabled != liquid_granted;
-                self.cache.liquid_gate.server_enabled = liquid_granted;
-                // Persist the grant. Since Liquid removal PR 1 nothing reads it
-                // at cube open (the SDK never connects); the launcher still
-                // feeds it to the constant-false gate. Removed in PR 5. See
-                // `CubeSettings::liquid_granted`.
-                let persist_grant = if grant_changed {
-                    self.persist_liquid_grant(liquid_granted)
-                } else {
-                    Task::none()
-                };
                 // Sync lightning address to cache for sidebar display
                 self.cache.lightning_address = self
                     .panels
@@ -8513,16 +8136,9 @@ impl App {
                             view::NodeSettingsMessage::SwitchToConnect,
                         ),
                     )));
-                    return Task::batch([
-                        task,
-                        auth_bootstrap,
-                        refresh_recovery_kit,
-                        persist_grant,
-                        nav,
-                        switch,
-                    ]);
+                    return Task::batch([task, auth_bootstrap, refresh_recovery_kit, nav, switch]);
                 }
-                return Task::batch([task, auth_bootstrap, refresh_recovery_kit, persist_grant]);
+                return Task::batch([task, auth_bootstrap, refresh_recovery_kit]);
             }
             Message::View(view::Message::ReceivedCelebrationActivity) => {
                 return Task::done(Message::View(view::Message::DismissReceivedCelebration)).chain(
@@ -8915,8 +8531,7 @@ impl App {
                 amount_sat,
                 payment_id,
             } => {
-                // Drive the same global overlay the Liquid `PaymentSucceeded`
-                // handler uses, but for a Spark deposit that just claimed (the
+                // Drive the global "payment received" overlay for a Spark deposit that just claimed (the
                 // Spark bridge has no distinct "payment received" event for a
                 // claim — only `DepositsChanged` — so the celebration is fired
                 // explicitly from the auto-claim watcher in `GlobalHome`).
@@ -9081,7 +8696,7 @@ impl App {
                         ))));
                         // Transfer-redesign follow-up: the Home state tracks a
                         // `pending_spark_incoming` indicator for transfer-initiated
-                        // deposits (VaultToSpark / LiquidToSpark). Forward the
+                        // deposits (VaultToSpark). Forward the
                         // event so Home can reconcile its own view (auto-claim a
                         // matured deposit, or clear the indicator once claimed).
                         tasks.push(Task::done(Message::View(view::Message::Home(
@@ -9118,317 +8733,6 @@ impl App {
                 return Task::batch(tasks);
             }
 
-            Message::BreezEvent(event) => {
-                use breez_sdk_liquid::prelude::{PaymentDetails, PaymentType, SdkEvent};
-                log::info!("App received Breez Event: {:?}", event);
-
-                let swap_id_for_bitcoin_send = |details: &breez_sdk_liquid::prelude::Payment| {
-                    if matches!(details.payment_type, PaymentType::Send) {
-                        match &details.details {
-                            PaymentDetails::Bitcoin { swap_id, .. } => Some(swap_id.clone()),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                };
-
-                match event {
-                    SdkEvent::PaymentWaitingFeeAcceptance { details } => {
-                        log::info!("Payment waiting for fee acceptance: {:?}", details);
-                        let Some(client) = self.breez_client.clone() else {
-                            return Task::none();
-                        };
-
-                        return Task::perform(
-                            async move {
-                                if let PaymentDetails::Bitcoin { swap_id, .. } = details.details {
-                                    match client.fetch_payment_proposed_fees(&swap_id).await {
-                                        Ok(fees_response) => {
-                                            log::info!(
-                                                "Accepting fees for swap {}: payer_amount={}, fees={}",
-                                                swap_id,
-                                                fees_response.payer_amount_sat,
-                                                fees_response.fees_sat
-                                            );
-                                            if let Err(e) = client
-                                                .accept_payment_proposed_fees(fees_response)
-                                                .await
-                                            {
-                                                log::error!("Failed to accept payment fees: {}", e);
-                                                Err(format!("Failed to accept payment fees: {}", e))
-                                            } else {
-                                                log::info!(
-                                                    "Successfully accepted fees for swap {}",
-                                                    swap_id
-                                                );
-                                                Ok(())
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log::error!("Failed to fetch proposed fees: {}", e);
-                                            Err(format!("Failed to fetch proposed fees: {}", e))
-                                        }
-                                    }
-                                } else {
-                                    Ok(())
-                                }
-                            },
-                            |result| {
-                                if let Err(err) = result {
-                                    log::error!("Fee acceptance failed: {}", err);
-                                }
-                                // Trigger a cache update to refresh balance displays
-                                Message::Tick
-                            },
-                        );
-                    }
-                    SdkEvent::PaymentPending { details } => {
-                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::LiquidToVaultPending(Some(swap_id)),
-                            )))
-                        });
-
-                        // Refresh only the active liquid panel + home balance.
-                        // Inactive panels refresh when navigated to via reload().
-                        let mut tasks = vec![
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshLiquidBalance,
-                            ))),
-                            home_task.unwrap_or_else(Task::none),
-                        ];
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::PaymentSucceeded { details } => {
-                        // Show global celebration for incoming payments. Hidden
-                        // Liquid celebrates nothing: the amount appears in no
-                        // balance or row (Tenshu v175 master §3 decision 2).
-                        if matches!(details.payment_type, PaymentType::Receive)
-                            && self.cache.liquid_gate.show()
-                        {
-                            use coincube_ui::component::amount::DisplayAmount;
-                            let usdt_id =
-                                crate::app::breez_liquid::assets::usdt_asset_id(self.cache.network);
-                            // Mirror the check in state/liquid/receive.rs: a
-                            // payment is considered USDt only when it's a
-                            // Liquid asset with the matching asset_id AND
-                            // `asset_info` is populated so we can format the
-                            // minor-unit amount.
-                            let usdt_amount_minor: Option<u64> = match &details.details {
-                                PaymentDetails::Liquid {
-                                    asset_id,
-                                    asset_info,
-                                    ..
-                                } if usdt_id.is_some_and(|id| id == asset_id) => {
-                                    asset_info.as_ref().map(|info| {
-                                        crate::app::breez_liquid::assets::usdt_amount_to_minor(
-                                            info.amount,
-                                        )
-                                    })
-                                }
-                                _ => None,
-                            };
-                            let context = if usdt_amount_minor.is_some() {
-                                "note-receive"
-                            } else {
-                                match &details.details {
-                                    PaymentDetails::Lightning { .. } => "lightning-receive",
-                                    PaymentDetails::Bitcoin { .. } => "bitcoin-receive",
-                                    _ => "liquid-receive",
-                                }
-                            };
-                            self.received_celebration_amount = if let Some(minor) =
-                                usdt_amount_minor
-                            {
-                                format!(
-                                    "{} USDt",
-                                    crate::app::breez_liquid::assets::format_usdt_display(minor)
-                                )
-                            } else {
-                                format!(
-                                    "{} {}",
-                                    bitcoin::Amount::from_sat(details.amount_sat)
-                                        .to_formatted_string_with_unit(self.cache.bitcoin_unit),
-                                    self.cache.bitcoin_unit.label()
-                                )
-                            };
-                            self.received_celebration_context = context.to_string();
-                            self.received_celebration_wallet = "Into Liquid";
-                            self.received_celebration_id = details
-                                .tx_id
-                                .clone()
-                                .filter(|id| !id.is_empty())
-                                .map(|id| ("Transaction ID", id));
-                            self.received_celebration_quote =
-                                coincube_ui::component::quote_display::random_quote(context);
-                            self.received_celebration_image =
-                                coincube_ui::component::quote_display::image_handle_for_context(
-                                    context,
-                                );
-                            self.show_received_celebration = true;
-                        }
-
-                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::LiquidToVaultSucceeded(Some(swap_id)),
-                            )))
-                        });
-
-                        let mut tasks = vec![
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshLiquidBalance,
-                            ))),
-                            home_task.unwrap_or_else(Task::none),
-                        ];
-                        // Transfer-redesign follow-up: a peg-in (BTC on-chain →
-                        // L-BTC) completing is the event we need to clear the
-                        // Liquid card's pending-receive indicator after a
-                        // VaultToLiquid or SparkToLiquid transfer. Only counts
-                        // when the incoming payment is the Bitcoin swap leg.
-                        if matches!(details.payment_type, PaymentType::Receive)
-                            && matches!(details.details, PaymentDetails::Bitcoin { .. })
-                        {
-                            tasks.push(Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::LiquidPeginCompleted {
-                                    amount_sat: details.amount_sat,
-                                },
-                            ))));
-                        }
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::PaymentFailed { details } => {
-                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::LiquidToVaultFailed(Some(swap_id)),
-                            )))
-                        });
-
-                        let mut tasks = vec![
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshLiquidBalance,
-                            ))),
-                            home_task.unwrap_or_else(Task::none),
-                        ];
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-                        // A failed BTC→L-BTC swap may have become refundable — let the
-                        // transactions panel know so the user sees the Refund CTA.
-                        tasks.push(self.refresh_refundables_task());
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::PaymentRefundable { details } => {
-                        log::info!(
-                            target: "breez_swap",
-                            "SdkEvent::PaymentRefundable tx_id={:?}",
-                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
-                        );
-                        let mut tasks = Vec::new();
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-                        tasks.push(self.refresh_refundables_task());
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::PaymentRefundPending { details } => {
-                        log::info!(
-                            target: "breez_swap",
-                            "SdkEvent::PaymentRefundPending tx_id={:?}",
-                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
-                        );
-                        let mut tasks = Vec::new();
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-                        tasks.push(self.refresh_refundables_task());
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::PaymentRefunded { details } => {
-                        log::info!(
-                            target: "breez_swap",
-                            "SdkEvent::PaymentRefunded tx_id={:?}",
-                            details.tx_id.as_deref().map(|t| truncate_middle(t, 6, 6))
-                        );
-                        let mut tasks = vec![Task::done(Message::View(view::Message::Home(
-                            view::HomeMessage::RefreshLiquidBalance,
-                        )))];
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-                        tasks.push(self.refresh_refundables_task());
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::PaymentWaitingConfirmation { details } => {
-                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::LiquidToVaultWaitingConfirmation(Some(swap_id)),
-                            )))
-                        });
-
-                        let mut tasks = vec![
-                            Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshLiquidBalance,
-                            ))),
-                            home_task.unwrap_or_else(Task::none),
-                        ];
-                        if let Some(msg) = self.panels.active_liquid_refresh(true) {
-                            tasks.push(Task::done(msg));
-                        }
-
-                        // Notify the user that an incoming Lightning payment is
-                        // mid-swap to L-BTC. The swap can take a couple of minutes,
-                        // so without this toast the wait between PaymentWaitingConfirmation
-                        // and PaymentSucceeded looks like nothing is happening.
-                        // Breez fires this event multiple times for the same swap, so
-                        // dedupe by tx_id to avoid stacking duplicate toasts. Hidden
-                        // Liquid raises no toast, as with the celebration above.
-                        if matches!(details.payment_type, PaymentType::Receive)
-                            && self.cache.liquid_gate.show()
-                            && details.tx_id.as_ref().is_some_and(|id| {
-                                !self.toasted_incoming_waiting_tx_ids.contains(id)
-                            })
-                        {
-                            let tx_id = details.tx_id.clone().unwrap();
-                            if self.toasted_incoming_waiting_tx_ids.len() == 16 {
-                                self.toasted_incoming_waiting_tx_ids.pop_front();
-                            }
-                            self.toasted_incoming_waiting_tx_ids.push_back(tx_id);
-                            tasks.push(Task::done(Message::View(
-                                view::Message::ShowIncomingLiquidWaitingToast(details.amount_sat),
-                            )));
-                        }
-
-                        return Task::batch(tasks);
-                    }
-                    SdkEvent::Synced => {
-                        // SDK completed an internal sync — refresh only the
-                        // active liquid panel to avoid redundant info() calls.
-                        // Inactive panels refresh when navigated to via reload().
-                        let mut tasks = Vec::new();
-                        if let Some(msg) = self.panels.active_liquid_refresh(false) {
-                            tasks.push(Task::done(msg));
-                        }
-                        // Debounced refundables poll — picks up older expired
-                        // swaps that didn't emit an explicit refundable event
-                        // while the app was offline. Always enqueued, so this
-                        // arm unconditionally returns.
-                        tasks.push(self.refresh_refundables_task());
-                        return Task::batch(tasks);
-                    }
-                    _ => {
-                        // Other events - just log
-                        log::debug!("Unhandled Breez event: {:?}", event);
-                    }
-                }
-            }
-
             // Route P2P messages directly to the P2P panel regardless of active menu,
             // so real-time trade updates are processed even when viewing other panels.
             msg @ Message::View(view::Message::P2P(_)) => {
@@ -9447,7 +8751,7 @@ impl App {
             }
 
             // Intercept the mnemonic backup completion so the "not backed up"
-            // warning banners on the Vault/Liquid home screens disappear
+            // warning banners on the Vault home screens disappear
             // immediately. Route the message directly to the global settings
             // panel (rather than `current_mut()`) so the backup flow still
             // transitions to Completed and scrubs `backup_mnemonic` even if
@@ -9537,58 +8841,6 @@ impl App {
                 return self.route_recovery_alerts(msg);
             }
 
-            // Route refundables updates directly to LiquidTransactions so that
-            // event-driven `list_refundables()` polls (fired from `BreezEvent`
-            // handlers above) land on the correct panel even when the user is
-            // sitting on a different screen. Otherwise the result would be
-            // dropped into whatever panel happens to be current.
-            Message::RefundablesPolled(result) => {
-                // Poll response: clear the in-flight guard regardless of
-                // outcome, but only advance the debounce timestamp on
-                // success so a failed poll doesn't suppress retries for 30s.
-                // We intentionally *don't* touch these fields for a manual
-                // reload response — see the `RefundablesLoaded` arm below.
-                self.refundables_fetch_in_flight = false;
-                match result {
-                    Ok(refundables) => {
-                        self.last_refundables_fetch = Some(std::time::Instant::now());
-                        // Forward the payload to LiquidTransactions through
-                        // the panel's regular handler. The panel's
-                        // reconciliation logic is origin-agnostic, so a poll
-                        // result is converted to a `RefundablesLoaded` for
-                        // it.
-                        let Some(panel) = self.panels.liquid_transactions.as_mut() else {
-                            return Task::none();
-                        };
-                        return panel.update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::RefundablesLoaded(Ok(refundables)),
-                        );
-                    }
-                    Err(e) => {
-                        // Swallow: this is a background debounce poll the
-                        // user didn't initiate. Surfacing it as a global
-                        // ShowError toast — which is what
-                        // `RefundablesLoaded(Err)` in LiquidTransactions
-                        // does — would interrupt whichever panel the user
-                        // is currently viewing with an error they have no
-                        // context for. Log locally and let the next poll
-                        // (or a manual reload) retry.
-                        log::warn!(
-                            target: "breez_swap",
-                            "background refundables poll failed: {}",
-                            e
-                        );
-                    }
-                }
-            }
-            msg @ Message::RefundablesLoaded(_) | msg @ Message::RefundCompleted { .. } => {
-                let Some(panel) = self.panels.liquid_transactions.as_mut() else {
-                    return Task::none();
-                };
-                return panel.update(self.daemon.clone(), &self.cache, msg);
-            }
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
@@ -10162,7 +9414,6 @@ impl App {
             self.cache.chain(),
             self.cache.p2p_test_coordinator,
             self.cache.marketplace_flags,
-            self.cache.liquid_gate,
         )
         .reason()
         .map(str::to_string)
@@ -10941,7 +10192,6 @@ pub(crate) mod tests {
             wallet,
             None,
             None,
-            None,
             Config::new(false),
             daemon.clone(),
             datadir,
@@ -11203,7 +10453,7 @@ pub(crate) mod tests {
         drop(task);
         assert!(!app.requires_connect());
         assert!(app.fork_connect_client.is_none());
-        assert!(app.breez_client.is_none() && app.spark_backend().is_none());
+        assert!(app.spark_backend().is_none());
         app
     }
 
@@ -11815,7 +11065,6 @@ pub(crate) mod tests {
             wallet,
             None,
             None,
-            None,
             Config::new(false),
             split_backend_daemon(root, true),
             datadir,
@@ -11847,6 +11096,57 @@ pub(crate) mod tests {
         app
     }
 
+    /// Spark rides on its own backend, not on a Liquid client: a Cube opened
+    /// with a Spark backend and no Liquid client still exposes Spark to the
+    /// registry, the event subscription and the balance and send calls.
+    #[tokio::test]
+    async fn a_spark_backend_without_a_liquid_client_still_exposes_spark() {
+        use coincube_spark_protocol::Method;
+        let root = std::env::temp_dir().join(format!("spark-only-{}", uuid::Uuid::new_v4()));
+        let chain = crate::chain::ChainId::Signet;
+        let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+        let spark = Arc::new(crate::app::wallets::SparkBackend::new(Arc::new(client)));
+        let (app, startup) = App::without_wallet(
+            None,
+            Some(spark.clone()),
+            Config::new(false),
+            CoincubeDirectory::new(root.clone()),
+            chain.bitcoin_network(),
+            settings::CubeSettings::new("Spark".into(), chain),
+            None,
+        );
+        drop(startup);
+
+        let exposed = app.spark_backend().expect("Spark stays available");
+        assert!(Arc::ptr_eq(&exposed, &spark));
+        assert!(app
+            .wallet_registry
+            .spark()
+            .is_some_and(|s| Arc::ptr_eq(s, &spark)));
+        assert!(matches!(
+            app.wallet_registry.route_lightning_address(),
+            Some(crate::app::wallets::LightningRoute::Spark(_))
+        ));
+        // The event subscription is built from the registry's backend.
+        let _events = app.subscription();
+
+        // Balance: the backend's `get_info` reaches the bridge.
+        let backend = exposed.clone();
+        let balance = tokio::spawn(async move { backend.get_info().await });
+        let request = requests.recv().await.expect("a balance request");
+        assert!(matches!(request.method, Method::GetInfo(_)));
+        balance.abort();
+
+        // Send: the backend's prepare step reaches the bridge too.
+        let backend = exposed.clone();
+        let send =
+            tokio::spawn(async move { backend.prepare_send("sp1test".into(), Some(1_000)).await });
+        let request = requests.recv().await.expect("a send request");
+        assert!(matches!(request.method, Method::PrepareSend(_)));
+        send.abort();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// A Bitcoin Blake2b Cube without a Vault opens like a Bitcoin Cube
     /// without one, with no Liquid or Spark anywhere: no Breez client, no
     /// Spark backend, no Liquid or P2P panels, and no Spark on its Overview.
@@ -11872,10 +11172,7 @@ pub(crate) mod tests {
         drop(startup);
 
         assert!(app.wallet.is_none());
-        assert!(app.breez_client.is_none());
         assert!(app.spark_backend().is_none());
-        assert!(app.panels.liquid_overview.is_none());
-        assert!(app.panels.liquid_send.is_none());
         assert!(app.panels.p2p.is_none());
         assert!(app.cache.cube_encryption_key.is_some());
         assert_eq!(app.cache.chain(), chain);
@@ -12249,8 +11546,7 @@ pub(crate) mod tests {
             network: chain.bitcoin_network(),
             ..Cache::default()
         };
-        let mut panels = Panels::new(
-            None,
+        let panels = Panels::new(
             None,
             None,
             &cache,
@@ -12263,16 +11559,8 @@ pub(crate) mod tests {
             "Fixture".into(),
             chain.api_str().into(),
         );
-        assert!(panels.liquid_overview.is_none());
-        assert!(panels.liquid_send.is_none());
-        assert!(panels.liquid_swap.is_none());
-        assert!(panels.liquid_receive.is_none());
-        assert!(panels.liquid_transactions.is_none());
-        assert!(panels.liquid_settings.is_none());
         assert!(panels.buy_sell.is_none() && panels.p2p.is_none());
         assert!(panels.vault_overview.is_some());
-        panels.current = Menu::Liquid(crate::app::menu::LiquidSubMenu::Send);
-        assert!(panels.current().is_none() && panels.current_mut().is_none());
         assert!(
             !root.exists(),
             "panel construction must not create a Bitcoin or fork datadir"
@@ -12281,7 +11569,7 @@ pub(crate) mod tests {
 
     /// Buy/Sell runs on Spark (Mavapay buys receive into it, sells pay from
     /// it), so both construction sites build the panel from the Spark backend
-    /// and leave it out without one — whatever the Liquid client is.
+    /// and leave it out without one.
     #[test]
     fn buy_sell_panel_is_built_from_the_spark_backend_at_both_sites() {
         use std::str::FromStr;
@@ -12301,10 +11589,8 @@ pub(crate) mod tests {
                 crate::app::breez_spark::SparkClient::disconnected_for_test(),
             ))))
         };
-        let liquid = || Some(Arc::new(BreezClient::disconnected(cache.network)));
-        let panels = |breez, spark| {
+        let panels = |spark| {
             Panels::new(
-                breez,
                 // The signer only feeds P2P; Buy/Sell doesn't depend on it.
                 None,
                 spark,
@@ -12320,11 +11606,11 @@ pub(crate) mod tests {
             )
         };
 
-        // `Panels::new`: Spark alone is enough; a Liquid client alone is not.
-        let with_spark = panels(None, spark());
+        // `Panels::new`: built with Spark, absent without it.
+        let with_spark = panels(spark());
         assert!(with_spark.buy_sell.is_some());
-        let mut liquid_only = panels(liquid(), None);
-        assert!(liquid_only.buy_sell.is_none());
+        let mut without_spark = panels(None);
+        assert!(without_spark.buy_sell.is_none());
 
         // `build_vault_panels`: the same rule when a Vault arrives mid-session.
         let rebuild = |panels: &mut Panels, spark| {
@@ -12338,20 +11624,20 @@ pub(crate) mod tests {
                 spark,
             )
         };
-        rebuild(&mut liquid_only, spark());
-        assert!(liquid_only.buy_sell.is_some());
-        rebuild(&mut liquid_only, None);
-        assert!(liquid_only.buy_sell.is_none());
+        rebuild(&mut without_spark, spark());
+        assert!(without_spark.buy_sell.is_some());
+        rebuild(&mut without_spark, None);
+        assert!(without_spark.buy_sell.is_none());
 
         // A panel whose sell payment is with the bridge survives a rebuild
         // (e.g. the late imported-wallet load), checkout and all.
-        rebuild(&mut liquid_only, spark());
+        rebuild(&mut without_spark, spark());
         {
             use crate::app::view::buysell::{
                 BuyOrSell, BuySellFlowState, MavapayFlowStep, MavapayState, SellFulfilment,
                 SellPayment,
             };
-            let panel = liquid_only.buy_sell.as_mut().unwrap();
+            let panel = without_spark.buy_sell.as_mut().unwrap();
             panel.step = BuySellFlowState::Mavapay(MavapayState::new(
                 BuyOrSell::Sell,
                 MavapayFlowStep::Checkout {
@@ -12372,13 +11658,13 @@ pub(crate) mod tests {
                 spark().unwrap(),
             ));
         }
-        rebuild(&mut liquid_only, spark());
-        assert!(liquid_only
+        rebuild(&mut without_spark, spark());
+        assert!(without_spark
             .buy_sell
             .as_ref()
             .is_some_and(|panel| panel.sell_payment_in_flight()));
-        rebuild(&mut liquid_only, None);
-        assert!(liquid_only
+        rebuild(&mut without_spark, None);
+        assert!(without_spark
             .buy_sell
             .as_ref()
             .is_some_and(|panel| panel.sell_payment_in_flight()));
@@ -12469,7 +11755,6 @@ pub(crate) mod tests {
                     "testnet4",
                 )
             );
-            assert!(app.breez_client().is_none());
             assert!(app.spark_backend().is_none());
             assert!(app.wallet_registry.route_lightning_address().is_none());
             assert!(app.cache.has_connect_session);
@@ -14186,7 +13471,6 @@ pub(crate) mod shell_tests {
         let (mut app, startup) = App::new_inner(
             cache,
             wallet.clone(),
-            None,
             None,
             None,
             Config::new(false),
@@ -16271,189 +15555,6 @@ mod toast_timer_tests {
 }
 
 #[cfg(test)]
-mod incoming_liquid_toast_privacy_tests {
-    use crate::app::state::preferences::{BalancePrivacy, BalancePrivacyChrome};
-    use crate::app::view::shared::landing::capture;
-
-    #[test]
-    fn visible_waiting_toast_tracks_hide_and_accepted_show() {
-        let _guard = crate::app::session::test_guard();
-        let root =
-            std::env::temp_dir().join(format!("incoming-toast-privacy-{}", uuid::Uuid::new_v4()));
-        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
-        assert_eq!(
-            super::ToastContent::Text("Split review: 12,345 sats".into())
-                .display(app.cache.bitcoin_unit, true),
-            "Split review: 12,345 sats",
-            "ordinary toast text must not be subject to broad string redaction"
-        );
-        drop(app.update(super::Message::View(
-            super::view::Message::ShowIncomingLiquidWaitingToast(12_345),
-        )));
-        assert_eq!(app.errors.len(), 1);
-
-        let mounted = |app: &super::App| {
-            capture::inspect(
-                "incoming-liquid-waiting-toast",
-                super::view::toast_overlay(app.displayed_toasts()),
-                (1024, 768),
-                "dark",
-                coincube_ui::theme::Theme::dark(),
-            )
-        };
-        let set_privacy = |app: &mut super::App, privacy| {
-            app.cache.balance_privacy = Some(BalancePrivacyChrome {
-                privacy,
-                busy: false,
-                interactive: privacy == BalancePrivacy::Shown,
-            });
-        };
-
-        // The same toast stays mounted throughout. Hide masks immediately,
-        // including before its persistence completes; a failed or pending Show
-        // still has no accepted Show receipt and cannot reveal the amount.
-        set_privacy(&mut app, BalancePrivacy::Shown);
-        let shown = mounted(&app);
-        assert!(shown.contains("12,345"));
-        set_privacy(&mut app, BalancePrivacy::HiddenLocally);
-        let hidden = mounted(&app);
-        assert!(hidden.contains("••••••"));
-        assert!(!hidden.contains("12,345"));
-        assert!(hidden.contains("swapping to L-BTC, awaiting confirmation"));
-        set_privacy(&mut app, BalancePrivacy::Hidden);
-        assert!(!mounted(&app).contains("12,345"));
-        set_privacy(&mut app, BalancePrivacy::Unresolved);
-        assert!(!mounted(&app).contains("12,345"));
-        app.cache.balance_privacy = None;
-        assert!(!mounted(&app).contains("12,345"));
-        // The user has requested Show, but the write has not produced its
-        // accepted receipt. The GUI still publishes Hidden while busy.
-        app.cache.balance_privacy = Some(BalancePrivacyChrome {
-            privacy: BalancePrivacy::Hidden,
-            busy: true,
-            interactive: false,
-        });
-        assert!(!mounted(&app).contains("12,345"));
-        // The GUI publishes Shown only after accepting the explicit Show
-        // receipt; the existing toast then reveals the original amount.
-        set_privacy(&mut app, BalancePrivacy::Shown);
-        assert!(mounted(&app).contains("12,345"));
-        assert_eq!(app.errors.len(), 1);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}
-
-/// #968 review finding 1: Tenshu v175 hides Liquid for everyone (master §3
-/// decision 2), so a Liquid receive raises no waiting toast and no
-/// celebration, even on a Cube with the grant and a Liquid wallet on disk.
-/// [`super::features::LiquidGate::show`] can't be turned on, so each test was
-/// checked against its guard removed (both failed); the Spark control shows
-/// the celebration itself still works.
-#[cfg(test)]
-mod hidden_liquid_receive_tests {
-    use breez_sdk_liquid::prelude::{Payment, PaymentDetails, PaymentState, PaymentType, SdkEvent};
-
-    fn liquid_receive() -> Payment {
-        Payment {
-            destination: None,
-            tx_id: Some("synthetic-liquid-receive".into()),
-            unblinding_data: None,
-            timestamp: 0,
-            amount_sat: 12_345,
-            fees_sat: 0,
-            swapper_fees_sat: None,
-            payment_type: PaymentType::Receive,
-            status: PaymentState::Pending,
-            details: PaymentDetails::Liquid {
-                destination: "synthetic-destination".into(),
-                description: String::new(),
-                asset_id: String::new(),
-                asset_info: None,
-                lnurl_info: None,
-                bip353_address: None,
-                payer_note: None,
-            },
-        }
-    }
-
-    /// A mainnet App whose Liquid gate has both inputs set.
-    fn app_with_liquid_inputs(root: &std::path::Path) -> super::App {
-        let (mut app, _) = super::shell_tests::bitcoin_app(root);
-        app.cache.liquid_gate = super::features::LiquidGate {
-            server_enabled: true,
-            local_state_exists: true,
-        };
-        app
-    }
-
-    /// Every message a task produces, in order.
-    fn outputs(task: super::Task<super::Message>) -> Vec<super::Message> {
-        use iced_runtime::futures::futures::StreamExt;
-        let Some(stream) = iced_runtime::task::into_stream(task) else {
-            return Vec::new();
-        };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(
-                stream
-                    .filter_map(|action| async move {
-                        match action {
-                            iced_runtime::Action::Output(message) => Some(message),
-                            _ => None,
-                        }
-                    })
-                    .collect(),
-            )
-    }
-
-    #[test]
-    fn hidden_liquid_receive_raises_no_waiting_toast() {
-        let _guard = crate::app::session::test_guard();
-        let root =
-            std::env::temp_dir().join(format!("hidden-liquid-toast-{}", uuid::Uuid::new_v4()));
-        let mut app = app_with_liquid_inputs(&root);
-        let produced = outputs(app.update(super::Message::BreezEvent(
-            SdkEvent::PaymentWaitingConfirmation {
-                details: liquid_receive(),
-            },
-        )));
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(!produced.iter().any(|message| matches!(
-            message,
-            super::Message::View(super::view::Message::ShowIncomingLiquidWaitingToast(_))
-        )));
-        assert!(app.toasted_incoming_waiting_tx_ids.is_empty());
-    }
-
-    #[test]
-    fn hidden_liquid_receive_does_not_celebrate() {
-        let _guard = crate::app::session::test_guard();
-        let root = std::env::temp_dir().join(format!(
-            "hidden-liquid-celebration-{}",
-            uuid::Uuid::new_v4()
-        ));
-        let mut app = app_with_liquid_inputs(&root);
-        drop(
-            app.update(super::Message::BreezEvent(SdkEvent::PaymentSucceeded {
-                details: liquid_receive(),
-            })),
-        );
-        assert!(!app.show_received_celebration);
-
-        // Control: a Spark receive on the same App still celebrates.
-        drop(app.update(super::Message::ShowReceivedCelebration {
-            context: "spark-receive".to_string(),
-            amount_sat: 12_345,
-            payment_id: None,
-        }));
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(app.show_received_celebration);
-    }
-}
-
-#[cfg(test)]
 mod settings_navigation_integration_tests {
     use super::*;
     use crate::app::view::shared::landing::capture;
@@ -17935,8 +17036,6 @@ mod wallet_recent_activity_tests {
             Message::ActivitySparkRefreshed(stale, Ok((Vec::new(), false))),
             Message::ActivityVaultLoaded(stale, Err("late vault failure".into())),
             Message::ActivityPsbtLoaded(stale, Err("late PSBT failure".into())),
-            Message::ActivityLiquidLoaded(stale, Err("late Liquid failure".into())),
-            Message::ActivityRefundablesLoaded(stale, Err("late refund failure".into())),
             Message::ActivityLabelSaved(u64::MAX, Err("late label failure".into())),
         ] {
             drop(app.update(message));

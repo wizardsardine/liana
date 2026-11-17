@@ -17,7 +17,6 @@ fn fixture_context() -> NavContext<'static> {
         network: ChainId::Bitcoin,
         p2p_test_coordinator: false,
         marketplace_flags: features::MarketplaceServerFlags::OFF,
-        liquid_gate: features::LiquidGate::HIDDEN,
         cube_name: "Synthetic QA Cube",
         // Wallet names in the labels; the row IDs stay `…nav.Spark` and
         // `…nav.Vault`.
@@ -116,10 +115,6 @@ fn activity_is_cube_scoped_even_without_a_wallet_backend() {
     let mut ctx = fixture_context();
     ctx.has_vault = false;
     ctx.network = ChainId::Testnet;
-    ctx.liquid_gate = features::LiquidGate {
-        server_enabled: true,
-        local_state_exists: false,
-    };
     assert_eq!(
         activity_route(&ctx),
         Some(Menu::Cube(CubeSubMenu::Activity))
@@ -1418,11 +1413,7 @@ fn sidebar_targets(ctx: &NavContext<'_>, menu: &Menu) -> usize {
 fn wallets_have_no_sidebar_sub_menus() {
     // The canvas sidebar lists each wallet once; Send, Receive and history
     // live on the wallet's own page. Only Marketplace keeps children.
-    let mut ctx = fixture_context();
-    ctx.liquid_gate = features::LiquidGate {
-        server_enabled: true,
-        local_state_exists: true,
-    };
+    let ctx = fixture_context();
     let baseline = sidebar_targets(&ctx, &Menu::Cube(CubeSubMenu::Overview));
     // No Vault Tools group either: those tools are links on the Vault page.
     let all_ids = {
@@ -1458,9 +1449,6 @@ fn wallets_have_no_sidebar_sub_menus() {
         Menu::Vault(VaultSubMenu::Send),
         Menu::Vault(VaultSubMenu::Receive),
         Menu::Vault(VaultSubMenu::Transactions(None)),
-        Menu::Liquid(LiquidSubMenu::Overview),
-        Menu::Liquid(LiquidSubMenu::Send),
-        Menu::Liquid(LiquidSubMenu::Transactions(None)),
     ] {
         assert_eq!(
             sidebar_targets(&ctx, &menu),

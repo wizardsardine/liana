@@ -21,8 +21,7 @@ COVERAGE_CLEAN="${COVERAGE_CLEAN:-1}"
 # pins". Enabling COVERAGE_DOCTESTS requires nightly (doctest coverage is
 # nightly-only), so CI sets this to one nightly and runs the lib/bins/tests and
 # --doc passes under it, keeping their profraw in one set for the merged report.
-# That nightly must predate rust-lang/rust#148922, which changed the never-type
-# fallback from `()` to `!` and breaks the transitive `lightning 0.0.118`.
+# CI pins a dated nightly (see .github/workflows/coverage.yml).
 CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}"
 COVERAGE_DOCTESTS="${COVERAGE_DOCTESTS:-0}"
 COVERAGE_TARGET_LINES="${COVERAGE_TARGET_LINES:-}"
