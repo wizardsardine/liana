@@ -59,7 +59,8 @@ impl std::fmt::Display for KeySource {
 }
 
 /// The source menu's choices: a single-signer wallet has no one else to
-/// sign, and adding to an attached wallet only stores words.
+/// sign, an n-of-n wallet needs every key here, and adding to an attached
+/// wallet only stores words.
 const MULTISIG_SOURCES: [KeySource; 3] =
     [KeySource::Hardware, KeySource::Words, KeySource::Elsewhere];
 const SINGLE_SOURCES: [KeySource; 2] = [KeySource::Hardware, KeySource::Words];
@@ -173,6 +174,21 @@ impl KeysState {
 
     pub(super) fn multisig(&self) -> bool {
         self.slots.len() > 1
+    }
+
+    /// A key may be skipped only when the others can still reach the
+    /// threshold: never in a single-signer or n-of-n wallet.
+    pub(super) fn can_skip(&self) -> bool {
+        self.multisig() && self.threshold < self.slots.len()
+    }
+
+    /// The choices the source menu offers for each key.
+    pub(super) fn sources(&self) -> &'static [KeySource] {
+        if self.can_skip() {
+            &MULTISIG_SOURCES
+        } else {
+            &SINGLE_SOURCES
+        }
     }
 
     pub(super) fn provided(&self) -> usize {
@@ -830,11 +846,7 @@ pub(super) fn step<'a>(
         .push(h3(localized_copy("Add the wallet's keys")))
         .push(p1_regular(lead).style(theme::text::secondary));
     let busy = keys.checking();
-    let sources: &'static [KeySource] = if keys.multisig() {
-        &MULTISIG_SOURCES
-    } else {
-        &SINGLE_SOURCES
-    };
+    let sources = keys.sources();
     let mut rows = Column::new().push(iced::widget::rule::horizontal(1));
     for (index, slot) in keys.slots.iter().enumerate() {
         let status = key_line(keys, index, slot, devices);
