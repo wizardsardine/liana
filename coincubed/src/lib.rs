@@ -1366,13 +1366,7 @@ impl DaemonHandle {
         // The RPC socket name is random, so two processes would otherwise both
         // bind and the second would overwrite `rpc.socket`. Hold the datadir
         // before any database or socket setup, and keep it until stop.
-        let datadir_lock = match data_dir.try_lock() {
-            Ok(lock) => lock,
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                return Err(StartupError::AlreadyRunning);
-            }
-            Err(e) => return Err(StartupError::Io(e)),
-        };
+        let datadir_lock = lock_startup_data_directory(&data_dir)?;
 
         // Set up the connection to bitcoind (if using it) first as we may need it for the database
         // migration when setting up SQLite below.
@@ -1700,6 +1694,16 @@ fn preflight_startup_storage(
         config.check().map_err(StartupError::Config)?;
     }
     Ok(())
+}
+
+fn lock_startup_data_directory(
+    data_dir: &DataDirectory,
+) -> Result<datadir::DaemonLock, StartupError> {
+    match data_dir.try_lock() {
+        Ok(lock) => Ok(lock),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(StartupError::AlreadyRunning),
+        Err(e) => Err(StartupError::Io(e)),
+    }
 }
 
 fn heal_startup_scan_window(
