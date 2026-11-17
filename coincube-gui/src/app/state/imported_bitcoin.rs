@@ -633,7 +633,7 @@ impl ImportedBitcoinPanel {
             birthday_calendar_open: false,
             scan_from_beginning: true,
             lookahead: "200".into(),
-            provider: Provider::Public,
+            provider: Provider::Connect,
             provider_known: true,
             endpoint: String::new(),
             review,
@@ -2981,21 +2981,6 @@ impl ImportedBitcoinPanel {
     /// checked once per connection of its device; a failed check waits for
     /// Check again or for the device to be reconnected.
     fn auto_check_devices(&mut self) -> Task<Message> {
-        // Only while the Keys step is on screen: a device prompt with no
-        // row explaining it would be a surprise.
-        if self.adding_keys
-            || self.review.is_none()
-            || !self.journey_open()
-            || self.journey_step() != JourneyStep::Keys
-        {
-            return Task::none();
-        }
-        // Past the threshold a key is not needed: its device is checked
-        // only on Check device, so Review stays open.
-        let enough = self
-            .keys
-            .as_ref()
-            .is_some_and(|keys| keys.provided() >= keys.threshold);
         let connected: Vec<(
             String,
             coincube_core::miniscript::bitcoin::bip32::Fingerprint,
@@ -3016,20 +3001,44 @@ impl ImportedBitcoinPanel {
                     .collect()
             })
             .unwrap_or_default();
+        let device_for = |fingerprint| {
+            connected
+                .iter()
+                .find(|(_, connected)| *connected == fingerprint)
+                .map(|(id, _)| id)
+        };
+        // Unplugged: the next connection is checked afresh. This runs on
+        // every device update, even with the Keys step off screen, so a
+        // device unplugged and plugged back in meanwhile is still new.
+        if let Some(keys) = &mut self.keys {
+            for slot in &mut keys.slots {
+                if device_for(slot.account.fingerprint) != slot.auto_checked.as_ref() {
+                    slot.auto_checked = None;
+                }
+            }
+        }
+        // Only while the Keys step is on screen: a device prompt with no
+        // row explaining it would be a surprise.
+        if self.adding_keys
+            || self.review.is_none()
+            || !self.journey_open()
+            || self.journey_step() != JourneyStep::Keys
+        {
+            return Task::none();
+        }
+        // Past the threshold a key is not needed: its device is checked
+        // only on Check device, so Review stays open.
+        let enough = self
+            .keys
+            .as_ref()
+            .is_some_and(|keys| keys.provided() >= keys.threshold);
         // One check at a time, so a device never has two requests waiting
         // on it; the next starts when this one lands.
         let busy = self.keys.as_ref().is_some_and(KeysState::checking);
         let mut due = None;
         if let Some(keys) = &mut self.keys {
             for (index, slot) in keys.slots.iter_mut().enumerate() {
-                let device = connected
-                    .iter()
-                    .find(|(_, fingerprint)| *fingerprint == slot.account.fingerprint)
-                    .map(|(id, _)| id);
-                // Unplugged: the next connection is checked afresh.
-                if device.is_none() {
-                    slot.auto_checked = None;
-                }
+                let device = device_for(slot.account.fingerprint);
                 // A failed check is tried again only on a fresh connection.
                 let waiting = slot.status == KeyStatus::Missing
                     || (matches!(slot.status, KeyStatus::Failed(_)) && slot.auto_checked.is_none());
@@ -6324,6 +6333,50 @@ mod tests {
             panel.keys.as_ref().unwrap().slots[2].status,
             KeyStatus::Checking
         );
+    }
+
+    /// A device unplugged and plugged back in while the Keys step is off
+    /// screen is a new connection, and so is one whose check was cancelled
+    /// by leaving the step: both are checked again on return.
+    #[test]
+    fn off_screen_reconnects_and_cancelled_checks_are_checked_again() {
+        let mut panel = keys_panel_with(&[("coldcard-1", 2)]);
+        let fingerprint = panel.keys.as_ref().unwrap().slots[2].account.fingerprint;
+        let status =
+            |panel: &ImportedBitcoinPanel| panel.keys.as_ref().unwrap().slots[2].status.clone();
+        let _ = panel.auto_check_devices();
+        assert_eq!(status(&panel), KeyStatus::Checking);
+        let check = panel.keys.as_ref().unwrap().slots[2].check;
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::DeviceVerified(
+            generation,
+            2,
+            check,
+            Err("Not this key.".into()),
+        ));
+        assert_eq!(status(&panel), KeyStatus::Failed("Not this key.".into()));
+
+        // Off screen: unplugged, then plugged back in.
+        panel.journey = false;
+        let devices = &mut panel.hardware_wallets.as_mut().unwrap().list;
+        devices.clear();
+        let _ = panel.auto_check_devices();
+        panel
+            .hardware_wallets
+            .as_mut()
+            .unwrap()
+            .list
+            .push(connected("coldcard-1", fingerprint));
+        let _ = panel.auto_check_devices();
+        let _ = panel.update_view(ImportMessage::ResumeJourney, None, 0);
+        assert_eq!(status(&panel), KeyStatus::Checking);
+
+        // Leaving cancels the check; returning starts it again.
+        panel.journey = false;
+        panel.keys.as_mut().unwrap().forget_words();
+        assert_eq!(status(&panel), KeyStatus::Missing);
+        let _ = panel.update_view(ImportMessage::ResumeJourney, None, 0);
+        assert_eq!(status(&panel), KeyStatus::Checking);
     }
 
     /// A signer's device whose key is set to recovery words is not lost:

@@ -1,5 +1,12 @@
 pub mod ui;
 
+#[cfg(test)]
+mod test_webview;
+#[cfg(not(test))]
+use iced_wry::IcedWebviewManager as WebviewManager;
+#[cfg(test)]
+use test_webview::WebviewManager;
+
 use super::panel::*;
 use crate::{
     app::{view, Cache},
@@ -106,7 +113,7 @@ pub struct MeldState {
 
     // sse data
     pub sse_retries: usize,
-    pub webview_manager: iced_wry::IcedWebviewManager,
+    pub webview_manager: WebviewManager,
 }
 
 impl MeldState {
@@ -120,7 +127,7 @@ impl MeldState {
             buy_or_sell,
             country,
             sse_retries: 0,
-            webview_manager: iced_wry::IcedWebviewManager::new(),
+            webview_manager: WebviewManager::new(),
             steps: vec![MeldFlowStep::RegionChecks],
             network,
         };

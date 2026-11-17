@@ -211,6 +211,11 @@ impl KeysState {
             // A check in flight can no longer land, so nothing may stay
             // Checking: that would hold every control disabled.
             if slot.source == KeySource::Words || slot.status == KeyStatus::Checking {
+                // A cancelled device check never ran to the end: the
+                // device is checked again when the step is next shown.
+                if slot.status == KeyStatus::Checking {
+                    slot.auto_checked = None;
+                }
                 slot.status = KeyStatus::Missing;
             }
         }

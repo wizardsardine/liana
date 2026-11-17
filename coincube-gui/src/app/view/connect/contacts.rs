@@ -23,6 +23,9 @@ use super::{
 };
 use coincube_ui::font;
 
+#[cfg(test)]
+mod coverage_tests;
+
 /// Top-level contacts dispatcher.
 pub fn contacts_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     match &state.contacts_state.step {
@@ -285,7 +288,10 @@ fn received_invite_card<'a>(
 }
 
 fn expiry_element<'a>(expires_at: &str) -> Element<'a, ConnectAccountMessage> {
-    let days = compute_days_until(expires_at);
+    expiry_element_for_days(compute_days_until(expires_at))
+}
+
+fn expiry_element_for_days<'a>(days: Option<i64>) -> Element<'a, ConnectAccountMessage> {
     match days {
         Some(1) => text::p2_regular("Expires in 1 day")
             .color(color::GREY_3)
@@ -304,9 +310,12 @@ fn expiry_element<'a>(expires_at: &str) -> Element<'a, ConnectAccountMessage> {
 }
 
 fn compute_days_until(expires_at: &str) -> Option<i64> {
+    compute_days_until_at(expires_at, chrono::Utc::now().date_naive())
+}
+
+fn compute_days_until_at(expires_at: &str, today: chrono::NaiveDate) -> Option<i64> {
     let expiry = chrono::DateTime::parse_from_rfc3339(expires_at).ok()?;
-    let now = chrono::Utc::now();
-    Some((expiry.date_naive() - now.date_naive()).num_days())
+    Some((expiry.date_naive() - today).num_days())
 }
 
 // =============================================================================
