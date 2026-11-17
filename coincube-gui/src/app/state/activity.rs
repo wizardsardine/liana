@@ -184,12 +184,12 @@ impl Activity {
         self.liquid_backend.clone().filter(|_| self.liquid_shown)
     }
 
-    /// The Vault screen offers Bump fee and Cancel only on a wallet with
-    /// an inheritance path (`state/vault/transactions.rs`).
+    /// Whether the Vault screen offers Bump fee and Cancel for this wallet
+    /// (`state/vault/transactions.rs`).
     pub fn vault_supports_replacement(&self) -> bool {
         self.wallet
             .as_ref()
-            .is_some_and(|wallet| wallet.supports_inheritance())
+            .is_some_and(|wallet| wallet.supports_replacement())
     }
 
     #[cfg(test)]

@@ -165,7 +165,7 @@ impl State for VaultTransactionsPanel {
                 tx,
                 self.labels_edited.cache(),
                 cache.bitcoin_unit,
-                self.wallet.supports_inheritance(),
+                self.wallet.supports_replacement(),
             );
             match &self.modal {
                 VaultTransactionsModal::CreateRbf(rbf) => rbf.view(content, self.wallet.chain),
@@ -288,7 +288,7 @@ impl State for VaultTransactionsPanel {
                     self.refresh_displayed();
                 }
             },
-            Message::RbfModal(_, _, _) if !self.wallet.supports_inheritance() => {
+            Message::RbfModal(_, _, _) if !self.wallet.supports_replacement() => {
                 return Task::none();
             }
             Message::RbfModal(tx, is_cancel, res) => match res {
@@ -416,7 +416,7 @@ impl State for VaultTransactionsPanel {
                 }
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::New(is_cancel))) => {
-                if !self.wallet.supports_inheritance() {
+                if !self.wallet.supports_replacement() {
                     return Task::none();
                 }
                 if let Some(tx) = &self.selected_tx {
