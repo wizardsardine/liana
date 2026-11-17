@@ -708,16 +708,25 @@ impl Panels {
     }
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
-        if self
-            .imported_bitcoin
-            .as_ref()
-            .is_some_and(|panel| panel.handles_route(&self.current))
-        {
+        if self.imported_holds_route() {
             return self
                 .imported_bitcoin
                 .as_mut()
                 .map(|panel| panel.as_mut() as &mut dyn State);
         }
+        self.route_panel_mut()
+    }
+
+    /// The import panel is standing in for the current route's own panel.
+    fn imported_holds_route(&self) -> bool {
+        self.imported_bitcoin
+            .as_ref()
+            .is_some_and(|panel| panel.handles_route(&self.current))
+    }
+
+    /// The current route's own panel, even while the import panel stands in
+    /// for it. An operation the route's panel started still completes there.
+    fn route_panel_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
             Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&mut self.global_home),
             Menu::Cube(crate::app::menu::CubeSubMenu::Activity) => Some(&mut self.activity),
@@ -9714,6 +9723,19 @@ impl App {
                 };
                 return panel.update(self.daemon.clone(), &self.cache, msg);
             }
+            // A send prepared or a PSBT signed on the Vault's screens
+            // completes on them, even if the import panel took the route back
+            // while it ran (its wallet went back to syncing). Each handler
+            // checks its own generation, so a stale result is ignored there.
+            msg @ (Message::VaultSpendPrepared { .. }
+            | Message::Signed(..)
+            | Message::CubeKeys(_))
+                if self.panels.imported_holds_route() =>
+            {
+                if let Some(panel) = self.panels.route_panel_mut() {
+                    return panel.update(self.daemon.clone(), &self.cache, msg);
+                }
+            }
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
@@ -12418,6 +12440,54 @@ pub(crate) mod tests {
             !root.exists(),
             "panel construction must not create a Bitcoin or fork datadir"
         );
+    }
+
+    /// While a syncing import stands in for Send and PSBTs, a sign or prepare
+    /// started on the Vault's own panel still has that panel to land on.
+    #[test]
+    fn vault_send_and_psbt_panels_stay_reachable_under_a_syncing_import() {
+        use std::str::FromStr;
+        let descriptor = coincube_core::descriptors::CoincubeDescriptor::from_str(
+            "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr"
+        ).unwrap();
+        let chain = crate::chain::ChainId::Bitcoin;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(chain));
+        let root = std::env::temp_dir().join(format!("coincube-route-{}", uuid::Uuid::new_v4()));
+        let cache = Cache {
+            fiat_chain: chain,
+            network: chain.bitcoin_network(),
+            ..Cache::default()
+        };
+        let mut panels = Panels::new(
+            None,
+            None,
+            &cache,
+            wallet,
+            CoincubeDirectory::new(root.clone()),
+            DaemonBackend::EmbeddedCoincubed(Some(crate::node::NodeType::Esplora)),
+            None,
+            Arc::new(Config::new(false)),
+            "fixture".into(),
+            "Fixture".into(),
+            chain.api_str().into(),
+        );
+        panels.imported_bitcoin = Some(Box::new(
+            state::imported_bitcoin::ImportedBitcoinPanel::new(
+                CoincubeDirectory::new(root).network_directory(chain),
+                "fixture".into(),
+                settings::BitcoinImport::pending(),
+            ),
+        ));
+        for menu in [
+            Menu::Vault(menu::VaultSubMenu::Send),
+            Menu::Vault(menu::VaultSubMenu::PSBTs(None)),
+        ] {
+            panels.current = menu;
+            assert!(panels.imported_holds_route());
+            assert!(panels.route_panel_mut().is_some());
+        }
+        panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        assert!(!panels.imported_holds_route());
     }
 
     #[tokio::test]
