@@ -1,45 +1,53 @@
 # Liana reproducible builds
 
-## Reproducible build of linux binaries with GUIX
-
 Releases of Liana are built in a reproducible manner, providing an assurance the binary a user is
 going to run corresponds to the sources published. It enables the possibility for the user, or a
 third party, to audit the code being ran.
 
-For Linux binaries (and hopefully soon for all hosts) we go further and provide bootstrappable
-builds, where the toolchain used to compile the source code reproducibly is itself built
-reproducibly from source.
+Learn more about reproducible builds [here](https://reproducible-builds.org/).
 
-Learn more about reproducible builds [here](https://reproducible-builds.org/), and bootstrappable
-builds [here](https://bootstrappable.org/).
-
-For instructions on bootstrappable builds of Linux releases, see the [`guix`](./guix) folder.
-
-
-## Reproducible build of windows and macos binaries with NIX
-
-You will have to install [Nix](https://nixos.org/download/#download-nix), a package manager.
-We rely on nix flakes, so you may need to activate this feature by setting in your `~/.config/nix/nix.conf`:
+All the release binaries are built with [Nix](https://nixos.org/download/#download-nix), a package
+manager. We rely on nix flakes, so you may need to activate this feature by setting in your
+`~/.config/nix/nix.conf`:
 
 ```
 experimental-features = nix-command flakes
 ```
 
-### Windows
+All the targets below are built from a Linux host. Replace `.#liana` with `.#liana-business` to
+build Liana Business instead: the output folders are the same, but Liana Business ships a single
+`liana-business` binary in place of the `lianad`, `liana-cli` and `liana-gui` trio.
+
+
+## Linux
+
+Simply run:
+
+```
+nix build .#liana.x86_64-unknown-linux-gnu
+```
+
+The `lianad`, `liana-cli` and `liana-gui` binaries will be present in the
+`./result/x86_64-unknown-linux-gnu` folder. They are linked against `glibc` version `2.31` through
+[`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild), so they run on any distribution
+shipping this version or a more recent one.
+
+
+## Windows
 
 Simply run:
 
 ```
 nix build .#liana.x86_64-pc-windows-gnu
 ```
-(or `.#liana-business.x86_64-pc-windows-gnu` for Liana Business).
 
-The `liana-gui-setup.exe` installer will be present in the `./result/x86_64-pc-windows-gnu`
-folder. It wraps the cross-compiled executable with [NSIS](https://nsis.sourceforge.io/); see
+The `liana-gui-setup.exe` installer (`liana-business-setup.exe` for Liana Business) will be present
+in the `./result/x86_64-pc-windows-gnu` folder. It wraps the cross-compiled executable with
+[NSIS](https://nsis.sourceforge.io/); see
 [`contrib/release/windows`](../release/windows/README.md) for how the installer is kept
 reproducible. The bare executable is still available under `.#liana.x86_64-pc-windows-gnu-exe`.
 
-#### Verifying the codesigned installer
+### Verifying the codesigned installer
 
 The codesigned `liana-<version>-setup.exe` is the reproducible
 `liana-<version>-setup-noncodesigned.exe` with an Authenticode signature attached. The signature
@@ -54,7 +62,7 @@ sha256sum /tmp/liana-setup.exe liana-<version>-setup.exe
 ```
 
 
-### MACOS
+## MacOS
 
 First you need get the MacOS SDK. It is required to be able to build the MacOS binaries. The `12_2` version is
 required (`Xcode_12.2.xip`). You need to download it from Apple's website. An Apple ID and cookies

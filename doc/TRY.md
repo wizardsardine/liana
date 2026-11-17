@@ -27,7 +27,7 @@ your system to follow the guide if you are running a Linux that isn't Debian- or
 - GUI requirements, see the link to projects below to search for the name of your distribution's packages.
     - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/)
     - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html)
-- Running binaries requires GLIBC >= 2.33 (Ubuntu >= 22.04 or Debian >= 12)
+- Running binaries requires GLIBC >= 2.31 (Ubuntu >= 20.04 or Debian >= 11)
 
 We'll use basic tools which should already be present on your system, such as:
 - `shasum`
@@ -54,7 +54,7 @@ Get the Liana software for your system on the [Wizardsardine website](https://wi
 
 A note for **Linux users only**: released binaries may not be working on your system if it is
 running a too old glibc. In this case you may have to build from source. See the [short section
-about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
+about this in the usage documentation](USAGE.md#a-note-on-linux-binaries-and-glibc-version).
 
 For every file available on the website, there is an accompanying `.asc` file with the same
 name on our [Github release page](https://github.com/wizardsardine/liana/releases).

@@ -75,9 +75,6 @@ built with: the toolchain described in
 [`contrib/reproducible/README.md`](contrib/reproducible/README.md) is a
 [mrustc](https://github.com/thepowersgang/mrustc)-bootstrapped Rust 1.90.
 
-Raising it is a breaking change for downstream packagers, so the toolchain pin, the version used by
-the CI jobs and this section should always be bumped together.
-
 ## Style
 
 To avoid endless bikeshedding, just use [`rustfmt`](https://github.com/rust-lang/rustfmt).
