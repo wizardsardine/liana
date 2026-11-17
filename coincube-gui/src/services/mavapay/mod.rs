@@ -22,8 +22,8 @@ pub enum MavapayMessage {
     // sell input form
     GetBanks,
     BanksReceived(MavapayBanks),
-    GetLiquidWalletBalance,
-    ReceivedLiquidWalletBalance(u64),
+    GetSparkBalance,
+    ReceivedSparkBalance(u64),
     VerifyNgnBankDetails,
     VerifiedNgnBankDetails(NgnCustomerDetails),
     BeneficiaryFieldUpdate(&'static str, String),
@@ -46,8 +46,25 @@ pub enum MavapayMessage {
 
     // checkout
     SimulatePayIn,
+    /// Pay the sell order's invoice from Spark.
     FulfillSellInvoice,
-    SellInvoiceFulfilled(breez_sdk_liquid::model::Payment),
+    /// Spark prepared the payment and it matches the quote; send it.
+    SellInvoicePrepared(coincube_spark_protocol::PrepareSendOk),
+    /// Preparing failed. Nothing was sent.
+    SellPrepareFailed(String),
+    SellInvoiceFulfilled(coincube_spark_protocol::SendPaymentOk),
+    /// The bridge answered the send with a rejection. Nothing was paid.
+    SellSendFailed(String),
+    /// The send was dispatched and nobody said what happened to it.
+    SellInvoiceOutcomeUnknown {
+        request_id: u64,
+        message: String,
+    },
+    /// Check again what happened to a send whose outcome is unknown.
+    CheckSellPayment,
+    SellPaymentChecked(crate::app::state::spark::send::ReconcileOutcome),
+    /// Repeat a send whose check found no trace, under the same key.
+    RetrySellPayment,
     QuoteFulfilled(GetOrderResponse),
 
     // SSE stream events

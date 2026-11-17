@@ -86,7 +86,9 @@ pub struct BuySellPanel {
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
-    pub breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
+    /// The Cube's Spark wallet: Mavapay buys receive into it and sells are
+    /// paid from it. The panel isn't built without one.
+    pub spark: std::sync::Arc<crate::app::wallets::SparkBackend>,
     pub detected_country: Option<&'static crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
@@ -100,7 +102,7 @@ impl BuySellPanel {
     pub fn new(
         network: bitcoin::Network,
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
-        breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
+        spark: std::sync::Arc<crate::app::wallets::SparkBackend>,
     ) -> Self {
         BuySellPanel {
             // Start in detecting location state
@@ -109,17 +111,13 @@ impl BuySellPanel {
             network,
             // API state
             coincube_client: crate::services::coincube::CoincubeClient::new(),
-            breez_client,
+            spark,
             detected_country: None,
             login: None,
         }
     }
 
-    pub fn view<'a>(
-        &'a self,
-        mask_amounts: bool,
-        liquid_shown: bool,
-    ) -> iced::Element<'a, ViewMessage, theme::Theme> {
+    pub fn view<'a>(&'a self, mask_amounts: bool) -> iced::Element<'a, ViewMessage, theme::Theme> {
         match &self.step {
             BuySellFlowState::DetectingLocation(..)
             | BuySellFlowState::Login { .. }
@@ -129,7 +127,7 @@ impl BuySellPanel {
                 Self::entry_view(&self.step, self.detected_country)
             }
             BuySellFlowState::Mavapay(state) => {
-                Self::provider_view(super::mavapay::ui::form(state, mask_amounts, liquid_shown))
+                Self::provider_view(super::mavapay::ui::form(state, mask_amounts))
             }
             BuySellFlowState::Meld(state) => Self::provider_view(state.view()),
         }

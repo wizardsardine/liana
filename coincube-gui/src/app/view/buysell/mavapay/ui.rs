@@ -1,6 +1,6 @@
 use crate::{
     app::view::{
-        buysell::{panel::BuyOrSell, MavapayFlowStep, MavapayState},
+        buysell::{mavapay::SellFulfilment, panel::BuyOrSell, MavapayFlowStep, MavapayState},
         BuySellMessage, Message as ViewMessage,
     },
     services::{coincube::Country, mavapay::*},
@@ -14,12 +14,9 @@ use coincube_ui::component::amount::{format_f64_as_string, format_u64_as_string}
 use coincube_ui::component::{button, card, text};
 use coincube_ui::{color, icon::*, theme};
 
-/// `liquid_shown` is the Liquid gate ([`crate::app::features::LiquidGate::show`]):
-/// while it is off, a sell checkout offers no Liquid fulfilment.
 pub fn form<'a>(
     state: &'a MavapayState,
     mask_amounts: bool,
-    liquid_shown: bool,
 ) -> iced::Element<'a, ViewMessage, theme::Theme> {
     // The eye covers saved orders and completed checkout. Entry and an
     // unfulfilled checkout show amounts for active payment review.
@@ -30,7 +27,7 @@ pub fn form<'a>(
     {
         MavapayFlowStep::BuyInputFrom { .. } => buy_input_form(state),
         MavapayFlowStep::SellInputForm { .. } => sell_input_form(state),
-        MavapayFlowStep::Checkout { .. } => checkout_form(state, mask_amounts, liquid_shown),
+        MavapayFlowStep::Checkout { .. } => checkout_form(state, mask_amounts),
         MavapayFlowStep::History { .. } => history_view(state, mask_amounts),
         MavapayFlowStep::OrderDetail { .. } => order_detail_view(state, mask_amounts),
     };
@@ -1199,17 +1196,16 @@ fn order_detail_view<'a>(
     .width(Length::Fill)
 }
 
-// TODO: Use Breez SDK to satisfy lightning invoice, with user confirmation
 fn checkout_form<'a>(
     state: &'a MavapayState,
     mask_amounts: bool,
-    liquid_shown: bool,
 ) -> widget::Column<'a, BuySellMessage, theme::Theme> {
     let Some(MavapayFlowStep::Checkout {
         fulfilled_order,
         quote,
         invoice_qr_code_data,
-        liquid_balance,
+        spark_balance,
+        sell,
         ..
     }) = state.steps.last()
     else {
@@ -1228,10 +1224,6 @@ fn checkout_form<'a>(
                         ]
                     }
                     BuyOrSell::Sell => {
-                        let can_fulfil_sell_order = liquid_balance
-                            .map(|s| s >= quote.total_amount_in_source_currency)
-                            .unwrap_or(false);
-
                         widget::column![
                             summary_card(quote),
                             invoice_qr_code_data
@@ -1241,23 +1233,14 @@ fn checkout_form<'a>(
                                     quote.invoice.as_str(),
                                     data
                                 )),
-                            // Only while Liquid is shown: the deposit QR
-                            // above is how a sell order is paid otherwise.
-                            liquid_shown.then(|| match can_fulfil_sell_order {
-                                true => button::primary(
-                                    Some(bitcoin_icon()),
-                                    localized_copy("Fulfil Order from Liquid Wallet")
-                                )
-                                .on_press(BuySellMessage::Mavapay(
-                                    MavapayMessage::FulfillSellInvoice
-                                )),
-                                false => button::secondary(
-                                    Some(restore_icon()),
-                                    localized_copy(
-                                        "Liquid Balance insufficient. Manually fulfill invoice"
-                                    )
-                                ),
-                            }),
+                            // The deposit QR above always works; paying from
+                            // Spark is offered on top of it once the balance
+                            // is known.
+                            spark_fulfilment(
+                                &sell.fulfilment,
+                                *spark_balance,
+                                quote.total_amount_in_source_currency
+                            ),
                         ]
                         .spacing(10)
                     }
@@ -1281,6 +1264,78 @@ fn checkout_form<'a>(
     }
     .align_x(Alignment::Center)
     .width(600)
+}
+
+/// The "pay from Spark" part of a sell checkout. `None` when the Spark balance
+/// isn't known, which leaves the deposit QR as the way to pay.
+fn spark_fulfilment<'a>(
+    fulfilment: &'a SellFulfilment,
+    spark_balance: Option<u64>,
+    total_sat: u64,
+) -> Option<iced::Element<'a, BuySellMessage, theme::Theme>> {
+    let element: iced::Element<'a, BuySellMessage, theme::Theme> = match fulfilment {
+        SellFulfilment::Idle => {
+            let balance = spark_balance?;
+            if balance >= total_sat {
+                button::primary(Some(bitcoin_icon()), localized_copy("Fulfil from Spark"))
+                    .on_press(BuySellMessage::Mavapay(MavapayMessage::FulfillSellInvoice))
+                    .into()
+            } else {
+                button::secondary(
+                    Some(restore_icon()),
+                    localized_copy("Spark balance too low. Pay the invoice manually"),
+                )
+                .into()
+            }
+        }
+        // No `on_press`: a second click must not start a second payment.
+        SellFulfilment::Preparing | SellFulfilment::Sending => {
+            button::primary(Some(bitcoin_icon()), localized_copy("Paying from Spark…")).into()
+        }
+        SellFulfilment::Paid => text::p2_regular(localized_copy(
+            "Paid from your Spark wallet. Waiting for Mavapay to confirm the order.",
+        ))
+        .into(),
+        SellFulfilment::OutcomeUnknown {
+            checking,
+            outcome,
+            guard,
+        } => {
+            let mut content =
+                widget::column![text::p1_bold(localized_copy("Payment status unconfirmed"))]
+                    .spacing(10)
+                    .align_x(Alignment::Center);
+            match (checking, outcome) {
+                (true, _) | (_, None) => {
+                    content = content.push(text::p2_regular(localized_copy(
+                        "Checking your payment history to find out whether it went through. \
+                         Don't send it again until this finishes.",
+                    )));
+                }
+                (false, Some(outcome)) => {
+                    content = content.push(text::p2_regular(coincube_ui::locale::notice(
+                        outcome.guidance(*guard),
+                    )));
+                    let mut actions = widget::row![].spacing(10);
+                    // Repeats under the original key, never a fresh one.
+                    if fulfilment.may_resend() {
+                        actions = actions.push(
+                            button::primary(None, localized_copy("Send again")).on_press(
+                                BuySellMessage::Mavapay(MavapayMessage::RetrySellPayment),
+                            ),
+                        );
+                    }
+                    actions = actions.push(
+                        button::secondary(None, localized_copy("Check again"))
+                            .on_press(BuySellMessage::Mavapay(MavapayMessage::CheckSellPayment)),
+                    );
+                    content = content.push(actions);
+                }
+            }
+            content.into()
+        }
+    };
+    Some(element)
 }
 
 fn invoice_qr_code_display<'a>(
@@ -1489,8 +1544,11 @@ fn success_icon_badge() -> widget::Container<'static, BuySellMessage, theme::The
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{app::breez_liquid::BreezClient, app::view::shared::landing::capture};
-    use coincube_core::miniscript::bitcoin;
+    use crate::app::{
+        state::spark::send::{ReconcileOutcome, RetryGuard},
+        view::{buysell::mavapay::SellPayment, shared::landing::capture},
+        wallets::SparkBackend,
+    };
     use std::sync::Arc;
 
     fn country(code: &str) -> &'static Country {
@@ -1505,7 +1563,9 @@ mod tests {
             buy_or_sell,
             step,
             country(country_code),
-            Arc::new(BreezClient::disconnected(bitcoin::Network::Signet)),
+            Arc::new(SparkBackend::new(Arc::new(
+                crate::app::breez_spark::SparkClient::disconnected_for_test(),
+            ))),
         );
         state.sat_amount = 123_456;
         state.btc_price = Some(5_000_000_000.0);
@@ -1734,7 +1794,7 @@ mod tests {
             },
             "NG",
         );
-        let _ = form(&buy, false, false);
+        let _ = form(&buy, false);
 
         let mut buy_without_price = state(
             BuyOrSell::Buy,
@@ -1746,12 +1806,12 @@ mod tests {
             "NG",
         );
         buy_without_price.btc_price = None;
-        let _ = form(&buy_without_price, false, false);
+        let _ = form(&buy_without_price, false);
 
         let ngn = state(
             BuyOrSell::Sell,
             MavapayFlowStep::SellInputForm {
-                liquid_balance: Some(50_000),
+                spark_balance: Some(50_000),
                 banks: Some(MavapayBanks::Nigerian(vec![NigerianBank {
                     bank_name: "Fixture Bank".to_string(),
                     nip_bank_code: "999".to_string(),
@@ -1766,12 +1826,12 @@ mod tests {
             },
             "NG",
         );
-        let _ = form(&ngn, false, false);
+        let _ = form(&ngn, false);
 
         let zar = state(
             BuyOrSell::Sell,
             MavapayFlowStep::SellInputForm {
-                liquid_balance: Some(50_000),
+                spark_balance: Some(50_000),
                 banks: Some(MavapayBanks::SouthAfrican(vec![
                     "Capitec".to_string(),
                     "Standard Bank".to_string(),
@@ -1785,12 +1845,12 @@ mod tests {
             },
             "ZA",
         );
-        let _ = form(&zar, false, false);
+        let _ = form(&zar, false);
 
         let kes = state(
             BuyOrSell::Sell,
             MavapayFlowStep::SellInputForm {
-                liquid_balance: Some(50_000),
+                spark_balance: Some(50_000),
                 banks: None,
                 beneficiary: Beneficiary::KES(KenyanBeneficiary::PayToPhone {
                     account_name: "Recipient".to_string(),
@@ -1800,12 +1860,12 @@ mod tests {
             },
             "KE",
         );
-        let _ = form(&kes, false, false);
+        let _ = form(&kes, false);
 
         let invalid_ngn = state(
             BuyOrSell::Sell,
             MavapayFlowStep::SellInputForm {
-                liquid_balance: None,
+                spark_balance: None,
                 banks: None,
                 beneficiary: Beneficiary::NGN {
                     bank_account_name: None,
@@ -1817,7 +1877,7 @@ mod tests {
             },
             "NG",
         );
-        let _ = form(&invalid_ngn, false, false);
+        let _ = form(&invalid_ngn, false);
     }
 
     #[test]
@@ -1833,13 +1893,13 @@ mod tests {
                 ),
                 fulfilled_order: None,
                 invoice_qr_code_data: None,
-                liquid_balance: None,
-                fulfilling_ln_invoice: false,
+                spark_balance: None,
+                sell: SellPayment::default(),
                 stream_order_id: Some("order-quote-1".to_string()),
             },
             "NG",
         );
-        let _ = form(&checkout, false, false);
+        let _ = form(&checkout, false);
 
         let fulfilled = state(
             BuyOrSell::Buy,
@@ -1852,13 +1912,13 @@ mod tests {
                 ),
                 fulfilled_order: Some(order(TransactionStatus::Success, Vec::new())),
                 invoice_qr_code_data: None,
-                liquid_balance: None,
-                fulfilling_ln_invoice: false,
+                spark_balance: None,
+                sell: SellPayment::default(),
                 stream_order_id: None,
             },
             "NG",
         );
-        let _ = form(&fulfilled, false, false);
+        let _ = form(&fulfilled, false);
 
         for step in [
             MavapayFlowStep::History {
@@ -1883,7 +1943,7 @@ mod tests {
             },
         ] {
             let history = state(BuyOrSell::Buy, step, "NG");
-            let _ = form(&history, false, false);
+            let _ = form(&history, false);
         }
     }
 
@@ -1930,14 +1990,14 @@ mod tests {
             },
         ] {
             let detail = state(BuyOrSell::Buy, step, "NG");
-            let _ = form(&detail, false, false);
+            let _ = form(&detail, false);
         }
     }
 
     fn inspect(state: &MavapayState, mask_amounts: bool) -> capture::Inspection {
         capture::inspect(
             "mavapay-passive-order-privacy",
-            form(state, mask_amounts, false),
+            form(state, mask_amounts),
             (1024, 768),
             "dark",
             theme::Theme::dark(),
@@ -2014,58 +2074,144 @@ mod tests {
         }
     }
 
-    /// Tenshu v175 hides Liquid, so a sell checkout pays only by its deposit
-    /// QR, even for an account with the grant and a Liquid wallet on disk.
-    #[test]
-    fn sell_checkout_offers_no_liquid_fulfilment_while_liquid_is_hidden() {
+    fn sell_checkout(spark_balance: Option<u64>, fulfilment: SellFulfilment) -> MavapayState {
         let quote = quote(
             "quote-sell",
             MavapayUnitCurrency::BitcoinSatoshi,
             MavapayUnitCurrency::NigerianNairaKobo,
             MavapayPaymentMethod::Lightning,
         );
-        // A balance that covers the order and one that doesn't: each would
-        // show its own Liquid line if Liquid were shown.
-        for liquid_balance in [Some(quote.total_amount_in_source_currency), Some(0)] {
-            let checkout = state(
-                BuyOrSell::Sell,
-                MavapayFlowStep::Checkout {
-                    quote: quote.clone(),
-                    fulfilled_order: None,
-                    invoice_qr_code_data: Some(
-                        iced::widget::qr_code::Data::new(quote.invoice.as_bytes()).unwrap(),
-                    ),
-                    liquid_balance,
-                    fulfilling_ln_invoice: false,
-                    stream_order_id: None,
+        let invoice_qr_code_data =
+            Some(iced::widget::qr_code::Data::new(quote.invoice.as_bytes()).unwrap());
+        state(
+            BuyOrSell::Sell,
+            MavapayFlowStep::Checkout {
+                quote,
+                fulfilled_order: None,
+                invoice_qr_code_data,
+                spark_balance,
+                sell: SellPayment {
+                    fulfilment,
+                    ..SellPayment::default()
                 },
-                "NG",
-            );
-            let gate = crate::app::features::LiquidGate {
-                server_enabled: true,
-                local_state_exists: true,
-            };
-            let hidden = capture::inspect(
-                "mavapay-sell-checkout-liquid-hidden",
-                form(&checkout, false, gate.show()),
-                (1024, 768),
-                "dark",
-                theme::Theme::dark(),
-            );
-            assert!(hidden.contains("Deposit into the following address to proceed"));
-            assert!(!hidden.contains("Liquid"), "{:?}", liquid_balance);
+                stream_order_id: None,
+            },
+            "NG",
+        )
+    }
 
-            // The same checkout with Liquid shown still offers it, so the
-            // absence above is the gate's doing.
-            let shown = capture::inspect(
-                "mavapay-sell-checkout-liquid-shown",
-                form(&checkout, false, true),
-                (1024, 768),
-                "dark",
-                theme::Theme::dark(),
+    fn inspect_sell(name: &str, state: &MavapayState) -> capture::Inspection {
+        capture::inspect(
+            name,
+            form(state, false),
+            (1024, 768),
+            "dark",
+            theme::Theme::dark(),
+        )
+    }
+
+    /// A Spark balance that covers the order offers paying from Spark, next to
+    /// the deposit QR. Nothing mentions Liquid any more.
+    #[test]
+    fn sell_checkout_offers_spark_fulfilment_when_spark_covers_the_order() {
+        let checkout = sell_checkout(Some(12_500), SellFulfilment::Idle);
+        let shown = inspect_sell("mavapay-sell-checkout-spark-funded", &checkout);
+        assert!(shown.contains("Deposit into the following address to proceed"));
+        assert!(shown.contains("Fulfil from Spark"));
+        assert!(!shown.contains("Spark balance too low"));
+        assert!(!shown.contains("Liquid"));
+    }
+
+    /// Too little in Spark keeps the manual deposit-QR fallback and offers no
+    /// Spark payment.
+    #[test]
+    fn sell_checkout_falls_back_to_manual_payment_when_spark_is_short() {
+        let checkout = sell_checkout(Some(12_499), SellFulfilment::Idle);
+        let shown = inspect_sell("mavapay-sell-checkout-spark-short", &checkout);
+        assert!(shown.contains("Deposit into the following address to proceed"));
+        assert!(shown.contains("Spark balance too low. Pay the invoice manually"));
+        assert!(!shown.contains("Fulfil from Spark"));
+
+        // An unknown balance offers nothing beyond the QR.
+        let unknown = inspect_sell(
+            "mavapay-sell-checkout-spark-unknown",
+            &sell_checkout(None, SellFulfilment::Idle),
+        );
+        assert!(unknown.contains("Deposit into the following address to proceed"));
+        assert!(!unknown.contains("Fulfil from Spark"));
+        assert!(!unknown.contains("Spark balance too low"));
+    }
+
+    /// While a payment is with the bridge, or its outcome is unknown, the
+    /// checkout offers no way to pay again; only a check that found no trace
+    /// on a key-guarded rail offers "Send again".
+    #[test]
+    fn sell_checkout_offers_no_second_payment_while_one_is_unresolved() {
+        for fulfilment in [SellFulfilment::Preparing, SellFulfilment::Sending] {
+            let shown = inspect_sell(
+                "mavapay-sell-checkout-in-flight",
+                &sell_checkout(Some(50_000), fulfilment),
             );
-            assert!(shown.contains("Liquid"), "{:?}", liquid_balance);
+            assert!(shown.contains("Paying from Spark"));
+            assert!(!shown.contains("Fulfil from Spark"));
         }
+
+        let checking = inspect_sell(
+            "mavapay-sell-checkout-checking",
+            &sell_checkout(
+                Some(50_000),
+                SellFulfilment::OutcomeUnknown {
+                    checking: true,
+                    outcome: None,
+                    guard: RetryGuard::IdempotencyKey,
+                },
+            ),
+        );
+        assert!(checking.contains("Payment status unconfirmed"));
+        assert!(!checking.contains("Fulfil from Spark"));
+        assert!(!checking.contains("Send again"));
+
+        let inconclusive = inspect_sell(
+            "mavapay-sell-checkout-inconclusive",
+            &sell_checkout(
+                Some(50_000),
+                SellFulfilment::OutcomeUnknown {
+                    checking: false,
+                    outcome: Some(ReconcileOutcome::Inconclusive("offline".to_string())),
+                    guard: RetryGuard::IdempotencyKey,
+                },
+            ),
+        );
+        assert!(inconclusive.contains("Check again"));
+        assert!(!inconclusive.contains("Send again"));
+        assert!(!inconclusive.contains("Fulfil from Spark"));
+
+        let unguarded = inspect_sell(
+            "mavapay-sell-checkout-unguarded",
+            &sell_checkout(
+                Some(50_000),
+                SellFulfilment::OutcomeUnknown {
+                    checking: false,
+                    outcome: Some(ReconcileOutcome::NoTrace),
+                    guard: RetryGuard::None,
+                },
+            ),
+        );
+        assert!(!unguarded.contains("Send again"));
+
+        let guarded = inspect_sell(
+            "mavapay-sell-checkout-guarded",
+            &sell_checkout(
+                Some(50_000),
+                SellFulfilment::OutcomeUnknown {
+                    checking: false,
+                    outcome: Some(ReconcileOutcome::NoTrace),
+                    guard: RetryGuard::IdempotencyKey,
+                },
+            ),
+        );
+        assert!(guarded.contains("Send again"));
+        assert!(!guarded.contains("Fulfil from Spark"));
     }
 
     #[test]
@@ -2081,8 +2227,8 @@ mod tests {
                 ),
                 fulfilled_order: None,
                 invoice_qr_code_data: None,
-                liquid_balance: None,
-                fulfilling_ln_invoice: false,
+                spark_balance: None,
+                sell: SellPayment::default(),
                 stream_order_id: None,
             },
             "NG",
@@ -2106,8 +2252,8 @@ mod tests {
                 ),
                 fulfilled_order: Some(order(TransactionStatus::Paid, Vec::new())),
                 invoice_qr_code_data: None,
-                liquid_balance: None,
-                fulfilling_ln_invoice: false,
+                spark_balance: None,
+                sell: SellPayment::default(),
                 stream_order_id: None,
             },
             "NG",

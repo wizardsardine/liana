@@ -30,11 +30,7 @@ impl State for BuySellPanel {
         // No pinned page head (plan L3 exception): Buy/Sell keeps its own
         // heading and Back bar inside the provider column, whose steps own
         // them (`view::buysell::panel`).
-        view::dashboard(
-            menu,
-            cache,
-            self.view(cache.balance_amounts_masked(), cache.liquid_gate.show()),
-        )
+        view::dashboard(menu, cache, self.view(cache.balance_amounts_masked()))
     }
 
     fn update(
@@ -300,7 +296,7 @@ impl State for BuySellPanel {
                                         banks: None,
                                         beneficiary,
                                         sending_quote: false,
-                                        liquid_balance: None,
+                                        spark_balance: None,
                                     }
                                 }
                                 BuyOrSell::Buy => MavapayFlowStep::BuyInputFrom {
@@ -310,7 +306,7 @@ impl State for BuySellPanel {
                                 },
                             },
                             country,
-                            self.breez_client.clone(),
+                            self.spark.clone(),
                         ));
 
                         if matches!(buy_or_sell, panel::BuyOrSell::Sell) {
@@ -322,9 +318,7 @@ impl State for BuySellPanel {
                                     view::BuySellMessage::Mavapay(MavapayMessage::GetPrice),
                                 ))),
                                 iced::Task::done(Message::View(view::Message::BuySell(
-                                    view::BuySellMessage::Mavapay(
-                                        MavapayMessage::GetLiquidWalletBalance,
-                                    ),
+                                    view::BuySellMessage::Mavapay(MavapayMessage::GetSparkBalance),
                                 ))),
                             ]);
                         } else {
@@ -367,7 +361,7 @@ impl State for BuySellPanel {
                                 transactions: None,
                             },
                             country,
-                            self.breez_client.clone(),
+                            self.spark.clone(),
                         ));
 
                         return iced::Task::done(Message::View(view::Message::BuySell(
@@ -398,12 +392,6 @@ impl State for BuySellPanel {
                         }
                         Some(MavapayFlowStep::OrderDetail { loading, .. }) => {
                             *loading = false;
-                        }
-                        Some(MavapayFlowStep::Checkout {
-                            fulfilling_ln_invoice,
-                            ..
-                        }) => {
-                            *fulfilling_ln_invoice = false;
                         }
                         _ => {}
                     }
@@ -804,14 +792,14 @@ mod tests {
         ))
     }
 
+    fn spark() -> Arc<crate::app::wallets::SparkBackend> {
+        Arc::new(crate::app::wallets::SparkBackend::new(Arc::new(
+            crate::app::breez_spark::SparkClient::disconnected_for_test(),
+        )))
+    }
+
     fn panel() -> BuySellPanel {
-        BuySellPanel::new(
-            Network::Bitcoin,
-            wallet(),
-            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-                Network::Bitcoin,
-            )),
-        )
+        BuySellPanel::new(Network::Bitcoin, wallet(), spark())
     }
 
     fn country(code: &str) -> &'static Country {
@@ -1107,7 +1095,7 @@ mod tests {
                     ..
                 }),
                 sending_quote: false,
-                liquid_balance: None,
+                spark_balance: None,
                 ..
             }) if phone_number == "+254700000000"
         ));
@@ -1231,9 +1219,7 @@ mod tests {
                 sending_quote: true,
             },
             country("NG"),
-            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-                Network::Bitcoin,
-            )),
+            spark(),
         ));
         let _ = panel.update(
             None,
