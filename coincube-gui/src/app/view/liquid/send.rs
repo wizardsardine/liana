@@ -1,4 +1,7 @@
 use breez_sdk_liquid::InputType;
+
+#[cfg(test)]
+mod coverage_tests;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::locale::Text as CopyText;
