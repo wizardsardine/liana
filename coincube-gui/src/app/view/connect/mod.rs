@@ -2985,6 +2985,11 @@ mod renewal_banner_tests {
         assert!(has(&security(&account), "Checking the authenticator app"));
 
         account.two_factor.status = TwoFactorStatusView::Unsupported;
+        assert!(has(
+            &security(&account),
+            "can't manage the authenticator app"
+        ));
+        account.two_factor.status = TwoFactorStatusView::Failed;
         assert!(has(&security(&account), "Couldn't check whether"));
 
         let status = |enabled, remaining| {

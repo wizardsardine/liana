@@ -1753,8 +1753,9 @@ pub enum TwoFactorStatusResult {
     Failed(UserError),
 }
 
-/// Devices & security › Authenticator app and Backup codes. Each async
-/// result carries the session generation it was started in.
+/// Devices & security › Authenticator app and Backup codes. `StatusLoaded`
+/// carries the session generation it was started in; the other results carry
+/// the panel request token (`TwoFactorSettings::op`).
 #[derive(Debug, Clone)]
 pub enum TwoFactorSettingsMessage {
     StatusLoaded(TwoFactorStatusResult, u64),

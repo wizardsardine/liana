@@ -179,7 +179,10 @@ impl std::fmt::Display for CoincubeError {
                 write!(f, "Rate limited — retry after {}s", retry_after.as_secs())
             }
             CoincubeError::SecondFactorRequired(_) => {
-                write!(f, "This account needs a code from its authenticator app")
+                write!(
+                    f,
+                    "This account uses an authenticator app, and this screen can't ask for its code yet."
+                )
             }
         }
     }

@@ -347,7 +347,19 @@ pub(super) fn settings_ux<'a>(acct: &'a ConnectAccountPanel) -> Element<'a, Conn
                 .push(horizontal_rule())
                 .into();
         }
-        TwoFactorStatusView::Unsupported | TwoFactorStatusView::Failed => {
+        TwoFactorStatusView::Unsupported => {
+            return col
+                .push(setting_row(
+                    "Authenticator app",
+                    "COINCUBE | Connect can't manage the authenticator app from this app yet."
+                        .to_string(),
+                    None,
+                    None,
+                ))
+                .push(horizontal_rule())
+                .into();
+        }
+        TwoFactorStatusView::Failed => {
             return col
                 .push(setting_row(
                     "Authenticator app",

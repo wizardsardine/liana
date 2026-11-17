@@ -1068,7 +1068,10 @@ const BACKUP_CODE_ALPHABET: &str = "23456789abcdefghjkmnpqrstuvwxyz";
 /// characters (12 plus two dashes) for a backup code.
 pub fn filter_second_factor_input(raw: &str, backup: bool) -> String {
     if backup {
-        raw.trim().chars().take(14).collect()
+        raw.chars()
+            .filter(|c| !c.is_whitespace())
+            .take(14)
+            .collect()
     } else {
         raw.chars().filter(|c| c.is_ascii_digit()).take(6).collect()
     }
@@ -1133,6 +1136,12 @@ pub struct TwoFactorSettings {
     pub note: Option<TwoFactorNote>,
     /// Outcome of "Save as text file…" for the codes on screen.
     pub saved_to_file: Option<Result<(), String>>,
+    /// Identifies the panel request in flight. Not `session_generation`:
+    /// a sibling tab's refresh of the same account bumps that, and dropping
+    /// an `Enabled` or `Regenerated` result for it would strand `busy` and
+    /// lose backup codes the server has already issued. Only leaving the
+    /// account (`reset`) or starting another request retires a token.
+    op: u64,
 }
 
 impl TwoFactorSettings {
@@ -1144,7 +1153,18 @@ impl TwoFactorSettings {
 
     fn reset(&mut self) {
         self.clear_entry();
+        // Keep counting so a result started before the reset never matches.
+        let op = self.op.wrapping_add(1);
         *self = Self::default();
+        self.op = op;
+    }
+
+    /// Starts a panel request and returns the token its result must carry.
+    fn begin(&mut self) -> u64 {
+        self.op = self.op.wrapping_add(1);
+        self.busy = true;
+        self.wrong = false;
+        self.op
     }
 }
 
@@ -2683,6 +2703,7 @@ impl ConnectAccountPanel {
                     return iced::Task::none();
                 }
                 self.auth_commit_pending = false;
+                self.signing_in_with_authenticator = false;
                 self.error = Some(PanelError::retryable(
                     UserError::new(
                         "Connect session changed",
@@ -2707,6 +2728,12 @@ impl ConnectAccountPanel {
                     return iced::Task::none();
                 }
                 self.session_generation += 1;
+                // Another account's session: nothing about this account's
+                // authenticator carries over.
+                if self.user.as_ref().is_some_and(|u| u.id != user.id) {
+                    self.two_factor.reset();
+                    self.backup_codes_notice = None;
+                }
                 self.user = Some(user);
                 self.plan = plan;
                 // Phase 6: gate on the duress check FIRST — don't reveal the
@@ -4366,6 +4393,7 @@ impl ConnectAccountPanel {
                     // Confirmed not in duress — NOW reveal the dashboard.
                     DuressCheckOutcome::Ok(s) => {
                         self.step = ConnectFlowStep::Dashboard;
+                        self.signing_in_with_authenticator = false;
                         self.signed_out_by = None;
                         self.unverified = None;
                         // Plan & billing opened while the session was still
@@ -4549,13 +4577,6 @@ impl ConnectAccountPanel {
         });
     }
 
-    /// Tears down all session state: bumps `session_generation` (so any
-    /// in-flight async results keyed to the old generation are ignored),
-    /// clears cached user/plan/feature data, scrubs secrets, drops the keyring
-    /// session, and replaces the JWT-bearing client with a fresh anonymous one.
-    /// Does NOT set `self.step` — the caller picks the destination (Login, an
-    /// error screen, etc.). Shared by `LogOut` and the duress-gate 401 path so
-    /// a rejected session can't leave stale state behind for the next `Init`.
     fn update_two_factor(&mut self, msg: TwoFactorSettingsMessage) -> iced::Task<Message> {
         let gen = self.session_generation;
         let wrap = |m: TwoFactorSettingsMessage| {
@@ -4569,17 +4590,28 @@ impl ConnectAccountPanel {
                 if g != gen {
                     return iced::Task::none();
                 }
-                tf.status = match result {
-                    TwoFactorStatusResult::Loaded(status) => TwoFactorStatusView::Loaded(status),
-                    TwoFactorStatusResult::Unsupported => TwoFactorStatusView::Unsupported,
+                // A failed refresh keeps a status already known: replacing it
+                // would hide an open panel, including codes shown only once.
+                let known = matches!(tf.status, TwoFactorStatusView::Loaded(_));
+                match result {
+                    TwoFactorStatusResult::Loaded(status) => {
+                        tf.status = TwoFactorStatusView::Loaded(status);
+                    }
+                    TwoFactorStatusResult::Unsupported => {
+                        if !known {
+                            tf.status = TwoFactorStatusView::Unsupported;
+                        }
+                    }
                     TwoFactorStatusResult::Failed(error) => {
                         log::warn!(
                             "[CONNECT] authenticator status unavailable: {}",
                             error.title
                         );
-                        TwoFactorStatusView::Failed
+                        if !known {
+                            tf.status = TwoFactorStatusView::Failed;
+                        }
                     }
-                };
+                }
             }
 
             TwoFactorSettingsMessage::StartSetup => {
@@ -4591,16 +4623,16 @@ impl ConnectAccountPanel {
                 tf.clear_entry();
                 tf.note = None;
                 tf.panel = TwoFactorPanel::LoadingSetup;
-                tf.busy = true;
+                let op = tf.begin();
                 let client = self.client.clone();
                 return iced::Task::perform(
                     async move { client.generate_totp().await.map_err(|e| (&e).into()) },
-                    move |res| wrap(TwoFactorSettingsMessage::SetupLoaded(res, gen)),
+                    move |res| wrap(TwoFactorSettingsMessage::SetupLoaded(res, op)),
                 );
             }
 
             TwoFactorSettingsMessage::SetupLoaded(res, g) => {
-                if g != gen || !matches!(tf.panel, TwoFactorPanel::LoadingSetup) {
+                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::LoadingSetup) {
                     return iced::Task::none();
                 }
                 tf.busy = false;
@@ -4636,8 +4668,7 @@ impl ConnectAccountPanel {
                 {
                     return iced::Task::none();
                 }
-                tf.busy = true;
-                tf.wrong = false;
+                let op = tf.begin();
                 let code = zeroize::Zeroizing::new(tf.code.0.clone());
                 let client = self.client.clone();
                 return iced::Task::perform(
@@ -4647,12 +4678,12 @@ impl ConnectAccountPanel {
                             .await
                             .map_err(|e| CodeFailure::classify(&e))
                     },
-                    move |res| wrap(TwoFactorSettingsMessage::Enabled(res, gen)),
+                    move |res| wrap(TwoFactorSettingsMessage::Enabled(res, op)),
                 );
             }
 
             TwoFactorSettingsMessage::Enabled(res, g) => {
-                if g != gen || !matches!(tf.panel, TwoFactorPanel::Setup { .. }) {
+                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Setup { .. }) {
                     return iced::Task::none();
                 }
                 match res {
@@ -4754,8 +4785,7 @@ impl ConnectAccountPanel {
                 {
                     return iced::Task::none();
                 }
-                tf.busy = true;
-                tf.wrong = false;
+                let op = tf.begin();
                 let code = zeroize::Zeroizing::new(tf.code.0.clone());
                 let client = self.client.clone();
                 return iced::Task::perform(
@@ -4765,12 +4795,12 @@ impl ConnectAccountPanel {
                             .await
                             .map_err(|e| CodeFailure::classify(&e))
                     },
-                    move |res| wrap(TwoFactorSettingsMessage::Regenerated(res, gen)),
+                    move |res| wrap(TwoFactorSettingsMessage::Regenerated(res, op)),
                 );
             }
 
             TwoFactorSettingsMessage::Regenerated(res, g) => {
-                if g != gen || !matches!(tf.panel, TwoFactorPanel::Regenerate) {
+                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Regenerate) {
                     return iced::Task::none();
                 }
                 match res {
@@ -4821,8 +4851,7 @@ impl ConnectAccountPanel {
                 if tf.busy || !second_factor_code_complete(&tf.code.0, backup) {
                     return iced::Task::none();
                 }
-                tf.busy = true;
-                tf.wrong = false;
+                let op = tf.begin();
                 let code = zeroize::Zeroizing::new(tf.code.0.clone());
                 let client = self.client.clone();
                 return iced::Task::perform(
@@ -4837,12 +4866,12 @@ impl ConnectAccountPanel {
                             .await
                             .map_err(|e| CodeFailure::classify(&e))
                     },
-                    move |res| wrap(TwoFactorSettingsMessage::Disabled(res, gen)),
+                    move |res| wrap(TwoFactorSettingsMessage::Disabled(res, op)),
                 );
             }
 
             TwoFactorSettingsMessage::Disabled(res, g) => {
-                if g != gen || !matches!(tf.panel, TwoFactorPanel::Disable { .. }) {
+                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Disable { .. }) {
                     return iced::Task::none();
                 }
                 match res {
@@ -4904,6 +4933,13 @@ impl ConnectAccountPanel {
         self.update_message(ConnectAccountMessage::Error(error))
     }
 
+    /// Tears down all session state: bumps `session_generation` (so any
+    /// in-flight async results keyed to the old generation are ignored),
+    /// clears cached user/plan/feature data, scrubs secrets, drops the keyring
+    /// session, and replaces the JWT-bearing client with a fresh anonymous one.
+    /// Does NOT set `self.step` — the caller picks the destination (Login, an
+    /// error screen, etc.). Shared by `LogOut` and the duress-gate 401 path so
+    /// a rejected session can't leave stale state behind for the next `Init`.
     fn clear_session(&mut self) {
         self.auth_commit_pending = false;
         self.unverified = None;
@@ -5391,6 +5427,7 @@ impl ConnectAccountPanel {
             DuressMessage::FinishRecovery => {
                 self.scrub_recovery_passphrase();
                 self.step = ConnectFlowStep::Dashboard;
+                self.signing_in_with_authenticator = false;
                 self.signed_out_by = None;
                 self.unverified = None;
                 self.error = None;
@@ -12980,6 +13017,11 @@ mod two_factor_tests {
         assert!(!second_factor_code_complete("abcd-efgh-jkm0", true));
         assert!(!second_factor_code_complete("abcd-efgh-jkm", true));
         assert_eq!(filter_second_factor_input("12a3 4567", false), "123456");
+        // A pasted code with spaced dashes still fits and completes.
+        assert!(second_factor_code_complete(
+            &filter_second_factor_input("ABCD - EFGH - JKMN", true),
+            true
+        ));
         assert_eq!(
             filter_second_factor_input(" abcd-efgh-jkmn-extra ", true),
             "abcd-efgh-jkmn"
@@ -13198,17 +13240,19 @@ mod two_factor_tests {
             TwoFactorPanel::LoadingSetup
         ));
         // A result from an earlier session is dropped.
+        let op = panel.two_factor.op;
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::SetupLoaded(Ok(setup()), gen + 1),
+            TwoFactorSettingsMessage::SetupLoaded(Ok(setup()), op + 1),
         );
         assert!(matches!(
             panel.two_factor.panel,
             TwoFactorPanel::LoadingSetup
         ));
+        let op = panel.two_factor.op;
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::SetupLoaded(Ok(setup()), gen),
+            TwoFactorSettingsMessage::SetupLoaded(Ok(setup()), op),
         );
         assert!(matches!(
             &panel.two_factor.panel,
@@ -13229,9 +13273,10 @@ mod two_factor_tests {
         );
         settings(&mut panel, TwoFactorSettingsMessage::ConfirmSetup);
         assert!(panel.two_factor.busy);
+        let op = panel.two_factor.op;
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::Enabled(Err(CodeFailure::Wrong), gen),
+            TwoFactorSettingsMessage::Enabled(Err(CodeFailure::Wrong), op),
         );
         assert!(panel.two_factor.wrong);
         assert!(!panel.two_factor.busy);
@@ -13244,9 +13289,10 @@ mod two_factor_tests {
         );
         assert!(!panel.two_factor.wrong);
         settings(&mut panel, TwoFactorSettingsMessage::ConfirmSetup);
+        let op = panel.two_factor.op;
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::Enabled(Ok(codes(10)), gen),
+            TwoFactorSettingsMessage::Enabled(Ok(codes(10)), op),
         );
         assert!(matches!(
             &panel.two_factor.panel,
@@ -13298,9 +13344,10 @@ mod two_factor_tests {
         );
         settings(&mut panel, TwoFactorSettingsMessage::ConfirmRegenerate);
         assert!(panel.two_factor.busy);
+        let op = panel.two_factor.op;
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::Regenerated(Ok(codes(10)), gen),
+            TwoFactorSettingsMessage::Regenerated(Ok(codes(10)), op),
         );
         assert!(matches!(
             panel.two_factor.panel,
@@ -13333,9 +13380,10 @@ mod two_factor_tests {
         settings(&mut panel, TwoFactorSettingsMessage::ConfirmDisable);
         assert!(panel.two_factor.busy);
         // An expired session is not a wrong code: it goes to the error card.
+        let op = panel.two_factor.op;
         settings(
             &mut panel,
-            TwoFactorSettingsMessage::Disabled(Err(CodeFailure::Expired), gen),
+            TwoFactorSettingsMessage::Disabled(Err(CodeFailure::Expired), op),
         );
         assert!(!panel.two_factor.wrong);
         assert!(panel.error.is_some());
@@ -13346,7 +13394,8 @@ mod two_factor_tests {
             TwoFactorSettingsMessage::CodeChanged(input("abcd-efgh-jkmn")),
         );
         settings(&mut panel, TwoFactorSettingsMessage::ConfirmDisable);
-        settings(&mut panel, TwoFactorSettingsMessage::Disabled(Ok(()), gen));
+        let op = panel.two_factor.op;
+        settings(&mut panel, TwoFactorSettingsMessage::Disabled(Ok(()), op));
         assert!(!panel.two_factor.status.enabled());
         assert!(matches!(panel.two_factor.panel, TwoFactorPanel::Closed));
         assert_eq!(panel.two_factor.note, Some(TwoFactorNote::TurnedOff));
@@ -13367,6 +13416,102 @@ mod two_factor_tests {
         assert!(panel.error.is_none());
         // Turning on is offered only once the status says it is off.
         settings(&mut panel, TwoFactorSettingsMessage::StartSetup);
+        assert!(matches!(panel.two_factor.panel, TwoFactorPanel::Closed));
+    }
+
+    #[test]
+    fn a_same_account_refresh_does_not_drop_issued_codes() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.user = Some(login().user);
+        let gen = panel.session_generation();
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::StatusLoaded(
+                TwoFactorStatusResult::Loaded(TwoFactorStatus {
+                    enabled: true,
+                    remaining: 4,
+                    total: 10,
+                    generated_at: None,
+                }),
+                gen,
+            ),
+        );
+        settings(&mut panel, TwoFactorSettingsMessage::AskRegenerate);
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::CodeChanged(input("123456")),
+        );
+        settings(&mut panel, TwoFactorSettingsMessage::ConfirmRegenerate);
+        let op = panel.two_factor.op;
+        // A sibling tab's refresh of the same account lands mid-request.
+        let _ = panel.update_message(ConnectAccountMessage::SessionLoaded {
+            user: login().user,
+            plan: None,
+            epoch: panel.auth_epoch(),
+        });
+        assert_ne!(panel.session_generation(), gen);
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::Regenerated(Ok(codes(10)), op),
+        );
+        assert!(!panel.two_factor.busy);
+        assert!(matches!(
+            panel.two_factor.panel,
+            TwoFactorPanel::Codes {
+                regenerated: true,
+                ..
+            }
+        ));
+
+        // A failed status refresh keeps the codes on screen.
+        let gen_now = panel.session_generation();
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::StatusLoaded(
+                TwoFactorStatusResult::Failed(UserError::new("x", "y", "z", true)),
+                gen_now,
+            ),
+        );
+        assert!(panel.two_factor.status.enabled());
+    }
+
+    #[test]
+    fn another_accounts_session_resets_the_authenticator_state() {
+        let mut panel = ConnectAccountPanel::new();
+        panel.user = Some(login().user);
+        panel.backup_codes_notice = Some(3);
+        let gen = panel.session_generation();
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::StatusLoaded(
+                TwoFactorStatusResult::Loaded(TwoFactorStatus {
+                    enabled: false,
+                    remaining: 0,
+                    total: 0,
+                    generated_at: None,
+                }),
+                gen,
+            ),
+        );
+        settings(&mut panel, TwoFactorSettingsMessage::StartSetup);
+        let op = panel.two_factor.op;
+        let mut other = login().user;
+        other.id = 2;
+        let _ = panel.update_message(ConnectAccountMessage::SessionLoaded {
+            user: other,
+            plan: None,
+            epoch: panel.auth_epoch(),
+        });
+        assert_eq!(panel.backup_codes_notice, None);
+        assert!(matches!(
+            panel.two_factor.status,
+            TwoFactorStatusView::Loading
+        ));
+        // The old account's setup can't land on the new one.
+        settings(
+            &mut panel,
+            TwoFactorSettingsMessage::SetupLoaded(Ok(setup()), op),
+        );
         assert!(matches!(panel.two_factor.panel, TwoFactorPanel::Closed));
     }
 
