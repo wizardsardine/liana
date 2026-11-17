@@ -15,7 +15,7 @@
 //! node-setup steps gives the user an explicit PIN-creation pad and
 //! lets `install_local_wallet` store the mnemonic in the same shape a
 //! fresh-install Cube uses. Downstream, the tab-level `CubeSaved`
-//! handler can load a BreezClient against that blob before handing
+//! handler can resolve the Cube signer and load Spark against that blob before handing
 //! off to the Loader.
 //!
 //! # Scope note
