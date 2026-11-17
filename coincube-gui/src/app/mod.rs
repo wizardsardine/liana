@@ -3699,13 +3699,7 @@ impl App {
             load_connect_transport_key(&data_dir.network_directory(cache.chain()));
         let cache = cache;
         let config_arc = Arc::new(config);
-        let wallet_registry = match &breez_client {
-            Some(client) => crate::app::wallets::WalletRegistry::with_spark(
-                Arc::new(LiquidBackend::new(client.clone())),
-                spark_backend.clone(),
-            ),
-            None => crate::app::wallets::WalletRegistry::vault_only(),
-        };
+        let wallet_registry = crate::app::wallets::WalletRegistry::new(spark_backend.clone());
 
         // A Vault restored from a Recovery Kit lands its descriptors in a
         // watchonly wallet that has never scanned them, so it owes a rescan from
@@ -4031,13 +4025,7 @@ impl App {
             (breez_client, cube_signer, spark_backend)
         };
         let config_arc = Arc::new(config);
-        let wallet_registry = match &breez_client {
-            Some(client) => crate::app::wallets::WalletRegistry::with_spark(
-                Arc::new(LiquidBackend::new(client.clone())),
-                spark_backend.clone(),
-            ),
-            None => crate::app::wallets::WalletRegistry::vault_only(),
-        };
+        let wallet_registry = crate::app::wallets::WalletRegistry::new(spark_backend.clone());
         // Load bitcoin_unit and display_mode from settings if available
         let network_dir = datadir.network_directory(cube_settings.network);
         let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -12173,6 +12161,58 @@ pub(crate) mod tests {
             app.fork_connect_client = Some(client);
         }
         app
+    }
+
+    /// Spark rides on its own backend, not on a Liquid client: a Cube opened
+    /// with a Spark backend and no Liquid client still exposes Spark to the
+    /// registry, the event subscription and the balance and send calls.
+    #[tokio::test]
+    async fn a_spark_backend_without_a_liquid_client_still_exposes_spark() {
+        use coincube_spark_protocol::Method;
+        let root = std::env::temp_dir().join(format!("spark-only-{}", uuid::Uuid::new_v4()));
+        let chain = crate::chain::ChainId::Signet;
+        let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+        let spark = Arc::new(crate::app::wallets::SparkBackend::new(Arc::new(client)));
+        let (app, startup) = App::without_wallet(
+            None,
+            None,
+            Some(spark.clone()),
+            Config::new(false),
+            CoincubeDirectory::new(root.clone()),
+            chain.bitcoin_network(),
+            settings::CubeSettings::new("Spark".into(), chain),
+            None,
+        );
+        drop(startup);
+
+        let exposed = app.spark_backend().expect("Spark stays available");
+        assert!(Arc::ptr_eq(&exposed, &spark));
+        assert!(app
+            .wallet_registry
+            .spark()
+            .is_some_and(|s| Arc::ptr_eq(s, &spark)));
+        assert!(matches!(
+            app.wallet_registry.route_lightning_address(),
+            Some(crate::app::wallets::LightningRoute::Spark(_))
+        ));
+        // The event subscription is built from the registry's backend.
+        let _events = app.subscription();
+
+        // Balance: the backend's `get_info` reaches the bridge.
+        let backend = exposed.clone();
+        let balance = tokio::spawn(async move { backend.get_info().await });
+        let request = requests.recv().await.expect("a balance request");
+        assert!(matches!(request.method, Method::GetInfo(_)));
+        balance.abort();
+
+        // Send: the backend's prepare step reaches the bridge too.
+        let backend = exposed.clone();
+        let send =
+            tokio::spawn(async move { backend.prepare_send("sp1test".into(), Some(1_000)).await });
+        let request = requests.recv().await.expect("a send request");
+        assert!(matches!(request.method, Method::PrepareSend(_)));
+        send.abort();
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A Bitcoin Blake2b Cube without a Vault opens like a Bitcoin Cube
