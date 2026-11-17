@@ -93,6 +93,10 @@ pub struct Loader {
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
     pub breez_client: Option<std::sync::Arc<BreezClient>>,
+    /// The Cube master signer resolved at unlock, carried to [`app::App::new`]
+    /// for the seed-derived features. Never set on Bitcoin Blake2b, which
+    /// carries [`Self::cube_encryption_key`] instead.
+    pub cube_signer: Option<app::cube_signer::CubeSigner>,
     pub connect_client: Option<crate::services::coincube::CoincubeClient>,
     pub cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
     /// Optional Spark backend loaded alongside `breez_client` in the PIN
@@ -160,6 +164,7 @@ pub enum Message {
     ),
     BreezLoaded {
         breez: std::sync::Arc<BreezClient>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
         cache: Cache,
         wallet: Arc<Wallet>,
@@ -188,6 +193,7 @@ impl Loader {
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
         breez_client: Option<std::sync::Arc<BreezClient>>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     ) -> (Self, Task<Message>) {
         Self::build(
@@ -199,6 +205,7 @@ impl Loader {
             wallet_settings,
             cube_settings,
             breez_client,
+            cube_signer,
             spark_backend,
             None,
             None,
@@ -218,6 +225,7 @@ impl Loader {
         wallet_settings: WalletSettings,
         cube_settings: CubeSettings,
         breez_client: Option<std::sync::Arc<BreezClient>>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
         connect_client: Option<crate::services::coincube::CoincubeClient>,
     ) -> (Self, Task<Message>) {
@@ -230,6 +238,7 @@ impl Loader {
             Some(wallet_settings),
             cube_settings,
             breez_client,
+            cube_signer,
             spark_backend,
             connect_client,
             None,
@@ -257,6 +266,7 @@ impl Loader {
             cube_settings,
             None,
             None,
+            None,
             Some(client),
             Some(cube_encryption_key),
         )
@@ -277,6 +287,7 @@ impl Loader {
             None,
             Some(wallet_settings),
             cube_settings,
+            None,
             None,
             None,
             None,
@@ -307,6 +318,7 @@ impl Loader {
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
         breez_client: Option<Arc<BreezClient>>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<Arc<app::wallets::SparkBackend>>,
         connect_client: Option<crate::services::coincube::CoincubeClient>,
         cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
@@ -359,6 +371,7 @@ impl Loader {
                         })
                         || cube_encryption_key.is_none()
                         || breez_client.is_some()
+                        || cube_signer.is_some()
                         || spark_backend.is_some()
                         || backup.is_some()
                         || wallet_settings
@@ -442,6 +455,7 @@ impl Loader {
                 cube_settings,
                 backup,
                 breez_client,
+                cube_signer,
                 spark_backend,
                 connect_client,
                 cube_encryption_key,
@@ -803,6 +817,7 @@ impl Loader {
                     self.wallet_settings.clone(),
                     self.cube_settings.clone(),
                     self.breez_client.clone(),
+                    self.cube_signer.clone(),
                     self.spark_backend.clone(),
                     self.connect_client.clone(),
                     self.cube_encryption_key.clone(),
@@ -2219,6 +2234,7 @@ mod tests {
             cube_settings(),
             None,
             None,
+            None,
         )
         .0
     }
@@ -2468,6 +2484,7 @@ mod chain_identity_tests {
                 cube(chain),
                 None,
                 None,
+                None,
             );
             match &loader.step {
                 Step::Error(e) => assert_eq!(e.to_string(), BTCB2_DORMANT_REASON, "{:?}", chain),
@@ -2497,6 +2514,7 @@ mod chain_identity_tests {
             cube(ChainId::Signet),
             None,
             None,
+            None,
         );
         assert!(matches!(&loader.step, Step::Error(e) if matches!(**e, Error::Unexpected(_))));
         // The agreeing case is untouched.
@@ -2508,6 +2526,7 @@ mod chain_identity_tests {
             None,
             None,
             cube(ChainId::Signet),
+            None,
             None,
             None,
         );
@@ -3385,6 +3404,7 @@ mod bootstrap_backend_selection_tests {
             backup,
             wallet_settings,
             cube(chain),
+            None,
             None,
             None,
             client,

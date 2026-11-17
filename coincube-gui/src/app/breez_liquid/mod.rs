@@ -11,8 +11,9 @@ pub use breez_sdk_liquid::prelude::{GetInfoResponse, ReceivePaymentResponse, Sen
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use crate::app::cube_signer::{CubeSigner, CubeSignerError};
 use crate::app::seed_source::SeedSource;
 
 #[derive(Debug, Clone)]
@@ -98,9 +99,11 @@ pub fn local_state_exists(datadir: &Path, network: Network) -> bool {
 /// memory. [`SeedSource::EncryptedFile`] is the unchanged PIN-Cube path,
 /// session-cache fast path included.
 ///
-/// The master signer is always loaded — its mnemonic backs seed-derived
-/// features (Spark, P2P/Mostro identity, Connect blinding and the Vault
-/// builder's encryption key).
+/// The client carries the Cube master signer for Liquid's own use only. The
+/// features that derive from the master seed (P2P/Mostro identity, Connect
+/// blinding, the Vault builder's encryption key) take a
+/// [`CubeSigner`] instead (Liquid removal PR 2); unlock resolves one and
+/// builds this client around it with [`client_for_cube_signer`].
 ///
 /// The Liquid SDK is **never connected** (Liquid removal, desktop PR 1; plan
 /// `company-brain/plans/liquid-removal/`). Liquid has been hidden for everyone
@@ -114,50 +117,28 @@ pub async fn load_breez_client(
     seed: SeedSource<'_>,
     cube_id: &str,
 ) -> Result<Arc<BreezClient>, BreezError> {
-    let master_signer_fingerprint = seed.fingerprint();
+    // The Cube master signer is resolved by [`CubeSigner::resolve`], with the
+    // same `SeedSource::resolve` call and error mapping this function used to
+    // carry inline (session-cache fast path included): an absent signer gives
+    // a signer-less client so a seed-less Cube still loads, and every other
+    // failure (wrong PIN, decryption, IO) propagates.
+    match CubeSigner::resolve(datadir, network, &seed, cube_id) {
+        Ok(signer) => Ok(client_for_cube_signer(network, signer.as_ref())),
+        Err(CubeSignerError::NotFound(fingerprint)) => Err(BreezError::SignerNotFound(fingerprint)),
+        Err(CubeSignerError::Signer(msg)) => Err(BreezError::SignerError(msg)),
+    }
+}
 
-    // `SeedSource::resolve` prefers the signer the unlock already decrypted.
-    // Verifying the PIN is a full Argon2id pass over the seed file, so
-    // re-reading it here would pay ~831 ms for a result we are already
-    // holding. It falls back to disk whenever the session has nothing for this
-    // Cube+fingerprint — every other entry point (restore, login, tests) takes
-    // that path unchanged.
-    let liquid_signer = match seed.resolve(datadir, network, cube_id) {
-        Ok(signer) => Arc::new(Mutex::new(signer)),
-        Err(e) => {
-            let mapped = match e {
-                coincube_core::signer::SignerError::MnemonicStorage(io_err)
-                    if io_err.kind() == std::io::ErrorKind::NotFound =>
-                {
-                    BreezError::SignerNotFound(master_signer_fingerprint)
-                }
-                coincube_core::signer::SignerError::SignerNotFound(fingerprint) => {
-                    BreezError::SignerNotFound(fingerprint)
-                }
-                _ => BreezError::SignerError(e.to_string()),
-            };
-            // A genuinely *absent* signer (seed-less / watch-only cube) is not
-            // fatal now that Liquid never connects — degrade to a signer-less
-            // disconnected client so the cube still loads. Before PR 1 this
-            // only applied off mainnet; on mainnet the caller's fallback did
-            // the same thing after logging a warning. Every other failure
-            // (wrong PIN, decryption, IO errors) propagates so it surfaces as
-            // a real error rather than being silently masked.
-            if matches!(mapped, BreezError::SignerNotFound(_)) {
-                log::info!(
-                    "No master signer for cube on {network}: {mapped}; \
-                     using a signer-less disconnected client"
-                );
-                return Ok(Arc::new(BreezClient::disconnected(network)));
-            }
-            return Err(mapped);
-        }
-    };
-
-    Ok(Arc::new(BreezClient::disconnected_with_signer(
-        network,
-        liquid_signer,
-    )))
+/// The disconnected Liquid client for an unlocked Cube, sharing the Cube's
+/// master signer instance (or signer-less for a seed-less Cube).
+///
+/// Liquid only: no other feature reads the signer through the client any
+/// more; they take the [`CubeSigner`] itself (Liquid removal PR 2).
+pub fn client_for_cube_signer(network: Network, signer: Option<&CubeSigner>) -> Arc<BreezClient> {
+    Arc::new(match signer {
+        Some(signer) => BreezClient::disconnected_with_signer(network, signer.liquid_handle()),
+        None => BreezClient::disconnected(network),
+    })
 }
 
 #[cfg(test)]

@@ -674,7 +674,7 @@ pub fn derive_connect_encryption_pubkey(
             CubeEncryptionKey::derive(&signer, chain.bitcoin_network()).public_key_hex(),
         ),
         // No seed file for this fingerprint: nothing to derive, and nothing
-        // wrong. Mapped the same way `load_breez_client` maps an absent signer.
+        // wrong. Mapped the same way `CubeSigner::resolve` maps an absent signer.
         Err(SignerError::SignerNotFound(_)) => ConnectEncryptionKey::NoSeed,
         Err(SignerError::MnemonicStorage(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
             ConnectEncryptionKey::NoSeed

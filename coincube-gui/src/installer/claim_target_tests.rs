@@ -158,6 +158,7 @@ async fn a_claim_target_reuses_the_descriptor_and_takes_its_own_cube_identity() 
         None,
         None,
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     )
@@ -274,6 +275,7 @@ async fn a_fork_installer_is_never_handed_the_callers_breez_or_spark_clients() {
         None,
         Some(breez.clone()),
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     )
@@ -325,6 +327,7 @@ async fn an_unauthenticated_claim_is_refused_before_anything_is_built() {
         None,
         None,
         None,
+        None,
         false,
         None,
     );
@@ -360,6 +363,7 @@ async fn the_fork_chain_refuses_every_flow_but_creation_claim_and_cube_restore()
             None,
             None,
             None,
+            None,
             false,
             Some(authenticated_client(&server)),
         );
@@ -378,6 +382,7 @@ async fn the_fork_chain_refuses_every_flow_but_creation_claim_and_cube_restore()
             ChainId::BitcoinBlake2b,
             flow.clone(),
             false,
+            None,
             None,
             None,
             None,
@@ -410,6 +415,7 @@ async fn the_claim_flow_never_asks_for_a_pin_a_descriptor_or_the_mnemonic_again(
             from_cube: Box::new(source),
         },
         true,
+        None,
         None,
         None,
         None,
@@ -568,6 +574,7 @@ async fn a_claim_install_writes_a_seed_the_minted_cube_can_open() {
         None,
         None,
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     )
@@ -668,6 +675,7 @@ async fn a_claim_is_refused_when_the_source_cube_has_no_pin_in_this_session() {
         None,
         None,
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     );
@@ -692,6 +700,7 @@ async fn a_claim_is_refused_when_the_source_cube_has_no_pin_in_this_session() {
             from_cube: Box::new(lapsed),
         },
         true,
+        None,
         None,
         None,
         None,
@@ -737,6 +746,7 @@ async fn a_passkey_source_cube_can_create_its_copy() {
             from_cube: Box::new(passkey_source),
         },
         true,
+        None,
         None,
         None,
         None,
@@ -793,6 +803,7 @@ async fn backing_out_of_a_claim_returns_to_the_source_cube_not_to_home() {
         Some(Arc::new(
             crate::app::breez_liquid::BreezClient::disconnected(Network::Bitcoin),
         )),
+        None,
         None,
         false,
         Some(authenticated_client(&server)),
@@ -855,6 +866,7 @@ async fn the_real_install_writes_a_target_the_exit_seams_credential_opens() {
             from_cube: Box::new(source),
         },
         true,
+        None,
         None,
         None,
         None,
@@ -954,6 +966,7 @@ async fn every_exit_from_a_claim_releases_the_parked_source_handle() {
             None,
             Some(breez.clone()),
             None,
+            None,
             false,
             Some(authenticated_client(&server)),
         )
@@ -1044,6 +1057,7 @@ async fn a_claim_interrupted_after_the_seed_write_can_be_retried_after_a_restart
                 from_cube: Box::new(src),
             },
             true,
+            None,
             None,
             None,
             None,
@@ -1264,6 +1278,7 @@ async fn an_install_interrupted_between_the_wallet_and_the_cube_stays_retryable(
             None,
             None,
             None,
+            None,
             false,
             Some(authenticated_client(&server)),
         )
@@ -1449,6 +1464,7 @@ async fn cancelling_a_claim_from_a_legacy_liana_connect_source_returns_to_the_la
             crate::app::breez_liquid::BreezClient::disconnected(Network::Bitcoin),
         )),
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     )
@@ -1537,6 +1553,7 @@ async fn cancelling_a_claim_restores_the_vault_the_source_cube_points_at() {
             crate::app::breez_liquid::BreezClient::disconnected(Network::Bitcoin),
         )),
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     )
@@ -1621,6 +1638,7 @@ async fn completing_copy_setup_returns_to_the_source_without_a_claim_handoff() {
         None,
         None,
         None,
+        None,
         false,
         Some(authenticated_client(&server)),
     )
@@ -1638,7 +1656,7 @@ async fn completing_copy_setup_returns_to_the_source_without_a_claim_handoff() {
     assert_eq!(tab.copy_owner(), Some(owner));
     let messages = tab_outputs(
         tab.update(crate::gui::tab::Message::Install(Message::CubeSaved(
-            Ok((target.clone(), None, None)),
+            Ok((target.clone(), None, None, None)),
             None,
             None,
         ))),
@@ -1679,6 +1697,7 @@ async fn backing_out_of_an_owned_copy_returns_to_the_pane() {
             from_cube: Box::new(source),
         },
         true,
+        None,
         None,
         None,
         None,

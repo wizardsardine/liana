@@ -34,7 +34,8 @@
 //!
 //! It is not a widening of the secret's exposure. The decrypted mnemonic
 //! already sits in process memory for the whole session — inside the
-//! `BreezClient`'s signer and inside the Spark bridge subprocess — so holding
+//! [`crate::app::cube_signer::CubeSigner`] and inside the Spark bridge
+//! subprocess — so holding
 //! one more copy here does not change the threat model. What it does change is
 //! that there is now a single place that drops *all* of it deterministically:
 //! [`close`], called on lock, on idle auto-lock, and on duress activation.

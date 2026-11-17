@@ -50,6 +50,7 @@ fn in_cube_installer(
         Some(cube.clone()),
         None,
         None,
+        None,
         false,
         Some(client),
     );
