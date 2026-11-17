@@ -2900,8 +2900,18 @@ impl Modal for SignModal {
                 }
                 self.error = None;
                 self.signer_notice = None;
+                // An imported wallet signs on a hardware wallet through its
+                // device policy; a paired phone over the local network signs
+                // on the same path as for any Vault.
                 if let Some(imported) = self.wallet.main_descriptor.as_imported().cloned() {
-                    return self.sign_imported_with_device(&imported, requested_fp, tx);
+                    let on_device = self
+                        .hws
+                        .list
+                        .iter()
+                        .any(|hw| hw.fingerprint() == Some(requested_fp) && !hw.is_lan_phone());
+                    if on_device {
+                        return self.sign_imported_with_device(&imported, requested_fp, tx);
+                    }
                 }
                 let selected = self
                     .hws
