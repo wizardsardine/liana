@@ -182,36 +182,47 @@ pub fn verify_replay_protected<C: secp256k1::Verification>(
             )
             .map_err(|_| ConfirmedUnifiedError::PrevoutsLengthMismatch)?;
         let message = secp256k1::Message::from_digest(digest);
-        let mut signatures = 0;
-        for element in stack
-            .iter()
-            .filter(|element| looks_like_der_signature(element))
-        {
-            let (sighash, der) = element.split_last().expect("not empty");
-            if *sighash != UNIFIED_SIGHASH_ALL {
-                return Err(ConfirmedUnifiedError::NotUnified {
-                    input,
-                    sighash: *sighash,
-                });
-            }
-            let mut signature = secp256k1::ecdsa::Signature::from_der(der)
-                .map_err(|_| ConfirmedUnifiedError::InvalidSignature { input })?;
-            // Consensus does not require low S; the digest is what matters.
-            signature.normalize_s();
-            if !keys
-                .iter()
-                .any(|key| secp.verify_ecdsa(&message, &signature, &key.inner).is_ok())
-            {
-                return Err(ConfirmedUnifiedError::InvalidSignature { input });
-            }
-            signatures += 1;
-        }
-        if signatures == 0 {
-            return Err(ConfirmedUnifiedError::Unsigned { input });
-        }
+        let signatures = verify_witness_signatures(stack, &keys, &message, secp, input)?;
         checked += signatures;
     }
     Ok(checked)
+}
+
+fn verify_witness_signatures<C: secp256k1::Verification>(
+    stack: &[&[u8]],
+    keys: &[PublicKey],
+    message: &secp256k1::Message,
+    secp: &secp256k1::Secp256k1<C>,
+    input: usize,
+) -> Result<usize, ConfirmedUnifiedError> {
+    let mut signatures = 0;
+    for element in stack
+        .iter()
+        .filter(|element| looks_like_der_signature(element))
+    {
+        let (sighash, der) = element.split_last().expect("not empty");
+        if *sighash != UNIFIED_SIGHASH_ALL {
+            return Err(ConfirmedUnifiedError::NotUnified {
+                input,
+                sighash: *sighash,
+            });
+        }
+        let mut signature = secp256k1::ecdsa::Signature::from_der(der)
+            .map_err(|_| ConfirmedUnifiedError::InvalidSignature { input })?;
+        // Consensus does not require low S; the digest is what matters.
+        signature.normalize_s();
+        if !keys
+            .iter()
+            .any(|key| secp.verify_ecdsa(message, &signature, &key.inner).is_ok())
+        {
+            return Err(ConfirmedUnifiedError::InvalidSignature { input });
+        }
+        signatures += 1;
+    }
+    if signatures == 0 {
+        return Err(ConfirmedUnifiedError::Unsigned { input });
+    }
+    Ok(signatures)
 }
 
 #[cfg(test)]
