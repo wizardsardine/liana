@@ -683,6 +683,12 @@ impl ImportedBitcoinPanel {
         self.connect_token = client.and_then(CoincubeClient::token).map(str::to_owned);
     }
 
+    /// Keys from recovery words stored in this Cube for the attached wallet,
+    /// once read.
+    pub fn stored_keys(&self) -> Option<usize> {
+        self.stored_keys
+    }
+
     pub fn is_ready(&self) -> bool {
         self.import.is_ready()
             && self.coins.is_some()
@@ -901,7 +907,9 @@ impl ImportedBitcoinPanel {
             // A ready wallet sends and signs on the Vault's own screens,
             // except on Bitcoin Blake2b, where sending is not available.
             Menu::Vault(VaultSubMenu::Send | VaultSubMenu::PSBTs(_)) => self.chain().is_blake2b(),
-            Menu::Vault(VaultSubMenu::Settings(_)) => true,
+            // Vault Settings serves a ready wallet, except Node: its server,
+            // synchronization and wider address search stay here for now.
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node))) => true,
             _ => false,
         }
     }
@@ -6829,6 +6837,19 @@ mod tests {
         assert!(panel.is_ready());
         assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::Send)));
         assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::PSBTs(None))));
+        // Vault Settings serves it, except Node for now.
+        for option in [
+            SettingsOption::Wallet,
+            SettingsOption::ImportExport,
+            SettingsOption::Connections,
+        ] {
+            assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::Settings(Some(option)))));
+        }
+        assert!(
+            panel.handles_route(&Menu::Vault(VaultSubMenu::Settings(Some(
+                SettingsOption::Node
+            ))))
+        );
     }
 
     /// A PSBT built like the daemon's: one coin, an outside payment and

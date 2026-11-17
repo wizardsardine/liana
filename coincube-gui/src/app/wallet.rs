@@ -552,8 +552,10 @@ impl Wallet {
     /// The Vault records which of its keys came from the COINCUBE Keychain,
     /// and none did. An unrecorded Vault may still hold one, so it is not
     /// counted here.
+    /// No phone can ever pair for this wallet: a Vault recorded without a
+    /// Keychain key, or an imported wallet, which never has one.
     pub fn lacks_keychain_key(&self) -> bool {
-        self.keychain_keys_recorded && self.keychain_key_ids.is_empty()
+        self.is_imported() || (self.keychain_keys_recorded && self.keychain_key_ids.is_empty())
     }
 
     /// Record which keys came from the COINCUBE Keychain, and whether that

@@ -171,18 +171,21 @@ fn section_routes(menu: &Menu, cache: &Cache) -> Vec<RouteChoice> {
         ]
         .iter()
         .copied()
-        .filter(|(section, _, _)| {
-            !cache.has_imported_bitcoin || *section != SettingsOption::ImportExport
-        })
         // A Vault without a Keychain key can never pair a phone, so it has
-        // no Keychain tab, except while that tab is the one open.
+        // no Keychain tab, except while that tab is the one open. An imported
+        // wallet never has one, and before its Wallet loads (an unfinished
+        // import) `vault_lacks_keychain_key` is not set yet, so it is hidden
+        // outright.
         .filter(|(section, _, _)| {
             *section != SettingsOption::LocalSigning
-                || !cache.vault_lacks_keychain_key
-                || matches!(
-                    menu,
-                    Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning)))
-                )
+                || (!cache.has_imported_bitcoin
+                    && (!cache.vault_lacks_keychain_key
+                        || matches!(
+                            menu,
+                            Menu::Vault(VaultSubMenu::Settings(Some(
+                                SettingsOption::LocalSigning
+                            )))
+                        )))
         })
         .map(|(section, label, id)| RouteChoice {
             id: match id {
@@ -197,7 +200,7 @@ fn section_routes(menu: &Menu, cache: &Cache) -> Vec<RouteChoice> {
             selected: matches!(menu, Menu::Vault(VaultSubMenu::Settings(Some(current))) if *current == section)
                 || (section == SettingsOption::Wallet
                     && matches!(menu, Menu::Vault(VaultSubMenu::Settings(None)))),
-            enabled: section != SettingsOption::LocalSigning || !cache.has_imported_bitcoin,
+            enabled: true,
         })
         .collect(),
         Some(RouteScope::Spark) => [
@@ -319,20 +322,46 @@ mod tests {
     }
 
     #[test]
-    fn imported_bitcoin_keeps_vault_scope_and_disables_phone_pairing() {
+    fn imported_bitcoin_has_the_vault_tabs_without_phone_pairing() {
+        // As the App sets it: an imported wallet has no Keychain key, so
+        // like such a Vault it has no Mobile tab. Every other tab is there.
         let cache = Cache {
             has_vault: false,
             has_imported_bitcoin: true,
+            vault_lacks_keychain_key: true,
             ..Cache::default()
         };
         let menu = Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Wallet)));
         assert!(scopes(&cache).contains(&RouteScope::Vault));
-        assert!(section_routes(&menu, &cache)
-            .iter()
-            .any(|choice| choice.label == "Mobile" && !choice.enabled));
-        assert!(!section_routes(&menu, &cache)
-            .iter()
-            .any(|choice| choice.label == "Data & exports"));
+        let labels: Vec<_> = section_routes(&menu, &cache)
+            .into_iter()
+            .map(|choice| choice.label)
+            .collect();
+        assert!(!labels.iter().any(|label| label == "Mobile"));
+        for tab in ["Wallet & signers", "Node", "Connections", "Data & exports"] {
+            assert!(labels.iter().any(|label| label == tab), "{}", tab);
+        }
+    }
+
+    /// Before an imported wallet loads (an unfinished import), the
+    /// no-Keychain flag is not set yet. The Mobile tab is still hidden, even
+    /// on its own route.
+    #[test]
+    fn an_unfinished_import_has_no_mobile_tab() {
+        let cache = Cache {
+            has_vault: false,
+            has_imported_bitcoin: true,
+            vault_lacks_keychain_key: false,
+            ..Cache::default()
+        };
+        for menu in [
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Wallet))),
+            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))),
+        ] {
+            assert!(!section_routes(&menu, &cache)
+                .iter()
+                .any(|choice| choice.label == "Mobile"));
+        }
     }
 
     #[test]
@@ -570,13 +599,13 @@ mod tests {
     #[test]
     fn switching_to_a_scope_without_the_tab_opens_its_first() {
         let cache = Cache {
-            has_vault: false,
-            has_imported_bitcoin: true,
+            has_vault: true,
             ..Cache::default()
         };
-        let cube_data = Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::DataExports));
+        // The Vault has no Backup & protection tab.
+        let cube_backup = Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Recovery));
         assert_eq!(
-            scope_route(&cube_data, RouteScope::Vault, &cache),
+            scope_route(&cube_backup, RouteScope::Vault, &cache),
             RouteScope::Vault.landing()
         );
     }
