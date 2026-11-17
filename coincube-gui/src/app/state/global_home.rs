@@ -1548,7 +1548,6 @@ impl State for GlobalHome {
                             .transfer_direction
                             .is_some_and(|direction| direction.is_other_cube())
                         {
-                            let _ = (amount_sat, destination_kind);
                             self.current_view.next();
                             self.finish_other_cube();
                             return Task::none();

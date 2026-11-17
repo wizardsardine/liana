@@ -3,10 +3,11 @@
 //! Architecture
 //! ------------
 //!
-//! The Breez Spark SDK lives in a sibling binary because its dep graph
-//! (rusqlite / libsqlite3-sys / tokio_with_wasm) can't be unified with
-//! breez-sdk-liquid's. See `coincube-spark-bridge/Cargo.toml` for the
-//! companion crate.
+//! The Breez Spark SDK lives in a sibling binary because its `rusqlite` /
+//! `libsqlite3-sys` requirement can't be unified with `coincubed`'s rusqlite
+//! 0.38 fork (Cargo allows one `sqlite3` link per graph; see the root
+//! `Cargo.toml`). See `coincube-spark-bridge/Cargo.toml` for the companion
+//! crate.
 //!
 //! [`SparkClient`] owns a [`tokio::process::Child`] and three background
 //! tokio tasks:
