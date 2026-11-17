@@ -235,6 +235,40 @@ fn payment_matches_intent(
     })
 }
 
+/// Settle what happened to a send whose outcome is unknown.
+///
+/// Two sources, in order of authority: the bridge's own late answer to
+/// `pending.request_id`, then the payment history bounded to the dispatch
+/// time. Anything that can't be established is
+/// [`ReconcileOutcome::Inconclusive`], which never enables a resend. Shared by
+/// the Send panel and Buy/Sell's sell fulfilment, so both follow one rule.
+pub(crate) async fn reconcile_pending_send(
+    backend: &SparkBackend,
+    pending: &PendingSend,
+) -> ReconcileOutcome {
+    if let Some(request_id) = pending.request_id {
+        match backend.client().take_late_outcome(request_id).await {
+            Some(Ok(_sent)) => return ReconcileOutcome::Landed,
+            Some(Err(SparkClientError::BridgeError { message, .. })) => {
+                return ReconcileOutcome::DefinitelyFailed(message);
+            }
+            Some(Err(e)) => return ReconcileOutcome::Inconclusive(e.to_string()),
+            None => {}
+        }
+    }
+
+    match backend.list_payments(Some(50), None).await {
+        Ok(list) => {
+            if payment_matches_intent(&list.payments, pending) {
+                ReconcileOutcome::Landed
+            } else {
+                ReconcileOutcome::NoTrace
+            }
+        }
+        Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
+    }
+}
+
 /// Which guard protects a retry of this prepared payment.
 ///
 /// Decided from the prepare itself rather than from a method-name string, so a
@@ -1059,29 +1093,7 @@ impl SparkSend {
         };
 
         Task::perform(
-            async move {
-                if let Some(request_id) = pending.request_id {
-                    match backend.client().take_late_outcome(request_id).await {
-                        Some(Ok(_sent)) => return ReconcileOutcome::Landed,
-                        Some(Err(SparkClientError::BridgeError { message, .. })) => {
-                            return ReconcileOutcome::DefinitelyFailed(message);
-                        }
-                        Some(Err(e)) => return ReconcileOutcome::Inconclusive(e.to_string()),
-                        None => {}
-                    }
-                }
-
-                match backend.list_payments(Some(50), None).await {
-                    Ok(list) => {
-                        if payment_matches_intent(&list.payments, &pending) {
-                            ReconcileOutcome::Landed
-                        } else {
-                            ReconcileOutcome::NoTrace
-                        }
-                    }
-                    Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
-                }
-            },
+            async move { reconcile_pending_send(&backend, &pending).await },
             |outcome| {
                 Message::View(crate::app::view::Message::SparkSend(
                     SparkSendMessage::ReconcileFinished(outcome),
@@ -2121,7 +2133,7 @@ impl bech32::Checksum for Bolt11Bech32 {
 /// Grammar (BOLT11 §"Human-Readable Part"): `ln` + a currency prefix (`bc`,
 /// `tb`, `bcrt`, …) + an optional amount, which is a decimal followed by an
 /// optional multiplier — `m`/`u`/`n`/`p` for milli/micro/nano/pico-bitcoin.
-fn bolt11_amount_sat(input: &str) -> Option<u64> {
+pub(crate) fn bolt11_amount_sat(input: &str) -> Option<u64> {
     let s = input.trim().to_ascii_lowercase();
     // Wallets and QR codes hand out `lightning:`-scheme URIs as often as bare
     // invoices; anything after a `?` is BIP21-style parameters, not the invoice.
