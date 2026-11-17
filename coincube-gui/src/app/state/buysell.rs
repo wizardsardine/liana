@@ -30,11 +30,7 @@ impl State for BuySellPanel {
         // No pinned page head (plan L3 exception): Buy/Sell keeps its own
         // heading and Back bar inside the provider column, whose steps own
         // them (`view::buysell::panel`).
-        view::dashboard(
-            menu,
-            cache,
-            self.view(cache.balance_amounts_masked(), cache.liquid_gate.show()),
-        )
+        view::dashboard(menu, cache, self.view(cache.balance_amounts_masked()))
     }
 
     fn update(
@@ -47,6 +43,35 @@ impl State for BuySellPanel {
             Message::View(view::Message::BuySell(message)) => message,
             _ => return iced::Task::none(),
         };
+
+        // Replacing the flow while a sell payment is with the Spark bridge
+        // would drop the checkout that is waiting for its answer, and with it
+        // the only record of whether the order was paid. ("Start New
+        // Transaction" sends `ResetWidget`, which can arrive once Mavapay has
+        // already confirmed the order.)
+        if self.sell_payment_in_flight() {
+            match message {
+                // A refreshed token must still be stored and a logout still
+                // happen: hold them until the payment answers.
+                view::BuySellMessage::SetLoginState(..) | view::BuySellMessage::LogOut => {
+                    log::info!(
+                        "[BUYSELL] Deferring a session change until the sell payment answers"
+                    );
+                    self.deferred_session.push(message);
+                    return iced::Task::none();
+                }
+                view::BuySellMessage::ResetWidget
+                | view::BuySellMessage::CountryDetected(..)
+                | view::BuySellMessage::StartSession
+                | view::BuySellMessage::ViewHistory => {
+                    log::warn!(
+                        "[BUYSELL] Ignoring a flow change while a sell payment is in flight"
+                    );
+                    return iced::Task::none();
+                }
+                _ => {}
+            }
+        }
 
         match message {
             view::BuySellMessage::ResetWidget => {
@@ -300,7 +325,7 @@ impl State for BuySellPanel {
                                         banks: None,
                                         beneficiary,
                                         sending_quote: false,
-                                        liquid_balance: None,
+                                        spark_balance: None,
                                     }
                                 }
                                 BuyOrSell::Buy => MavapayFlowStep::BuyInputFrom {
@@ -310,7 +335,7 @@ impl State for BuySellPanel {
                                 },
                             },
                             country,
-                            self.breez_client.clone(),
+                            self.spark.clone(),
                         ));
 
                         if matches!(buy_or_sell, panel::BuyOrSell::Sell) {
@@ -322,9 +347,7 @@ impl State for BuySellPanel {
                                     view::BuySellMessage::Mavapay(MavapayMessage::GetPrice),
                                 ))),
                                 iced::Task::done(Message::View(view::Message::BuySell(
-                                    view::BuySellMessage::Mavapay(
-                                        MavapayMessage::GetLiquidWalletBalance,
-                                    ),
+                                    view::BuySellMessage::Mavapay(MavapayMessage::GetSparkBalance),
                                 ))),
                             ]);
                         } else {
@@ -367,7 +390,7 @@ impl State for BuySellPanel {
                                 transactions: None,
                             },
                             country,
-                            self.breez_client.clone(),
+                            self.spark.clone(),
                         ));
 
                         return iced::Task::done(Message::View(view::Message::BuySell(
@@ -398,12 +421,6 @@ impl State for BuySellPanel {
                         }
                         Some(MavapayFlowStep::OrderDetail { loading, .. }) => {
                             *loading = false;
-                        }
-                        Some(MavapayFlowStep::Checkout {
-                            fulfilling_ln_invoice,
-                            ..
-                        }) => {
-                            *fulfilling_ln_invoice = false;
                         }
                         _ => {}
                     }
@@ -662,8 +679,14 @@ impl State for BuySellPanel {
                         }
                     },
                     (BuySellFlowState::Mavapay(state), view::BuySellMessage::Mavapay(msg)) => {
-                        if let Some(task) = state.update(msg, &self.coincube_client) {
-                            return task.map(Message::View);
+                        let task = state
+                            .update(msg, &self.coincube_client)
+                            .map(|task| task.map(Message::View));
+                        // Once the sell payment has answered, apply any
+                        // session change held back while it was in flight.
+                        let deferred = self.take_deferred_session();
+                        if task.is_some() || !deferred.is_empty() {
+                            return iced::Task::batch(task.into_iter().chain(deferred));
                         }
                     }
                     (BuySellFlowState::Meld(state), view::BuySellMessage::Meld(msg)) => {
@@ -804,14 +827,14 @@ mod tests {
         ))
     }
 
+    fn spark() -> Arc<crate::app::wallets::SparkBackend> {
+        Arc::new(crate::app::wallets::SparkBackend::new(Arc::new(
+            crate::app::breez_spark::SparkClient::disconnected_for_test(),
+        )))
+    }
+
     fn panel() -> BuySellPanel {
-        BuySellPanel::new(
-            Network::Bitcoin,
-            wallet(),
-            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-                Network::Bitcoin,
-            )),
-        )
+        BuySellPanel::new(Network::Bitcoin, wallet(), spark())
     }
 
     fn country(code: &str) -> &'static Country {
@@ -1080,6 +1103,119 @@ mod tests {
         ));
     }
 
+    fn sell_checkout(quote_id: &str, fulfilment: SellFulfilment) -> MavapayState {
+        let quote = crate::app::view::buysell::mavapay::tests::sell_quote(quote_id);
+        MavapayState::new(
+            BuyOrSell::Sell,
+            MavapayFlowStep::Checkout {
+                quote,
+                fulfilled_order: None,
+                invoice_qr_code_data: None,
+                spark_balance: Some(10_000_000),
+                sell: SellPayment {
+                    fulfilment,
+                    ..SellPayment::default()
+                },
+                stream_order_id: None,
+            },
+            country("NG"),
+            spark(),
+        )
+    }
+
+    fn checkout_fulfilment(panel: &BuySellPanel) -> Option<(&str, &SellFulfilment)> {
+        match &panel.step {
+            BuySellFlowState::Mavapay(state) => match state.steps.last() {
+                Some(MavapayFlowStep::Checkout { quote, sell, .. }) => {
+                    Some((quote.id.as_str(), &sell.fulfilment))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// "Start New Transaction" (and every other flow change) is refused while
+    /// a sell payment is with the bridge, and a late success for an earlier
+    /// order doesn't settle the checkout that replaced it.
+    #[test]
+    fn a_sell_payment_in_flight_survives_resets_and_late_answers_stay_with_their_order() {
+        let mut panel = panel();
+        panel.detected_country = Some(country("NG"));
+        panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-a", SellFulfilment::Sending));
+        assert!(panel.sell_payment_in_flight());
+        for change in [
+            view::BuySellMessage::ResetWidget,
+            view::BuySellMessage::StartSession,
+            view::BuySellMessage::ViewHistory,
+            view::BuySellMessage::LogOut,
+        ] {
+            let _ = panel.update(None, &Cache::default(), buysell_msg(change));
+            assert_eq!(
+                checkout_fulfilment(&panel),
+                Some(("quote-a", &SellFulfilment::Sending))
+            );
+        }
+
+        // Order A settled elsewhere and the user moved on to order B, whose
+        // own payment is now out. A's late success must not mark B paid.
+        panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-b", SellFulfilment::Sending));
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::SellInvoiceFulfilled {
+                    quote_id: "quote-a".to_string(),
+                    payment: coincube_spark_protocol::SendPaymentOk {
+                        payment_id: "pay-a".to_string(),
+                        amount_sat: 2_500_000,
+                        fee_sat: 3,
+                    },
+                },
+            )),
+        );
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-b", &SellFulfilment::Sending))
+        );
+
+        // A logout (or a refreshed login) arriving mid-payment is held, not
+        // dropped, and applied once the payment answers.
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::LogOut),
+        );
+        // Two held: this one and the `LogOut` from the loop above.
+        assert_eq!(panel.deferred_session.len(), 2);
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-b", &SellFulfilment::Sending))
+        );
+        let _ = panel.update(
+            None,
+            &Cache::default(),
+            buysell_msg(view::BuySellMessage::Mavapay(
+                MavapayMessage::SellSendFailed {
+                    quote_id: "quote-b".to_string(),
+                    error: "no route".to_string(),
+                },
+            )),
+        );
+        assert_eq!(
+            checkout_fulfilment(&panel),
+            Some(("quote-b", &SellFulfilment::Idle))
+        );
+        assert!(
+            panel.deferred_session.is_empty(),
+            "the held logout was re-dispatched once the payment answered"
+        );
+
+        // At rest, a reset goes through as before.
+        panel.step = BuySellFlowState::Mavapay(sell_checkout("quote-b", SellFulfilment::Idle));
+        assert!(!panel.sell_payment_in_flight());
+    }
+
     #[test]
     fn start_session_initializes_mavapay_sell_for_supported_country() {
         let mut panel = panel();
@@ -1107,7 +1243,7 @@ mod tests {
                     ..
                 }),
                 sending_quote: false,
-                liquid_balance: None,
+                spark_balance: None,
                 ..
             }) if phone_number == "+254700000000"
         ));
@@ -1231,9 +1367,7 @@ mod tests {
                 sending_quote: true,
             },
             country("NG"),
-            Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-                Network::Bitcoin,
-            )),
+            spark(),
         ));
         let _ = panel.update(
             None,

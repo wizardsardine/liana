@@ -491,11 +491,13 @@ impl Panels {
                 // Connect's legacy hasVault contract requires an inheritance policy.
                 wallet.supports_inheritance(),
             ),
-            buy_sell: breez_client.as_ref().map(|client| {
+            // Mavapay buys receive into Spark and sells are paid from it, so
+            // Buy/Sell exists exactly when the Cube has a Spark wallet.
+            buy_sell: spark_backend.as_ref().map(|spark| {
                 crate::app::view::buysell::BuySellPanel::new(
                     cache.network,
                     wallet.clone(),
-                    client.clone(),
+                    spark.clone(),
                 )
             }),
             p2p: match cube_signer.as_ref().and_then(CubeSigner::p2p_mnemonic) {
@@ -525,7 +527,7 @@ impl Panels {
         data_dir: CoincubeDirectory,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
-        breez_client: Option<Arc<BreezClient>>,
+        spark_backend: Option<Arc<crate::app::wallets::SparkBackend>>,
     ) {
         self.vault_overview = Some(VaultOverview::new(
             wallet.clone(),
@@ -602,9 +604,20 @@ impl Panels {
             )
         });
 
-        self.buy_sell = breez_client.map(|client| {
-            crate::app::view::buysell::BuySellPanel::new(cache.network, wallet, client)
-        });
+        // Built from the Spark wallet, as in `Panels::new`. A panel whose sell
+        // payment is with the bridge is kept: replacing it would drop the
+        // checkout waiting for the answer.
+        if self
+            .buy_sell
+            .as_ref()
+            .is_some_and(|panel| panel.sell_payment_in_flight())
+        {
+            log::warn!("[BUYSELL] Keeping the Buy/Sell panel: a sell payment is in flight");
+        } else {
+            self.buy_sell = spark_backend.map(|spark| {
+                crate::app::view::buysell::BuySellPanel::new(cache.network, wallet, spark)
+            });
+        }
     }
 
     fn current(&self) -> Option<&dyn State> {
@@ -6361,7 +6374,7 @@ impl App {
                 self.datadir.clone(),
                 None,
                 self.config.clone(),
-                self.breez_client.clone(),
+                self.spark_backend(),
             );
             tasks.push(
                 self.panels
@@ -8219,7 +8232,7 @@ impl App {
                             self.datadir.clone(),
                             self.internal_bitcoind.as_ref(),
                             self.config.clone(),
-                            self.breez_client.clone(),
+                            self.spark_backend(),
                         );
                     }
 
@@ -12592,6 +12605,113 @@ pub(crate) mod tests {
             !root.exists(),
             "panel construction must not create a Bitcoin or fork datadir"
         );
+    }
+
+    /// Buy/Sell runs on Spark (Mavapay buys receive into it, sells pay from
+    /// it), so both construction sites build the panel from the Spark backend
+    /// and leave it out without one — whatever the Liquid client is.
+    #[test]
+    fn buy_sell_panel_is_built_from_the_spark_backend_at_both_sites() {
+        use std::str::FromStr;
+        let descriptor = coincube_core::descriptors::CoincubeDescriptor::from_str(
+            "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr"
+        ).unwrap();
+        let chain = crate::chain::ChainId::Signet;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(chain));
+        let root = std::env::temp_dir().join(format!("coincube-buysell-{}", uuid::Uuid::new_v4()));
+        let cache = Cache {
+            fiat_chain: chain,
+            network: chain.bitcoin_network(),
+            ..Cache::default()
+        };
+        let spark = || {
+            Some(Arc::new(crate::app::wallets::SparkBackend::new(Arc::new(
+                crate::app::breez_spark::SparkClient::disconnected_for_test(),
+            ))))
+        };
+        let liquid = || Some(Arc::new(BreezClient::disconnected(cache.network)));
+        let panels = |breez, spark| {
+            Panels::new(
+                breez,
+                // The signer only feeds P2P; Buy/Sell doesn't depend on it.
+                None,
+                spark,
+                &cache,
+                wallet.clone(),
+                CoincubeDirectory::new(root.clone()),
+                DaemonBackend::EmbeddedCoincubed(Some(crate::node::NodeType::Esplora)),
+                None,
+                Arc::new(Config::new(false)),
+                "fixture".into(),
+                "Fixture".into(),
+                chain.api_str().into(),
+            )
+        };
+
+        // `Panels::new`: Spark alone is enough; a Liquid client alone is not.
+        let with_spark = panels(None, spark());
+        assert!(with_spark.buy_sell.is_some());
+        let mut liquid_only = panels(liquid(), None);
+        assert!(liquid_only.buy_sell.is_none());
+
+        // `build_vault_panels`: the same rule when a Vault arrives mid-session.
+        let rebuild = |panels: &mut Panels, spark| {
+            panels.build_vault_panels(
+                wallet.clone(),
+                &cache,
+                DaemonBackend::EmbeddedCoincubed(Some(crate::node::NodeType::Esplora)),
+                CoincubeDirectory::new(root.clone()),
+                None,
+                Arc::new(Config::new(false)),
+                spark,
+            )
+        };
+        rebuild(&mut liquid_only, spark());
+        assert!(liquid_only.buy_sell.is_some());
+        rebuild(&mut liquid_only, None);
+        assert!(liquid_only.buy_sell.is_none());
+
+        // A panel whose sell payment is with the bridge survives a rebuild
+        // (e.g. the late imported-wallet load), checkout and all.
+        rebuild(&mut liquid_only, spark());
+        {
+            use crate::app::view::buysell::{
+                BuyOrSell, BuySellFlowState, MavapayFlowStep, MavapayState, SellFulfilment,
+                SellPayment,
+            };
+            let panel = liquid_only.buy_sell.as_mut().unwrap();
+            panel.step = BuySellFlowState::Mavapay(MavapayState::new(
+                BuyOrSell::Sell,
+                MavapayFlowStep::Checkout {
+                    quote: crate::app::view::buysell::mavapay::tests::sell_quote("quote-a"),
+                    fulfilled_order: None,
+                    invoice_qr_code_data: None,
+                    spark_balance: None,
+                    sell: SellPayment {
+                        fulfilment: SellFulfilment::Sending,
+                        ..SellPayment::default()
+                    },
+                    stream_order_id: None,
+                },
+                crate::services::coincube::get_countries()
+                    .iter()
+                    .find(|c| c.code == "NG")
+                    .unwrap(),
+                spark().unwrap(),
+            ));
+        }
+        rebuild(&mut liquid_only, spark());
+        assert!(liquid_only
+            .buy_sell
+            .as_ref()
+            .is_some_and(|panel| panel.sell_payment_in_flight()));
+        rebuild(&mut liquid_only, None);
+        assert!(liquid_only
+            .buy_sell
+            .as_ref()
+            .is_some_and(|panel| panel.sell_payment_in_flight()));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

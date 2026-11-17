@@ -1099,6 +1099,20 @@ impl SparkClient {
         (client, request_rx)
     }
 
+    /// Answer request `id` with a bridge error, as the bridge does when it
+    /// refuses a request.
+    #[cfg(test)]
+    pub(crate) async fn mock_refuse(&self, id: u64, kind: ErrorKind, message: &str) {
+        let waiter = self
+            .inner
+            .pending
+            .lock()
+            .await
+            .remove(&id)
+            .expect("a pending request");
+        let _ = waiter.send(Response::err(id, kind, message));
+    }
+
     #[cfg(test)]
     pub(crate) async fn mock_reply(&self, id: u64, answer: Option<OkPayload>) {
         let waiter = self

@@ -86,7 +86,9 @@ pub struct BuySellPanel {
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
-    pub breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
+    /// The Cube's Spark wallet: Mavapay buys receive into it and sells are
+    /// paid from it. The panel isn't built without one.
+    pub spark: std::sync::Arc<crate::app::wallets::SparkBackend>,
     pub detected_country: Option<&'static crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
@@ -94,13 +96,17 @@ pub struct BuySellPanel {
 
     // only really useful for address generation
     pub wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+
+    /// Session changes (`SetLoginState`, `LogOut`) that arrived while a sell
+    /// payment was in flight, applied in order once it answers.
+    pub deferred_session: Vec<crate::app::view::BuySellMessage>,
 }
 
 impl BuySellPanel {
     pub fn new(
         network: bitcoin::Network,
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
-        breez_client: std::sync::Arc<crate::app::breez_liquid::BreezClient>,
+        spark: std::sync::Arc<crate::app::wallets::SparkBackend>,
     ) -> Self {
         BuySellPanel {
             // Start in detecting location state
@@ -109,17 +115,44 @@ impl BuySellPanel {
             network,
             // API state
             coincube_client: crate::services::coincube::CoincubeClient::new(),
-            breez_client,
+            spark,
             detected_country: None,
             login: None,
+            deferred_session: Vec::new(),
         }
     }
 
-    pub fn view<'a>(
-        &'a self,
-        mask_amounts: bool,
-        liquid_shown: bool,
-    ) -> iced::Element<'a, ViewMessage, theme::Theme> {
+    /// A sell checkout's Spark payment is with the bridge: the flow must not
+    /// be replaced until it answers.
+    pub fn sell_payment_in_flight(&self) -> bool {
+        matches!(
+            &self.step,
+            BuySellFlowState::Mavapay(state)
+                if matches!(
+                    state.steps.last(),
+                    Some(super::mavapay::MavapayFlowStep::Checkout { sell, .. })
+                        if sell.fulfilment.in_flight()
+                )
+        )
+    }
+
+    /// The held-back session changes, re-dispatched, once no sell payment is
+    /// in flight. Empty while one still is.
+    pub fn take_deferred_session(&mut self) -> Vec<iced::Task<crate::app::message::Message>> {
+        if self.sell_payment_in_flight() {
+            return Vec::new();
+        }
+        std::mem::take(&mut self.deferred_session)
+            .into_iter()
+            .map(|msg| {
+                iced::Task::done(crate::app::message::Message::View(
+                    crate::app::view::Message::BuySell(msg),
+                ))
+            })
+            .collect()
+    }
+
+    pub fn view<'a>(&'a self, mask_amounts: bool) -> iced::Element<'a, ViewMessage, theme::Theme> {
         match &self.step {
             BuySellFlowState::DetectingLocation(..)
             | BuySellFlowState::Login { .. }
@@ -129,7 +162,7 @@ impl BuySellPanel {
                 Self::entry_view(&self.step, self.detected_country)
             }
             BuySellFlowState::Mavapay(state) => {
-                Self::provider_view(super::mavapay::ui::form(state, mask_amounts, liquid_shown))
+                Self::provider_view(super::mavapay::ui::form(state, mask_amounts))
             }
             BuySellFlowState::Meld(state) => Self::provider_view(state.view()),
         }

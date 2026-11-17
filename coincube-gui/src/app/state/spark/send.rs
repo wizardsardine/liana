@@ -207,24 +207,43 @@ impl ReconcileOutcome {
 /// still far short of "some earlier payment of the same size".
 const RECONCILE_BACKDATE_SLACK_SECS: i64 = 60;
 
-/// Whether the payment history contains the send described by `pending`.
+/// What the payment history says about the send described by `pending`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HistoryMatch {
+    /// A matching payment completed: this send landed.
+    Settled,
+    /// A matching payment exists but hasn't completed (pending, or a status
+    /// this build doesn't know). It may still land, so it is neither "paid"
+    /// nor "no trace".
+    InProgress,
+    /// Nothing that could be this send. A *failed* payment of the same size
+    /// counts as nothing: it is an earlier rejected attempt, not this one.
+    None,
+}
+
+/// Look for the send described by `pending` in the payment history.
 ///
 /// Deliberately conservative in the direction that matters: it errs towards
 /// *finding* a match (which blocks a resend) rather than missing one (which
 /// would enable one). An outgoing payment of the same size, no older than the
 /// dispatch minus [`RECONCILE_BACKDATE_SLACK_SECS`], is treated as this
-/// payment.
+/// payment — then its status decides. The bridge reports the SDK's
+/// `PaymentStatus` by its `Debug` name (`Completed`, `Pending`, `Failed`).
+/// Only `Completed` is "landed"; `Failed` is ignored, so an earlier rejected
+/// attempt can't pass for this one; anything else is still in progress.
 ///
 /// This is inference, not proof — the SDK has no "look up by idempotency key"
 /// call, so there is nothing better available. It is only ever used to decide
-/// between "definitely landed" and "no evidence"; the safety of acting on the
-/// latter rests on the idempotency key, not on this function being right.
-fn payment_matches_intent(
+/// between "definitely landed", "still in progress" and "no evidence"; the
+/// safety of acting on the last rests on the idempotency key, not on this
+/// function being right.
+fn history_match(
     payments: &[coincube_spark_protocol::PaymentSummary],
     pending: &PendingSend,
-) -> bool {
+) -> HistoryMatch {
     let floor = pending.dispatched_at - RECONCILE_BACKDATE_SLACK_SECS;
-    payments.iter().any(|p| {
+    let mut in_progress = false;
+    for p in payments.iter().filter(|p| {
         p.direction.eq_ignore_ascii_case("outgoing")
             && p.timestamp as i64 >= floor
             && match pending.token_amount {
@@ -232,7 +251,54 @@ fn payment_matches_intent(
                 Some(token_amount) => p.token_amount == Some(token_amount),
                 None => p.amount_sat.unsigned_abs() == pending.amount_sat,
             }
-    })
+    }) {
+        if p.status.eq_ignore_ascii_case("completed") {
+            return HistoryMatch::Settled;
+        }
+        if !p.status.eq_ignore_ascii_case("failed") {
+            in_progress = true;
+        }
+    }
+    if in_progress {
+        HistoryMatch::InProgress
+    } else {
+        HistoryMatch::None
+    }
+}
+
+/// Settle what happened to a send whose outcome is unknown.
+///
+/// Two sources, in order of authority: the bridge's own late answer to
+/// `pending.request_id`, then the payment history bounded to the dispatch
+/// time. Anything that can't be established is
+/// [`ReconcileOutcome::Inconclusive`], which never enables a resend. Shared by
+/// the Send panel and Buy/Sell's sell fulfilment, so both follow one rule.
+pub(crate) async fn reconcile_pending_send(
+    backend: &SparkBackend,
+    pending: &PendingSend,
+) -> ReconcileOutcome {
+    if let Some(request_id) = pending.request_id {
+        match backend.client().take_late_outcome(request_id).await {
+            Some(Ok(_sent)) => return ReconcileOutcome::Landed,
+            Some(Err(SparkClientError::BridgeError { message, .. })) => {
+                return ReconcileOutcome::DefinitelyFailed(message);
+            }
+            Some(Err(e)) => return ReconcileOutcome::Inconclusive(e.to_string()),
+            None => {}
+        }
+    }
+
+    match backend.list_payments(Some(50), None).await {
+        Ok(list) => match history_match(&list.payments, pending) {
+            HistoryMatch::Settled => ReconcileOutcome::Landed,
+            // Not paid yet, and not safe to repeat: keep it unconfirmed.
+            HistoryMatch::InProgress => {
+                ReconcileOutcome::Inconclusive("it is still in progress".to_string())
+            }
+            HistoryMatch::None => ReconcileOutcome::NoTrace,
+        },
+        Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
+    }
 }
 
 /// Which guard protects a retry of this prepared payment.
@@ -1059,29 +1125,7 @@ impl SparkSend {
         };
 
         Task::perform(
-            async move {
-                if let Some(request_id) = pending.request_id {
-                    match backend.client().take_late_outcome(request_id).await {
-                        Some(Ok(_sent)) => return ReconcileOutcome::Landed,
-                        Some(Err(SparkClientError::BridgeError { message, .. })) => {
-                            return ReconcileOutcome::DefinitelyFailed(message);
-                        }
-                        Some(Err(e)) => return ReconcileOutcome::Inconclusive(e.to_string()),
-                        None => {}
-                    }
-                }
-
-                match backend.list_payments(Some(50), None).await {
-                    Ok(list) => {
-                        if payment_matches_intent(&list.payments, &pending) {
-                            ReconcileOutcome::Landed
-                        } else {
-                            ReconcileOutcome::NoTrace
-                        }
-                    }
-                    Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
-                }
-            },
+            async move { reconcile_pending_send(&backend, &pending).await },
             |outcome| {
                 Message::View(crate::app::view::Message::SparkSend(
                     SparkSendMessage::ReconcileFinished(outcome),
@@ -2121,7 +2165,7 @@ impl bech32::Checksum for Bolt11Bech32 {
 /// Grammar (BOLT11 §"Human-Readable Part"): `ln` + a currency prefix (`bc`,
 /// `tb`, `bcrt`, …) + an optional amount, which is a decimal followed by an
 /// optional multiplier — `m`/`u`/`n`/`p` for milli/micro/nano/pico-bitcoin.
-fn bolt11_amount_sat(input: &str) -> Option<u64> {
+pub(crate) fn bolt11_amount_sat(input: &str) -> Option<u64> {
     let s = input.trim().to_ascii_lowercase();
     // Wallets and QR codes hand out `lightning:`-scheme URIs as often as bare
     // invoices; anything after a `?` is BIP21-style parameters, not the invoice.
@@ -3514,13 +3558,19 @@ mod tests {
             method: "token".to_string(),
             ..payment(0, (now + 2) as u64, "outgoing")
         };
-        assert!(payment_matches_intent(&[token(2_500_000)], &pending));
-        assert!(!payment_matches_intent(&[token(1_000_000)], &pending));
+        assert_eq!(
+            HistoryMatch::Settled,
+            history_match(&[token(2_500_000)], &pending)
+        );
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[token(1_000_000)], &pending)
+        );
         // A zero-sats payment that moved no token is not this one.
-        assert!(!payment_matches_intent(
-            &[payment(0, (now + 2) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[payment(0, (now + 2) as u64, "outgoing")], &pending)
+        );
         assert!(!ReconcileOutcome::NoTrace.may_resend(pending.guard));
     }
 
@@ -5211,6 +5261,47 @@ mod tests {
         assert!(panel.pending_send.is_none());
     }
 
+    /// A same-key retry of a payment that ended `Failed`: the SDK hands back
+    /// the stored failed payment, and the bridge answers that as an error. The
+    /// client reports it as a definite rejection (not an unknown outcome), the
+    /// panel shows a failure rather than "Sent", and the key is retired.
+    #[tokio::test]
+    async fn a_same_key_retry_of_a_failed_payment_is_a_definite_failure() {
+        let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+        let backend = SparkBackend::new(Arc::new(client));
+        let (result, _) = tokio::join!(
+            backend.send_payment("h".to_string(), Some("key-1".to_string())),
+            async {
+                let request = requests.recv().await.expect("the send");
+                backend
+                    .client()
+                    .mock_refuse(
+                        request.id,
+                        ErrorKind::Sdk,
+                        "send_payment failed: the payment pay-1 failed",
+                    )
+                    .await;
+            }
+        );
+        let Err(err @ SparkClientError::BridgeError { .. }) = result else {
+            panic!("expected a definite bridge rejection, got {:?}", result);
+        };
+
+        // The resend after an unknown outcome keeps the original key…
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        panel.phase = SparkSendPhase::Sending;
+        assert_eq!(
+            panel.send_idempotency_key.as_deref(),
+            Some("key-from-the-first-attempt")
+        );
+        // …and its rejection is an ordinary failure, not "Sent".
+        let _ = send(&mut panel, SparkSendMessage::SendFailed(err.to_string()));
+        assert!(matches!(panel.phase, SparkSendPhase::Error(_)));
+        assert!(panel.pending_send.is_none());
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(panel.send_idempotency_key.is_none());
+    }
+
     /// History matching brackets on direction, amount and time, and errs
     /// towards *finding* the payment — the direction that blocks a resend.
     #[test]
@@ -5225,32 +5316,110 @@ mod tests {
         };
 
         // The payment itself, recorded a moment after dispatch.
-        assert!(payment_matches_intent(
-            &[payment(-1_000, (now + 2) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::Settled,
+            history_match(&[payment(-1_000, (now + 2) as u64, "outgoing")], &pending)
+        );
         // Recorded slightly *before* the gui's clock — still ours.
-        assert!(payment_matches_intent(
-            &[payment(-1_000, (now - 5) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::Settled,
+            history_match(&[payment(-1_000, (now - 5) as u64, "outgoing")], &pending)
+        );
         // An older payment of the same size is somebody else's.
-        assert!(!payment_matches_intent(
-            &[payment(-1_000, (now - 3_600) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(
+                &[payment(-1_000, (now - 3_600) as u64, "outgoing")],
+                &pending
+            )
+        );
         // A receive of the same size is not this send.
-        assert!(!payment_matches_intent(
-            &[payment(1_000, (now + 2) as u64, "incoming")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[payment(1_000, (now + 2) as u64, "incoming")], &pending)
+        );
         // A different amount is a different payment.
-        assert!(!payment_matches_intent(
-            &[payment(-2_000, (now + 2) as u64, "outgoing")],
-            &pending
-        ));
+        assert_eq!(
+            HistoryMatch::None,
+            history_match(&[payment(-2_000, (now + 2) as u64, "outgoing")], &pending)
+        );
         // Empty history is no evidence.
-        assert!(!payment_matches_intent(&[], &pending));
+        assert_eq!(HistoryMatch::None, history_match(&[], &pending));
+    }
+
+    /// A same-size outgoing payment only counts as this send once it has
+    /// completed. A failed one is an earlier rejected attempt, and a pending
+    /// one hasn't landed yet: neither may read as "paid", and a pending one
+    /// must not allow a repeat either.
+    #[tokio::test]
+    async fn history_matching_reads_the_payment_status() {
+        let now = chrono::Utc::now().timestamp();
+        let pending = PendingSend {
+            request_id: None,
+            dispatched_at: now,
+            amount_sat: 1_000,
+            token_amount: None,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let with_status = |status: &str| PaymentSummary {
+            status: status.to_string(),
+            ..payment(-1_000, (now + 2) as u64, "outgoing")
+        };
+
+        // The bridge sends the SDK's `PaymentStatus` Debug names.
+        assert_eq!(
+            history_match(&[with_status("Completed")], &pending),
+            HistoryMatch::Settled
+        );
+        assert_eq!(
+            history_match(&[with_status("Failed")], &pending),
+            HistoryMatch::None
+        );
+        assert_eq!(
+            history_match(&[with_status("Pending")], &pending),
+            HistoryMatch::InProgress
+        );
+        // An unknown status is treated as in progress, never as settled.
+        assert_eq!(
+            history_match(&[with_status("Refunding")], &pending),
+            HistoryMatch::InProgress
+        );
+        // A completed match wins over an earlier failed attempt.
+        assert_eq!(
+            history_match(&[with_status("Failed"), with_status("Completed")], &pending),
+            HistoryMatch::Settled
+        );
+
+        // Through the shared reconcile, as both the Send panel and Buy/Sell's
+        // sell fulfilment run it.
+        let reconcile = |payments: Vec<PaymentSummary>| {
+            let pending = pending.clone();
+            async move {
+                let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+                let backend = SparkBackend::new(Arc::new(client));
+                let (outcome, _) =
+                    tokio::join!(reconcile_pending_send(&backend, &pending), async {
+                        let request = requests.recv().await.expect("a history request");
+                        backend
+                            .client()
+                            .mock_reply(
+                                request.id,
+                                Some(coincube_spark_protocol::OkPayload::ListPayments(
+                                    coincube_spark_protocol::ListPaymentsOk { payments },
+                                )),
+                            )
+                            .await;
+                    });
+                outcome
+            }
+        };
+        let failed = reconcile(vec![with_status("Failed")]).await;
+        assert_eq!(failed, ReconcileOutcome::NoTrace);
+        let in_progress = reconcile(vec![with_status("Pending")]).await;
+        assert!(matches!(in_progress, ReconcileOutcome::Inconclusive(_)));
+        assert!(!in_progress.may_resend(RetryGuard::IdempotencyKey));
+        let landed = reconcile(vec![with_status("Completed")]).await;
+        assert_eq!(landed, ReconcileOutcome::Landed);
     }
 
     /// Every rail the panel can send on, with the guard each one gets and what
