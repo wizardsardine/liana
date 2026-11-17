@@ -6236,6 +6236,153 @@ mod tests {
         );
     }
 
+    /// A plugged-in device is named for what it is. A key is offered for
+    /// checking only when that device is the signer. A phone is left out. A
+    /// device that cannot be read yet may still be the key, so it is listed
+    /// with what to do rather than treated as absent, and a readable
+    /// stranger is never offered for a check (ported from #1309 to the
+    /// one-row-per-key Keys step).
+    #[tokio::test]
+    async fn a_connected_device_is_checked_only_when_it_is_that_key() {
+        use crate::hw::{UnsupportedReason, LAN_PHONE_ID_PREFIX};
+        use async_hwi::DeviceKind;
+
+        let wallet = two_of_three();
+        let directory = NetworkDirectory::new(
+            std::env::temp_dir().join(format!("import-key-devices-{}", uuid::Uuid::new_v4())),
+        );
+        let mut panel =
+            ImportedBitcoinPanel::new(directory, "cube-1".into(), BitcoinImport::pending());
+        let keys = KeysState::new(&wallet);
+        let signers: Vec<_> = keys
+            .slots
+            .iter()
+            .map(|slot| slot.account.fingerprint)
+            .collect();
+        let stranger = Fingerprint::from([0xab, 0xcd, 0x12, 0x34]);
+        assert!(!signers.contains(&stranger));
+
+        let phone = HardwareWallet::Unsupported {
+            id: format!("{LAN_PHONE_ID_PREFIX}abcd1234"),
+            kind: DeviceKind::Specter,
+            version: None,
+            reason: UnsupportedReason::Method("paired phone"),
+        };
+        let mut listing = HardwareWallets::new(
+            CoincubeDirectory::new(
+                std::env::temp_dir()
+                    .join(format!("import-key-devices-hw-{}", uuid::Uuid::new_v4())),
+            ),
+            Network::Bitcoin,
+        );
+        listing.list = vec![
+            phone.clone(),
+            HardwareWallet::Locked {
+                id: "jade-1".into(),
+                device: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                pairing_code: None,
+                kind: DeviceKind::Jade,
+            },
+            HardwareWallet::Unsupported {
+                id: "ledger-stranger".into(),
+                kind: DeviceKind::Ledger,
+                version: None,
+                reason: UnsupportedReason::NotPartOfWallet(stranger),
+            },
+            HardwareWallet::Unsupported {
+                id: "coldcard-old".into(),
+                kind: DeviceKind::Coldcard,
+                version: None,
+                reason: UnsupportedReason::Version {
+                    minimal_supported_version: "5.2.2",
+                    note: None,
+                },
+            },
+        ];
+        panel.hardware_wallets = Some(listing);
+        for slot in &keys.slots {
+            assert!(panel.connected_device(&slot.account).is_none());
+        }
+
+        // The phone is left out; each device says what it is.
+        let devices = panel.key_devices();
+        assert_eq!(
+            devices
+                .iter()
+                .map(|device| device.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Jade", "Ledger", "Coldcard"]
+        );
+        assert_eq!(devices[0].fingerprint, None);
+        assert_eq!(
+            devices[0].problem.as_deref(),
+            Some("Locked. Unlock it to see which key it holds.")
+        );
+        assert_eq!(devices[1].fingerprint, Some(stranger));
+        assert!(devices[1].problem.is_none());
+        assert_eq!(devices[2].fingerprint, None);
+        assert_eq!(
+            devices[2].problem.as_deref(),
+            Some("Firmware too old to read its key. Update it to 5.2.2 or later.")
+        );
+
+        // No key is matched: every key waits, nothing is offered for a
+        // check, and the three devices are listed below with what to do.
+        let (form, _) = keys::step(&keys, false, &devices, None);
+        let shown = rendered_labels(form).await;
+        assert_eq!(
+            shown
+                .iter()
+                .filter(|text| *text == "Waiting for its device")
+                .count(),
+            signers.len()
+        );
+        assert_labels(
+            &shown,
+            &[
+                "Connected, not matched to a key",
+                "Jade",
+                "Locked. Unlock it to see which key it holds.",
+                "Ledger",
+                &stranger.to_string(),
+                "Not a signer of this wallet.",
+                "Coldcard",
+                "Firmware too old to read its key. Update it to 5.2.2 or later.",
+            ],
+            &[
+                "Check device",
+                "Specter",
+                "Can't read its key in COINCUBE Desktop.",
+            ],
+        );
+
+        // Every remaining device can be read, and none is a signer: the
+        // keys still wait, and the stranger is still only listed below.
+        let mut listing = panel.hardware_wallets.take().unwrap();
+        listing.list.retain(|hw| hw.id() == "ledger-stranger");
+        listing.list.insert(0, phone);
+        panel.hardware_wallets = Some(listing);
+        let devices = panel.key_devices();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].fingerprint, Some(stranger));
+        let (form, _) = keys::step(&keys, false, &devices, None);
+        let shown = rendered_labels(form).await;
+        assert_labels(
+            &shown,
+            &[
+                "Waiting for its device",
+                "Ledger",
+                "Not a signer of this wallet.",
+            ],
+            &[
+                "Check device",
+                "Specter",
+                "Jade",
+                "Connected, and its fingerprint matches this key.",
+            ],
+        );
+    }
+
     /// A device that never answers: enough for the Keys step to list it and
     /// start a check, which the tests never run.
     #[derive(Debug)]
