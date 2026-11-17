@@ -1,9 +1,151 @@
 //! The Cube's master signer, for the features that derive from the master seed.
 //!
-//! Liquid removal, desktop PR 2. This module starts as the golden-vector
-//! fixtures (master invariant I2): values captured from the code paths that
-//! read the signer out of the Liquid client, pinned so the move to a dedicated
-//! signer type can be shown to change nothing.
+//! Every non-wallet feature that hangs off the Cube's master seed — the
+//! P2P/Mostro identity, the Connect-blinding [`CubeEncryptionKey`] and the
+//! Vault builder's copy of that key — used to borrow the signer from the
+//! Liquid client (`BreezClient::liquid_signer()`). Liquid removal (desktop
+//! PR 2; plan `company-brain/plans/liquid-removal/`) moves it here so those
+//! features no longer depend on Liquid. Key derivation is unchanged:
+//! `coincube-core` is not touched (master invariant I1), and the golden
+//! vectors in [`golden`] pin every derived value (I2).
+//!
+//! A [`CubeSigner`] is resolved once at unlock from the same
+//! [`SeedSource::resolve`] call the wallet loaders make, so a PIN Cube keeps
+//! the session-cache fast path and a passkey Cube uses its in-memory seed. A
+//! seed-less (watch-only) Cube has none. The Liquid client, while it still
+//! exists, is built from the *same* shared signer
+//! ([`crate::app::breez_liquid::client_for_cube_signer`]), so nothing decrypts
+//! the seed twice.
+
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
+use coincube_core::signer::{MasterSigner, SignerError};
+
+use crate::app::seed_source::SeedSource;
+use crate::services::connect::crypto::CubeEncryptionKey;
+
+/// The unlocked master signer of the open Cube.
+///
+/// Cheap to clone: clones share one signer.
+#[derive(Clone)]
+pub struct CubeSigner(Arc<Mutex<MasterSigner>>);
+
+/// Why the Cube's master signer could not be resolved at unlock.
+///
+/// An *absent* signer is not an error: [`CubeSigner::resolve`] returns
+/// `Ok(None)` for it.
+#[derive(Debug, Clone)]
+pub enum CubeSignerError {
+    /// No signer for this fingerprint where one was required (a restore that
+    /// just wrote the seed).
+    NotFound(Fingerprint),
+    /// The signer exists but could not be opened: wrong PIN, decryption or IO
+    /// failure, missing device secret.
+    Signer(String),
+}
+
+impl std::fmt::Display for CubeSignerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(fp) => write!(f, "no master signer found for {}", fp),
+            Self::Signer(msg) => write!(f, "Signer error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for CubeSignerError {}
+
+impl CubeSigner {
+    pub fn new(signer: MasterSigner) -> Self {
+        Self(Arc::new(Mutex::new(signer)))
+    }
+
+    /// Resolves the Cube's master signer at unlock.
+    ///
+    /// Same call and same error mapping the Liquid loader used: a genuinely
+    /// absent signer (no seed file for the fingerprint, or no signer with it)
+    /// is `Ok(None)`, so a seed-less Cube still opens without P2P or a Connect
+    /// key; every other failure — wrong PIN, decryption, IO, missing device
+    /// secret — is an error and is never masked as a signer-less Cube.
+    pub fn resolve(
+        datadir: &Path,
+        network: Network,
+        seed: &SeedSource<'_>,
+        cube_id: &str,
+    ) -> Result<Option<Self>, CubeSignerError> {
+        match seed.resolve(datadir, network, cube_id) {
+            Ok(signer) => Ok(Some(Self::new(signer))),
+            Err(SignerError::MnemonicStorage(io_err))
+                if io_err.kind() == std::io::ErrorKind::NotFound =>
+            {
+                log::info!(
+                    "No master signer for cube on {network} (fingerprint {}); \
+                     opening without one",
+                    seed.fingerprint()
+                );
+                Ok(None)
+            }
+            Err(SignerError::SignerNotFound(fingerprint)) => {
+                log::info!(
+                    "No master signer for cube on {network} (fingerprint {fingerprint}); \
+                     opening without one"
+                );
+                Ok(None)
+            }
+            Err(e) => Err(CubeSignerError::Signer(e.to_string())),
+        }
+    }
+
+    /// The signer the unlock parked in the session, for when resolving at
+    /// unlock failed.
+    ///
+    /// Both the PIN and the passkey unlock store their decrypted signer in the
+    /// session before the wallets load, so a load that failed afterwards must
+    /// not cost the Cube its signer: P2P, Connect blinding and the Vault
+    /// builder would lose it. `None` when the session holds none for this Cube
+    /// and fingerprint — a seed-less Cube, or a session closed since.
+    pub fn after_failed_unlock_load(cube: &crate::app::settings::CubeSettings) -> Option<Self> {
+        let signer = cube
+            .master_signer_fingerprint
+            .and_then(|fp| crate::app::session::unlocked_signer(&cube.id, fp));
+        if signer.is_none() {
+            tracing::warn!(
+                "No unlocked master signer for Cube {} in the session; it opens without one",
+                cube.id
+            );
+        }
+        signer.map(Self::new)
+    }
+
+    /// The mnemonic the P2P/Mostro panel derives its Nostr identity from.
+    /// `None` if it is empty, which disables the panel.
+    pub fn p2p_mnemonic(&self) -> Option<zeroize::Zeroizing<String>> {
+        let mnemonic = self.0.lock().expect("signer lock").mnemonic_str();
+        (!mnemonic.is_empty()).then_some(mnemonic)
+    }
+
+    /// The Cube's Connect-blinding encryption key (`SPEC-cube-xpub-envelope-v1`
+    /// §3) — the key whose public half was registered with Connect.
+    pub fn encryption_key(&self, network: Network) -> Option<Arc<CubeEncryptionKey>> {
+        let guard = self.0.lock().ok()?;
+        Some(Arc::new(CubeEncryptionKey::derive(&guard, network)))
+    }
+
+    /// The shared signer, for building the Liquid client around the same
+    /// instance. Liquid-only; PR 5 removes it with the client.
+    pub(crate) fn liquid_handle(&self) -> Arc<Mutex<MasterSigner>> {
+        self.0.clone()
+    }
+}
+
+impl std::fmt::Debug for CubeSigner {
+    /// Manual: `MasterSigner` is a master seed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CubeSigner").finish_non_exhaustive()
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod golden {
@@ -244,5 +386,118 @@ pub(crate) mod golden {
             .open(&kat::kat_envelope(), kat::KAT_CUBE_ID, kat::KAT_KEY_ID)
             .expect("the existing envelope fixture opens");
         assert_eq!(std::str::from_utf8(&xpub).unwrap(), kat::KAT_XPUB);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::golden::{self, Scratch};
+    use super::*;
+    use crate::app::session;
+    use crate::app::settings::CubeSettings;
+    use coincube_core::miniscript::bitcoin::secp256k1::Secp256k1;
+
+    #[test]
+    fn an_absent_signer_resolves_to_none_on_every_network() {
+        let _g = session::test_guard();
+        session::close();
+        let scratch = Scratch::new("absent");
+        for network in [Network::Bitcoin, Network::Testnet, Network::Signet] {
+            let signer = CubeSigner::resolve(
+                &scratch.0,
+                network,
+                &SeedSource::encrypted_file(Fingerprint::default(), golden::PIN),
+                "cube-seedless",
+            )
+            .expect("an absent signer is not an error");
+            assert!(signer.is_none());
+        }
+    }
+
+    #[test]
+    fn a_wrong_pin_is_an_error_not_a_seedless_cube() {
+        let _g = session::test_guard();
+        session::close();
+        let scratch = Scratch::new("wrong-pin");
+        let network = Network::Bitcoin;
+        let fp = golden::write_pin_seed(&scratch.0, network, "cube-wrong-pin");
+        let result = CubeSigner::resolve(
+            &scratch.0,
+            network,
+            &SeedSource::encrypted_file(fp, "0000"),
+            "cube-wrong-pin",
+        );
+        assert!(matches!(result, Err(CubeSignerError::Signer(_))));
+        // A seed file bound to another Cube is refused too.
+        let result = CubeSigner::resolve(
+            &scratch.0,
+            network,
+            &SeedSource::encrypted_file(fp, golden::PIN),
+            "another-cube",
+        );
+        assert!(matches!(result, Err(CubeSignerError::Signer(_))));
+    }
+
+    #[test]
+    fn the_session_fast_path_is_kept() {
+        let _g = session::test_guard();
+        session::close();
+        let network = Network::Bitcoin;
+        let signer = golden::pin_signer(network);
+        let fp = signer.fingerprint(&Secp256k1::signing_only());
+        session::store_unlocked_signer("cube-cached", fp, signer);
+        // No seed file anywhere: only the session can answer.
+        let resolved = CubeSigner::resolve(
+            Path::new("/nonexistent/datadir"),
+            network,
+            &SeedSource::encrypted_file(fp, "not-the-pin"),
+            "cube-cached",
+        )
+        .unwrap()
+        .expect("the unlock's cached signer");
+        assert_eq!(
+            resolved.p2p_mnemonic().unwrap().as_str(),
+            golden::PIN_MNEMONIC
+        );
+        session::close();
+    }
+
+    #[test]
+    fn the_unlock_fallback_takes_the_session_signer_or_none() {
+        let _g = session::test_guard();
+        session::close();
+        let network = Network::Bitcoin;
+        let signer = golden::pin_signer(network);
+        let fp = signer.fingerprint(&Secp256k1::signing_only());
+        let cube = CubeSettings::new("Fallback".to_string(), network).with_master_signer(fp);
+        assert!(CubeSigner::after_failed_unlock_load(&cube).is_none());
+        session::store_unlocked_signer(&cube.id, fp, signer);
+        assert!(CubeSigner::after_failed_unlock_load(&cube).is_some());
+        // Another Cube's session signer is never borrowed.
+        let other = CubeSettings::new("Other".to_string(), network).with_master_signer(fp);
+        assert!(CubeSigner::after_failed_unlock_load(&other).is_none());
+        session::close();
+    }
+
+    #[test]
+    fn the_liquid_client_shares_the_cube_signer() {
+        let signer = CubeSigner::new(golden::pin_signer(Network::Bitcoin));
+        let client =
+            crate::app::breez_liquid::client_for_cube_signer(Network::Bitcoin, Some(&signer));
+        assert!(Arc::ptr_eq(
+            &client.liquid_signer().unwrap(),
+            &signer.liquid_handle()
+        ));
+        let seedless = crate::app::breez_liquid::client_for_cube_signer(Network::Bitcoin, None);
+        assert!(seedless.liquid_signer().is_none());
+    }
+
+    #[test]
+    fn debug_never_prints_the_seed() {
+        let rendered = format!(
+            "{:?}",
+            CubeSigner::new(golden::pin_signer(Network::Bitcoin))
+        );
+        assert!(!rendered.contains("abandon"), "{}", rendered);
     }
 }
