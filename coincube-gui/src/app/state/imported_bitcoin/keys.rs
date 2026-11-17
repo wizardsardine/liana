@@ -46,7 +46,7 @@ impl KeySource {
         match self {
             Self::Words => "Recovery words",
             Self::Hardware => "Hardware wallet",
-            Self::Elsewhere => "Signs elsewhere",
+            Self::Elsewhere => "Skip this key",
         }
     }
 }
@@ -59,7 +59,8 @@ impl std::fmt::Display for KeySource {
 }
 
 /// The source menu's choices: a single-signer wallet has no one else to
-/// sign, and adding to an attached wallet only stores words.
+/// sign, an n-of-n wallet needs every key here, and adding to an attached
+/// wallet only stores words.
 const MULTISIG_SOURCES: [KeySource; 3] =
     [KeySource::Hardware, KeySource::Words, KeySource::Elsewhere];
 const SINGLE_SOURCES: [KeySource; 2] = [KeySource::Hardware, KeySource::Words];
@@ -175,6 +176,21 @@ impl KeysState {
         self.slots.len() > 1
     }
 
+    /// A key may be skipped only when the others can still reach the
+    /// threshold: never in a single-signer or n-of-n wallet.
+    pub(super) fn can_skip(&self) -> bool {
+        self.multisig() && self.threshold < self.slots.len()
+    }
+
+    /// The choices the source menu offers for each key.
+    pub(super) fn sources(&self) -> &'static [KeySource] {
+        if self.can_skip() {
+            &MULTISIG_SOURCES
+        } else {
+            &SINGLE_SOURCES
+        }
+    }
+
     pub(super) fn provided(&self) -> usize {
         self.slots.iter().filter(|slot| slot.provided()).count()
     }
@@ -254,8 +270,8 @@ impl KeysState {
         let elsewhere = self.signs_elsewhere();
         if elsewhere > 0 {
             line.push_str(&coincube_ui::localized_format!(
-                " · {elsewhere} signs elsewhere",
-                " · {elsewhere} con firma externa"
+                " · {elsewhere} not added here",
+                " · {elsewhere} sin añadir aquí"
             ));
         }
         line
@@ -600,8 +616,8 @@ fn key_line<'d>(
         (KeySource::Elsewhere, _) => KeyLine {
             mark: Mark::Elsewhere,
             ..line(
-                localized_copy("Signs elsewhere").to_owned(),
-                localized_copy("Another wallet or person signs with this key. COINCUBE Desktop saves the PSBT for them.").to_owned(),
+                localized_copy("Skipped").to_owned(),
+                localized_copy("Not added here. Another wallet or person signs with this key; COINCUBE Desktop saves the PSBT for them.").to_owned(),
             )
         },
         (KeySource::Words, KeyStatus::Verified) => KeyLine {
@@ -698,12 +714,11 @@ fn key_line<'d>(
                 mark: Mark::Elsewhere,
                 dimmed: true,
                 ..line(
-                    localized_copy("Not needed to spend").to_owned(),
-                    coincube_ui::localized_format!(
-                        "{} keys are verified, so this one signs elsewhere. Connect its device to add it anyway.",
-                        "Hay {} claves verificadas, así que esta firma en otro lugar. Conecta su dispositivo para añadirla de todos modos.",
-                        keys.threshold
-                    ),
+                    localized_copy("Not added — not needed to spend").to_owned(),
+                    localized_copy(
+                        "Enough keys are verified to spend. Connect its hardware wallet to add it too.",
+                    )
+                    .to_owned(),
                 )
             },
             None => line(
@@ -810,12 +825,22 @@ pub(super) fn step<'a>(
     let lead = if adding {
         localized_copy("Enter the recovery words for any of this wallet's signers. Each set is checked against its signer's fingerprint, then stored on this device for this Cube.")
             .to_string()
+    } else if keys.multisig() && keys.threshold >= count {
+        // Every signer is needed, so there is nothing to skip.
+        coincube_ui::localized_format!(
+            "This wallet has {count} signers and all of them must sign to spend. \
+             Verify each key here; each is checked against its fingerprint.",
+            "Esta cartera tiene {count} claves de firma y todas deben firmar para gastar. \
+             Verifica cada clave aquí; cada una se verifica con su huella."
+        )
     } else if keys.multisig() {
         coincube_ui::localized_format!(
-            "This wallet has {count} signers and any {} can spend. Verify {} of them here; \
-             the others sign elsewhere. Each key is checked against its fingerprint.",
-            "Esta cartera tiene {count} firmantes y bastan {} para gastar. Verifica {} de \
-             ellas aquí; las demás firman en otro lugar. Cada clave se verifica con su huella.",
+            "This wallet has {count} signers and any {} can spend. Verify at least {} here. \
+             You can skip the rest; they can still sign from their own device or wallet. \
+             Each key is checked against its fingerprint.",
+            "Esta cartera tiene {count} claves de firma y basta con {} para gastar. Verifica \
+             al menos {} aquí. Puedes omitir las demás; pueden seguir firmando desde su propio \
+             dispositivo o cartera. Cada clave se verifica con su huella.",
             keys.threshold,
             keys.threshold
         )
@@ -828,11 +853,7 @@ pub(super) fn step<'a>(
         .push(h3(localized_copy("Add the wallet's keys")))
         .push(p1_regular(lead).style(theme::text::secondary));
     let busy = keys.checking();
-    let sources: &'static [KeySource] = if keys.multisig() {
-        &MULTISIG_SOURCES
-    } else {
-        &SINGLE_SOURCES
-    };
+    let sources = keys.sources();
     let mut rows = Column::new().push(iced::widget::rule::horizontal(1));
     for (index, slot) in keys.slots.iter().enumerate() {
         let status = key_line(keys, index, slot, devices);
@@ -1110,12 +1131,12 @@ pub(super) fn step<'a>(
             match elsewhere.as_slice() {
                 [] => {}
                 [only] => line.push_str(&coincube_ui::localized_format!(
-                    " · Key {only} signs elsewhere",
-                    " · la clave {only} firma en otro lugar"
+                    " · Key {only} not added",
+                    " · clave {only} sin añadir"
                 )),
                 many => line.push_str(&coincube_ui::localized_format!(
-                    " · {} keys sign elsewhere",
-                    " · {} claves firman en otro lugar",
+                    " · {} keys not added",
+                    " · {} claves sin añadir",
                     many.len()
                 )),
             }
