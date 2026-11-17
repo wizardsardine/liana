@@ -306,6 +306,13 @@ impl std::fmt::Debug for SparkClient {
 }
 
 impl SparkClient {
+    /// Whether the bridge is gone (or the client was shut down). Every
+    /// request after this fails at once, and the client is never respawned:
+    /// a state check against it can't settle anything.
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::SeqCst)
+    }
+
     /// Spawn the bridge subprocess, hand it a mnemonic + config, and
     /// return the connected client.
     ///
@@ -1111,6 +1118,12 @@ impl SparkClient {
             .remove(&id)
             .expect("a pending request");
         let _ = waiter.send(Response::err(id, kind, message));
+    }
+
+    /// What the reader and writer do when the bridge goes away.
+    #[cfg(test)]
+    pub(crate) fn mock_close(&self) {
+        self.inner.closed.store(true, Ordering::SeqCst);
     }
 
     #[cfg(test)]

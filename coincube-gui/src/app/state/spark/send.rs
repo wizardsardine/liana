@@ -1086,6 +1086,11 @@ impl SparkSend {
         // rails, where the key *is* the guard.
         let guard = retry_guard_for(&prepare);
         let amount_sat = prepare.amount_sat;
+        // A Lightning send names its invoice, so a state check can tell this
+        // payment from another of the same size.
+        let invoice = (prepare.method == "Bolt11Invoice")
+            .then(|| bolt11_of(&self.destination_input))
+            .flatten();
         let token_amount = self
             .prepared_token_payment
             .map(|payment| payment.amount.amount.min(u64::MAX as u128) as u64);
@@ -1104,7 +1109,7 @@ impl SparkSend {
             dispatched_at: chrono::Utc::now().timestamp(),
             amount_sat,
             token_amount,
-            invoice: None,
+            invoice,
             guard,
         });
 
@@ -2206,6 +2211,21 @@ impl bech32::Checksum for Bolt11Bech32 {
 /// Grammar (BOLT11 §"Human-Readable Part"): `ln` + a currency prefix (`bc`,
 /// `tb`, `bcrt`, …) + an optional amount, which is a decimal followed by an
 /// optional multiplier — `m`/`u`/`n`/`p` for milli/micro/nano/pico-bitcoin.
+/// The bare BOLT11 invoice in a Send destination: the input without a
+/// `lightning:` scheme or BIP21-style parameters. `None` for anything that
+/// isn't one on its face (a BIP21 `bitcoin:` URI, an address), which leaves
+/// history matching on amount and time.
+///
+/// A wrong answer here only fails safe: a row whose invoice doesn't match is
+/// skipped, so the check reports no trace and a repeat runs under the same
+/// idempotency key, which the SDK dedups.
+fn bolt11_of(input: &str) -> Option<String> {
+    let s = input.trim().to_ascii_lowercase();
+    let s = s.strip_prefix("lightning:").unwrap_or(&s);
+    let s = s.split('?').next()?;
+    s.starts_with("ln").then(|| s.to_string())
+}
+
 pub(crate) fn bolt11_amount_sat(input: &str) -> Option<u64> {
     let s = input.trim().to_ascii_lowercase();
     // Wallets and QR codes hand out `lightning:`-scheme URIs as often as bare
@@ -5474,6 +5494,17 @@ mod tests {
             ),
             HistoryMatch::InProgress
         );
+    }
+
+    #[test]
+    fn a_send_destination_names_its_invoice_only_when_it_is_one() {
+        assert_eq!(bolt11_of(" LNBC1ABC ").as_deref(), Some("lnbc1abc"));
+        assert_eq!(
+            bolt11_of("lightning:lnbc1abc?amount=1").as_deref(),
+            Some("lnbc1abc")
+        );
+        assert_eq!(bolt11_of("bitcoin:bc1qxyz?lightning=lnbc1abc"), None);
+        assert_eq!(bolt11_of("sp1qexampleaddress"), None);
     }
 
     /// A same-size outgoing payment only counts as this send once it has
