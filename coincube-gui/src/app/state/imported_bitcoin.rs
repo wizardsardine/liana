@@ -4705,6 +4705,60 @@ mod tests {
         std::fs::remove_dir_all(root.path()).unwrap();
     }
 
+    /// The Vault's Receive allocates an imported wallet's address under the
+    /// same source lock, so a paired Bitcoin Blake2b Cube holding it blocks
+    /// this one instead of handing out the same address.
+    #[tokio::test]
+    async fn vault_receive_for_an_imported_wallet_takes_the_source_lock() {
+        let panel = ready_import_panel();
+        let imported = panel.import.active_attachment().unwrap().descriptor.clone();
+        let source = coincube_core::public_wallet_source::SplitSource::new(
+            imported.receive_descriptor().clone(),
+            Some(imported.change_descriptor().clone()),
+        )
+        .unwrap();
+        let root = CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("vault-receive-lock-{}", uuid::Uuid::new_v4())),
+        );
+        let config = Config::new(
+            BitcoinConfig::new(ChainId::Bitcoin, Duration::from_secs(30)),
+            None,
+            log::LevelFilter::Off,
+            WalletDescriptor::Imported(imported.clone()),
+            root.network_directory(ChainId::Bitcoin)
+                .coincubed_data_directory(&panel.import.active_attachment().unwrap().wallet_id),
+        );
+        let daemon: Arc<dyn Daemon + Send + Sync> =
+            Arc::new(EmbeddedDaemon::unstarted_for_test(config, None));
+        let wallet = crate::app::wallet::Wallet::new(WalletDescriptor::Imported(imported));
+        let guard =
+            bitcoin_import::pairing::source_lock::source_reservation_lock(&root, &source).unwrap();
+        let error = crate::app::state::vault::receive::next_receive_address(
+            root.clone(),
+            &wallet,
+            daemon.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("reserving addresses"),
+            "{}",
+            error
+        );
+        drop(guard);
+        // Without the lock the request reaches the daemon (unstarted here).
+        let error =
+            crate::app::state::vault::receive::next_receive_address(root.clone(), &wallet, daemon)
+                .await
+                .unwrap_err();
+        assert!(
+            !error.to_string().contains("reserving addresses"),
+            "{}",
+            error
+        );
+        std::fs::remove_dir_all(root.path()).unwrap();
+    }
+
     #[test]
     fn paired_imported_discovery_refusal_preserves_shared_runtime_and_snapshot() {
         let mut panel = ready_import_panel();
