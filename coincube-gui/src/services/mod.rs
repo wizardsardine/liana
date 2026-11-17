@@ -84,7 +84,10 @@ fn resolve_api_base_url(runtime: Option<&str>, compiled: Option<&str>, fallback:
     // Debug builds keep http:// for local API servers.
     #[cfg(not(debug_assertions))]
     if url.starts_with("http://") {
-        panic!("COINCUBE_API_URL must use https:// in release builds, got {url}");
+        panic!(
+            "COINCUBE_API_URL must use https:// in release builds, got {}",
+            url
+        );
     }
     url
 }
