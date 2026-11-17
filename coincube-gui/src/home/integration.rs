@@ -4,6 +4,8 @@
 use super::*;
 use iced_runtime::futures::futures::StreamExt;
 
+mod creation_diagnostic;
+
 async fn drain(task: Task<Message>) -> Vec<Message> {
     match iced_runtime::task::into_stream(task) {
         Some(stream) => {
@@ -144,13 +146,10 @@ async fn create_new_testnet4_cube(
         return Err("backup_verification_failed");
     }
     let messages = drain(home.update(Message::View(ViewMessage::CreationBackupContinue))).await;
-    let mut created = None;
-    for message in messages {
-        if let Message::CubeCreated(result) = message {
-            created = Some(result.map_err(|_| "cube_persistence_failed")?);
-        }
-    }
-    created.ok_or("cube_persistence_failed")
+    creation_diagnostic::result(messages.into_iter().filter_map(|message| match message {
+        Message::CubeCreated(result) => Some(result),
+        _ => None,
+    }))
 }
 
 /// Admit normal Developer Mode only for an unused isolated QA profile.
