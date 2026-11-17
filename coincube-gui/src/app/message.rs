@@ -81,6 +81,11 @@ pub enum Message {
     /// stored key and the label.
     ActivityLabelSaved(u64, Result<(String, String, Option<String>), String>),
     ImportedBitcoin(Box<super::state::imported_bitcoin::ImportEvent>),
+    /// An imported wallet's composed PSBT, built and saved by its daemon.
+    ImportedSpendPrepared {
+        generation: u64,
+        result: Result<(Psbt, Vec<String>), Error>,
+    },
     VaultSpendPrepared {
         generation: u64,
         result: Result<(Psbt, Vec<String>), Error>,

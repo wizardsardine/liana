@@ -448,7 +448,9 @@ impl Panels {
                 )
             }),
             receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
-            create_spend: wallet.supports_inheritance().then(|| {
+            // An imported wallet composes in the same Send form; its
+            // own panel then reviews and signs the PSBT.
+            create_spend: (wallet.supports_inheritance() || wallet.is_imported()).then(|| {
                 let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                     cache.coins(),
                     cache.blockheight().max(0) as u32,
@@ -573,7 +575,7 @@ impl Panels {
             )
         });
         self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
-        self.create_spend = wallet.supports_inheritance().then(|| {
+        self.create_spend = (wallet.supports_inheritance() || wallet.is_imported()).then(|| {
             let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                 cache.coins(),
                 cache.blockheight() as u32,

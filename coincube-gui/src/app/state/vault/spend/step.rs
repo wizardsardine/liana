@@ -329,9 +329,10 @@ impl DefineSpend {
         self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
             if *a_selected && !b_selected || !a_selected && *b_selected {
                 b_selected.cmp(a_selected)
-            } else if remaining_sequence(a, blockheight, timelock)
-                == remaining_sequence(b, blockheight, timelock)
-            {
+            } else if timelock.is_none_or(|timelock| {
+                remaining_sequence(a, blockheight, timelock)
+                    == remaining_sequence(b, blockheight, timelock)
+            }) {
                 // bigger amount first
                 b.amount.cmp(&a.amount)
             } else {
@@ -350,13 +351,11 @@ impl DefineSpend {
     /// This is used for calculating a coin's remaining sequence.
     ///
     /// Use the first timelock if this is a primary path spend and otherwise the same
-    /// timelock as used for the recovery.
-    pub fn timelock(&self) -> u16 {
-        self.recovery_timelock.unwrap_or_else(|| {
-            self.wallet
-                .recovery_timelock()
-                .expect("legacy spend is Vault-only")
-        })
+    /// timelock as used for the recovery. `None` for an imported wallet, which
+    /// has no recovery clock.
+    pub fn timelock(&self) -> Option<u16> {
+        self.recovery_timelock
+            .or_else(|| self.wallet.recovery_timelock())
     }
 
     // If `is_redraft`, the validation of recipients will take into account
@@ -1040,13 +1039,28 @@ impl Step for DefineSpend {
                         self.generating = true;
                         self.preparation_id = PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed);
                         let generation = self.preparation_id;
+                        if !self.wallet.supports_inheritance() {
+                            // An imported wallet: build and save the PSBT here,
+                            // then its own review signs it with the wallet's
+                            // original signers. No Vault `SpendTx` is built.
+                            let recipients = self.recipients.clone();
+                            return Task::perform(async move {
+                                let psbt = match daemon.create_spend_tx(&inputs, &outputs, feerate_vb, None).await
+                                    .map_err(Error::from)? {
+                                    CreateSpendResult::Success { psbt, warnings } => (psbt, warnings),
+                                    CreateSpendResult::InsufficientFunds { missing } => return Err(SpendCreationError::CoinSelection(
+                                        coincube_core::spend::InsufficientFunds { missing }).into()),
+                                };
+                                validate_requested_amounts(&recipients, &psbt.0)?;
+                                daemon.update_spend_tx(&psbt.0).await.map_err(Error::from)?;
+                                Ok(psbt)
+                            }, move |result| Message::ImportedSpendPrepared { generation, result });
+                        }
                         self.lookup_ticket = if self.recipients.is_empty() { None } else { branta::begin(self.network) };
                         let ticket = self.lookup_ticket.clone();
                         let recipients = self.recipients.clone();
                         let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
-                            return Task::done(Message::View(view::Message::ShowError(
-                                "Use the imported wallet Send screen for this account.".into(),
-                            )));
+                            return Task::none();
                         };
                         let requests: Vec<_> = self.recipients.iter().enumerate().filter_map(|(row, recipient)| {
                             let address = recipient.destination().ok()?.require_network(self.network).ok()?;
@@ -1124,6 +1138,20 @@ impl Step for DefineSpend {
                 let redraft_task = self.schedule_redraft();
                 self.check_valid();
                 return redraft_task;
+            }
+            Message::ImportedSpendPrepared { generation, result } => {
+                if !self.generating || generation != self.preparation_id {
+                    return Task::none();
+                }
+                self.generating = false;
+                match result {
+                    Ok((psbt, warnings)) => {
+                        return Task::done(Message::View(view::Message::ImportedBitcoin(
+                            crate::app::state::imported_bitcoin::ImportMessage::OpenPrepared(psbt, warnings),
+                        )));
+                    }
+                    Err(error) => self.warning = Some(error),
+                }
             }
             Message::VaultSpendPrepared { generation, result, identities } => {
                 if !self.generating || generation != self.preparation_id {
@@ -2204,7 +2232,7 @@ mod tests {
         assert_eq!(primary.send_max_to_recipient, None);
         assert!(primary.coins[0].1);
         assert_eq!(primary.coins[0].0.outpoint, coins[1].outpoint);
-        assert_eq!(primary.timelock(), wallet.recovery_timelock().unwrap());
+        assert_eq!(primary.timelock(), wallet.recovery_timelock());
 
         let recovery = DefineSpend::new(
             Network::Bitcoin,
@@ -2221,7 +2249,7 @@ mod tests {
         assert_eq!(recovery.send_max_to_recipient, Some(0));
         assert!(recovery.recipients[0].is_recovery);
         assert!(recovery.coins.iter().all(|(_, selected)| *selected));
-        assert_eq!(recovery.timelock(), 10);
+        assert_eq!(recovery.timelock(), Some(10));
 
         let self_send = recovery.self_send();
         assert!(self_send.recipients.is_empty());

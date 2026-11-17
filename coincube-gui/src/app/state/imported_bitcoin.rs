@@ -18,7 +18,7 @@ use std::{
 use coincube_core::{
     imported_spend::{finalize_imported_spend, verify_imported_signatures, ImportedFinalizeError},
     miniscript::{
-        bitcoin::{address, psbt::Psbt, secp256k1, Address, Network, Txid},
+        bitcoin::{psbt::Psbt, secp256k1, Address, Network, Txid},
         DescriptorPublicKey, ForEachKey,
     },
     public_wallet_finalize::FinalizeError,
@@ -31,7 +31,7 @@ use coincube_ui::{
     widget::{Column, ColumnExt, Element, Row, RowExt},
 };
 use coincubed::{
-    commands::{CoinStatus, CreateSpendResult, ListSpendEntry},
+    commands::{CoinStatus, ListSpendEntry},
     config::{BitcoinBackend, BitcoinConfig, Config, ElectrumConfig, EsploraConfig},
 };
 use iced::{
@@ -45,7 +45,7 @@ use crate::{
         menu::{Menu, SettingsOption, VaultSubMenu},
         message::Message,
         settings::{self, BitcoinImport, BitcoinImportStage, ImportedWalletAttachment},
-        state::State,
+        state::{vault::label::LabelsEdited, State},
         view,
     },
     chain::ChainId,
@@ -279,12 +279,53 @@ fn checked_draft(
         Err(ImportedFinalizeError::Signatures(FinalizeError::Unsatisfied)) => None,
         Err(error) => return Err(error.to_string()),
     };
+    let change_indexes = change_indexes(wallet, &psbt);
     Ok(ImportedDraft {
         psbt,
         signatures_per_input,
         final_txid,
         warnings,
+        change_indexes,
     })
+}
+
+/// Outputs of `psbt` that pay this wallet. The daemon sets a BIP32
+/// derivation on each of them; an output counts only if the derived script
+/// matches.
+fn change_indexes(wallet: &ImportedWalletDescriptor, psbt: &Psbt) -> Vec<usize> {
+    let descriptor = WalletDescriptor::Imported(wallet.clone());
+    psbt.outputs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, output)| {
+            let path = output
+                .bip32_derivation
+                .values()
+                .map(|(_, path)| path)
+                .chain(output.tap_key_origins.values().map(|(_, (_, path))| path))
+                .next()?;
+            let child = u32::from(*path.into_iter().last()?);
+            let script = &psbt.unsigned_tx.output.get(index)?.script_pubkey;
+            [
+                descriptor.change_descriptor(),
+                descriptor.receive_descriptor(),
+            ]
+            .iter()
+            .any(|branch| branch.script_pubkey(child).is_ok_and(|own| &own == script))
+            .then_some(index)
+        })
+        .collect()
+}
+
+/// Signatures each input needs: the multisig threshold, else one.
+fn required_signatures(wallet: &ImportedWalletDescriptor) -> usize {
+    wallet
+        .receive_descriptor()
+        .to_string()
+        .split_once("multi(")
+        .and_then(|(_, rest)| rest.split_once(','))
+        .and_then(|(required, _)| required.trim().parse().ok())
+        .unwrap_or(1)
 }
 
 fn import_signed_psbt(
@@ -404,10 +445,8 @@ pub enum ImportMessage {
     ResumeJourney,
     ShowSend,
     CloseSend,
-    RecipientEdited(String),
-    AmountEdited(String),
-    FeerateEdited(String),
-    CreateDraft,
+    /// The Send form built and saved this PSBT: open it for signing.
+    OpenPrepared(Psbt, Vec<String>),
     SelectDraft(Txid),
     CopyPsbt,
     SignedPsbtEdited(String),
@@ -449,7 +488,8 @@ pub enum ImportEvent {
     ProgressChecked(u64, Result<model::GetInfoResult, String>),
     Address(u64, Result<model::GetAddressResult, String>),
     Abandoned(u64, Result<(), String>),
-    DraftCreated(u64, Result<(Psbt, Vec<String>), String>),
+    /// (generation, PSBT, labels of its transaction, outputs and coins)
+    ReviewLabels(u64, Txid, Result<HashMap<String, String>, String>),
     SignedSaved(u64, Txid, Result<SignedSpend, String>),
     Broadcasted(u64, Result<(Txid, bool), String>),
     HardwareSigned(u64, Txid, Result<SignedSpend, String>),
@@ -463,6 +503,48 @@ struct ImportedDraft {
     signatures_per_input: Vec<usize>,
     final_txid: Option<Txid>,
     warnings: Vec<String>,
+    /// Outputs paying back to this wallet, by index.
+    change_indexes: Vec<usize>,
+}
+
+/// The opened PSBT's labels: its transaction, outputs and spent coins.
+#[derive(Debug, Default)]
+struct ReviewLabels {
+    items: Vec<model::LabelItem>,
+    labels: HashMap<String, String>,
+}
+
+impl ReviewLabels {
+    fn for_psbt(psbt: &Psbt) -> Self {
+        let tx = &psbt.unsigned_tx;
+        let txid = tx.compute_txid();
+        let items = std::iter::once(model::LabelItem::Txid(txid))
+            .chain((0..tx.output.len()).map(|vout| {
+                model::LabelItem::OutPoint(coincube_core::miniscript::bitcoin::OutPoint {
+                    txid,
+                    vout: vout as u32,
+                })
+            }))
+            .chain(
+                tx.input
+                    .iter()
+                    .map(|input| model::LabelItem::OutPoint(input.previous_output)),
+            )
+            .collect();
+        Self {
+            items,
+            labels: HashMap::new(),
+        }
+    }
+}
+
+impl model::Labelled for ReviewLabels {
+    fn labelled(&self) -> Vec<model::LabelItem> {
+        self.items.clone()
+    }
+    fn labels(&mut self) -> &mut HashMap<String, String> {
+        &mut self.labels
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -571,10 +653,12 @@ pub struct ImportedBitcoinPanel {
     address: Option<model::GetAddressResult>,
     show_details: bool,
     abandoned: bool,
-    send_recipient: String,
-    send_amount: String,
-    send_feerate: String,
     signed_psbt_text: String,
+    /// The opened PSBT's labels, and the ones being edited.
+    review_labels: ReviewLabels,
+    labels_edited: LabelsEdited,
+    /// This wallet's coins by outpoint, for the review's spent coins.
+    review_coins: HashMap<coincube_core::miniscript::bitcoin::OutPoint, model::Coin>,
     spend_drafts: Vec<ListSpendEntry>,
     draft: Option<ImportedDraft>,
     last_broadcast_txid: Option<Txid>,
@@ -655,9 +739,9 @@ impl ImportedBitcoinPanel {
             address: None,
             show_details: false,
             abandoned: false,
-            send_recipient: String::new(),
-            send_amount: String::new(),
-            send_feerate: "5".into(),
+            review_labels: ReviewLabels::default(),
+            labels_edited: LabelsEdited::default(),
+            review_coins: HashMap::new(),
             signed_psbt_text: String::new(),
             spend_drafts: Vec::new(),
             draft: None,
@@ -914,9 +998,10 @@ impl ImportedBitcoinPanel {
             Menu::Vault(VaultSubMenu::Recovery) => false,
             Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))) => false,
             Menu::Vault(_) if !self.is_ready() => true,
-            Menu::Vault(
-                VaultSubMenu::Send | VaultSubMenu::PSBTs(_) | VaultSubMenu::Settings(_),
-            ) => true,
+            // A ready wallet composes in the Vault's Send form, except on
+            // Bitcoin Blake2b, where sending is not available.
+            Menu::Vault(VaultSubMenu::Send) => self.chain().is_blake2b(),
+            Menu::Vault(VaultSubMenu::PSBTs(_) | VaultSubMenu::Settings(_)) => true,
             _ => false,
         }
     }
@@ -944,10 +1029,20 @@ impl ImportedBitcoinPanel {
                     return Task::none();
                 }
                 self.error = self.ensure_hardware_wallets().err();
-                if let Menu::Vault(VaultSubMenu::PSBTs(Some(id))) = menu {
-                    self.select_saved_draft(*id);
+                match menu {
+                    // A PSBT the Send form just opened is already selected.
+                    Menu::Vault(VaultSubMenu::PSBTs(Some(id)))
+                        if self
+                            .draft
+                            .as_ref()
+                            .is_none_or(|draft| draft.psbt.unsigned_tx.compute_txid() != *id) =>
+                    {
+                        self.select_saved_draft(*id)
+                    }
+                    Menu::Vault(VaultSubMenu::PSBTs(None)) => self.draft = None,
+                    _ => {}
                 }
-                self.refresh()
+                Task::batch([self.load_review_labels(), self.refresh()])
             }
             _ => self.refresh(),
         }
@@ -975,30 +1070,34 @@ impl ImportedBitcoinPanel {
             .ok_or_else(|| "The imported wallet is not installed yet.".into())
     }
 
-    fn send_request(&self) -> Result<(Address<address::NetworkUnchecked>, u64, u64), String> {
-        let unchecked = Address::from_str(self.send_recipient.trim())
-            .map_err(|_| "Enter a valid Bitcoin address.".to_string())?;
-        unchecked
-            .clone()
-            .require_network(self.chain().bitcoin_network())
-            .map_err(|_| "The recipient address belongs to another Bitcoin network.".to_string())?;
-        let amount = self
-            .send_amount
-            .trim()
-            .parse::<u64>()
-            .map_err(|_| "Enter the amount in satoshis.".to_string())?;
-        if amount == 0 {
-            return Err("The amount must be greater than zero.".into());
-        }
-        let feerate = self
-            .send_feerate
-            .trim()
-            .parse::<u64>()
-            .map_err(|_| "Enter a fee rate in sat/vB.".to_string())?;
-        if feerate == 0 {
-            return Err("The fee rate must be at least 1 sat/vB.".into());
-        }
-        Ok((unchecked, amount, feerate))
+    /// Read the opened PSBT's labels from the wallet's daemon.
+    fn load_review_labels(&mut self) -> Task<Message> {
+        let Some(draft) = &self.draft else {
+            self.review_labels = ReviewLabels::default();
+            return Task::none();
+        };
+        self.review_labels = ReviewLabels::for_psbt(&draft.psbt);
+        self.labels_edited = LabelsEdited::default();
+        let Some(daemon) = self.daemon.clone() else {
+            return Task::none();
+        };
+        let id = draft.psbt.unsigned_tx.compute_txid();
+        let items: std::collections::HashSet<_> =
+            self.review_labels.items.iter().cloned().collect();
+        let generation = self.generation;
+        Task::perform(
+            async move {
+                daemon
+                    .get_labels(&items)
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            move |result| {
+                Message::ImportedBitcoin(Box::new(ImportEvent::ReviewLabels(
+                    generation, id, result,
+                )))
+            },
+        )
     }
 
     fn select_saved_draft(&mut self, id: Txid) {
@@ -1186,7 +1285,7 @@ impl ImportedBitcoinPanel {
             && matches!(
                 message,
                 ImportMessage::ShowSend
-                    | ImportMessage::CreateDraft
+                    | ImportMessage::OpenPrepared(..)
                     | ImportMessage::SelectDraft(_)
                     | ImportMessage::CopyPsbt
                     | ImportMessage::SignedPsbtEdited(_)
@@ -1668,72 +1767,32 @@ impl ImportedBitcoinPanel {
                     VaultSubMenu::Overview,
                 ))))
             }
-            ImportMessage::RecipientEdited(value) => {
-                self.send_recipient = value;
-                self.error = None;
-                Task::none()
-            }
-            ImportMessage::AmountEdited(value) => {
-                self.send_amount = value;
-                self.error = None;
-                Task::none()
-            }
-            ImportMessage::FeerateEdited(value) => {
-                self.send_feerate = value;
-                self.error = None;
-                Task::none()
-            }
-            ImportMessage::CreateDraft => {
-                if !self.is_ready() {
-                    self.error = Some(
-                        "The complete history scan must finish before a spend can be drafted."
-                            .into(),
-                    );
-                    return Task::none();
-                }
-                let (address, amount, feerate) = match self.send_request() {
-                    Ok(request) => request,
-                    Err(error) => {
-                        self.error = Some(error);
-                        return Task::none();
+            ImportMessage::OpenPrepared(psbt, warnings) => {
+                let id = psbt.unsigned_tx.compute_txid();
+                self.file_notice = None;
+                self.last_broadcast_txid = None;
+                self.broadcast_notice = None;
+                self.signed_psbt_text.clear();
+                match self
+                    .import_descriptor()
+                    .and_then(|wallet| checked_draft(&wallet, psbt, warnings))
+                {
+                    Ok(draft) => {
+                        self.draft = Some(draft);
+                        self.error = None;
                     }
-                };
-                let Some(daemon) = self.daemon.clone() else {
-                    return Task::none();
-                };
-                self.busy = true;
-                self.error = None;
-                let generation = self.generation;
-                Task::perform(
-                    async move {
-                        let destinations = HashMap::from([(address, amount)]);
-                        match daemon
-                            .create_spend_tx(&[], &destinations, feerate, None)
-                            .await
-                            .map_err(|error| error.to_string())?
-                        {
-                            CreateSpendResult::Success { psbt, warnings } => {
-                                daemon
-                                    .update_spend_tx(&psbt)
-                                    .await
-                                    .map_err(|error| error.to_string())?;
-                                Ok((psbt, warnings))
-                            }
-                            CreateSpendResult::InsufficientFunds { missing } => Err(format!(
-                                "Insufficient funds: {missing} more satoshis are needed."
-                            )),
-                        }
-                    },
-                    move |result| {
-                        Message::ImportedBitcoin(Box::new(ImportEvent::DraftCreated(
-                            generation, result,
-                        )))
-                    },
-                )
+                    Err(error) => {
+                        self.draft = None;
+                        self.error = Some(error);
+                    }
+                }
+                Task::done(Message::View(view::Message::Menu(Menu::Vault(
+                    VaultSubMenu::PSBTs(Some(id)),
+                ))))
             }
             ImportMessage::SelectDraft(id) => {
                 self.select_saved_draft(id);
-                Task::none()
+                self.load_review_labels()
             }
             ImportMessage::CopyPsbt => self.draft.as_ref().map_or_else(Task::none, |draft| {
                 iced::clipboard::write(draft.psbt.to_string())
@@ -2239,6 +2298,11 @@ impl ImportedBitcoinPanel {
                     Ok((info, coins, history, spend_drafts, stage)) => {
                         self.snapshot_failed = false;
                         self.info = Some(info);
+                        self.review_coins = coins
+                            .coins
+                            .iter()
+                            .map(|coin| (coin.outpoint, coin.clone()))
+                            .collect();
                         self.coins = Some(coins);
                         self.history = history;
                         self.spend_drafts = spend_drafts;
@@ -2369,22 +2433,16 @@ impl ImportedBitcoinPanel {
                 }
                 Task::none()
             }
-            ImportEvent::DraftCreated(generation, result) if generation == self.generation => {
-                self.busy = false;
-                match result {
-                    Ok((psbt, warnings)) => match self
-                        .import_descriptor()
-                        .and_then(|wallet| checked_draft(&wallet, psbt, warnings))
-                    {
-                        Ok(draft) => {
-                            self.draft = Some(draft);
-                            self.signed_psbt_text.clear();
-                            self.error = None;
-                            return self.refresh();
-                        }
-                        Err(error) => self.error = Some(error),
-                    },
-                    Err(error) => self.error = Some(error),
+            ImportEvent::ReviewLabels(generation, id, result) if generation == self.generation => {
+                if self
+                    .draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.psbt.unsigned_tx.compute_txid() == id)
+                {
+                    match result {
+                        Ok(labels) => self.review_labels.labels = labels,
+                        Err(_) => log::warn!("Could not read the imported PSBT's labels"),
+                    }
                 }
                 Task::none()
             }
@@ -2402,15 +2460,16 @@ impl ImportedBitcoinPanel {
                 }
                 match result {
                     Ok((psbt, counts, final_txid)) => {
-                        let warnings = self
-                            .draft
-                            .as_ref()
-                            .map_or_else(Vec::new, |draft| draft.warnings.clone());
+                        let (warnings, change_indexes) =
+                            self.draft.as_ref().map_or_else(Default::default, |draft| {
+                                (draft.warnings.clone(), draft.change_indexes.clone())
+                            });
                         self.draft = Some(ImportedDraft {
                             psbt,
                             signatures_per_input: counts,
                             final_txid,
                             warnings,
+                            change_indexes,
                         });
                         self.signed_psbt_text.clear();
                         self.error = None;
@@ -2474,15 +2533,16 @@ impl ImportedBitcoinPanel {
                 }
                 match result {
                     Ok(Some((psbt, counts, final_txid))) => {
-                        let warnings = self
-                            .draft
-                            .as_ref()
-                            .map_or_else(Vec::new, |draft| draft.warnings.clone());
+                        let (warnings, change_indexes) =
+                            self.draft.as_ref().map_or_else(Default::default, |draft| {
+                                (draft.warnings.clone(), draft.change_indexes.clone())
+                            });
                         self.draft = Some(ImportedDraft {
                             psbt,
                             signatures_per_input: counts,
                             final_txid,
                             warnings,
+                            change_indexes,
                         });
                         self.file_notice = Some("Signed PSBT loaded and verified.".into());
                         self.error = None;
@@ -4089,235 +4149,204 @@ impl ImportedBitcoinPanel {
         content
     }
 
-    fn send_view(&self, psbts_only: bool) -> Element<'_, view::Message> {
-        if self.chain().is_blake2b() {
-            return Column::new()
-                .spacing(16)
-                .push(h2(localized_copy("Send")))
-                .push(p1_regular(localized_copy(
-                    "Sending from paired imported Bitcoin Blake2b wallets is not available.",
-                )))
-                .into();
-        }
-        let mut content = Column::new()
-            .spacing(14)
-            .push(h2(if psbts_only { "PSBTs" } else { localized_copy("Send Bitcoin") }))
-            .push(p1_regular(localized_copy("Spend from the imported wallet using its original signer or hardware device. Your Cube seed cannot sign this transaction.")))
-            .push(button::secondary(None, localized_copy("Back to overview"))
-                .on_press(view::Message::Menu(Menu::Vault(VaultSubMenu::Overview))));
-        if let Some(txid) = self.last_broadcast_txid {
-            content = content.push(p1_bold(coincube_ui::localized_format!(
-                "Broadcast transaction: {txid}",
-                "Transacción publicada: {txid}"
-            )));
-        }
-        if let Some(notice) = &self.broadcast_notice {
-            content = content.push(caption(shown_notice(notice)));
-        }
-        if let Some(notice) = &self.file_notice {
-            content = content.push(caption(shown_notice(notice)));
-        }
-        if let Some(draft) = &self.draft {
-            content = content
-                .push(p1_bold(localized_copy("Review transaction")))
-                .push(p1_regular(crate::chain::canonical_network_name(
-                    self.chain(),
-                )))
-                .push(caption(coincube_ui::localized_format!(
-                    "Draft ID: {}",
-                    "ID del borrador: {}",
-                    draft.psbt.unsigned_tx.compute_txid()
-                )));
-            for output in &draft.psbt.unsigned_tx.output {
-                let address = Address::from_script(&output.script_pubkey, Network::Bitcoin)
-                    .map(|address| address.to_string())
-                    .unwrap_or_else(|_| localized_copy("Unsupported output script").into());
-                content = content.push(p1_regular(format!(
-                    "{} sats → {address}",
-                    output.value.to_sat()
-                )));
-            }
-            if let Ok(fee) = draft.psbt.fee() {
-                content = content.push(p1_regular(coincube_ui::localized_format!(
-                    "Network fee: {} sats",
-                    "Comisión de red: {} sats",
-                    fee.to_sat()
-                )));
-            }
-            for warning in &draft.warnings {
-                content = content.push(caption(shown_notice(warning)));
-            }
-            content = content
-                .push(caption(coincube_ui::localized_format!("Valid signer signatures per input: {}", "Firmas válidas por entrada: {}",
-                    draft.signatures_per_input.iter().map(|count| count.to_string()).collect::<Vec<_>>().join(", "))))
-                .push(p1_regular(localized_copy("Save or copy this PSBT for the original signing wallet. Load the signed file or paste its base64 below. For multisig, repeat with each signer.")))
-                .push(Row::new().spacing(10)
-                    .push(button::secondary(None, localized_copy("Save PSBT file"))
-                        .on_press_maybe((!self.busy).then_some(view::Message::ImportedBitcoin(ImportMessage::SavePsbt(coincube_ui::locale::language())))))
-                    .push(button::secondary(None, localized_copy("Load signed PSBT"))
-                        .on_press_maybe((!self.busy).then_some(view::Message::ImportedBitcoin(ImportMessage::LoadSignedPsbt(coincube_ui::locale::language())))))
-                    .push(button::secondary(None, localized_copy("Copy PSBT"))
-                        .on_press(view::Message::ImportedBitcoin(ImportMessage::CopyPsbt))))
-                .push(p1_bold(localized_copy("Sign with a connected device")));
-            if let Some(listing) = &self.hardware_wallets {
-                if listing.list.is_empty() {
-                    content = content.push(caption(localized_copy(
-                        "Connect and unlock a hardware wallet to sign here.",
-                    )));
-                }
-                for device in &listing.list {
-                    let label = match device {
-                        HardwareWallet::Supported {
-                            kind, fingerprint, ..
-                        } => {
-                            format!("{kind} · {fingerprint}")
-                        }
-                        HardwareWallet::Locked { kind, .. } => coincube_ui::localized_format!(
-                            "{kind} · unlock device",
-                            "{kind} · desbloquea el dispositivo"
-                        ),
-                        HardwareWallet::Unsupported { kind, .. } => {
-                            coincube_ui::localized_format!(
-                                "{kind} · unsupported",
-                                "{kind} · no compatible"
-                            )
-                        }
-                    };
-                    content = content.push(caption(label));
-                    if device.is_supported() {
-                        content = content.push(
-                            button::secondary(None, localized_copy("Sign PSBT")).on_press_maybe(
-                                (!self.busy).then_some(view::Message::ImportedBitcoin(
-                                    ImportMessage::SignWithDevice(device.id().clone()),
-                                )),
-                            ),
-                        );
-                    }
-                }
-            }
-            content = content
-                .push(
-                    text_input(
-                        localized_copy("Paste signed PSBT (base64)"),
-                        &self.signed_psbt_text,
-                    )
-                    .on_input(|value| {
-                        view::Message::ImportedBitcoin(ImportMessage::SignedPsbtEdited(value))
+    /// Send on Bitcoin Blake2b, where an imported wallet cannot send.
+    fn send_unavailable_view(&self) -> Element<'_, view::Message> {
+        Column::new()
+            .spacing(16)
+            .push(h2(localized_copy("Send")))
+            .push(p1_regular(localized_copy(
+                "Sending from paired imported Bitcoin Blake2b wallets is not available.",
+            )))
+            .into()
+    }
+
+    /// The opened PSBT, reviewed and signed like a Vault Send.
+    fn review_view<'a>(
+        &'a self,
+        draft: &'a ImportedDraft,
+        menu: &'a Menu,
+        cache: &'a Cache,
+    ) -> Element<'a, view::Message> {
+        let draft_id = draft.psbt.unsigned_tx.compute_txid();
+        let broadcast_txid = self.last_broadcast_txid.or_else(|| {
+            self.spend_drafts
+                .iter()
+                .find(|entry| entry.psbt.unsigned_tx.compute_txid() == draft_id)
+                .and_then(|entry| entry.broadcast_txid)
+        });
+        let signers = self
+            .hardware_wallets
+            .as_ref()
+            .map(|listing| {
+                listing
+                    .list
+                    .iter()
+                    .map(|device| view::vault::spend::ImportedSigner {
+                        label: match device {
+                            HardwareWallet::Supported {
+                                kind, fingerprint, ..
+                            } => format!("{kind} · {fingerprint}"),
+                            HardwareWallet::Locked { kind, .. } => {
+                                coincube_ui::localized_format!(
+                                    "{kind} · unlock device",
+                                    "{kind} · desbloquea el dispositivo"
+                                )
+                            }
+                            HardwareWallet::Unsupported { kind, .. } => {
+                                coincube_ui::localized_format!(
+                                    "{kind} · unsupported",
+                                    "{kind} · no compatible"
+                                )
+                            }
+                        },
+                        id: device.is_supported().then(|| device.id().clone()),
                     })
-                    .padding(10),
-                )
+                    .collect()
+            })
+            .unwrap_or_default();
+        let required_signatures = self
+            .import_descriptor()
+            .map_or(1, |wallet| required_signatures(&wallet));
+        view::vault::spend::imported_review_view(
+            menu,
+            cache,
+            view::vault::spend::ImportedReview {
+                psbt: &draft.psbt,
+                network: self.chain().bitcoin_network(),
+                change_indexes: &draft.change_indexes,
+                coins: &self.review_coins,
+                labels: &self.review_labels.labels,
+                labels_editing: self.labels_edited.cache(),
+                warnings: draft.warnings.iter().map(|w| shown_notice(w)).collect(),
+                notices: [&self.broadcast_notice, &self.file_notice]
+                    .iter()
+                    .filter_map(|notice| notice.as_deref())
+                    .map(shown_notice)
+                    .collect(),
+                error: self.error.as_deref().map(shown_notice),
+                signatures_per_input: &draft.signatures_per_input,
+                required_signatures,
+                final_txid: draft.final_txid,
+                broadcast_txid,
+                signers,
+                signers_loaded: self.hardware_wallets.is_some(),
+                busy: self.busy,
+                can_broadcast: self.is_ready(),
+                signed_psbt_text: &self.signed_psbt_text,
+            },
+        )
+    }
+
+    /// The wallet's saved PSBTs.
+    fn psbts_view(&self, cache: &Cache) -> Element<'_, view::Message> {
+        let wallet = self.import_descriptor().ok();
+        let mut content = Column::new().spacing(25).push(
+            Row::new()
+                .align_y(iced::Alignment::Center)
+                .spacing(10)
                 .push(
-                    button::secondary(None, localized_copy("Import signatures")).on_press_maybe(
-                        (!self.busy && !self.signed_psbt_text.trim().is_empty()).then_some(
-                            view::Message::ImportedBitcoin(ImportMessage::ImportSignedPsbt),
-                        ),
-                    ),
-                );
-            let draft_id = draft.psbt.unsigned_tx.compute_txid();
-            let already_broadcast = self.spend_drafts.iter().any(|entry| {
-                entry.psbt.unsigned_tx.compute_txid() == draft_id && entry.broadcast_txid.is_some()
-            });
-            if let Some(final_txid) = draft.final_txid {
-                content = content
-                    .push(p1_bold(coincube_ui::localized_format!(
-                        "Ready to broadcast · Final transaction ID: {final_txid}",
-                        "Lista para publicar · ID de la transacción final: {final_txid}"
-                    )))
-                    .push(
-                        button::primary(
-                            None,
-                            if self.busy {
-                                localized_copy("Broadcasting…")
-                            } else {
-                                localized_copy("Broadcast transaction")
-                            },
-                        )
-                        .on_press_maybe(
-                            (!self.busy && self.is_ready() && !already_broadcast).then_some(
-                                view::Message::ImportedBitcoin(ImportMessage::Broadcast),
-                            ),
-                        ),
-                    );
-                if already_broadcast {
-                    content = content.push(caption(localized_copy(
-                        "This saved transaction was already broadcast.",
-                    )));
-                }
-            } else {
-                content = content.push(caption(localized_copy(
-                    "Waiting for enough valid signatures on every input.",
-                )));
-            }
-        } else if !psbts_only {
-            content = content
-                .push(p1_bold(localized_copy("New transaction")))
-                .push(
-                    text_input(
-                        localized_copy("Bitcoin recipient address"),
-                        &self.send_recipient,
-                    )
-                    .on_input(|value| {
-                        view::Message::ImportedBitcoin(ImportMessage::RecipientEdited(value))
-                    })
-                    .padding(10),
-                )
-                .push(
-                    text_input(localized_copy("Amount in satoshis"), &self.send_amount)
-                        .on_input(|value| {
-                            view::Message::ImportedBitcoin(ImportMessage::AmountEdited(value))
-                        })
-                        .padding(10),
-                )
-                .push(
-                    text_input(localized_copy("Fee rate in sat/vB"), &self.send_feerate)
-                        .on_input(|value| {
-                            view::Message::ImportedBitcoin(ImportMessage::FeerateEdited(value))
-                        })
-                        .padding(10),
+                    iced::widget::Container::new(h3(localized_copy("PSBT proposals")).bold())
+                        .width(iced::Length::Fill),
                 )
                 .push(
                     button::primary(
-                        None,
-                        if self.busy {
-                            localized_copy("Preparing…")
-                        } else {
-                            localized_copy("Review PSBT")
-                        },
+                        Some(coincube_ui::icon::plus_icon()),
+                        localized_copy("Create PSBT"),
                     )
-                    .on_press_maybe(
-                        (!self.busy && self.is_ready())
-                            .then_some(view::Message::ImportedBitcoin(ImportMessage::CreateDraft)),
-                    ),
-                );
-        }
-        if psbts_only && self.draft.is_none() {
-            content = content.push(
-                button::primary(None, localized_copy("New transaction"))
                     .on_press(view::Message::Menu(Menu::Vault(VaultSubMenu::Send))),
-            );
-        }
-        if !self.spend_drafts.is_empty() {
-            content = content.push(p1_bold(localized_copy("Saved transactions")));
-            for entry in self.spend_drafts.iter().take(10) {
-                let id = entry.psbt.unsigned_tx.compute_txid();
-                content = content
-                    .push(caption(coincube_ui::localized_format!(
-                        "Draft {id}",
-                        "Borrador {id}"
-                    )))
-                    .push(
-                        button::secondary(None, localized_copy("Open saved PSBT")).on_press_maybe(
-                            (!self.busy).then_some(view::Message::ImportedBitcoin(
-                                ImportMessage::SelectDraft(id),
-                            )),
-                        ),
-                    );
-            }
-        }
+                ),
+        );
         if let Some(error) = &self.error {
             content = content.push(p1_regular(shown_notice(error)).style(theme::text::error));
         }
-        content.into()
+        if self.spend_drafts.is_empty() {
+            return content
+                .push(view::placeholder(
+                    coincube_ui::icon::receipt_icon().size(80),
+                    localized_copy("No PSBTs yet"),
+                    localized_copy(
+                        "Create a PSBT here, then sign it with this wallet's own signers.",
+                    ),
+                ))
+                .into();
+        }
+        let rows =
+            self.spend_drafts
+                .iter()
+                .take(20)
+                .enumerate()
+                .fold(Column::new(), |col, (i, entry)| {
+                    let id = entry.psbt.unsigned_tx.compute_txid();
+                    let change = wallet
+                        .as_ref()
+                        .map(|wallet| change_indexes(wallet, &entry.psbt))
+                        .unwrap_or_default();
+                    let paid = entry
+                        .psbt
+                        .unsigned_tx
+                        .output
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| !change.contains(index))
+                        .fold(
+                            coincube_core::miniscript::bitcoin::Amount::ZERO,
+                            |sum, (_, output)| sum + output.value,
+                        );
+                    let txid = id.to_string();
+                    let col = if i == 0 {
+                        col
+                    } else {
+                        col.push(iced::widget::rule::horizontal(1))
+                    };
+                    col.push(
+                        iced::widget::Container::new(
+                            Row::new()
+                                .spacing(12)
+                                .align_y(iced::Alignment::Center)
+                                .push(
+                                    p1_regular(format!(
+                                        "{}…{}",
+                                        &txid[..8],
+                                        &txid[txid.len() - 8..]
+                                    ))
+                                    .width(iced::Length::Fill),
+                                )
+                                .push(if cache.balance_amounts_masked() {
+                                    Element::from(p1_regular("••••"))
+                                } else {
+                                    coincube_ui::component::amount::amount_with_unit(
+                                        &paid,
+                                        cache.bitcoin_unit,
+                                    )
+                                    .into()
+                                })
+                                .push(
+                                    p2_regular(if entry.broadcast_txid.is_some() {
+                                        localized_copy("Broadcast")
+                                    } else {
+                                        localized_copy("Waiting to sign")
+                                    })
+                                    .style(theme::text::secondary)
+                                    .width(iced::Length::Fixed(140.0)),
+                                )
+                                .push(
+                                    button::secondary(None, localized_copy("Open"))
+                                        .width(iced::Length::Fixed(120.0))
+                                        .on_press(view::Message::Menu(Menu::Vault(
+                                            VaultSubMenu::PSBTs(Some(id)),
+                                        ))),
+                                ),
+                        )
+                        .padding(14),
+                    )
+                });
+        content
+            .push(
+                iced::widget::Container::new(rows)
+                    .width(iced::Length::Fill)
+                    .style(theme::card::simple),
+            )
+            .into()
     }
 
     fn settings_view(&self, option: Option<SettingsOption>) -> Element<'_, view::Message> {
@@ -4425,8 +4454,14 @@ impl State for ImportedBitcoinPanel {
             self.wallet_view(cache.balance_amounts_masked())
         } else {
             match menu {
-                Menu::Vault(VaultSubMenu::Send) => self.send_view(false),
-                Menu::Vault(VaultSubMenu::PSBTs(_)) => self.send_view(true),
+                Menu::Vault(VaultSubMenu::Send) => self.send_unavailable_view(),
+                Menu::Vault(VaultSubMenu::PSBTs(_)) if self.chain().is_blake2b() => {
+                    self.send_unavailable_view()
+                }
+                Menu::Vault(VaultSubMenu::PSBTs(_)) => match &self.draft {
+                    Some(draft) => return self.review_view(draft, menu, cache),
+                    None => self.psbts_view(cache),
+                },
                 Menu::Vault(VaultSubMenu::Settings(option)) => self.settings_view(*option),
                 // Unreachable once ready: `App` routes only Send, PSBTs and
                 // Settings here, and the Vault page (with its Tools links)
@@ -4435,6 +4470,35 @@ impl State for ImportedBitcoinPanel {
             }
         };
         view::dashboard(menu, cache, body)
+    }
+
+    /// Label edits on the opened PSBT's review.
+    fn update(
+        &mut self,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        if !matches!(
+            message,
+            Message::View(view::Message::Label(..)) | Message::LabelsUpdated(_)
+        ) {
+            return Task::none();
+        }
+        let Some(daemon) = self.daemon.clone() else {
+            return Task::none();
+        };
+        match self.labels_edited.update(
+            daemon,
+            message,
+            [&mut self.review_labels as &mut dyn model::LabelsLoader],
+        ) {
+            Ok(task) => task,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                Task::none()
+            }
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -7053,6 +7117,158 @@ mod tests {
     }
 
     #[test]
+    fn a_ready_import_composes_in_the_vault_send_form() {
+        let panel = ready_import_panel();
+        assert!(panel.is_ready());
+        assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::Send)));
+        assert!(panel.handles_route(&Menu::Vault(VaultSubMenu::PSBTs(None))));
+    }
+
+    /// A PSBT built like the daemon's: one coin, an outside payment and
+    /// change at /1/3.
+    fn payment_with_change(wallet: &ImportedWalletDescriptor) -> Psbt {
+        use coincube_core::miniscript::bitcoin::{TxIn, TxOut};
+        use coincube_core::spend::{
+            AddrInfo, CandidateCoin, SpendOutputAddress, SpendTxFees, TxGetter,
+        };
+        struct OneTx(Transaction);
+        impl TxGetter for OneTx {
+            fn get_tx(&mut self, txid: &Txid) -> Option<Transaction> {
+                (self.0.compute_txid() == *txid).then(|| self.0.clone())
+            }
+        }
+        let script = |descriptor: &coincube_core::miniscript::Descriptor<DescriptorPublicKey>,
+                      index| {
+            descriptor
+                .at_derivation_index(index)
+                .unwrap()
+                .script_pubkey()
+        };
+        let address = |script: coincube_core::miniscript::bitcoin::ScriptBuf| {
+            Address::from_script(&script, Network::Bitcoin).unwrap()
+        };
+        let previous = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn::default()],
+            output: vec![TxOut {
+                value: Amount::from_sat(300_000),
+                script_pubkey: script(wallet.receive_descriptor(), 0),
+            }],
+        };
+        let coin = CandidateCoin {
+            outpoint: OutPoint {
+                txid: previous.compute_txid(),
+                vout: 0,
+            },
+            amount: Amount::from_sat(300_000),
+            deriv_index: ChildNumber::Normal { index: 0 },
+            is_change: false,
+            must_select: true,
+            sequence: None,
+            ancestor_info: None,
+        };
+        let change = SpendOutputAddress {
+            addr: address(script(wallet.change_descriptor(), 3)),
+            info: Some(AddrInfo {
+                index: ChildNumber::Normal { index: 3 },
+                is_change: true,
+            }),
+        };
+        let outside = SpendOutputAddress {
+            addr: address(script(two_of_three().receive_descriptor(), 0)),
+            info: None,
+        };
+        coincube_core::imported_spend::create_imported_spend(
+            wallet,
+            &secp256k1::Secp256k1::verification_only(),
+            &mut OneTx(previous),
+            &[(outside, Amount::from_sat(250_000))],
+            &[coin],
+            SpendTxFees::Regular(5),
+            change,
+            LockTime::ZERO,
+        )
+        .unwrap()
+        .psbt
+    }
+
+    #[test]
+    fn the_review_tells_change_from_payments_and_reads_the_threshold() {
+        let panel = ready_import_panel();
+        let wallet = panel.import_descriptor().unwrap();
+        let mut psbt = payment_with_change(&wallet);
+        let change = change_indexes(&wallet, &psbt);
+        assert_eq!(change.len(), 1);
+        // A derivation on an output that is not this wallet's never counts.
+        let payment = 1 - change[0];
+        let claimed = psbt.outputs[change[0]].clone();
+        psbt.outputs[payment] = claimed;
+        assert_eq!(change_indexes(&wallet, &psbt), change);
+        assert_eq!(required_signatures(&wallet), 1);
+        assert_eq!(required_signatures(&two_of_three()), 2);
+    }
+
+    #[tokio::test]
+    async fn the_vault_send_form_opens_for_an_imported_wallet() {
+        let panel = ready_import_panel();
+        let wallet = Arc::new(crate::app::wallet::Wallet::new(WalletDescriptor::Imported(
+            panel.import_descriptor().unwrap(),
+        )));
+        // The form needs no recovery clock: an imported wallet has none.
+        let form = crate::app::state::vault::spend::CreateSpendPanel::new(
+            wallet,
+            &[],
+            1,
+            Network::Bitcoin,
+            Amount::ZERO,
+            Amount::ZERO,
+            crate::app::wallet::SyncStatus::Synced,
+            Default::default(),
+        );
+        let cache = Cache::default();
+        let menu = Menu::Vault(VaultSubMenu::Send);
+        let shown = rendered_labels(State::view(&form, &menu, &cache)).await;
+        assert!(!shown
+            .iter()
+            .any(|label| label.contains("Amount in satoshis")));
+    }
+
+    #[tokio::test]
+    async fn a_prepared_psbt_opens_on_the_send_review() {
+        let mut panel = ready_import_panel();
+        let wallet = panel.import_descriptor().unwrap();
+        let psbt = payment_with_change(&wallet);
+        let change = change_indexes(&wallet, &psbt);
+        let id = psbt.unsigned_tx.compute_txid();
+        let _ = panel.update_view(ImportMessage::OpenPrepared(psbt, Vec::new()), None, 0);
+        assert!(panel.error.is_none(), "{:?}", panel.error);
+        let draft = panel.draft.as_ref().expect("the prepared PSBT is open");
+        assert_eq!(draft.psbt.unsigned_tx.compute_txid(), id);
+        assert_eq!(draft.change_indexes, change);
+        // Entering its route keeps it: the saved list may not have it yet.
+        let menu = Menu::Vault(VaultSubMenu::PSBTs(Some(id)));
+        let _ = panel.enter_route(&menu);
+        assert!(panel.draft.is_some());
+        let cache = Cache::default();
+        let shown = rendered_labels(State::view(&panel, &menu, &cache)).await;
+        assert_labels(
+            &shown,
+            &[
+                "Sign",
+                "Save PSBT file",
+                "Load signed PSBT",
+                "Copy PSBT",
+                "Not signed yet",
+            ],
+            &["Review PSBT", "Open saved PSBT", "Back to overview"],
+        );
+        // The list route closes it.
+        let _ = panel.enter_route(&Menu::Vault(VaultSubMenu::PSBTs(None)));
+        assert!(panel.draft.is_none());
+    }
+
+    #[test]
     fn selecting_missing_saved_transaction_clears_previous_draft() {
         let directory = NetworkDirectory::new(std::env::temp_dir().join("import-panel-draft-test"));
         let mut panel =
@@ -7070,6 +7286,7 @@ mod tests {
             signatures_per_input: Vec::new(),
             final_txid: Some(id),
             warnings: Vec::new(),
+            change_indexes: Vec::new(),
         });
         panel.select_saved_draft(id);
         assert!(panel.draft.is_none());
@@ -7104,6 +7321,7 @@ mod tests {
             signatures_per_input: Vec::new(),
             final_txid: None,
             warnings: Vec::new(),
+            change_indexes: Vec::new(),
         });
         let generation = panel.generation;
         let _ = panel.update_event(ImportEvent::SignedSaved(
