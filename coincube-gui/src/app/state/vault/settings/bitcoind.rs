@@ -1475,7 +1475,16 @@ impl State for BitcoindSettingsState {
                     can_switch_to_connect,
                     can_switch_to_bitcoind,
                     can_setup_local_node,
-                ) = if let Some(cfg) = &self.full_config {
+                ) = if let Some(summary) = cache
+                    .imported_node
+                    .as_ref()
+                    .filter(|_| cache.has_imported_bitcoin)
+                {
+                    // An imported wallet syncs from the server chosen at import
+                    // (Connect, public or own Esplora, or Electrum), never a
+                    // local node: nothing to switch to or set up here.
+                    (summary.server, icon::network_icon(), false, false, false)
+                } else if let Some(cfg) = &self.full_config {
                     let (ab, ai) = match &cfg.bitcoin_backend {
                         Some(BitcoinBackend::Esplora(_)) => {
                             ("COINCUBE | Connect", icon::network_icon())
@@ -1562,6 +1571,13 @@ impl State for BitcoindSettingsState {
                 );
                 if let Some(card) = self.background_install_card(cache) {
                     setting_panels.push(card.map(map_node_msg));
+                }
+                if let Some(summary) = cache
+                    .imported_node
+                    .as_ref()
+                    .filter(|_| cache.has_imported_bitcoin)
+                {
+                    setting_panels.push(view::vault::settings::imported_history_section(summary));
                 }
                 // Standing notice, not just a click-time warning: the
                 // automatic switch is refused too, and the "will switch
@@ -1729,13 +1745,17 @@ impl State for BitcoindSettingsState {
                     ));
                 }
             }
-            node_panels.push(
-                self.rescan_settings
-                    .view(cache, can_do_rescan)
-                    .map(move |msg| {
-                        view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
-                    }),
-            );
+            // An imported wallet searches more addresses instead of rescanning
+            // from a date (its Wallet history group).
+            if !cache.has_imported_bitcoin {
+                node_panels.push(
+                    self.rescan_settings
+                        .view(cache, can_do_rescan)
+                        .map(move |msg| {
+                            view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
+                        }),
+                );
+            }
             if advanced_disclosure {
                 if self.node_advanced {
                     advanced_panels.extend(node_panels);
@@ -3359,6 +3379,73 @@ mod tests {
         let _ = rescan.update(daemon, &cache, view::SettingsEditMessage::Confirm);
         assert!(rescan.future_date);
         assert!(!rescan.processing);
+    }
+
+    /// An imported Vault's Node page names its server, shows its history scan
+    /// with Retry synchronization and the wider address search, and offers
+    /// no local node or date rescan.
+    #[tokio::test]
+    async fn an_imported_vaults_node_page_shows_its_history_not_local_nodes() {
+        use crate::app::state::imported_bitcoin::ImportedNodeSummary;
+        use crate::home::restore_frame::rendered_labels;
+        let summary = ImportedNodeSummary {
+            server: "My Electrum server",
+            endpoint: "ssl://electrum.example:50002".into(),
+            status: Some(coincubed::commands::ImportedWalletSync {
+                wallet_identity: "id".into(),
+                chain_id: crate::chain::ChainId::Bitcoin,
+                birthday: 0,
+                initial_lookahead: 200,
+                discovery_target: 200,
+                receive_scanned: 200,
+                change_scanned: 200,
+                history_complete: true,
+            }),
+            ready: true,
+            busy: false,
+            can_expand: true,
+            notice: None,
+        };
+        let state = BitcoindSettingsState::new(
+            Some(config_with_backend(Some(BitcoinBackend::Electrum(
+                electrum_config(),
+            )))),
+            &Cache::default(),
+            false,
+            false,
+        );
+        let menu = Menu::Vault(crate::app::menu::VaultSubMenu::Settings(Some(
+            crate::app::menu::SettingsOption::Node,
+        )));
+        let imported = Cache {
+            has_imported_bitcoin: true,
+            imported_node: Some(summary),
+            ..Cache::default()
+        };
+        let shown = rendered_labels(State::view(&state, &menu, &imported)).await;
+        for label in [
+            "Wallet history",
+            "My Electrum server",
+            "Retry synchronization",
+            "Search 200 more addresses",
+        ] {
+            assert!(
+                shown.iter().any(|l| l.contains(label)),
+                "{}: {:?}",
+                label,
+                shown
+            );
+        }
+        assert!(
+            !shown.iter().any(|l| l == "Year"),
+            "no date rescan: {:?}",
+            shown
+        );
+
+        // A Vault keeps its date rescan and has no imported history.
+        let vault = Cache::default();
+        let shown = rendered_labels(State::view(&state, &menu, &vault)).await;
+        assert!(!shown.iter().any(|l| l == "Wallet history"));
     }
 
     #[test]

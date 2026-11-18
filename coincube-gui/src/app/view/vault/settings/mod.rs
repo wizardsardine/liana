@@ -1738,6 +1738,67 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
+/// An imported Vault's history scan on its Node page: what it has checked,
+/// Retry synchronization, and a wider address search.
+pub fn imported_history_section<'a>(
+    summary: &'a crate::app::state::imported_bitcoin::ImportedNodeSummary,
+) -> Element<'a, Message> {
+    use crate::app::state::imported_bitcoin::ImportMessage;
+    use crate::app::view::settings::page;
+    let idle = !summary.busy;
+    let mut rows: Vec<Element<'a, Message>> = vec![page::row(localized_copy("Server"))
+        .description(summary.endpoint.clone())
+        .accessory(page::status(
+            if summary.ready {
+                page::Status::Ok
+            } else {
+                page::Status::Busy
+            },
+            localized_copy(if summary.ready { "Synced" } else { "Syncing" }),
+        ))
+        .control(page::button(
+            "tenshu.settings.node.imported.retry",
+            localized_copy("Retry synchronization"),
+            idle.then_some(Message::ImportedBitcoin(
+                ImportMessage::RetrySynchronization,
+            )),
+        ))
+        .into()];
+    if let Some(status) = &summary.status {
+        let mut history =
+            page::row(localized_copy("Addresses checked")).description(localized_format!(
+                "Receive {} · change {} · target {} per branch",
+                "Recepción {} · cambio {} · objetivo {} por rama",
+                status.receive_scanned,
+                status.change_scanned,
+                status.discovery_target
+            ));
+        if summary.can_expand && status.discovery_target < 10_000 {
+            history = history.control(page::button(
+                "tenshu.settings.node.imported.expand",
+                localized_copy("Search 200 more addresses"),
+                (idle && summary.ready)
+                    .then_some(Message::ImportedBitcoin(ImportMessage::ExpandDiscovery)),
+            ));
+        }
+        rows.push(history.into());
+    }
+    let mut column = Column::new().width(Length::Fill).push(page::group(
+        localized_copy("Wallet history"),
+        Some(
+            localized_copy(
+                "This imported wallet's history comes from its server. Search more addresses if a payment is missing.",
+            )
+            .into(),
+        ),
+        page::rows(rows),
+    ));
+    if let Some(notice) = &summary.notice {
+        column = column.push(text(notice.clone()).size(13).style(theme::text::error));
+    }
+    column.into()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn node_backend_status<'a>(
     active_backend: &'static str,
