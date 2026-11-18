@@ -3325,6 +3325,25 @@ pub(crate) fn claim_target_exists(datadir: &CoincubeDirectory, descriptor_checks
     claim_targets(datadir).contains_key(descriptor_checksum)
 }
 
+/// Whether this Bitcoin Cube's Vault has a Bitcoin Blake2b copy: a claimed
+/// Vault, or for an imported Vault the paired Cube holding the same imported
+/// wallet on Bitcoin Blake2b. Only a Bitcoin Cube has a copy.
+fn copy_exists(
+    datadir: &CoincubeDirectory,
+    network: crate::chain::ChainId,
+    wallet: &Wallet,
+) -> bool {
+    if network != crate::chain::ChainId::Bitcoin {
+        return false;
+    }
+    if wallet.supports_inheritance() {
+        claim_target_exists(datadir, &wallet.descriptor_checksum)
+    } else {
+        wallet.is_imported()
+            && crate::services::split_coins::journal::twin_wallet_id(datadir, wallet).is_some()
+    }
+}
+
 impl App {
     #[cfg(test)]
     pub(crate) fn current_menu_for_test(&self) -> &Menu {
@@ -3685,9 +3704,7 @@ impl App {
         // Resolved once per cube-open, from the fork chain's settings file.
         // Only a Bitcoin Cube can be a claim source, so the question is not
         // asked on any other chain.
-        cache.btcb2_already_claimed = wallet.supports_inheritance()
-            && cube_settings.network == crate::chain::ChainId::Bitcoin
-            && claim_target_exists(&data_dir, &wallet.descriptor_checksum);
+        cache.btcb2_already_claimed = copy_exists(&data_dir, cube_settings.network, &wallet);
         // Connect blinding (PR D3): derive the Cube's encryption key once from
         // the master signer the unlock already loaded, so every surface that
         // opens a Connect-served key can do so without re-prompting for a PIN.
@@ -4462,14 +4479,11 @@ impl App {
             .map(|record| record.txid)
             .collect();
         let chain = wallet.chain;
-        let twin_records = crate::services::split_coins::journal::twin_data_dir(
-            &self.cache.datadir_path,
-            chain,
-            &wallet.descriptor_checksum,
-        )
-        .zip(crate::services::entangled::twin_chain(chain))
-        .map(|(dir, twin)| crate::services::split_coins::journal::load(&dir, twin))
-        .unwrap_or_default();
+        let twin_records =
+            crate::services::split_coins::journal::twin_data_dir(&self.cache.datadir_path, wallet)
+                .zip(crate::services::entangled::twin_chain(chain))
+                .map(|(dir, twin)| crate::services::split_coins::journal::load(&dir, twin))
+                .unwrap_or_default();
         // The twin journal only nominates splits; Connect must show each one
         // deep on the twin chain now before its coins count as separated.
         let candidates =
@@ -5092,12 +5106,10 @@ impl App {
     /// Re-read from the disk whether this Bitcoin Cube's Vault already has a
     /// Bitcoin Blake2b copy (`Cache::btcb2_already_claimed`).
     pub(crate) fn refresh_copy_exists(&mut self) {
-        self.cache.btcb2_already_claimed = self.cube_settings.network
-            == crate::chain::ChainId::Bitcoin
-            && self.wallet.as_ref().is_some_and(|wallet| {
-                wallet.supports_inheritance()
-                    && claim_target_exists(&self.datadir, &wallet.descriptor_checksum)
-            });
+        self.cache.btcb2_already_claimed = self
+            .wallet
+            .as_ref()
+            .is_some_and(|wallet| copy_exists(&self.datadir, self.cube_settings.network, wallet));
     }
 
     pub(crate) fn claim_source_cube(&self) -> crate::app::features::ClaimSourceCube {
