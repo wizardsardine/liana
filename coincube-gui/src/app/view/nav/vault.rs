@@ -66,10 +66,11 @@ pub fn items(ctx: &NavContext) -> Vec<SubItem> {
         );
     }
     // Split coins checklist (Lane B1.5): only while Bitcoin Blake2b is on for
-    // this Vault, like Coin control's Chains column.
+    // this Vault, like Coin control's Chains column. An imported Vault splits
+    // the same way, with a split key.
     let blake2b_on = ctx.network.is_blake2b()
         || (ctx.network == crate::chain::ChainId::Bitcoin && ctx.btcb2_server_enabled);
-    if blake2b_on && ctx.has_vault && !ctx.has_imported_bitcoin {
+    if blake2b_on && (ctx.has_vault || ctx.has_imported_bitcoin) {
         let settings_at = items.len().saturating_sub(1);
         items.insert(
             settings_at,
@@ -203,30 +204,38 @@ mod tests {
         ))));
     }
 
+    /// An imported Vault has every Vault route but Recovery: Split coins
+    /// included, on Bitcoin with Bitcoin Blake2b on and on Bitcoin Blake2b.
     #[test]
-    fn imported_wallet_has_no_inheritance_or_split_actions() {
+    fn imported_wallet_has_split_coins_but_no_recovery() {
         let status = crate::app::ConnectionStatus::default();
         let mut context = ctx(&status, crate::chain::ChainId::Bitcoin, true, false);
         context.has_vault = false;
         context.has_imported_bitcoin = true;
-        assert_eq!(
-            labels(&items(&context)),
-            [
-                "Overview",
-                "Send",
-                "Receive",
-                "Coins",
-                "Transactions",
-                "PSBTs",
-                "Settings"
-            ]
-        );
+        let with_split = [
+            "Overview",
+            "Send",
+            "Receive",
+            "Coins",
+            "Transactions",
+            "PSBTs",
+            "Split coins",
+            "Settings",
+        ];
+        assert_eq!(labels(&items(&context)), with_split);
         assert!(matches!(
             &items(&context).last().unwrap().route,
             Menu::Vault(VaultSubMenu::Settings(Some(
                 crate::app::menu::SettingsOption::Wallet
             )))
         ));
+        assert_eq!(
+            tools(&context)
+                .into_iter()
+                .map(|(label, _)| label)
+                .collect::<Vec<_>>(),
+            ["Coin control", "PSBT proposals", "Split coins"]
+        );
         let settings = crate::app::view::nav::tertiary::items_for(
             &Menu::Vault(VaultSubMenu::Settings(None)),
             &context,
@@ -238,7 +247,13 @@ mod tests {
         );
         assert!(settings[2].disabled_reason.is_some());
         context.network = crate::chain::ChainId::BitcoinBlake2b;
-        assert!(!labels(&items(&context)).contains(&"Split coins"));
+        assert_eq!(labels(&items(&context)), with_split);
+
+        // Bitcoin Blake2b off: no split surface, as for a Vault.
+        let mut off = ctx(&status, crate::chain::ChainId::Bitcoin, false, false);
+        off.has_vault = false;
+        off.has_imported_bitcoin = true;
+        assert!(!labels(&items(&off)).contains(&"Split coins"));
     }
 
     /// With the account grant Split coins appears, immediately before

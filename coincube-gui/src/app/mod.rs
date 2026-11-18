@@ -7222,7 +7222,9 @@ impl App {
                 // From the disk, not the cache (#503): a copy made earlier in
                 // this session leaves the cached flag stale, and the hub would
                 // otherwise start a second installer for the same Vault.
-                let Some(wallet) = self.wallet.as_ref() else {
+                // Only a Vault is claimed; an imported Vault's copy is its
+                // paired imported Cube, which this wizard doesn't make.
+                let Some(wallet) = self.wallet.as_ref().filter(|w| w.supports_inheritance()) else {
                     return Task::none();
                 };
                 if self.cube_settings.network != crate::chain::ChainId::Bitcoin {
