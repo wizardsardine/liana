@@ -82,6 +82,8 @@ pub struct HubFacts {
     /// Whether the copy can be created from here: a Vault through the copy
     /// wizard, an imported Vault as its paired imported Cube.
     pub can_create_copy: bool,
+    /// An imported Vault, whose signers make only ordinary signatures.
+    pub imported: bool,
 }
 
 /// The checklist, worded in the window's language: it is built while the
@@ -162,6 +164,8 @@ pub fn items(facts: HubFacts) -> Vec<HubItem> {
                 title: localized_copy("Replay-protected signature").into(),
                 detail: if facts.signature_available {
                     localized_copy("Available: this Vault can sign it. No split key needed.").into()
+                } else if facts.imported {
+                    localized_copy("Not available: this imported wallet signs the standard Bitcoin way, so it can't make this signature. Use a split key.").into()
                 } else {
                     localized_copy("Not available: this Vault's signers can't make this signature. Use a split key.").into()
                 },
@@ -295,6 +299,7 @@ impl SplitHubPanel {
             signature_available: split_coins::signature_available(&self.wallet),
             copy_exists: cache.btcb2_already_claimed,
             can_create_copy: self.wallet.supports_inheritance() || self.wallet.is_imported(),
+            imported: self.wallet.is_imported(),
         }
     }
 }
@@ -336,6 +341,7 @@ mod tests {
             signature_available: false,
             copy_exists: false,
             can_create_copy: true,
+            imported: false,
         }
     }
 
@@ -540,6 +546,7 @@ mod tests {
                 if here.is_blake2b() {
                     assert_eq!(items[1].title, "Replay-protected signature");
                     assert_eq!(items[1].state, ItemState::Optional);
+                    assert!(items[1].detail.contains("imported wallet"));
                     assert!(items
                         .iter()
                         .all(|item| item.action != Some(("Create copy", HubAction::CreateCopy))));

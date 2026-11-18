@@ -207,6 +207,7 @@ impl CoinsPanel {
             here: self.chain,
             method: split.method,
             signature_available: self.signature_available(),
+            imported: self.wallet.as_deref().is_some_and(Wallet::is_imported),
             inputs,
             key_needed: split.method == Method::SplitKey && key.is_none(),
             address: split.address.clone(),
@@ -456,7 +457,12 @@ impl State for CoinsPanel {
                 .count();
             return coincube_ui::widget::modal::Modal::new(
                 content,
-                view::vault::split_coins::send_warning(self.chain, count, ack),
+                view::vault::split_coins::send_warning(
+                    self.chain,
+                    count,
+                    ack,
+                    self.wallet.as_deref().is_some_and(Wallet::is_imported),
+                ),
             )
             .on_blur(Some(view::Message::CoinControl(
                 CoinControlMessage::CloseWarning,
