@@ -20,6 +20,10 @@
 //!                              Idle
 //! ```
 //!
+//! `Sent` means settled. A send the bridge accepted but reports as not yet
+//! completed (a `Pending` Lightning payment), or one it never answered, goes
+//! to `OutcomeUnknown` instead, where the payment history decides.
+//!
 //! The `handle` returned by `prepare_send` is stored inside `Prepared`
 //! and consumed by `send_payment` on confirm. Changing the input after
 //! `Prepared` drops the handle (the SDK's prepare is single-use).
@@ -1867,6 +1871,28 @@ impl State for SparkSend {
                     policy,
                 };
                 Task::none()
+            }
+            SparkSendMessage::SendSucceeded(ok) if !ok.is_completed() => {
+                // Accepted is not paid. A Lightning send can come back
+                // `Pending` and still fail on its route, so it must not get
+                // the "Sent" screen, and its key and intent stay: the history
+                // check below decides, exactly as for an unanswered send.
+                // An older bridge that reports no status is treated the same.
+                let status = ok.status.as_deref().unwrap_or("unknown");
+                let guard = self
+                    .pending_send
+                    .as_ref()
+                    .map(|p| p.guard)
+                    .unwrap_or(RetryGuard::None);
+                self.phase = SparkSendPhase::OutcomeUnknown {
+                    message: format!(
+                        "The payment was accepted but hasn't settled yet (status: {status})."
+                    ),
+                    outcome: None,
+                    checking: true,
+                    guard,
+                };
+                self.reconcile_unknown_send()
             }
             SparkSendMessage::SendSucceeded(ok) => {
                 self.sent_amount_display = match self.prepared_token_payment {
@@ -5126,6 +5152,59 @@ mod tests {
             guard,
         };
         panel
+    }
+
+    /// An accepted send that hasn't settled is not "Sent": a pending
+    /// Lightning payment can still fail on its route. The panel checks the
+    /// history instead, keeping the key and the intent so nothing can pay
+    /// twice, and the inputs stay for a guarded resend. An older bridge
+    /// that reports no status gets the same treatment.
+    #[test]
+    fn an_accepted_but_pending_send_is_checked_not_sent() {
+        for status in [Some("Pending"), None] {
+            let mut panel = SparkSend::new(None);
+            panel.destination_input = "lnbc1example".to_string();
+            panel.amount_input = "1000".to_string();
+            panel.send_idempotency_key = Some("key-1".to_string());
+            panel.pending_send = Some(PendingSend {
+                request_id: None,
+                dispatched_at: chrono::Utc::now().timestamp(),
+                amount_sat: 1_000,
+                token_amount: None,
+                invoice: Some("lnbc1example".to_string()),
+                guard: RetryGuard::IdempotencyKey,
+            });
+            panel.phase = SparkSendPhase::Sending;
+
+            let _ = send(
+                &mut panel,
+                SparkSendMessage::SendSucceeded(SendPaymentOk {
+                    payment_id: "payment-id".to_string(),
+                    amount_sat: 1_000,
+                    fee_sat: 2,
+                    status: status.map(str::to_string),
+                }),
+            );
+
+            match &panel.phase {
+                SparkSendPhase::OutcomeUnknown {
+                    message,
+                    outcome: None,
+                    checking: true,
+                    guard: RetryGuard::IdempotencyKey,
+                } => assert!(
+                    message.contains(status.unwrap_or("unknown")),
+                    "status {:?} gave message {:?}",
+                    status,
+                    message
+                ),
+                other => panic!("status {:?} gave phase {:?}", status, other),
+            }
+            assert_eq!(panel.send_idempotency_key.as_deref(), Some("key-1"));
+            assert!(panel.pending_send.is_some());
+            assert_eq!(panel.destination_input, "lnbc1example");
+            assert_eq!(panel.amount_input, "1000");
+        }
     }
 
     /// **The audited hazard, as a test.** A send that outruns the client
