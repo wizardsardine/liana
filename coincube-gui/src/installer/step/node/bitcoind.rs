@@ -1036,6 +1036,11 @@ pub struct InternalBitcoindStep {
     /// Gate: the download/install/start flow only runs once the user confirms
     /// the flavour on this screen. Until then the flavour picker is shown.
     flavor_confirmed: bool,
+    /// Identifies the current setup attempt (one confirmation of the picker).
+    /// Bumped on every new confirmation, on Back and on a chain change, and
+    /// carried by the async `ManifestFetched` result and the queued
+    /// `Install` / `Start`, so follow-ups of an abandoned attempt are ignored.
+    setup_attempt: u64,
     /// Node-resources advanced disclosure open on the flavour screen.
     show_advanced: bool,
     /// Custom prune-target field (MB). Source of truth for the written `prune`;
@@ -1075,6 +1080,7 @@ impl InternalBitcoindStep {
             internal_bitcoind: None,
             existing_flavor: None,
             flavor_confirmed: false,
+            setup_attempt: 0,
             show_advanced: false,
             prune_mb: form::Value {
                 value: PRUNE_DEFAULT.to_string(),
@@ -1229,7 +1235,7 @@ impl InternalBitcoindStep {
         }
         let mutation = matches!(
             msg,
-            M::ConfirmFlavor | M::DefineConfig | M::Download | M::Install | M::Start
+            M::ConfirmFlavor | M::DefineConfig | M::Download | M::Install(_) | M::Start(_)
         );
         let sync_refresh = matches!(msg, M::CheckLocalSync)
             && self
@@ -1327,6 +1333,11 @@ impl InternalBitcoindStep {
         self.started = None; // clear both Ok and Err
                              // Re-show the flavour picker when the user comes back.
         self.flavor_confirmed = false;
+        // Abandon this attempt: a manifest fetch or queued install/start still
+        // in flight must not resume it.
+        self.setup_attempt = self.setup_attempt.wrapping_add(1);
+        // The picker now shows `error`; don't carry the old attempt's over.
+        self.error = None;
         Task::perform(async {}, |_| Message::Previous)
     }
 
@@ -1350,6 +1361,14 @@ impl InternalBitcoindStep {
     fn confirm_node_flavor(&mut self) -> Task<Message> {
         if !self.flavor_confirmed {
             self.flavor_confirmed = true;
+            self.setup_attempt = self.setup_attempt.wrapping_add(1);
+            // A new confirmation may pick another flavour or other resource
+            // values than a config written by an earlier attempt, so drop the
+            // cached one: `load` then runs `DefineConfig` again (a locked
+            // fresh read that keeps the existing ports and RPC auth) before
+            // any download or start.
+            self.internal_bitcoind_config = None;
+            self.bitcoind_config = None;
             // Resolve the binary for the chosen flavour: reuse it if
             // already installed, else queue a download.
             let exe_path = bitcoind::internal_bitcoind_exe_path_for(
@@ -1377,6 +1396,9 @@ impl InternalBitcoindStep {
         let resources = match self.resource_values() {
             Some(r) => r,
             None => {
+                // Back to the picker, advanced controls open, so the
+                // offending field can be fixed and confirmed again.
+                self.flavor_confirmed = false;
                 self.show_advanced = true;
                 self.error = Some(
                     "Enter a prune target of at least 550 MB, and a mempool cap \
@@ -1537,13 +1559,18 @@ impl InternalBitcoindStep {
                 // Fetch the release SHA256SUMS(+.asc) the archive is
                 // verified against (Knots); a no-op for Core.
                 let flavor = self.flavor;
+                let attempt = self.setup_attempt;
                 return Task::perform(
                     async move {
                         crate::download::fetch_release_manifest(flavor)
                             .await
                             .map_err(|e| e.to_string())
                     },
-                    |r| Message::InternalBitcoind(message::InternalBitcoindMsg::ManifestFetched(r)),
+                    move |r| {
+                        Message::InternalBitcoind(message::InternalBitcoindMsg::ManifestFetched(
+                            attempt, r,
+                        ))
+                    },
                 );
             }
         }
@@ -1584,8 +1611,9 @@ impl InternalBitcoindStep {
                             flavor.chain_family(),
                             flavor.version(),
                         ));
-                        return Task::perform(async {}, |_| {
-                            Message::InternalBitcoind(message::InternalBitcoindMsg::Start)
+                        let attempt = self.setup_attempt;
+                        return Task::perform(async {}, move |_| {
+                            Message::InternalBitcoind(message::InternalBitcoindMsg::Start(attempt))
                         });
                     }
                     Err(e) => {
@@ -1607,11 +1635,11 @@ impl InternalBitcoindStep {
             ));
             return Task::none();
         }
-        let bitcoind_config = self
-            .bitcoind_config
-            .as_ref()
-            .expect("already added")
-            .clone();
+        // Only reachable once `DefineConfig` has run for this attempt; refuse
+        // quietly rather than panic if it has not.
+        let Some(bitcoind_config) = self.bitcoind_config.clone() else {
+            return Task::none();
+        };
         let lifecycle = match crate::node::bitcoind::ManagedNodeLifecycle::acquire(
             &self.coincube_datadir,
             crate::node::bitcoind::NodeChainFamily::from_chain(self.chain),
@@ -1664,8 +1692,9 @@ impl InternalBitcoindStep {
         match res {
             Ok(manifest) => {
                 self.manifest = manifest;
-                Task::perform(async {}, |_| {
-                    Message::InternalBitcoind(message::InternalBitcoindMsg::Install)
+                let attempt = self.setup_attempt;
+                Task::perform(async {}, move |_| {
+                    Message::InternalBitcoind(message::InternalBitcoindMsg::Install(attempt))
                 })
             }
             Err(e) => {
@@ -1706,6 +1735,7 @@ impl Step for InternalBitcoindStep {
             self.bitcoind_config = None;
             self.internal_bitcoind_config = None;
             self.flavor_confirmed = false;
+            self.setup_attempt = self.setup_attempt.wrapping_add(1);
             self.resources_loaded = false;
             self.local_sync_ready = false;
             self.local_sync_pending = false;
@@ -1800,11 +1830,18 @@ impl Step for InternalBitcoindStep {
                 message::InternalBitcoindMsg::DownloadProgressed(update) => {
                     return self.update_node_download(update)
                 }
-                message::InternalBitcoindMsg::ManifestFetched(res) => {
+                // Results and follow-ups of an abandoned setup attempt.
+                message::InternalBitcoindMsg::ManifestFetched(attempt, _)
+                | message::InternalBitcoindMsg::Install(attempt)
+                | message::InternalBitcoindMsg::Start(attempt)
+                    if attempt != self.setup_attempt => {}
+                message::InternalBitcoindMsg::ManifestFetched(_, res) => {
                     return self.handle_node_manifest(res)
                 }
-                message::InternalBitcoindMsg::Install => return self.install_selected_bitcoind(),
-                message::InternalBitcoindMsg::Start => return self.start_selected_bitcoind(),
+                message::InternalBitcoindMsg::Install(_) => {
+                    return self.install_selected_bitcoind()
+                }
+                message::InternalBitcoindMsg::Start(_) => return self.start_selected_bitcoind(),
             }
         }
         Task::none()
@@ -1841,8 +1878,9 @@ impl Step for InternalBitcoindStep {
             }
         }
         if self.started.is_none() {
-            return Task::perform(async {}, |_| {
-                Message::InternalBitcoind(message::InternalBitcoindMsg::Start)
+            let attempt = self.setup_attempt;
+            return Task::perform(async {}, move |_| {
+                Message::InternalBitcoind(message::InternalBitcoindMsg::Start(attempt))
             });
         }
         Task::none()
@@ -2083,8 +2121,8 @@ mod tests {
         for operation in [
             message::InternalBitcoindMsg::DefineConfig,
             message::InternalBitcoindMsg::Download,
-            message::InternalBitcoindMsg::Install,
-            message::InternalBitcoindMsg::Start,
+            message::InternalBitcoindMsg::Install(step.setup_attempt),
+            message::InternalBitcoindMsg::Start(step.setup_attempt),
         ] {
             step.local_feature_revoked = false;
             drop(step.update(&mut hws, Message::InternalBitcoind(operation.clone())));
@@ -2234,7 +2272,7 @@ mod tests {
         let mut hws = HardwareWallets::new(dir.clone(), Network::Bitcoin);
         let _ = step.update(
             &mut hws,
-            Message::InternalBitcoind(message::InternalBitcoindMsg::Start),
+            Message::InternalBitcoind(message::InternalBitcoindMsg::Start(step.setup_attempt)),
         );
         assert!(
             matches!(
@@ -2971,7 +3009,7 @@ mod tests {
         for msg in [
             message::InternalBitcoindMsg::DefineConfig,
             message::InternalBitcoindMsg::Download,
-            message::InternalBitcoindMsg::Install,
+            message::InternalBitcoindMsg::Install(step.setup_attempt),
         ]
         .iter()
         .cloned()
@@ -3195,5 +3233,176 @@ mod tests {
             }
             let _ = fs::remove_dir_all(&base);
         }
+    }
+
+    // Re-confirming the picker after Back (e.g. Knots → Back → Core) drops the
+    // config the earlier attempt wrote, so `DefineConfig` runs again and the
+    // new flavour is what lands on disk — keeping the existing ports.
+    #[test]
+    fn reconfirmation_rewrites_the_config_for_the_new_flavor() {
+        let base = std::env::temp_dir().join(format!("reconfirm-{}", uuid::Uuid::new_v4()));
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        let send = |step: &mut InternalBitcoindStep,
+                    hws: &mut HardwareWallets,
+                    msg: message::InternalBitcoindMsg| {
+            drop(step.update(hws, Message::InternalBitcoind(msg)));
+        };
+
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::SelectFlavor(NodeFlavor::Knots),
+        );
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::ConfirmFlavor,
+        );
+        let first = define_config(&mut step);
+        assert_eq!(
+            step.internal_bitcoind_config.as_ref().map(|c| c.flavor),
+            Some(NodeFlavor::Knots)
+        );
+        assert_eq!(
+            crate::node::revalidate::ManagedNodeState::load(&datadir).configured_flavor,
+            Some(NodeFlavor::Knots)
+        );
+        let ports = {
+            let main = first.networks.get(&Network::Bitcoin).unwrap();
+            (main.rpc_port, main.p2p_port)
+        };
+
+        send(&mut step, &mut hws, message::InternalBitcoindMsg::Previous);
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::SelectFlavor(NodeFlavor::Core),
+        );
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::ConfirmFlavor,
+        );
+        assert!(step.flavor_confirmed);
+        assert!(
+            step.internal_bitcoind_config.is_none() && step.bitcoind_config.is_none(),
+            "the earlier attempt's config must not skip DefineConfig"
+        );
+
+        let second = define_config(&mut step);
+        assert_eq!(step.flavor, NodeFlavor::Core);
+        assert_eq!(
+            step.internal_bitcoind_config.as_ref().map(|c| c.flavor),
+            Some(NodeFlavor::Core)
+        );
+        let main = second.networks.get(&Network::Bitcoin).unwrap();
+        assert_eq!((main.rpc_port, main.p2p_port), ports);
+        assert_eq!(
+            crate::node::revalidate::ManagedNodeState::load(&datadir).configured_flavor,
+            Some(NodeFlavor::Core)
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Resource validation failing after confirm returns to the picker with the
+    // advanced controls open and the error kept; a valid value then proceeds.
+    #[test]
+    fn resource_validation_failure_returns_to_the_picker() {
+        let base = std::env::temp_dir().join(format!("reject-unconfirm-{}", uuid::Uuid::new_v4()));
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited("549".into())),
+        ));
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ConfirmFlavor),
+        ));
+        assert!(step.flavor_confirmed);
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::DefineConfig),
+        ));
+        assert!(
+            !step.flavor_confirmed,
+            "the resource fields must be editable"
+        );
+        assert!(step.show_advanced);
+        assert!(step.error.is_some());
+        assert!(!bitcoind::internal_bitcoind_config_path(&step.bitcoind_datadir).exists());
+
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited("550".into())),
+        ));
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ConfirmFlavor),
+        ));
+        assert!(step.flavor_confirmed);
+        let conf = define_config(&mut step);
+        assert_eq!(conf.networks.get(&Network::Bitcoin).unwrap().prune, 550);
+        assert!(step.flavor_confirmed);
+        assert!(step.error.is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // A manifest result, or an install/start it queued, from an attempt the
+    // user abandoned with Back is ignored; the active attempt's still applies.
+    #[test]
+    fn follow_ups_of_an_abandoned_setup_attempt_are_ignored() {
+        let base = std::env::temp_dir().join(format!("stale-attempt-{}", uuid::Uuid::new_v4()));
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ConfirmFlavor),
+        ));
+        let old = step.setup_attempt;
+        // The download finished, then the user went Back: the archive is kept.
+        step.exe_download = Some(Download {
+            state: DownloadState::Finished(b"not an archive".to_vec()),
+        });
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::Previous),
+        ));
+        assert_ne!(step.setup_attempt, old);
+        assert!(matches!(
+            step.exe_download.as_ref().map(|d| &d.state),
+            Some(DownloadState::Finished(_))
+        ));
+
+        let manifest = Some(("sums".to_string(), "asc".to_string()));
+        for msg in [
+            message::InternalBitcoindMsg::ManifestFetched(old, Ok(manifest.clone())),
+            message::InternalBitcoindMsg::Install(old),
+            message::InternalBitcoindMsg::Start(old),
+        ] {
+            drop(step.update(&mut hws, Message::InternalBitcoind(msg)));
+        }
+        assert!(step.manifest.is_none());
+        assert!(
+            step.install_state.is_none(),
+            "no install for a stale attempt"
+        );
+        assert!(step.started.is_none(), "no start for a stale attempt");
+        assert!(step.error.is_none());
+
+        // The active attempt's result is still handled.
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ManifestFetched(
+                step.setup_attempt,
+                Ok(manifest.clone()),
+            )),
+        ));
+        assert_eq!(step.manifest, manifest);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
