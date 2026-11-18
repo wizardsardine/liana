@@ -863,25 +863,21 @@ pub async fn bootstrap_step(
     let mut job: Recovery = read_json(path)?.ok_or("Missing recovery progress")?;
     job.validate(binding)?;
     let before = job.download_next;
-    let result:Result<(),String>=async {
-        let info=rpc.check_chain(network).await?;
-        if info["automatic_pruning"].as_bool()!=Some(false) || info["pruned"].as_bool()!=Some(true) {return Err("Restart the managed node with recovery pruning controls".into());}
-        let anchor=rpc.block_hash(job.target).await?;
-        if anchor!=job.target_hash {job.rewind(Some(chain_changed(job.range_start())));job.target_hash=anchor;}
-        let end=job.download_next.saturating_add(BATCH_BLOCKS-1).min(job.target);
-        for height in job.download_next..=end {
-            if fs4::available_space(dir).map_err(|e|e.to_string())?<MIN_FREE_BYTES {return Err("Free more disk space to download the blocks needed to load this wallet, then resume".into());}
-            if !rpc.fetch_block(rpc.block_hash(height).await?,job.fetch_attempts).await? {
-                job.fetch_attempts+=1;
-                if job.fetch_attempts>=8 {return Err("An archival peer did not supply the wallet's catch-up block; retry recovery".into());}
-                return Ok(());
-            }
-            job.download_next=height+1;
-            job.fetch_attempts=0;
-            write_json(path,&job)?;
+    let result: Result<(), String> = async {
+        let info = rpc.check_chain(network).await?;
+        if info["automatic_pruning"].as_bool() != Some(false)
+            || info["pruned"].as_bool() != Some(true)
+        {
+            return Err("Restart the managed node with recovery pruning controls".into());
         }
-        Ok(())
-    }.await;
+        let anchor = rpc.block_hash(job.target).await?;
+        if anchor != job.target_hash {
+            job.rewind(Some(chain_changed(job.range_start())));
+            job.target_hash = anchor;
+        }
+        bootstrap_download_batch(rpc, dir, path, &mut job).await
+    }
+    .await;
     if let Err(error) = result {
         let paused = absorb_transient(&mut job, &error);
         write_json(path, &job)?;
@@ -894,6 +890,40 @@ pub async fn bootstrap_step(
     }
     write_json(path, &job)?;
     Ok(job)
+}
+
+async fn bootstrap_download_batch(
+    rpc: &NodeRpc,
+    dir: &Path,
+    path: &Path,
+    job: &mut Recovery,
+) -> Result<(), String> {
+    let end = job
+        .download_next
+        .saturating_add(BATCH_BLOCKS - 1)
+        .min(job.target);
+    for height in job.download_next..=end {
+        if fs4::available_space(dir).map_err(|e| e.to_string())? < MIN_FREE_BYTES {
+            return Err("Free more disk space to download the blocks needed to load this wallet, then resume".into());
+        }
+        if !rpc
+            .fetch_block(rpc.block_hash(height).await?, job.fetch_attempts)
+            .await?
+        {
+            job.fetch_attempts += 1;
+            if job.fetch_attempts >= 8 {
+                return Err(
+                    "An archival peer did not supply the wallet's catch-up block; retry recovery"
+                        .into(),
+                );
+            }
+            return Ok(());
+        }
+        job.download_next = height + 1;
+        job.fetch_attempts = 0;
+        write_json(path, job)?;
+    }
+    Ok(())
 }
 
 pub async fn recover_step(
@@ -910,56 +940,44 @@ pub async fn recover_step(
         return Ok(recovery);
     }
     let before = (recovery.next, recovery.blocks.len());
-    let result: Result<(),String> = async {
+    let result: Result<(), String> = async {
         let info = rpc.check_chain(network).await?;
         if rpc.block_hash(recovery.target).await? != recovery.target_hash {
             // Every previously scanned block may be on the old branch. Rewind
             // the entire requested range; stale checkpoints cannot authorize a
             // switch. Keep the user's range and preserve wallet records.
             recovery.rewind(Some(chain_changed(recovery.range_start())));
-            recovery.target_hash=rpc.block_hash(recovery.target).await?;
-            recovery.phase=Phase::Downloading;
-            write_json(path,&recovery)?;
+            recovery.target_hash = rpc.block_hash(recovery.target).await?;
+            recovery.phase = Phase::Downloading;
+            write_json(path, &recovery)?;
         }
-        if matches!(recovery.phase,Phase::Complete|Phase::Reconciling) { return Ok(()); }
-        if info["pruned"].as_bool()!=Some(true) || info["automatic_pruning"].as_bool()!=Some(false) {
-            return Err("Restart the managed node with recovery pruning controls before downloading blocks".into());
+        if matches!(recovery.phase, Phase::Complete | Phase::Reconciling) {
+            return Ok(());
         }
-        let wallet = rpc.call(true,"getwalletinfo",json!([])).await.map_err(|e|e.to_string())?;
-        if wallet["scanning"].is_object() { return Ok(()); }
-        if wallet["scanning"].as_bool()!=Some(false) { return Err("Cannot determine local wallet scan status".into()); }
+        if info["pruned"].as_bool() != Some(true)
+            || info["automatic_pruning"].as_bool() != Some(false)
+        {
+            return Err(
+                "Restart the managed node with recovery pruning controls before downloading blocks"
+                    .into(),
+            );
+        }
+        let wallet = rpc
+            .call(true, "getwalletinfo", json!([]))
+            .await
+            .map_err(|e| e.to_string())?;
+        if wallet["scanning"].is_object() {
+            return Ok(());
+        }
+        if wallet["scanning"].as_bool() != Some(false) {
+            return Err("Cannot determine local wallet scan status".into());
+        }
         if !recovery.blocks.is_empty() {
             return single_blocks_step(rpc, directory, path, &mut recovery).await;
         }
-        let end=recovery.next.saturating_add(BATCH_BLOCKS-1).min(recovery.target);
-        recovery.phase=Phase::Downloading;
-        write_json(path,&recovery)?;
-        let mut hashes=Vec::new();
-        for height in recovery.next..=end {
-            if fs4::available_space(directory).map_err(|e|e.to_string())? < MIN_FREE_BYTES { return Err("Not enough free disk space to recover more blocks; free space and resume".into()); }
-            let hash=rpc.block_hash(height).await?;
-            if !rpc.fetch_block(hash,recovery.fetch_attempts).await? {
-                recovery.fetch_attempts+=1;
-                if recovery.fetch_attempts>=8 { return Err("An archival peer did not supply the requested block; retry recovery after checking node connectivity".into()); }
-                return Ok(());
-            }
-            hashes.push((height,hash));
-        }
-        recovery.phase=Phase::Scanning;
-        write_json(path,&recovery)?;
-        // The final scan omits stop_height to also reconcile transactions that
-        // were already in the mempool before their funding parents were imported.
-        let params=if end==recovery.target { json!([recovery.next]) } else {json!([recovery.next,end])};
-        let scanned=rpc.call(true,"rescanblockchain",params).await.map_err(|e|e.to_string())?;
-        if scanned["start_height"].as_u64()!=Some(u64::from(recovery.next)) || scanned["stop_height"].as_u64().is_none_or(|h|h<u64::from(end)) {
-            return Err("The wallet did not finish scanning the requested blocks; resume recovery".into());
-        }
-        for (height,hash) in hashes { if rpc.block_hash(height).await? != hash { return Err("The chain changed during recovery; resume to scan the new branch".into()); } }
-        recovery.next=end+1;
-        recovery.fetch_attempts=0;
-        recovery.phase=if end==recovery.target {Phase::Reconciling} else {Phase::Downloading};
-        Ok(())
-    }.await;
+        recover_contiguous_batch(rpc, directory, path, &mut recovery).await
+    }
+    .await;
     if let Err(error) = result {
         let paused = absorb_transient(&mut recovery, &error);
         write_json(path, &recovery)?;
@@ -976,6 +994,82 @@ pub async fn recover_step(
     }
     write_json(path, &recovery)?;
     Ok(recovery)
+}
+
+async fn recover_contiguous_batch(
+    rpc: &NodeRpc,
+    directory: &Path,
+    path: &Path,
+    recovery: &mut Recovery,
+) -> Result<(), String> {
+    let end = recovery
+        .next
+        .saturating_add(BATCH_BLOCKS - 1)
+        .min(recovery.target);
+    recovery.phase = Phase::Downloading;
+    write_json(path, recovery)?;
+    let mut hashes = Vec::new();
+    for height in recovery.next..=end {
+        if fs4::available_space(directory).map_err(|e| e.to_string())? < MIN_FREE_BYTES {
+            return Err(
+                "Not enough free disk space to recover more blocks; free space and resume".into(),
+            );
+        }
+        let hash = rpc.block_hash(height).await?;
+        if !rpc.fetch_block(hash, recovery.fetch_attempts).await? {
+            recovery.fetch_attempts += 1;
+            if recovery.fetch_attempts >= 8 {
+                return Err("An archival peer did not supply the requested block; retry recovery after checking node connectivity".into());
+            }
+            return Ok(());
+        }
+        hashes.push((height, hash));
+    }
+    scan_recovered_range(rpc, path, recovery, end, hashes).await
+}
+
+async fn scan_recovered_range(
+    rpc: &NodeRpc,
+    path: &Path,
+    recovery: &mut Recovery,
+    end: u32,
+    hashes: Vec<(u32, BlockHash)>,
+) -> Result<(), String> {
+    recovery.phase = Phase::Scanning;
+    write_json(path, recovery)?;
+    // The final scan omits stop_height to also reconcile transactions that
+    // were already in the mempool before their funding parents were imported.
+    let params = if end == recovery.target {
+        json!([recovery.next])
+    } else {
+        json!([recovery.next, end])
+    };
+    let scanned = rpc
+        .call(true, "rescanblockchain", params)
+        .await
+        .map_err(|e| e.to_string())?;
+    if scanned["start_height"].as_u64() != Some(u64::from(recovery.next))
+        || scanned["stop_height"]
+            .as_u64()
+            .is_none_or(|h| h < u64::from(end))
+    {
+        return Err(
+            "The wallet did not finish scanning the requested blocks; resume recovery".into(),
+        );
+    }
+    for (height, hash) in hashes {
+        if rpc.block_hash(height).await? != hash {
+            return Err("The chain changed during recovery; resume to scan the new branch".into());
+        }
+    }
+    recovery.next = end + 1;
+    recovery.fetch_attempts = 0;
+    recovery.phase = if end == recovery.target {
+        Phase::Reconciling
+    } else {
+        Phase::Downloading
+    };
+    Ok(())
 }
 
 /// Fetch and scan queued single blocks, one at a time, in height order so a
@@ -1113,34 +1207,7 @@ pub async fn plan_coin_scans(
             .map(|height| u32::try_from(height).map_err(|_| "Invalid confirmed coin height"))
             .transpose()?;
         if height.is_none() {
-            let funding = rpc.transaction_at(coin.outpoint.txid, None).await?;
-            if funding.is_none() {
-                return Err("Connect has an unconfirmed transaction the local node has not seen. Keep Connect active until the nodes agree, then resume recovery.".into());
-            }
-            if let Some(spend) = coin.spend_info {
-                if rpc
-                    .transaction_at(spend.txid, spend.height.and_then(|h| u32::try_from(h).ok()))
-                    .await?
-                    .is_none_or(|tx| {
-                        !tx.input
-                            .iter()
-                            .any(|input| input.previous_output == coin.outpoint)
-                    })
-                {
-                    return Err("The local node has not seen this pending spend. Keep Connect active until the nodes agree, then resume recovery.".into());
-                }
-            }
-            let unspent = rpc
-                .call(
-                    false,
-                    "gettxout",
-                    json!([coin.outpoint.txid.to_string(), coin.outpoint.vout, true]),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            if unspent.is_null() != coin.spend_info.is_some() {
-                return Err("Connect and the local node disagree about a pending output's spender. Keep Connect active and resume when they agree.".into());
-            }
+            validate_unconfirmed_coin(rpc, coin).await?;
             continue;
         }
         let height = height.expect("unconfirmed handled above");
@@ -1154,63 +1221,9 @@ pub async fn plan_coin_scans(
             .await
             .map_err(|e| e.to_string())?;
         if let Some(spend) = coin.spend_info {
-            let spend_height = spend.height.and_then(|h| u32::try_from(h).ok());
-            let spender = rpc.transaction_at(spend.txid, spend_height).await?;
-            let missing = spender.is_none_or(|tx| {
-                !tx.input
-                    .iter()
-                    .any(|input| input.previous_output == coin.outpoint)
-            }) || !unspent.is_null();
-            if missing {
-                match spend_height {
-                    Some(spent_at) => {
-                        plan.blocks.insert(spent_at);
-                    }
-                    None => plan.lower_floor(
-                        height,
-                        format!("A pending spend of a coin from block {height} is not in the local wallet yet, so COINCUBE Desktop scans every block from {height}."),
-                    ),
-                }
-            }
+            plan_known_spend(rpc, coin, spend, height, &unspent, &mut plan).await?;
         } else if unspent.is_null() {
-            // `Some(None)`: the local wallet already holds the named spender.
-            let found = match outspends {
-                Some(source) => match fetch_outspend(source, coin.outpoint).await {
-                    // The provider's height can be past the local tip or wrong;
-                    // either way the coin falls back to a full scan. A node that
-                    // missed its deadline is retried instead.
-                    Ok(Some((spender, spent_at, block))) if spent_at >= height => {
-                        match rpc.block_hash(spent_at).await {
-                            Ok(local) if local == block => {
-                                let recorded = rpc
-                                    .transaction_at(spender, Some(spent_at))
-                                    .await?
-                                    .is_some_and(|tx| {
-                                        tx.input
-                                            .iter()
-                                            .any(|input| input.previous_output == coin.outpoint)
-                                    });
-                                Some((!recorded).then_some(spent_at))
-                            }
-                            Ok(_) => None,
-                            Err(e) if e.starts_with(UNREACHABLE) => return Err(e),
-                            Err(_) => None,
-                        }
-                    }
-                    _ => None,
-                },
-                None => None,
-            };
-            match found {
-                Some(Some(spent_at)) => {
-                    plan.blocks.insert(spent_at);
-                }
-                Some(None) => {}
-                None => plan.lower_floor(
-                    height,
-                    format!("Connect could not say which transaction spent a coin from block {height}, so COINCUBE Desktop scans every block from {height}."),
-                ),
-            }
+            plan_unknown_spend(rpc, coin, outspends, height, &mut plan).await?;
         } else {
             let output = funding.as_ref().and_then(|tx| tx.output.get(vout as usize));
             let script = unspent["scriptPubKey"]["hex"]
@@ -1230,6 +1243,118 @@ pub async fn plan_coin_scans(
         }
     }
     Ok(plan)
+}
+
+async fn validate_unconfirmed_coin(
+    rpc: &NodeRpc,
+    coin: &coincubed::commands::ListCoinsEntry,
+) -> Result<(), String> {
+    let funding = rpc.transaction_at(coin.outpoint.txid, None).await?;
+    if funding.is_none() {
+        return Err("Connect has an unconfirmed transaction the local node has not seen. Keep Connect active until the nodes agree, then resume recovery.".into());
+    }
+    if let Some(spend) = coin.spend_info {
+        if rpc
+            .transaction_at(spend.txid, spend.height.and_then(|h| u32::try_from(h).ok()))
+            .await?
+            .is_none_or(|tx| {
+                !tx.input
+                    .iter()
+                    .any(|input| input.previous_output == coin.outpoint)
+            })
+        {
+            return Err("The local node has not seen this pending spend. Keep Connect active until the nodes agree, then resume recovery.".into());
+        }
+    }
+    let unspent = rpc
+        .call(
+            false,
+            "gettxout",
+            json!([coin.outpoint.txid.to_string(), coin.outpoint.vout, true]),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    if unspent.is_null() != coin.spend_info.is_some() {
+        return Err("Connect and the local node disagree about a pending output's spender. Keep Connect active and resume when they agree.".into());
+    }
+    Ok(())
+}
+
+async fn plan_known_spend(
+    rpc: &NodeRpc,
+    coin: &coincubed::commands::ListCoinsEntry,
+    spend: coincubed::commands::LCSpendInfo,
+    height: u32,
+    unspent: &Value,
+    plan: &mut ScanPlan,
+) -> Result<(), String> {
+    let spend_height = spend.height.and_then(|h| u32::try_from(h).ok());
+    let spender = rpc.transaction_at(spend.txid, spend_height).await?;
+    let missing = spender.is_none_or(|tx| {
+        !tx.input
+            .iter()
+            .any(|input| input.previous_output == coin.outpoint)
+    }) || !unspent.is_null();
+    if missing {
+        match spend_height {
+            Some(spent_at) => {
+                plan.blocks.insert(spent_at);
+            }
+            None => plan.lower_floor(
+                height,
+                format!("A pending spend of a coin from block {height} is not in the local wallet yet, so COINCUBE Desktop scans every block from {height}."),
+            ),
+        }
+    }
+    Ok(())
+}
+
+async fn plan_unknown_spend(
+    rpc: &NodeRpc,
+    coin: &coincubed::commands::ListCoinsEntry,
+    outspends: Option<&EsploraConfig>,
+    height: u32,
+    plan: &mut ScanPlan,
+) -> Result<(), String> {
+    // `Some(None)`: the local wallet already holds the named spender.
+    let found = match outspends {
+        Some(source) => match fetch_outspend(source, coin.outpoint).await {
+            // The provider's height can be past the local tip or wrong;
+            // either way the coin falls back to a full scan. A node that
+            // missed its deadline is retried instead.
+            Ok(Some((spender, spent_at, block))) if spent_at >= height => {
+                match rpc.block_hash(spent_at).await {
+                    Ok(local) if local == block => {
+                        let recorded = rpc
+                            .transaction_at(spender, Some(spent_at))
+                            .await?
+                            .is_some_and(|tx| {
+                                tx.input
+                                    .iter()
+                                    .any(|input| input.previous_output == coin.outpoint)
+                            });
+                        Some((!recorded).then_some(spent_at))
+                    }
+                    Ok(_) => None,
+                    Err(e) if e.starts_with(UNREACHABLE) => return Err(e),
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        },
+        None => None,
+    };
+    match found {
+        Some(Some(spent_at)) => {
+            plan.blocks.insert(spent_at);
+        }
+        Some(None) => {}
+        None => plan.lower_floor(
+            height,
+            format!("Connect could not say which transaction spent a coin from block {height}, so COINCUBE Desktop scans every block from {height}."),
+        ),
+    }
+    Ok(())
 }
 
 #[cfg(test)]
