@@ -307,6 +307,38 @@ fn history_match(
     }
 }
 
+/// What the history says about the payment the bridge accepted as
+/// `payment_id`.
+///
+/// The bridge named the payment, so this looks it up by that id rather than
+/// by size and time: a different payment of the same size can't settle it,
+/// and its own failure is recognised. It exists (the bridge accepted it), so
+/// a missing row means the history hasn't caught up, never "no trace" — no
+/// resend is offered on an accepted payment.
+fn accepted_payment_outcome(
+    payments: &[coincube_spark_protocol::PaymentSummary],
+    payment_id: &str,
+) -> ReconcileOutcome {
+    match payments.iter().find(|p| p.id == payment_id) {
+        Some(p) if p.status.eq_ignore_ascii_case("completed") => ReconcileOutcome::Landed,
+        // The SDK's `Failed` is terminal: nothing was paid and nothing more
+        // will be, so the ordinary start-over path is safe.
+        Some(p) if p.status.eq_ignore_ascii_case("failed") => ReconcileOutcome::DefinitelyFailed(
+            "The payment failed after it was sent, so nothing was paid.".to_string(),
+        ),
+        Some(_) => ReconcileOutcome::Inconclusive("it is still in progress".to_string()),
+        None => ReconcileOutcome::Inconclusive("it isn't in your payment history yet".to_string()),
+    }
+}
+
+/// [`accepted_payment_outcome`] against the current payment history.
+async fn reconcile_accepted_send(backend: &SparkBackend, payment_id: &str) -> ReconcileOutcome {
+    match backend.list_payments(Some(50), None).await {
+        Ok(list) => accepted_payment_outcome(&list.payments, payment_id),
+        Err(e) => ReconcileOutcome::Inconclusive(e.to_string()),
+    }
+}
+
 /// Settle what happened to a send whose outcome is unknown.
 ///
 /// Two sources, in order of authority: the bridge's own late answer to
@@ -1271,12 +1303,17 @@ impl SparkSend {
             )));
         };
 
+        // A send the bridge accepted is looked up by the id it was given.
+        let accepted_id = self.accepted_send.as_ref().map(|ok| ok.payment_id.clone());
         Task::perform(
             async move {
                 if !delay.is_zero() {
                     tokio::time::sleep(delay).await;
                 }
-                reconcile_pending_send(&backend, &pending).await
+                match accepted_id {
+                    Some(id) => reconcile_accepted_send(&backend, &id).await,
+                    None => reconcile_pending_send(&backend, &pending).await,
+                }
             },
             |outcome| {
                 Message::View(crate::app::view::Message::SparkSend(
@@ -1431,20 +1468,34 @@ impl State for SparkSend {
         use crate::app::view::SparkSendMessage;
         // Editing while dispatch is unresolved would detach the visible intent
         // from the actual payment. Ignore stale input events in these phases.
-        if matches!(
+        // A payment found to have landed is finished: nothing about it can be
+        // retried, so the user may leave it and start over.
+        let landed = matches!(
             self.phase,
-            SparkSendPhase::Sending | SparkSendPhase::OutcomeUnknown { .. }
-        ) && matches!(
-            &msg,
-            SparkSendMessage::DestinationInputChanged(_)
-                | SparkSendMessage::AmountInputChanged(_)
-                | SparkSendMessage::SetReceiveTarget(_)
-                | SparkSendMessage::SelectPayFrom(_)
-                | SparkSendMessage::StartFrom(_)
-                | SparkSendMessage::PrepareRequested
-                | SparkSendMessage::EditDetails
-                | SparkSendMessage::Reset
-        ) {
+            SparkSendPhase::OutcomeUnknown {
+                outcome: Some(ReconcileOutcome::Landed),
+                checking: false,
+                ..
+            }
+        );
+        let leaving_landed = landed && matches!(&msg, SparkSendMessage::Reset);
+        if !leaving_landed
+            && matches!(
+                self.phase,
+                SparkSendPhase::Sending | SparkSendPhase::OutcomeUnknown { .. }
+            )
+            && matches!(
+                &msg,
+                SparkSendMessage::DestinationInputChanged(_)
+                    | SparkSendMessage::AmountInputChanged(_)
+                    | SparkSendMessage::SetReceiveTarget(_)
+                    | SparkSendMessage::SelectPayFrom(_)
+                    | SparkSendMessage::StartFrom(_)
+                    | SparkSendMessage::PrepareRequested
+                    | SparkSendMessage::EditDetails
+                    | SparkSendMessage::Reset
+            )
+        {
             return Task::none();
         }
         match msg {
@@ -5309,6 +5360,99 @@ mod tests {
             SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
         );
         assert!(matches!(panel.phase, SparkSendPhase::Sent(_)));
+    }
+
+    /// An accepted payment is judged by its own id: a different completed
+    /// payment of the same size, at the same time, settles nothing; its own
+    /// failure is definite; a missing or pending row keeps it checking and
+    /// never reads as "no trace" (which could offer a resend).
+    #[test]
+    fn an_accepted_payment_is_judged_by_its_own_id() {
+        let now = chrono::Utc::now().timestamp() as u64;
+        let row = |id: &str, status: &str| PaymentSummary {
+            id: id.to_string(),
+            status: status.to_string(),
+            ..payment(-1_000, now, "Send")
+        };
+        assert_eq!(
+            accepted_payment_outcome(&[row("ours", "Completed")], "ours"),
+            ReconcileOutcome::Landed
+        );
+        assert!(matches!(
+            accepted_payment_outcome(&[row("other", "Completed")], "ours"),
+            ReconcileOutcome::Inconclusive(_)
+        ));
+        assert!(matches!(
+            accepted_payment_outcome(&[row("other", "Completed"), row("ours", "Failed")], "ours"),
+            ReconcileOutcome::DefinitelyFailed(_)
+        ));
+        assert!(matches!(
+            accepted_payment_outcome(&[row("ours", "Pending")], "ours"),
+            ReconcileOutcome::Inconclusive(_)
+        ));
+        assert!(matches!(
+            accepted_payment_outcome(&[], "ours"),
+            ReconcileOutcome::Inconclusive(_)
+        ));
+    }
+
+    /// An accepted payment that fails ends in an ordinary failure the user
+    /// can start over from, not a screen with no way out.
+    #[test]
+    fn an_accepted_payment_that_fails_can_be_started_over() {
+        let mut panel = accepted_send_panel(Some("Pending"));
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::DefinitelyFailed(
+                "The payment failed after it was sent, so nothing was paid.".to_string(),
+            )),
+        );
+        assert!(matches!(panel.phase, SparkSendPhase::Error(_)));
+        assert!(panel.pending_send.is_none());
+        assert!(panel.accepted_send.is_none());
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+        assert!(panel.send_idempotency_key.is_none());
+    }
+
+    /// Once a check finds an unanswered send landed, the user can finish
+    /// with Done (`Reset`). Until then — while checking, or on any other
+    /// outcome — leaving stays blocked, because it would mint a new key.
+    #[test]
+    fn a_landed_payment_can_be_dismissed_and_nothing_else_can() {
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Inconclusive(
+                "history unavailable".to_string(),
+            )),
+        );
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(matches!(panel.phase, SparkSendPhase::OutcomeUnknown { .. }));
+        assert!(panel.send_idempotency_key.is_some());
+
+        let _ = send(&mut panel, SparkSendMessage::ReconcileRequested);
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(matches!(
+            panel.phase,
+            SparkSendPhase::OutcomeUnknown { checking: true, .. }
+        ));
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
+        );
+        // Edits stay blocked even now: only finishing is offered.
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::AmountInputChanged("5".to_string()),
+        );
+        assert_eq!(panel.amount_input, "1000");
+        let _ = send(&mut panel, SparkSendMessage::Reset);
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+        assert!(panel.send_idempotency_key.is_none());
+        assert!(panel.pending_send.is_none());
+        assert!(panel.destination_input.is_empty());
     }
 
     /// A send nobody answered has no receipt to show, so a check that finds
