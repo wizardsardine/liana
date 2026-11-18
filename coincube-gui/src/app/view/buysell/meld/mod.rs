@@ -371,9 +371,15 @@ impl MeldState {
         // is still greppable against their dashboard.
         let (title, guidance) = match description {
             "QUOTE_ACQUISITION_FAILED" => {
-                if let Some(MeldFlowStep::AddressSelection {
-                    processing_request, ..
-                }) = self.steps.last_mut()
+                // reset quote loading state (buy: address step, sell: amount form)
+                if let Some(
+                    MeldFlowStep::AddressSelection {
+                        processing_request, ..
+                    }
+                    | MeldFlowStep::AmountInputForm {
+                        processing_request, ..
+                    },
+                ) = self.steps.last_mut()
                 {
                     *processing_request = false;
                 }
@@ -415,7 +421,8 @@ impl MeldState {
         regions_: Option<Vec<meld::api::MeldRegion>>,
         cache: &Cache,
     ) {
-        match regions_ {
+        // an empty region list has nothing to pick from, so treat it as "no regions"
+        match regions_.filter(|regions| !regions.is_empty()) {
             Some(regions) => {
                 self.steps.push(MeldFlowStep::RegionSelection {
                     selected: None,
@@ -583,9 +590,14 @@ impl MeldState {
             deposit_address,
             address_picker_open,
             was_picked_from_existing_addresses,
+            processing_request,
             ..
         }) = self.steps.last_mut()
         {
+            // the in-flight quote request was made for the current address
+            if *processing_request {
+                return;
+            }
             if let Some(la) = addresses.get(idx).cloned() {
                 let address = la.address.to_string();
                 let qr_code_data = iced::widget::qr_code::Data::new(address.as_bytes()).unwrap();
@@ -855,8 +867,8 @@ impl MeldState {
             None => {
                 return Some(iced::Task::done(view::Message::BuySell(
                     view::BuySellMessage::Meld(MeldMessage::SessionError(
-                        "Unable to start ActiveSession".into(),
-                        "Webview failed to initialize, check logs for specific details",
+                        "Unable to start ActiveSession: webview failed to initialize, check logs for specific details".into(),
+                        "WEBVIEW_INIT_FAILURE",
                     )),
                 )));
             }
@@ -882,34 +894,42 @@ impl MeldState {
         match serde_json::from_str::<meld::api::MeldEvent>(&event.data) {
             Ok(ev) => {
                 // ensure event belongs to current session
-                if let Some(MeldFlowStep::ActiveSession {
+                let Some(MeldFlowStep::ActiveSession {
                     session,
                     event_idempotency_set,
                     ..
                 }) = self.steps.last_mut()
-                {
-                    if ev.meld_session_id != session.session_id {
-                        log::debug!(
-                            "[MELD] Ignoring event received for previous session: {:?}",
-                            ev.meld_session_id
-                        );
+                else {
+                    // no session is active (e.g. it was navigated away from),
+                    // so never schedule a reset or error for a stale event
+                    log::debug!(
+                        "[MELD] Ignoring event received without an active session: {:?}",
+                        ev.meld_session_id
+                    );
+                    return None;
+                };
 
-                        return None;
-                    }
+                if ev.meld_session_id != session.session_id {
+                    log::debug!(
+                        "[MELD] Ignoring event received for previous session: {:?}",
+                        ev.meld_session_id
+                    );
 
-                    // check for duplicate events
-                    let hash = {
-                        use std::hash::Hasher;
+                    return None;
+                }
 
-                        let mut hash = std::hash::DefaultHasher::new();
-                        hash.write(ev.event_id.as_bytes());
-                        hash.finish()
-                    };
+                // check for duplicate events
+                let hash = {
+                    use std::hash::Hasher;
 
-                    if !event_idempotency_set.insert(hash) {
-                        log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
-                        return None;
-                    }
+                    let mut hash = std::hash::DefaultHasher::new();
+                    hash.write(ev.event_id.as_bytes());
+                    hash.finish()
+                };
+
+                if !event_idempotency_set.insert(hash) {
+                    log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
+                    return None;
                 }
 
                 // check if event was a success
