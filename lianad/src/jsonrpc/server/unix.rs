@@ -4,6 +4,7 @@
 //! JSONRPC2 requests on a Unix Domain Socket.
 
 use crate::{
+    backoff::Backoff,
     jsonrpc::{
         api,
         rpc::{Request, Response},
@@ -11,7 +12,6 @@ use crate::{
     DaemonControl,
 };
 
-use bwk_backoff::Backoff;
 use std::{
     fs, io,
     os::unix::{fs::PermissionsExt, net},
