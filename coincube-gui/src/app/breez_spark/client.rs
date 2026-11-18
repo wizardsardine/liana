@@ -1121,6 +1121,17 @@ impl SparkClient {
         let _ = waiter.send(Response::err(id, kind, message));
     }
 
+    /// Park the bridge's answer to `request_id` as a late outcome, as the
+    /// reader does when it arrives after the caller stopped waiting.
+    #[cfg(test)]
+    pub(crate) async fn mock_late_outcome(&self, request_id: u64, payload: OkPayload) {
+        self.inner
+            .late_outcomes
+            .lock()
+            .await
+            .insert(request_id, Response::ok(request_id, payload));
+    }
+
     /// What the reader and writer do when the bridge goes away.
     #[cfg(test)]
     pub(crate) fn mock_close(&self) {

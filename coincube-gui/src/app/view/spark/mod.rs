@@ -544,6 +544,12 @@ pub enum SparkSendMessage {
     ReconcileRequested,
     /// The result of that check.
     ReconcileFinished(crate::app::state::spark::send::ReconcileOutcome),
+    /// The result of that check, when it also claimed the bridge's late
+    /// answer accepting the payment. Kept, so later checks go by its id.
+    LateAnswerChecked {
+        outcome: crate::app::state::spark::send::ReconcileOutcome,
+        answer: coincube_spark_protocol::SendPaymentOk,
+    },
     /// The user chose to send again after reconciliation found no trace of the
     /// payment. Deliberately **not** [`Self::Reset`]: the original idempotency
     /// key and intent are kept, so the SDK dedups if the first attempt did land
