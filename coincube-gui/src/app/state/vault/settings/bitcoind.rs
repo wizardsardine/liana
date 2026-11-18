@@ -1335,7 +1335,11 @@ impl State for BitcoindSettingsState {
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let recovery_in_progress = wallet_history_recovery_in_progress(cache);
-        if cache.chain().is_blake2b() {
+        // A ready import syncs from its own server on either chain: it takes
+        // the shared page below, which shows that server and its history, not
+        // this chain's Connect/Knots switch.
+        let imported = cache.has_imported_bitcoin && cache.imported_node.is_some();
+        if cache.chain().is_blake2b() && !imported {
             let cfg = self.full_config.as_ref();
             let local = cfg.is_some_and(|cfg| {
                 matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
@@ -3386,7 +3390,7 @@ mod tests {
     /// no local node or date rescan.
     #[tokio::test]
     async fn an_imported_vaults_node_page_shows_its_history_not_local_nodes() {
-        use crate::app::state::imported_bitcoin::ImportedNodeSummary;
+        use crate::app::state::imported_bitcoin::{ImportedNodeSummary, ImportedSyncStatus};
         use crate::home::restore_frame::rendered_labels;
         let summary = ImportedNodeSummary {
             server: "My Electrum server",
@@ -3401,11 +3405,19 @@ mod tests {
                 change_scanned: 200,
                 history_complete: true,
             }),
+            sync_status: ImportedSyncStatus::Synced,
             ready: true,
             busy: false,
             can_expand: true,
             notice: None,
         };
+        let failed = ImportedNodeSummary {
+            sync_status: ImportedSyncStatus::Failed,
+            ..summary.clone()
+        };
+        let shown = rendered_labels(view::vault::settings::imported_history_section(&failed)).await;
+        assert!(shown.iter().any(|label| label == "Sync failed"));
+        assert!(!shown.iter().any(|label| label == "Synced"));
         let state = BitcoindSettingsState::new(
             Some(config_with_backend(Some(BitcoinBackend::Electrum(
                 electrum_config(),
@@ -3439,6 +3451,34 @@ mod tests {
         assert!(
             !shown.iter().any(|l| l == "Year"),
             "no date rescan: {:?}",
+            shown
+        );
+
+        // The same on Bitcoin Blake2b: no Knots/Connect switch for an import.
+        let blake2b = Cache {
+            fiat_chain: crate::chain::ChainId::BitcoinBlake2b,
+            ..imported
+        };
+        let shown = rendered_labels(State::view(&state, &menu, &blake2b)).await;
+        for label in [
+            "Wallet history",
+            "My Electrum server",
+            "Retry synchronization",
+            "Search 200 more addresses",
+        ] {
+            assert!(
+                shown.iter().any(|l| l.contains(label)),
+                "Blake2b {}: {:?}",
+                label,
+                shown
+            );
+        }
+        assert!(
+            !shown
+                .iter()
+                .any(|l| l.contains("Bitcoin Knots (Bitcoin Blake2b)")
+                    || l.contains("COINCUBE | Connect")),
+            "no Blake2b node switch: {:?}",
             shown
         );
 
