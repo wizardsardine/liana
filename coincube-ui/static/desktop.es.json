@@ -3349,5 +3349,13 @@
   "The paired Cube is no longer available.": "El Cube emparejado ya no está disponible.",
   "Imported signer metadata is unavailable.": "Los datos de los firmantes importados no están disponibles.",
   "Duplicate Cube records prevent safe pairing.": "Hay registros de Cube duplicados que impiden emparejar de forma segura.",
-  "Duplicate wallet records prevent safe pairing.": "Hay registros de cartera duplicados que impiden emparejar de forma segura."
+  "Duplicate wallet records prevent safe pairing.": "Hay registros de cartera duplicados que impiden emparejar de forma segura.",
+  "Finish the imported key restore before copying keys.": "Termina la restauración de claves importadas antes de copiar las claves.",
+  "Imported key does not match the copy's wallet.": "La clave importada no coincide con la cartera de la copia.",
+  "Imported key record could not be copied.": "No se pudo copiar el registro de la clave importada.",
+  "Cannot verify the Bitcoin Blake2b copy.": "No se puede verificar la copia de Bitcoin Blake2b.",
+  "The Bitcoin Blake2b copy no longer exists.": "La copia de Bitcoin Blake2b ya no existe.",
+  "The Bitcoin Blake2b copy changed; its keys were not copied.": "La copia de Bitcoin Blake2b cambió; sus claves no se copiaron.",
+  "This Cube is not a Bitcoin Blake2b copy.": "Este Cube no es una copia de Bitcoin Blake2b.",
+  "This Cube is not this wallet's Bitcoin Blake2b copy.": "Este Cube no es la copia de Bitcoin Blake2b de esta cartera."
 }
