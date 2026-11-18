@@ -47,7 +47,8 @@ fn source_binding(source: &CubeSettings) -> Result<ImportedClaimPair, String> {
         || source.is_passkey_cube()
     {
         return Err(
-            "Open a PIN-unlocked imported Bitcoin wallet to create its paired Claim Cube.".into(),
+            "Open a PIN-unlocked imported Bitcoin wallet to create its Bitcoin Blake2b copy."
+                .into(),
         );
     }
     let import = source
@@ -90,8 +91,7 @@ fn validate_target(source: &CubeSettings, target: &CubeSettings) -> Result<(), S
         || target.bitcoin_import.as_ref().and_then(|i| i.attachment()) != Some(&wallet)
     {
         return Err(
-            "The paired Claim Cube conflicts with its imported source. No wallet was replaced."
-                .into(),
+            "The Bitcoin Blake2b copy conflicts with this wallet. No wallet was replaced.".into(),
         );
     }
     Ok(())
@@ -645,6 +645,46 @@ pub(crate) mod tests {
                 "{:?}",
                 shape
             );
+        }
+    }
+
+    /// Every message the copy can show has a Spanish translation.
+    #[test]
+    fn the_copy_messages_are_translated() {
+        let messages = [
+            "Sign in to COINCUBE | Connect to create the Bitcoin Blake2b copy.",
+            "Unlock this Cube with its PIN again to create the copy.",
+            "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
+            "Unlock this Cube with its PIN again before creating the copy.",
+            "This Cube changed. Open Split coins and try again.",
+            "This unfinished paired wallet has no saved discovery range. Resolve its pending import before retrying the copy; no wallet data was changed.",
+            "The unfinished paired wallet has no verified copied discovery range. Finish or resolve its pending import before retrying the copy.",
+            "This wallet's storage changed. Open Split coins and try again.",
+            "Wait for this wallet's scan to finish before creating the copy.",
+            "This wallet's address range is too large to copy.",
+            "Open a PIN-unlocked imported Bitcoin wallet to create its Bitcoin Blake2b copy.",
+            "The Bitcoin Blake2b copy conflicts with this wallet. No wallet was replaced.",
+            "The paired imported wallet signer metadata changed.",
+            "The source imported wallet is missing.",
+            "The source imported wallet is not installed.",
+            "The paired Cube is no longer available.",
+            "Imported signer metadata is unavailable.",
+            "Duplicate Cube records prevent safe pairing.",
+            "Duplicate wallet records prevent safe pairing.",
+        ];
+        let source = include_str!("pairing.rs");
+        let app = include_str!("../../app/mod.rs");
+        for message in messages {
+            assert!(
+                source.contains(message) || app.contains(message),
+                "not used any more: {}",
+                message
+            );
+            let spanish =
+                coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+                    coincube_ui::locale::copy(message).to_string()
+                });
+            assert_ne!(spanish, message, "no Spanish for: {}", message);
         }
     }
 }

@@ -5121,7 +5121,9 @@ impl App {
     /// PIN, syncing through Connect. Reuses a copy that already exists.
     fn create_imported_copy(&mut self) -> Task<Message> {
         let error = |message: &str| {
-            Task::done(Message::View(view::Message::ShowError(message.to_string())))
+            Task::done(Message::View(view::Message::ShowError(
+                coincube_ui::locale::copy(message).to_string(),
+            )))
         };
         if self.imported_copy_in_flight
             || self.cube_settings.network != crate::chain::ChainId::Bitcoin
@@ -7753,9 +7755,15 @@ impl App {
                 return match result {
                     Ok(()) => Task::done(Message::View(view::Message::ShowToast(
                         log::Level::Info,
-                        "Bitcoin Blake2b copy created. Open it from the Cube switcher.".to_string(),
+                        coincube_ui::locale::copy(
+                            "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
+                        )
+                        .to_string(),
                     ))),
-                    Err(error) => Task::done(Message::View(view::Message::ShowError(error))),
+                    // Pairing errors are English; show them in the window's language.
+                    Err(error) => Task::done(Message::View(view::Message::ShowError(
+                        coincube_ui::locale::copy(&error).to_string(),
+                    ))),
                 };
             }
             Message::CubeVaultReported => {
