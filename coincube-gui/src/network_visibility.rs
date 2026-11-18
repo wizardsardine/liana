@@ -135,54 +135,54 @@ mod tests {
 
     #[test]
     fn filters_normalize_idempotently_and_never_leak_hidden_chains() {
-        for developer_mode in [false, true] {
-            for bitcoin_blake2b_beta in [false, true] {
-                let policy = NetworkVisibility {
-                    developer_mode,
-                    bitcoin_blake2b_beta,
-                };
-                let filters = [NetworkFilter::All, NetworkFilter::Live, NetworkFilter::Test]
-                    .iter()
-                    .copied()
-                    .chain(ChainId::ALL.iter().copied().map(NetworkFilter::Network));
-                for filter in filters {
-                    let normalized = policy.normalize_filter(filter);
-                    assert_eq!(policy.normalize_filter(normalized), normalized);
-                    for chain in ChainId::ALL {
-                        if !policy.allows(chain) {
-                            assert!(
-                                !policy.matches(filter, chain),
-                                "{:?} {:?} {:?}",
-                                policy,
-                                filter,
-                                chain
-                            );
-                        }
+        for (developer_mode, bitcoin_blake2b_beta) in
+            [(false, false), (false, true), (true, false), (true, true)]
+        {
+            let policy = NetworkVisibility {
+                developer_mode,
+                bitcoin_blake2b_beta,
+            };
+            let filters = [NetworkFilter::All, NetworkFilter::Live, NetworkFilter::Test]
+                .iter()
+                .copied()
+                .chain(ChainId::ALL.iter().copied().map(NetworkFilter::Network));
+            for filter in filters {
+                let normalized = policy.normalize_filter(filter);
+                assert_eq!(policy.normalize_filter(normalized), normalized);
+                for chain in ChainId::ALL {
+                    if !policy.allows(chain) {
+                        assert!(
+                            !policy.matches(filter, chain),
+                            "{:?} {:?} {:?}",
+                            policy,
+                            filter,
+                            chain
+                        );
                     }
                 }
-                if !developer_mode {
-                    assert_eq!(
-                        policy.normalize_filter(NetworkFilter::Live),
-                        NetworkFilter::All
-                    );
-                    assert_eq!(
-                        policy.normalize_filter(NetworkFilter::Test),
-                        NetworkFilter::All
-                    );
-                } else {
-                    assert!(policy.matches(NetworkFilter::Live, ChainId::Bitcoin));
-                    assert!(!policy.matches(NetworkFilter::Test, ChainId::Bitcoin));
-                    assert!(policy.matches(NetworkFilter::Test, ChainId::Testnet));
-                }
-                assert_eq!(
-                    policy.normalize_selection(ChainId::BitcoinBlake2bTestnet4),
-                    if developer_mode && bitcoin_blake2b_beta {
-                        ChainId::BitcoinBlake2bTestnet4
-                    } else {
-                        ChainId::Bitcoin
-                    }
-                );
             }
+            if !developer_mode {
+                assert_eq!(
+                    policy.normalize_filter(NetworkFilter::Live),
+                    NetworkFilter::All
+                );
+                assert_eq!(
+                    policy.normalize_filter(NetworkFilter::Test),
+                    NetworkFilter::All
+                );
+            } else {
+                assert!(policy.matches(NetworkFilter::Live, ChainId::Bitcoin));
+                assert!(!policy.matches(NetworkFilter::Test, ChainId::Bitcoin));
+                assert!(policy.matches(NetworkFilter::Test, ChainId::Testnet));
+            }
+            assert_eq!(
+                policy.normalize_selection(ChainId::BitcoinBlake2bTestnet4),
+                if developer_mode && bitcoin_blake2b_beta {
+                    ChainId::BitcoinBlake2bTestnet4
+                } else {
+                    ChainId::Bitcoin
+                }
+            );
         }
     }
 

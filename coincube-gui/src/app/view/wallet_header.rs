@@ -168,6 +168,92 @@ pub fn wallet_header<'a, M: Clone + 'static>(props: WalletHeaderProps<M>) -> Col
         on_swap_focus,
     } = props;
 
+    let (primary, secondary) = balance_rows(
+        &sync,
+        sats,
+        fiat.as_ref(),
+        balance_masked,
+        bitcoin_unit,
+        variant,
+        display_mode,
+    );
+
+    // Wrap the primary in a click-to-swap mouse_area when `on_swap` is
+    // provided. Pointer cursor on hover is the only discoverability cue
+    // — no adjacent glyph, per design feedback.
+    let primary_row: Element<'a, M> = if let Some(swap) = on_swap {
+        if let Some((id, focus)) = on_swap_focus {
+            Action::new(id, primary, focus)
+                .style(theme::button::transparent)
+                .padding(0)
+                .on_press(swap)
+                .into()
+        } else {
+            mouse_area(primary)
+                .interaction(mouse::Interaction::Pointer)
+                .on_press(swap)
+                .into()
+        }
+    } else {
+        primary
+    };
+
+    let progress_row = balance_progress_row(&sync);
+
+    let unconfirmed_row: Option<Element<'a, M>> = match (&sync, unconfirmed.as_ref()) {
+        (SyncState::Synced, Some(u)) if u.amount.to_sat() != 0 && !balance_masked => Some(
+            Row::<'a, M>::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text("+").size(H3_SIZE).style(theme::text::secondary))
+                .push(unconfirmed_amount_with_size_and_unit::<M>(
+                    &u.amount,
+                    H3_SIZE,
+                    bitcoin_unit,
+                ))
+                .push(
+                    text("unconfirmed")
+                        .size(H3_SIZE)
+                        .style(theme::text::secondary),
+                )
+                .push_maybe(u.fiat.as_ref().map(|f| {
+                    let fiat_text: Element<'a, M> =
+                        f.to_text().size(H4_SIZE).color(color::GREY_3).into();
+                    Row::<'a, M>::new()
+                        .align_y(Alignment::Center)
+                        .push(Space::new().width(Length::Fixed(10.0)))
+                        .push(fiat_text)
+                }))
+                .wrap()
+                .into(),
+        ),
+        _ => None,
+    };
+
+    let pending_send_row: Option<Element<'a, M>> = (!balance_masked && pending_send_sats > 0)
+        .then(|| pending_row(pending_send_sats, bitcoin_unit, "-"));
+    let pending_receive_row: Option<Element<'a, M>> = (!balance_masked && pending_receive_sats > 0)
+        .then(|| pending_row(pending_receive_sats, bitcoin_unit, "+"));
+
+    Column::<'a, M>::new()
+        .spacing(4)
+        .push(primary_row)
+        .push(secondary)
+        .push_maybe(progress_row)
+        .push_maybe(unconfirmed_row)
+        .push_maybe(pending_send_row)
+        .push_maybe(pending_receive_row)
+}
+
+fn balance_rows<'a, M: Clone + 'static>(
+    sync: &SyncState,
+    sats: Amount,
+    fiat: Option<&FiatAmount>,
+    balance_masked: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
+    variant: HeaderVariant,
+    display_mode: DisplayMode,
+) -> (Element<'a, M>, Element<'a, M>) {
     let primary_size = match variant {
         HeaderVariant::Jumbo => H1_SIZE,
         HeaderVariant::Card | HeaderVariant::Overview | HeaderVariant::Landing => H2_SIZE,
@@ -191,7 +277,7 @@ pub fn wallet_header<'a, M: Clone + 'static>(props: WalletHeaderProps<M>) -> Col
             .style(theme::text::secondary)
             .into()
     } else {
-        match &sync {
+        match sync {
             SyncState::Synced | SyncState::Stale { .. } => {
                 amount_with_size_and_unit::<M>(&sats, secondary_size, bitcoin_unit).into()
             }
@@ -221,8 +307,7 @@ pub fn wallet_header<'a, M: Clone + 'static>(props: WalletHeaderProps<M>) -> Col
     } else if amount_unknown {
         Some(text(UNKNOWN_AMOUNT).size(primary_size).bold().into())
     } else {
-        fiat.as_ref()
-            .map(|f| fiat_amount_row::<M>(f, primary_size, FiatStyle::Primary).into())
+        fiat.map(|f| fiat_amount_row::<M>(f, primary_size, FiatStyle::Primary).into())
     };
     let fiat_secondary: Option<Element<'a, M>> = if balance_masked {
         Some(
@@ -239,14 +324,31 @@ pub fn wallet_header<'a, M: Clone + 'static>(props: WalletHeaderProps<M>) -> Col
                 .into(),
         )
     } else {
-        fiat.as_ref()
-            .map(|f| fiat_amount_row::<M>(f, secondary_size, FiatStyle::Secondary).into())
+        fiat.map(|f| fiat_amount_row::<M>(f, secondary_size, FiatStyle::Secondary).into())
     };
 
+    order_balance_rows(
+        display_mode,
+        variant,
+        bitcoin_primary,
+        bitcoin_secondary,
+        fiat_primary,
+        fiat_secondary,
+    )
+}
+
+fn order_balance_rows<'a, M: Clone + 'static>(
+    display_mode: DisplayMode,
+    variant: HeaderVariant,
+    bitcoin_primary: Element<'a, M>,
+    bitcoin_secondary: Element<'a, M>,
+    fiat_primary: Option<Element<'a, M>>,
+    fiat_secondary: Option<Element<'a, M>>,
+) -> (Element<'a, M>, Element<'a, M>) {
     // Pick primary/secondary per display_mode. If fiat-native but no
     // fiat data is available, fall through to bitcoin-primary so the
     // header isn't blank.
-    let (primary, secondary): (Element<'a, M>, Element<'a, M>) = match display_mode {
+    match display_mode {
         DisplayMode::FiatNative => match fiat_primary {
             Some(fp) => (fp, bitcoin_secondary),
             None => (
@@ -264,29 +366,11 @@ pub fn wallet_header<'a, M: Clone + 'static>(props: WalletHeaderProps<M>) -> Col
                 }
             }),
         ),
-    };
+    }
+}
 
-    // Wrap the primary in a click-to-swap mouse_area when `on_swap` is
-    // provided. Pointer cursor on hover is the only discoverability cue
-    // — no adjacent glyph, per design feedback.
-    let primary_row: Element<'a, M> = if let Some(swap) = on_swap {
-        if let Some((id, focus)) = on_swap_focus {
-            Action::new(id, primary, focus)
-                .style(theme::button::transparent)
-                .padding(0)
-                .on_press(swap)
-                .into()
-        } else {
-            mouse_area(primary)
-                .interaction(mouse::Interaction::Pointer)
-                .on_press(swap)
-                .into()
-        }
-    } else {
-        primary
-    };
-
-    let progress_row: Option<Element<'a, M>> = match &sync {
+fn balance_progress_row<'a, M: Clone + 'static>(sync: &SyncState) -> Option<Element<'a, M>> {
+    match sync {
         SyncState::Synced => None,
         SyncState::Syncing { progress, label } => {
             let line = match progress {
@@ -347,51 +431,7 @@ pub fn wallet_header<'a, M: Clone + 'static>(props: WalletHeaderProps<M>) -> Col
             ..
         } => Some(warning_row(label.clone())),
         SyncState::Stale { message } => Some(warning_row(message.clone())),
-    };
-
-    let unconfirmed_row: Option<Element<'a, M>> = match (&sync, unconfirmed.as_ref()) {
-        (SyncState::Synced, Some(u)) if u.amount.to_sat() != 0 && !balance_masked => Some(
-            Row::<'a, M>::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(text("+").size(H3_SIZE).style(theme::text::secondary))
-                .push(unconfirmed_amount_with_size_and_unit::<M>(
-                    &u.amount,
-                    H3_SIZE,
-                    bitcoin_unit,
-                ))
-                .push(
-                    text("unconfirmed")
-                        .size(H3_SIZE)
-                        .style(theme::text::secondary),
-                )
-                .push_maybe(u.fiat.as_ref().map(|f| {
-                    let fiat_text: Element<'a, M> =
-                        f.to_text().size(H4_SIZE).color(color::GREY_3).into();
-                    Row::<'a, M>::new()
-                        .align_y(Alignment::Center)
-                        .push(Space::new().width(Length::Fixed(10.0)))
-                        .push(fiat_text)
-                }))
-                .wrap()
-                .into(),
-        ),
-        _ => None,
-    };
-
-    let pending_send_row: Option<Element<'a, M>> = (!balance_masked && pending_send_sats > 0)
-        .then(|| pending_row(pending_send_sats, bitcoin_unit, "-"));
-    let pending_receive_row: Option<Element<'a, M>> = (!balance_masked && pending_receive_sats > 0)
-        .then(|| pending_row(pending_receive_sats, bitcoin_unit, "+"));
-
-    Column::<'a, M>::new()
-        .spacing(4)
-        .push(primary_row)
-        .push(secondary)
-        .push_maybe(progress_row)
-        .push_maybe(unconfirmed_row)
-        .push_maybe(pending_send_row)
-        .push_maybe(pending_receive_row)
+    }
 }
 
 /// Whether the fiat row is the Primary (large + bold value, dimmed

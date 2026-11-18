@@ -258,6 +258,34 @@ impl CreateSpendPanel {
             self.current == 0
         }
     }
+
+    fn advance_step(&mut self) -> bool {
+        if let Some(step) = self.steps.get(self.current) {
+            if !step.can_advance() {
+                return false;
+            }
+            step.apply(&mut self.draft);
+        }
+
+        if let Some(step) = self.steps.get_mut(self.current + 1) {
+            self.current += 1;
+            step.load(&self.coins, self.tip_height, &self.draft);
+        }
+        true
+    }
+
+    fn return_to_previous_step(&mut self) {
+        self.steps[self.current].interrupt();
+        let previous = self.current.saturating_sub(1);
+        if let Some(step) = self.steps.get_mut(previous) {
+            self.current = previous;
+            // For recovery spends, ensure all steps use the latest coins and tip height.
+            // TODO: consider doing this for all spend kinds, not just recovery.
+            if self.draft.is_recovery() {
+                step.load(&self.coins, self.tip_height, &self.draft);
+            }
+        }
+    }
 }
 
 impl State for CreateSpendPanel {
@@ -294,31 +322,12 @@ impl State for CreateSpendPanel {
             return redirect(Menu::Vault(VaultSubMenu::PSBTs(None)));
         }
 
-        if matches!(message, Message::View(view::Message::Next)) {
-            if let Some(step) = self.steps.get(self.current) {
-                if !step.can_advance() {
-                    return Task::none();
-                }
-                step.apply(&mut self.draft);
-            }
-
-            if let Some(step) = self.steps.get_mut(self.current + 1) {
-                self.current += 1;
-                step.load(&self.coins, self.tip_height, &self.draft);
-            }
+        if matches!(message, Message::View(view::Message::Next)) && !self.advance_step() {
+            return Task::none();
         }
 
         if matches!(message, Message::View(view::Message::Previous)) {
-            self.steps[self.current].interrupt();
-            let previous = self.current.saturating_sub(1);
-            if let Some(step) = self.steps.get_mut(previous) {
-                self.current = previous;
-                // For recovery spends, ensure all steps use the latest coins and tip height.
-                // TODO: consider doing this for all spend kinds, not just recovery.
-                if self.draft.is_recovery() {
-                    step.load(&self.coins, self.tip_height, &self.draft);
-                }
-            }
+            self.return_to_previous_step();
         }
 
         if let Message::CoinsTipHeight(Ok(coins), Ok(tip)) = &message {

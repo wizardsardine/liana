@@ -1,6 +1,7 @@
-use iced::futures::{self, SinkExt, TryStreamExt};
-use reqwest_sse::EventSource as _;
+use iced::futures::{self, channel::mpsc::Sender, SinkExt, TryStreamExt};
+use reqwest_sse::{Event, EventSource as _};
 use serde::Deserialize;
+use std::ops::ControlFlow;
 
 use super::api::{MavapayCurrency, TransactionStatus};
 use super::MavapayMessage;
@@ -53,109 +54,112 @@ pub fn transaction_stream(
         order_id
     );
 
-    iced::stream::channel(
-        32,
-        |mut channel: iced::futures::channel::mpsc::Sender<MavapayMessage>| async move {
-            if let Some((request, order_id)) = init {
-                // Send request
-                match reqwest::Client::new().execute(request).await {
-                    // Query event source
-                    Ok(res) => {
-                        log::trace!("[MAVAPAY] EventSource pre-request was successful");
-                        let _ = channel.send(MavapayMessage::StreamConnected).await;
+    iced::stream::channel(32, |mut channel: Sender<MavapayMessage>| async move {
+        if let Some((request, order_id)) = init {
+            // Send request
+            match reqwest::Client::new().execute(request).await {
+                // Query event source
+                Ok(res) => {
+                    log::trace!("[MAVAPAY] EventSource pre-request was successful");
+                    let _ = channel.send(MavapayMessage::StreamConnected).await;
 
-                        match res.events().await {
-                            Ok(mut source) => loop {
-                                let timeout =
-                                    tokio::time::sleep(std::time::Duration::from_secs(60));
-                                let event = TryStreamExt::try_next(&mut source);
-
-                                futures::pin_mut!(timeout);
-                                futures::pin_mut!(event);
-
-                                match futures::future::select(timeout, event).await {
-                                    futures::future::Either::Left(_) => {
-                                        let _ = channel
-                                        .send(MavapayMessage::EventSourceDisconnected(
-                                            "EventSource heartbeat failure, client is probably offline".to_string(),
-                                        ))
-                                        .await;
-
-                                        break;
-                                    }
-                                    futures::future::Either::Right((event, _)) => match event {
-                                        Ok(Some(ev)) => {
-                                            match ev.event_type.as_str() {
-                                                "transactionUpdate" => {
-                                                    match serde_json::from_str::<TransactionUpdate>(
-                                                        &ev.data,
-                                                    ) {
-                                                        Ok(update)
-                                                            if update.order_id == order_id =>
-                                                        {
-                                                            log::info!(
-                                                                "[MAVAPAY] Update for order {}: status={:?}",
-                                                                update.order_id,
-                                                                update.status
-                                                            );
-
-                                                            let _ = channel
-                                                                .send(
-                                                                    MavapayMessage::TransactionUpdated(
-                                                                        update,
-                                                                    ),
-                                                                )
-                                                                .await;
-                                                        }
-                                                        Ok(_) => continue, // Different order, ignore
-                                                        Err(e) => {
-                                                            log::warn!(
-                                                            "[MAVAPAY] Failed to parse update: {}",
-                                                            e
-                                                        );
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                                "connected" | "ping" => continue,
-                                                _type => {
-                                                    log::warn!("[MAVAPAY] Ignored event: {:?}", ev);
-                                                    continue;
-                                                }
-                                            }
-                                        }
-                                        Ok(None) => {
-                                            log::info!("[MAVAPAY] EventSource exiting safely");
-                                            break;
-                                        }
-                                        Err(err) => {
-                                            let _ = channel
-                                                .send(MavapayMessage::EventSourceDisconnected(
-                                                    err.to_string(),
-                                                ))
-                                                .await;
-
-                                            break;
-                                        }
-                                    },
-                                }
-                            },
-                            Err(err) => {
-                                log::error!("[MAVAPAY] Failed to get event source: {}", err);
-                                let _ = channel
-                                    .send(MavapayMessage::StreamError(err.to_string()))
-                                    .await;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        log::error!("[MAVAPAY] EventSource pre-request failed: {}", err);
-                        let _ = channel
-                            .send(MavapayMessage::StreamError(err.to_string()))
-                            .await;
-                    }
+                    read_transaction_events(res, &mut channel, &order_id).await;
+                }
+                Err(err) => {
+                    log::error!("[MAVAPAY] EventSource pre-request failed: {}", err);
+                    let _ = channel
+                        .send(MavapayMessage::StreamError(err.to_string()))
+                        .await;
                 }
             }
+        }
+    })
+}
+
+async fn read_transaction_events(
+    res: reqwest::Response,
+    channel: &mut Sender<MavapayMessage>,
+    order_id: &str,
+) {
+    match res.events().await {
+        Ok(mut source) => loop {
+            let timeout = tokio::time::sleep(std::time::Duration::from_secs(60));
+            let event = TryStreamExt::try_next(&mut source);
+
+            futures::pin_mut!(timeout);
+            futures::pin_mut!(event);
+
+            match futures::future::select(timeout, event).await {
+                futures::future::Either::Left(_) => {
+                    let _ = channel
+                        .send(MavapayMessage::EventSourceDisconnected(
+                            "EventSource heartbeat failure, client is probably offline".to_string(),
+                        ))
+                        .await;
+
+                    break;
+                }
+                futures::future::Either::Right((event, _)) => match event {
+                    Ok(Some(ev)) => {
+                        if dispatch_transaction_event(ev, channel, order_id)
+                            .await
+                            .is_break()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        log::info!("[MAVAPAY] EventSource exiting safely");
+                        break;
+                    }
+                    Err(err) => {
+                        let _ = channel
+                            .send(MavapayMessage::EventSourceDisconnected(err.to_string()))
+                            .await;
+
+                        break;
+                    }
+                },
+            }
         },
-    )
+        Err(err) => {
+            log::error!("[MAVAPAY] Failed to get event source: {}", err);
+            let _ = channel
+                .send(MavapayMessage::StreamError(err.to_string()))
+                .await;
+        }
+    }
+}
+
+async fn dispatch_transaction_event(
+    ev: Event,
+    channel: &mut Sender<MavapayMessage>,
+    order_id: &str,
+) -> ControlFlow<()> {
+    match ev.event_type.as_str() {
+        "transactionUpdate" => match serde_json::from_str::<TransactionUpdate>(&ev.data) {
+            Ok(update) if update.order_id == order_id => {
+                log::info!(
+                    "[MAVAPAY] Update for order {}: status={:?}",
+                    update.order_id,
+                    update.status
+                );
+
+                let _ = channel
+                    .send(MavapayMessage::TransactionUpdated(update))
+                    .await;
+            }
+            Ok(_) => (), // Different order, ignore
+            Err(e) => {
+                log::warn!("[MAVAPAY] Failed to parse update: {}", e);
+                return ControlFlow::Break(());
+            }
+        },
+        "connected" | "ping" => (),
+        _type => {
+            log::warn!("[MAVAPAY] Ignored event: {:?}", ev);
+        }
+    }
+
+    ControlFlow::Continue(())
 }

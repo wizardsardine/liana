@@ -580,6 +580,32 @@ fn gap_above<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     gap(SECTION_GAP, content)
 }
 
+fn generate_action<'a>(has_address: bool, generating: bool) -> Action<'a, Message> {
+    let style = generate_style(has_address);
+    let label = if !has_address {
+        localized_copy("Generate address")
+    } else {
+        localized_copy("New address")
+    };
+    if generating {
+        action(
+            generate_id(),
+            coincube_ui::locale::copy("Generating address…"),
+            None,
+            None,
+            style,
+        )
+    } else {
+        action(
+            generate_id(),
+            label,
+            Some(icon::plus_icon()),
+            Some(Message::NextReceiveAddress),
+            style,
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
@@ -618,31 +644,7 @@ pub fn receive<'a>(
         )
     };
 
-    let generate = {
-        let style = generate_style(!addresses.is_empty());
-        let label = if addresses.is_empty() {
-            localized_copy("Generate address")
-        } else {
-            localized_copy("New address")
-        };
-        if generating {
-            action(
-                generate_id(),
-                coincube_ui::locale::copy("Generating address…"),
-                None,
-                None,
-                style,
-            )
-        } else {
-            action(
-                generate_id(),
-                label,
-                Some(icon::plus_icon()),
-                Some(Message::NextReceiveAddress),
-                style,
-            )
-        }
-    };
+    let generate = generate_action(!addresses.is_empty(), generating);
 
     // Fixed sections keep every control at a stable tree position, so focus
     // survives a state change that only alters a section's contents.
@@ -1072,6 +1074,41 @@ mod tests {
         rest.into_iter().next().unwrap()
     }
 
+    fn assert_expanded_address_actions(ready: &capture::Inspection) {
+        assert!(ready.contains("Bitcoin address"));
+        assert!(ready.contains(&addr(3).to_string()));
+        assert!(ready.contains("Salary · synthetic"));
+        assert!(ready.contains("New address"));
+        assert!(ready.contains("Generated earlier in this session"));
+        for n in [1, 2, 3] {
+            assert!(ready.contains(&addr(n).to_string()));
+            for control in [Control::Copy, Control::Verify] {
+                assert!(
+                    ready.has_focus(generated(control, n)),
+                    "{} {:?}",
+                    n,
+                    control
+                );
+            }
+        }
+        assert!(!ready.has_focus(generated(Control::Qr, 3)));
+        for n in [1, 2] {
+            assert!(ready.has_focus(generated(Control::Qr, n)));
+        }
+        assert!(ready.has_focus(previous_disclosure_id()));
+        assert!(ready.has_focus(previous(Control::Toggle, 10)));
+        assert!(ready.has_focus(previous(Control::Toggle, 11)));
+        // Only the selected previous row discloses its actions.
+        for control in [Control::Copy, Control::Qr, Control::Verify] {
+            assert!(ready.has_focus(previous(control, 11)));
+            assert!(!ready.has_focus(previous(control, 10)));
+        }
+        assert!(ready.contains(&truncate_middle(&addr(10).to_string())));
+        assert!(ready.contains(&addr(11).to_string()));
+        assert!(ready.contains("See more"));
+        assert!(ready.has_focus(see_more_id()));
+    }
+
     #[test]
     fn receive_states_render_in_both_themes_at_compact_and_wide_sizes() {
         for (appearance, theme) in themes() {
@@ -1136,38 +1173,7 @@ mod tests {
                         .expect("Activity link");
                     assert_eq!(link.1.x, aside.1.x, "Activity link should align with aside");
                 }
-                assert!(ready.contains("Bitcoin address"));
-                assert!(ready.contains(&addr(3).to_string()));
-                assert!(ready.contains("Salary · synthetic"));
-                assert!(ready.contains("New address"));
-                assert!(ready.contains("Generated earlier in this session"));
-                for n in [1, 2, 3] {
-                    assert!(ready.contains(&addr(n).to_string()));
-                    for control in [Control::Copy, Control::Verify] {
-                        assert!(
-                            ready.has_focus(generated(control, n)),
-                            "{} {:?}",
-                            n,
-                            control
-                        );
-                    }
-                }
-                assert!(!ready.has_focus(generated(Control::Qr, 3)));
-                for n in [1, 2] {
-                    assert!(ready.has_focus(generated(Control::Qr, n)));
-                }
-                assert!(ready.has_focus(previous_disclosure_id()));
-                assert!(ready.has_focus(previous(Control::Toggle, 10)));
-                assert!(ready.has_focus(previous(Control::Toggle, 11)));
-                // Only the selected previous row discloses its actions.
-                for control in [Control::Copy, Control::Qr, Control::Verify] {
-                    assert!(ready.has_focus(previous(control, 11)));
-                    assert!(!ready.has_focus(previous(control, 10)));
-                }
-                assert!(ready.contains(&truncate_middle(&addr(10).to_string())));
-                assert!(ready.contains(&addr(11).to_string()));
-                assert!(ready.contains("See more"));
-                assert!(ready.has_focus(see_more_id()));
+                assert_expanded_address_actions(&ready);
 
                 let mut f = Fixture::populated();
                 f.show_prev = false;
@@ -1888,6 +1894,35 @@ mod tests {
         .expect("save QR capture manifest");
     }
 
+    fn qr_translation_mismatches(
+        physical_size: Size<u32>,
+        pixels: &[u8],
+        original: &[u8],
+        shift_x: u32,
+        shift_y: u32,
+    ) -> (u64, Option<(u32, u32)>) {
+        let mut mismatches = 0_u64;
+        let mut first_mismatch = None;
+        for py in 0..physical_size.height {
+            for px in 0..physical_size.width {
+                let offset = ((py * physical_size.width + px) * 4) as usize;
+                let actual = &pixels[offset..offset + 4];
+                let expected = if px >= shift_x && py >= shift_y {
+                    let original_offset =
+                        (((py - shift_y) * physical_size.width + (px - shift_x)) * 4) as usize;
+                    &original[original_offset..original_offset + 4]
+                } else {
+                    &[255, 255, 255, 255]
+                };
+                if actual != expected {
+                    mismatches += 1;
+                    first_mismatch.get_or_insert((px, py));
+                }
+            }
+        }
+        (mismatches, first_mismatch)
+    }
+
     /// A QR's cached geometry must move with its widget without losing any
     /// modules. Keep the same Data and widget tree through every move, then
     /// compare the actual backend pixels with the origin frame translated by
@@ -1993,26 +2028,8 @@ mod tests {
                 let original = origin.as_ref().expect("origin screenshot");
                 let shift_x = x * scale;
                 let shift_y = y * scale;
-                let mut mismatches = 0_u64;
-                let mut first_mismatch = None;
-                for py in 0..physical_size.height {
-                    for px in 0..physical_size.width {
-                        let offset = ((py * physical_size.width + px) * 4) as usize;
-                        let actual = &pixels[offset..offset + 4];
-                        let expected = if px >= shift_x && py >= shift_y {
-                            let original_offset = (((py - shift_y) * physical_size.width
-                                + (px - shift_x))
-                                * 4) as usize;
-                            &original[original_offset..original_offset + 4]
-                        } else {
-                            &[255, 255, 255, 255]
-                        };
-                        if actual != expected {
-                            mismatches += 1;
-                            first_mismatch.get_or_insert((px, py));
-                        }
-                    }
-                }
+                let (mismatches, first_mismatch) =
+                    qr_translation_mismatches(physical_size, &pixels, original, shift_x, shift_y);
                 comparisons.push((scale, step, x, y, mismatches, first_mismatch));
             }
         }

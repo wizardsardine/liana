@@ -508,23 +508,7 @@ pub fn payment_view<'a>(
         cache,
         vault_page_head(cache, title),
         Column::new()
-            .push(if tx.is_single_payment().is_some() {
-                // if the payment is a payment of a single payment transaction then
-                // the label of the transaction is attached to the label of the payment outpoint
-                if let Some(label) = labels_editing.get(&outpoint) {
-                    label::label_editing(vec![outpoint.clone(), txid.clone()], label, H3_SIZE)
-                } else {
-                    label::label_editable(
-                        vec![outpoint.clone(), txid.clone()],
-                        tx.labels.get(&outpoint),
-                        H3_SIZE,
-                    )
-                }
-            } else if let Some(label) = labels_editing.get(&outpoint) {
-                label::label_editing(vec![outpoint.clone()], label, H3_SIZE)
-            } else {
-                label::label_editable(vec![outpoint.clone()], tx.labels.get(&outpoint), H3_SIZE)
-            })
+            .push(payment_label(tx, &outpoint, &txid, labels_editing))
             .push(Container::new(if cache.balance_amounts_masked() {
                 Row::new().push(text("••••••").size(H3_SIZE))
             } else {
@@ -532,19 +516,7 @@ pub fn payment_view<'a>(
             }))
             .push(Space::new().height(H3_SIZE))
             .push(Container::new(h3(localized_copy("Transaction"))).width(Length::Fill))
-            .push(if tx.is_batch() {
-                if let Some(label) = labels_editing.get(&txid) {
-                    Some(label::label_editing(vec![txid.clone()], label, H3_SIZE))
-                } else {
-                    Some(label::label_editable(
-                        vec![txid.clone()],
-                        tx.labels.get(&txid),
-                        H3_SIZE,
-                    ))
-                }
-            } else {
-                None
-            })
+            .push(batch_transaction_label(tx, &txid, labels_editing))
             .push(tx.fee_amount.map(|fee_amount| {
                 Row::new()
                     .align_y(Alignment::Center)
@@ -620,6 +592,51 @@ pub fn payment_view<'a>(
             )
             .spacing(20),
     )
+}
+
+fn payment_label<'a>(
+    tx: &'a HistoryTransaction,
+    outpoint: &str,
+    txid: &str,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Element<'a, Message> {
+    if tx.is_single_payment().is_some() {
+        // if the payment is a payment of a single payment transaction then
+        // the label of the transaction is attached to the label of the payment outpoint
+        if let Some(label) = labels_editing.get(outpoint) {
+            label::label_editing(vec![outpoint.to_owned(), txid.to_owned()], label, H3_SIZE)
+        } else {
+            label::label_editable(
+                vec![outpoint.to_owned(), txid.to_owned()],
+                tx.labels.get(outpoint),
+                H3_SIZE,
+            )
+        }
+    } else if let Some(label) = labels_editing.get(outpoint) {
+        label::label_editing(vec![outpoint.to_owned()], label, H3_SIZE)
+    } else {
+        label::label_editable(vec![outpoint.to_owned()], tx.labels.get(outpoint), H3_SIZE)
+    }
+}
+
+fn batch_transaction_label<'a>(
+    tx: &'a HistoryTransaction,
+    txid: &str,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+) -> Option<Element<'a, Message>> {
+    if tx.is_batch() {
+        if let Some(label) = labels_editing.get(txid) {
+            Some(label::label_editing(vec![txid.to_owned()], label, H3_SIZE))
+        } else {
+            Some(label::label_editable(
+                vec![txid.to_owned()],
+                tx.labels.get(txid),
+                H3_SIZE,
+            ))
+        }
+    } else {
+        None
+    }
 }
 
 /// Full-screen celebration view when a vault payment is received.

@@ -213,6 +213,50 @@ fn mix(base: [u8; 3], over: [u8; 3], a: f32) -> [u8; 3] {
     [0, 1, 2].map(|i| (base[i] as f32 + (over[i] as f32 - base[i] as f32) * a).round() as u8)
 }
 
+fn stage_face_art(
+    cube: &StageCube<'_>,
+    projected: &ProjectedFace,
+    facing: bool,
+    light: bool,
+) -> Option<Arc<Art>> {
+    let ghost = cube.marks.ghost;
+    if ghost.is_some() && !facing {
+        None
+    } else {
+        match projected.face {
+            Face::Top | Face::Left | Face::Right => {
+                rest_face_svg(projected.face, cube.marks, light)
+                    .and_then(|svg| art(&svg, REST_ART_PX))
+            }
+            // The live details panel owns a square, settled face.
+            Face::BackLeft if ghost.is_some() => cube
+                .ghost_details
+                .filter(|_| cube.pose.spin < 1.0)
+                .and_then(|text| {
+                    art(
+                        &ghost_details_svg(cube.marks.network, light, text),
+                        PANEL_ART_PX,
+                    )
+                }),
+            Face::BackLeft => cube
+                .details
+                .filter(|_| cube.pose.spin < 1.0 || cube.pose.second > 0.0)
+                .and_then(|text| art(&details_svg(cube.marks.network, light, text), PANEL_ART_PX)),
+            Face::BackRight => cube
+                .unlock_name
+                .filter(|_| cube.pose.second < 1.0)
+                .and_then(|name| {
+                    art(
+                        &unlock_svg(cube.marks.network, light, name, cube.marks.passkey),
+                        PANEL_ART_PX,
+                    )
+                }),
+            // The live loading content owns it.
+            Face::Bottom => None,
+        }
+    }
+}
+
 impl StageData {
     /// The List view's opening: no Cubes, the glowing frame inset 20px from
     /// the stage with 14px corners, `.lframe`.
@@ -341,51 +385,7 @@ impl StageData {
                             ),
                             _ => (palette.face(projected.face), 1.0),
                         };
-                        let art = if ghost.is_some() && !facing {
-                            None
-                        } else {
-                            match projected.face {
-                                Face::Top | Face::Left | Face::Right => {
-                                    rest_face_svg(projected.face, cube.marks, light)
-                                        .and_then(|svg| art(&svg, REST_ART_PX))
-                                }
-                                // The live details panel owns a square, settled face.
-                                Face::BackLeft if ghost.is_some() => cube
-                                    .ghost_details
-                                    .filter(|_| cube.pose.spin < 1.0)
-                                    .and_then(|text| {
-                                        art(
-                                            &ghost_details_svg(cube.marks.network, light, text),
-                                            PANEL_ART_PX,
-                                        )
-                                    }),
-                                Face::BackLeft => cube
-                                    .details
-                                    .filter(|_| cube.pose.spin < 1.0 || cube.pose.second > 0.0)
-                                    .and_then(|text| {
-                                        art(
-                                            &details_svg(cube.marks.network, light, text),
-                                            PANEL_ART_PX,
-                                        )
-                                    }),
-                                Face::BackRight => cube
-                                    .unlock_name
-                                    .filter(|_| cube.pose.second < 1.0)
-                                    .and_then(|name| {
-                                        art(
-                                            &unlock_svg(
-                                                cube.marks.network,
-                                                light,
-                                                name,
-                                                cube.marks.passkey,
-                                            ),
-                                            PANEL_ART_PX,
-                                        )
-                                    }),
-                                // The live loading content owns it.
-                                Face::Bottom => None,
-                            }
-                        };
+                        let art = stage_face_art(&cube, &projected, facing, light);
                         FaceDraw {
                             color,
                             alpha,
@@ -1112,6 +1112,192 @@ fn buffer(device: &wgpu::Device, data: &[f32]) -> wgpu::Buffer {
     })
 }
 
+fn prepare_scene_layer(
+    pipeline: &mut Pipeline,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    v: &mut Vertices,
+    data: &StageData,
+    layer: &SceneLayer,
+    size_px: (u32, u32),
+) -> PreparedLayer {
+    let size = (data.width, data.height);
+    let palette = data.palette;
+    let none = [0.0; 4];
+    let kind = |k: f32| [0.0, 0.0, 0.0, k];
+    let first = v.0.len();
+    let mut draws = Vec::new();
+    let frame = layer.frame;
+    if frame.shadow_opacity > 0.0 {
+        let start = v.count();
+        let (cx, cy) = frame.shadow_center;
+        let (rx, ry) = frame.shadow_radii;
+        let pad = frame.shadow_sigma * 3.0;
+        let (hx, hy) = (rx + pad, ry + pad);
+        let s = palette.shadow;
+        v.quad(
+            [
+                (cx - hx, cy - hy),
+                (cx + hx, cy - hy),
+                (cx + hx, cy + hy),
+                (cx - hx, cy + hy),
+            ],
+            [1.0; 4],
+            [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)],
+            size,
+            [
+                s[0] as f32 / 255.0,
+                s[1] as f32 / 255.0,
+                s[2] as f32 / 255.0,
+                s[3] as f32 / 255.0 * frame.shadow_opacity,
+            ],
+            none,
+            kind(1.0),
+            [frame.shadow_sigma.max(0.01), 0.0, rx, ry],
+        );
+        draws.push(Draw {
+            range: start..v.count(),
+            art: None,
+        });
+    }
+    if let Some(opacity) = layer.footprint.filter(|o| *o > 0.0) {
+        // `.gfoot`: a dashed ellipse in `--line` where the shadow would
+        // fall, 1.3s by .5s against the shadow's 1.45s by .62s.
+        let start = v.count();
+        let (cx, cy) = frame.shadow_center;
+        let (rx, ry) = (
+            frame.shadow_radii.0 * 0.65 / 0.725,
+            frame.shadow_radii.1 * 0.25 / 0.31,
+        );
+        let (hx, hy) = (rx + 2.0, ry + 2.0);
+        let line = srgb(palette.line);
+        v.quad(
+            [
+                (cx - hx, cy - hy),
+                (cx + hx, cy - hy),
+                (cx + hx, cy + hy),
+                (cx - hx, cy + hy),
+            ],
+            [1.0; 4],
+            [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)],
+            size,
+            [line[0], line[1], line[2], opacity],
+            none,
+            kind(3.0),
+            // About 4px dashes around the ring.
+            [
+                ((rx + ry) * std::f32::consts::PI / 8.0).round().max(4.0),
+                0.0,
+                rx,
+                ry,
+            ],
+        );
+        draws.push(Draw {
+            range: start..v.count(),
+            art: None,
+        });
+    }
+    let edge = layer.edge;
+    let edge = [
+        edge[0] as f32 / 255.0,
+        edge[1] as f32 / 255.0,
+        edge[2] as f32 / 255.0,
+        edge[3] as f32 / 255.0,
+    ];
+    // About 3px dashes on a 152px face, as Chromium draws 1.5px.
+    let dashes = if layer.dashed {
+        (1.0 / layer.border / 4.0).round()
+    } else {
+        0.0
+    };
+    for face in &layer.faces {
+        let start = v.count();
+        let color = srgb(face.color);
+        v.quad(
+            face.projected.corners,
+            face.projected.w,
+            [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+            size,
+            [color[0], color[1], color[2], face.alpha],
+            edge,
+            [layer.border, layer.border, dashes, 0.0],
+            [dashes, if face.art.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0],
+        );
+        if let Some(art) = &face.art {
+            pipeline.upload(device, queue, art);
+        }
+        draws.push(Draw {
+            range: start..v.count(),
+            art: face.art.clone(),
+        });
+    }
+    if let Some(glow) = layer.glow {
+        // The shape grown by the halo margin along its own edges, with
+        // UVs in its own pixels from its centre.
+        let start = v.count();
+        let [c0, c1, _, c3] = glow.corners;
+        let unit = |(x, y): (f32, f32)| {
+            let n = x.hypot(y).max(1e-3);
+            (x / n, y / n)
+        };
+        let along = unit((c1.0 - c0.0, c1.1 - c0.1));
+        let down = unit((c3.0 - c0.0, c3.1 - c0.1));
+        let signs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+        let margin = GLOW_MARGIN * glow.scale;
+        let (hx, hy) = (glow.half.0 + margin, glow.half.1 + margin);
+        let corners = [0, 1, 2, 3].map(|i| {
+            let (sx, sy): (f32, f32) = signs[i];
+            let (x, y) = glow.corners[i];
+            (
+                x + (along.0 * sx + down.0 * sy) * margin,
+                y + (along.1 * sx + down.1 * sy) * margin,
+            )
+        });
+        let color = srgb(glow.glow.color);
+        v.quad(
+            corners,
+            glow.w,
+            signs.map(|(sx, sy)| (sx * hx, sy * hy)),
+            size,
+            [color[0], color[1], color[2], 1.0],
+            none,
+            [glow.glow.level, glow.glow.pulse, glow.scale, 4.0],
+            [glow.half.0, glow.half.1, glow.radius, 0.0],
+        );
+        draws.push(Draw {
+            range: start..v.count(),
+            art: None,
+        });
+    }
+    // Bounds of this layer's vertices, back in stage pixels.
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for vertex in v.0[first..].chunks(FLOATS) {
+        let (x, y) = (
+            (vertex[0] / vertex[3] + 1.0) / 2.0 * size.0,
+            (1.0 - vertex[1] / vertex[3]) / 2.0 * size.1,
+        );
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+    }
+    let (sx, sy) = (size_px.0 as f32 / size.0, size_px.1 as f32 / size.1);
+    let clamp = |v: f32, max: u32| (v.max(0.0) as u32).min(max);
+    let (px0, py0) = (
+        clamp((x0 * sx).floor() - 2.0, size_px.0),
+        clamp((y0 * sy).floor() - 2.0, size_px.1),
+    );
+    let (px1, py1) = (
+        clamp((x1 * sx).ceil() + 2.0, size_px.0),
+        clamp((y1 * sy).ceil() + 2.0, size_px.1),
+    );
+    PreparedLayer {
+        draws,
+        opacity: frame.opacity,
+        rect: (px0, py0, px1.saturating_sub(px0), py1.saturating_sub(py0)),
+    }
+}
+
 impl shader::Primitive for StagePrimitive {
     type Pipeline = Pipeline;
 
@@ -1185,177 +1371,15 @@ impl shader::Primitive for StagePrimitive {
         let floor_range = 0..v.count();
         let mut layers = Vec::with_capacity(data.layers.len());
         for layer in &data.layers {
-            let first = v.0.len();
-            let mut draws = Vec::new();
-            let frame = layer.frame;
-            if frame.shadow_opacity > 0.0 {
-                let start = v.count();
-                let (cx, cy) = frame.shadow_center;
-                let (rx, ry) = frame.shadow_radii;
-                let pad = frame.shadow_sigma * 3.0;
-                let (hx, hy) = (rx + pad, ry + pad);
-                let s = palette.shadow;
-                v.quad(
-                    [
-                        (cx - hx, cy - hy),
-                        (cx + hx, cy - hy),
-                        (cx + hx, cy + hy),
-                        (cx - hx, cy + hy),
-                    ],
-                    [1.0; 4],
-                    [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)],
-                    size,
-                    [
-                        s[0] as f32 / 255.0,
-                        s[1] as f32 / 255.0,
-                        s[2] as f32 / 255.0,
-                        s[3] as f32 / 255.0 * frame.shadow_opacity,
-                    ],
-                    none,
-                    kind(1.0),
-                    [frame.shadow_sigma.max(0.01), 0.0, rx, ry],
-                );
-                draws.push(Draw {
-                    range: start..v.count(),
-                    art: None,
-                });
-            }
-            if let Some(opacity) = layer.footprint.filter(|o| *o > 0.0) {
-                // `.gfoot`: a dashed ellipse in `--line` where the shadow would
-                // fall, 1.3s by .5s against the shadow's 1.45s by .62s.
-                let start = v.count();
-                let (cx, cy) = frame.shadow_center;
-                let (rx, ry) = (
-                    frame.shadow_radii.0 * 0.65 / 0.725,
-                    frame.shadow_radii.1 * 0.25 / 0.31,
-                );
-                let (hx, hy) = (rx + 2.0, ry + 2.0);
-                let line = srgb(palette.line);
-                v.quad(
-                    [
-                        (cx - hx, cy - hy),
-                        (cx + hx, cy - hy),
-                        (cx + hx, cy + hy),
-                        (cx - hx, cy + hy),
-                    ],
-                    [1.0; 4],
-                    [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)],
-                    size,
-                    [line[0], line[1], line[2], opacity],
-                    none,
-                    kind(3.0),
-                    // About 4px dashes around the ring.
-                    [
-                        ((rx + ry) * std::f32::consts::PI / 8.0).round().max(4.0),
-                        0.0,
-                        rx,
-                        ry,
-                    ],
-                );
-                draws.push(Draw {
-                    range: start..v.count(),
-                    art: None,
-                });
-            }
-            let edge = layer.edge;
-            let edge = [
-                edge[0] as f32 / 255.0,
-                edge[1] as f32 / 255.0,
-                edge[2] as f32 / 255.0,
-                edge[3] as f32 / 255.0,
-            ];
-            // About 3px dashes on a 152px face, as Chromium draws 1.5px.
-            let dashes = if layer.dashed {
-                (1.0 / layer.border / 4.0).round()
-            } else {
-                0.0
-            };
-            for face in &layer.faces {
-                let start = v.count();
-                let color = srgb(face.color);
-                v.quad(
-                    face.projected.corners,
-                    face.projected.w,
-                    [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
-                    size,
-                    [color[0], color[1], color[2], face.alpha],
-                    edge,
-                    [layer.border, layer.border, dashes, 0.0],
-                    [dashes, if face.art.is_some() { 1.0 } else { 0.0 }, 0.0, 0.0],
-                );
-                if let Some(art) = &face.art {
-                    pipeline.upload(device, queue, art);
-                }
-                draws.push(Draw {
-                    range: start..v.count(),
-                    art: face.art.clone(),
-                });
-            }
-            if let Some(glow) = layer.glow {
-                // The shape grown by the halo margin along its own edges, with
-                // UVs in its own pixels from its centre.
-                let start = v.count();
-                let [c0, c1, _, c3] = glow.corners;
-                let unit = |(x, y): (f32, f32)| {
-                    let n = x.hypot(y).max(1e-3);
-                    (x / n, y / n)
-                };
-                let along = unit((c1.0 - c0.0, c1.1 - c0.1));
-                let down = unit((c3.0 - c0.0, c3.1 - c0.1));
-                let signs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
-                let margin = GLOW_MARGIN * glow.scale;
-                let (hx, hy) = (glow.half.0 + margin, glow.half.1 + margin);
-                let corners = [0, 1, 2, 3].map(|i| {
-                    let (sx, sy): (f32, f32) = signs[i];
-                    let (x, y) = glow.corners[i];
-                    (
-                        x + (along.0 * sx + down.0 * sy) * margin,
-                        y + (along.1 * sx + down.1 * sy) * margin,
-                    )
-                });
-                let color = srgb(glow.glow.color);
-                v.quad(
-                    corners,
-                    glow.w,
-                    signs.map(|(sx, sy)| (sx * hx, sy * hy)),
-                    size,
-                    [color[0], color[1], color[2], 1.0],
-                    none,
-                    [glow.glow.level, glow.glow.pulse, glow.scale, 4.0],
-                    [glow.half.0, glow.half.1, glow.radius, 0.0],
-                );
-                draws.push(Draw {
-                    range: start..v.count(),
-                    art: None,
-                });
-            }
-            // Bounds of this layer's vertices, back in stage pixels.
-            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-            for vertex in v.0[first..].chunks(FLOATS) {
-                let (x, y) = (
-                    (vertex[0] / vertex[3] + 1.0) / 2.0 * size.0,
-                    (1.0 - vertex[1] / vertex[3]) / 2.0 * size.1,
-                );
-                x0 = x0.min(x);
-                y0 = y0.min(y);
-                x1 = x1.max(x);
-                y1 = y1.max(y);
-            }
-            let (sx, sy) = (physical.2 as f32 / size.0, physical.3 as f32 / size.1);
-            let clamp = |v: f32, max: u32| (v.max(0.0) as u32).min(max);
-            let (px0, py0) = (
-                clamp((x0 * sx).floor() - 2.0, physical.2),
-                clamp((y0 * sy).floor() - 2.0, physical.3),
-            );
-            let (px1, py1) = (
-                clamp((x1 * sx).ceil() + 2.0, physical.2),
-                clamp((y1 * sy).ceil() + 2.0, physical.3),
-            );
-            layers.push(PreparedLayer {
-                draws,
-                opacity: frame.opacity,
-                rect: (px0, py0, px1.saturating_sub(px0), py1.saturating_sub(py0)),
-            });
+            layers.push(prepare_scene_layer(
+                pipeline,
+                device,
+                queue,
+                &mut v,
+                data,
+                layer,
+                (physical.2, physical.3),
+            ));
         }
         // Composite triangles: one per layer into the base, then the base
         // into the frame. Each samples only the stage's corner of the layer.

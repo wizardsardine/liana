@@ -117,19 +117,7 @@ impl PinInput {
                 let old_was_empty = self.digits[index].is_empty();
                 let old_len = self.digits[index].len();
                 if value.is_empty() {
-                    self.replace_digit(index, value);
-                    if index > 0 {
-                        // this deletes the number and also moves the cursor to the previous field
-                        // If the field was already empty, also clear the previous field
-                        if old_was_empty {
-                            // Scrub the previous digit in place rather
-                            // than reassigning `String::new()`, which
-                            // would drop the old plaintext buffer
-                            // un-scrubbed.
-                            self.digits[index - 1].zeroize();
-                        }
-                        return focus_previous();
-                    }
+                    return self.erase_digit(index, value, old_was_empty);
                 } else if !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()) {
                     // Smart fill logic: determine which field to update
                     if value.len() == 1 {
@@ -139,26 +127,7 @@ impl PinInput {
                             return focus_next();
                         }
                     } else if value.len() > old_len {
-                        // User typed in a field that already has content
-                        // Extract the newly typed character
-                        if let Some(last_char) = value.chars().last() {
-                            if last_char.is_ascii_digit() {
-                                let new_digit = last_char.to_string();
-
-                                // Smart fill: if current field has content and next field is empty, fill next
-                                if !old_was_empty && index < 3 && self.digits[index + 1].is_empty()
-                                {
-                                    self.replace_digit(index + 1, new_digit);
-                                    return focus_next();
-                                } else {
-                                    // Otherwise replace current field
-                                    self.replace_digit(index, new_digit);
-                                    if index < 3 {
-                                        return focus_next();
-                                    }
-                                }
-                            }
-                        }
+                        return self.smart_fill_digit(index, &value, old_was_empty);
                     }
                 }
                 Task::none()
@@ -169,6 +138,51 @@ impl PinInput {
             }
             Message::Submit => Task::none(),
         }
+    }
+
+    fn erase_digit(&mut self, index: usize, value: String, old_was_empty: bool) -> Task<Message> {
+        self.replace_digit(index, value);
+        if index > 0 {
+            // this deletes the number and also moves the cursor to the previous field
+            // If the field was already empty, also clear the previous field
+            if old_was_empty {
+                // Scrub the previous digit in place rather
+                // than reassigning `String::new()`, which
+                // would drop the old plaintext buffer
+                // un-scrubbed.
+                self.digits[index - 1].zeroize();
+            }
+            return focus_previous();
+        }
+        Task::none()
+    }
+
+    fn smart_fill_digit(
+        &mut self,
+        index: usize,
+        value: &str,
+        old_was_empty: bool,
+    ) -> Task<Message> {
+        // User typed in a field that already has content
+        // Extract the newly typed character
+        if let Some(last_char) = value.chars().last() {
+            if last_char.is_ascii_digit() {
+                let new_digit = last_char.to_string();
+
+                // Smart fill: if current field has content and next field is empty, fill next
+                if !old_was_empty && index < 3 && self.digits[index + 1].is_empty() {
+                    self.replace_digit(index + 1, new_digit);
+                    return focus_next();
+                } else {
+                    // Otherwise replace current field
+                    self.replace_digit(index, new_digit);
+                    if index < 3 {
+                        return focus_next();
+                    }
+                }
+            }
+        }
+        Task::none()
     }
 
     /// Render the PIN input row (4 digit fields + eye toggle).
@@ -234,25 +248,7 @@ impl PinInput {
                 .secure(self.hidden)
                 .on_input(move |v| Message::DigitChanged(i, v))
                 .on_submit(Message::Submit)
-                .style(|theme: &theme::Theme, status| {
-                    let shell = theme.colors.shell;
-                    text_input::Style {
-                        background: iced::Background::Color(shell.background),
-                        border: iced::Border {
-                            color: if matches!(status, text_input::Status::Focused { .. }) {
-                                shell.focus
-                            } else {
-                                shell.line
-                            },
-                            width: 1.0,
-                            radius: 8.0.into(),
-                        },
-                        icon: shell.muted,
-                        placeholder: shell.muted,
-                        value: shell.ink,
-                        selection: shell.selected,
-                    }
-                });
+                .style(face_digit_style);
             row = row.push(if i == 0 {
                 input.id(first_digit_id())
             } else {
@@ -300,6 +296,31 @@ impl PinInput {
             }),
         )
         .into()
+    }
+}
+
+fn face_digit_style(
+    theme: &coincube_ui::theme::Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input;
+
+    let shell = theme.colors.shell;
+    text_input::Style {
+        background: iced::Background::Color(shell.background),
+        border: iced::Border {
+            color: if matches!(status, text_input::Status::Focused { .. }) {
+                shell.focus
+            } else {
+                shell.line
+            },
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        icon: shell.muted,
+        placeholder: shell.muted,
+        value: shell.ink,
+        selection: shell.selected,
     }
 }
 

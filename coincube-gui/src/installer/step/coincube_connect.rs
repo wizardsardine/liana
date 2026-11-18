@@ -86,6 +86,71 @@ async fn send_otp(client: CoincubeClient, email: String, is_signup: bool) -> Res
 }
 
 impl CoincubeConnectStep {
+    fn toggle_mode(&mut self) {
+        if !self.processing {
+            self.is_signup = !self.is_signup;
+            self.error = None;
+        }
+    }
+
+    fn otp_requested(
+        &mut self,
+        email: String,
+        result: Result<(), String>,
+    ) -> Option<Task<Message>> {
+        self.processing = false;
+        match result {
+            Ok(()) => {
+                self.otp_sent = true;
+                self.otp = form::Value::default();
+                self.error = None;
+            }
+            Err(e) => {
+                if !self.is_signup && e.contains("Email not verified") {
+                    return Some(Task::done(Message::CoincubeConnect(
+                        CoincubeConnectMsg::EmailNotVerified { email },
+                    )));
+                }
+                self.error = Some(e);
+            }
+        }
+        None
+    }
+
+    fn otp_edited(&mut self, value: String) -> Option<Task<Message>> {
+        self.otp.value = value.trim().to_string();
+        self.otp.valid = true;
+        if self.otp.value.len() == 6 && !self.processing {
+            let client = self.client.clone();
+            let email = self.email.value.clone();
+            let otp = self.otp.value.clone();
+            let is_signup = self.is_signup;
+            self.processing = true;
+            self.error = None;
+            return Some(Task::perform(
+                async move {
+                    let req = OtpVerifyRequest { email, otp };
+                    if is_signup {
+                        client.signup_verify_otp(req).await
+                    } else {
+                        client.login_verify_otp(req).await
+                    }
+                    // Wrap into `Zeroizing<String>` at the
+                    // async boundary — before the token
+                    // enters the message queue — so every
+                    // in-flight copy of the subsequent
+                    // `OtpVerified` message scrubs its
+                    // heap on drop, not just the copy
+                    // stashed on the step's state.
+                    .map(|resp| Zeroizing::new(resp.token))
+                    .map_err(|e| e.to_string())
+                },
+                |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpVerified(res)),
+            ));
+        }
+        None
+    }
+
     /// The flow has no Connect step at all, as opposed to one whose token
     /// is already in hand.
     fn never_runs(ctx: &Context) -> bool {
@@ -245,12 +310,7 @@ impl Step for CoincubeConnectStep {
                     self.email.valid =
                         !self.email.value.is_empty() && self.email.value.contains('@');
                 }
-                CoincubeConnectMsg::ToggleMode => {
-                    if !self.processing {
-                        self.is_signup = !self.is_signup;
-                        self.error = None;
-                    }
-                }
+                CoincubeConnectMsg::ToggleMode => self.toggle_mode(),
                 CoincubeConnectMsg::RequestOtp => {
                     self.processing = true;
                     self.error = None;
@@ -278,22 +338,7 @@ impl Step for CoincubeConnectStep {
                     );
                 }
                 CoincubeConnectMsg::OtpRequested { email, result } => {
-                    self.processing = false;
-                    match result {
-                        Ok(()) => {
-                            self.otp_sent = true;
-                            self.otp = form::Value::default();
-                            self.error = None;
-                        }
-                        Err(e) => {
-                            if !self.is_signup && e.contains("Email not verified") {
-                                return Task::done(Message::CoincubeConnect(
-                                    CoincubeConnectMsg::EmailNotVerified { email },
-                                ));
-                            }
-                            self.error = Some(e);
-                        }
-                    }
+                    return self.otp_requested(email, result).unwrap_or_else(Task::none);
                 }
                 CoincubeConnectMsg::OtpResent(res) => {
                     self.processing = false;
@@ -327,36 +372,7 @@ impl Step for CoincubeConnectStep {
                     );
                 }
                 CoincubeConnectMsg::OtpEdited(value) => {
-                    self.otp.value = value.trim().to_string();
-                    self.otp.valid = true;
-                    if self.otp.value.len() == 6 && !self.processing {
-                        let client = self.client.clone();
-                        let email = self.email.value.clone();
-                        let otp = self.otp.value.clone();
-                        let is_signup = self.is_signup;
-                        self.processing = true;
-                        self.error = None;
-                        return Task::perform(
-                            async move {
-                                let req = OtpVerifyRequest { email, otp };
-                                if is_signup {
-                                    client.signup_verify_otp(req).await
-                                } else {
-                                    client.login_verify_otp(req).await
-                                }
-                                // Wrap into `Zeroizing<String>` at the
-                                // async boundary — before the token
-                                // enters the message queue — so every
-                                // in-flight copy of the subsequent
-                                // `OtpVerified` message scrubs its
-                                // heap on drop, not just the copy
-                                // stashed on the step's state.
-                                .map(|resp| Zeroizing::new(resp.token))
-                                .map_err(|e| e.to_string())
-                            },
-                            |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpVerified(res)),
-                        );
-                    }
+                    return self.otp_edited(value).unwrap_or_else(Task::none);
                 }
                 CoincubeConnectMsg::OtpVerified(res) => {
                     self.processing = false;
