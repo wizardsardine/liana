@@ -959,6 +959,8 @@ pub struct App {
     /// not start a second one. Cleared when it reports back; a failed write
     /// leaves the obligation to be retried on a later refresh.
     rescan_obligation_retire_in_flight: bool,
+    /// An imported Vault's Bitcoin Blake2b copy is being created.
+    imported_copy_in_flight: bool,
     /// Set when an auto-promotion to the pending local node fails and the
     /// previous daemon is recovered. The recovered daemon still carries
     /// `auto_switch_to_pending = true` + `pending_bitcoind`, so without this the
@@ -3909,6 +3911,7 @@ impl App {
             background_node_attempt: None,
             rescan_obligation_retired_by_scan: false,
             rescan_obligation_retire_in_flight: false,
+            imported_copy_in_flight: false,
             auto_switch_suppressed: false,
             local_switch_hold: None,
             entangled_in_flight: HashSet::new(),
@@ -4195,6 +4198,7 @@ impl App {
                 background_node_attempt: None,
                 rescan_obligation_retired_by_scan: false,
                 rescan_obligation_retire_in_flight: false,
+                imported_copy_in_flight: false,
                 auto_switch_suppressed: false,
                 local_switch_hold: None,
                 entangled_in_flight: HashSet::new(),
@@ -5113,6 +5117,64 @@ impl App {
             .wallet
             .as_ref()
             .is_some_and(|wallet| copy_exists(&self.datadir, self.cube_settings.network, wallet));
+    }
+
+    /// Create this imported Vault's Bitcoin Blake2b copy: a Cube of its own
+    /// holding the paired imported wallet, unlocked with this Cube's seed and
+    /// PIN, syncing through Connect. Reuses a copy that already exists.
+    fn create_imported_copy(&mut self) -> Task<Message> {
+        let error = |message: &str| {
+            Task::done(Message::View(view::Message::ShowError(message.to_string())))
+        };
+        if self.imported_copy_in_flight
+            || self.cube_settings.network != crate::chain::ChainId::Bitcoin
+        {
+            return Task::none();
+        }
+        self.refresh_copy_exists();
+        if self.cache.btcb2_already_claimed {
+            return Task::none();
+        }
+        if let Some(reason) =
+            crate::app::features::bitcoin_blake2b(crate::app::features::BitcoinBlake2bServerFlag {
+                server_enabled: self.cache.btcb2_server_enabled,
+            })
+            .reason()
+        {
+            return error(reason);
+        }
+        let Some(token) = self
+            .authenticated_coincube_client()
+            .and_then(|client| client.token().map(str::to_owned))
+        else {
+            return error("Sign in to COINCUBE | Connect to create the Bitcoin Blake2b copy.");
+        };
+        let source = self.cube_settings.clone();
+        let credentials = source.master_signer_fingerprint.and_then(|fingerprint| {
+            Some((
+                session::unlocked_signer(&source.id, fingerprint)?,
+                session::pin_for(&source.id)?,
+            ))
+        });
+        let Some((signer, pin)) = credentials else {
+            return error("Unlock this Cube with its PIN again to create the copy.");
+        };
+        let signer = crate::signer::Signer::new(signer);
+        let backend = coincubed::config::BitcoinBackend::Esplora(
+            crate::installer::connect_esplora_config(crate::chain::ChainId::BitcoinBlake2b, &token),
+        );
+        let root = self.datadir.clone();
+        self.imported_copy_in_flight = true;
+        Task::perform(
+            async move {
+                crate::services::bitcoin_import::pairing::install_pair(
+                    &root, &source, &signer, &pin, backend,
+                )
+                .await
+                .map(|_| ())
+            },
+            Message::ImportedCopyCreated,
+        )
     }
 
     pub(crate) fn claim_source_cube(&self) -> crate::app::features::ClaimSourceCube {
@@ -7229,8 +7291,11 @@ impl App {
                 // From the disk, not the cache (#503): a copy made earlier in
                 // this session leaves the cached flag stale, and the hub would
                 // otherwise start a second installer for the same Vault.
-                // Only a Vault is claimed; an imported Vault's copy is its
-                // paired imported Cube, which this wizard doesn't make.
+                // A Vault is copied by the copy wizard; an imported Vault's
+                // copy is its paired imported Cube, made here.
+                if self.wallet.as_ref().is_some_and(|w| w.is_imported()) {
+                    return self.create_imported_copy();
+                }
                 let Some(wallet) = self.wallet.as_ref().filter(|w| w.supports_inheritance()) else {
                     return Task::none();
                 };
@@ -7688,6 +7753,17 @@ impl App {
                     log::debug!("[RECOVERY] heartbeat post failed (ignored): {e}");
                 }
                 return Task::none();
+            }
+            Message::ImportedCopyCreated(result) => {
+                self.imported_copy_in_flight = false;
+                self.refresh_copy_exists();
+                return match result {
+                    Ok(()) => Task::done(Message::View(view::Message::ShowToast(
+                        log::Level::Info,
+                        "Bitcoin Blake2b copy created. Open it from the Cube switcher.".to_string(),
+                    ))),
+                    Err(error) => Task::done(Message::View(view::Message::ShowError(error))),
+                };
             }
             Message::CubeVaultReported => {
                 // Fire-and-forget: the re-report task logs its own outcome; the
@@ -10915,6 +10991,67 @@ pub(crate) mod tests {
         );
         drop(startup);
         (app, daemon, attachment)
+    }
+
+    /// Create copy on an imported Vault makes its paired Cube, never the
+    /// Vault copy wizard, and says why when it can't start.
+    #[test]
+    fn imported_create_copy_explains_what_it_needs_and_never_opens_the_vault_wizard() {
+        use iced::futures::StreamExt;
+        let root = std::env::temp_dir().join(format!("imported-copy-app-{}", uuid::Uuid::new_v4()));
+        let (mut app, _, _) = imported_vault_app(&root);
+        let outputs = |task: Task<Message>| -> Vec<Message> {
+            let Some(stream) = iced_runtime::task::into_stream(task) else {
+                return Vec::new();
+            };
+            iced::futures::executor::block_on(stream.collect::<Vec<_>>())
+                .into_iter()
+                .filter_map(|action| match action {
+                    iced_runtime::Action::Output(message) => Some(message),
+                    _ => None,
+                })
+                .collect()
+        };
+        let error_of = |messages: &[Message]| {
+            messages.iter().find_map(|message| match message {
+                Message::View(view::Message::ShowError(error)) => Some(error.clone()),
+                _ => None,
+            })
+        };
+        let starts_wizard = |messages: &[Message]| {
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::View(view::Message::StartClaimBlake2b)))
+        };
+
+        app.cache.btcb2_server_enabled = false;
+        let messages = outputs(app.update(Message::View(view::Message::CreateBlake2bCopy)));
+        assert!(error_of(&messages).is_some(), "Bitcoin Blake2b is off");
+        assert!(!starts_wizard(&messages));
+
+        app.cache.btcb2_server_enabled = true;
+        app.panels.connect.account.bitcoin_blake2b_opt_in = true;
+        app.panels.connect.account.features = Some(
+            serde_json::from_value(serde_json::json!({
+                "plans": [], "bitcoinBlake2bEnabled": true,
+            }))
+            .unwrap(),
+        );
+        let messages = outputs(app.update(Message::View(view::Message::CreateBlake2bCopy)));
+        assert!(
+            error_of(&messages).is_some_and(|e| e.contains("Sign in")),
+            "{:?}",
+            error_of(&messages)
+        );
+        assert!(!starts_wizard(&messages));
+        assert!(!app.imported_copy_in_flight, "nothing was started");
+
+        // A failed creation clears the in-flight flag and shows the reason.
+        app.imported_copy_in_flight = true;
+        let messages = outputs(app.update(Message::ImportedCopyCreated(Err("boom".into()))));
+        assert_eq!(error_of(&messages).as_deref(), Some("boom"));
+        assert!(!app.imported_copy_in_flight);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
