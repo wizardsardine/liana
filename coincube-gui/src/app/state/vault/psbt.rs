@@ -64,6 +64,8 @@ fn restore_psbt_focus(target: iced::advanced::widget::Id) -> Task<Message> {
         focused: false,
     }))
 }
+#[cfg(any(test, feature = "integration-tests"))]
+use crate::chain::ChainId;
 use crate::export::{ImportExportMessage, ImportExportType, Progress};
 use crate::{
     app::{
@@ -79,7 +81,6 @@ use crate::{
         view::BorderWalletReconMessage,
         wallet::{Wallet, WalletError},
     },
-    chain::ChainId,
     daemon::{
         model::{LabelItem, Labelled, SpendStatus, SpendTx},
         Daemon,
@@ -2834,8 +2835,14 @@ impl SignModal {
         let psbt = tx.psbt.clone();
         Task::perform(
             async move {
-                let failed = |error: crate::split_hardware::sign::SignError| {
-                    Error::from(WalletError::MasterSigner(error.to_string()))
+                // A refusal on the device is the user's choice, not a failure:
+                // map it to the silent refusal `Message::Signed` already skips.
+                let failed = |error: crate::split_hardware::sign::SignError| match error {
+                    crate::split_hardware::sign::SignError::SigningRefused
+                    | crate::split_hardware::sign::SignError::RegistrationRefused => {
+                        Error::HardwareWallet(async_hwi::Error::UserRefused)
+                    }
+                    error => Error::from(WalletError::MasterSigner(error.to_string())),
                 };
                 let mut session = SigningSession::from_listed(&device, policy, binder)
                     .await
@@ -3040,7 +3047,7 @@ impl Modal for SignModal {
                 if let Some(recon) = &mut self.border_wallet_recon {
                     if let Some((fingerprint, mnemonic)) = recon.update(msg) {
                         let network = recon.network;
-                        let chain = self.wallet.chain;
+                        let unified = uses_unified_signatures(&self.wallet);
                         let psbt = tx.psbt.clone();
                         // Clear reconstruction state (zeroizes phrase words via Drop).
                         self.border_wallet_recon = None;
@@ -3049,7 +3056,7 @@ impl Modal for SignModal {
                         return Task::perform(
                             async move {
                                 let result = sign_border_wallet_for_chain(
-                                    chain,
+                                    unified,
                                     mnemonic,
                                     fingerprint,
                                     network,
@@ -3397,7 +3404,11 @@ pub fn merge_testnet4_integration_signatures(
     psbt: &mut Psbt,
     signed_psbt: &Psbt,
 ) -> Result<(), UnifiedFinalizeError> {
-    merge_signatures_for_chain(ChainId::from(Network::Testnet4), psbt, signed_psbt)
+    merge_signatures_for_chain(
+        ChainId::from(Network::Testnet4).is_blake2b(),
+        psbt,
+        signed_psbt,
+    )
 }
 
 /// Sign with the Vault's hot key, keyed on the chain: `SIGHASH_ALL` into
@@ -3409,15 +3420,19 @@ pub(crate) fn sign_recovery_fixture_for_chain(
     signer: &crate::signer::Signer,
     psbt: Psbt,
 ) -> Result<Psbt, Error> {
-    sign_with_master_signer_for_chain(chain, signer, psbt)
+    sign_with_master_signer_for_chain(chain.is_blake2b(), signer, psbt)
 }
 
+/// Sign with the master signer, in the wallet's signature format: `unified`
+/// is [`uses_unified_signatures`] for the wallet (never the bare chain), so
+/// signing and [`merge_signatures_for_chain`] always agree. An imported
+/// wallet on Bitcoin Blake2b makes ordinary signatures.
 fn sign_with_master_signer_for_chain(
-    chain: ChainId,
+    unified: bool,
     signer: &crate::signer::Signer,
     psbt: Psbt,
 ) -> Result<Psbt, Error> {
-    if !chain.is_blake2b() {
+    if !unified {
         return signer.sign_psbt(psbt).map_err(|e| {
             WalletError::MasterSigner(format!("Master signer failed to sign psbt: {}", e)).into()
         });
@@ -3437,16 +3452,16 @@ fn sign_with_master_signer_for_chain(
     Ok(signed.psbt().clone())
 }
 
-/// Border Wallet signing keyed on the chain, same split as
+/// Border Wallet signing in the wallet's signature format, same split as
 /// [`sign_with_master_signer_for_chain`].
 fn sign_border_wallet_for_chain(
-    chain: ChainId,
+    unified: bool,
     mnemonic: coincube_core::bip39::Mnemonic,
     fingerprint: Fingerprint,
     network: Network,
     psbt: Psbt,
 ) -> Result<(Fingerprint, Psbt), coincube_core::border_wallet::BorderWalletError> {
-    if !chain.is_blake2b() {
+    if !unified {
         return sign_psbt_with_border_wallet(mnemonic, fingerprint, network, psbt);
     }
     let unified = UnifiedPsbt::from_psbt(psbt).map_err(|e| {
@@ -3462,7 +3477,7 @@ async fn sign_psbt_with_master_signer(
     psbt: Psbt,
 ) -> (Fingerprint, Result<Psbt, Error>) {
     if let Some(signer) = &wallet.signer {
-        let res = sign_with_master_signer_for_chain(wallet.chain, signer, psbt);
+        let res = sign_with_master_signer_for_chain(uses_unified_signatures(&wallet), signer, psbt);
         (signer.fingerprint(), res)
     } else {
         (
@@ -5063,9 +5078,10 @@ mod tests {
             let expected = hot.sign_psbt(f.psbt.clone()).unwrap().serialize();
             assert!(!expected.is_empty());
             for chain in BITCOIN_FAMILY {
-                let got = sign_with_master_signer_for_chain(chain, &hot, f.psbt.clone())
-                    .unwrap()
-                    .serialize();
+                let got =
+                    sign_with_master_signer_for_chain(chain.is_blake2b(), &hot, f.psbt.clone())
+                        .unwrap()
+                        .serialize();
                 assert_eq!(got, expected, "{:?}", chain);
             }
             // And the prior path never produced a unified record.
@@ -5089,7 +5105,7 @@ mod tests {
             .unwrap();
             for chain in BITCOIN_FAMILY {
                 let (got_fp, got) = sign_border_wallet_for_chain(
-                    chain,
+                    chain.is_blake2b(),
                     mnemonic.clone(),
                     fingerprint,
                     Network::Bitcoin,
@@ -5395,13 +5411,48 @@ mod tests {
             Arc::new(wallet)
         }
 
+        /// An imported wallet on Bitcoin Blake2b with a loaded signer signs
+        /// and merges in the same (ordinary) format, so the signature its
+        /// signer makes survives the merge instead of being dropped.
+        #[test]
+        fn imported_blake2b_signer_signature_survives_the_merge() {
+            use coincube_core::miniscript::bitcoin::bip32::{DerivationPath, Xpriv, Xpub};
+            use coincube_core::wallet_descriptor::{ImportedWalletDescriptor, WalletDescriptor};
+            let secp = secp256k1::Secp256k1::new();
+            let master = Xpriv::new_master(Network::Bitcoin, &[7; 32]).unwrap();
+            let account = master
+                .derive_priv(&secp, &DerivationPath::from_str("m/84'/0'/0'").unwrap())
+                .unwrap();
+            let key = format!(
+                "[{}/84'/0'/0']{}",
+                master.fingerprint(&secp),
+                Xpub::from_priv(&secp, &account)
+            );
+            let imported = ImportedWalletDescriptor::parse(
+                &format!("wpkh({key}/0/*)"),
+                Some(&format!("wpkh({key}/1/*)")),
+                ChainId::BitcoinBlake2b,
+            )
+            .unwrap();
+            let wallet = Wallet::new(WalletDescriptor::Imported(imported))
+                .with_chain(ChainId::BitcoinBlake2b);
+            let unified = uses_unified_signatures(&wallet);
+            assert!(!unified);
+
+            let f = fixture();
+            let hot = crate::signer::Signer::new(signer(21));
+            let signed = sign_with_master_signer_for_chain(unified, &hot, f.psbt.clone()).unwrap();
+            let mut merged = f.psbt.clone();
+            merge_signatures_for_chain(unified, &mut merged, &signed).unwrap();
+            assert_eq!(merged.inputs[0].partial_sigs.len(), 1);
+            assert!(merged.inputs[0].proprietary.is_empty());
+        }
+
         #[test]
         fn master_signer_produces_unified_records_not_partial_sigs() {
             let f = fixture();
             let hot = crate::signer::Signer::new(signer(21));
-            let signed =
-                sign_with_master_signer_for_chain(ChainId::BitcoinBlake2b, &hot, f.psbt.clone())
-                    .unwrap();
+            let signed = sign_with_master_signer_for_chain(true, &hot, f.psbt.clone()).unwrap();
             assert!(signed.inputs[0].partial_sigs.is_empty());
             let records =
                 unified_signatures(&UnifiedPsbt::from_psbt(signed.clone()).unwrap()).unwrap();
@@ -5421,7 +5472,7 @@ mod tests {
             let mnemonic = coincube_core::bip39::Mnemonic::from_entropy(&[22; 16]).unwrap();
             let fingerprint = signer(22).fingerprint(&secp);
             let (fp, signed) = sign_border_wallet_for_chain(
-                ChainId::BitcoinBlake2b,
+                true,
                 mnemonic,
                 fingerprint,
                 Network::Bitcoin,

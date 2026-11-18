@@ -1279,14 +1279,26 @@ fn quorum_sentence(
     verb: &str,
 ) -> String {
     let names: Vec<String> = keys.iter().map(|k| signer_name(k, keys_aliases)).collect();
-    if coincube_ui::locale::language() == coincube_ui::locale::Language::Spanish {
+    // One listed signer can stand for several required signatures: an
+    // imported multisig may hold two accounts behind one master fingerprint.
+    // Single-signer wording only when one signature is required, and never
+    // "any N of M" with N above the M signers listed.
+    let spanish = coincube_ui::locale::language() == coincube_ui::locale::Language::Spanish;
+    if spanish {
         let verb = if verb == "approve" {
             "aprobar"
         } else {
             "gastar"
         };
-        return if keys.len() == 1 {
+        return if threshold <= 1 && keys.len() == 1 {
             format!("{} puede {}.", names[0], verb)
+        } else if threshold > keys.len() {
+            format!(
+                "Se necesitan {} firmas de {} para {}.",
+                threshold,
+                names.join(", "),
+                verb
+            )
         } else {
             format!(
                 "Bastan {} de {} firmantes para {}: {}.",
@@ -1297,8 +1309,15 @@ fn quorum_sentence(
             )
         };
     }
-    if keys.len() == 1 {
+    if threshold <= 1 && keys.len() == 1 {
         format!("{} {}s.", names[0], verb)
+    } else if threshold > keys.len() {
+        format!(
+            "{} signatures from {} are needed to {}.",
+            threshold,
+            names.join(", "),
+            verb
+        )
     } else {
         format!(
             "Any {} of {} signers {}: {}.",
@@ -3658,6 +3677,32 @@ pub fn register_wallet_modal<'a>(
 
 #[cfg(test)]
 mod tests {
+    use super::quorum_sentence;
+
+    #[test]
+    fn quorum_wording_shows_a_threshold_above_one_for_a_repeated_fingerprint() {
+        use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+        use std::str::FromStr;
+        let a = Fingerprint::from_str("aabbccdd").unwrap();
+        let b = Fingerprint::from_str("11223344").unwrap();
+        assert_eq!(
+            quorum_sentence(1, &[a], &[], "approve"),
+            "aabbccdd approves."
+        );
+        assert_eq!(
+            quorum_sentence(2, &[a], &[], "approve"),
+            "2 signatures from aabbccdd are needed to approve."
+        );
+        assert_eq!(
+            quorum_sentence(3, &[a, b], &[], "spend"),
+            "3 signatures from aabbccdd, 11223344 are needed to spend."
+        );
+        assert_eq!(
+            quorum_sentence(2, &[a, b], &[], "approve"),
+            "Any 2 of 2 signers approve: aabbccdd, 11223344."
+        );
+    }
+
     use super::*;
     use crate::{
         app::{

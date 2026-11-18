@@ -247,9 +247,10 @@ pub trait Daemon: Debug {
                 .cloned()
                 .collect();
 
-            spend_txs.push(model::SpendTx::new(
+            spend_txs.push(model::SpendTx::new_recorded(
                 tx.updated_at,
                 tx.psbt,
+                tx.broadcast_txid,
                 coins,
                 descriptor,
                 &curve,

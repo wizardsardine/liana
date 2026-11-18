@@ -110,8 +110,9 @@ pub enum Message {
     /// discarded here — it must never block or affect the UI.
     CubeVaultReported,
     /// An imported Vault's Bitcoin Blake2b copy (its paired Cube) was
-    /// created, or why not.
-    ImportedCopyCreated(Result<(), String>),
+    /// created, or why not. Carries the attempt it answers, so a result
+    /// from a predecessor `App` in the same tab is ignored.
+    ImportedCopyCreated(crate::app::cache::AppGeneration, Result<(), String>),
     /// Terminal no-op for the fire-and-forget push of a Spark Stable Balance
     /// decision to the Cube's Connect record
     /// (`ConnectCubePanel::report_spark_stable_balance`). Logged inside the
@@ -168,6 +169,10 @@ pub enum Message {
     /// Vault Settings. Nothing is written to the wallet's settings.
     DeviceRegistered(Fingerprint, Result<(), Error>),
     Updated(Result<(), Error>),
+    /// The save result of work the current route's own panel started while
+    /// the import panel stood in for it (a forwarded signature). Delivered to
+    /// that panel, never to the import panel; see `App::update_dispatch`.
+    RoutePanelResult(Box<Message>),
     /// UI-only signal to recompute collected signatures and re-evaluate the
     /// Sign picker's close/broadcast state after an in-memory PSBT merge —
     /// distinct from `Updated(Ok)`, which additionally marks the spend tx as

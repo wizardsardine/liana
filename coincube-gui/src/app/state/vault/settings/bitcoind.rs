@@ -1664,7 +1664,13 @@ impl State for BitcoindSettingsState {
             // Panels below join the disclosure when there is one.
             let mut node_panels = Vec::new();
 
-            if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
+            // An imported wallet syncs only from the server chosen at import,
+            // shown by its own server and history section above. The daemon's
+            // Bitcoind/Electrum controls would edit a config it does not use
+            // (or, on Bitcoin Blake2b, do nothing), so they are not offered.
+            if !cache.has_imported_bitcoin
+                && (self.bitcoind_settings.is_some() || self.electrum_settings.is_some())
+            {
                 if let Some(settings) = self.bitcoind_settings.as_ref() {
                     node_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
                         move |msg| {
@@ -3445,6 +3451,11 @@ mod tests {
             "no date rescan: {:?}",
             shown
         );
+        assert!(
+            !shown.iter().any(|l| l == "Electrum"),
+            "no daemon Electrum controls for an import: {:?}",
+            shown
+        );
 
         // The same on Bitcoin Blake2b: no Knots/Connect switch for an import.
         let blake2b = Cache {
@@ -3474,10 +3485,16 @@ mod tests {
             shown
         );
 
-        // A Vault keeps its date rescan and has no imported history.
+        // A Vault keeps its date rescan and its Electrum controls, and has
+        // no imported history.
         let vault = Cache::default();
         let shown = rendered_labels(State::view(&state, &menu, &vault)).await;
         assert!(!shown.iter().any(|l| l == "Wallet history"));
+        assert!(
+            shown.iter().any(|l| l == "Electrum"),
+            "a Vault keeps its Electrum controls: {:?}",
+            shown
+        );
     }
 
     #[test]
