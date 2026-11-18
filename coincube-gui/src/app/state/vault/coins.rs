@@ -221,7 +221,8 @@ impl CoinsPanel {
     /// Whether Send selected must warn first: Bitcoin Blake2b is on and a
     /// chosen coin is still on both chains. On Bitcoin a send can copy to
     /// Bitcoin Blake2b; on Bitcoin Blake2b only a Vault that can't make the
-    /// replay-protected signature is exposed (decision item 5).
+    /// replay-protected signature is exposed. The warning offers Split first
+    /// and never blocks: the user may send anyway after the tick.
     fn send_needs_warning(&self, cache: &Cache) -> bool {
         self.blake2b(cache)
             && (!self.chain.is_blake2b() || !self.signature_available())
@@ -293,8 +294,7 @@ impl CoinsPanel {
                 }
             }
             CoinControlMessage::SendAnyway => {
-                // Only the Bitcoin side can be acknowledged away.
-                if self.send_warning == Some(true) && !self.chain.is_blake2b() {
+                if self.send_warning == Some(true) {
                     self.send_warning = None;
                     return Task::done(Message::SendSelectedCoins(
                         self.chosen.iter().copied().collect(),
@@ -1097,7 +1097,7 @@ mod tests {
         }
 
         #[test]
-        fn a_blake2b_vault_without_the_signature_cannot_send_anyway() {
+        fn a_blake2b_vault_without_the_signature_sends_anyway_after_the_tick() {
             let (_, mut cache, [a, ..]) = fixture();
             let coins = cache.daemon_cache.coins.clone();
             let mut panel = CoinsPanel::new(&coins, 0, crate::chain::ChainId::BitcoinBlake2b);
@@ -1105,13 +1105,12 @@ mod tests {
             let _ = panel.update_split(&cache, CoinControlMessage::Choose(a));
             let _ = panel.update_split(&cache, CoinControlMessage::SendSelected);
             assert_eq!(panel.send_warning, Some(false));
-            let _ = panel.update_split(&cache, CoinControlMessage::AcknowledgeBothChains(true));
             let _ = panel.update_split(&cache, CoinControlMessage::SendAnyway);
-            assert_eq!(
-                panel.send_warning,
-                Some(true),
-                "split first is the only way on"
-            );
+            assert_eq!(panel.send_warning, Some(false), "not without the tick");
+            let _ = panel.update_split(&cache, CoinControlMessage::AcknowledgeBothChains(true));
+            let task = panel.update_split(&cache, CoinControlMessage::SendAnyway);
+            assert_eq!(panel.send_warning, None, "replay is the user's choice");
+            assert!(task.units() > 0, "the send goes ahead");
         }
 
         #[test]

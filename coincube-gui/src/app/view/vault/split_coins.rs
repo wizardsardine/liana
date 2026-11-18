@@ -162,8 +162,8 @@ pub fn selection_bar<'a>(count: usize, total: Amount, mask_amounts: bool) -> Ele
 }
 
 /// The warning before Send selected spends coins that are on both chains.
-/// On Bitcoin it can be acknowledged; on Bitcoin Blake2b (a Vault that can't
-/// make the replay-protected signature) the only way on is to split first.
+/// Either chain can send anyway after the acknowledgement; replay is the
+/// user's choice, never a block.
 pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, Message> {
     let other = chain_name(twin(here));
     let question = if count == 1 {
@@ -172,7 +172,7 @@ pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, M
         format!("{} selected coins also exist on {}", count, other)
     };
     let body = if here.is_blake2b() {
-        localized_copy("Your hardware signer can't make a replay-protected signature, so this transaction could be copied to Bitcoin and move your bitcoin too. Split these coins first.")
+        localized_copy("A Bitcoin Blake2b transaction that spends them can be copied to Bitcoin and move those coins too, to the same recipient. Split them first, or continue if that doesn't matter to you.")
     } else {
         localized_copy("A Bitcoin transaction that spends them can be copied to Bitcoin Blake2b and move those coins too, to the same recipient. Split them first, or continue if that doesn't matter to you.")
     };
@@ -186,17 +186,16 @@ pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, M
             1,
         )))
         .push(p1_regular(body).style(theme::text::secondary));
-    if !here.is_blake2b() {
-        column = column.push(
-            checkbox(ack)
-                .label(localized_copy(
-                    "I understand the Bitcoin Blake2b copies may move too",
-                ))
-                .on_toggle(|ack| {
-                    Message::CoinControl(CoinControlMessage::AcknowledgeBothChains(ack))
-                }),
-        );
-    }
+    let ack_label = if here.is_blake2b() {
+        localized_copy("I understand the Bitcoin copies may move too")
+    } else {
+        localized_copy("I understand the Bitcoin Blake2b copies may move too")
+    };
+    column = column.push(
+        checkbox(ack)
+            .label(ack_label)
+            .on_toggle(|ack| Message::CoinControl(CoinControlMessage::AcknowledgeBothChains(ack))),
+    );
     let mut footer = Row::new()
         .spacing(12)
         .align_y(Alignment::Center)
@@ -205,14 +204,12 @@ pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, M
             button::secondary(None, CopyText::Cancel.get())
                 .on_press(Message::CoinControl(CoinControlMessage::CloseWarning)),
         );
-    if !here.is_blake2b() {
-        footer = footer.push(if ack {
-            button::secondary(None, localized_copy("Send anyway"))
-                .on_press(Message::CoinControl(CoinControlMessage::SendAnyway))
-        } else {
-            button::secondary(None, localized_copy("Send anyway"))
-        });
-    }
+    footer = footer.push(if ack {
+        button::secondary(None, localized_copy("Send anyway"))
+            .on_press(Message::CoinControl(CoinControlMessage::SendAnyway))
+    } else {
+        button::secondary(None, localized_copy("Send anyway"))
+    });
     footer = footer.push(
         button::primary(None, localized_copy("Split first"))
             .on_press(Message::CoinControl(CoinControlMessage::OpenSplit)),
