@@ -30,52 +30,15 @@ use crate::installer::{
 /// editors (`multisig_inheritance_recovery_template` and
 /// `expanding_multisig_inheritance_template`).
 fn second_recovery_path_section(use_taproot: bool, recovery_path: &Path) -> Element<'_, Message> {
-    path(
+    super::fixed_recovery_path(
+        2,
+        recovery_path,
         color::ORANGE,
-        Some("Second recovery option:".to_string()),
-        recovery_path.sequence,
-        recovery_path.warning,
-        recovery_path.threshold,
-        recovery_path
-            .keys
-            .iter()
-            .enumerate()
-            .map(|(i, rec_key)| {
-                if let Some(key) = rec_key {
-                    defined_key(
-                        &key.name,
-                        color::ORANGE,
-                        "Recovery key".to_string(),
-                        if use_taproot && !key.source.is_compatible_taproot() {
-                            Some("This device does not support Taproot")
-                        } else {
-                            None
-                        },
-                        true,
-                    )
-                } else {
-                    undefined_key(
-                        color::ORANGE,
-                        "Recovery key",
-                        !recovery_path.keys[0..i].iter().any(|k| k.is_none()),
-                        true,
-                    )
-                }
-                .map(move |msg| message::DefinePath::Key(i, msg))
-            })
-            .collect(),
-        true,
+        "Second recovery option:",
+        "Recovery key",
+        use_taproot,
+        &[],
     )
-    .map(move |msg| {
-        if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
-            Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
-                PathKind::Recovery,
-                vec![(2, i)],
-            ))
-        } else {
-            Message::DefineDescriptor(message::DefineDescriptor::Path(2, msg))
-        }
-    })
 }
 
 pub fn multisig_security_template_description(
