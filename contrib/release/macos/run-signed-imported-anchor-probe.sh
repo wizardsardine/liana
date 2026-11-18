@@ -56,7 +56,10 @@ cat > "$BUNDLE/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>1.0</string>
 </dict></plist>
 PLIST
-codesign -f -s "$SIGN_IDENTITY" --options runtime --entitlements "$ENTITLEMENTS" "$BUNDLE"
+# CODESIGN_KEYCHAIN picks one keychain when the identity is installed in
+# more than one (codesign calls that ambiguous), e.g. login.keychain-db.
+codesign -f -s "$SIGN_IDENTITY" ${CODESIGN_KEYCHAIN:+--keychain "$CODESIGN_KEYCHAIN"} \
+    --options runtime --entitlements "$ENTITLEMENTS" "$BUNDLE"
 codesign --verify --strict "$BUNDLE"
 "$REPO_ROOT/contrib/release/macos/check-profile-authorises-cert.sh" \
     "$PROFILE" --signed-bundle "$BUNDLE"

@@ -204,6 +204,9 @@ if re.fullmatch(r'[0-9A-Fa-f]{40}', ident):
     matches = [(h, n) for h, n in ids if h.lower() == ident.lower()]
 else:
     matches = [(h, n) for h, n in ids if n == ident]
+# One certificate installed in two keychains (login and System) is listed
+# twice with the same SHA-1. That is one identity, not an ambiguity.
+matches = list({h.upper(): (h, n) for h, n in matches}.values())
 
 if not matches:
     print(f"no eligible code-signing identity matches '{ident}'", file=sys.stderr)

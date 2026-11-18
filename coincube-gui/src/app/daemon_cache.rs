@@ -6,7 +6,8 @@ impl App {
         &mut self,
         result: Result<DaemonCache, Error>,
     ) -> Task<Message> {
-        if self.cache.has_imported_bitcoin {
+        // A scanning import's coins are not a balance yet.
+        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
             return Task::none();
         }
         match result {

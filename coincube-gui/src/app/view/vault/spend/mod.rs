@@ -546,7 +546,7 @@ pub fn create_spend_tx<'a>(
     recipients: Vec<Element<'a, Message>>,
     is_valid: bool,
     duplicate: bool,
-    timelock: u16,
+    timelock: Option<u16>,
     recovery_timelock: Option<u16>,
     coins: &[(Coin, bool)],
     coins_labels: &'a HashMap<String, String>,
@@ -1417,7 +1417,7 @@ fn coin_list_view<'a>(
     i: usize,
     coin: &Coin,
     coins_labels: &'a HashMap<String, String>,
-    timelock: u16,
+    timelock: Option<u16>,
     blockheight: u32,
     selected: bool,
     bitcoin_unit: BitcoinDisplayUnit,
@@ -1458,12 +1458,15 @@ fn coin_list_view<'a>(
         )
         .push(Container::new(identity).width(Length::Fill))
         .push(if coin.spend_info.is_some() {
-            badge::spent()
+            Some(badge::spent())
         } else if coin.block_height.is_none() {
-            badge::unconfirmed()
+            Some(badge::unconfirmed())
         } else {
-            let seq = remaining_sequence(coin, blockheight, timelock);
-            coins::coin_sequence_label(seq, timelock as u32)
+            // An imported wallet has no recovery clock to count down.
+            timelock.map(|timelock| {
+                let seq = remaining_sequence(coin, blockheight, timelock);
+                coins::coin_sequence_label(seq, timelock as u32)
+            })
         })
         .push(
             Container::new(amount_with_unit(&coin.amount, bitcoin_unit))
@@ -1691,7 +1694,7 @@ mod tests {
             recipients,
             s.is_valid,
             s.duplicate,
-            144,
+            Some(144),
             s.recovery.then_some(52_560),
             &coins,
             &fixture.coins_labels,

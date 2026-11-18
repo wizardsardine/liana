@@ -94,6 +94,10 @@ pub enum Message {
         enabled: bool,
     },
     UpdateDaemonCache(Result<DaemonCache, Error>),
+    UpdateImportedDaemonCache {
+        generation: u64,
+        result: Result<DaemonCache, Error>,
+    },
     CacheUpdated,
     /// Outcome of clearing a restored Vault's pending-rescan marker after a
     /// completed full scan: `Err` carries why the settings write failed, and the
@@ -158,6 +162,8 @@ pub enum Message {
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
+    /// An imported wallet's keys stored in this Cube, for the signer picker.
+    CubeKeys(Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
     Updated(Result<(), Error>),
     /// UI-only signal to recompute collected signatures and re-evaluate the

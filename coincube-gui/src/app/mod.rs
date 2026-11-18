@@ -434,9 +434,8 @@ impl Panels {
             ),
             split_hub: Some(state::vault::split_hub::SplitHubPanel::new(wallet.clone())),
             transactions: Some(VaultTransactionsPanel::new(wallet.clone())),
-            psbts: wallet
-                .supports_inheritance()
-                .then(|| PsbtsPanel::new(wallet.clone())),
+            // Vaults and imported wallets share the PSBT list and review.
+            psbts: Some(PsbtsPanel::new(wallet.clone())),
             recovery: wallet.supports_inheritance().then(|| {
                 new_recovery_panel(
                     wallet.clone(),
@@ -452,7 +451,8 @@ impl Panels {
                 )
             }),
             receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
-            create_spend: wallet.supports_inheritance().then(|| {
+            // Vaults and imported wallets share the Send flow.
+            create_spend: Some({
                 let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                     cache.coins(),
                     cache.blockheight().max(0) as u32,
@@ -476,7 +476,8 @@ impl Panels {
                     cache.bitcoin_unit,
                 )
             }),
-            vault_settings: wallet.supports_inheritance().then(|| {
+            // Vaults and imported wallets share Vault Settings.
+            vault_settings: Some({
                 VaultSettingsState::new(
                     data_dir.clone(),
                     wallet.clone(),
@@ -559,9 +560,7 @@ impl Panels {
         );
         self.split_hub = Some(state::vault::split_hub::SplitHubPanel::new(wallet.clone()));
         self.transactions = Some(VaultTransactionsPanel::new(wallet.clone()));
-        self.psbts = wallet
-            .supports_inheritance()
-            .then(|| PsbtsPanel::new(wallet.clone()));
+        self.psbts = Some(PsbtsPanel::new(wallet.clone()));
         self.recovery = wallet.supports_inheritance().then(|| {
             new_recovery_panel(
                 wallet.clone(),
@@ -577,7 +576,7 @@ impl Panels {
             )
         });
         self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
-        self.create_spend = wallet.supports_inheritance().then(|| {
+        self.create_spend = Some({
             let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                 cache.coins(),
                 cache.blockheight() as u32,
@@ -601,7 +600,7 @@ impl Panels {
                 cache.bitcoin_unit,
             )
         });
-        self.vault_settings = wallet.supports_inheritance().then(|| {
+        self.vault_settings = Some({
             VaultSettingsState::new(
                 data_dir.clone(),
                 wallet.clone(),
@@ -713,16 +712,25 @@ impl Panels {
     }
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
-        if self
-            .imported_bitcoin
-            .as_ref()
-            .is_some_and(|panel| panel.handles_route(&self.current))
-        {
+        if self.imported_holds_route() {
             return self
                 .imported_bitcoin
                 .as_mut()
                 .map(|panel| panel.as_mut() as &mut dyn State);
         }
+        self.route_panel_mut()
+    }
+
+    /// The import panel is standing in for the current route's own panel.
+    fn imported_holds_route(&self) -> bool {
+        self.imported_bitcoin
+            .as_ref()
+            .is_some_and(|panel| panel.handles_route(&self.current))
+    }
+
+    /// The current route's own panel, even while the import panel stands in
+    /// for it. An operation the route's panel started still completes there.
+    fn route_panel_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
             Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&mut self.global_home),
             Menu::Cube(crate::app::menu::CubeSubMenu::Activity) => Some(&mut self.activity),
@@ -5876,9 +5884,11 @@ impl App {
         tasks.push(price_task);
         tasks.push(local_feature_task);
 
-        // Imported policies use the same App daemon, with a generation-bound
-        // snapshot that also verifies discovery coverage and the Cube attachment.
-        if self.cache.has_imported_bitcoin {
+        // While an imported Vault's history scan runs, its import panel owns
+        // the snapshot (scan progress, discovery coverage, the Cube
+        // attachment). Once the scan is complete it polls like any Vault; the
+        // panel's own slower refresh still watches for a new scan.
+        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
             let client = self.authenticated_coincube_client();
             let epoch = self.panels.connect.account.session_generation();
             if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
@@ -5919,6 +5929,11 @@ impl App {
                 let daemon = daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
+                let imported_generation = self
+                    .panels
+                    .imported_bitcoin
+                    .as_ref()
+                    .map(|panel| panel.runtime_generation());
                 tasks.push(Task::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
@@ -5937,7 +5952,12 @@ impl App {
                             last_tick: tick,
                         })
                     },
-                    Message::UpdateDaemonCache,
+                    move |result| match imported_generation {
+                        Some(generation) => {
+                            Message::UpdateImportedDaemonCache { generation, result }
+                        }
+                        None => Message::UpdateDaemonCache(result),
+                    },
                 ));
             }
 
@@ -6283,10 +6303,29 @@ impl App {
         };
     }
 
+    /// An imported Vault whose history scan is complete: the App's normal
+    /// cache poll feeds it, as for any Vault.
+    fn imported_vault_ready(&self) -> bool {
+        self.panels
+            .imported_bitcoin
+            .as_ref()
+            .is_some_and(|panel| panel.is_ready())
+    }
+
     /// Adopt an imported policy into the existing Vault wallet and App runtime.
     /// The import controller retains only a shared handle for its policy-specific
     /// signing and discovery work; the App owns the wallet and shutdown.
     fn adopt_imported_runtime(&mut self) -> Task<Message> {
+        self.cache.imported_stored_keys = self
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .and_then(|panel| panel.stored_keys());
+        self.cache.imported_node = self
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .map(|panel| panel.node_summary());
         if self
             .cube_settings
             .bitcoin_import
@@ -6328,20 +6367,27 @@ impl App {
         };
         let was_ready = self.panels.global_home.imported_balance.is_some();
         let before = self.cache.daemon_cache.clone();
-        let ready = panel.sync_cache(&mut self.cache);
-        if !ready {
-            self.cache.daemon_cache.coins.clear();
-            self.cache.daemon_cache.sync_progress = 0.0;
-        }
         let first_load = self.wallet.is_none();
         let runtime_changed = self
             .daemon
             .as_ref()
             .is_none_or(|previous| !Arc::ptr_eq(previous, &daemon));
+        // The panel's snapshot seeds the cache when the scan completes or the
+        // runtime changes. After that the App's normal poll owns the cache, so
+        // a later panel refresh does not overwrite it.
+        let ready = if first_load || !was_ready || runtime_changed {
+            panel.sync_cache(&mut self.cache)
+        } else {
+            panel.is_ready()
+        };
+        if !ready {
+            self.cache.daemon_cache.coins.clear();
+            self.cache.daemon_cache.sync_progress = 0.0;
+        }
         self.daemon = Some(daemon.clone());
         self.cache.has_vault = false;
         self.cache.has_imported_bitcoin = true;
-        self.cache.vault_lacks_keychain_key = false;
+        self.cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
         self.panels.global_home.imported_installed = true;
         self.panels.global_home.imported_balance = panel.authoritative_balance();
         let mut tasks = Vec::new();
@@ -6364,9 +6410,10 @@ impl App {
         }
         if ready {
             tasks.push(Task::done(Message::CacheUpdated));
-            // The imported runtime never sends `UpdateDaemonCache`: the
-            // Overview's Vault rows follow it here, once its history is in
-            // and whenever a refresh can have changed it.
+            // Until the scan completes the runtime sends no
+            // `UpdateDaemonCache`: the Overview's Vault rows follow it here
+            // when its history comes in or the runtime changes. After that
+            // the normal poll refreshes them.
             if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
                 && (first_load
                     || !was_ready
@@ -7303,6 +7350,16 @@ impl App {
                 return self.handle_fiat_price(fiat_price);
             }
             Message::UpdateDaemonCache(res) => return self.handle_daemon_cache(res),
+            Message::UpdateImportedDaemonCache { generation, result } => {
+                if self
+                    .panels
+                    .imported_bitcoin
+                    .as_ref()
+                    .is_some_and(|panel| panel.runtime_generation() == generation)
+                {
+                    return self.handle_daemon_cache(result);
+                }
+            }
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
@@ -9214,6 +9271,21 @@ impl App {
                 };
                 return panel.update(self.daemon.clone(), &self.cache, msg);
             }
+            // A send prepared or a PSBT signed on the Vault's screens
+            // completes on them, even if the import panel took the route back
+            // while it ran. During a wider scan the old daemon can already
+            // be stopped, and these Vault panels require a live daemon.
+            msg @ (Message::VaultSpendPrepared { .. }
+            | Message::Signed(..)
+            | Message::CubeKeys(_))
+                if self.panels.imported_holds_route() =>
+            {
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.route_panel_mut())
+                {
+                    return panel.update(Some(daemon), &self.cache, msg);
+                }
+            }
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
@@ -10578,6 +10650,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn late_vault_results_are_ignored_while_import_discovery_has_no_daemon() {
+        let _guard = crate::app::session::test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _, _) = imported_vault_app(root.path());
+        app.daemon = None;
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        assert!(app.panels.imported_holds_route());
+        assert!(app.panels.route_panel_mut().is_some());
+        assert_eq!(
+            app.update(Message::VaultSpendPrepared {
+                generation: 1,
+                result: Err(Error::Unexpected("late prepare".into())),
+                identities: vec![],
+            })
+            .units(),
+            0
+        );
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::PSBTs(None));
+        assert!(app.panels.imported_holds_route());
+        assert!(app.panels.route_panel_mut().is_some());
+        assert_eq!(app.update(Message::CubeKeys(Ok(vec![]))).units(), 0);
+    }
+
+    #[test]
     fn imported_policy_loads_as_the_existing_vault_wallet() {
         let root =
             std::env::temp_dir().join(format!("imported-vault-app-{}", uuid::Uuid::new_v4()));
@@ -10688,10 +10784,11 @@ pub(crate) mod tests {
         );
     }
 
-    /// The imported runtime never sends `UpdateDaemonCache`, so the Overview's
-    /// Vault rows follow its adoption: once the scan completes, then on each
-    /// refresh that moves a coin or a block, never while the scan runs, for
-    /// an unchanged snapshot, or on another page.
+    /// While the scan runs the imported runtime's poll results are ignored and
+    /// the Overview's Vault rows follow the panel's adoption once the scan
+    /// completes. From then on the normal poll owns the cache: a block it
+    /// reports refreshes the rows, an unchanged poll, a later panel refresh
+    /// or another page does not.
     #[test]
     fn the_overview_follows_the_imported_vaults_history() {
         let _guard = crate::app::session::test_guard();
@@ -10715,6 +10812,22 @@ pub(crate) mod tests {
                 .complete_scan_for_tests(block_height, Vec::new());
             drop(app.adopt_imported_runtime());
         };
+        let generation = app
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .unwrap()
+            .runtime_generation();
+        let poll = |app: &mut App, block_height: i32, generation: u64| {
+            let polled = cache::DaemonCache {
+                blockheight: block_height,
+                ..app.cache.daemon_cache.clone()
+            };
+            drop(app.update(Message::UpdateImportedDaemonCache {
+                generation,
+                result: Ok(polled),
+            }));
+        };
         settle(&mut app);
 
         drop(app.adopt_imported_runtime());
@@ -10722,22 +10835,40 @@ pub(crate) mod tests {
             !app.panels.activity.vault_loading,
             "the scan is still running"
         );
+        poll(&mut app, 99, generation);
+        assert_ne!(app.cache.blockheight(), 99, "a scanning poll is ignored");
 
         scanned(&mut app, 100);
         assert!(app.panels.activity.vault_loading, "the history is in");
         settle(&mut app);
 
-        scanned(&mut app, 100);
+        poll(&mut app, 99, generation.wrapping_sub(1));
+        assert_eq!(
+            app.cache.blockheight(),
+            100,
+            "a replaced daemon's poll is ignored"
+        );
+
+        poll(&mut app, 100, generation);
         assert!(!app.panels.activity.vault_loading, "nothing changed");
 
-        scanned(&mut app, 101);
+        poll(&mut app, 101, generation);
+        assert_eq!(app.cache.blockheight(), 101);
         assert!(app.panels.activity.vault_loading, "a block arrived");
         settle(&mut app);
+
+        scanned(&mut app, 100);
+        assert_eq!(
+            app.cache.blockheight(),
+            101,
+            "a later panel refresh leaves the polled cache"
+        );
+        assert!(!app.panels.activity.vault_loading);
 
         app.panels.current = Menu::Cube(menu::CubeSubMenu::Settings(
             menu::CubeSettingsOption::General,
         ));
-        scanned(&mut app, 102);
+        poll(&mut app, 102, generation);
         assert!(!app.panels.activity.vault_loading, "another page");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -11899,6 +12030,54 @@ pub(crate) mod tests {
             !root.exists(),
             "panel construction must not create a Bitcoin or fork datadir"
         );
+    }
+
+    /// While a syncing import stands in for Send and PSBTs, a sign or prepare
+    /// started on the Vault's own panel still has that panel to land on.
+    #[test]
+    fn vault_send_and_psbt_panels_stay_reachable_under_a_syncing_import() {
+        use std::str::FromStr;
+        let descriptor = coincube_core::descriptors::CoincubeDescriptor::from_str(
+            "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr"
+        ).unwrap();
+        let chain = crate::chain::ChainId::Bitcoin;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(chain));
+        let root = std::env::temp_dir().join(format!("coincube-route-{}", uuid::Uuid::new_v4()));
+        let cache = Cache {
+            fiat_chain: chain,
+            network: chain.bitcoin_network(),
+            ..Cache::default()
+        };
+        let mut panels = Panels::new(
+            None,
+            None,
+            &cache,
+            wallet,
+            CoincubeDirectory::new(root.clone()),
+            DaemonBackend::EmbeddedCoincubed(Some(crate::node::NodeType::Esplora)),
+            None,
+            Arc::new(Config::new(false)),
+            "fixture".into(),
+            "Fixture".into(),
+            chain.api_str().into(),
+        );
+        panels.imported_bitcoin = Some(Box::new(
+            state::imported_bitcoin::ImportedBitcoinPanel::new(
+                CoincubeDirectory::new(root).network_directory(chain),
+                "fixture".into(),
+                settings::BitcoinImport::pending(),
+            ),
+        ));
+        for menu in [
+            Menu::Vault(menu::VaultSubMenu::Send),
+            Menu::Vault(menu::VaultSubMenu::PSBTs(None)),
+        ] {
+            panels.current = menu;
+            assert!(panels.imported_holds_route());
+            assert!(panels.route_panel_mut().is_some());
+        }
+        panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        assert!(!panels.imported_holds_route());
     }
 
     #[tokio::test]

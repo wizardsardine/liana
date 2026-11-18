@@ -77,7 +77,8 @@ fn segwit(descriptor: &Descriptor<DefiniteDescriptorKey>) -> bool {
 
 /// Build an ordinary signed-later PSBT with authenticated full previous
 /// transactions, exact descriptor scripts and signer origins. The caller must
-/// reserve `change_addr` durably before requesting this construction.
+/// reserve a fresh owned change address durably. For an explicit sweep of
+/// selected coins, `change_addr` is the sole payment address.
 #[allow(clippy::too_many_arguments)]
 pub fn create_imported_spend(
     wallet: &ImportedWalletDescriptor,
@@ -102,17 +103,20 @@ pub fn create_imported_spend(
             InsaneFeeInfo::TooHighFeerate(feerate),
         ));
     }
-    if !matches!(
+    let owned_change = matches!(
         change_addr.info,
         Some(AddrInfo {
             is_change: true,
             ..
         })
-    ) {
+    );
+    let explicit_sweep = destinations.is_empty()
+        && !candidate_coins.is_empty()
+        && candidate_coins.iter().all(|coin| coin.must_select);
+    if !owned_change && !explicit_sweep {
         return Err(invalid("change must be an owned change-branch address"));
     }
-    let change_desc =
-        own_output(wallet, &change_addr)?.ok_or_else(|| invalid("missing change derivation"))?;
+    let change_desc = own_output(wallet, &change_addr)?;
     let mut seen = BTreeSet::new();
     for coin in candidate_coins {
         if !seen.insert(coin.outpoint) {
@@ -161,6 +165,8 @@ pub fn create_imported_spend(
     let selection_rate: u16 = feerate
         .try_into()
         .map_err(|_| SpendCreationError::InsaneFees(InsaneFeeInfo::TooHighFeerate(feerate)))?;
+    // A sweep payment to an external or receive address is required.
+    // Only change is subject to the economic change threshold.
     let CoinSelectionRes {
         selected,
         change_amount,
@@ -176,7 +182,7 @@ pub fn create_imported_spend(
         is_segwit,
         destinations.is_empty(),
         spend::DUST_OUTPUT_SATS,
-        true,
+        owned_change,
     )
     .map_err(SpendCreationError::CoinSelection)?;
     let has_change = change_amount.to_sat() > 0;
@@ -185,7 +191,7 @@ pub fn create_imported_spend(
         spend::check_output_value(change_amount)?;
         change_txo.value = change_amount;
         tx.output.push(change_txo);
-        owned_outputs.push(Some(change_desc));
+        owned_outputs.push(change_desc);
     } else if max_change_amount.to_sat() > 0 {
         warnings.push(CreateSpendWarning::ChangeAddedToFee(
             max_change_amount.to_sat(),
@@ -680,6 +686,64 @@ mod tests {
     }
 
     #[test]
+    fn imported_sweep_sizes_the_actual_external_payment_and_requires_selected_coins() {
+        let (wallet, _, ordinary) = draft("wpkh");
+        let previous = ordinary.psbt.inputs[0].non_witness_utxo.clone().unwrap();
+        let (key, _) = account(99, "m/86h/1h/0h");
+        let secp = secp256k1::Secp256k1::new();
+        let (key, _) =
+            secp256k1::PublicKey::from_secret_key(&secp, &key.private_key).x_only_public_key();
+        let recipient = SpendOutputAddress {
+            addr: Address::p2tr(&secp, key, None, Network::Regtest),
+            info: None,
+        };
+        let build = |sats, must_select, destinations: &[(SpendOutputAddress, Amount)]| {
+            let mut previous = previous.clone();
+            let amount = Amount::from_sat(sats);
+            previous.output[0].value = amount;
+            let candidate = CandidateCoin {
+                outpoint: OutPoint::new(previous.compute_txid(), 0),
+                amount,
+                deriv_index: ChildNumber::Normal { index: 0 },
+                is_change: false,
+                must_select,
+                sequence: None,
+                ancestor_info: None,
+            };
+            create_imported_spend(
+                &wallet,
+                &secp256k1::Secp256k1::verification_only(),
+                &mut OneTx(previous),
+                destinations,
+                &[candidate],
+                SpendTxFees::Regular(10),
+                recipient.clone(),
+                LockTime::ZERO,
+            )
+        };
+
+        let large = build(150_000, true, &[]).unwrap();
+        let fee = large.psbt.fee().unwrap().to_sat();
+        let small = build(fee + 600, true, &[]).unwrap().psbt;
+        assert_eq!(
+            small.unsigned_tx.output,
+            [TxOut {
+                value: Amount::from_sat(600),
+                script_pubkey: recipient.addr.script_pubkey(),
+            }]
+        );
+        assert!(small.outputs[0].bip32_derivation.is_empty());
+        assert_eq!(small.fee().unwrap().to_sat(), fee);
+        assert!(build(150_000, false, &[]).is_err());
+        assert!(build(
+            150_000,
+            true,
+            &[(recipient.clone(), Amount::from_sat(50_000))]
+        )
+        .is_err());
+    }
+
+    #[test]
     fn imported_blake2b_ordinary_spend_entry_points_refuse_without_signatures() {
         let (wallet, _, draft) = draft("wpkh");
         let fork = ImportedWalletDescriptor::from_descriptors(
@@ -806,6 +870,121 @@ mod tests {
                 other
             );
         }
+    }
+
+    /// Every supported shape reads as a Vault policy with one path and no
+    /// recovery paths, and its signature progress counts like a Vault's.
+    #[test]
+    fn imported_shapes_read_as_a_primary_only_policy() {
+        use crate::descriptors::PathInfo;
+        for (kind, threshold, keys) in [
+            ("pkh", 1, 1),
+            ("sh(wpkh)", 1, 1),
+            ("wpkh", 1, 1),
+            ("wsh(multi)", 2, 3),
+            ("wsh(sortedmulti)", 2, 3),
+        ] {
+            let (wallet, signers, created) = draft(kind);
+            let policy = wallet.policy().unwrap();
+            assert!(policy.recovery_paths().is_empty(), "{}", kind);
+            let (k, origins) = policy.primary_path().thresh_origins();
+            assert_eq!((k, origins.len()), (threshold, keys), "{}", kind);
+            match (policy.primary_path(), keys) {
+                (PathInfo::Single(_), 1) | (PathInfo::Multi(..), 3) => {}
+                (path, _) => panic!("{}: {:?}", kind, path),
+            }
+
+            let unsigned = wallet.partial_spend_info(&created.psbt).unwrap();
+            assert_eq!(unsigned.primary_path().threshold, threshold, "{}", kind);
+            assert_eq!(unsigned.primary_path().sigs_count, 0, "{}", kind);
+            assert!(unsigned.recovery_paths().is_empty());
+
+            let mut signed = created.psbt.clone();
+            add_signature(&mut signed, &signers[0]);
+            let info = wallet.partial_spend_info(&signed).unwrap();
+            assert_eq!(info.primary_path().sigs_count, 1, "{}", kind);
+            assert_eq!(info.primary_path().signed_pubkeys.len(), 1, "{}", kind);
+
+            assert_eq!(wallet.change_indexes(&created.psbt), vec![1], "{}", kind);
+            let vbytes = wallet.unsigned_tx_max_vbytes(&created.psbt.unsigned_tx);
+            let fee = created.psbt.fee().unwrap().to_sat();
+            // Built at 5 sat/vB against the same size estimate.
+            assert!(
+                fee >= 5 * vbytes && fee <= 5 * vbytes + 10,
+                "{}: {} vs {}",
+                kind,
+                fee,
+                vbytes
+            );
+        }
+    }
+
+    /// A signer counts only where it signed every input: a PSBT signed on
+    /// some inputs reads as less signed instead of failing.
+    #[test]
+    fn imported_spend_info_counts_only_signers_on_every_input() {
+        let (wallet, signers, created) = draft("wsh(sortedmulti)");
+        let mut psbt = created.psbt.clone();
+        let mut second = psbt.unsigned_tx.input[0].clone();
+        second.previous_output.vout += 1;
+        psbt.unsigned_tx.input.push(second);
+        psbt.inputs.push(psbt.inputs[0].clone());
+
+        add_signature(&mut psbt, &signers[0]);
+        let partial = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial.primary_path().sigs_count, 0);
+        assert!(partial.primary_path().signed_pubkeys.is_empty());
+
+        let sigs = psbt.inputs[0].partial_sigs.clone();
+        psbt.inputs[1].partial_sigs = sigs;
+        let both = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(both.primary_path().sigs_count, 1);
+        assert_eq!(both.primary_path().signed_pubkeys.len(), 1);
+        assert_eq!(both.primary_path().threshold, 2);
+    }
+
+    #[test]
+    fn imported_spend_info_reaches_threshold_with_different_signers_per_input() {
+        let (wallet, signers, created) = draft("wsh(sortedmulti)");
+        let mut psbt = created.psbt.clone();
+        let mut second = psbt.unsigned_tx.input[0].clone();
+        second.previous_output.vout += 1;
+        psbt.unsigned_tx.input.push(second);
+        psbt.inputs.push(psbt.inputs[0].clone());
+
+        // Input 0 signed by the first two keys, input 1 by the last two.
+        let mut other = psbt.clone();
+        add_signature(&mut psbt, &signers[0]);
+        add_signature(&mut psbt, &signers[1]);
+        add_signature(&mut other, &signers[1]);
+        add_signature(&mut other, &signers[2]);
+        psbt.inputs[1].partial_sigs = other.inputs[0].partial_sigs.clone();
+
+        let partial = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial.primary_path().threshold, 2);
+        assert_eq!(partial.primary_path().sigs_count, 2);
+        // Only the key that signed both inputs reads as signed.
+        assert_eq!(partial.primary_path().signed_pubkeys.len(), 1);
+
+        // One input short of the threshold keeps the spend short.
+        psbt.inputs[1].partial_sigs = {
+            let mut short = created.psbt.clone();
+            add_signature(&mut short, &signers[2]);
+            short.inputs[0].partial_sigs.clone()
+        };
+        let short = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(short.primary_path().sigs_count, 1);
+        assert!(short.primary_path().signed_pubkeys.is_empty());
+    }
+
+    #[test]
+    fn imported_multipath_descriptor_derives_both_branches() {
+        let (wallet, _, _) = draft("wsh(sortedmulti)");
+        let multipath = wallet.multipath_descriptor();
+        let branches = multipath.into_single_descriptors().unwrap();
+        assert_eq!(branches.len(), 2);
+        assert_eq!(&branches[0], wallet.receive_descriptor());
+        assert_eq!(&branches[1], wallet.change_descriptor());
     }
 
     #[test]

@@ -32,7 +32,7 @@
 use std::collections::BTreeSet;
 
 use coincube_core::{
-    descriptors::{CoincubeDescError, CoincubeDescriptor, PartialSpendInfo},
+    descriptors::{CoincubeDescError, PartialSpendInfo},
     miniscript::bitcoin::{ecdsa, psbt::Psbt, secp256k1, sighash::EcdsaSighashType, Txid},
     psbt_unified::{unified_signatures, UnifiedPsbt},
     unified_finalize::{finalize_p2wsh_all_unified, UnifiedFinalizeError},
@@ -251,13 +251,13 @@ pub fn refuse_before_dispatch(psbt: &Psbt) -> Result<(), DispatchRefused> {
 /// unchanged analysis of the unchanged PSBT.
 pub fn spend_info_for_chain(
     chain: ChainId,
-    descriptor: &CoincubeDescriptor,
+    descriptor: &impl coincube_core::wallet_descriptor::SpendAnalysis,
     psbt: &Psbt,
 ) -> Result<PartialSpendInfo, CoincubeDescError> {
     if !chain.is_blake2b() {
-        return descriptor.partial_spend_info(psbt);
+        return descriptor.spend_info(psbt);
     }
-    descriptor.partial_spend_info(&counting_projection(psbt))
+    descriptor.spend_info(&counting_projection(psbt))
 }
 
 /// See [`spend_info_for_chain`]. Falls back to the PSBT as-is when the

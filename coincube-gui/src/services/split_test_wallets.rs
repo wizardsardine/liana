@@ -54,8 +54,9 @@ fn account(master: &Xpriv, path: &str) -> String {
     )
 }
 
-pub fn wallet(shape: Shape) -> Wallet {
-    let template = match shape {
+/// The shape's descriptor with `{b}` in place of the branch step.
+fn template(shape: Shape) -> String {
+    match shape {
         Shape::Wpkh => format!("wpkh({}/{{b}}/*)", account(&master(1), "m/84'/0'/0'")),
         Shape::ShWpkh => format!("sh(wpkh({}/{{b}}/*))", account(&master(1), "m/49'/0'/0'")),
         Shape::Pkh => format!("pkh({}/{{b}}/*)", account(&master(1), "m/44'/0'/0'")),
@@ -71,7 +72,11 @@ pub fn wallet(shape: Shape) -> Wallet {
             };
             format!("wsh({name}(2,{}))", keys.join(","))
         }
-    };
+    }
+}
+
+pub fn wallet(shape: Shape) -> Wallet {
+    let template = template(shape);
     let parse = |branch, step: u32| {
         ScanDescriptor::parse(branch, &template.replace("{b}", &step.to_string())).unwrap()
     };
@@ -79,6 +84,21 @@ pub fn wallet(shape: Shape) -> Wallet {
         external: parse(Branch::External, 0),
         internal: parse(Branch::Internal, 1),
     }
+}
+
+/// The shape as an imported Bitcoin Vault, the way the app loads it.
+pub fn imported_vault(shape: Shape) -> crate::app::wallet::Wallet {
+    let template = template(shape);
+    let branch = |step: u32| template.replace("{b}", &step.to_string());
+    let descriptor = coincube_core::wallet_descriptor::ImportedWalletDescriptor::parse(
+        &branch(0),
+        Some(&branch(1)),
+        crate::chain::ChainId::Bitcoin,
+    )
+    .unwrap();
+    crate::app::wallet::Wallet::new(
+        coincube_core::wallet_descriptor::WalletDescriptor::Imported(descriptor),
+    )
 }
 
 pub fn block_hash(height: u64) -> BlockHash {
