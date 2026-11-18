@@ -23,16 +23,6 @@ use crate::{
     wallet_descriptor::ImportedWalletDescriptor,
 };
 
-const FORK_SPEND_UNAVAILABLE: &str =
-    "Ordinary imported Bitcoin Blake2b spending is not available yet";
-
-fn require_bitcoin_wallet(wallet: &ImportedWalletDescriptor) -> Result<(), SpendCreationError> {
-    if wallet.chain().is_blake2b() {
-        return Err(invalid(FORK_SPEND_UNAVAILABLE));
-    }
-    Ok(())
-}
-
 fn invalid(reason: &'static str) -> SpendCreationError {
     SpendCreationError::InvalidImportedWallet(reason)
 }
@@ -89,7 +79,6 @@ pub fn create_imported_spend(
     change_addr: SpendOutputAddress,
     locktime: LockTime,
 ) -> Result<CreateSpendRes, SpendCreationError> {
-    require_bitcoin_wallet(wallet)?;
     let (feerate, replaced_fee) = match fees {
         SpendTxFees::Regular(rate) => (rate, None),
         SpendTxFees::Rbf(rate, fee) => (rate, Some(fee)),
@@ -259,7 +248,6 @@ pub fn verify_imported_spend_before_broadcast(
     wallet: &ImportedWalletDescriptor,
     psbt: &Psbt,
 ) -> Result<(), SpendCreationError> {
-    require_bitcoin_wallet(wallet)?;
     let tx = &psbt.unsigned_tx;
     if tx.input.is_empty()
         || tx.output.is_empty()
@@ -558,7 +546,7 @@ mod tests {
         )
     }
 
-    fn wallet(kind: &str) -> (ImportedWalletDescriptor, Vec<Xpriv>) {
+    fn wallet_on(kind: &str, chain: ChainId) -> (ImportedWalletDescriptor, Vec<Xpriv>) {
         let path = if kind.starts_with("wsh") {
             "m/48h/1h/0h/2h"
         } else {
@@ -591,8 +579,7 @@ mod tests {
             _ => unreachable!(),
         };
         (
-            ImportedWalletDescriptor::parse(&render(0), Some(&render(1)), ChainId::Regtest)
-                .unwrap(),
+            ImportedWalletDescriptor::parse(&render(0), Some(&render(1)), chain).unwrap(),
             accounts.into_iter().map(|(key, _)| key).collect(),
         )
     }
@@ -604,12 +591,17 @@ mod tests {
         }
     }
 
-    fn address(script: ScriptBuf) -> Address {
-        Address::from_script(&script, Network::Regtest).unwrap()
+    fn draft(kind: &str) -> (ImportedWalletDescriptor, Vec<Xpriv>, CreateSpendRes) {
+        draft_on(kind, ChainId::Regtest)
     }
 
-    fn draft(kind: &str) -> (ImportedWalletDescriptor, Vec<Xpriv>, CreateSpendRes) {
-        let (wallet, signers) = wallet(kind);
+    fn draft_on(
+        kind: &str,
+        chain: ChainId,
+    ) -> (ImportedWalletDescriptor, Vec<Xpriv>, CreateSpendRes) {
+        let (wallet, signers) = wallet_on(kind, chain);
+        let address =
+            |script: ScriptBuf| Address::from_script(&script, chain.bitcoin_network()).unwrap();
         let receive = wallet
             .receive_descriptor()
             .at_derivation_index(0)
@@ -679,59 +671,29 @@ mod tests {
         (wallet, signers, created)
     }
 
+    /// A Bitcoin Blake2b imported wallet spends like a Bitcoin one: Bitcoin
+    /// Blake2b keeps Bitcoin's transactions and signatures, so every shape
+    /// builds, passes the pre-broadcast check and finalises with its signers'
+    /// ordinary signatures. Replay is the spend screen's warning, not a
+    /// refusal here (Robert, 2026-11-17).
     #[test]
-    fn imported_blake2b_ordinary_spend_entry_points_refuse_without_signatures() {
-        let (wallet, _, draft) = draft("wpkh");
-        let fork = ImportedWalletDescriptor::from_descriptors(
-            wallet.receive_descriptor().clone(),
-            wallet.change_descriptor().clone(),
-            ChainId::BitcoinBlake2bTestnet4,
-        )
-        .unwrap();
-        let original = draft.psbt.clone();
-        let secp = secp256k1::Secp256k1::verification_only();
-        assert!(matches!(
-            verify_imported_spend_before_broadcast(&fork, &draft.psbt),
-            Err(SpendCreationError::InvalidImportedWallet(
-                FORK_SPEND_UNAVAILABLE
-            ))
-        ));
-        assert!(verify_imported_signatures(&fork, &draft.psbt, &draft.psbt, &secp).is_err());
-        assert!(finalize_imported_spend(&fork, &draft.psbt, &draft.psbt, &secp).is_err());
-        let change = SpendOutputAddress {
-            addr: address(
-                fork.change_descriptor()
-                    .at_derivation_index(1)
-                    .unwrap()
-                    .script_pubkey(),
-            ),
-            info: Some(AddrInfo {
-                index: ChildNumber::Normal { index: 1 },
-                is_change: true,
-            }),
-        };
-        let previous = draft.psbt.inputs[0].non_witness_utxo.clone().unwrap();
-        assert!(matches!(
-            create_imported_spend(
-                &fork,
-                &secp,
-                &mut OneTx(previous),
-                &[],
-                &[],
-                SpendTxFees::Regular(1),
-                change,
-                LockTime::ZERO
-            ),
-            Err(SpendCreationError::InvalidImportedWallet(
-                FORK_SPEND_UNAVAILABLE
-            ))
-        ));
-        assert_eq!(draft.psbt, original);
-        assert!(draft
-            .psbt
-            .inputs
-            .iter()
-            .all(|input| input.partial_sigs.is_empty()));
+    fn imported_blake2b_wallets_build_sign_and_finalize_spends() {
+        let secp = secp256k1::Secp256k1::new();
+        for kind in ["pkh", "wpkh", "sh(wpkh)", "wsh(multi)", "wsh(sortedmulti)"] {
+            let (wallet, signers, created) = draft_on(kind, ChainId::BitcoinBlake2bTestnet4);
+            assert!(wallet.chain().is_blake2b());
+            verify_imported_spend_before_broadcast(&wallet, &created.psbt)
+                .unwrap_or_else(|e| panic!("{}: {:?}", kind, e));
+            let mut signed = created.psbt.clone();
+            for signer in signers
+                .iter()
+                .take(if kind.starts_with("wsh") { 2 } else { 1 })
+            {
+                add_signature(&mut signed, signer);
+            }
+            finalize_imported_spend(&wallet, &created.psbt, &signed, &secp)
+                .unwrap_or_else(|e| panic!("{}: {:?}", kind, e));
+        }
     }
 
     fn add_signature(psbt: &mut Psbt, signer: &Xpriv) {
@@ -754,11 +716,6 @@ mod tests {
         );
     }
 
-    /// The shared public-wallet finalizer accepts only implicit or explicit
-    /// `SIGHASH_ALL`: an `ALL` input request is accepted like the default,
-    /// while any other request, or an `ALL` signature whose trailing byte is
-    /// relabeled, is refused. Ported from the removed foreign-Split finalizer
-    /// tests, which covered these helpers through step 1.
     #[test]
     fn only_sighash_all_signatures_finalize() {
         use miniscript::bitcoin::psbt::PsbtSighashType;
