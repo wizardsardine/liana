@@ -163,26 +163,17 @@ impl HttpObservationSource {
                 .min(fork_history.observed_at)
                 .min(bitcoin.observed_at)
                 .min(fork.observed_at);
-            for (chain, root) in [
-                (ChainId::Bitcoin, &bitcoin.value),
-                (fork_chain, &fork.value),
-            ] {
-                let shared = self
-                    .hash_at_height(chain, history.shared_history_height)
-                    .await?;
-                let block = self.hash_at_height(chain, u64::from(height)).await?;
-                let tip = self.tip(chain).await?;
-                if shared.value != history.shared_history_hash
-                    || block.value != root.block.hash
-                    || tip.value != root.tip
-                {
-                    return Err(FailureKind::Changed);
-                }
-                oldest = oldest
-                    .min(shared.observed_at)
-                    .min(block.observed_at)
-                    .min(tip.observed_at);
-            }
+            oldest = self
+                .recheck_coinbase_views(
+                    [
+                        (ChainId::Bitcoin, &bitcoin.value),
+                        (fork_chain, &fork.value),
+                    ],
+                    history,
+                    height,
+                    oldest,
+                )
+                .await?;
             let after = super::super::super::checked_ancestry_anchor(
                 self.anchor(fork_chain).await?,
                 fork_chain,
@@ -243,6 +234,32 @@ impl HttpObservationSource {
             }
             FailureKind::Deadline
         })?
+    }
+    async fn recheck_coinbase_views(
+        &self,
+        roots: [(ChainId, &CanonicalCoinbase); 2],
+        history: AncestryHistory,
+        height: u32,
+        mut oldest: i64,
+    ) -> Result<i64, FailureKind> {
+        for (chain, root) in roots {
+            let shared = self
+                .hash_at_height(chain, history.shared_history_height)
+                .await?;
+            let block = self.hash_at_height(chain, u64::from(height)).await?;
+            let tip = self.tip(chain).await?;
+            if shared.value != history.shared_history_hash
+                || block.value != root.block.hash
+                || tip.value != root.tip
+            {
+                return Err(FailureKind::Changed);
+            }
+            oldest = oldest
+                .min(shared.observed_at)
+                .min(block.observed_at)
+                .min(tip.observed_at);
+        }
+        Ok(oldest)
     }
 }
 
