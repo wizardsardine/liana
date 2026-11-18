@@ -394,6 +394,15 @@ pub struct ConnectCubePanel {
     pub ln_reregistering: bool,
     ln_check_version: u32,
     ln_check_abort: Option<TaskHandle>,
+    /// True when the latest availability check was issued before the
+    /// server cube id was known, so it could only ask Spark. The
+    /// registration handler re-runs it once the id lands so the hint
+    /// reflects the API's answer too.
+    ln_check_missing_cube_id: bool,
+    /// Abort handle for the manual SDK rebind task. It holds the shared
+    /// Spark client and the previous account's username, so it must not
+    /// keep issuing SDK calls after `clear_client`.
+    ln_reregister_abort: Option<TaskHandle>,
     /// Spark subprocess client. Phase 4g routes the Lightning
     /// Address claim flow through `register_lightning_address` on
     /// the Breez-hosted LNURL server; the API's own reserve/confirm
@@ -465,6 +474,8 @@ impl ConnectCubePanel {
             ln_reregistering: false,
             ln_check_version: 0,
             ln_check_abort: None,
+            ln_check_missing_cube_id: false,
+            ln_reregister_abort: None,
             spark_client,
             ln_reconcile_needs_reregister: None,
             client: None,
@@ -496,11 +507,15 @@ impl ConnectCubePanel {
         if self.client.is_some() && self.server_cube_id.is_some() && self.avatar_data.is_none() {
             let client = self.client.clone().unwrap();
             let cid = self.api_cube_id().unwrap();
+            let generation = self.session_generation;
             return Some(iced::Task::perform(
                 async move { client.get_avatar(&cid).await },
-                |res| {
+                move |res| {
                     Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                        crate::app::view::AvatarMessage::Loaded(res.map_err(|e| e.to_string())),
+                        crate::app::view::AvatarMessage::Loaded {
+                            generation,
+                            result: res.map_err(|e| e.to_string()),
+                        },
                     )))
                 },
             ));
@@ -510,17 +525,13 @@ impl ConnectCubePanel {
 
     /// Returns the active avatar image handle for the sidebar, if available.
     pub fn get_active_avatar_handle(&self) -> Option<iced::widget::image::Handle> {
-        self.avatar_data.as_ref().and_then(|d| {
-            let url = d.active_avatar_url.as_deref().unwrap_or("");
-            // Extract the last path segment for exact ID matching
-            // (avoids false matches like ".../112" matching ID "12")
-            let active_id = url.rsplit('/').next()?.split('.').next()?;
-            d.variants
-                .iter()
-                .find(|v| v.id.to_string() == active_id)
-                .and_then(|v| self.avatar_image_cache.get(&v.id))
-                .map(|(_, handle)| handle.clone())
-        })
+        let id = self
+            .avatar_data
+            .as_ref()
+            .and_then(active_avatar_variant_id)?;
+        self.avatar_image_cache
+            .get(&id)
+            .map(|(_, handle)| handle.clone())
     }
 
     /// Clear the API client and all session-scoped state (called on account logout).
@@ -564,6 +575,10 @@ impl ConnectCubePanel {
         self.ln_reregistering = false;
         self.ln_check_version += 1;
         if let Some(handle) = self.ln_check_abort.take() {
+            handle.abort();
+        }
+        self.ln_check_missing_cube_id = false;
+        if let Some(handle) = self.ln_reregister_abort.take() {
             handle.abort();
         }
         self.ln_reconcile_needs_reregister = None;
@@ -646,6 +661,7 @@ impl ConnectCubePanel {
         }
         let db_username = db_username.to_string();
         let db_addr = db_addr.clone();
+        let generation = self.session_generation;
         Some(iced::Task::perform(
             async move {
                 match spark.get_lightning_address().await {
@@ -702,9 +718,12 @@ impl ConnectCubePanel {
                     Err(e) => ReconcileOutcome::QueryFailed(e.to_string()),
                 }
             },
-            |outcome| {
+            move |outcome| {
                 Message::View(view::Message::ConnectCube(
-                    ConnectCubeMessage::LightningAddressReconciled(outcome),
+                    ConnectCubeMessage::LightningAddressReconciled {
+                        generation,
+                        outcome,
+                    },
                 ))
             },
         ))
@@ -1097,15 +1116,30 @@ impl ConnectCubePanel {
                 return self.retry_lightning_address_reregister()
             }
 
-            ConnectCubeMessage::LightningAddressReregistered { generation, result } => {
-                self.on_lightning_address_reregistered(generation, result)
-            }
+            ConnectCubeMessage::LightningAddressReregistered {
+                generation,
+                address,
+                result,
+            } => self.on_lightning_address_reregistered(generation, &address, result),
 
             ConnectCubeMessage::SparkLightningAddressChanged(info) => {
                 return self.on_spark_lightning_address_changed(info)
             }
 
-            ConnectCubeMessage::LightningAddressReconciled(outcome) => match outcome {
+            ConnectCubeMessage::LightningAddressReconciled {
+                generation,
+                outcome,
+            } if generation != self.session_generation => {
+                log::debug!(
+                    "[CONNECT-CUBE] discarding a Spark reconcile outcome from a \
+                     previous session (generation {}, now {}): {:?}",
+                    generation,
+                    self.session_generation,
+                    outcome
+                );
+            }
+
+            ConnectCubeMessage::LightningAddressReconciled { outcome, .. } => match outcome {
                 ReconcileOutcome::AlreadyBound(info) => {
                     log::info!(
                         "[CONNECT-CUBE] Spark reports lightning address {}",
@@ -1208,6 +1242,14 @@ impl ConnectCubePanel {
                 // state. Covers device reinstall / SDK storage
                 // wipe / multi-device identity swap.
                 let reconcile_task = self.reconcile_spark_lightning_address();
+                // An availability hint computed before the id existed
+                // only reflects Spark; re-run it now that the API can
+                // answer for this Cube.
+                let recheck_task = if self.ln_check_missing_cube_id {
+                    Some(self.on_ln_username_changed(self.ln_username_input.clone()))
+                } else {
+                    None
+                };
                 // Trigger avatar load now that cube is registered.
                 let avatar_task = self.load_avatar_if_needed();
                 // The server cube id just became known, which is the
@@ -1255,6 +1297,7 @@ impl ConnectCubePanel {
                     stable_balance_task,
                 ];
                 tasks.extend(reconcile_task);
+                tasks.extend(recheck_task);
                 tasks.extend(avatar_task);
                 return iced::Task::batch(tasks);
             }
@@ -1269,6 +1312,7 @@ impl ConnectCubePanel {
 
     fn on_ln_username_changed(&mut self, input: String) -> iced::Task<Message> {
         self.ln_username_input = input.to_lowercase();
+        self.ln_check_missing_cube_id = false;
         self.ln_username_available = None;
         self.ln_username_error = None;
         self.ln_claim_error = None;
@@ -1316,6 +1360,7 @@ impl ConnectCubePanel {
         let username = self.ln_username_input.clone();
         let api_client = self.client.clone();
         let api_cube_id = self.api_cube_id();
+        self.ln_check_missing_cube_id = api_cube_id.is_none();
         self.ln_checking = true;
         let (task, abort_handle) = iced::Task::perform(
             async move {
@@ -1502,6 +1547,7 @@ impl ConnectCubePanel {
         if let Some(handle) = self.ln_check_abort.take() {
             handle.abort();
         }
+        self.ln_check_missing_cube_id = false;
         self.ln_checking = false;
     }
 
@@ -1579,28 +1625,35 @@ impl ConnectCubePanel {
 
                 // Step 3: bind the new username on the
                 // Breez-hosted LNURL server.
-                if let Err(e) = spark
+                let info = match spark
                     .register_lightning_address(new_username.clone(), None)
                     .await
                 {
-                    log::error!(
-                        "[CONNECT-CUBE] change: SDK register failed after \
-                         server commit + SDK delete (cube={}, new={}): {}",
-                        cube_id,
-                        new_username,
-                        e
-                    );
-                    return LightningAddressChangeOutcome::SdkSyncFailed {
-                        addr: new_addr,
-                        message: format!(
-                            "Could not register {} with the Lightning Address \
-                             server: {}. Tap Retry to finish.",
-                            new_username, e
-                        ),
-                    };
-                }
+                    Ok(info) => info,
+                    Err(e) => {
+                        log::error!(
+                            "[CONNECT-CUBE] change: SDK register failed after \
+                             server commit + SDK delete (cube={}, new={}): {}",
+                            cube_id,
+                            new_username,
+                            e
+                        );
+                        return LightningAddressChangeOutcome::SdkSyncFailed {
+                            addr: new_addr,
+                            message: format!(
+                                "Could not register {} with the Lightning Address \
+                                 server: {}. Tap Retry to finish.",
+                                new_username, e
+                            ),
+                        };
+                    }
+                };
 
-                LightningAddressChangeOutcome::Ok(new_addr)
+                // Same domain-drift guard as the reconciler: the
+                // SDK's `lnurl_domain` is fixed at init, so a
+                // successful register can still bind a different
+                // `user@domain` than the server committed.
+                rename_outcome(new_addr, &info.lightning_address)
             },
             move |outcome| {
                 Message::View(view::Message::ConnectCube(
@@ -1693,7 +1746,11 @@ impl ConnectCubePanel {
         };
         self.ln_reregistering = true;
         let generation = self.session_generation;
-        iced::Task::perform(
+        if let Some(handle) = self.ln_reregister_abort.take() {
+            handle.abort();
+        }
+        let address = db_addr;
+        let (task, abort_handle) = iced::Task::perform(
             async move {
                 // Idempotent: tolerates an already-empty SDK.
                 // Ignore failure here — the register that
@@ -1714,27 +1771,48 @@ impl ConnectCubePanel {
             },
             move |result| {
                 Message::View(view::Message::ConnectCube(
-                    ConnectCubeMessage::LightningAddressReregistered { generation, result },
+                    ConnectCubeMessage::LightningAddressReregistered {
+                        generation,
+                        address,
+                        result,
+                    },
                 ))
             },
         )
+        .abortable();
+        self.ln_reregister_abort = Some(abort_handle);
+        task
     }
 
     fn on_lightning_address_reregistered(
         &mut self,
         generation: u64,
+        issued_for: &str,
         result: Result<LightningAddressInfo, String>,
     ) {
         if generation != self.session_generation {
             return;
         }
         self.ln_reregistering = false;
+        self.ln_reregister_abort = None;
+        let db_addr = self
+            .lightning_address
+            .as_ref()
+            .and_then(|la| la.lightning_address.as_deref());
+        if db_addr != Some(issued_for) {
+            // A rename committed while this retry was in flight. The
+            // result describes the previous reservation, and the
+            // rename's own outcome decides the prompt for the new one.
+            log::debug!(
+                "[CONNECT-CUBE] discarding a rebind result for {:?}; the \
+                 confirmed reservation is now {:?}",
+                issued_for,
+                db_addr
+            );
+            return;
+        }
         match result {
             Ok(info) => {
-                let db_addr = self
-                    .lightning_address
-                    .as_ref()
-                    .and_then(|la| la.lightning_address.as_deref());
                 if db_addr == Some(info.lightning_address.as_str()) {
                     self.ln_reconcile_needs_reregister = None;
                     log::info!(
@@ -1801,6 +1879,17 @@ impl ConnectCubePanel {
                     }
                 }
             }
+            None if self.ln_changing => {
+                // A rename's own SDK delete emits this event between
+                // the server commit and its register call. Rebinding
+                // the stored (old) name here would race that register
+                // and make it fail; the rename's outcome decides which
+                // name the SDK binds.
+                log::debug!(
+                    "[CONNECT-CUBE] Spark lightning address cleared during a \
+                     rename — leaving the rebind to the rename"
+                );
+            }
             None => {
                 // If the DB still has a confirmed username
                 // (i.e. the user didn't initiate the delete
@@ -1844,10 +1933,32 @@ impl ConnectCubePanel {
     }
 
     fn update_avatar(&mut self, msg: AvatarMessage) -> iced::Task<Message> {
+        // Results of requests issued under a previous session must not
+        // populate this account's avatar state or start follow-ups
+        // through the current client.
+        let result_generation = match &msg {
+            AvatarMessage::Loaded { generation, .. }
+            | AvatarMessage::GenerateComplete { generation, .. }
+            | AvatarMessage::VariantSelected { generation, .. }
+            | AvatarMessage::RegenerationsLoaded { generation, .. }
+            | AvatarMessage::ImageLoaded { generation, .. } => Some(*generation),
+            _ => None,
+        };
+        if let Some(generation) = result_generation {
+            if generation != self.session_generation {
+                log::debug!(
+                    "[AVATAR] discarding a result from a previous session \
+                     (generation {}, now {})",
+                    generation,
+                    self.session_generation
+                );
+                return iced::Task::none();
+            }
+        }
         match msg {
             AvatarMessage::Enter => return self.enter_avatar(),
 
-            AvatarMessage::Loaded(result) => return self.on_avatar_loaded(result),
+            AvatarMessage::Loaded { result, .. } => return self.on_avatar_loaded(result),
 
             AvatarMessage::SetStep(step) => {
                 self.avatar_step = step;
@@ -1863,7 +1974,7 @@ impl ConnectCubePanel {
 
             AvatarMessage::Generate => return self.generate_avatar(),
 
-            AvatarMessage::GenerateComplete(result) => {
+            AvatarMessage::GenerateComplete { result, .. } => {
                 return self.on_avatar_generate_complete(result)
             }
 
@@ -1871,11 +1982,11 @@ impl ConnectCubePanel {
                 return self.select_avatar_variant(variant_id)
             }
 
-            AvatarMessage::VariantSelected(result) => {
+            AvatarMessage::VariantSelected { result, .. } => {
                 return self.on_avatar_variant_selected(result)
             }
 
-            AvatarMessage::RegenerationsLoaded(result) => match result {
+            AvatarMessage::RegenerationsLoaded { result, .. } => match result {
                 Ok(data) => {
                     if let Some(ref mut ad) = self.avatar_data {
                         ad.regenerations_remaining = data.remaining;
@@ -1886,7 +1997,9 @@ impl ConnectCubePanel {
                 }
             },
 
-            AvatarMessage::ImageLoaded { variant_id, result } => match result {
+            AvatarMessage::ImageLoaded {
+                variant_id, result, ..
+            } => match result {
                 Ok(bytes) => {
                     let handle = iced::widget::image::Handle::from_bytes(bytes.clone());
                     self.avatar_image_cache.insert(variant_id, (bytes, handle));
@@ -1929,9 +2042,13 @@ impl ConnectCubePanel {
             }
             return iced::Task::none();
         };
-        iced::Task::perform(async move { client.get_avatar(&cid).await }, |res| {
+        let generation = self.session_generation;
+        iced::Task::perform(async move { client.get_avatar(&cid).await }, move |res| {
             Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                AvatarMessage::Loaded(res.map_err(|e| e.to_string())),
+                AvatarMessage::Loaded {
+                    generation,
+                    result: res.map_err(|e| e.to_string()),
+                },
             )))
         })
     }
@@ -1943,16 +2060,7 @@ impl ConnectCubePanel {
         match result {
             Ok(data) => {
                 let has = data.has_avatar;
-                let active_id = data
-                    .variants
-                    .iter()
-                    .find(|v| {
-                        data.active_avatar_url
-                            .as_deref()
-                            .map(|u| u.ends_with(&v.id.to_string()))
-                            .unwrap_or(false)
-                    })
-                    .map(|v| v.id);
+                let active_id = active_avatar_variant_id(&data);
                 self.avatar_data = Some(data);
                 if has {
                     self.avatar_step = AvatarFlowStep::Settings;
@@ -1994,11 +2102,15 @@ impl ConnectCubePanel {
         self.avatar_generating = true;
         self.avatar_error = None;
         self.avatar_step = AvatarFlowStep::Generating;
+        let generation = self.session_generation;
         iced::Task::perform(
             async move { client.post_avatar_generate(&cid, req).await },
-            |res| {
+            move |res| {
                 Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                    AvatarMessage::GenerateComplete(res.map_err(|e| e.to_string())),
+                    AvatarMessage::GenerateComplete {
+                        generation,
+                        result: res.map_err(|e| e.to_string()),
+                    },
                 )))
             },
         )
@@ -2059,12 +2171,14 @@ impl ConnectCubePanel {
             let Some(cid) = self.api_cube_id() else {
                 return iced::Task::none();
             };
+            let generation = self.session_generation;
             return iced::Task::batch([
                 iced::Task::perform(
                     async move { client.fetch_avatar_image(variant_id).await },
                     move |res| {
                         Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
                             AvatarMessage::ImageLoaded {
+                                generation,
                                 variant_id,
                                 result: res.map_err(|e| e.to_string()),
                             },
@@ -2073,9 +2187,12 @@ impl ConnectCubePanel {
                 ),
                 iced::Task::perform(
                     async move { client2.get_avatar_regenerations(&cid).await },
-                    |res| {
+                    move |res| {
                         Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                            AvatarMessage::RegenerationsLoaded(res.map_err(|e| e.to_string())),
+                            AvatarMessage::RegenerationsLoaded {
+                                generation,
+                                result: res.map_err(|e| e.to_string()),
+                            },
                         )))
                     },
                 ),
@@ -2097,15 +2214,19 @@ impl ConnectCubePanel {
             );
             return iced::Task::none();
         };
+        let generation = self.session_generation;
         iced::Task::perform(
             async move {
                 client
                     .post_avatar_select(&cid, AvatarSelectRequest { variant_id })
                     .await
             },
-            |res| {
+            move |res| {
                 Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                    AvatarMessage::VariantSelected(res.map_err(|e| e.to_string())),
+                    AvatarMessage::VariantSelected {
+                        generation,
+                        result: res.map_err(|e| e.to_string()),
+                    },
                 )))
             },
         )
@@ -2134,11 +2255,13 @@ impl ConnectCubePanel {
     fn fetch_avatar_image_if_missing(&self, variant_id: u64) -> iced::Task<Message> {
         if !self.avatar_image_cache.contains_key(&variant_id) {
             if let Some(client) = self.client.clone() {
+                let generation = self.session_generation;
                 return iced::Task::perform(
                     async move { client.fetch_avatar_image(variant_id).await },
                     move |res| {
                         Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
                             AvatarMessage::ImageLoaded {
+                                generation,
                                 variant_id,
                                 result: res.map_err(|e| e.to_string()),
                             },
@@ -2151,13 +2274,7 @@ impl ConnectCubePanel {
     }
 
     fn download_avatar(&self) -> iced::Task<Message> {
-        let active_id = self.avatar_data.as_ref().and_then(|d| {
-            let url = d.active_avatar_url.as_deref().unwrap_or("");
-            d.variants
-                .iter()
-                .find(|v| url.ends_with(&v.id.to_string()))
-                .map(|v| v.id)
-        });
+        let active_id = self.avatar_data.as_ref().and_then(active_avatar_variant_id);
         if let Some(id) = active_id {
             if let Some((bytes, _)) = self.avatar_image_cache.get(&id) {
                 let bytes = bytes.clone();
@@ -2220,6 +2337,42 @@ async fn rollback_reconcile_domain_mismatch(
          reservation is '{}'{}",
         bound, db_addr, suffix
     ))
+}
+
+/// The variant named by `active_avatar_url`, matched on the URL's last path
+/// segment (without extension) so `.../112.png` never resolves to variant
+/// `12`.
+fn active_avatar_variant_id(data: &crate::services::coincube::GetAvatarData) -> Option<u64> {
+    let url = data.active_avatar_url.as_deref()?;
+    let active_id = url.rsplit('/').next()?.split('.').next()?;
+    data.variants
+        .iter()
+        .find(|v| v.id.to_string() == active_id)
+        .map(|v| v.id)
+}
+
+/// Outcome of a rename whose SDK register succeeded: success only when the
+/// SDK bound exactly the server-committed `user@domain`.
+fn rename_outcome(committed: LightningAddress, spark_bound: &str) -> LightningAddressChangeOutcome {
+    if committed.lightning_address.as_deref() == Some(spark_bound) {
+        return LightningAddressChangeOutcome::Ok(committed);
+    }
+    log::error!(
+        "[CONNECT-CUBE] change: Spark SDK bound {:?} but the server \
+         committed {:?}",
+        spark_bound,
+        committed.lightning_address
+    );
+    let message = format!(
+        "Spark SDK registered '{}' but the confirmed reservation is '{}'. \
+         Tap Retry to finish.",
+        spark_bound,
+        committed.lightning_address.as_deref().unwrap_or("")
+    );
+    LightningAddressChangeOutcome::SdkSyncFailed {
+        addr: committed,
+        message,
+    }
 }
 
 async fn check_connect_ln_username_availability(
@@ -3024,24 +3177,28 @@ mod tests {
         )));
         assert!(panel.ln_reconcile_needs_reregister.is_none());
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
-            ReconcileOutcome::AlreadyBound(lightning_info("founder@example.com")),
-        ));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled {
+            generation: panel.session_generation(),
+            outcome: ReconcileOutcome::AlreadyBound(lightning_info("founder@example.com")),
+        });
         assert!(panel.ln_reconcile_needs_reregister.is_none());
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
-            ReconcileOutcome::ReRegistered(lightning_info("founder@example.com")),
-        ));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled {
+            generation: panel.session_generation(),
+            outcome: ReconcileOutcome::ReRegistered(lightning_info("founder@example.com")),
+        });
         assert!(panel.ln_reconcile_needs_reregister.is_none());
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
-            ReconcileOutcome::QueryFailed("offline".to_string()),
-        ));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled {
+            generation: panel.session_generation(),
+            outcome: ReconcileOutcome::QueryFailed("offline".to_string()),
+        });
         assert!(panel.ln_reconcile_needs_reregister.is_none());
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled(
-            ReconcileOutcome::NeedsReRegistration("needs retry".to_string()),
-        ));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled {
+            generation: panel.session_generation(),
+            outcome: ReconcileOutcome::NeedsReRegistration("needs retry".to_string()),
+        });
         assert_eq!(
             panel.ln_reconcile_needs_reregister.as_deref(),
             Some("needs retry")
@@ -3049,18 +3206,21 @@ mod tests {
 
         let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
             generation: panel.session_generation(),
+            address: "founder@example.com".to_string(),
             result: Ok(lightning_info("founder@example.com")),
         });
         assert!(panel.ln_reconcile_needs_reregister.is_none());
 
         let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
             generation: panel.session_generation(),
+            address: "founder@example.com".to_string(),
             result: Ok(lightning_info("wrong@example.com")),
         });
         assert!(panel.ln_reconcile_needs_reregister.is_some());
 
         let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
             generation: panel.session_generation(),
+            address: "founder@example.com".to_string(),
             result: Err("still down".to_string()),
         });
         assert_eq!(
@@ -3084,6 +3244,7 @@ mod tests {
 
         let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
             generation: old_generation,
+            address: "account-a@coincube.io".to_string(),
             result: Err("account A failed".to_owned()),
         });
         assert!(panel.ln_reregistering);
@@ -3101,6 +3262,7 @@ mod tests {
 
         let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
             generation,
+            address: "account-b@coincube.io".to_string(),
             result: Ok(lightning_info("account-b@coincube.io")),
         });
         assert!(!panel.ln_reregistering);
@@ -3119,19 +3281,22 @@ mod tests {
         let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Enter));
         assert_eq!(panel.avatar_error.as_deref(), Some("registration pending"));
 
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded(Ok(
-            avatar_data(false, None),
-        ))));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded {
+            generation: panel.session_generation(),
+            result: Ok(avatar_data(false, None)),
+        }));
         assert!(matches!(panel.avatar_step, AvatarFlowStep::Questionnaire));
 
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded(Ok(
-            avatar_data(true, Some(7)),
-        ))));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded {
+            generation: panel.session_generation(),
+            result: Ok(avatar_data(true, Some(7))),
+        }));
         assert!(matches!(panel.avatar_step, AvatarFlowStep::Settings));
 
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded(Err(
-            "load failed".to_string(),
-        ))));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded {
+            generation: panel.session_generation(),
+            result: Err("load failed".to_string()),
+        }));
         assert_eq!(panel.avatar_error.as_deref(), Some("load failed"));
 
         let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::SetStep(
@@ -3180,9 +3345,12 @@ mod tests {
             variant: avatar_variant(9),
         };
         panel.avatar_data = Some(avatar_data(true, Some(7)));
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::GenerateComplete(
-            Ok(generated),
-        )));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::GenerateComplete {
+                generation: panel.session_generation(),
+                result: Ok(generated),
+            },
+        ));
         assert!(matches!(panel.avatar_step, AvatarFlowStep::Reveal));
         assert_eq!(panel.avatar_draft.gender, AvatarGender::Woman);
         assert_eq!(
@@ -3190,9 +3358,12 @@ mod tests {
             2
         );
 
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::GenerateComplete(
-            Err("generation failed".to_string()),
-        )));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::GenerateComplete {
+                generation: panel.session_generation(),
+                result: Err("generation failed".to_string()),
+            },
+        ));
         assert_eq!(panel.avatar_error.as_deref(), Some("generation failed"));
         assert!(matches!(panel.avatar_step, AvatarFlowStep::Questionnaire));
 
@@ -3200,12 +3371,13 @@ mod tests {
         let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::SelectVariant(8)));
         assert_eq!(panel.avatar_error.as_deref(), Some("Not signed in"));
 
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected(
-            Ok(AvatarSelectData {
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected {
+            generation: panel.session_generation(),
+            result: Ok(AvatarSelectData {
                 active_avatar_url: "https://cdn.example/avatar/8.png".to_string(),
                 variant_id: 8,
             }),
-        )));
+        }));
         assert_eq!(
             panel
                 .avatar_data
@@ -3216,17 +3388,21 @@ mod tests {
             Some("https://cdn.example/avatar/8.png")
         );
 
-        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected(
-            Err("select failed".to_string()),
-        )));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected {
+            generation: panel.session_generation(),
+            result: Err("select failed".to_string()),
+        }));
         assert_eq!(panel.avatar_error.as_deref(), Some("select failed"));
 
         let _ = panel.update_message(ConnectCubeMessage::Avatar(
-            AvatarMessage::RegenerationsLoaded(Ok(RegenerationData {
-                total_allowed: 5,
-                used: 4,
-                remaining: 1,
-            })),
+            AvatarMessage::RegenerationsLoaded {
+                generation: panel.session_generation(),
+                result: Ok(RegenerationData {
+                    total_allowed: 5,
+                    used: 4,
+                    remaining: 1,
+                }),
+            },
         ));
         assert_eq!(
             panel.avatar_data.as_ref().unwrap().regenerations_remaining,
@@ -3234,6 +3410,7 @@ mod tests {
         );
 
         let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
+            generation: panel.session_generation(),
             variant_id: 8,
             result: Ok(vec![137, 80, 78, 71]),
         }));
@@ -3249,5 +3426,185 @@ mod tests {
         assert!(matches!(panel.avatar_step, AvatarFlowStep::Questionnaire));
 
         let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Noop));
+    }
+
+    #[test]
+    fn active_avatar_lookup_matches_the_exact_variant_id() {
+        let mut data = avatar_data(true, Some(112));
+        data.variants = vec![avatar_variant(12), avatar_variant(112)];
+        assert_eq!(active_avatar_variant_id(&data), Some(112));
+        data.active_avatar_url = Some("https://cdn.example/avatar/112".to_string());
+        assert_eq!(active_avatar_variant_id(&data), Some(112));
+        data.active_avatar_url = Some("https://cdn.example/avatar/12.png".to_string());
+        assert_eq!(active_avatar_variant_id(&data), Some(12));
+        data.active_avatar_url = Some("https://cdn.example/avatar/2.png".to_string());
+        assert_eq!(active_avatar_variant_id(&data), None);
+        data.active_avatar_url = None;
+        assert_eq!(active_avatar_variant_id(&data), None);
+
+        // Only variant 12's bytes are cached: the sidebar handle for an
+        // active 112 must not fall back to them.
+        let mut panel = panel();
+        let mut data = avatar_data(true, Some(112));
+        data.variants = vec![avatar_variant(12), avatar_variant(112)];
+        panel.avatar_data = Some(data);
+        panel.avatar_image_cache.insert(
+            12,
+            (vec![1], iced::widget::image::Handle::from_bytes(vec![1u8])),
+        );
+        assert!(panel.get_active_avatar_handle().is_none());
+        assert!(iced_runtime::task::into_stream(panel.download_avatar()).is_none());
+    }
+
+    #[test]
+    fn avatar_results_from_a_previous_session_are_dropped() {
+        let mut panel = panel();
+        panel.set_client(CoincubeClient::for_test("http://account-a.invalid"));
+        let stale = panel.session_generation();
+        panel.set_client(CoincubeClient::for_test("http://account-b.invalid"));
+        assert_ne!(stale, panel.session_generation());
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::Loaded {
+            generation: stale,
+            result: Ok(avatar_data(true, Some(7))),
+        }));
+        assert!(panel.avatar_data.is_none());
+        assert!(matches!(panel.avatar_step, AvatarFlowStep::Idle));
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
+            generation: stale,
+            variant_id: 7,
+            result: Ok(vec![137, 80, 78, 71]),
+        }));
+        assert!(panel.avatar_image_cache.is_empty());
+
+        panel.avatar_generating = true;
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::GenerateComplete {
+                generation: stale,
+                result: Err("old account".to_string()),
+            },
+        ));
+        assert!(panel.avatar_generating);
+        assert!(panel.avatar_error.is_none());
+
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::VariantSelected {
+            generation: stale,
+            result: Err("old account".to_string()),
+        }));
+        assert!(panel.avatar_error.is_none());
+
+        panel.avatar_data = Some(avatar_data(true, Some(7)));
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(
+            AvatarMessage::RegenerationsLoaded {
+                generation: stale,
+                result: Ok(RegenerationData {
+                    total_allowed: 5,
+                    used: 5,
+                    remaining: 0,
+                }),
+            },
+        ));
+        assert_eq!(
+            panel.avatar_data.as_ref().unwrap().regenerations_remaining,
+            3
+        );
+
+        // The current session's results still land.
+        let _ = panel.update_message(ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
+            generation: panel.session_generation(),
+            variant_id: 7,
+            result: Ok(vec![137, 80, 78, 71]),
+        }));
+        assert!(panel.avatar_image_cache.contains_key(&7));
+    }
+
+    #[test]
+    fn reconcile_outcome_from_a_previous_session_is_dropped() {
+        let mut panel = panel();
+        let stale = panel.session_generation();
+        panel.clear_client();
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled {
+            generation: stale,
+            outcome: ReconcileOutcome::NeedsReRegistration("old account".to_string()),
+        });
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+
+        panel.ln_reconcile_needs_reregister = Some("current".to_string());
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReconciled {
+            generation: stale,
+            outcome: ReconcileOutcome::AlreadyBound(lightning_info("old@coincube.io")),
+        });
+        assert_eq!(
+            panel.ln_reconcile_needs_reregister.as_deref(),
+            Some("current")
+        );
+    }
+
+    #[test]
+    fn rename_succeeds_only_when_spark_binds_the_committed_address() {
+        assert!(matches!(
+            rename_outcome(lightning("alice@coincube.io"), "alice@coincube.io"),
+            LightningAddressChangeOutcome::Ok(_)
+        ));
+        match rename_outcome(lightning("alice@coincube.io"), "alice@staging.coincube.io") {
+            LightningAddressChangeOutcome::SdkSyncFailed { addr, message } => {
+                assert_eq!(addr.lightning_address.as_deref(), Some("alice@coincube.io"));
+                assert!(message.contains("alice@staging.coincube.io"));
+            }
+            other => panic!("expected SdkSyncFailed, got {:?}", other),
+        }
+        assert!(matches!(
+            rename_outcome(
+                LightningAddress {
+                    lightning_address: None
+                },
+                "alice@coincube.io"
+            ),
+            LightningAddressChangeOutcome::SdkSyncFailed { .. }
+        ));
+    }
+
+    #[test]
+    fn rebind_result_for_a_renamed_reservation_is_dropped() {
+        let mut panel = panel();
+        // The retry was issued for `old@`, then a rename committed `new@`.
+        panel.lightning_address = Some(lightning("new@coincube.io"));
+        panel.ln_reregistering = true;
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
+            generation: panel.session_generation(),
+            address: "old@coincube.io".to_string(),
+            result: Ok(lightning_info("old@coincube.io")),
+        });
+        assert!(!panel.ln_reregistering);
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
+    }
+
+    #[test]
+    fn clear_client_aborts_a_pending_rebind() {
+        let mut panel = panel();
+        let (_task, handle) = iced::Task::<Message>::none().abortable();
+        let observer = handle.clone();
+        panel.ln_reregister_abort = Some(handle);
+        panel.clear_client();
+        assert!(observer.is_aborted());
+        assert!(panel.ln_reregister_abort.is_none());
+    }
+
+    #[test]
+    fn registration_reruns_an_availability_check_issued_without_a_cube_id() {
+        let mut panel = panel();
+        panel.ln_username_input = "founder".to_string();
+        panel.ln_username_available = Some(true);
+        panel.ln_check_missing_cube_id = true;
+        let _ = panel.update_message(ConnectCubeMessage::CubeRegistered {
+            generation: panel.session_generation(),
+            result: Ok(cube_response(None)),
+        });
+        // The Spark-only hint is retired; without a Spark client here the
+        // re-run stops before issuing a request.
+        assert!(!panel.ln_check_missing_cube_id);
+        assert!(panel.ln_username_available.is_none());
+        assert_eq!(panel.ln_username_input, "founder");
     }
 }
