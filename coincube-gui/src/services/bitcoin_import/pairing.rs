@@ -672,8 +672,14 @@ pub(crate) mod tests {
             "Duplicate Cube records prevent safe pairing.",
             "Duplicate wallet records prevent safe pairing.",
         ];
-        let source = include_str!("pairing.rs");
-        let app = include_str!("../../app/mod.rs");
+        // Only the code above each file's first test module counts, so this
+        // list doesn't find itself.
+        let production = |file: &'static str| {
+            file.split_once("\n#[cfg(test)]")
+                .map_or(file, |(code, _)| code)
+        };
+        let source = production(include_str!("pairing.rs"));
+        let app = production(include_str!("../../app/mod.rs"));
         for message in messages {
             assert!(
                 source.contains(message) || app.contains(message),
