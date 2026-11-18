@@ -3,6 +3,7 @@ mod connect_auth;
 mod connect_stream;
 mod cube_name;
 mod daemon_cache;
+mod daemon_lifecycle;
 mod fiat_updates;
 mod recovery_settings;
 
@@ -7754,90 +7755,7 @@ impl App {
                 }
             }
             Message::DaemonRestarted(outcome) => {
-                self.daemon_switch_in_progress = false;
-                self.cache.daemon_switch_in_progress = false;
-                // Non-blocking toast emitted on top of the normal result (e.g. a
-                // switch that succeeded but couldn't be persisted to disk).
-                let mut extra = Task::none();
-                let result = match outcome {
-                    DaemonRestart::Started(daemon) => {
-                        self.daemon = Some(daemon);
-                        // A fresh successful switch (adopt / manual) re-arms
-                        // auto-promotion that a prior failure had suppressed.
-                        self.auto_switch_suppressed = false;
-                        Ok(())
-                    }
-                    DaemonRestart::StartedNotPersisted(daemon) => {
-                        // The switch succeeded (wallet is on the new backend); the
-                        // only problem is the config wasn't saved. Report success
-                        // but warn that it may not survive a restart.
-                        self.daemon = Some(daemon);
-                        self.auto_switch_suppressed = false;
-                        extra = Task::done(Message::View(view::Message::ShowToast(
-                            log::Level::Warn,
-                            "Switched Bitcoin backend, but couldn't save the change to disk — \
-                             it may revert if you restart Coincube."
-                                .to_string(),
-                        )));
-                        Ok(())
-                    }
-                    DaemonRestart::Failed { error, recovered } => {
-                        if let Some(daemon) = recovered {
-                            self.daemon = Some(daemon);
-                            // The recovered daemon still carries the armed
-                            // `auto_switch_to_pending` + `pending_bitcoind`, so
-                            // suppress auto-promotion to stop the same failing
-                            // switch re-firing every poll. A later user-initiated
-                            // switch re-arms it (see the Started arms).
-                            self.auto_switch_suppressed = true;
-                        } else {
-                            // The old daemon was already stopped during the switch
-                            // and recovery couldn't bring one back. Drop it rather
-                            // than keep referencing a dead daemon that ticks and
-                            // config loads would keep poking.
-                            self.daemon = None;
-                        }
-                        error!("Daemon backend switch failed: {}", error);
-                        Err(error)
-                    }
-                    DaemonRestart::Panicked(error) => {
-                        // Unknown post-panic state. self.daemon still holds the
-                        // pre-switch daemon (cloned, not taken), so leave it in
-                        // place — a possibly-stopped backend the user can re-switch
-                        // beats no backend on an open vault. Suppress auto-promotion
-                        // so a still-armed config can't re-trigger the same panic
-                        // every poll; a manual switch re-arms it.
-                        self.auto_switch_suppressed = true;
-                        error!("Daemon backend switch panicked; keeping previous daemon: {error}");
-                        Err(error)
-                    }
-                };
-                // A successful switch invalidates the previous node probe and
-                // clears its cached permission before polling the replacement.
-                if result.is_ok() {
-                    self.bitcoind_sync_probe_in_progress = false;
-                    self.node_history_request_epoch =
-                        self.node_history_request_epoch.wrapping_add(1);
-                    self.node_history_in_progress = false;
-                    self.node_history_pending = None;
-                    self.cache.node_history = node_history::Status::default();
-                    self.cache.node_history_switch_requested = false;
-                    self.cache.node_bitcoind_sync_progress = None;
-                    self.cache.node_bitcoind_sync_heights = None;
-                    self.cache.node_bitcoind_ibd = None;
-                    self.cache.node_bitcoind_subversion = None;
-                    self.cache.node_bitcoind_pruning = None;
-                    self.cache.local_switch_history = None;
-                    self.cache.node_bitcoind_last_log = None;
-                    self.local_switch_hold = None;
-                }
-                let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));
-                return Task::batch([
-                    cfg_task,
-                    extra,
-                    Task::done(Message::CacheUpdated),
-                    Task::done(Message::PollBitcoindSync),
-                ]);
+                return self.handle_daemon_restarted(outcome);
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 // Check if we're transitioning from no-vault to has-vault state
