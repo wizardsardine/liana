@@ -165,6 +165,8 @@ pub fn create_imported_spend(
     let selection_rate: u16 = feerate
         .try_into()
         .map_err(|_| SpendCreationError::InsaneFees(InsaneFeeInfo::TooHighFeerate(feerate)))?;
+    // A sweep payment to an external or receive address is required.
+    // Only change is subject to the economic change threshold.
     let CoinSelectionRes {
         selected,
         change_amount,
@@ -180,7 +182,7 @@ pub fn create_imported_spend(
         is_segwit,
         destinations.is_empty(),
         spend::DUST_OUTPUT_SATS,
-        true,
+        owned_change,
     )
     .map_err(SpendCreationError::CoinSelection)?;
     let has_change = change_amount.to_sat() > 0;
