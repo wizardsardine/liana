@@ -2,6 +2,8 @@ mod activity_routing;
 mod connect_auth;
 mod connect_stream;
 mod cube_name;
+mod daemon_cache;
+mod daemon_lifecycle;
 mod fiat_updates;
 mod recovery_settings;
 
@@ -708,16 +710,25 @@ impl Panels {
     }
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
-        if self
-            .imported_bitcoin
-            .as_ref()
-            .is_some_and(|panel| panel.handles_route(&self.current))
-        {
+        if self.imported_holds_route() {
             return self
                 .imported_bitcoin
                 .as_mut()
                 .map(|panel| panel.as_mut() as &mut dyn State);
         }
+        self.route_panel_mut()
+    }
+
+    /// The import panel is standing in for the current route's own panel.
+    fn imported_holds_route(&self) -> bool {
+        self.imported_bitcoin
+            .as_ref()
+            .is_some_and(|panel| panel.handles_route(&self.current))
+    }
+
+    /// The current route's own panel, even while the import panel stands in
+    /// for it. An operation the route's panel started still completes there.
+    fn route_panel_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
             Menu::Cube(crate::app::menu::CubeSubMenu::Overview) => Some(&mut self.global_home),
             Menu::Cube(crate::app::menu::CubeSubMenu::Activity) => Some(&mut self.activity),
@@ -7597,134 +7608,7 @@ impl App {
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
                 return self.handle_fiat_price(fiat_price);
             }
-            Message::UpdateDaemonCache(res) => {
-                // A scanning import's coins are not a balance yet.
-                if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
-                    return Task::none();
-                }
-                match res {
-                    Ok(mut daemon_cache) => {
-                        // Apply optimistic-broadcast overrides before the
-                        // cache is published: reconcile drops entries the
-                        // daemon now reflects on its own, then any still-
-                        // pending broadcasts get synthetic `spend_info` so
-                        // `coins_summary` (Vault balance) and every other
-                        // `cache.coins()` consumer treats the inputs as
-                        // already spent.
-                        if let Some(wallet) = &self.wallet {
-                            wallet.reconcile_with_coins(&daemon_cache.coins);
-                            wallet.apply_coin_overrides(&mut daemon_cache.coins);
-                        }
-                        let retire_obligation = if full_scan_settles_rescan_obligation(
-                            &self.daemon_backend(),
-                            self.rescan_obligation_retired_by_scan
-                                || self.rescan_obligation_retire_in_flight,
-                            &daemon_cache.history_sync,
-                        ) {
-                            let task = self.retire_rescan_obligation_task();
-                            self.rescan_obligation_retire_in_flight = task.is_some();
-                            task
-                        } else {
-                            None
-                        };
-                        let vault_changed = overview_activity_vault_changed(
-                            &self.cache.daemon_cache,
-                            &daemon_cache,
-                        );
-                        self.cache.daemon_cache = daemon_cache;
-                        // The Vault page's rows follow its own reload
-                        // (`Message::Payments`).
-                        let recent = if vault_changed
-                            && matches!(
-                                self.panels.current,
-                                Menu::Cube(menu::CubeSubMenu::Overview)
-                            ) {
-                            self.panels.activity.refresh_wallet(
-                                view::activity::WalletFilter::Vault,
-                                self.daemon.clone(),
-                                self.wallet.clone(),
-                            )
-                        } else {
-                            Task::none()
-                        };
-                        // Fire-and-forget recovery heartbeat after the sync's
-                        // fresh tip lands (Estate Notifications — PR 2). Batched
-                        // alongside the normal cache cascade so it never delays
-                        // or blocks it.
-                        let heartbeat = self.recovery_heartbeat_task();
-                        // Same posture for the BTCB2 entangled-deposit lookups:
-                        // `Task::none()` on every Bitcoin-family Cube.
-                        let entangled = self.entangled_lookup_task();
-                        let chain_proofs = self.chain_proof_task();
-                        let splits = self.split_refresh_task();
-                        let unswept = self.unswept_notice_task();
-                        return Task::batch([
-                            heartbeat,
-                            entangled,
-                            chain_proofs,
-                            splits,
-                            unswept,
-                            retire_obligation.unwrap_or_else(Task::none),
-                            recent,
-                            Task::done(Message::CacheUpdated),
-                        ]);
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to update daemon cache: {}", e);
-                        // If the active Bitcoind daemon has failed and a Connect
-                        // Esplora fallback is configured (set when IBD completed),
-                        // restart using Connect — but only on transport/stopped
-                        // errors, not transient RPC application-level responses.
-                        if is_daemon_unreachable(&e) {
-                            let fallback = self
-                                .daemon
-                                .as_ref()
-                                .filter(|d| {
-                                    matches!(
-                                        d.backend(),
-                                        DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
-                                    )
-                                })
-                                .and_then(|d| d.config())
-                                .and_then(|c| {
-                                    c.fallback_esplora.as_ref().map(|fb| {
-                                        let mut new_cfg = c.clone();
-                                        // Demote the current Bitcoind to
-                                        // `pending_bitcoind` so the syncing card
-                                        // reappears and the user can retry once
-                                        // the node is healthy. Without this the
-                                        // fallback strands the user on Connect
-                                        // with an empty pending slot, which
-                                        // surfaces the "Set up local node" prompt
-                                        // and forces a full re-install.
-                                        let preserved_bitcoind = match &c.bitcoin_backend {
-                                            Some(coincubed::config::BitcoinBackend::Bitcoind(
-                                                bc,
-                                            )) => Some(bc.clone()),
-                                            _ => None,
-                                        };
-                                        new_cfg.bitcoin_backend = Some(
-                                            coincubed::config::BitcoinBackend::Esplora(fb.clone()),
-                                        );
-                                        new_cfg.pending_bitcoind = preserved_bitcoind;
-                                        // Fell back to Connect after a Bitcoind
-                                        // failure — park the node but don't
-                                        // auto-revert to it on the next probe.
-                                        new_cfg.auto_switch_to_pending = Some(false);
-                                        new_cfg.fallback_esplora = None;
-                                        new_cfg
-                                    })
-                                });
-                            if let Some(new_cfg) = fallback {
-                                if !self.daemon_switch_in_progress {
-                                    info!("Switching to COINCUBE | Connect fallback after Bitcoind failure");
-                                    return self.spawn_daemon_switch(new_cfg);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            Message::UpdateDaemonCache(res) => return self.handle_daemon_cache(res),
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
@@ -7908,98 +7792,7 @@ impl App {
                 }
             }
             Message::DaemonRestarted(outcome) => {
-                self.daemon_switch_in_progress = false;
-                self.cache.daemon_switch_in_progress = false;
-                // Non-blocking toast emitted on top of the normal result (e.g. a
-                // switch that succeeded but couldn't be persisted to disk).
-                let mut extra = Task::none();
-                let result = match outcome {
-                    DaemonRestart::Started(daemon) => {
-                        self.daemon = Some(daemon);
-                        // A fresh successful switch (adopt / manual) re-arms
-                        // auto-promotion that a prior failure had suppressed.
-                        self.auto_switch_suppressed = false;
-                        Ok(())
-                    }
-                    DaemonRestart::StartedNotPersisted(daemon) => {
-                        // The switch succeeded (wallet is on the new backend); the
-                        // only problem is the config wasn't saved. Report success
-                        // but warn that it may not survive a restart.
-                        self.daemon = Some(daemon);
-                        self.auto_switch_suppressed = false;
-                        extra = Task::done(Message::View(view::Message::ShowToast(
-                            log::Level::Warn,
-                            "Switched Bitcoin backend, but couldn't save the change to disk — \
-                             it may revert if you restart Coincube."
-                                .to_string(),
-                        )));
-                        Ok(())
-                    }
-                    DaemonRestart::Failed { error, recovered } => {
-                        if let Some(daemon) = recovered {
-                            self.daemon = Some(daemon);
-                            // The recovered daemon still carries the armed
-                            // `auto_switch_to_pending` + `pending_bitcoind`, so
-                            // suppress auto-promotion to stop the same failing
-                            // switch re-firing every poll. A later user-initiated
-                            // switch re-arms it (see the Started arms).
-                            self.auto_switch_suppressed = true;
-                        } else {
-                            // The old daemon was already stopped during the switch
-                            // and recovery couldn't bring one back. Drop it rather
-                            // than keep referencing a dead daemon that ticks and
-                            // config loads would keep poking.
-                            self.daemon = None;
-                        }
-                        error!("Daemon backend switch failed: {}", error);
-                        Err(error)
-                    }
-                    DaemonRestart::Panicked(error) => {
-                        // Unknown post-panic state. self.daemon still holds the
-                        // pre-switch daemon (cloned, not taken), so leave it in
-                        // place — a possibly-stopped backend the user can re-switch
-                        // beats no backend on an open vault. Suppress auto-promotion
-                        // so a still-armed config can't re-trigger the same panic
-                        // every poll; a manual switch re-arms it.
-                        self.auto_switch_suppressed = true;
-                        error!("Daemon backend switch panicked; keeping previous daemon: {error}");
-                        Err(error)
-                    }
-                };
-                // A successful switch invalidates the previous node probe and
-                // clears its cached permission before polling the replacement.
-                if result.is_ok() {
-                    self.bitcoind_sync_probe_in_progress = false;
-                    self.node_history_request_epoch =
-                        self.node_history_request_epoch.wrapping_add(1);
-                    self.node_history_in_progress = false;
-                    self.node_history_pending = None;
-                    self.cache.node_history = node_history::Status::default();
-                    self.cache.node_history_switch_requested = false;
-                    self.cache.node_bitcoind_sync_progress = None;
-                    self.cache.node_bitcoind_sync_heights = None;
-                    self.cache.node_bitcoind_ibd = None;
-                    self.cache.node_bitcoind_subversion = None;
-                    self.cache.node_bitcoind_pruning = None;
-                    self.cache.local_switch_history = None;
-                    self.cache.node_bitcoind_last_log = None;
-                    self.local_switch_hold = None;
-                }
-                // An imported wallet's panel holds the runtime for its scan and
-                // signing work; hand it the one now running.
-                let imported_task =
-                    match (self.daemon.clone(), self.panels.imported_bitcoin.as_mut()) {
-                        (Some(daemon), Some(panel)) => panel.replace_runtime(daemon),
-                        _ => Task::none(),
-                    };
-                let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));
-                return Task::batch([
-                    cfg_task,
-                    imported_task,
-                    extra,
-                    Task::done(Message::CacheUpdated),
-                    Task::done(Message::PollBitcoindSync),
-                ]);
+                return self.handle_daemon_restarted(outcome);
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 // Check if we're transitioning from no-vault to has-vault state
@@ -9726,6 +9519,19 @@ impl App {
                     return Task::none();
                 };
                 return panel.update(self.daemon.clone(), &self.cache, msg);
+            }
+            // A send prepared or a PSBT signed on the Vault's screens
+            // completes on them, even if the import panel took the route back
+            // while it ran (its wallet went back to syncing). Each handler
+            // checks its own generation, so a stale result is ignored there.
+            msg @ (Message::VaultSpendPrepared { .. }
+            | Message::Signed(..)
+            | Message::CubeKeys(_))
+                if self.panels.imported_holds_route() =>
+            {
+                if let Some(panel) = self.panels.route_panel_mut() {
+                    return panel.update(self.daemon.clone(), &self.cache, msg);
+                }
             }
             msg => {
                 if let (Some(daemon), Some(panel)) =
@@ -12431,6 +12237,54 @@ pub(crate) mod tests {
             !root.exists(),
             "panel construction must not create a Bitcoin or fork datadir"
         );
+    }
+
+    /// While a syncing import stands in for Send and PSBTs, a sign or prepare
+    /// started on the Vault's own panel still has that panel to land on.
+    #[test]
+    fn vault_send_and_psbt_panels_stay_reachable_under_a_syncing_import() {
+        use std::str::FromStr;
+        let descriptor = coincube_core::descriptors::CoincubeDescriptor::from_str(
+            "wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr"
+        ).unwrap();
+        let chain = crate::chain::ChainId::Bitcoin;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(chain));
+        let root = std::env::temp_dir().join(format!("coincube-route-{}", uuid::Uuid::new_v4()));
+        let cache = Cache {
+            fiat_chain: chain,
+            network: chain.bitcoin_network(),
+            ..Cache::default()
+        };
+        let mut panels = Panels::new(
+            None,
+            None,
+            &cache,
+            wallet,
+            CoincubeDirectory::new(root.clone()),
+            DaemonBackend::EmbeddedCoincubed(Some(crate::node::NodeType::Esplora)),
+            None,
+            Arc::new(Config::new(false)),
+            "fixture".into(),
+            "Fixture".into(),
+            chain.api_str().into(),
+        );
+        panels.imported_bitcoin = Some(Box::new(
+            state::imported_bitcoin::ImportedBitcoinPanel::new(
+                CoincubeDirectory::new(root).network_directory(chain),
+                "fixture".into(),
+                settings::BitcoinImport::pending(),
+            ),
+        ));
+        for menu in [
+            Menu::Vault(menu::VaultSubMenu::Send),
+            Menu::Vault(menu::VaultSubMenu::PSBTs(None)),
+        ] {
+            panels.current = menu;
+            assert!(panels.imported_holds_route());
+            assert!(panels.route_panel_mut().is_some());
+        }
+        panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        assert!(!panels.imported_holds_route());
     }
 
     #[tokio::test]

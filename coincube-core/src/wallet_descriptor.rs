@@ -449,9 +449,11 @@ impl ImportedWalletDescriptor {
     }
 
     /// Signatures claimed in `psbt`, as the Vault counts them: per key origin,
-    /// against the primary path's threshold. A signer counts only where it
-    /// signed every input, so a PSBT signed on some inputs reads as less
-    /// signed rather than failing. This is progress only;
+    /// against the primary path's threshold. A signer is listed as signed only
+    /// where it signed every input, and the count is the least signed input's,
+    /// so a PSBT signed on some inputs reads as less signed rather than
+    /// failing, and inputs signed by different signers still reach the
+    /// threshold. This is progress only;
     /// [`crate::imported_spend::finalize_imported_spend`] verifies signatures
     /// before a broadcast.
     pub fn partial_spend_info(
@@ -477,6 +479,7 @@ impl ImportedWalletDescriptor {
         });
         let mut common = infos.next().expect("checked at least one input");
         for info in infos {
+            common.sigs_count = common.sigs_count.min(info.sigs_count);
             common.signed_pubkeys.retain(|fingerprint, count| {
                 info.signed_pubkeys.get(fingerprint).is_some_and(|other| {
                     *count = (*count).min(*other);
@@ -484,7 +487,6 @@ impl ImportedWalletDescriptor {
                 })
             });
         }
-        common.sigs_count = common.signed_pubkeys.values().sum();
         Ok(crate::descriptors::PartialSpendInfo::primary_only(common))
     }
 

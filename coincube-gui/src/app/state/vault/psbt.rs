@@ -2104,7 +2104,10 @@ pub struct SignModal {
     /// Where this Cube's files are, to reach an imported wallet's stored keys.
     datadir: CoincubeDirectory,
     /// An imported wallet's keys stored in this Cube, by fingerprint.
-    cube_keys: HashMap<Fingerprint, crate::services::imported_keys::LocalKeyRecord>,
+    /// Every stored account per master fingerprint: one master can hold
+    /// more than one of the wallet's accounts, and selecting it signs with
+    /// all of them.
+    cube_keys: HashMap<Fingerprint, Vec<crate::services::imported_keys::LocalKeyRecord>>,
     network: Network,
     error: Option<Error>,
     /// A signer-specific limitation that should be visible inside the picker.
@@ -2900,8 +2903,18 @@ impl Modal for SignModal {
                 }
                 self.error = None;
                 self.signer_notice = None;
+                // An imported wallet signs on a hardware wallet through its
+                // device policy; a paired phone over the local network signs
+                // on the same path as for any Vault.
                 if let Some(imported) = self.wallet.main_descriptor.as_imported().cloned() {
-                    return self.sign_imported_with_device(&imported, requested_fp, tx);
+                    let on_device = self
+                        .hws
+                        .list
+                        .iter()
+                        .any(|hw| hw.fingerprint() == Some(requested_fp) && !hw.is_lan_phone());
+                    if on_device {
+                        return self.sign_imported_with_device(&imported, requested_fp, tx);
+                    }
                 }
                 let selected = self
                     .hws
@@ -2949,18 +2962,7 @@ impl Modal for SignModal {
                 return Task::done(Message::View(view::Message::ShowError(reason.to_string())));
             }
             Message::CubeKeys(result) => match result {
-                Ok(records) => {
-                    self.cube_keys = records
-                        .into_iter()
-                        .filter_map(|record| {
-                            record
-                                .fingerprint
-                                .parse::<Fingerprint>()
-                                .ok()
-                                .map(|fingerprint| (fingerprint, record))
-                        })
-                        .collect();
-                }
+                Ok(records) => self.cube_keys = cube_keys_by_fingerprint(records),
                 // No stored keys to offer; every other signer still works.
                 Err(error) => log::info!("Imported wallet keys unavailable: {error}"),
             },
@@ -2970,7 +2972,7 @@ impl Modal for SignModal {
                 if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
                     return refused;
                 }
-                let Some(record) = self.cube_keys.get(&fingerprint).cloned() else {
+                let Some(records) = self.cube_keys.get(&fingerprint).cloned() else {
                     return Task::none();
                 };
                 self.signing.insert(fingerprint);
@@ -2979,8 +2981,8 @@ impl Modal for SignModal {
                 return Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            crate::services::imported_signer::sign_with_cube_key(
-                                &datadir, chain, &record, &psbt,
+                            crate::services::imported_signer::sign_with_cube_keys(
+                                &datadir, chain, &records, &psbt,
                             )
                         })
                         .await
@@ -3455,6 +3457,19 @@ async fn sign_psbt_with_master_signer(
     }
 }
 
+/// Stored accounts grouped by master fingerprint, keeping each account.
+fn cube_keys_by_fingerprint(
+    records: Vec<crate::services::imported_keys::LocalKeyRecord>,
+) -> HashMap<Fingerprint, Vec<crate::services::imported_keys::LocalKeyRecord>> {
+    let mut grouped: HashMap<_, Vec<_>> = HashMap::new();
+    for record in records {
+        if let Ok(fingerprint) = record.fingerprint.parse::<Fingerprint>() {
+            grouped.entry(fingerprint).or_default().push(record);
+        }
+    }
+    grouped
+}
+
 async fn sign_psbt(
     wallet: Arc<Wallet>,
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
@@ -3588,13 +3603,13 @@ mod tests {
         let stored = accounts[0].0;
         modal.cube_keys.insert(
             stored,
-            crate::services::imported_keys::LocalKeyRecord {
+            vec![crate::services::imported_keys::LocalKeyRecord {
                 record_id: uuid::Uuid::nil(),
                 revision: uuid::Uuid::nil(),
                 fingerprint: stored.to_string(),
                 origin: "m/48'/0'/0'/2'".into(),
                 xpub: String::new(),
-            },
+            }],
         );
         let paths = modal.signing_paths();
         let row = paths[0]
@@ -3607,6 +3622,27 @@ mod tests {
             row.state,
             SigningKeyState::Available(SigningKeyAction::CubeKey)
         ));
+    }
+
+    #[test]
+    fn two_stored_accounts_behind_one_fingerprint_are_both_kept() {
+        let record =
+            |origin: &str, fingerprint: &str| crate::services::imported_keys::LocalKeyRecord {
+                record_id: uuid::Uuid::new_v4(),
+                revision: uuid::Uuid::new_v4(),
+                fingerprint: fingerprint.into(),
+                origin: origin.into(),
+                xpub: String::new(),
+            };
+        let grouped = cube_keys_by_fingerprint(vec![
+            record("m/48'/0'/0'/2'", "aabbccdd"),
+            record("m/48'/0'/1'/2'", "aabbccdd"),
+            record("m/48'/0'/0'/2'", "11223344"),
+        ]);
+        assert_eq!(grouped.len(), 2);
+        let shared = &grouped[&Fingerprint::from_str("aabbccdd").unwrap()];
+        let origins: Vec<_> = shared.iter().map(|r| r.origin.as_str()).collect();
+        assert_eq!(origins, ["m/48'/0'/0'/2'", "m/48'/0'/1'/2'"]);
     }
 
     fn wallet() -> Wallet {

@@ -880,6 +880,40 @@ mod tests {
     }
 
     #[test]
+    fn imported_spend_info_reaches_threshold_with_different_signers_per_input() {
+        let (wallet, signers, created) = draft("wsh(sortedmulti)");
+        let mut psbt = created.psbt.clone();
+        let mut second = psbt.unsigned_tx.input[0].clone();
+        second.previous_output.vout += 1;
+        psbt.unsigned_tx.input.push(second);
+        psbt.inputs.push(psbt.inputs[0].clone());
+
+        // Input 0 signed by the first two keys, input 1 by the last two.
+        let mut other = psbt.clone();
+        add_signature(&mut psbt, &signers[0]);
+        add_signature(&mut psbt, &signers[1]);
+        add_signature(&mut other, &signers[1]);
+        add_signature(&mut other, &signers[2]);
+        psbt.inputs[1].partial_sigs = other.inputs[0].partial_sigs.clone();
+
+        let partial = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(partial.primary_path().threshold, 2);
+        assert_eq!(partial.primary_path().sigs_count, 2);
+        // Only the key that signed both inputs reads as signed.
+        assert_eq!(partial.primary_path().signed_pubkeys.len(), 1);
+
+        // One input short of the threshold keeps the spend short.
+        psbt.inputs[1].partial_sigs = {
+            let mut short = created.psbt.clone();
+            add_signature(&mut short, &signers[2]);
+            short.inputs[0].partial_sigs.clone()
+        };
+        let short = wallet.partial_spend_info(&psbt).unwrap();
+        assert_eq!(short.primary_path().sigs_count, 1);
+        assert!(short.primary_path().signed_pubkeys.is_empty());
+    }
+
+    #[test]
     fn imported_multipath_descriptor_derives_both_branches() {
         let (wallet, _, _) = draft("wsh(sortedmulti)");
         let multipath = wallet.multipath_descriptor();
