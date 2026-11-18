@@ -381,6 +381,16 @@ pub fn short_duration_label(n: u32, unit: &str) -> String {
     }
 }
 
+fn sequence_slider_message(v: u16) -> Message {
+    Message::DefineDescriptor(message::DefineDescriptor::ThresholdSequenceModal(
+        message::ThresholdSequenceModal::SequenceEdited(
+            // Since slider starts at 1, intermediate values are off by 1 from intended values.
+            // Subtract 1 to align with expected sequence values, except for edge cases (1 and u16::MAX)
+            (if v > 1 && v != u16::MAX { v - 1 } else { v }).to_string(),
+        ),
+    ))
+}
+
 pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Message> {
     let mut col = Column::new()
         .width(Length::Fill)
@@ -426,19 +436,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                 ))
                 .push(
                     Container::new(
-                        slider(1..=u16::MAX, sequence, |v| {
-                            Message::DefineDescriptor(
-                                message::DefineDescriptor::ThresholdSequenceModal(
-                                    message::ThresholdSequenceModal::SequenceEdited(
-                                        // Since slider starts at 1, intermediate values are off by 1 from intended values.
-                                        // Subtract 1 to align with expected sequence values, except for edge cases (1 and u16::MAX)
-                                        (if v > 1 && v != u16::MAX { v - 1 } else { v })
-                                            .to_string(),
-                                    ),
-                                ),
-                            )
-                        })
-                        .step(4383_u16), // 4383 blocks per month
+                        slider(1..=u16::MAX, sequence, sequence_slider_message).step(4383_u16), // 4383 blocks per month
                     )
                     .width(Length::Fixed(500.0)),
                 );
