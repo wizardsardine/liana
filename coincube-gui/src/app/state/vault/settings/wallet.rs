@@ -143,9 +143,10 @@ impl WalletSettingsState {
     /// Whether Settings offers "Register on hardware device". It does on
     /// every chain, Bitcoin Blake2b included (HW-1 Amendment B): devices may
     /// build a BTCB2 Vault, and the signing picker sends an unregistered
-    /// device here.
+    /// device here. An imported Vault offers it when its devices need a
+    /// registration, which is for multisig only.
     fn hardware_registration_allowed(&self) -> bool {
-        self.wallet.supports_inheritance()
+        self.wallet.supports_inheritance() || imported_needs_registration(&self.wallet)
     }
 }
 
@@ -518,7 +519,26 @@ impl RegisterWalletModal {
                 }
                 Task::none()
             }
+            Message::DeviceRegistered(fingerprint, res) => {
+                self.processing = false;
+                self.chosen_hw = None;
+                match res {
+                    Ok(()) => {
+                        self.registered.insert(fingerprint);
+                        Task::none()
+                    }
+                    Err(Error::HardwareWallet(async_hwi::Error::UserRefused)) => Task::none(),
+                    Err(e) => {
+                        let err_msg = crate::user_error::report(&e);
+                        self.warning = Some(e);
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
+                    }
+                }
+            }
             Message::View(view::Message::SelectHardwareWallet(i)) => {
+                if self.wallet.is_imported() {
+                    return self.register_imported(i);
+                }
                 if let Some(HardwareWallet::Supported {
                     fingerprint,
                     device,
@@ -543,6 +563,71 @@ impl RegisterWalletModal {
             _ => Task::none(),
         }
     }
+}
+
+impl RegisterWalletModal {
+    /// An imported Vault registers the device policy its signing session
+    /// uses (`split_hardware`), so a device registered here signs without
+    /// asking again. Jade, Coldcard and BitBox02 keep the registration;
+    /// Ledger's token is not stored (P6), so Ledger asks again when it signs.
+    fn register_imported(&mut self, i: usize) -> Task<Message> {
+        use crate::split_hardware::{bind::ProductionBinder, policy::imported_policy};
+        let Some(imported) = self.wallet.main_descriptor.as_imported() else {
+            return Task::none();
+        };
+        let Some((device, fingerprint)) = self
+            .hws
+            .list
+            .get(i)
+            .filter(|hw| hw.is_supported() && !hw.is_lan_phone())
+            .and_then(|hw| Some((hw.clone(), hw.fingerprint()?)))
+        else {
+            return Task::none();
+        };
+        let policy = match imported_policy(imported) {
+            Ok(policy) => policy,
+            Err(error) => {
+                let err = Error::Unexpected(error.to_string());
+                let err_msg = crate::user_error::report(&err);
+                self.warning = Some(err);
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+        };
+        let binder = Arc::new(ProductionBinder::from_listing(&self.hws));
+        self.chosen_hw = Some(i);
+        self.processing = true;
+        Task::perform(
+            register_imported_policy(device, policy, binder),
+            move |res| Message::DeviceRegistered(fingerprint, res),
+        )
+    }
+}
+
+/// Whether an imported Vault's devices must register its policy before they
+/// sign: multisig only. Singlesig imports sign their standard account paths.
+fn imported_needs_registration(wallet: &Wallet) -> bool {
+    wallet
+        .main_descriptor
+        .as_imported()
+        .and_then(|imported| crate::split_hardware::policy::imported_policy(imported).ok())
+        .is_some_and(|policy| policy.shape().is_multisig())
+}
+
+async fn register_imported_policy(
+    device: HardwareWallet,
+    policy: crate::split_hardware::sign::DevicePolicy,
+    binder: Arc<dyn crate::split_hardware::sign::PolicyBinder>,
+) -> Result<(), Error> {
+    use crate::split_hardware::sign::{SignError, SigningSession};
+    let failed = |error: SignError| match error {
+        SignError::RegistrationRefused => Error::HardwareWallet(async_hwi::Error::UserRefused),
+        error => Error::Unexpected(error.to_string()),
+    };
+    let mut session = SigningSession::from_listed(&device, policy, binder)
+        .await
+        .map_err(failed)?;
+    session.register().await.map_err(failed)?;
+    Ok(())
 }
 
 async fn register_wallet(
@@ -1063,6 +1148,145 @@ mod chain_tests {
             );
             assert!(state.hardware_registration_allowed(), "{:?}", chain);
         }
+    }
+
+    /// An imported Vault offers "Register on device" only when its devices
+    /// need a registration: multisig. Singlesig imports sign their standard
+    /// account paths without one.
+    #[test]
+    fn an_imported_vault_offers_registration_for_multisig_only() {
+        use crate::services::split_test_wallets::{imported_vault, Shape, SHAPES};
+        for shape in SHAPES {
+            let state = WalletSettingsState::new(
+                CoincubeDirectory::new(std::path::PathBuf::new()),
+                Arc::new(imported_vault(shape)),
+                Arc::new(Config::new(false)),
+            );
+            assert_eq!(
+                state.hardware_registration_allowed(),
+                matches!(shape, Shape::WshMulti | Shape::WshSortedMulti),
+                "{:?}",
+                shape
+            );
+        }
+    }
+
+    /// A Jade-like device that keeps registrations itself.
+    #[derive(Debug)]
+    struct StoringDevice {
+        fingerprint: Fingerprint,
+        stored: std::sync::Mutex<Vec<(String, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl async_hwi::HWI for StoringDevice {
+        fn device_kind(&self) -> async_hwi::DeviceKind {
+            async_hwi::DeviceKind::Jade
+        }
+        async fn get_version(&self) -> Result<async_hwi::Version, async_hwi::Error> {
+            Err(async_hwi::Error::UnimplementedMethod)
+        }
+        async fn get_master_fingerprint(&self) -> Result<Fingerprint, async_hwi::Error> {
+            Ok(self.fingerprint)
+        }
+        async fn get_extended_pubkey(
+            &self,
+            _path: &coincube_core::miniscript::bitcoin::bip32::DerivationPath,
+        ) -> Result<coincube_core::miniscript::bitcoin::bip32::Xpub, async_hwi::Error> {
+            Err(async_hwi::Error::UnimplementedMethod)
+        }
+        async fn register_wallet(
+            &self,
+            name: &str,
+            policy: &str,
+        ) -> Result<Option<[u8; 32]>, async_hwi::Error> {
+            self.stored
+                .lock()
+                .unwrap()
+                .push((name.to_string(), policy.to_string()));
+            Ok(None)
+        }
+        async fn is_wallet_registered(
+            &self,
+            name: &str,
+            policy: &str,
+        ) -> Result<bool, async_hwi::Error> {
+            Ok(self
+                .stored
+                .lock()
+                .unwrap()
+                .contains(&(name.to_string(), policy.to_string())))
+        }
+        async fn display_address(
+            &self,
+            _script: &async_hwi::AddressScript,
+        ) -> Result<(), async_hwi::Error> {
+            Err(async_hwi::Error::UnimplementedMethod)
+        }
+        async fn sign_tx(
+            &self,
+            _psbt: &mut coincube_core::miniscript::bitcoin::Psbt,
+        ) -> Result<(), async_hwi::Error> {
+            Err(async_hwi::Error::UnimplementedMethod)
+        }
+    }
+
+    /// Registering an imported multisig Vault from Settings sends the device
+    /// the same policy its signing session uses, marks the device registered
+    /// in the modal and writes nothing to the Cube's settings.
+    #[tokio::test]
+    async fn an_imported_vault_registers_its_signing_policy_on_a_device() {
+        use crate::services::split_test_wallets::{imported_vault, master, Shape};
+        use crate::split_hardware::{bind::ProductionBinder, policy::imported_policy};
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+        let fingerprint = master(1).fingerprint(&secp);
+        let wallet = Arc::new(imported_vault(Shape::WshSortedMulti));
+        let root = std::env::temp_dir().join(format!(
+            "coincube-imported-register-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let dir = CoincubeDirectory::new(root.clone());
+        let device = Arc::new(StoringDevice {
+            fingerprint,
+            stored: Default::default(),
+        });
+        let mut modal = RegisterWalletModal::new(dir.clone(), wallet.clone());
+        modal.hws.list = vec![HardwareWallet::Supported {
+            id: "jade".into(),
+            device: device.clone(),
+            kind: async_hwi::DeviceKind::Jade,
+            fingerprint,
+            version: None,
+            registered: None,
+            alias: None,
+        }];
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let _task = modal.update(
+            Some(daemon.clone()),
+            &Cache::default(),
+            Message::View(view::Message::SelectHardwareWallet(0)),
+        );
+        assert!(modal.processing);
+        assert_eq!(modal.chosen_hw, Some(0));
+
+        let policy = imported_policy(wallet.main_descriptor.as_imported().unwrap()).unwrap();
+        let (name, descriptor) = (policy.name().to_owned(), policy.descriptor().to_owned());
+        let binder = Arc::new(ProductionBinder::from_listing(&modal.hws));
+        let result = register_imported_policy(modal.hws.list[0].clone(), policy, binder).await;
+        assert!(result.is_ok(), "{:?}", result);
+        assert_eq!(*device.stored.lock().unwrap(), vec![(name, descriptor)]);
+
+        let _ = modal.update(
+            Some(daemon),
+            &Cache::default(),
+            Message::DeviceRegistered(fingerprint, result),
+        );
+        assert!(!modal.processing);
+        assert!(modal.registered.contains(&fingerprint));
+        assert!(modal.wallet.hardware_wallets.is_empty());
+        assert!(!root.exists(), "registration wrote to the datadir");
     }
 
     /// A device that records each registration request and answers with an

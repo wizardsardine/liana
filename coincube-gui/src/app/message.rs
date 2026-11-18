@@ -161,6 +161,9 @@ pub enum Message {
     /// An imported wallet's keys stored in this Cube, for the signer picker.
     CubeKeys(Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
+    /// A hardware wallet registered an imported Vault's device policy from
+    /// Vault Settings. Nothing is written to the wallet's settings.
+    DeviceRegistered(Fingerprint, Result<(), Error>),
     Updated(Result<(), Error>),
     /// UI-only signal to recompute collected signatures and re-evaluate the
     /// Sign picker's close/broadcast state after an in-memory PSBT merge —
