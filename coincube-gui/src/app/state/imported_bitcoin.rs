@@ -533,6 +533,29 @@ impl JourneyStep {
     }
 }
 
+/// Current synchronization health, separate from whether the import is ready to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportedSyncStatus {
+    Synced,
+    Syncing,
+    Failed,
+}
+
+/// An imported wallet's server and history scan, for Vault Settings → Node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedNodeSummary {
+    pub server: &'static str,
+    /// The server's scheme, host and port, without credentials or a path.
+    pub endpoint: String,
+    pub status: Option<coincubed::commands::ImportedWalletSync>,
+    pub sync_status: ImportedSyncStatus,
+    pub ready: bool,
+    pub busy: bool,
+    /// A wider address search is offered (not on Bitcoin Blake2b).
+    pub can_expand: bool,
+    pub notice: Option<String>,
+}
+
 pub struct ImportedBitcoinPanel {
     directory: NetworkDirectory,
     cube_id: String,
@@ -681,6 +704,58 @@ impl ImportedBitcoinPanel {
 
     pub fn set_connect_client(&mut self, client: Option<&CoincubeClient>) {
         self.connect_token = client.and_then(CoincubeClient::token).map(str::to_owned);
+    }
+
+    /// What Vault Settings → Node shows for this wallet: its server, its
+    /// history scan, and whether its actions can run.
+    pub fn node_summary(&self) -> ImportedNodeSummary {
+        let ready = self.is_ready();
+        let sync_status = match self.info.as_ref() {
+            _ if self.sync_requesting => ImportedSyncStatus::Syncing,
+            _ if self.sync_failed => ImportedSyncStatus::Failed,
+            Some(info)
+                if info.history_sync.last_failure.is_some()
+                    || info.chain_divergence
+                    || info.refused_reorg_depth.is_some() =>
+            {
+                ImportedSyncStatus::Failed
+            }
+            Some(info) if ready && bitcoin_import::history_scan_complete(info, false) => {
+                ImportedSyncStatus::Synced
+            }
+            _ => ImportedSyncStatus::Syncing,
+        };
+        ImportedNodeSummary {
+            server: if self.provider_known {
+                localized_copy(self.provider.label())
+            } else {
+                localized_copy("Server settings unavailable")
+            },
+            endpoint: public_server_label(&self.endpoint),
+            status: self
+                .info
+                .as_ref()
+                .and_then(|info| info.imported_wallet.clone()),
+            sync_status,
+            ready,
+            busy: self.busy,
+            can_expand: !self.chain().is_blake2b(),
+            notice: self.error.as_deref().map(shown_notice),
+        }
+    }
+
+    /// Take the App's replacement runtime after a server switch stopped the
+    /// one this panel held.
+    pub fn replace_runtime(&mut self, daemon: Arc<dyn Daemon + Send + Sync>) -> Task<Message> {
+        if self
+            .daemon
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &daemon))
+        {
+            return Task::none();
+        }
+        self.daemon = None;
+        self.bind_runtime(daemon)
     }
 
     /// Keys from recovery words stored in this Cube for the attached wallet,
@@ -911,9 +986,8 @@ impl ImportedBitcoinPanel {
             // A ready wallet sends and signs on the Vault's own screens,
             // except on Bitcoin Blake2b, where sending is not available.
             Menu::Vault(VaultSubMenu::Send | VaultSubMenu::PSBTs(_)) => self.chain().is_blake2b(),
-            // Vault Settings serves a ready wallet, except Node: its server,
-            // synchronization and wider address search stay here for now.
-            Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::Node))) => true,
+            // Vault Settings serves a ready wallet, Node included: it reads
+            // this panel's `node_summary` and sends its actions here.
             _ => false,
         }
     }
@@ -4975,6 +5049,13 @@ mod tests {
     fn a_completed_import_stays_ready_through_sync_trouble() {
         let mut panel = ready_import_panel();
         assert!(panel.is_ready());
+        assert_eq!(panel.node_summary().sync_status, ImportedSyncStatus::Synced);
+        panel.info.as_mut().unwrap().sync = 0.5;
+        assert!(panel.is_ready());
+        assert_eq!(
+            panel.node_summary().sync_status,
+            ImportedSyncStatus::Syncing
+        );
         {
             let info = panel.info.as_mut().unwrap();
             info.history_sync.last_failure = Some(coincubed::commands::PollFailure {
@@ -4983,10 +5064,10 @@ mod tests {
                 last_at: 1,
                 consecutive: 3,
             });
-            info.sync = 0.5;
             info.history_sync.full_scan_in_progress = true;
         }
         assert!(panel.is_ready(), "a failing poll or catch-up sync");
+        assert_eq!(panel.node_summary().sync_status, ImportedSyncStatus::Failed);
         assert!(panel.authoritative_balance().is_some());
         let info = panel.info.clone().unwrap();
         assert!(bitcoin_import::history_scan_complete(&info, true));
@@ -5021,6 +5102,26 @@ mod tests {
             change(panel.info.as_mut().unwrap());
             assert!(!panel.is_ready(), "{}", why);
         }
+    }
+
+    #[test]
+    fn node_status_reports_a_failed_retry_even_with_a_healthy_prior_snapshot() {
+        let mut panel = ready_import_panel();
+        panel.sync_requesting = true;
+        assert_eq!(
+            panel.node_summary().sync_status,
+            ImportedSyncStatus::Syncing
+        );
+
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::SynchronizationRequested(
+            generation,
+            Err("server unavailable".into()),
+        ));
+        let summary = panel.node_summary();
+        assert!(summary.ready);
+        assert_eq!(summary.sync_status, ImportedSyncStatus::Failed);
+        assert!(summary.notice.is_some());
     }
 
     #[test]
@@ -6986,19 +7087,56 @@ mod tests {
         assert!(panel.is_ready());
         assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::Send)));
         assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::PSBTs(None))));
-        // Vault Settings serves it, except Node for now.
+        // Vault Settings serves every tab; Node reads this panel's summary.
         for option in [
             SettingsOption::Wallet,
+            SettingsOption::Node,
             SettingsOption::ImportExport,
             SettingsOption::Connections,
         ] {
             assert!(!panel.handles_route(&Menu::Vault(VaultSubMenu::Settings(Some(option)))));
         }
-        assert!(
-            panel.handles_route(&Menu::Vault(VaultSubMenu::Settings(Some(
-                SettingsOption::Node
-            ))))
+        let summary = panel.node_summary();
+        assert!(summary.ready);
+        assert_eq!(
+            summary
+                .status
+                .as_ref()
+                .map(|status| status.history_complete),
+            Some(true)
         );
+    }
+
+    /// After a server switch the App hands the panel its new runtime; the
+    /// same runtime again changes nothing.
+    #[test]
+    fn a_server_switch_hands_the_panel_its_new_runtime() {
+        let mut panel = ready_import_panel();
+        let wallet = panel.import.active_attachment().unwrap().clone();
+        let runtime = |name: &str| -> Arc<dyn Daemon + Send + Sync> {
+            let config = Config::new(
+                BitcoinConfig::new(ChainId::Bitcoin, Duration::from_secs(30)),
+                None,
+                log::LevelFilter::Off,
+                WalletDescriptor::Imported(wallet.descriptor.clone()),
+                panel_dir(name),
+            );
+            Arc::new(EmbeddedDaemon::unstarted_for_test(config, None))
+        };
+        fn panel_dir(name: &str) -> coincubed::datadir::DataDirectory {
+            coincubed::datadir::DataDirectory::new(
+                std::env::temp_dir().join(format!("imported-runtime-{name}")),
+            )
+        }
+        let old = runtime("old");
+        let new = runtime("new");
+        panel.daemon = Some(old.clone());
+        let _ = panel.replace_runtime(new.clone());
+        assert!(Arc::ptr_eq(panel.daemon.as_ref().unwrap(), &new));
+        assert!(panel.error.is_none(), "{:?}", panel.error);
+        let generation = panel.generation;
+        let _ = panel.replace_runtime(new.clone());
+        assert_eq!(panel.generation, generation, "the same runtime is a no-op");
     }
 
     /// A PSBT built like the daemon's: one coin, an outside payment and

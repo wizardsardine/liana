@@ -6319,6 +6319,11 @@ impl App {
             .imported_bitcoin
             .as_ref()
             .and_then(|panel| panel.stored_keys());
+        self.cache.imported_node = self
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .map(|panel| panel.node_summary());
         if self
             .cube_settings
             .bitcoin_import
