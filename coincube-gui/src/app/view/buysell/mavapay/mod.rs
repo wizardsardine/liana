@@ -1118,6 +1118,17 @@ impl MavapayState {
                         update.status
                     );
 
+                    // A stream left over from an earlier checkout can still
+                    // deliver: only this checkout's own order may move it.
+                    if quote.order_id.as_deref() != Some(update.order_id.as_str()) {
+                        log::warn!(
+                            "[MAVAPAY-SSE] Ignoring an update for Order({}): this checkout is for {:?}",
+                            update.order_id,
+                            quote.order_id
+                        );
+                        return None;
+                    }
+
                     if matches!(
                         update.status,
                         TransactionStatus::Paid | TransactionStatus::Success
@@ -1164,26 +1175,32 @@ impl MavapayState {
                 }
 
                 MavapayMessage::QuoteFulfilled(order) => {
+                    // Only this checkout's own order may change it: a fetch
+                    // started for an earlier order can outlive that checkout
+                    // and land here. Showing it would put another order's
+                    // receipt on this screen and stop this order's stream.
+                    let this_order = quote.order_id.as_deref() == Some(order.order_id.as_str())
+                        || order.quote_id.as_deref() == Some(quote.id.as_str());
+                    if !this_order {
+                        log::warn!(
+                            "[MAVAPAY] Ignoring Order({}) fulfilment: this checkout is Quote({})",
+                            order.order_id,
+                            quote.id
+                        );
+                        return None;
+                    }
                     log::info!(
                         "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
                         quote.id,
                         order
                     );
-
-                    // Only this checkout's own order can settle its payment:
-                    // a fetch started for an earlier order can outlive that
-                    // checkout and land here.
-                    let this_order = quote.order_id.as_deref() == Some(order.order_id.as_str())
-                        || order.quote_id.as_deref() == Some(quote.id.as_str());
                     *fulfilled_order = Some(order);
                     *stream_order_id = None;
                     // Mavapay says this order is paid, so its invoice is: a
                     // sell payment whose outcome was unknown landed, and there
                     // is nothing left to repeat. One still awaiting an answer
                     // settles when that answer comes.
-                    if this_order
-                        && matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. })
-                    {
+                    if matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. }) {
                         log::info!("[MAVAPAY] Mavapay confirmed the order: sell payment settled");
                         sell.fulfilment = SellFulfilment::Paid;
                         sell.idempotency_key = None;
@@ -1968,14 +1985,64 @@ pub(crate) mod tests {
             quote_id: Some("quote-other".to_string()),
             ..order.clone()
         };
+        if let Some(MavapayFlowStep::Checkout {
+            stream_order_id, ..
+        }) = state.steps.last_mut()
+        {
+            *stream_order_id = Some("order-quote-sell".to_string());
+        }
         let _ = state.update(MavapayMessage::QuoteFulfilled(other), &client);
         assert!(state.sell_checkout_held());
         assert!(sell(&state).idempotency_key.is_some());
+        // …and changes nothing else either: no foreign receipt on this
+        // screen, and this order's own stream keeps running.
+        match state.steps.last() {
+            Some(MavapayFlowStep::Checkout {
+                fulfilled_order,
+                stream_order_id,
+                ..
+            }) => {
+                assert!(fulfilled_order.is_none());
+                assert_eq!(stream_order_id.as_deref(), Some("order-quote-sell"));
+            }
+            other => panic!("expected a checkout, got {:?}", other),
+        }
 
         let _ = state.update(MavapayMessage::QuoteFulfilled(order), &client);
         assert_eq!(sell(&state).fulfilment, SellFulfilment::Paid);
         assert!(sell(&state).idempotency_key.is_none());
         assert!(!state.sell_checkout_held());
+    }
+
+    /// A paid update on the stream for some other order starts no order
+    /// fetch here; this checkout's own order does.
+    #[test]
+    fn stream_updates_for_another_order_are_ignored() {
+        let (spark, _requests) = fake_spark();
+        let client = crate::services::coincube::CoincubeClient::new();
+        let mut state = sell_checkout(spark);
+        let update = |order_id: &str| crate::services::mavapay::stream::TransactionUpdate {
+            amount: INVOICE_SATS,
+            created_at: "2026-11-17T00:00:00Z".to_string(),
+            currency: MavapayCurrency::Bitcoin,
+            event_type: "transaction.updated".to_string(),
+            order_hash: "hash".to_string(),
+            order_id: order_id.to_string(),
+            status: TransactionStatus::Paid,
+            transaction_id: 1,
+        };
+        assert!(state
+            .update(
+                MavapayMessage::TransactionUpdated(update("order-other")),
+                &client
+            )
+            .is_none());
+        assert!(state
+            .update(
+                MavapayMessage::TransactionUpdated(update("order-quote-sell")),
+                &client
+            )
+            .is_some());
     }
 
     /// A dead bridge is never respawned, so its checks can't settle

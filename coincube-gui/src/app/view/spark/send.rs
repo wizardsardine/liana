@@ -31,7 +31,9 @@ use coincube_core::miniscript::bitcoin::{Amount, Network};
 
 use crate::app::breez_spark::assets::stable_token_as_sats;
 use crate::app::state::spark::cross_chain::{self, supported_on};
-use crate::app::state::spark::send::{CrossChainContext, SparkSendPhase, SparkSendTarget};
+use crate::app::state::spark::send::{
+    CrossChainContext, ReconcileOutcome, SparkSendPhase, SparkSendTarget,
+};
 use crate::app::view::shared::payment_columns::{payment_columns, rail_card};
 use crate::app::view::spark::{last_tx::recent_rail_section, SparkRecentTransaction};
 use crate::app::view::{Message, SparkSendMessage};
@@ -654,11 +656,22 @@ fn phase_body<'a>(view: &SparkSendView<'a>) -> Element<'a, Message> {
                                 .width(Length::Fixed(160.0)),
                         );
                     }
-                    actions = actions.push(
-                        button::secondary(None, CopyText::CheckAgain.get())
-                            .on_press(Message::SparkSend(SparkSendMessage::ReconcileRequested))
-                            .width(Length::Fixed(140.0)),
-                    );
+                    if *outcome == ReconcileOutcome::Landed {
+                        // It went through: nothing left to check or retry,
+                        // so let the user finish rather than strand them
+                        // here. `Reset` is allowed for this outcome only.
+                        actions = actions.push(
+                            button::primary(None, localized_copy("Done"))
+                                .on_press(Message::SparkSend(SparkSendMessage::Reset))
+                                .width(Length::Fixed(140.0)),
+                        );
+                    } else {
+                        actions = actions.push(
+                            button::secondary(None, CopyText::CheckAgain.get())
+                                .on_press(Message::SparkSend(SparkSendMessage::ReconcileRequested))
+                                .width(Length::Fixed(140.0)),
+                        );
+                    }
                 }
             }
 
@@ -4248,6 +4261,16 @@ mod tests {
                 )),
                 present: &["Check again", "View transactions"],
                 absent: &["Send again", "Try again"],
+            },
+            Case {
+                scenario: "outcome-unknown-landed",
+                fixture: Fixture::filled(outcome_unknown(
+                    false,
+                    Some(ReconcileOutcome::Landed),
+                    RetryGuard::IdempotencyKey,
+                )),
+                present: &["This payment did go through.", "Done", "View transactions"],
+                absent: &["Send again", "Check again", "Try again"],
             },
             Case {
                 scenario: "outcome-unknown-no-trace-guarded",
