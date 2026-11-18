@@ -1518,6 +1518,7 @@
   "No Recovery Kit": "Sin Kit de recuperación",
   "No Recovery Kit in Connect": "No hay Kit de recuperación en Connect",
   "No Regenerations Remaining": "Agotaste las regeneraciones disponibles",
+  "An imported Vault has no recovery path.": "Un Vault importado no tiene ruta de recuperación.",
   "No Vault in this Cube.": "No hay Vault en este Cube.",
   "No Vault to receive this transfer": "No hay un Vault para recibir esta transferencia",
   "No active variant": "No hay variante activa",

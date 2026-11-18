@@ -89,6 +89,9 @@ pub struct LiquidTransactions {
     /// the user's freshly-typed input with a stale Vault address.
     next_vault_refund_id: u64,
     pending_vault_refund_id: Option<u64>,
+    /// The Cube's Vault, from the last reload: an imported Vault hands out
+    /// refund addresses under its reservation lock.
+    vault_wallet: Option<Arc<Wallet>>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
     /// Page currently displayed (0-indexed).
@@ -145,6 +148,7 @@ impl LiquidTransactions {
             in_flight_refunds: HashMap::new(),
             next_vault_refund_id: 0,
             pending_vault_refund_id: None,
+            vault_wallet: None,
             empty_state_quote,
             empty_state_image_handle,
             current_page: 0,
@@ -400,7 +404,7 @@ impl State for LiquidTransactions {
     fn update(
         &mut self,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         match message {
@@ -770,13 +774,24 @@ impl State for LiquidTransactions {
                 self.next_vault_refund_id = self.next_vault_refund_id.wrapping_add(1);
                 let request_id = self.next_vault_refund_id;
                 self.pending_vault_refund_id = Some(request_id);
+                let (data_dir, wallet) = (cache.datadir_path.clone(), self.vault_wallet.clone());
                 Task::perform(
                     async move {
-                        daemon
-                            .get_new_address()
-                            .await
-                            .map(|res| res.address.to_string())
-                            .map_err(|e| e.to_string())
+                        match wallet {
+                            Some(wallet) => {
+                                crate::app::state::vault::receive::vault_receive_address(
+                                    data_dir, &wallet, daemon,
+                                )
+                                .await
+                                .map(|res| res.address.to_string())
+                                .map_err(|e| e.to_string())
+                            }
+                            None => daemon
+                                .get_new_address()
+                                .await
+                                .map(|res| res.address.to_string())
+                                .map_err(|e| e.to_string()),
+                        }
                     },
                     move |result| {
                         Message::View(view::Message::VaultRefundAddressResolved(
@@ -913,8 +928,9 @@ impl State for LiquidTransactions {
     fn reload(
         &mut self,
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _wallet: Option<Arc<Wallet>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        self.vault_wallet = wallet;
         self.loading = true;
         self.selected_payment = None;
         self.selected_refundable = None;

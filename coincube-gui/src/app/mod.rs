@@ -3694,7 +3694,7 @@ impl App {
             (breez_client, spark_backend)
         };
         cache.fiat_chain = cube_settings.network;
-        cache.has_vault = wallet.supports_inheritance();
+        cache.has_vault = wallet.supports_inheritance() || wallet.is_imported();
         cache.has_imported_bitcoin = wallet.is_imported();
         cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
         cache.wallet_names = cache::WalletNames::new(&cube_settings, Some(&wallet));
@@ -3849,7 +3849,7 @@ impl App {
         }
         let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
-        cache_with_vault.has_vault = wallet.supports_inheritance();
+        cache_with_vault.has_vault = wallet.supports_inheritance() || wallet.is_imported();
         cache_with_vault.has_imported_bitcoin = wallet.is_imported();
         cache_with_vault.has_p2p = panels.p2p.is_some();
         // Liquid sunset gate, local half: whether a Liquid wallet exists on
@@ -6385,7 +6385,7 @@ impl App {
             self.cache.daemon_cache.sync_progress = 0.0;
         }
         self.daemon = Some(daemon.clone());
-        self.cache.has_vault = false;
+        self.cache.has_vault = true;
         self.cache.has_imported_bitcoin = true;
         self.cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
         self.panels.global_home.imported_installed = true;
@@ -7828,7 +7828,7 @@ impl App {
                 self.wallet = Some(wallet.clone());
                 self.imported_kit_metadata
                     .reload(&self.datadir, &self.cube_settings);
-                self.cache.has_vault = wallet.supports_inheritance();
+                self.cache.has_vault = wallet.supports_inheritance() || wallet.is_imported();
                 self.cache.has_imported_bitcoin = wallet.is_imported();
                 self.cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
 
@@ -10923,7 +10923,11 @@ pub(crate) mod tests {
         assert!(app.panels.transactions.is_some());
         assert!(app.panels.recovery.is_none());
         assert!(!app.claim_source_cube().has_vault);
-        assert!(!app.cache.has_vault); // Legacy inheritance/Connect capability.
+        assert!(
+            app.cache.has_vault,
+            "an imported Vault is this Cube's Vault"
+        );
+        assert!(!app.cache.has_inheritance_vault());
         assert!(app.cache.has_imported_bitcoin);
         assert!(app.wallet.as_ref().unwrap().signer.is_none());
         assert_eq!(app.wallet.as_ref().unwrap().id(), attachment.wallet_id);
