@@ -274,133 +274,11 @@ impl App {
                 }
                 self.set_connect_status(ConnectionStatus::Reconnecting)
             }
-            M::SessionEvent(session_event) => {
-                log::info!(
-                    "[CONNECT GRPC] SessionEvent seq={} type={:?} session={}",
-                    session_event.event_seq,
-                    session_event.event_type,
-                    session_event.session_id,
-                );
-                // Persist the latest seq so a restart resumes from the
-                // right cursor. Best-effort — log and continue on error.
-                let seq = session_event.event_seq;
-                let persist_task = if let Some(email) = self.connect_email.clone() {
-                    let network_dir = self.datadir.network_directory(self.cache.chain());
-                    Task::perform(
-                        async move {
-                            if let Err(e) =
-                                crate::services::connect::client::cache::set_last_seen_event_seq_for_email(
-                                    &network_dir,
-                                    &email,
-                                    seq,
-                                )
-                                .await
-                            {
-                                log::warn!(
-                                    "[CONNECT GRPC] Failed to persist last_seen_event_seq={}: {}",
-                                    seq,
-                                    e,
-                                );
-                            }
-                        },
-                        |_| Message::CacheUpdated,
-                    )
-                } else {
-                    Task::none()
-                };
-                // Fan the event out via Message::KeychainSign(StreamEvent).
-                // It travels through the standard update path and is
-                // delegated to the active PSBT modal (if any) by
-                // `PsbtState`'s catchall arm — modals that don't
-                // recognise the session_id are no-ops.
-                let dispatch_task = Task::done(Message::KeychainSign(
-                    crate::app::state::vault::keychain_sign::KeychainSignMessage::StreamEvent(
-                        session_event,
-                    ),
-                ));
-                Task::batch([persist_task, dispatch_task])
-            }
+            M::SessionEvent(session_event) => self.handle_connect_session_event(session_event),
             M::DuressActivated { unlock_at, source } => {
-                // Phase 7b: remote duress activation. Persist active state to
-                // DuressLocalState (at the data-dir root) WITHOUT wiping —
-                // remote activation can be accidental, so local Cube data is
-                // left intact. The UI lock is sequenced AFTER the persist (it's
-                // the task's completion message, not a parallel batch) so the
-                // cryptic screen never appears before `active` is durable; if
-                // the app exits right after seeing the lock, the relaunch
-                // reconcile still routes back into duress.
-                log::warn!(
-                    "[CONNECT GRPC] Duress activated remotely (source={})",
-                    source
-                );
-                let root = self.datadir.path().to_path_buf();
-                Task::perform(
-                    async move {
-                        // load() already maps a missing file to Ok(default); a
-                        // real parse/IO error must NOT be papered over with a
-                        // default that save() then writes back, clobbering valid
-                        // state (enrolled / account_id / encrypted code). Skip
-                        // the persist on a real read error — the UI still locks
-                        // below, and the DuressLockRemote backstop / session-check
-                        // re-sync handle durability.
-                        let mut st = match crate::services::duress::DuressLocalState::load(&root) {
-                            Ok(st) => st,
-                            Err(e) => {
-                                log::warn!(
-                                    "[CONNECT GRPC] reading duress state failed; \
-                                     not overwriting: {e}"
-                                );
-                                return;
-                            }
-                        };
-                        st.active = true;
-                        st.unlock_at = unlock_at;
-                        // Retry: a failed persist would let a relaunch reconcile
-                        // (which keys off st.active) drop back to the normal Home
-                        // flow with Cube data intact while the server is still in
-                        // duress. The DuressLockRemote handler re-persists as a
-                        // final backstop tied to the UI lock.
-                        for attempt in 1..=3 {
-                            match st.save(&root) {
-                                Ok(()) => break,
-                                Err(e) => log::warn!(
-                                    "[CONNECT GRPC] persist remote duress state \
-                                     attempt {attempt}/3 failed: {e}"
-                                ),
-                            }
-                        }
-                    },
-                    |_| Message::View(view::Message::DuressLockRemote),
-                )
+                self.handle_connect_duress_activated(unlock_at, source)
             }
-            M::DuressCleared => {
-                log::info!("[CONNECT GRPC] Duress cleared remotely");
-                let root = self.datadir.path().to_path_buf();
-                Task::perform(
-                    async move {
-                        // As above: skip on a real read error so a transient
-                        // failure can't clobber valid state with a default. The
-                        // cryptic screen's own server poll re-syncs the cleared
-                        // state on the next check.
-                        let mut st = match crate::services::duress::DuressLocalState::load(&root) {
-                            Ok(st) => st,
-                            Err(e) => {
-                                log::warn!(
-                                    "[CONNECT GRPC] reading duress state failed; \
-                                     not overwriting: {e}"
-                                );
-                                return;
-                            }
-                        };
-                        st.active = false;
-                        st.unlock_at = None;
-                        if let Err(e) = st.save(&root) {
-                            log::warn!("[CONNECT GRPC] Failed to clear remote duress state: {e}");
-                        }
-                    },
-                    |_| Message::CacheUpdated,
-                )
-            }
+            M::DuressCleared => self.handle_connect_duress_cleared(),
             M::DuressDisabled { account_id } => {
                 // Issue 2: duress disabled account-wide on another device. Disarm
                 // THIS device locally (clear Cube PIN hashes + local state +
@@ -423,6 +301,143 @@ impl App {
                 )
             }
         }
+    }
+
+    fn handle_connect_session_event(
+        &self,
+        session_event: crate::services::connect::grpc::connect_v1::SessionEvent,
+    ) -> Task<Message> {
+        log::info!(
+            "[CONNECT GRPC] SessionEvent seq={} type={:?} session={}",
+            session_event.event_seq,
+            session_event.event_type,
+            session_event.session_id,
+        );
+        // Persist the latest seq so a restart resumes from the
+        // right cursor. Best-effort — log and continue on error.
+        let seq = session_event.event_seq;
+        let persist_task = if let Some(email) = self.connect_email.clone() {
+            let network_dir = self.datadir.network_directory(self.cache.chain());
+            Task::perform(
+                async move {
+                    if let Err(e) =
+                        crate::services::connect::client::cache::set_last_seen_event_seq_for_email(
+                            &network_dir,
+                            &email,
+                            seq,
+                        )
+                        .await
+                    {
+                        log::warn!(
+                            "[CONNECT GRPC] Failed to persist last_seen_event_seq={}: {}",
+                            seq,
+                            e,
+                        );
+                    }
+                },
+                |_| Message::CacheUpdated,
+            )
+        } else {
+            Task::none()
+        };
+        // Fan the event out via Message::KeychainSign(StreamEvent).
+        // It travels through the standard update path and is
+        // delegated to the active PSBT modal (if any) by
+        // `PsbtState`'s catchall arm — modals that don't
+        // recognise the session_id are no-ops.
+        let dispatch_task = Task::done(Message::KeychainSign(
+            crate::app::state::vault::keychain_sign::KeychainSignMessage::StreamEvent(
+                session_event,
+            ),
+        ));
+        Task::batch([persist_task, dispatch_task])
+    }
+
+    fn handle_connect_duress_activated(
+        &self,
+        unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+        source: String,
+    ) -> Task<Message> {
+        // Phase 7b: remote duress activation. Persist active state to
+        // DuressLocalState (at the data-dir root) WITHOUT wiping —
+        // remote activation can be accidental, so local Cube data is
+        // left intact. The UI lock is sequenced AFTER the persist (it's
+        // the task's completion message, not a parallel batch) so the
+        // cryptic screen never appears before `active` is durable; if
+        // the app exits right after seeing the lock, the relaunch
+        // reconcile still routes back into duress.
+        log::warn!(
+            "[CONNECT GRPC] Duress activated remotely (source={})",
+            source
+        );
+        let root = self.datadir.path().to_path_buf();
+        Task::perform(
+            async move {
+                // load() already maps a missing file to Ok(default); a
+                // real parse/IO error must NOT be papered over with a
+                // default that save() then writes back, clobbering valid
+                // state (enrolled / account_id / encrypted code). Skip
+                // the persist on a real read error — the UI still locks
+                // below, and the DuressLockRemote backstop / session-check
+                // re-sync handle durability.
+                let mut st = match crate::services::duress::DuressLocalState::load(&root) {
+                    Ok(st) => st,
+                    Err(e) => {
+                        log::warn!(
+                            "[CONNECT GRPC] reading duress state failed; \
+                             not overwriting: {e}"
+                        );
+                        return;
+                    }
+                };
+                st.active = true;
+                st.unlock_at = unlock_at;
+                // Retry: a failed persist would let a relaunch reconcile
+                // (which keys off st.active) drop back to the normal Home
+                // flow with Cube data intact while the server is still in
+                // duress. The DuressLockRemote handler re-persists as a
+                // final backstop tied to the UI lock.
+                for attempt in 1..=3 {
+                    match st.save(&root) {
+                        Ok(()) => break,
+                        Err(e) => log::warn!(
+                            "[CONNECT GRPC] persist remote duress state \
+                             attempt {attempt}/3 failed: {e}"
+                        ),
+                    }
+                }
+            },
+            |_| Message::View(view::Message::DuressLockRemote),
+        )
+    }
+
+    fn handle_connect_duress_cleared(&self) -> Task<Message> {
+        log::info!("[CONNECT GRPC] Duress cleared remotely");
+        let root = self.datadir.path().to_path_buf();
+        Task::perform(
+            async move {
+                // As above: skip on a real read error so a transient
+                // failure can't clobber valid state with a default. The
+                // cryptic screen's own server poll re-syncs the cleared
+                // state on the next check.
+                let mut st = match crate::services::duress::DuressLocalState::load(&root) {
+                    Ok(st) => st,
+                    Err(e) => {
+                        log::warn!(
+                            "[CONNECT GRPC] reading duress state failed; \
+                             not overwriting: {e}"
+                        );
+                        return;
+                    }
+                };
+                st.active = false;
+                st.unlock_at = None;
+                if let Err(e) = st.save(&root) {
+                    log::warn!("[CONNECT GRPC] Failed to clear remote duress state: {e}");
+                }
+            },
+            |_| Message::CacheUpdated,
+        )
     }
 
     /// The Connect control, its panel and renewal; everything else routes on.
