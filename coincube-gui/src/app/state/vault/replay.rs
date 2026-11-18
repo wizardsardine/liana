@@ -16,13 +16,11 @@
 //!   guarantee.
 //! - *Replayable*: at least one input would be finalised from legacy
 //!   signatures alone. Amber; broadcasting needs the explicit acknowledgement
-//!   [`REPLAYABLE_ACKNOWLEDGEMENT`] — **unless** one of those inputs spends a
-//!   deposit Connect has positively confirmed also exists on Bitcoin (`#276`
-//!   I13). Such an input *requires* a replay-capable signature (or, once Lane
-//!   B1.5 exists, a poison split first); no acknowledgement clears it
-//!   ([`blocked_entangled_inputs`]). An input whose entanglement is *Unknown*
-//!   is amber and acknowledgeable, never blocked — a lookup that has not
-//!   happened is not evidence either way.
+//!   [`REPLAYABLE_ACKNOWLEDGEMENT`]. An input spending a deposit Connect has
+//!   positively confirmed also exists on Bitcoin (`#276` I13,
+//!   [`confirmed_entangled_inputs`]) is named in a stronger warning that
+//!   offers **Split first** or a replay-protected signature, but it is never
+//!   blocked: the user decides whether to risk replay (Robert, 2026-11-17).
 //! - *Split — cannot replay*: the spend's inputs include a verified split key
 //!   (a coin whose ancestry exists only on this chain), so Bitcoin rejects the
 //!   whole transaction; set by [`ReplayReview::with_split_key`].
@@ -316,6 +314,10 @@ pub struct ReplayReview {
     /// see. Keying to content also means a recompute with no new signature
     /// (every Keychain stream event emits one) keeps the tick.
     acknowledged_for: Option<[u8; 32]>,
+    /// The inputs known to also exist on Bitcoin when the user ticked. A
+    /// lookup that confirms another input afterwards asks again, so nobody
+    /// sends past a warning they never saw.
+    acknowledged_confirmed: BTreeSet<usize>,
 }
 
 impl ReplayReview {
@@ -325,6 +327,7 @@ impl ReplayReview {
             split_key: None,
             psbt_digest: psbt_digest(psbt),
             acknowledged_for: None,
+            acknowledged_confirmed: BTreeSet::new(),
         }
     }
 
@@ -370,6 +373,7 @@ impl ReplayReview {
         });
         if self.acknowledged_for == Some(next.psbt_digest) {
             next.acknowledged_for = self.acknowledged_for;
+            next.acknowledged_confirmed = self.acknowledged_confirmed.clone();
         }
         next
     }
@@ -381,7 +385,29 @@ impl ReplayReview {
 
     /// Record or clear the acknowledgement for the PSBT this review is of.
     pub fn set_acknowledged(&mut self, acknowledged: bool) {
+        self.acknowledge(acknowledged, &[]);
+    }
+
+    /// Record or clear the acknowledgement, with the inputs the spend screen
+    /// showed as also existing on Bitcoin when it was given.
+    pub fn acknowledge(&mut self, acknowledged: bool, entangled: &[(usize, Entanglement)]) {
         self.acknowledged_for = acknowledged.then_some(self.psbt_digest);
+        self.acknowledged_confirmed = if acknowledged {
+            confirmed_entangled_inputs(&self.status(), entangled)
+                .into_iter()
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+    }
+
+    /// Whether the acknowledgement covers these signatures **and** every
+    /// input now known to also exist on Bitcoin.
+    pub fn acknowledgement_covers(&self, entangled: &[(usize, Entanglement)]) -> bool {
+        self.acknowledged()
+            && confirmed_entangled_inputs(&self.status(), entangled)
+                .iter()
+                .all(|index| self.acknowledged_confirmed.contains(index))
     }
 
     /// The digest of the PSBT this review describes.
@@ -390,24 +416,22 @@ impl ReplayReview {
     }
 
     /// Whether the signatures collected are enough: the finaliser would
-    /// produce a transaction **and** no input the user is required to protect
-    /// ([`blocked_entangled_inputs`]) is left replayable. This is what closes
-    /// the signing picker on BTCB2 — a blocked input keeps it open so the
-    /// replay-capable signature can be added. `entangled` is
-    /// [`entangled_inputs`] resolved from the cache at the time of the check.
-    pub fn signatures_complete(&self, entangled: &[(usize, Entanglement)]) -> bool {
-        let status = self.status();
-        status.is_finalisable() && blocked_entangled_inputs(&status, entangled).is_empty()
+    /// produce a transaction. This is what closes the signing picker on
+    /// BTCB2. Inputs that also exist on Bitcoin do not keep it open: the
+    /// user may add a replay-protected signature, split first, or accept
+    /// the risk at Broadcast.
+    pub fn signatures_complete(&self) -> bool {
+        self.status().is_finalisable()
     }
 
     /// Whether the spend may be broadcast: [`Self::signatures_complete`], and
-    /// acknowledged when it is replayable. The acknowledgement never
-    /// substitutes for a required signature on a known-entangled input.
+    /// acknowledged when it is replayable. Inputs known to also exist on
+    /// Bitcoin never block it; the acknowledgement must only have been given
+    /// with them shown ([`Self::acknowledgement_covers`]).
     pub fn broadcast_ready(&self, entangled: &[(usize, Entanglement)]) -> bool {
         let status = self.status();
         status.is_finalisable()
-            && blocked_entangled_inputs(&status, entangled).is_empty()
-            && (!status.needs_acknowledgement() || self.acknowledged())
+            && (!status.needs_acknowledgement() || self.acknowledgement_covers(entangled))
     }
 }
 
@@ -418,13 +442,13 @@ pub fn psbt_digest(psbt: &Psbt) -> [u8; 32] {
 }
 
 /// Inputs (by index) that are replayable **and** spend a deposit Connect has
-/// positively confirmed on the twin chain ([`Entanglement::Entangled`]). These
-/// require a replay-capable signature in the witness (`#276` I13); the
-/// acknowledgement does not apply to them. `Unknown` inputs are never in this
-/// set: gating on an unanswered lookup would block every BTCB2 spend until a
-/// sync completed, and "never reads as not entangled" asks for the honest
-/// amber, not a hard stop.
-pub fn blocked_entangled_inputs(
+/// positively confirmed on the twin chain ([`Entanglement::Entangled`]): the
+/// spend as signed can also move those coins on Bitcoin (`#276` I13). The
+/// spend screen names them and offers Split first or a replay-protected
+/// signature; sending them anyway takes the same acknowledgement as any
+/// replayable spend. `Unknown` inputs are not in this set: an unanswered
+/// lookup is shown as not yet checked.
+pub fn confirmed_entangled_inputs(
     status: &ReplayStatus,
     entangled: &[(usize, Entanglement)],
 ) -> Vec<usize> {
@@ -466,12 +490,10 @@ pub fn entangled_inputs(
 
 /// Whether the Broadcast action is available. One definition for the state
 /// (broadcast handler) and the view (button), so they cannot disagree: on a
-/// Bitcoin-family Cube it is the path threshold as before (`entangled` is
-/// ignored — it is always empty there); on Bitcoin Blake2b it is the
-/// finaliser's verdict, the I13 requirement on known-entangled inputs, and
-/// the acknowledgement. `entangled` must be resolved from the cache at the
-/// point of the check, so a lookup that lands after the last signature
-/// tightens the gate instead of being missed by it.
+/// Bitcoin-family Cube it is the path threshold as before; on Bitcoin
+/// Blake2b it is the finaliser's verdict and, for a replayable spend, the
+/// acknowledgement. `entangled` is resolved from the cache at the point of
+/// the check, so an input confirmed on Bitcoin after the tick asks again.
 pub fn broadcast_ready(
     path_ready: bool,
     review: Option<&ReplayReview>,
@@ -499,12 +521,8 @@ pub fn not_ready_reason(
     if checking {
         return localized_copy(CHECKING_COPY).to_string();
     }
-    let blocked = blocked_entangled_inputs(&review.status(), entangled);
-    if let Some(required) = blocked_entangled_copy(&blocked) {
-        return required;
-    }
     let (label, _) = pill_copy(&review.status(), entangled);
-    if review.status().needs_acknowledgement() && !review.acknowledged() {
+    if review.status().needs_acknowledgement() && !review.acknowledgement_covers(entangled) {
         return localized_format!(
             "{}. Tick \"{}\" to send.",
             "{}. Marca «{}» para enviar.",
@@ -515,39 +533,30 @@ pub fn not_ready_reason(
     label
 }
 
-/// The remedy line shown under the pill when [`blocked_entangled_inputs`] is
-/// non-empty: a replay-capable signature (the Cube key or a Border Wallet
-/// key), or splitting the coins first in Coin control (Lane B1.5), which
-/// the view offers as **Split first**.
-pub fn blocked_entangled_copy(blocked: &[usize]) -> Option<String> {
-    if blocked.is_empty() {
+/// The warning shown under the pill when [`confirmed_entangled_inputs`] is
+/// non-empty. It names the inputs, says what sending them as signed can do
+/// on Bitcoin and offers the ways to protect them: **Split first** in Coin
+/// control, or a replay-protected signature where a signer can make one.
+/// Sending anyway stays the user's choice, through the acknowledgement.
+pub fn confirmed_entangled_copy(confirmed: &[usize]) -> Option<String> {
+    if confirmed.is_empty() {
         return None;
     }
-    let list = blocked
+    let list = confirmed
         .iter()
         .map(|i| i.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let (noun, verb, pronoun) = if blocked.len() == 1 {
-        (
-            localized_copy("Input"),
-            localized_copy("exists"),
-            localized_copy("it"),
-        )
+    let (noun, verb) = if confirmed.len() == 1 {
+        (localized_copy("Input"), localized_copy("exists"))
     } else {
-        (
-            localized_copy("Inputs"),
-            localized_copy("exist"),
-            localized_copy("them"),
-        )
+        (localized_copy("Inputs"), localized_copy("exist"))
     };
     Some(localized_format!(
-        "{noun} {list} also {verb} on Bitcoin, so this cannot be sent without a replay-capable \
-         signature on {pronoun} (the Cube key or a Border Wallet key). If enough legacy \
-         signatures were already collected to form a Bitcoin witness, create a new spend and \
-         collect the replay-capable signature first; Coincube refuses to retain both complete \
-         alternatives. Or split the coins first in Coin control.",
-        "{noun} {list} también {verb} en Bitcoin. Para enviar se necesita una firma protegida contra repetición en {pronoun}, con la clave del Cube o de Border Wallet. Si ya hay suficientes firmas antiguas para formar un testigo válido en Bitcoin, crea un gasto nuevo y recopila primero la firma protegida. Coincube rechaza conservar ambas alternativas completas. También puedes separar primero las monedas en Control de monedas."
+        "{noun} {list} also {verb} on Bitcoin. Sent with these signatures, this spend can also \
+         move those coins on Bitcoin. To keep them separate, split the coins first or add a \
+         replay-protected signature. You can also send it anyway.",
+        "{noun} {list} también {verb} en Bitcoin. Con estas firmas, este gasto también puede mover esas monedas en Bitcoin. Para separarlas, divide primero las monedas o añade una firma protegida contra repetición. También puedes enviarlo de todos modos."
     ))
 }
 
@@ -573,17 +582,17 @@ pub fn pill_copy(status: &ReplayStatus, entangled: &[(usize, Entanglement)]) -> 
             PillTone::Success,
         ),
         ReplayStatus::Replayable { inputs } => {
-            let blocked: BTreeSet<usize> = blocked_entangled_inputs(status, entangled)
+            let confirmed: BTreeSet<usize> = confirmed_entangled_inputs(status, entangled)
                 .into_iter()
                 .collect();
             let entangled: BTreeSet<usize> = entangled.iter().map(|(index, _)| *index).collect();
             let list = inputs
                 .iter()
                 .map(|index| {
-                    if blocked.contains(index) {
+                    if confirmed.contains(index) {
                         localized_format!(
-                            "{index} (also exists on Bitcoin — signature required)",
-                            "{index} (también existe en Bitcoin · requiere firma)"
+                            "{index} (also exists on Bitcoin)",
+                            "{index} (también existe en Bitcoin)"
                         )
                     } else if entangled.contains(index) {
                         localized_format!(
@@ -939,11 +948,12 @@ mod tests {
         assert!(!broadcast_ready(true, Some(&unknown), none));
     }
 
-    /// `#276` I13: a replayable input that Connect has confirmed also exists
-    /// on Bitcoin *requires* a replay-capable signature. The acknowledgement
-    /// never clears it; an unanswered lookup never imposes it.
+    /// `#276` I13, as revised (Robert, 2026-11-17): a replayable input that
+    /// Connect has confirmed also exists on Bitcoin is named in a warning,
+    /// never blocked. Ticking with it shown sends; a confirmation that lands
+    /// after the tick asks again, so the warning is always seen first.
     #[test]
-    fn a_known_entangled_replayable_input_cannot_be_acknowledged_away() {
+    fn a_known_entangled_replayable_input_warns_and_sends_after_the_tick() {
         let f = fixture();
         let secp = secp();
         let legacy_only = legacy(&legacy(&f.psbt, &f.signers[0]), &f.signers[1]);
@@ -951,56 +961,50 @@ mod tests {
         assert_eq!(review.status, ReplayStatus::Replayable { inputs: vec![0] });
         let entangled = [(0, Entanglement::Entangled)];
 
-        // 1. Known entangled + legacy-only: not ready, and still not ready
-        //    after the tick — the check that distinguishes a requirement
-        //    from a warning.
+        // 1. Known entangled + legacy-only: signatures are complete, the
+        //    warning names the input, and the tick given with it shown sends.
         assert_eq!(
-            blocked_entangled_inputs(&review.status(), &entangled),
+            confirmed_entangled_inputs(&review.status(), &entangled),
             vec![0]
         );
-        assert!(!review.signatures_complete(&entangled));
+        assert!(confirmed_entangled_copy(&[0]).is_some());
+        assert!(review.signatures_complete());
         assert!(!review.broadcast_ready(&entangled));
-        review.set_acknowledged(true);
-        assert!(!review.broadcast_ready(&entangled));
-        assert!(!broadcast_ready(true, Some(&review), &entangled));
+        review.acknowledge(true, &entangled);
+        assert!(review.broadcast_ready(&entangled));
+        assert!(broadcast_ready(true, Some(&review), &entangled));
 
-        // 2. The same input with a verified unified signature in the witness
-        //    is ready: the requirement is satisfiable in this build.
+        // 2. A tick given before the lookup confirmed the input asks again.
+        let mut early = ReplayReview::new(&legacy_only, &secp);
+        early.acknowledge(true, &[(0, Entanglement::Unknown)]);
+        assert!(early.broadcast_ready(&[(0, Entanglement::Unknown)]));
+        assert!(!early.broadcast_ready(&entangled));
+        early.acknowledge(true, &entangled);
+        assert!(early.broadcast_ready(&entangled));
+
+        // 3. A verified unified signature makes it Protected: no warning.
         let with_unified = legacy(&unified(&f.psbt, &f.signers[0]), &f.signers[1]);
         let protected = ReplayReview::new(&with_unified, &secp);
         assert_eq!(protected.status, ReplayStatus::Protected);
-        assert!(blocked_entangled_inputs(&protected.status, &entangled).is_empty());
-        assert!(protected.signatures_complete(&entangled));
+        assert!(confirmed_entangled_inputs(&protected.status, &entangled).is_empty());
         assert!(protected.broadcast_ready(&entangled));
-
-        // 3. Unknown + replayable: unchanged amber, the tick still works —
-        //    the gate must not over-block a spend nobody has looked up yet.
-        let unknown = [(0, Entanglement::Unknown)];
-        let mut review = ReplayReview::new(&legacy_only, &secp);
-        assert!(blocked_entangled_inputs(&review.status(), &unknown).is_empty());
-        assert!(review.signatures_complete(&unknown));
-        assert!(!review.broadcast_ready(&unknown));
-        review.set_acknowledged(true);
-        assert!(review.broadcast_ready(&unknown));
 
         // 4. Not entangled + replayable: the unchanged acknowledgement path.
         let mut review = ReplayReview::new(&legacy_only, &secp);
         assert!(!review.broadcast_ready(&[]));
         review.set_acknowledged(true);
         assert!(review.broadcast_ready(&[]));
-        // (`entangled_inputs` never yields NotEntangled entries, but the gate
-        // ignores them if handed one.)
         assert!(review.broadcast_ready(&[(0, Entanglement::NotEntangled)]));
 
-        // The requirement is on the witness, not on the coin: an entangled
+        // The warning is about the witness, not the coin: an entangled
         // input that is not replayable, or is not an input at all, is not
-        // blocked.
-        assert!(blocked_entangled_inputs(
+        // named.
+        assert!(confirmed_entangled_inputs(
             &ReplayStatus::Replayable { inputs: vec![1] },
             &[(0, Entanglement::Entangled)]
         )
         .is_empty());
-        assert!(blocked_entangled_inputs(
+        assert!(confirmed_entangled_inputs(
             &ReplayStatus::Unknown(UnknownReason::Incomplete),
             &[(0, Entanglement::Entangled)]
         )
@@ -1008,25 +1012,24 @@ mod tests {
     }
 
     #[test]
-    fn blocked_copy_names_the_input_and_the_honest_remedy() {
-        assert_eq!(blocked_entangled_copy(&[]), None);
-        let one = blocked_entangled_copy(&[0]).unwrap();
+    fn confirmed_copy_names_the_inputs_the_risk_and_the_options() {
+        assert_eq!(confirmed_entangled_copy(&[]), None);
+        let one = confirmed_entangled_copy(&[0]).unwrap();
         assert!(one.starts_with("Input 0 also exists on Bitcoin"), "{}", one);
-        assert!(one.contains("replay-capable signature on it"), "{}", one);
-        assert!(one.contains("Cube key or a Border Wallet key"), "{}", one);
-        assert!(one.contains("create a new spend"), "{}", one);
         assert!(
-            one.ends_with("Or split the coins first in Coin control."),
+            one.contains("can also move those coins on Bitcoin"),
             "{}",
             one
         );
-        let two = blocked_entangled_copy(&[0, 2]).unwrap();
+        assert!(one.contains("split the coins first"), "{}", one);
+        assert!(one.contains("replay-protected signature"), "{}", one);
+        assert!(one.ends_with("You can also send it anyway."), "{}", one);
+        let two = confirmed_entangled_copy(&[0, 2]).unwrap();
         assert!(
             two.starts_with("Inputs 0, 2 also exist on Bitcoin"),
             "{}",
             two
         );
-        assert!(two.contains("signature on them"), "{}", two);
     }
 
     /// The acknowledgement is keyed to the PSBT's bytes: a recompute over the
@@ -1086,7 +1089,7 @@ mod tests {
             ),
             (
                 "Replayable — no replay-capable signature on inputs \
-                 0 (also exists on Bitcoin — signature required), \
+                 0 (also exists on Bitcoin), \
                  2 (not yet checked against Bitcoin)"
                     .to_string(),
                 PillTone::Warning

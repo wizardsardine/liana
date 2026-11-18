@@ -508,7 +508,7 @@ impl PsbtState {
         }
         let sign = match &self.replay {
             None => !self.broadcast_ready(cache),
-            Some(review) => !review.signatures_complete(&self.entangled_inputs(cache)),
+            Some(review) => !review.signatures_complete(),
         };
         self.action_id(if sign {
             "overview.sign"
@@ -757,9 +757,9 @@ impl PsbtState {
     /// Whether this spend may be broadcast now — the one definition the
     /// Broadcast handler and the view share ([`replay::broadcast_ready`]):
     /// verified finalization on a Bitcoin-family Cube; on Bitcoin Blake2b the
-    /// unified finalizer's verdict, the I13 requirement on known-entangled inputs,
-    /// and the acknowledgement. On either chain a recorded split-key split
-    /// also needs a fresh re-qualification of its key.
+    /// unified finalizer's verdict and, for a replayable spend, the
+    /// acknowledgement. On either chain a recorded split-key split also needs
+    /// a fresh re-qualification of its key.
     pub fn broadcast_ready(&self, cache: &Cache) -> bool {
         replay::broadcast_ready(
             self.bitcoin_signatures_complete(),
@@ -810,7 +810,6 @@ impl PsbtState {
         // Derive the picker's "Signed" indicator from the counted signers so
         // the per-key rows and the "X of N collected" badge can't diverge.
         let counted = self.tx.signers();
-        let entangled = self.entangled_inputs(cache);
         let bitcoin_complete = self.bitcoin_signatures_complete();
         let close = match self.modal.as_mut() {
             Some(PsbtModal::Sign(sign)) => {
@@ -822,14 +821,12 @@ impl PsbtState {
                 // failing row could be marked Failed). Dismissal-driven close
                 // has its own drain gate and is unaffected.
                 // On Bitcoin Blake2b "path satisfied" is the finaliser's
-                // verdict over verified signatures, not the partial-sig count,
-                // and a known-entangled input left replayable keeps the picker
-                // open so its required replay-capable signature can be added
-                // (`ReplayReview::signatures_complete`); the acknowledgement is
-                // asked for at Broadcast, not here.
+                // verdict over verified signatures, not the partial-sig count
+                // (`ReplayReview::signatures_complete`); the replay warning
+                // and acknowledgement come at Broadcast, not here.
                 let path_satisfied = match &self.replay {
                     None => bitcoin_complete,
-                    Some(review) => review.signatures_complete(&entangled),
+                    Some(review) => review.signatures_complete(),
                 };
                 (path_satisfied && !sign.keychain_persistence_pending())
                     || sign.should_close_after_dismiss()
@@ -1209,8 +1206,9 @@ impl PsbtState {
             Message::View(view::Message::Spend(view::SpendTxMessage::AcknowledgeReplay(
                 acknowledged,
             ))) => {
+                let entangled = self.entangled_inputs(cache);
                 if let Some(review) = self.replay.as_mut() {
-                    review.set_acknowledged(acknowledged);
+                    review.acknowledge(acknowledged, &entangled);
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
@@ -5813,8 +5811,11 @@ mod tests {
         // `record_entanglement`, the chain parameter of `classify_signers`,
         // `refuse_before_dispatch`).
 
+        /// Revised with I13 (Robert, 2026-11-17): a tick given before the
+        /// input was known to exist on Bitcoin does not cover it; ticking with
+        /// the warning shown does, and the spend then sends.
         #[test]
-        fn gandalf_probe_entangled_legacy_ack_is_not_sufficient() {
+        fn gandalf_probe_entangled_legacy_ack_must_be_given_with_the_warning() {
             let f = fixture();
             let wallet = wallet_with_hot_signer(&f);
             let secp = secp256k1::Secp256k1::new();
@@ -5846,8 +5847,11 @@ mod tests {
             );
             assert!(
                 !pill.broadcast_ready,
-                "I13 requires a verified unified signature or positive split evidence"
+                "a tick given before the warning does not cover the confirmed input"
             );
+            let entangled = pill.entangled.clone();
+            state.replay.as_mut().unwrap().acknowledge(true, &entangled);
+            assert!(state.replay_presentation(&cache).unwrap().broadcast_ready);
         }
 
         #[test]
@@ -6391,11 +6395,7 @@ mod tests {
             // classifies it as Deprecated and hides both signing actions.
             state.tx.status = SpendStatus::Pending;
             let cache = Cache::default();
-            assert!(state
-                .replay
-                .as_ref()
-                .unwrap()
-                .signatures_complete(&state.entangled_inputs(&cache)));
+            assert!(state.replay.as_ref().unwrap().signatures_complete());
             assert!(!state.broadcast_ready(&cache));
 
             state.modal = Some(PsbtModal::Sign(SignModal::new(
@@ -6573,15 +6573,14 @@ mod tests {
             );
         }
 
-        /// `#276` I13 through the state: a legacy-only spend of a deposit
-        /// Connect has confirmed on Bitcoin is not broadcastable — not through
-        /// the handler's gate, not through the view's button, and not after
-        /// the acknowledgement — until a verified unified signature is in the
-        /// witness. The entangled set is read from the cache at every check,
-        /// so a lookup that lands after the last signature still tightens the
-        /// gate. `Unknown` and `NotEntangled` keep the acknowledgement path.
+        /// `#276` I13 through the state, as revised (Robert, 2026-11-17): a
+        /// legacy-only spend of a deposit Connect has confirmed on Bitcoin is
+        /// warned about, never blocked. The picker closes at the threshold,
+        /// the warning offers Split first, and the tick sends it, as long as
+        /// it was given with the confirmed input shown: a lookup landing after
+        /// the tick asks again. A unified signature makes it Protected.
         #[test]
-        fn a_known_entangled_input_requires_a_unified_signature_through_state_and_view() {
+        fn a_known_entangled_input_warns_and_sends_after_the_tick_through_state_and_view() {
             use crate::services::entangled::Entanglement;
             let f = fixture();
             let wallet = wallet_with_hot_signer(&f);
@@ -6600,59 +6599,53 @@ mod tests {
             let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
                 crate::daemon::client::Coincubed::new(MockDaemon::new(vec![]).run()),
             );
+            let tick = |state: &mut PsbtState, cache: &Cache| {
+                let _ = state.update(
+                    daemon.clone(),
+                    cache,
+                    Message::View(view::Message::Spend(
+                        view::SpendTxMessage::AcknowledgeReplay(true),
+                    )),
+                );
+            };
 
-            // Before any lookup: Unknown, amber, acknowledgeable.
+            // Before any lookup: Unknown, amber, the tick sends.
             let unchecked = Cache::default();
             let pill = state.replay_presentation(&unchecked).unwrap();
             assert_eq!(pill.entangled, vec![(0, Entanglement::Unknown)]);
-            assert!(pill.review.signatures_complete(&pill.entangled));
+            assert!(pill.review.signatures_complete());
             assert!(!pill.broadcast_ready);
-            let _ = state.update(
-                daemon.clone(),
-                &unchecked,
-                Message::View(view::Message::Spend(
-                    view::SpendTxMessage::AcknowledgeReplay(true),
-                )),
-            );
+            tick(&mut state, &unchecked);
             assert!(state.broadcast_ready(&unchecked));
-            assert!(
-                state
-                    .replay_presentation(&unchecked)
-                    .unwrap()
-                    .broadcast_ready
-            );
 
-            // The lookup lands *after* the acknowledgement: the same review,
-            // read against the new cache, is no longer ready — through the
-            // state gate and through the pill the view renders.
+            // The lookup lands after the tick: the input is now named as also
+            // existing on Bitcoin, and the tick is asked for again.
             let mut entangled = Cache::default();
             entangled.record_entanglement(txid, Entanglement::Entangled, std::time::Instant::now());
-            assert!(state.replay.as_ref().unwrap().acknowledged());
             assert!(!state.broadcast_ready(&entangled));
             let pill = state.replay_presentation(&entangled).unwrap();
             assert!(!pill.broadcast_ready);
-            assert!(!pill.review.signatures_complete(&pill.entangled));
+            assert!(pill.review.signatures_complete());
             assert_eq!(
-                replay::blocked_entangled_inputs(&pill.review.status(), &pill.entangled),
+                replay::confirmed_entangled_inputs(&pill.review.status(), &pill.entangled),
                 vec![0]
             );
             let (label, _) = replay::pill_copy(&pill.review.status(), &pill.entangled);
             assert_eq!(
                 label,
-                "Replayable — no replay-capable signature on input 0 \
-                 (also exists on Bitcoin — signature required)"
+                "Replayable — no replay-capable signature on input 0 (also exists on Bitcoin)"
             );
-            assert!(replay::blocked_entangled_copy(&[0]).is_some());
-            // Ticking again changes nothing.
-            let _ = state.update(
-                daemon.clone(),
-                &entangled,
-                Message::View(view::Message::Spend(
-                    view::SpendTxMessage::AcknowledgeReplay(true),
-                )),
+            // Ticking with the warning shown sends it.
+            tick(&mut state, &entangled);
+            assert!(state.broadcast_ready(&entangled));
+            assert!(
+                state
+                    .replay_presentation(&entangled)
+                    .unwrap()
+                    .broadcast_ready
             );
-            assert!(!state.broadcast_ready(&entangled));
-            // The picker would not close on this set of signatures either.
+
+            // The picker closes at the legacy threshold: nothing is required.
             state.modal = Some(PsbtModal::Sign(SignModal::new(
                 HashSet::new(),
                 state.wallet.clone(),
@@ -6664,25 +6657,7 @@ mod tests {
                 false,
             )));
             let _ = state.reconcile_and_maybe_close(&entangled);
-            assert!(
-                state.modal.is_some(),
-                "a blocked input keeps the picker open"
-            );
-            // …but a lookup answering NotEntangled lets the ordinary
-            // acknowledgement path close it.
-            let mut not_entangled = Cache::default();
-            not_entangled.record_entanglement(
-                txid,
-                Entanglement::NotEntangled,
-                std::time::Instant::now(),
-            );
-            let _ = state.reconcile_and_maybe_close(&not_entangled);
             assert!(state.modal.is_none());
-            assert!(state
-                .replay_presentation(&not_entangled)
-                .unwrap()
-                .entangled
-                .is_empty());
 
             // Adding a unified signature after a complete legacy threshold
             // would leave two complete alternatives, so the reloaded-state
@@ -6699,8 +6674,8 @@ mod tests {
             ));
             assert!(!state.broadcast_ready(&entangled));
 
-            // Recreated in the safe order: unified first, then only the one
-            // legacy signature the mixed witness needs.
+            // Unified first, then only the one legacy signature the mixed
+            // witness needs: Protected, no warning, no tick needed.
             state.tx.psbt = legacy(&unified(&f.psbt, &f.signers[0]), &f.signers[1]);
             let _ = state.reconcile_and_maybe_close(&entangled);
             assert_eq!(
@@ -6709,68 +6684,10 @@ mod tests {
             );
             assert!(state.broadcast_ready(&entangled));
             let pill = state.replay_presentation(&entangled).unwrap();
-            assert!(pill.broadcast_ready);
             assert!(
-                replay::blocked_entangled_inputs(&pill.review.status(), &pill.entangled).is_empty()
+                replay::confirmed_entangled_inputs(&pill.review.status(), &pill.entangled)
+                    .is_empty()
             );
-
-            // Forward ordering: the lookup is already known when the legacy
-            // threshold is reached. The picker stays open at the threshold,
-            // the view keeps offering Sign (`signatures_complete` is what the
-            // Sign/Broadcast switch reads), and the hot key's unified
-            // signature then completes it.
-            let tx = SpendTx::new(
-                None,
-                legacy_only.clone(),
-                Vec::new(),
-                &f.descriptor,
-                &secp,
-                Network::Bitcoin,
-            );
-            let mut state = PsbtState::new(state.wallet.clone(), tx, true);
-            state.modal = Some(PsbtModal::Sign(SignModal::new(
-                HashSet::new(),
-                state.wallet.clone(),
-                CoincubeDirectory::new(PathBuf::new()),
-                Network::Bitcoin,
-                true,
-                None,
-                None,
-                false,
-            )));
-            let _ = state.reconcile_and_maybe_close(&entangled);
-            assert!(
-                state.modal.is_some(),
-                "picker stays open at the legacy threshold"
-            );
-            let pill = state.replay_presentation(&entangled).unwrap();
-            assert!(
-                !pill.review.signatures_complete(&pill.entangled),
-                "Sign stays offered"
-            );
-            assert!(!pill.broadcast_ready);
-            state.tx.psbt = legacy(
-                &legacy(&unified(&f.psbt, &f.signers[2]), &f.signers[0]),
-                &f.signers[1],
-            );
-            let _ = state.reconcile_and_maybe_close(&entangled);
-            assert!(
-                state.modal.is_some(),
-                "unsafe retained alternatives do not close the picker"
-            );
-            assert!(matches!(
-                &state.replay.as_ref().unwrap().status(),
-                ReplayStatus::Unknown(UnknownReason::Refused(_))
-            ));
-            state.tx.psbt = legacy(&unified(&f.psbt, &f.signers[0]), &f.signers[1]);
-            let _ = state.reconcile_and_maybe_close(&entangled);
-            assert!(
-                state.modal.is_none(),
-                "safe recreated spend closes the picker"
-            );
-            let pill = state.replay_presentation(&entangled).unwrap();
-            assert!(pill.review.signatures_complete(&pill.entangled));
-            assert!(pill.broadcast_ready);
         }
 
         #[test]
