@@ -437,7 +437,7 @@ fn verify_download(
 
 /// Install bitcoind by verifying the download and unpacking in `install_dir`.
 pub fn install_bitcoind(
-    install_dir: &PathBuf,
+    install_dir: &Path,
     bytes: &[u8],
     verification: &DownloadVerification,
 ) -> Result<(), InstallBitcoindError> {
@@ -1173,7 +1173,7 @@ impl InternalBitcoindStep {
         use message::InternalBitcoindMsg as M;
         match msg {
             M::LocalFeatureChecked(chain, request, pending, result) => {
-                self.handle_local_feature_check(chain, request, pending, result)
+                self.handle_local_feature_check(chain, request, *pending, result)
             }
             M::Previous => {
                 self.local_feature_request = self.local_feature_request.wrapping_add(1);
@@ -1193,7 +1193,7 @@ impl InternalBitcoindStep {
         &mut self,
         chain: crate::chain::ChainId,
         request: u64,
-        pending: Box<message::InternalBitcoindMsg>,
+        pending: message::InternalBitcoindMsg,
         result: Result<(), String>,
     ) -> Result<message::InternalBitcoindMsg, Task<Message>> {
         if chain != self.chain || request != self.local_feature_request {
@@ -1213,7 +1213,7 @@ impl InternalBitcoindStep {
             return Err(Task::none());
         }
         self.local_feature_checked_at = Some(std::time::Instant::now());
-        Ok(*pending)
+        Ok(pending)
     }
 
     fn check_local_feature_before(
