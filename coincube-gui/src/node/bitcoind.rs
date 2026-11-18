@@ -1956,7 +1956,6 @@ impl ManagedNodeLifecycle {
     /// excludes every new-version attach/stop. Unknown files and uncertain
     /// liveness remain owners, so a read failure cannot stop a live node.
     fn reconcile_stale_owners(&self) -> std::io::Result<()> {
-        use fs4::fs_std::FileExt;
         let locks = self.directory.path().join(LOCK_DIRECTORY_NAME);
         let networks = match std::fs::read_dir(&locks) {
             Ok(networks) => networks,
@@ -1965,39 +1964,45 @@ impl ManagedNodeLifecycle {
         };
         for network in networks {
             let network = network?;
-            for owner in std::fs::read_dir(network.path())? {
-                let owner = owner?;
-                let name = owner.file_name();
-                let Some(name) = name.to_str() else { continue };
-                let Some((pid, suffix)) = parse_owner_name(name) else {
-                    continue;
-                };
-                let stale = if let Some(uuid) = suffix.strip_prefix("v2-") {
-                    if uuid::Uuid::parse_str(uuid).is_err() {
-                        continue;
-                    }
-                    let file = std::fs::OpenOptions::new()
-                        .read(true)
-                        .write(true)
-                        .open(owner.path())?;
-                    let stale = file.try_lock_exclusive()?;
-                    drop(file);
-                    stale
-                } else if suffix.parse::<u64>().is_ok() || uuid::Uuid::parse_str(suffix).is_ok() {
-                    !legacy_process_alive(pid)?
-                } else {
-                    false
-                };
-                if stale {
-                    std::fs::remove_file(owner.path())?;
-                }
-            }
-            if std::fs::read_dir(network.path())?.next().is_none() {
-                std::fs::remove_dir(network.path())?;
-            }
+            Self::reconcile_network_owners(network)?;
         }
         if std::fs::read_dir(&locks)?.next().is_none() {
             std::fs::remove_dir(locks)?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_network_owners(network: std::fs::DirEntry) -> std::io::Result<()> {
+        use fs4::fs_std::FileExt;
+        for owner in std::fs::read_dir(network.path())? {
+            let owner = owner?;
+            let name = owner.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some((pid, suffix)) = parse_owner_name(name) else {
+                continue;
+            };
+            let stale = if let Some(uuid) = suffix.strip_prefix("v2-") {
+                if uuid::Uuid::parse_str(uuid).is_err() {
+                    continue;
+                }
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(owner.path())?;
+                let stale = file.try_lock_exclusive()?;
+                drop(file);
+                stale
+            } else if suffix.parse::<u64>().is_ok() || uuid::Uuid::parse_str(suffix).is_ok() {
+                !legacy_process_alive(pid)?
+            } else {
+                false
+            };
+            if stale {
+                std::fs::remove_file(owner.path())?;
+            }
+        }
+        if std::fs::read_dir(network.path())?.next().is_none() {
+            std::fs::remove_dir(network.path())?;
         }
         Ok(())
     }
@@ -2485,27 +2490,7 @@ impl Bitcoind {
         let family = NodeChainFamily::from_chain(chain);
         let configured_flavor = Self::preflight_for_chain(chain, coincube_datadir)?;
         if chain.is_blake2b() {
-            let dir = internal_bitcoind_datadir_for(coincube_datadir, family);
-            let conf = InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(&dir))
-                .map_err(|e| StartInternalBitcoindError::ConfigUnavailable(e.to_string()))?;
-            let Some(section) = conf.networks.get(&network) else {
-                return Err(StartInternalBitcoindError::ConfigUnavailable(
-                    "Missing managed fork network configuration".into(),
-                ));
-            };
-            if config.addr
-                != crate::installer::step::node::bitcoind::internal_bitcoind_address(
-                    section.rpc_port,
-                )
-                || config.rpc_auth
-                    != coincubed::config::BitcoindRpcAuth::CookieFile(
-                        internal_bitcoind_cookie_path(&dir, &network),
-                    )
-            {
-                return Err(StartInternalBitcoindError::ConfigUnavailable(
-                    "Local fork RPC configuration differs from the managed node".into(),
-                ));
-            }
+            verify_managed_fork_rpc_config(&config, coincube_datadir, family, network)?;
         }
         configured_flavor
             .check_chain(chain)
@@ -2552,20 +2537,13 @@ impl Bitcoind {
                 };
                 (running, running_flavor)
             });
-        if existing_owners && running.is_none() && !authorized_restart {
-            return Err(StartInternalBitcoindError::ConfigUnavailable(
-                "The managed node has active Cube owners but is unreachable. Close those Cubes before starting a replacement.".into(),
-            ));
-        }
-        if foreign_owners
-            && !running
-                .as_ref()
-                .is_some_and(|(_, flavor)| *flavor == configured_flavor)
-        {
-            return Err(StartInternalBitcoindError::ConfigUnavailable(
-                "Another app process owns this managed node; it cannot be restarted or replaced here. Close that process first.".into(),
-            ));
-        }
+        verify_managed_replacement(
+            running.as_ref(),
+            configured_flavor,
+            existing_owners,
+            foreign_owners,
+            authorized_restart,
+        )?;
         if let Some((running_node, running_flavor)) = &running {
             if chain.is_blake2b() {
                 running_node
@@ -2608,42 +2586,8 @@ impl Bitcoind {
         // It runs before the first irreversible step below — stopping a
         // mismatched running node — so a refusal leaves that node running
         // rather than stopped with no replacement started.
-        let history_lease = if chain.is_blake2b() {
-            None
-        } else {
-            Some(
-                crate::node::history::HistoryLease::acquire(&crate::node::retention::directory(
-                    coincube_datadir,
-                    network,
-                ))
-                .map_err(StartInternalBitcoindError::ConfigUnavailable)?,
-            )
-        };
-        let rolling = if chain.is_blake2b() {
-            None
-        } else {
-            crate::node::retention::load(coincube_datadir, network)
-                .map_err(StartInternalBitcoindError::ConfigUnavailable)?
-        };
-        let explicit_wallet_loading = rolling.is_some()
-            || (!chain.is_blake2b()
-                && crate::node::retention::requires_wallet_bootstrap(coincube_datadir, network)
-                    .map_err(StartInternalBitcoindError::ConfigUnavailable)?);
-        crate::node::managed_conf::update_managed_conf(coincube_datadir, family, |txn| {
-            let mut conf = txn.conf.clone();
-            if rolling.is_some() {
-                if let Some(section) = conf
-                    .as_mut()
-                    .and_then(|conf| conf.networks.get_mut(&network))
-                {
-                    section.prune = 1;
-                }
-            }
-            Ok(((), conf))
-        })
-        .map(|outcome| outcome.logged("rewriting the managed bitcoin.conf before the spawn"))
-        .map_err(|e| StartInternalBitcoindError::ConfigUnavailable(e.to_string()))?;
-        drop(history_lease);
+        let explicit_wallet_loading =
+            rewrite_config_for_managed_spawn(chain, coincube_datadir, family, network)?;
         if let Some((running, running_flavor)) = running {
             // A global flavour switch — e.g. Core is up for existing Vaults and
             // the user just picked Knots: stop it so we can relaunch the
@@ -2717,93 +2661,17 @@ impl Bitcoind {
                 .map_err(|e| StartInternalBitcoindError::CommandError(e.to_string()))
         };
 
-        // When we've just asked a previous managed node to stop, it keeps the
-        // datadir lock until it finishes flushing on shutdown; a fresh bitcoind
-        // then exits immediately with "Cannot obtain a lock on directory". Retry
-        // the spawn a bounded number of times (~15s) to ride out that window.
-        // A genuine start failure just exhausts the retries and surfaces the
-        // error, a few seconds later than before.
-        const MAX_LOCK_RETRIES: u32 = 30;
-        let mut lock_retries = 0;
-
-        let mut process = spawn_bitcoind()?;
-
-        // We've started bitcoind in the background, however it may fail to start for whatever
-        // reason. And we need its JSONRPC interface to be available to continue. Thus wait for
-        // the interface to be created successfully, regularly checking it did not fail to start.
-        let mut try_count = 0;
-        loop {
-            match process.try_wait() {
-                Ok(None) => {}
-                Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
-                Ok(Some(status)) => {
-                    if lock_retries < MAX_LOCK_RETRIES {
-                        lock_retries += 1;
-                        log::warn!(
-                            "bitcoind exited early ({status}); a stopping node likely still \
-                             holds the datadir lock — retrying ({lock_retries}/{MAX_LOCK_RETRIES})"
-                        );
-                        thread::sleep(time::Duration::from_millis(500));
-                        process = spawn_bitcoind()?;
-                        try_count = 0;
-                        continue;
-                    }
-                    log::error!("Bitcoind exited with status '{}'", status);
-                    return Err(StartInternalBitcoindError::ProcessExited(status));
-                }
-            }
-            match coincubed::BitcoinD::new(&config, "internal_bitcoind_start".to_string()) {
-                Ok(started) => {
-                    log::info!("Bitcoind seems to have successfully started.");
-                    // Ask the node what it actually is rather than trusting
-                    // `configured_flavor`: `select_managed_bitcoind_exe` falls back to
-                    // the other flavour's binary when the preferred one isn't
-                    // installed, so the two can legitimately disagree.
-                    let observed = started
-                        .subversion()
-                        .map(|sv| ObservedBuild::from_subversion(&sv))
-                        .unwrap_or_else(|| ObservedBuild::assumed(configured_flavor));
-                    if chain.is_blake2b() {
-                        if let Err(e) = started.check_local_fork_chain(chain, false) {
-                            // We own this freshly spawned process. A wrong-chain
-                            // binary must not be orphaned on a refused start.
-                            let _ = process.kill();
-                            let _ = process.wait();
-                            return Err(StartInternalBitcoindError::BitcoinDError(e.to_string()));
-                        }
-                    } else {
-                        crate::node::revalidate::reconcile_after_start(
-                            coincube_datadir,
-                            &identity,
-                            chain,
-                            observed,
-                        );
-                    }
-                    owner_lock.activate();
-                    return Ok(Self::owned(config, owner_lock));
-                }
-                Err(coincubed::BitcoindError::CookieFile(_)) => {
-                    // This is only raised if we're using cookie authentication.
-                    // Assume cookie file has not been created yet and try again.
-                }
-                Err(e) => {
-                    if !e.is_transient() && (!e.is_unauthorized() || try_count > 10) {
-                        // Non-transient error could happen, e.g., if RPC auth credentials are wrong.
-                        // Kill process now in case it's not possible to do via RPC command later.
-                        // If the auth credentials are wrong, it is possible that coincube-gui is
-                        // reading the previous state of the .cookie file and not the new generated
-                        // one.
-                        if let Err(e) = process.kill() {
-                            log::error!("Error trying to kill bitcoind process: '{}'", e);
-                        }
-                        return Err(StartInternalBitcoindError::BitcoinDError(e.to_string()));
-                    }
-                }
-            }
-            try_count += 1;
-            log::info!("Waiting for bitcoind to start.");
-            thread::sleep(time::Duration::from_millis(500));
-        }
+        let (mut process, started) = wait_for_managed_rpc(spawn_bitcoind, &config)?;
+        verify_started_managed_node(
+            &started,
+            &mut process,
+            chain,
+            configured_flavor,
+            coincube_datadir,
+            &identity,
+        )?;
+        owner_lock.activate();
+        Ok(Self::owned(config, owner_lock))
     }
 
     /// Stop (internal) bitcoind.
@@ -2812,6 +2680,206 @@ impl Bitcoind {
         // reference must not release the token while another still needs it.
         // BitcoindOwner::drop schedules release after the final Arc goes away.
     }
+}
+
+fn verify_managed_fork_rpc_config(
+    config: &BitcoindConfig,
+    coincube_datadir: &CoincubeDirectory,
+    family: NodeChainFamily,
+    network: Network,
+) -> Result<(), StartInternalBitcoindError> {
+    let dir = internal_bitcoind_datadir_for(coincube_datadir, family);
+    let conf = InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(&dir))
+        .map_err(|e| StartInternalBitcoindError::ConfigUnavailable(e.to_string()))?;
+    let Some(section) = conf.networks.get(&network) else {
+        return Err(StartInternalBitcoindError::ConfigUnavailable(
+            "Missing managed fork network configuration".into(),
+        ));
+    };
+    if config.addr
+        != crate::installer::step::node::bitcoind::internal_bitcoind_address(section.rpc_port)
+        || config.rpc_auth
+            != coincubed::config::BitcoindRpcAuth::CookieFile(internal_bitcoind_cookie_path(
+                &dir, &network,
+            ))
+    {
+        return Err(StartInternalBitcoindError::ConfigUnavailable(
+            "Local fork RPC configuration differs from the managed node".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_managed_replacement(
+    running: Option<&(coincubed::BitcoinD, NodeFlavor)>,
+    configured_flavor: NodeFlavor,
+    existing_owners: bool,
+    foreign_owners: bool,
+    authorized_restart: bool,
+) -> Result<(), StartInternalBitcoindError> {
+    if existing_owners && running.is_none() && !authorized_restart {
+        return Err(StartInternalBitcoindError::ConfigUnavailable(
+            "The managed node has active Cube owners but is unreachable. Close those Cubes before starting a replacement.".into(),
+        ));
+    }
+    if foreign_owners && !running.is_some_and(|(_, flavor)| *flavor == configured_flavor) {
+        return Err(StartInternalBitcoindError::ConfigUnavailable(
+            "Another app process owns this managed node; it cannot be restarted or replaced here. Close that process first.".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn rewrite_config_for_managed_spawn(
+    chain: crate::chain::ChainId,
+    coincube_datadir: &CoincubeDirectory,
+    family: NodeChainFamily,
+    network: Network,
+) -> Result<bool, StartInternalBitcoindError> {
+    let history_lease = if chain.is_blake2b() {
+        None
+    } else {
+        Some(
+            crate::node::history::HistoryLease::acquire(&crate::node::retention::directory(
+                coincube_datadir,
+                network,
+            ))
+            .map_err(StartInternalBitcoindError::ConfigUnavailable)?,
+        )
+    };
+    let rolling = if chain.is_blake2b() {
+        None
+    } else {
+        crate::node::retention::load(coincube_datadir, network)
+            .map_err(StartInternalBitcoindError::ConfigUnavailable)?
+    };
+    let explicit_wallet_loading = rolling.is_some()
+        || (!chain.is_blake2b()
+            && crate::node::retention::requires_wallet_bootstrap(coincube_datadir, network)
+                .map_err(StartInternalBitcoindError::ConfigUnavailable)?);
+    crate::node::managed_conf::update_managed_conf(coincube_datadir, family, |txn| {
+        let mut conf = txn.conf.clone();
+        if rolling.is_some() {
+            if let Some(section) = conf
+                .as_mut()
+                .and_then(|conf| conf.networks.get_mut(&network))
+            {
+                section.prune = 1;
+            }
+        }
+        Ok(((), conf))
+    })
+    .map(|outcome| outcome.logged("rewriting the managed bitcoin.conf before the spawn"))
+    .map_err(|e| StartInternalBitcoindError::ConfigUnavailable(e.to_string()))?;
+    drop(history_lease);
+    Ok(explicit_wallet_loading)
+}
+
+fn wait_for_managed_rpc(
+    spawn_bitcoind: impl Fn() -> Result<std::process::Child, StartInternalBitcoindError>,
+    config: &BitcoindConfig,
+) -> Result<(std::process::Child, coincubed::BitcoinD), StartInternalBitcoindError> {
+    // When we've just asked a previous managed node to stop, it keeps the
+    // datadir lock until it finishes flushing on shutdown; a fresh bitcoind
+    // then exits immediately with "Cannot obtain a lock on directory". Retry
+    // the spawn a bounded number of times (~15s) to ride out that window.
+    // A genuine start failure just exhausts the retries and surfaces the
+    // error, a few seconds later than before.
+    const MAX_LOCK_RETRIES: u32 = 30;
+    let mut lock_retries = 0;
+
+    let mut process = spawn_bitcoind()?;
+
+    // We've started bitcoind in the background, however it may fail to start for whatever
+    // reason. And we need its JSONRPC interface to be available to continue. Thus wait for
+    // the interface to be created successfully, regularly checking it did not fail to start.
+    let mut try_count = 0;
+    loop {
+        match process.try_wait() {
+            Ok(None) => {}
+            Err(e) => log::error!("Error while trying to wait for bitcoind: {}", e),
+            Ok(Some(status)) => {
+                if lock_retries < MAX_LOCK_RETRIES {
+                    lock_retries += 1;
+                    log::warn!(
+                        "bitcoind exited early ({status}); a stopping node likely still \
+                         holds the datadir lock — retrying ({lock_retries}/{MAX_LOCK_RETRIES})"
+                    );
+                    thread::sleep(time::Duration::from_millis(500));
+                    process = spawn_bitcoind()?;
+                    try_count = 0;
+                    continue;
+                }
+                log::error!("Bitcoind exited with status '{}'", status);
+                return Err(StartInternalBitcoindError::ProcessExited(status));
+            }
+        }
+        match coincubed::BitcoinD::new(config, "internal_bitcoind_start".to_string()) {
+            Ok(started) => {
+                log::info!("Bitcoind seems to have successfully started.");
+                return Ok((process, started));
+            }
+            Err(coincubed::BitcoindError::CookieFile(_)) => {
+                // This is only raised if we're using cookie authentication.
+                // Assume cookie file has not been created yet and try again.
+            }
+            Err(e) => {
+                check_managed_rpc_start_error(e, try_count, &mut process)?;
+            }
+        }
+        try_count += 1;
+        log::info!("Waiting for bitcoind to start.");
+        thread::sleep(time::Duration::from_millis(500));
+    }
+}
+
+fn verify_started_managed_node(
+    started: &coincubed::BitcoinD,
+    process: &mut std::process::Child,
+    chain: crate::chain::ChainId,
+    configured_flavor: NodeFlavor,
+    coincube_datadir: &CoincubeDirectory,
+    identity: &NodeIdentity,
+) -> Result<(), StartInternalBitcoindError> {
+    // Ask the node what it actually is rather than trusting
+    // `configured_flavor`: `select_managed_bitcoind_exe` falls back to
+    // the other flavour's binary when the preferred one isn't
+    // installed, so the two can legitimately disagree.
+    let observed = started
+        .subversion()
+        .map(|sv| ObservedBuild::from_subversion(&sv))
+        .unwrap_or_else(|| ObservedBuild::assumed(configured_flavor));
+    if chain.is_blake2b() {
+        if let Err(e) = started.check_local_fork_chain(chain, false) {
+            // We own this freshly spawned process. A wrong-chain
+            // binary must not be orphaned on a refused start.
+            let _ = process.kill();
+            let _ = process.wait();
+            return Err(StartInternalBitcoindError::BitcoinDError(e.to_string()));
+        }
+    } else {
+        crate::node::revalidate::reconcile_after_start(coincube_datadir, identity, chain, observed);
+    }
+    Ok(())
+}
+
+fn check_managed_rpc_start_error(
+    e: coincubed::BitcoindError,
+    try_count: i32,
+    process: &mut std::process::Child,
+) -> Result<(), StartInternalBitcoindError> {
+    if !e.is_transient() && (!e.is_unauthorized() || try_count > 10) {
+        // Non-transient error could happen, e.g., if RPC auth credentials are wrong.
+        // Kill process now in case it's not possible to do via RPC command later.
+        // If the auth credentials are wrong, it is possible that coincube-gui is
+        // reading the previous state of the .cookie file and not the new generated
+        // one.
+        if let Err(e) = process.kill() {
+            log::error!("Error trying to kill bitcoind process: '{}'", e);
+        }
+        return Err(StartInternalBitcoindError::BitcoinDError(e.to_string()));
+    }
+    Ok(())
 }
 
 impl BitcoindOwner {
