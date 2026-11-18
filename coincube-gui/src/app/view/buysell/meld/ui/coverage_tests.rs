@@ -72,6 +72,9 @@ fn update(s: &mut MeldState, message: MeldMessage) {
         &crate::app::Cache::default(),
         None,
         &CoincubeClient::new(),
+        &std::sync::Arc::new(crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::SHAPES[0],
+        )),
     );
 }
 

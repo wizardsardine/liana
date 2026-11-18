@@ -89,6 +89,9 @@ pub struct LiquidTransactions {
     /// the user's freshly-typed input with a stale Vault address.
     next_vault_refund_id: u64,
     pending_vault_refund_id: Option<u64>,
+    /// The Cube's Vault, from the last reload: an imported Vault hands out
+    /// refund addresses under its reservation lock.
+    vault_wallet: Option<Arc<Wallet>>,
     empty_state_quote: Quote,
     empty_state_image_handle: image::Handle,
     /// Page currently displayed (0-indexed).
@@ -145,6 +148,7 @@ impl LiquidTransactions {
             in_flight_refunds: HashMap::new(),
             next_vault_refund_id: 0,
             pending_vault_refund_id: None,
+            vault_wallet: None,
             empty_state_quote,
             empty_state_image_handle,
             current_page: 0,
@@ -400,7 +404,7 @@ impl State for LiquidTransactions {
     fn update(
         &mut self,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         match message {
@@ -481,7 +485,7 @@ impl State for LiquidTransactions {
                 self.pending_vault_refund_id = None;
                 Task::none()
             }
-            Message::View(view::Message::Reload) => self.reload(None, None),
+            Message::View(view::Message::Reload) => self.refresh(),
             Message::View(view::Message::LiquidTransactions(
                 view::LiquidTransactionsMessage::BackgroundRefresh,
             ))
@@ -549,8 +553,8 @@ impl State for LiquidTransactions {
                 if self.asset_filter != filter {
                     self.asset_filter = filter;
                     // Reload with the new filter — also resets pagination
-                    // back to page 0 (see `reload`).
-                    return self.reload(None, None);
+                    // back to page 0 (see `refresh`).
+                    return self.refresh();
                 }
                 Task::none()
             }
@@ -770,13 +774,24 @@ impl State for LiquidTransactions {
                 self.next_vault_refund_id = self.next_vault_refund_id.wrapping_add(1);
                 let request_id = self.next_vault_refund_id;
                 self.pending_vault_refund_id = Some(request_id);
+                let (data_dir, wallet) = (cache.datadir_path.clone(), self.vault_wallet.clone());
                 Task::perform(
                     async move {
-                        daemon
-                            .get_new_address()
-                            .await
-                            .map(|res| res.address.to_string())
-                            .map_err(|e| e.to_string())
+                        match wallet {
+                            Some(wallet) => {
+                                crate::app::state::vault::receive::vault_receive_address(
+                                    data_dir, &wallet, daemon,
+                                )
+                                .await
+                                .map(|res| res.address.to_string())
+                                .map_err(|e| e.to_string())
+                            }
+                            None => daemon
+                                .get_new_address()
+                                .await
+                                .map(|res| res.address.to_string())
+                                .map_err(|e| e.to_string()),
+                        }
                     },
                     move |result| {
                         Message::View(view::Message::VaultRefundAddressResolved(
@@ -913,8 +928,20 @@ impl State for LiquidTransactions {
     fn reload(
         &mut self,
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
-        _wallet: Option<Arc<Wallet>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        self.vault_wallet = wallet;
+        self.refresh()
+    }
+}
+
+impl LiquidTransactions {
+    /// Refetches the first page and the refundables. In-page reloads (the
+    /// Reload button, an asset-filter change) use this rather than
+    /// `State::reload(None, None)`, which would drop the Vault wallet the
+    /// App passed in and send "Use Vault address" past an imported Vault's
+    /// reservation lock.
+    fn refresh(&mut self) -> Task<Message> {
         self.loading = true;
         self.selected_payment = None;
         self.selected_refundable = None;
@@ -957,6 +984,39 @@ mod tests {
         let client = Arc::new(BreezClient::disconnected(Network::Bitcoin));
         let path = std::env::temp_dir().join("coincube-tx-test-missing-swaps.json");
         LiquidTransactions::new(Arc::new(LiquidBackend::new(client)), path)
+    }
+
+    /// The App hands the Vault wallet in through `State::reload`. An
+    /// in-page Reload or asset-filter change must keep it, or "Use Vault
+    /// address" falls back to `get_new_address` and skips an imported
+    /// Vault's reservation lock.
+    #[test]
+    fn in_page_reloads_keep_the_vault_wallet() {
+        use crate::services::split_test_wallets::{imported_vault, SHAPES};
+        let mut state = new_state();
+        let wallet = Arc::new(imported_vault(SHAPES[0]));
+        let _ = State::reload(&mut state, None, Some(wallet.clone()));
+        let cache = Cache::default();
+
+        let _ = state.update(None, &cache, Message::View(view::Message::Reload));
+        assert!(state
+            .vault_wallet
+            .as_ref()
+            .is_some_and(|w| Arc::ptr_eq(w, &wallet)));
+
+        let _ = state.update(
+            None,
+            &cache,
+            Message::View(view::Message::SetAssetFilter(AssetFilter::LbtcOnly)),
+        );
+        assert!(state
+            .vault_wallet
+            .as_ref()
+            .is_some_and(|w| Arc::ptr_eq(w, &wallet)));
+
+        // The App's own reload still replaces it, e.g. when the Vault unloads.
+        let _ = State::reload(&mut state, None, None);
+        assert!(state.vault_wallet.is_none());
     }
 
     #[test]

@@ -197,6 +197,22 @@ fn total_balance_pending(r: BalanceReadiness) -> bool {
     spark_pending || liquid_pending || usdt_pending || r.vault_pending
 }
 
+/// A deposit address for a transfer into this Cube's Vault, under the
+/// imported reservation lock when the Vault is imported.
+async fn vault_deposit_address(
+    data_dir: crate::dir::CoincubeDirectory,
+    wallet: Option<Arc<Wallet>>,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<crate::daemon::model::GetAddressResult, crate::app::error::Error> {
+    match wallet {
+        Some(wallet) => {
+            crate::app::state::vault::receive::vault_receive_address(data_dir, &wallet, daemon)
+                .await
+        }
+        None => daemon.get_new_address().await.map_err(Into::into),
+    }
+}
+
 /// Prefer an available local pair in Liquid, Vault, Spark order. A mainnet
 /// Cube with only Spark or Vault starts with Another Cube selected.
 pub(crate) fn default_transfer_direction(
@@ -1263,7 +1279,7 @@ impl State for GlobalHome {
                             if self
                                 .transfer_direction
                                 .is_some_and(Self::direction_uses_vault)
-                                && !self.legacy_vault_available(cache)
+                                && !self.vault_available(cache)
                             {
                                 return Task::none();
                             }
@@ -1308,9 +1324,12 @@ impl State for GlobalHome {
                                     )));
                                 };
                                 self.current_view.next();
+                                let (data_dir, wallet) =
+                                    (cache.datadir_path.clone(), self.wallet.clone());
                                 tasks.push(Task::perform(
                                     async move {
-                                        match daemon.get_new_address().await {
+                                        match vault_deposit_address(data_dir, wallet, daemon).await
+                                        {
                                             Ok(res) => {
                                                 Ok((res.address.to_string(), res.derivation_index))
                                             }
@@ -1674,6 +1693,8 @@ impl State for GlobalHome {
                                     None
                                 };
                                 let daemon = daemon.clone();
+                                let (data_dir, wallet) =
+                                    (cache.datadir_path.clone(), self.wallet.clone());
                                 self.current_view.next();
                                 let amount_sat = amount.to_sat();
                                 let fees_included = self.sends_max();
@@ -1681,18 +1702,20 @@ impl State for GlobalHome {
                                     async move {
                                         let addr_str = match other_address {
                                             Some(address) => address,
-                                            None => daemon
-                                                .ok_or(TransferError::WalletUnavailable(
+                                            None => vault_deposit_address(
+                                                data_dir,
+                                                wallet,
+                                                daemon.ok_or(TransferError::WalletUnavailable(
                                                     WalletKind::Vault,
-                                                ))?
-                                                .get_new_address()
-                                                .await
-                                                .map_err(|e| TransferError::NoDepositAddress {
-                                                    to: WalletKind::Vault,
-                                                    detail: e.to_string(),
-                                                })?
-                                                .address
-                                                .to_string(),
+                                                ))?,
+                                            )
+                                            .await
+                                            .map_err(|e| TransferError::NoDepositAddress {
+                                                to: WalletKind::Vault,
+                                                detail: e.to_string(),
+                                            })?
+                                            .address
+                                            .to_string(),
                                         };
                                         let prep = if fees_included {
                                             spark
@@ -1900,7 +1923,7 @@ impl State for GlobalHome {
                             return Task::none();
                         }
                         if direction == TransferDirection::SparkToVault
-                            && !self.legacy_vault_available(cache)
+                            && !self.vault_available(cache)
                         {
                             return Task::none();
                         }
@@ -2225,7 +2248,7 @@ impl State for GlobalHome {
                         {
                             return Task::none();
                         }
-                        if !self.legacy_vault_available(cache)
+                        if !self.vault_available(cache)
                             && (kind == WalletKind::Vault
                                 || self.transfer_from == Some(WalletKind::Vault)
                                 || self.transfer_to == Some(WalletKind::Vault))
@@ -2749,7 +2772,7 @@ impl State for GlobalHome {
                         Task::none()
                     }
                     HomeMessage::SignVaultToLiquidTx => {
-                        if !self.legacy_vault_available(cache) {
+                        if !self.vault_available(cache) {
                             return Task::none();
                         }
                         if !self.destination_is_ready() {
@@ -2928,7 +2951,7 @@ impl State for GlobalHome {
                         if self
                             .transfer_direction
                             .is_some_and(Self::direction_uses_vault)
-                            && !self.legacy_vault_available(cache)
+                            && !self.vault_available(cache)
                         {
                             return Task::none();
                         }
@@ -3865,7 +3888,7 @@ impl State for GlobalHome {
                         } else {
                             coincube_core::miniscript::bitcoin::Denomination::Satoshi
                         };
-                        if !self.legacy_vault_available(cache)
+                        if !self.vault_available(cache)
                             || !self.destination_response_is_current(generation, direction)
                             || !self.destination_is_ready()
                             || self
@@ -3892,14 +3915,9 @@ impl State for GlobalHome {
                         match result {
                             Ok((psbt, wallet, (datadir_path, network))) => {
                                 if let Some(wallet) = wallet {
-                                    let Some(descriptor) = wallet.inheritance_descriptor() else {
-                                        return Task::done(Message::View(
-                                            view::Message::ShowError(
-                                                "This transfer requires a Cube Vault.".into(),
-                                            ),
-                                        ));
-                                    };
-                                    let sigs = match descriptor.partial_spend_info(&psbt) {
+                                    use coincube_core::wallet_descriptor::SpendAnalysis;
+                                    let descriptor = &wallet.main_descriptor;
+                                    let sigs = match descriptor.spend_info(&psbt) {
                                         Ok(info) => info,
                                         Err(e) => {
                                             let err_msg =
@@ -3920,10 +3938,8 @@ impl State for GlobalHome {
                                         .iter()
                                         .map(|txin| txin.sequence)
                                         .any(|seq| seq.is_relative_lock_time());
-                                    let max_vbytes = descriptor.unsigned_tx_max_vbytes(
-                                        &psbt.unsigned_tx,
-                                        use_primary_path,
-                                    );
+                                    let max_vbytes = descriptor
+                                        .spend_max_vbytes(&psbt.unsigned_tx, use_primary_path);
                                     let fees = psbt.fee().expect("Fees should be present");
                                     self.spend_tx_fees = Some(fees);
 
@@ -4014,7 +4030,7 @@ impl State for GlobalHome {
                         feerate_vb,
                         result,
                     } => {
-                        if !self.legacy_vault_available(cache) {
+                        if !self.vault_available(cache) {
                             return Task::none();
                         }
                         if !self.destination_response_is_current(generation, direction)
@@ -4112,14 +4128,12 @@ impl State for GlobalHome {
                         let threshold_met = wallet
                             .as_ref()
                             .and_then(|wallet| {
-                                wallet.inheritance_descriptor().and_then(|descriptor| {
-                                    crate::app::state::vault::replay::spend_info_for_chain(
-                                        wallet.chain,
-                                        descriptor,
-                                        &spend_tx.psbt,
-                                    )
-                                    .ok()
-                                })
+                                crate::app::state::vault::replay::spend_info_for_chain(
+                                    wallet.chain,
+                                    &wallet.main_descriptor,
+                                    &spend_tx.psbt,
+                                )
+                                .ok()
                             })
                             .is_some_and(|info| {
                                 let primary = info.primary_path();
@@ -4394,7 +4408,7 @@ impl GlobalHome {
         // receive doesn't depend on it, so a not-yet-loaded one is fine here.
         let spark = (on_mainnet && self.spark_backend.is_some())
             .then(|| WalletIdentity::Spark(self.spark_identity.clone().unwrap_or_default()));
-        let vault = (on_mainnet && self.legacy_vault_available(cache))
+        let vault = (on_mainnet && self.vault_available(cache))
             .then(|| {
                 self.wallet
                     .as_ref()
@@ -4416,7 +4430,7 @@ impl GlobalHome {
             return None;
         }
         match direction.from_kind() {
-            WalletKind::Vault if self.legacy_vault_available(cache) => {
+            WalletKind::Vault if self.vault_available(cache) => {
                 Some(WalletIdentity::Vault(self.wallet.as_ref()?.id()))
             }
             WalletKind::Spark if self.spark_backend.is_some() => self
@@ -4692,12 +4706,10 @@ impl GlobalHome {
                     .map(|direction| (self.transfer_request_generation, direction))
     }
 
-    fn legacy_vault_available(&self, cache: &Cache) -> bool {
-        cache.has_vault
-            && self
-                .wallet
-                .as_ref()
-                .is_some_and(|wallet| wallet.supports_inheritance())
+    /// The Vault can take part in a transfer: a Vault or an imported Vault,
+    /// loaded in this Cube.
+    fn vault_available(&self, cache: &Cache) -> bool {
+        cache.has_vault && self.wallet.is_some()
     }
 
     fn direction_uses_vault(direction: TransferDirection) -> bool {
@@ -4849,7 +4861,7 @@ impl GlobalHome {
         cache: &Cache,
         daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
     ) -> Task<Message> {
-        if !self.legacy_vault_available(cache) {
+        if !self.vault_available(cache) {
             return Task::none();
         }
         let Some(direction) = self.transfer_direction else {
@@ -6630,11 +6642,27 @@ mod tests {
             assert!(!home.is_sending);
         }
 
-        /// `has_vault` is a cache flag. An imported wallet does not support
-        /// inheritance, so a stale `true` must not let a Vault picker choice,
-        /// a feerate preview, or a prepared Spark→Vault send through.
         #[test]
-        fn a_stale_vault_flag_cannot_spend_an_imported_wallet() {
+        fn a_loaded_imported_vault_is_a_transfer_side_like_a_vault() {
+            use crate::services::split_test_wallets::{imported_vault, SHAPES};
+            for shape in SHAPES {
+                let (mut home, _) = home_on_transfer_screen();
+                home.wallet = Some(Arc::new(imported_vault(shape)));
+                let cache = Cache {
+                    has_vault: true,
+                    has_imported_bitcoin: true,
+                    ..Cache::default()
+                };
+                assert!(home.vault_available(&cache), "{:?}", shape);
+                assert!(!cache.has_inheritance_vault());
+            }
+        }
+
+        /// An imported Vault takes part in transfers like a Vault, but only
+        /// once it is loaded: with `has_vault` still false, no Vault picker
+        /// choice, feerate preview or prepared Vault send gets through.
+        #[test]
+        fn an_unloaded_imported_vault_cannot_be_spent_from_home() {
             use coincube_core::miniscript::bitcoin::{
                 bip32::{DerivationPath, Xpriv, Xpub},
                 secp256k1::Secp256k1,
@@ -6661,12 +6689,13 @@ mod tests {
             home.wallet = Some(Arc::new(Wallet::new(
                 coincube_core::wallet_descriptor::WalletDescriptor::Imported(descriptor),
             )));
-            assert!(!home.wallet.as_ref().unwrap().supports_inheritance());
+            assert!(home.wallet.as_ref().unwrap().is_imported());
 
             let daemon = Arc::new(RecordingDaemon::default());
             let as_daemon: Arc<dyn Daemon + Sync + Send> = daemon.clone();
             let cache = Cache {
-                has_vault: true,
+                has_vault: false,
+                has_imported_bitcoin: true,
                 ..Cache::default()
             };
 
