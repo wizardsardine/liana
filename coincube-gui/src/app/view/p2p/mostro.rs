@@ -2714,6 +2714,57 @@ fn orders_from_cache(
     orders
 }
 
+fn trade_from_live_order(
+    session: &TradeSession,
+    event_ts: u64,
+    order: &mostro_core::order::SmallOrder,
+) -> P2PTrade {
+    // Live data from relay, but DM action takes priority
+    let relay_status = order
+        .status
+        .as_ref()
+        .map(map_trade_status)
+        .unwrap_or(TradeStatus::Pending);
+    let status = latest_status_action(session)
+        .and_then(dm_action_to_status)
+        .unwrap_or(relay_status);
+    let order_type = match session.kind.as_str() {
+        "buy" => OrderType::Buy,
+        _ => OrderType::Sell,
+    };
+    let fiat_amount = if order.fiat_amount > 0 {
+        order.fiat_amount as f64
+    } else {
+        session.fiat_amount as f64
+    };
+    P2PTrade {
+        id: session.order_id.clone(),
+        order_type,
+        status,
+        role: role_from_session(session),
+        fiat_amount,
+        min_amount: order.min_amount.map(|v| v as f64),
+        max_amount: order.max_amount.map(|v| v as f64),
+        fiat_currency: order.fiat_code.clone(),
+        sats_amount: if order.amount > 0 {
+            Some(order.amount as u64)
+        } else {
+            None
+        },
+        premium_percent: Some(order.premium as f64),
+        payment_method: order.payment_method.clone(),
+        counterparty_rating: None,
+        created_at_ts: event_ts as i64,
+        created_at: String::new(),
+        time_ago: format_time_ago(event_ts),
+        last_dm_action: latest_dm_action(session).map(String::from),
+        countdown_start_ts: countdown_start_timestamp(session),
+        counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+        admin_pubkey: session.admin_trade_pubkey.clone(),
+        hold_invoice: extract_hold_invoice(session),
+    }
+}
+
 /// Fetch the user's trades by loading saved sessions and querying the relay for live status.
 async fn fetch_user_trades(
     client: &Client,
@@ -2764,50 +2815,7 @@ async fn fetch_user_trades(
     let mut trades: Vec<P2PTrade> = Vec::new();
     for session in &sessions {
         if let Some((event_ts, order)) = latest_events.get(&session.order_id) {
-            // Live data from relay, but DM action takes priority
-            let relay_status = order
-                .status
-                .as_ref()
-                .map(map_trade_status)
-                .unwrap_or(TradeStatus::Pending);
-            let status = latest_status_action(session)
-                .and_then(dm_action_to_status)
-                .unwrap_or(relay_status);
-            let order_type = match session.kind.as_str() {
-                "buy" => OrderType::Buy,
-                _ => OrderType::Sell,
-            };
-            let fiat_amount = if order.fiat_amount > 0 {
-                order.fiat_amount as f64
-            } else {
-                session.fiat_amount as f64
-            };
-            trades.push(P2PTrade {
-                id: session.order_id.clone(),
-                order_type,
-                status,
-                role: role_from_session(session),
-                fiat_amount,
-                min_amount: order.min_amount.map(|v| v as f64),
-                max_amount: order.max_amount.map(|v| v as f64),
-                fiat_currency: order.fiat_code.clone(),
-                sats_amount: if order.amount > 0 {
-                    Some(order.amount as u64)
-                } else {
-                    None
-                },
-                premium_percent: Some(order.premium as f64),
-                payment_method: order.payment_method.clone(),
-                counterparty_rating: None,
-                created_at_ts: *event_ts as i64,
-                created_at: String::new(),
-                time_ago: format_time_ago(*event_ts),
-                last_dm_action: latest_dm_action(session).map(String::from),
-                countdown_start_ts: countdown_start_timestamp(session),
-                counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
-                admin_pubkey: session.admin_trade_pubkey.clone(),
-                hold_invoice: extract_hold_invoice(session),
-            });
+            trades.push(trade_from_live_order(session, *event_ts, order));
         } else {
             // Not found on relay — fallback from saved session
             trades.push(trade_from_session(session));
@@ -3207,6 +3215,30 @@ fn mostro_stream(
     )
 }
 
+fn append_new_shared_pubkeys(
+    session: &TradeSession,
+    keys: &Keys,
+    subscribed: &[PublicKey],
+    new_pubkeys: &mut Vec<PublicKey>,
+) {
+    for party_hex in [
+        session.counterparty_trade_pubkey.as_deref(),
+        session.admin_trade_pubkey.as_deref(),
+    ]
+    .iter()
+    .copied()
+    .flatten()
+    {
+        if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
+            if let Ok(spk) = PublicKey::from_hex(&hex) {
+                if !subscribed.contains(&spk) {
+                    new_pubkeys.push(spk);
+                }
+            }
+        }
+    }
+}
+
 /// Subscribe to gift-wrap DMs for any new trade pubkeys not yet subscribed.
 /// Uses ORDER_LOOKBACK_SECS (48h) so DMs survive app restarts and cache clears.
 async fn update_dm_subscriptions(
@@ -3227,22 +3259,7 @@ async fn update_dm_subscriptions(
             new_pubkeys.push(pk);
         }
         // Also subscribe to ECDH shared keys for P2P chat and dispute chat
-        for party_hex in [
-            session.counterparty_trade_pubkey.as_deref(),
-            session.admin_trade_pubkey.as_deref(),
-        ]
-        .iter()
-        .copied()
-        .flatten()
-        {
-            if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
-                if let Ok(spk) = PublicKey::from_hex(&hex) {
-                    if !subscribed_pubkeys.contains(&spk) {
-                        new_pubkeys.push(spk);
-                    }
-                }
-            }
-        }
+        append_new_shared_pubkeys(session, keys, subscribed_pubkeys, &mut new_pubkeys);
     }
 
     if new_pubkeys.is_empty() {
@@ -3522,6 +3539,27 @@ fn load_session_keys(cube_name: &str, mnemonic: &str) -> Vec<(TradeSession, Keys
         .collect()
 }
 
+fn append_session_shared_pubkeys(
+    session: &TradeSession,
+    keys: &Keys,
+    all_pubkeys: &mut Vec<PublicKey>,
+) {
+    for party_hex in [
+        session.counterparty_trade_pubkey.as_deref(),
+        session.admin_trade_pubkey.as_deref(),
+    ]
+    .iter()
+    .copied()
+    .flatten()
+    {
+        if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
+            if let Ok(pk) = PublicKey::from_hex(&hex) {
+                all_pubkeys.push(pk);
+            }
+        }
+    }
+}
+
 /// Process any pending DM notifications from the persistent subscription.
 /// When `silent` is true, DM actions are persisted to disk but no TradeUpdate messages
 /// are sent to the UI (no toasts). Used on first run for state recovery.
@@ -3543,20 +3581,7 @@ async fn process_dm_notifications(
     let mut all_pubkeys: Vec<PublicKey> =
         session_keys.iter().map(|(_, k)| k.public_key()).collect();
     for (session, keys) in &session_keys {
-        for party_hex in [
-            session.counterparty_trade_pubkey.as_deref(),
-            session.admin_trade_pubkey.as_deref(),
-        ]
-        .iter()
-        .copied()
-        .flatten()
-        {
-            if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
-                if let Ok(pk) = PublicKey::from_hex(&hex) {
-                    all_pubkeys.push(pk);
-                }
-            }
-        }
+        append_session_shared_pubkeys(session, keys, &mut all_pubkeys);
     }
     if !has_connected_relay(client).await {
         return;
