@@ -159,7 +159,6 @@ impl<'a> LocalKeyRepository<'a> {
         if import.attachment() != Some(attachment)
             || directory.path().file_name() != Some(std::ffi::OsStr::new(cube.network.dir_name()))
             || import.operation_id.is_nil()
-            || cube.network.is_blake2b()
         {
             return Err("Imported key scope does not match this Cube.".into());
         }

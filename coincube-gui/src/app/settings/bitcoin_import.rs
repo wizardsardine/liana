@@ -122,6 +122,12 @@ impl CubeSettings {
             .is_some()
     }
 
+    /// Whether this Cube holds a Vault for Connect's `hasVault`: a Vault
+    /// or an imported Vault.
+    pub fn holds_vault(&self) -> bool {
+        self.vault_wallet_id.is_some() || self.has_imported_bitcoin()
+    }
+
     pub fn bitcoin_import_pending(&self) -> bool {
         self.bitcoin_import
             .as_deref()
@@ -175,6 +181,30 @@ mod tests {
         );
         let restored: CubeSettings = serde_json::from_value(json).unwrap();
         assert_eq!(restored.bitcoin_import.unwrap().operation_id, Uuid::nil());
+    }
+
+    #[test]
+    fn an_attached_import_holds_a_vault_for_connect_but_a_pending_one_does_not() {
+        let mut cube = CubeSettings::new("Imported".into(), ChainId::Bitcoin);
+        assert!(!cube.holds_vault());
+        cube.bitcoin_import = Some(Box::new(BitcoinImport {
+            operation_id: Uuid::nil(),
+            stage: BitcoinImportStage::PendingSource,
+            last_error: None,
+        }));
+        assert!(!cube.holds_vault(), "no descriptor is attached yet");
+        let descriptor = ImportedWalletDescriptor::parse(
+            "wpkh([6cb116eb/84h/0h/0h]xpub6C6c6ShFaUMjohRwYGnrDr5kbrnUjBeGh5U8BPAjtZnZ2D7WpRidu2SUNpBVfmMaw8TpDA7quYNW4iNwGYaq9iAwp5fzHLCXJwTqe76WpmF/<0;1>/*)",
+            None,
+            ChainId::Bitcoin,
+        )
+        .unwrap();
+        let wallet = ImportedWalletAttachment::new(descriptor, ChainId::Bitcoin, 0, 20).unwrap();
+        cube.bitcoin_import.as_mut().unwrap().stage = BitcoinImportStage::Syncing { wallet };
+        assert!(
+            cube.holds_vault(),
+            "a scanning import already holds its Vault"
+        );
     }
 }
 

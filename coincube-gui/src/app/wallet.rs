@@ -273,9 +273,9 @@ impl Wallet {
 
     /// Whether Bump fee and Cancel can replace this wallet's unconfirmed
     /// sends. The daemon builds replacements for a Vault and for an imported
-    /// wallet, except an imported Bitcoin Blake2b wallet, which cannot spend.
+    /// wallet, on every chain.
     pub fn supports_replacement(&self) -> bool {
-        self.supports_inheritance() || (self.is_imported() && !self.chain.is_blake2b())
+        self.supports_inheritance() || self.is_imported()
     }
 
     /// The spending policy the Vault screens show and sign against: a
@@ -1218,10 +1218,9 @@ mod tests {
         assert_eq!(wallet.name, cube.name);
         assert!(wallet.is_imported());
         assert!(!wallet.supports_inheritance());
-        // Bump fee and Cancel work as for a Vault, except where an imported
-        // wallet cannot spend (Bitcoin Blake2b).
+        // Bump fee and Cancel work as for a Vault, Bitcoin Blake2b included.
         assert!(wallet.supports_replacement());
-        assert!(!wallet
+        assert!(wallet
             .clone()
             .with_chain(crate::chain::ChainId::BitcoinBlake2b)
             .supports_replacement());
