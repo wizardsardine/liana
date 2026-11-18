@@ -109,6 +109,17 @@ mod run {
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
     }
 
+    fn valid_request_id(request_id: &str) -> bool {
+        request_id.len() == 36
+            && request_id.bytes().enumerate().all(|(i, b)| {
+                if [8, 13, 18, 23].contains(&i) {
+                    b == b'-'
+                } else {
+                    b.is_ascii_hexdigit() && !b.is_ascii_uppercase()
+                }
+            })
+    }
+
     fn validate_input(input: &Input) -> Result<()> {
         check(input.network == "testnet4", "wrong_network")?;
         check(
@@ -128,17 +139,7 @@ mod run {
                 && input.target_key_id.parse::<u64>().unwrap_or(0) > 0,
             "invalid_identity",
         )?;
-        check(
-            input.request_id.len() == 36
-                && input.request_id.bytes().enumerate().all(|(i, b)| {
-                    if [8, 13, 18, 23].contains(&i) {
-                        b == b'-'
-                    } else {
-                        b.is_ascii_hexdigit() && !b.is_ascii_uppercase()
-                    }
-                }),
-            "invalid_request_id",
-        )?;
+        check(valid_request_id(&input.request_id), "invalid_request_id")?;
         for path in [&input.profile_dir, &input.psbt_file, &input.descriptor_file] {
             check(path.is_absolute(), "absolute_paths_required")?;
         }
