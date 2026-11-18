@@ -211,34 +211,7 @@ impl Motion {
         let fade = ease(t.as_secs_f32() / PEERS.as_secs_f32());
         match &self.kind {
             Kind::Select { previous } => {
-                if selected == Some(key) {
-                    let handoff = previous.is_some();
-                    Pose {
-                        spin: turn(if handoff { HANDOFF } else { Duration::ZERO }),
-                        second: 0.0,
-                        // A handoff target was dimmed; a browse selection was not.
-                        dim: if handoff { 1.0 - fade } else { 0.0 },
-                        shadow: 1.0 - fade,
-                        lift: 0.0,
-                        open: 0.0,
-                        rush: 0.0,
-                    }
-                } else if previous.as_ref() == Some(key) {
-                    Pose {
-                        spin: 1.0 - turn(Duration::ZERO),
-                        second: 0.0,
-                        dim: fade,
-                        shadow: fade,
-                        lift: 0.0,
-                        open: 0.0,
-                        rush: 0.0,
-                    }
-                } else {
-                    Pose {
-                        dim: if previous.is_some() { 1.0 } else { fade },
-                        ..Pose::REST
-                    }
-                }
+                selection_pose(key, selected, previous.as_ref(), turn, fade)
             }
             Kind::Return { key: returning } => {
                 if returning == key {
@@ -258,6 +231,43 @@ impl Motion {
                     }
                 }
             }
+        }
+    }
+}
+
+fn selection_pose(
+    key: &CubeCatalogKey,
+    selected: Option<&CubeCatalogKey>,
+    previous: Option<&CubeCatalogKey>,
+    turn: impl Fn(Duration) -> f32,
+    fade: f32,
+) -> Pose {
+    if selected == Some(key) {
+        let handoff = previous.is_some();
+        Pose {
+            spin: turn(if handoff { HANDOFF } else { Duration::ZERO }),
+            second: 0.0,
+            // A handoff target was dimmed; a browse selection was not.
+            dim: if handoff { 1.0 - fade } else { 0.0 },
+            shadow: 1.0 - fade,
+            lift: 0.0,
+            open: 0.0,
+            rush: 0.0,
+        }
+    } else if previous == Some(key) {
+        Pose {
+            spin: 1.0 - turn(Duration::ZERO),
+            second: 0.0,
+            dim: fade,
+            shadow: fade,
+            lift: 0.0,
+            open: 0.0,
+            rush: 0.0,
+        }
+    } else {
+        Pose {
+            dim: if previous.is_some() { 1.0 } else { fade },
+            ..Pose::REST
         }
     }
 }
