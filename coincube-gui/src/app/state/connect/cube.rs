@@ -1628,6 +1628,7 @@ impl ConnectCubePanel {
                     }
                 };
                 self.ln_reregistering = true;
+                let generation = self.session_generation;
                 return iced::Task::perform(
                     async move {
                         // Idempotent: tolerates an already-empty SDK.
@@ -1647,15 +1648,18 @@ impl ConnectCubePanel {
                             .await
                             .map_err(|e| e.to_string())
                     },
-                    |res| {
+                    move |result| {
                         Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressReregistered(res),
+                            ConnectCubeMessage::LightningAddressReregistered { generation, result },
                         ))
                     },
                 );
             }
 
-            ConnectCubeMessage::LightningAddressReregistered(result) => {
+            ConnectCubeMessage::LightningAddressReregistered { generation, result } => {
+                if generation != self.session_generation {
+                    return iced::Task::none();
+                }
                 self.ln_reregistering = false;
                 match result {
                     Ok(info) => {
@@ -2943,23 +2947,64 @@ mod tests {
             Some("needs retry")
         );
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered(Ok(
-            lightning_info("founder@example.com"),
-        )));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
+            generation: panel.session_generation(),
+            result: Ok(lightning_info("founder@example.com")),
+        });
         assert!(panel.ln_reconcile_needs_reregister.is_none());
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered(Ok(
-            lightning_info("wrong@example.com"),
-        )));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
+            generation: panel.session_generation(),
+            result: Ok(lightning_info("wrong@example.com")),
+        });
         assert!(panel.ln_reconcile_needs_reregister.is_some());
 
-        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered(Err(
-            "still down".to_string(),
-        )));
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
+            generation: panel.session_generation(),
+            result: Err("still down".to_string()),
+        });
         assert_eq!(
             panel.ln_reconcile_needs_reregister.as_deref(),
             Some("still down")
         );
+    }
+
+    #[test]
+    fn late_reregistration_failure_cannot_change_the_replacement_account() {
+        let mut panel = panel();
+        panel.set_client(CoincubeClient::for_test("http://account-a.invalid"));
+        let old_generation = panel.session_generation();
+
+        panel.set_client(CoincubeClient::for_test("http://account-b.invalid"));
+        let generation = panel.session_generation();
+        assert_ne!(generation, old_generation);
+        panel.lightning_address = Some(lightning("account-b@coincube.io"));
+        panel.ln_reconcile_needs_reregister = Some("account B needs retry".to_owned());
+        panel.ln_reregistering = true;
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
+            generation: old_generation,
+            result: Err("account A failed".to_owned()),
+        });
+        assert!(panel.ln_reregistering);
+        assert_eq!(
+            panel.ln_reconcile_needs_reregister.as_deref(),
+            Some("account B needs retry")
+        );
+        assert_eq!(
+            panel
+                .lightning_address
+                .as_ref()
+                .and_then(|address| address.lightning_address.as_deref()),
+            Some("account-b@coincube.io")
+        );
+
+        let _ = panel.update_message(ConnectCubeMessage::LightningAddressReregistered {
+            generation,
+            result: Ok(lightning_info("account-b@coincube.io")),
+        });
+        assert!(!panel.ln_reregistering);
+        assert!(panel.ln_reconcile_needs_reregister.is_none());
     }
 
     #[test]
