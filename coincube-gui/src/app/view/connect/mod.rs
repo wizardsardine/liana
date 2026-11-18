@@ -6700,6 +6700,15 @@ mod delete_account_view_tests {
         assert!(confirm.contains("Delete my account"));
         assert!(confirm.contains("Cancel"));
 
+        assert!(confirm.contains("Once deletion is complete, it can't be undone."));
+        assert!(confirm.contains("Make sure your recovery phrase is backed up first."));
+        assert!(!confirm.contains("We couldn't send your request."));
+
+        account.delete_account.request_failed = true;
+        assert!(render(&account, "delete-account-failed")
+            .contains("We couldn't send your request. Check your connection and try again."));
+        account.delete_account.request_failed = false;
+
         account.delete_account.submitting = true;
         assert!(render(&account, "delete-account-sending").contains("Sending request…"));
     }
@@ -6727,6 +6736,7 @@ mod delete_account_view_tests {
         account.delete_account.open = true;
         account.delete_account.status = DeletionStatus::NotRequested;
         account.delete_account.confirming = true;
+        account.delete_account.request_failed = true;
         coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
             render(&account, "delete-account-es-page").assert_spanish("delete account page (es)");
         });

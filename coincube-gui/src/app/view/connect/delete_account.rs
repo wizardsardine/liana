@@ -36,6 +36,11 @@ const DELETED_DATA: [&str; 6] = [
     "Payment and verification records",
 ];
 
+/// Mobile's `deleteAccountConfirmBody`.
+const CONFIRM_BODY: &str = "We'll delete your COINCUBE account and its data within 30 days. Make sure your recovery phrase is backed up first. Once deletion is complete, it can't be undone.";
+/// Mobile's `deleteAccountRequestFailed`.
+const REQUEST_FAILED: &str = "We couldn't send your request. Check your connection and try again.";
+
 const BEFORE_REQUEST: &str = "When you send the request, we'll email you to confirm we received it. Deletion completes within 30 days. To cancel before then, contact privacy@coincube.io.";
 const AFTER_REQUEST: &str = "You should receive a confirmation email at your account address. Deletion completes within 30 days. To cancel before then, contact privacy@coincube.io.";
 
@@ -153,7 +158,11 @@ pub(super) fn page<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
                 .push(paragraph(BEFORE_REQUEST))
                 .push(iced::widget::Space::new().height(Length::Fixed(16.0)));
             if deletion.confirming {
-                column.push(confirm_step(email, deletion.submitting))
+                column.push(confirm_step(
+                    email,
+                    deletion.submitting,
+                    deletion.request_failed,
+                ))
             } else {
                 column.push(
                     sheet_button(
@@ -170,7 +179,11 @@ pub(super) fn page<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAcc
     column.width(Length::Fill).into()
 }
 
-fn confirm_step<'a>(email: &'a str, submitting: bool) -> Element<'a, ConnectAccountMessage> {
+fn confirm_step<'a>(
+    email: &'a str,
+    submitting: bool,
+    failed: bool,
+) -> Element<'a, ConnectAccountMessage> {
     let send_label = if submitting {
         localized_copy("Sending request…")
     } else {
@@ -183,9 +196,18 @@ fn confirm_step<'a>(email: &'a str, submitting: bool) -> Element<'a, ConnectAcco
                 "¿Eliminar la cuenta de COINCUBE {email}?"
             )))
             .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-            .push(paragraph(
-                "COINCUBE Desktop and COINCUBE Mobile will no longer be able to use this account once deletion completes.",
-            ))
+            .push(paragraph(CONFIRM_BODY))
+            .push_maybe(failed.then(|| {
+                Column::new()
+                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                    .push(
+                        tenshu_text::body(localized_copy(REQUEST_FAILED))
+                            .size(13)
+                            .style(|theme| {
+                                coincube_ui::theme::tenshu::text::tone(theme, Tone::Bad)
+                            }),
+                    )
+            }))
             .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
             .push(
                 Row::new()

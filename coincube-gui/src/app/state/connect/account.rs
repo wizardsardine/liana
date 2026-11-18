@@ -4619,10 +4619,11 @@ impl ConnectAccountPanel {
         )
     }
 
-    /// The server refused the session (401): the same handling as any other
-    /// ended session — sign out here and raise the signed-out notice.
+    /// The server refused the session (`is_auth_error`: 401/403): the same
+    /// handling as any other ended session — sign out here and raise the
+    /// signed-out notice.
     fn deletion_session_ended(&mut self) -> iced::Task<Message> {
-        log::warn!("[CONNECT] account deletion: session rejected (401); signing out");
+        log::warn!("[CONNECT] account deletion: session rejected; signing out");
         let logout = self.update_message(ConnectAccountMessage::LogOut);
         iced::Task::batch([
             iced::Task::done(Message::ConnectSignedOutBy(
@@ -4690,19 +4691,24 @@ impl ConnectAccountPanel {
                 match self.delete_account.status_loaded(result, seq) {
                     None => {}
                     Some(DeletionFailure::SessionEnded) => return self.deletion_session_ended(),
-                    Some(DeletionFailure::Other(user)) => {
+                    // Only while the page is open: its card's retry reloads
+                    // this page's status and means nothing on the overview.
+                    Some(DeletionFailure::Other(user)) if self.delete_account.open => {
                         self.error = Some(PanelError::retryable(user, RetryAction::DeletionStatus));
                     }
+                    Some(DeletionFailure::Other(_)) => {}
                 }
             }
             DeleteAccountMessage::Requested(result, seq) => {
                 match self.delete_account.request_finished(result, seq) {
                     None => {}
                     Some(DeletionFailure::SessionEnded) => return self.deletion_session_ended(),
-                    // The confirm step's button is still on screen: it is the retry.
-                    Some(DeletionFailure::Other(user)) => {
+                    // The confirm step's button is still on screen: it is the
+                    // retry, and the step says the request didn't go through.
+                    Some(DeletionFailure::Other(user)) if self.delete_account.open => {
                         self.error = Some(PanelError::settled(user));
                     }
+                    Some(DeletionFailure::Other(_)) => {}
                 }
             }
         }
@@ -13941,6 +13947,57 @@ mod delete_account_panel_tests {
             DeletionStatus::Pending(pending())
         );
         assert!(panel.error.is_none());
+    }
+
+    #[test]
+    fn closing_mid_load_leaves_no_card_on_the_overview() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        let seq = panel.delete_account.seq;
+        delete(&mut panel, DeleteAccountMessage::Close);
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(
+                Err(DeletionFailure::Other(UserError::new(
+                    "Can't reach COINCUBE",
+                    "Try again.",
+                    "CC-TEST",
+                    true,
+                ))),
+                seq,
+            ),
+        );
+        assert!(panel.error.is_none());
+        assert!(!panel.delete_account.open);
+    }
+
+    #[test]
+    fn rejected_request_signs_out() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        let seq = panel.delete_account.seq;
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(Ok(None), seq),
+        );
+        delete(&mut panel, DeleteAccountMessage::Review(true));
+        delete(&mut panel, DeleteAccountMessage::Confirm);
+        let seq = panel.delete_account.seq;
+        let rejected = crate::app::state::connect::delete_account::deletion_failure(
+            &crate::services::coincube::CoincubeError::Unsuccessful(
+                crate::services::http::NotSuccessResponseInfo {
+                    status_code: 401,
+                    text: String::new(),
+                },
+            ),
+        );
+        delete(
+            &mut panel,
+            DeleteAccountMessage::Requested(Err(rejected), seq),
+        );
+        assert!(panel.user.is_none());
+        assert!(matches!(panel.step, ConnectFlowStep::Login { .. }));
+        assert!(!panel.delete_account.open);
     }
 
     #[test]

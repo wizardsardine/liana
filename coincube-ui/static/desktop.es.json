@@ -3351,5 +3351,6 @@
   "Request account deletion…": "Solicitar la eliminación de la cuenta…",
   "Sending request…": "Enviando solicitud…",
   "Delete my account": "Eliminar mi cuenta",
-  "COINCUBE Desktop and COINCUBE Mobile will no longer be able to use this account once deletion completes.": "COINCUBE Desktop y COINCUBE Mobile ya no podrán usar esta cuenta cuando se complete la eliminación."
+  "We'll delete your COINCUBE account and its data within 30 days. Make sure your recovery phrase is backed up first. Once deletion is complete, it can't be undone.": "Eliminaremos tu cuenta de COINCUBE y sus datos en un plazo de 30 días. Asegúrate antes de tener una copia de seguridad de tu frase de recuperación. Una vez completada la eliminación, no se puede deshacer.",
+  "We couldn't send your request. Check your connection and try again.": "No pudimos enviar tu solicitud. Revisa tu conexión e inténtalo de nuevo."
 }

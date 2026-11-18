@@ -37,6 +37,8 @@ pub struct DeleteAccountState {
     pub confirming: bool,
     /// `POST` in flight.
     pub submitting: bool,
+    /// The last `POST` failed; the confirm step says so beside its button.
+    pub request_failed: bool,
     /// Bumped for each status load and request. A result carrying an older
     /// value belongs to a superseded load, page or session and is dropped.
     pub seq: u64,
@@ -48,6 +50,7 @@ impl DeleteAccountState {
         self.open = true;
         self.confirming = false;
         self.submitting = false;
+        self.request_failed = false;
         self.begin_status_load()
     }
 
@@ -56,9 +59,16 @@ impl DeleteAccountState {
         self.next()
     }
 
+    /// Leaves the page. A status load still in flight is abandoned so its
+    /// result can't put a card on the Account overview; a request already
+    /// sent is kept so a success is still recorded.
     pub fn close(&mut self) {
         self.open = false;
         self.confirming = false;
+        self.request_failed = false;
+        if !self.submitting {
+            self.next();
+        }
     }
 
     /// Shows or hides the confirm step. Only offered while no request is on
@@ -67,6 +77,7 @@ impl DeleteAccountState {
         if self.submitting {
             return;
         }
+        self.request_failed = false;
         self.confirming = show && self.status == DeletionStatus::NotRequested;
     }
 
@@ -81,6 +92,7 @@ impl DeleteAccountState {
             return None;
         }
         self.submitting = true;
+        self.request_failed = false;
         Some(self.next())
     }
 
@@ -126,7 +138,10 @@ impl DeleteAccountState {
                 self.confirming = false;
                 None
             }
-            Err(failure) => Some(failure),
+            Err(failure) => {
+                self.request_failed = true;
+                Some(failure)
+            }
         }
     }
 
@@ -144,14 +159,14 @@ impl DeleteAccountState {
     }
 }
 
-/// A 401 means the session ended and goes to the app's sign-out handling;
-/// anything else is shown with the panel's error card.
+/// An auth refusal (401/403, `CoincubeError::is_auth_error`) means the session
+/// ended and goes to the app's sign-out handling; anything else is shown with
+/// the panel's error card.
 pub fn deletion_failure(error: &CoincubeError) -> DeletionFailure {
-    match error {
-        CoincubeError::Unsuccessful(info) if info.status_code == 401 => {
-            DeletionFailure::SessionEnded
-        }
-        other => DeletionFailure::Other(other.into()),
+    if error.is_auth_error() {
+        DeletionFailure::SessionEnded
+    } else {
+        DeletionFailure::Other(error.into())
     }
 }
 
@@ -272,18 +287,50 @@ mod tests {
     }
 
     #[test]
-    fn only_401_ends_the_session() {
+    fn closing_mid_load_drops_the_late_result() {
+        let mut state = DeleteAccountState::default();
+        let seq = state.open();
+        state.close();
+        assert!(state.status_loaded(Err(other()), seq).is_none());
+        assert_ne!(state.status, DeletionStatus::Failed);
+    }
+
+    #[test]
+    fn closing_while_sending_still_records_the_request() {
+        let mut state = not_requested();
+        state.review(true);
+        let seq = state.begin_request().unwrap();
+        state.close();
+        assert!(state.request_finished(Ok(pending()), seq).is_none());
+        assert_eq!(state.status, DeletionStatus::Pending(pending()));
+    }
+
+    #[test]
+    fn failed_request_is_flagged_until_the_next_attempt() {
+        let mut state = not_requested();
+        state.review(true);
+        let seq = state.begin_request().unwrap();
+        state.request_finished(Err(other()), seq);
+        assert!(state.request_failed);
+        state.begin_request().unwrap();
+        assert!(!state.request_failed);
+    }
+
+    #[test]
+    fn auth_refusals_end_the_session() {
         let error = |status_code| {
             CoincubeError::Unsuccessful(crate::services::http::NotSuccessResponseInfo {
                 status_code,
                 text: String::new(),
             })
         };
-        assert!(matches!(
-            deletion_failure(&error(401)),
-            DeletionFailure::SessionEnded
-        ));
-        for status in [400, 403, 404, 500] {
+        for status in [401, 403] {
+            assert!(matches!(
+                deletion_failure(&error(status)),
+                DeletionFailure::SessionEnded
+            ));
+        }
+        for status in [400, 404, 500] {
             assert!(matches!(
                 deletion_failure(&error(status)),
                 DeletionFailure::Other(_)

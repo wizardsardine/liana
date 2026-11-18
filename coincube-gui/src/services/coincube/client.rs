@@ -620,17 +620,21 @@ impl CoincubeClient {
     }
 
     /// `GET /api/v1/user/deletion-request` (authenticated). `Ok(None)` when
-    /// the account has no deletion request (the API answers 404); any other
-    /// failure, including 401, is returned as an error for the caller.
+    /// the account has no deletion request: a 404 carrying the standard error
+    /// envelope with code `NOT_FOUND`. Any other 404 (a missing route, a proxy
+    /// page) and every other failure, including 401, is returned as an error.
     pub async fn get_account_deletion_request(
         &self,
     ) -> Result<Option<AccountDeletionRequest>, CoincubeError> {
         let url = format!("{}/api/v1/user/deletion-request", self.base_url);
         let res = self.client.get(&url).send().await?;
-        if res.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let res = res.check_success().await?;
+        let res = match res.check_success().await {
+            Ok(res) => res,
+            Err(info) if info.status_code == 404 && info.code().as_deref() == Some("NOT_FOUND") => {
+                return Ok(None)
+            }
+            Err(info) => return Err(info.into()),
+        };
         let body = res.text().await?;
         Ok(Some(serde_json::from_str(&body)?))
     }
@@ -4660,6 +4664,24 @@ mod account_deletion_tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn status_plain_text_404_is_an_error_not_absence() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request");
+            then.status(404).body("404 page not found");
+        });
+        let err = signed_in(&server)
+            .get_account_deletion_request()
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(ref info) if info.status_code == 404
+        ));
     }
 
     #[tokio::test]
