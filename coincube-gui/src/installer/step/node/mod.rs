@@ -176,6 +176,18 @@ impl DefineNode {
         }
         Task::none()
     }
+
+    fn apply_ping_result(&mut self, node_type: NodeType, res: Result<(), Error>) {
+        // Result may not be for the selected node type.
+        if let Some(node) = self.get_mut(node_type) {
+            // Make sure we're expecting the ping result. Otherwise, the user may have changed values
+            // and so the ping result may not apply to the current values.
+            if node.waiting_for_ping_result {
+                node.waiting_for_ping_result = false;
+                node.is_running = Some(res);
+            }
+        }
+    }
 }
 
 impl Default for DefineNode {
@@ -221,15 +233,7 @@ impl Step for DefineNode {
                     }
                 }
                 message::DefineNode::PingResult((node_type, res)) => {
-                    // Result may not be for the selected node type.
-                    if let Some(node) = self.get_mut(node_type) {
-                        // Make sure we're expecting the ping result. Otherwise, the user may have changed values
-                        // and so the ping result may not apply to the current values.
-                        if node.waiting_for_ping_result {
-                            node.waiting_for_ping_result = false;
-                            node.is_running = Some(res);
-                        }
-                    }
+                    self.apply_ping_result(node_type, res);
                 }
                 msg @ message::DefineNode::DefineBitcoind(_) => {
                     return self.update_node(NodeType::Bitcoind, msg);
