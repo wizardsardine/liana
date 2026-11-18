@@ -30,7 +30,7 @@ pub enum EscrowTier {
     /// and sweeps via the recovery branch; never receives the seed.
     VaultOnly,
     /// Encrypt **seed + descriptor**. The heir restores the entire Cube
-    /// (Liquid + Spark + Vault).
+    /// (Spark + Vault).
     FullCube,
 }
 
