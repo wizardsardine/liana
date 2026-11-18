@@ -217,6 +217,7 @@ impl MeldState {
         cache: &Cache,
         daemon: Option<std::sync::Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         client: &'a CoincubeClient,
+        wallet: &std::sync::Arc<crate::app::wallet::Wallet>,
     ) -> Option<iced::Task<view::Message>> {
         match msg {
             MeldMessage::NavigateBack => {
@@ -513,8 +514,14 @@ impl MeldState {
 
             MeldMessage::CreateNewAddress => {
                 let daemon = daemon.expect("Daemon must be available for BuySell panel");
+                let (data_dir, wallet) = (cache.datadir_path.clone(), wallet.clone());
                 let task = iced::Task::perform(
-                    async move { daemon.as_ref().get_new_address().await },
+                    async move {
+                        crate::app::state::vault::receive::vault_receive_address(
+                            data_dir, &wallet, daemon,
+                        )
+                        .await
+                    },
                     |res| match res {
                         Ok(new) => view::Message::BuySell(view::BuySellMessage::Meld(
                             MeldMessage::NewAddressCreated(new),
