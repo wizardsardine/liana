@@ -6171,7 +6171,7 @@ impl P2PPanel {
                     }
                     Ok(Some(v))
                 }
-                Err(_) => return Err(()),
+                Err(_) => Err(()),
             }
         } else {
             Ok(None)
