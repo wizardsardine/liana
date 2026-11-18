@@ -350,21 +350,45 @@ pub(crate) async fn reconcile_pending_send(
     backend: &SparkBackend,
     pending: &PendingSend,
 ) -> ReconcileOutcome {
+    reconcile_pending_send_with_answer(backend, pending).await.0
+}
+
+/// [`reconcile_pending_send`], also handing back the bridge's late answer
+/// when it carried one.
+///
+/// The late answer can be claimed only once (`take_late_outcome`
+/// removes it), so a caller that will check again keeps it: it names the
+/// payment, and every later check can then look the payment up by its id
+/// instead of guessing from its size and time.
+pub(crate) async fn reconcile_pending_send_with_answer(
+    backend: &SparkBackend,
+    pending: &PendingSend,
+) -> (ReconcileOutcome, Option<SendPaymentOk>) {
     if let Some(request_id) = pending.request_id {
         match backend.client().take_late_outcome(request_id).await {
-            // Only a settled payment is landed. A pending one was accepted
-            // and may still fail, so the history decides (it shows the row
-            // as in progress until it settles).
-            Some(Ok(sent)) if sent.is_completed() => return ReconcileOutcome::Landed,
-            Some(Ok(_pending)) => {}
-            Some(Err(SparkClientError::BridgeError { message, .. })) => {
-                return ReconcileOutcome::DefinitelyFailed(message);
+            // Only a settled payment is landed.
+            Some(Ok(sent)) if sent.is_completed() => {
+                return (ReconcileOutcome::Landed, Some(sent));
             }
-            Some(Err(e)) => return ReconcileOutcome::Inconclusive(e.to_string()),
+            // Accepted but not settled: it may still fail. The answer names
+            // the payment, so judge it by that id, not by size and time.
+            Some(Ok(sent)) => {
+                let outcome = reconcile_accepted_send(backend, &sent.payment_id).await;
+                return (outcome, Some(sent));
+            }
+            Some(Err(SparkClientError::BridgeError { message, .. })) => {
+                return (ReconcileOutcome::DefinitelyFailed(message), None);
+            }
+            Some(Err(e)) => return (ReconcileOutcome::Inconclusive(e.to_string()), None),
             None => {}
         }
     }
+    (reconcile_from_history(backend, pending).await, None)
+}
 
+/// The history half of [`reconcile_pending_send`]: match by size, time and,
+/// when known, invoice.
+async fn reconcile_from_history(backend: &SparkBackend, pending: &PendingSend) -> ReconcileOutcome {
     match backend.list_payments(Some(50), None).await {
         Ok(list) => match history_match(&list.payments, pending) {
             HistoryMatch::Settled => ReconcileOutcome::Landed,
@@ -1311,14 +1335,15 @@ impl SparkSend {
                     tokio::time::sleep(delay).await;
                 }
                 match accepted_id {
-                    Some(id) => reconcile_accepted_send(&backend, &id).await,
-                    None => reconcile_pending_send(&backend, &pending).await,
+                    Some(id) => (reconcile_accepted_send(&backend, &id).await, None),
+                    None => reconcile_pending_send_with_answer(&backend, &pending).await,
                 }
             },
-            |outcome| {
-                Message::View(crate::app::view::Message::SparkSend(
-                    SparkSendMessage::ReconcileFinished(outcome),
-                ))
+            |(outcome, answer)| {
+                Message::View(crate::app::view::Message::SparkSend(match answer {
+                    Some(answer) => SparkSendMessage::LateAnswerChecked { outcome, answer },
+                    None => SparkSendMessage::ReconcileFinished(outcome),
+                }))
             },
         )
     }
@@ -2115,6 +2140,24 @@ impl State for SparkSend {
                     guard: *guard,
                 };
                 self.reconcile_unknown_send()
+            }
+            SparkSendMessage::LateAnswerChecked { outcome, answer } => {
+                if !matches!(self.phase, SparkSendPhase::OutcomeUnknown { .. }) {
+                    return Task::none();
+                }
+                // The bridge did answer after all, accepting the payment: keep
+                // its answer, which turns this into an accepted send. It is
+                // then checked by its id, re-checked by itself while in
+                // flight, and shown as sent with its real amount and fee.
+                self.accepted_send = Some(answer);
+                self.pending_rechecks = 0;
+                self.update(
+                    None,
+                    cache,
+                    Message::View(crate::app::view::Message::SparkSend(
+                        SparkSendMessage::ReconcileFinished(outcome),
+                    )),
+                )
             }
             SparkSendMessage::ReconcileFinished(outcome) => {
                 let SparkSendPhase::OutcomeUnknown { message, guard, .. } = &self.phase else {
@@ -5895,6 +5938,143 @@ mod tests {
         );
         assert_eq!(bolt11_of("bitcoin:bc1qxyz?lightning=lnbc1abc"), None);
         assert_eq!(bolt11_of("sp1qexampleaddress"), None);
+    }
+
+    /// A late answer accepting the payment names it: the check then goes by
+    /// that id (a same-size completed payment with another id settles
+    /// nothing), and hands the answer back so later checks can too. A late
+    /// answer that it completed is landed outright, without the history.
+    #[tokio::test]
+    async fn a_late_answer_is_judged_by_its_payment_id_and_kept() {
+        let now = chrono::Utc::now().timestamp();
+        let pending = PendingSend {
+            request_id: Some(7),
+            dispatched_at: now,
+            amount_sat: 1_000,
+            token_amount: None,
+            invoice: None,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let row = |id: &str, status: &str| PaymentSummary {
+            id: id.to_string(),
+            status: status.to_string(),
+            ..payment(-1_000, (now + 2) as u64, "Send")
+        };
+        let answer = |status: &str| SendPaymentOk {
+            payment_id: "ours".to_string(),
+            amount_sat: 1_000,
+            fee_sat: 2,
+            status: Some(status.to_string()),
+        };
+        let check = |late: SendPaymentOk, payments: Option<Vec<PaymentSummary>>| {
+            let pending = pending.clone();
+            async move {
+                let (client, mut requests) = crate::app::breez_spark::SparkClient::mock_transport();
+                let backend = SparkBackend::new(Arc::new(client));
+                backend
+                    .client()
+                    .mock_late_outcome(7, coincube_spark_protocol::OkPayload::SendPayment(late))
+                    .await;
+                let (result, _) = tokio::join!(
+                    reconcile_pending_send_with_answer(&backend, &pending),
+                    async {
+                        let Some(payments) = payments else { return };
+                        let request = requests.recv().await.expect("a history request");
+                        backend
+                            .client()
+                            .mock_reply(
+                                request.id,
+                                Some(coincube_spark_protocol::OkPayload::ListPayments(
+                                    coincube_spark_protocol::ListPaymentsOk { payments },
+                                )),
+                            )
+                            .await;
+                    }
+                );
+                result
+            }
+        };
+
+        let (outcome, kept) = check(answer("Pending"), Some(vec![row("other", "Completed")])).await;
+        assert!(matches!(outcome, ReconcileOutcome::Inconclusive(_)));
+        assert_eq!(kept.map(|ok| ok.payment_id).as_deref(), Some("ours"));
+
+        let (outcome, _) = check(answer("Pending"), Some(vec![row("ours", "Completed")])).await;
+        assert_eq!(outcome, ReconcileOutcome::Landed);
+
+        let (outcome, _) = check(answer("Pending"), Some(vec![row("ours", "Failed")])).await;
+        assert!(matches!(outcome, ReconcileOutcome::DefinitelyFailed(_)));
+
+        let (outcome, kept) = check(answer("Completed"), None).await;
+        assert_eq!(outcome, ReconcileOutcome::Landed);
+        assert!(kept.is_some());
+    }
+
+    /// The panel keeps a late answer, which makes the send an accepted one:
+    /// in flight it re-checks by itself, and once landed it is shown as sent
+    /// with the answer's amount and fee.
+    #[test]
+    fn a_late_answer_turns_an_unanswered_send_into_an_accepted_one() {
+        let late = SendPaymentOk {
+            payment_id: "ours".to_string(),
+            amount_sat: 1_000,
+            fee_sat: 3,
+            status: Some("Pending".to_string()),
+        };
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        panel.phase = SparkSendPhase::OutcomeUnknown {
+            message: "The Spark bridge did not answer.".to_string(),
+            outcome: None,
+            checking: true,
+            guard: RetryGuard::IdempotencyKey,
+        };
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::LateAnswerChecked {
+                outcome: ReconcileOutcome::Inconclusive("it is still in progress".to_string()),
+                answer: late.clone(),
+            },
+        );
+        assert_eq!(
+            panel
+                .accepted_send
+                .as_ref()
+                .map(|ok| ok.payment_id.as_str()),
+            Some("ours")
+        );
+        assert_eq!(panel.pending_rechecks, 1);
+        assert!(matches!(
+            panel.phase,
+            SparkSendPhase::OutcomeUnknown { checking: true, .. }
+        ));
+
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
+        );
+        assert!(matches!(panel.phase, SparkSendPhase::Sent(_)));
+        assert_eq!(panel.sent_fee_display, "3 sats");
+        assert!(panel.send_idempotency_key.is_none());
+    }
+
+    /// A late answer for a panel that has moved on changes nothing.
+    #[test]
+    fn a_late_answer_after_the_panel_moved_on_is_ignored() {
+        let mut panel = SparkSend::new(None);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::LateAnswerChecked {
+                outcome: ReconcileOutcome::Landed,
+                answer: SendPaymentOk {
+                    payment_id: "ours".to_string(),
+                    amount_sat: 1_000,
+                    fee_sat: 3,
+                    status: Some("Completed".to_string()),
+                },
+            },
+        );
+        assert!(matches!(panel.phase, SparkSendPhase::Idle));
+        assert!(panel.accepted_send.is_none());
     }
 
     /// A same-size outgoing payment only counts as this send once it has
