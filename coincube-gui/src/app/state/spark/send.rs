@@ -211,6 +211,14 @@ impl ReconcileOutcome {
 /// still far short of "some earlier payment of the same size".
 const RECONCILE_BACKDATE_SLACK_SECS: i64 = 60;
 
+/// How long to wait between automatic history checks for a send the bridge
+/// accepted but hadn't settled.
+const PENDING_RECHECK_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Automatic checks before the panel stops and leaves "Check again" to the
+/// user: about two minutes at [`PENDING_RECHECK_DELAY`].
+const PENDING_RECHECK_LIMIT: u32 = 40;
+
 /// What the payment history says about the send described by `pending`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryMatch {
@@ -630,6 +638,14 @@ pub struct SparkSend {
     /// reconciled and — only if reconciliation clears it — retried under the
     /// same key. `None` whenever no send is in flight or unresolved.
     pending_send: Option<PendingSend>,
+    /// The bridge's answer for a send it accepted but reported as not yet
+    /// settled. Kept so that, once the history shows it landed, the panel can
+    /// show it as sent with its real amount and fee. `None` otherwise,
+    /// including for a send that was never answered.
+    accepted_send: Option<SendPaymentOk>,
+    /// How many automatic history checks an accepted-but-unsettled send has
+    /// had. Capped by [`PENDING_RECHECK_LIMIT`]; then the user checks.
+    pending_rechecks: u32,
     /// The prepared cross-chain quote of the in-flight send, retained so a
     /// failed send can be retried by re-sending the **same handle** — same
     /// provider swap id, which dedups the BTC leg at the Spark protocol level.
@@ -701,6 +717,8 @@ impl SparkSend {
             slippage_input: String::new(),
             send_idempotency_key: None,
             pending_send: None,
+            accepted_send: None,
+            pending_rechecks: 0,
             cross_chain_prepare: None,
             quote_countdown: None,
             receive_target: SparkSendTarget::Lightning,
@@ -1106,6 +1124,8 @@ impl SparkSend {
             .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
             .clone();
 
+        self.accepted_send = None;
+        self.pending_rechecks = 0;
         // Recorded *before* dispatch: if the answer never comes, this is all
         // reconciliation will have to go on.
         self.pending_send = Some(PendingSend {
@@ -1147,6 +1167,79 @@ impl SparkSend {
         )
     }
 
+    /// Show a settled send as sent: the receipt, the celebration, and a
+    /// fresh start for the next payment (inputs, key and intent retired).
+    fn complete_send(&mut self, ok: SendPaymentOk) -> Task<Message> {
+        self.accepted_send = None;
+        self.pending_rechecks = 0;
+        self.sent_amount_display = match self.prepared_token_payment {
+            // The bridge reports a token payment's sats as zero.
+            Some(payment) => crate::app::view::spark::send::usdb_amount_line(
+                payment.amount.amount,
+                self.usdb_decimals(),
+            ),
+            None => format!("{} sats", format_u64_as_string(ok.amount_sat, ",")),
+        };
+        self.sent_recipient = self.destination_input.trim().to_string();
+        (self.sent_fee_display, self.sent_total_display) = match self.prepared_token_payment {
+            Some(payment) => {
+                let line = |amount| {
+                    crate::app::view::spark::send::usdb_amount_line(amount, self.usdb_decimals())
+                };
+                (
+                    line(payment.fee.amount),
+                    line(payment.amount.amount.saturating_add(payment.fee.amount)),
+                )
+            }
+            None => {
+                let sats = |sat: u64| format!("{} sats", format_u64_as_string(sat, ","));
+                (
+                    sats(ok.fee_sat),
+                    sats(ok.amount_sat.saturating_add(ok.fee_sat)),
+                )
+            }
+        };
+        self.phase = SparkSendPhase::Sent(ok);
+        // Clear the inputs so a follow-up send doesn't re-use them.
+        self.destination_input.clear();
+        self.detect_seq = self.detect_seq.wrapping_add(1);
+        self.detected = None;
+        self.amount_input.clear();
+        self.invoice_amount_sat = None;
+        // Retire the idempotency key with the send it belonged to. A
+        // *new* send must never reuse it, or the SDK would dedup it
+        // against this one and silently drop a payment the user meant
+        // to make.
+        self.send_idempotency_key = None;
+        self.pending_send = None;
+        self.cross_chain_prepare = None;
+        self.quote_countdown = None;
+        self.cross_chain = None;
+        // Refresh the Last Transactions list so the new payment
+        // appears under the send form once the user returns.
+        let refresh = fetch_payments_task(self.backend.clone());
+        // Pick celebration image based on send method.
+        // `last_send_method` mirrors the
+        // `breez_sdk_spark::SendPaymentMethod` variant names
+        // (BitcoinAddress / Bolt11Invoice / SparkAddress /
+        // SparkInvoice), plus LNURL-pay variants routed
+        // through the Lightning path.
+        let context = if self.last_send_method == "BitcoinAddress" {
+            "bitcoin-send"
+        } else if self.last_send_method == "Bolt11Invoice"
+            || self.last_send_method.contains("Lnurl")
+        {
+            "lightning-send"
+        } else {
+            "spark-send"
+        };
+        self.sent_celebration_context = context.to_string();
+        self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
+        self.sent_image_handle =
+            coincube_ui::component::quote_display::image_handle_for_context(context);
+        refresh
+    }
+
     /// Check what actually happened to a payment whose outcome is unknown.
     ///
     /// Two sources, in order of authority:
@@ -1163,6 +1256,11 @@ impl SparkSend {
     /// Anything that cannot be established returns
     /// [`ReconcileOutcome::Inconclusive`], which never enables a resend.
     fn reconcile_unknown_send(&self) -> Task<Message> {
+        self.reconcile_unknown_send_after(std::time::Duration::ZERO)
+    }
+
+    /// [`Self::reconcile_unknown_send`], after waiting `delay`.
+    fn reconcile_unknown_send_after(&self, delay: std::time::Duration) -> Task<Message> {
         use crate::app::view::SparkSendMessage;
         let (Some(backend), Some(pending)) = (self.backend.clone(), self.pending_send.clone())
         else {
@@ -1174,7 +1272,12 @@ impl SparkSend {
         };
 
         Task::perform(
-            async move { reconcile_pending_send(&backend, &pending).await },
+            async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                reconcile_pending_send(&backend, &pending).await
+            },
             |outcome| {
                 Message::View(crate::app::view::Message::SparkSend(
                     SparkSendMessage::ReconcileFinished(outcome),
@@ -1878,7 +1981,9 @@ impl State for SparkSend {
                 // the "Sent" screen, and its key and intent stay: the history
                 // check below decides, exactly as for an unanswered send.
                 // An older bridge that reports no status is treated the same.
-                let status = ok.status.as_deref().unwrap_or("unknown");
+                let status = ok.status.as_deref().unwrap_or("unknown").to_string();
+                self.accepted_send = Some(ok);
+                self.pending_rechecks = 0;
                 let guard = self
                     .pending_send
                     .as_ref()
@@ -1894,83 +1999,13 @@ impl State for SparkSend {
                 };
                 self.reconcile_unknown_send()
             }
-            SparkSendMessage::SendSucceeded(ok) => {
-                self.sent_amount_display = match self.prepared_token_payment {
-                    // The bridge reports a token payment's sats as zero.
-                    Some(payment) => crate::app::view::spark::send::usdb_amount_line(
-                        payment.amount.amount,
-                        self.usdb_decimals(),
-                    ),
-                    None => format!("{} sats", format_u64_as_string(ok.amount_sat, ",")),
-                };
-                self.sent_recipient = self.destination_input.trim().to_string();
-                (self.sent_fee_display, self.sent_total_display) = match self.prepared_token_payment
-                {
-                    Some(payment) => {
-                        let line = |amount| {
-                            crate::app::view::spark::send::usdb_amount_line(
-                                amount,
-                                self.usdb_decimals(),
-                            )
-                        };
-                        (
-                            line(payment.fee.amount),
-                            line(payment.amount.amount.saturating_add(payment.fee.amount)),
-                        )
-                    }
-                    None => {
-                        let sats = |sat: u64| format!("{} sats", format_u64_as_string(sat, ","));
-                        (
-                            sats(ok.fee_sat),
-                            sats(ok.amount_sat.saturating_add(ok.fee_sat)),
-                        )
-                    }
-                };
-                self.phase = SparkSendPhase::Sent(ok);
-                // Clear the inputs so a follow-up send doesn't re-use them.
-                self.destination_input.clear();
-                self.detect_seq = self.detect_seq.wrapping_add(1);
-                self.detected = None;
-                self.amount_input.clear();
-                self.invoice_amount_sat = None;
-                // Retire the idempotency key with the send it belonged to. A
-                // *new* send must never reuse it, or the SDK would dedup it
-                // against this one and silently drop a payment the user meant
-                // to make.
-                self.send_idempotency_key = None;
-                self.pending_send = None;
-                self.cross_chain_prepare = None;
-                self.quote_countdown = None;
-                self.cross_chain = None;
-                // Refresh the Last Transactions list so the new payment
-                // appears under the send form once the user returns.
-                let refresh = fetch_payments_task(self.backend.clone());
-                // Pick celebration image based on send method.
-                // `last_send_method` mirrors the
-                // `breez_sdk_spark::SendPaymentMethod` variant names
-                // (BitcoinAddress / Bolt11Invoice / SparkAddress /
-                // SparkInvoice), plus LNURL-pay variants routed
-                // through the Lightning path.
-                let context = if self.last_send_method == "BitcoinAddress" {
-                    "bitcoin-send"
-                } else if self.last_send_method == "Bolt11Invoice"
-                    || self.last_send_method.contains("Lnurl")
-                {
-                    "lightning-send"
-                } else {
-                    "spark-send"
-                };
-                self.sent_celebration_context = context.to_string();
-                self.sent_quote = coincube_ui::component::quote_display::random_quote(context);
-                self.sent_image_handle =
-                    coincube_ui::component::quote_display::image_handle_for_context(context);
-                refresh
-            }
+            SparkSendMessage::SendSucceeded(ok) => self.complete_send(ok),
             SparkSendMessage::SendFailed(err) => {
                 // A definite rejection: the bridge answered. The payment did
                 // not happen, so the ordinary correct-and-retry path applies
                 // and `Reset` may safely mint a new key.
                 self.pending_send = None;
+                self.accepted_send = None;
                 self.phase = SparkSendPhase::Error(err);
                 Task::none()
             }
@@ -1981,6 +2016,7 @@ impl State for SparkSend {
                 // Everything about the payment is kept: the key, the inputs,
                 // and now the request id, so a late answer can still be
                 // claimed. Nothing here says the payment failed.
+                self.accepted_send = None;
                 if let Some(pending) = self.pending_send.as_mut() {
                     pending.request_id = Some(request_id);
                 } else {
@@ -2035,12 +2071,38 @@ impl State for SparkSend {
                 };
                 let message = message.clone();
                 let guard = *guard;
+                // A send the bridge accepted, now found settled: it is sent,
+                // with the amount and fee the bridge reported.
+                if outcome == ReconcileOutcome::Landed {
+                    if let Some(ok) = self.accepted_send.take() {
+                        return self.complete_send(SendPaymentOk {
+                            status: Some("Completed".to_string()),
+                            ..ok
+                        });
+                    }
+                }
+                // Accepted and still in flight: look again shortly rather
+                // than leave the user to keep pressing "Check again".
+                if matches!(outcome, ReconcileOutcome::Inconclusive(_))
+                    && self.accepted_send.is_some()
+                    && self.pending_rechecks < PENDING_RECHECK_LIMIT
+                {
+                    self.pending_rechecks += 1;
+                    self.phase = SparkSendPhase::OutcomeUnknown {
+                        message,
+                        outcome: None,
+                        checking: true,
+                        guard,
+                    };
+                    return self.reconcile_unknown_send_after(PENDING_RECHECK_DELAY);
+                }
                 match &outcome {
                     // The bridge answered late and said it was rejected: that
                     // is a definite failure, so the panel can offer the normal
                     // start-over path.
                     ReconcileOutcome::DefinitelyFailed(reason) => {
                         self.pending_send = None;
+                        self.accepted_send = None;
                         self.phase = SparkSendPhase::Error(reason.clone());
                     }
                     _ => {
@@ -2079,6 +2141,7 @@ impl State for SparkSend {
                     "a resend must reuse the original key"
                 );
                 self.pending_send = None;
+                self.accepted_send = None;
                 self.phase = SparkSendPhase::Idle;
                 Task::done(Message::View(crate::app::view::Message::SparkSend(
                     SparkSendMessage::PrepareRequested,
@@ -2112,6 +2175,7 @@ impl State for SparkSend {
                 // send is a different payment and needs a fresh one.
                 self.send_idempotency_key = None;
                 self.pending_send = None;
+                self.accepted_send = None;
                 self.cross_chain_prepare = None;
                 self.quote_countdown = None;
                 self.slippage_input.clear();
@@ -5154,6 +5218,132 @@ mod tests {
         panel
     }
 
+    /// A panel whose bitcoin-rail Lightning send of 1_000 sats the bridge
+    /// has just accepted with `status`, before any history check returns.
+    fn accepted_send_panel(status: Option<&str>) -> SparkSend {
+        let mut panel = SparkSend::new(None);
+        panel.destination_input = "lnbc1example".to_string();
+        panel.amount_input = "1000".to_string();
+        panel.send_idempotency_key = Some("key-1".to_string());
+        panel.pending_send = Some(PendingSend {
+            request_id: None,
+            dispatched_at: chrono::Utc::now().timestamp(),
+            amount_sat: 1_000,
+            token_amount: None,
+            invoice: Some("lnbc1example".to_string()),
+            guard: RetryGuard::IdempotencyKey,
+        });
+        panel.phase = SparkSendPhase::Sending;
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::SendSucceeded(SendPaymentOk {
+                payment_id: "payment-id".to_string(),
+                amount_sat: 1_000,
+                fee_sat: 2,
+                status: status.map(str::to_string),
+            }),
+        );
+        panel
+    }
+
+    /// Once the history shows the accepted send settled, it is sent, with
+    /// the bridge's amount and fee, and the panel is free for the next one.
+    #[test]
+    fn an_accepted_send_found_settled_is_sent() {
+        let mut panel = accepted_send_panel(Some("Pending"));
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
+        );
+        match &panel.phase {
+            SparkSendPhase::Sent(ok) => assert!(ok.is_completed()),
+            other => panic!("expected Sent, got {:?}", other),
+        }
+        assert_eq!(panel.sent_amount_display, "1,000 sats");
+        assert_eq!(panel.sent_fee_display, "2 sats");
+        assert!(panel.send_idempotency_key.is_none());
+        assert!(panel.pending_send.is_none());
+        assert!(panel.accepted_send.is_none());
+        assert!(panel.destination_input.is_empty());
+    }
+
+    /// While the accepted send is still in flight the panel keeps checking
+    /// by itself, holding the key, and stops after the limit so the user can
+    /// check again or look at the history.
+    #[test]
+    fn an_accepted_send_in_flight_is_rechecked_up_to_a_limit() {
+        let mut panel = accepted_send_panel(Some("Pending"));
+        let in_progress = || {
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Inconclusive(
+                "it is still in progress".to_string(),
+            ))
+        };
+        for _ in 0..PENDING_RECHECK_LIMIT {
+            let _ = send(&mut panel, in_progress());
+            assert!(matches!(
+                panel.phase,
+                SparkSendPhase::OutcomeUnknown {
+                    checking: true,
+                    outcome: None,
+                    ..
+                }
+            ));
+        }
+        assert_eq!(panel.pending_rechecks, PENDING_RECHECK_LIMIT);
+        let _ = send(&mut panel, in_progress());
+        assert!(matches!(
+            panel.phase,
+            SparkSendPhase::OutcomeUnknown {
+                checking: false,
+                outcome: Some(ReconcileOutcome::Inconclusive(_)),
+                ..
+            }
+        ));
+        assert_eq!(panel.send_idempotency_key.as_deref(), Some("key-1"));
+        assert!(panel.pending_send.is_some());
+
+        // A later "Check again" that finds it settled still completes it.
+        let _ = send(&mut panel, SparkSendMessage::ReconcileRequested);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
+        );
+        assert!(matches!(panel.phase, SparkSendPhase::Sent(_)));
+    }
+
+    /// A send nobody answered has no receipt to show, so a check that finds
+    /// it landed reports that rather than inventing a fee. No automatic
+    /// re-checks either: those are for a send the bridge accepted.
+    #[test]
+    fn an_unanswered_send_is_not_rechecked_or_given_a_receipt() {
+        let mut panel = unknown_outcome_panel(RetryGuard::IdempotencyKey);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Inconclusive(
+                "it is still in progress".to_string(),
+            )),
+        );
+        assert!(matches!(
+            panel.phase,
+            SparkSendPhase::OutcomeUnknown {
+                checking: false,
+                ..
+            }
+        ));
+        assert_eq!(panel.pending_rechecks, 0);
+        let _ = send(
+            &mut panel,
+            SparkSendMessage::ReconcileFinished(ReconcileOutcome::Landed),
+        );
+        assert!(matches!(
+            panel.phase,
+            SparkSendPhase::OutcomeUnknown {
+                outcome: Some(ReconcileOutcome::Landed),
+                ..
+            }
+        ));
+    }
+
     /// An accepted send that hasn't settled is not "Sent": a pending
     /// Lightning payment can still fail on its route. The panel checks the
     /// history instead, keeping the key and the intent so nothing can pay
@@ -5162,30 +5352,7 @@ mod tests {
     #[test]
     fn an_accepted_but_pending_send_is_checked_not_sent() {
         for status in [Some("Pending"), None] {
-            let mut panel = SparkSend::new(None);
-            panel.destination_input = "lnbc1example".to_string();
-            panel.amount_input = "1000".to_string();
-            panel.send_idempotency_key = Some("key-1".to_string());
-            panel.pending_send = Some(PendingSend {
-                request_id: None,
-                dispatched_at: chrono::Utc::now().timestamp(),
-                amount_sat: 1_000,
-                token_amount: None,
-                invoice: Some("lnbc1example".to_string()),
-                guard: RetryGuard::IdempotencyKey,
-            });
-            panel.phase = SparkSendPhase::Sending;
-
-            let _ = send(
-                &mut panel,
-                SparkSendMessage::SendSucceeded(SendPaymentOk {
-                    payment_id: "payment-id".to_string(),
-                    amount_sat: 1_000,
-                    fee_sat: 2,
-                    status: status.map(str::to_string),
-                }),
-            );
-
+            let panel = accepted_send_panel(status);
             match &panel.phase {
                 SparkSendPhase::OutcomeUnknown {
                     message,

@@ -1936,10 +1936,33 @@ fn send_options_for(
         SendPaymentMethod::BitcoinAddress { .. } => Some(SendPaymentOptions::BitcoinAddress {
             confirmation_speed: speed.clone(),
         }),
-        SendPaymentMethod::Bolt11Invoice { .. }
-        | SendPaymentMethod::SparkAddress { .. }
+        SendPaymentMethod::Bolt11Invoice { .. } => Some(bolt11_send_options()),
+        SendPaymentMethod::SparkAddress { .. }
         | SendPaymentMethod::SparkInvoice { .. }
         | SendPaymentMethod::CrossChainAddress { .. } => None,
+    }
+}
+
+/// How long a Lightning send waits for the payment to settle before the SDK
+/// hands it back still `Pending`.
+///
+/// With no options the pinned SDK waits zero seconds, so nearly every
+/// Lightning send came back `Pending` and the gui (rightly) could not call it
+/// sent. Waiting lets the usual payment come back `Completed`. A slower one
+/// still returns `Pending`, and the gui then checks the history for it. Kept
+/// well inside the gui's send deadline (120 s), and the bridge serves each
+/// request on its own task, so the wait holds up nothing else.
+const BOLT11_COMPLETION_WAIT_SECS: u32 = 30;
+
+/// The options a Bolt11 send executes with.
+///
+/// `prefer_spark` must stay what passing no options meant: the SDK's
+/// `prefer_spark_over_lightning`, which `sdk_adapter` leaves at the
+/// `default_config` value, `false`. Only the completion wait changes.
+fn bolt11_send_options() -> SendPaymentOptions {
+    SendPaymentOptions::Bolt11Invoice {
+        prefer_spark: false,
+        completion_timeout_secs: Some(BOLT11_COMPLETION_WAIT_SECS),
     }
 }
 
@@ -3744,8 +3767,30 @@ mod fee_tier_tests {
         );
     }
 
-    /// Every other payment method keeps the options it has always been executed
-    /// with — `None`. The SDK rejects a Bitcoin-address option elsewhere with
+    /// A Bolt11 send waits for the payment to settle, so the usual one comes
+    /// back `Completed` rather than `Pending`, and keeps the routing it had
+    /// with no options (Lightning, not Spark).
+    #[test]
+    fn a_bolt11_send_waits_for_completion_and_keeps_its_routing() {
+        match bolt11_send_options() {
+            SendPaymentOptions::Bolt11Invoice {
+                prefer_spark,
+                completion_timeout_secs,
+            } => {
+                assert!(!prefer_spark);
+                let wait = completion_timeout_secs.expect("a completion wait");
+                assert!(wait > 0);
+                assert!(
+                    u64::from(wait) < 120,
+                    "the wait must end well before the gui's send deadline"
+                );
+            }
+            _ => panic!("expected Bolt11 options"),
+        }
+    }
+
+    /// Spark and cross-chain sends keep the options they have always been
+    /// executed with — `None`. The SDK rejects a Bitcoin-address option elsewhere with
     /// `InvalidInput`, so applying one would break Bolt11 and Spark sends
     /// outright.
     #[test]
@@ -5973,7 +6018,10 @@ mod sent_payment_tests {
                     assert_eq!(sent.payment_id, "pay-2");
                     assert_eq!((sent.amount_sat, sent.fee_sat), (1_000, 3));
                     // The gui reads only `Completed` as settled.
-                    assert_eq!(sent.status.as_deref(), Some(format!("{:?}", status).as_str()));
+                    assert_eq!(
+                        sent.status.as_deref(),
+                        Some(format!("{:?}", status).as_str())
+                    );
                     assert_eq!(sent.is_completed(), status == PaymentStatus::Completed);
                 }
                 other => panic!("{:?} must stay a success, got {:?}", status, other),
