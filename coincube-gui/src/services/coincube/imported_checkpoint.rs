@@ -114,6 +114,24 @@ async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>, Checkp
     Ok(bytes)
 }
 
+async fn locked_checkpoint_error(response: reqwest::Response) -> CheckpointError {
+    // The server uses 423 for both duress and a new device's wait.
+    // Retain the legacy envelope's dated delay, but never retain its
+    // message/body. Opaque, truncated, or oversized locks stay neutral.
+    let locked = match bounded_body(response).await {
+        Ok(bytes) => std::str::from_utf8(&bytes)
+            .ok()
+            .map(super::DownloadError::from_locked_body),
+        Err(_) => None,
+    };
+    match locked {
+        Some(super::DownloadError::TrustedDeviceDelay { available_at }) => {
+            CheckpointError::TrustedDeviceDelay { available_at }
+        }
+        _ => CheckpointError::Locked,
+    }
+}
+
 impl CoincubeClient {
     async fn imported_checkpoint_request<T: DeserializeOwned>(
         &self,
@@ -151,21 +169,7 @@ impl CoincubeClient {
             });
         }
         if status == 423 {
-            // The server uses 423 for both duress and a new device's wait.
-            // Retain the legacy envelope's dated delay, but never retain its
-            // message/body. Opaque, truncated, or oversized locks stay neutral.
-            let locked = match bounded_body(response).await {
-                Ok(bytes) => std::str::from_utf8(&bytes)
-                    .ok()
-                    .map(super::DownloadError::from_locked_body),
-                Err(_) => None,
-            };
-            return Err(match locked {
-                Some(super::DownloadError::TrustedDeviceDelay { available_at }) => {
-                    CheckpointError::TrustedDeviceDelay { available_at }
-                }
-                _ => CheckpointError::Locked,
-            });
+            return Err(locked_checkpoint_error(response).await);
         }
         match status {
             300..=399 => return Err(CheckpointError::InvalidResponse),

@@ -399,27 +399,7 @@ impl Anchor {
                 digest,
                 cleanup_txn,
                 retire_files,
-            } => {
-                if !valid_retire(retire_files)
-                    || (cleanup_txn.is_none() && !retire_files.is_empty())
-                {
-                    return Err("Invalid imported inventory cleanup receipt.".into());
-                }
-                out.push(1);
-                out.extend_from_slice(&generation.to_be_bytes());
-                out.extend_from_slice(digest);
-                out.push(u8::from(cleanup_txn.is_some()));
-                if let Some(id) = cleanup_txn {
-                    if id.is_nil() {
-                        return Err("Invalid imported inventory cleanup transaction.".into());
-                    }
-                    out.extend_from_slice(id.as_bytes());
-                }
-                out.push(retire_files.len() as u8);
-                for name in retire_files {
-                    field(&mut out, name)?;
-                }
-            }
+            } => encode_committed(&mut out, generation, digest, cleanup_txn, retire_files)?,
             State::Pending {
                 old_generation,
                 old_digest,
@@ -479,29 +459,7 @@ impl Anchor {
             policy_hash: reader.array()?,
         };
         let state = match reader.take(1)?[0] {
-            1 => {
-                let generation = u64::from_be_bytes(reader.array()?);
-                let digest = reader.array()?;
-                let cleanup_txn = match reader.take(1)?[0] {
-                    0 => None,
-                    1 => Some(reader.uuid()?),
-                    _ => return Err("Invalid imported inventory cleanup flag.".into()),
-                };
-                let count = reader.take(1)?[0] as usize;
-                if count > MAX_RETIRE {
-                    return Err("Imported inventory cleanup list is oversized.".into());
-                }
-                let mut retire_files = Vec::with_capacity(count);
-                for _ in 0..count {
-                    retire_files.push(reader.field()?);
-                }
-                State::Committed {
-                    generation,
-                    digest,
-                    cleanup_txn,
-                    retire_files,
-                }
-            }
+            1 => decode_committed(&mut reader)?,
             2 => {
                 let old_generation = u64::from_be_bytes(reader.array()?);
                 let old_digest = reader.array()?;
@@ -539,6 +497,57 @@ impl Anchor {
         }
         Ok(anchor)
     }
+}
+
+fn encode_committed(
+    out: &mut Vec<u8>,
+    generation: &u64,
+    digest: &[u8; 32],
+    cleanup_txn: &Option<Uuid>,
+    retire_files: &[String],
+) -> Result<(), String> {
+    if !valid_retire(retire_files) || (cleanup_txn.is_none() && !retire_files.is_empty()) {
+        return Err("Invalid imported inventory cleanup receipt.".into());
+    }
+    out.push(1);
+    out.extend_from_slice(&generation.to_be_bytes());
+    out.extend_from_slice(digest);
+    out.push(u8::from(cleanup_txn.is_some()));
+    if let Some(id) = cleanup_txn {
+        if id.is_nil() {
+            return Err("Invalid imported inventory cleanup transaction.".into());
+        }
+        out.extend_from_slice(id.as_bytes());
+    }
+    out.push(retire_files.len() as u8);
+    for name in retire_files {
+        field(out, name)?;
+    }
+    Ok(())
+}
+
+fn decode_committed(reader: &mut Reader<'_>) -> Result<State, String> {
+    let generation = u64::from_be_bytes(reader.array()?);
+    let digest = reader.array()?;
+    let cleanup_txn = match reader.take(1)?[0] {
+        0 => None,
+        1 => Some(reader.uuid()?),
+        _ => return Err("Invalid imported inventory cleanup flag.".into()),
+    };
+    let count = reader.take(1)?[0] as usize;
+    if count > MAX_RETIRE {
+        return Err("Imported inventory cleanup list is oversized.".into());
+    }
+    let mut retire_files = Vec::with_capacity(count);
+    for _ in 0..count {
+        retire_files.push(reader.field()?);
+    }
+    Ok(State::Committed {
+        generation,
+        digest,
+        cleanup_txn,
+        retire_files,
+    })
 }
 
 struct Reader<'a>(&'a [u8]);
