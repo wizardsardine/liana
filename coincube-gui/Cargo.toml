@@ -101,10 +101,33 @@ base64 = "0.22"
 # version and features iced already builds for its SVG widget.
 resvg = "0.45"
 bitcoin_hashes = "0.16"
+# Until the Liquid removal, breez-sdk-liquid enabled reqwest's default-tls,
+# system-proxy, charset and socks features, so every client used the OS TLS
+# stack and trust store (TlsBackend::default() is native-tls whenever
+# default-tls is on) and honoured the system and SOCKS proxy settings. They are
+# declared here so removing Liquid does not change that: users behind a
+# TLS-inspecting proxy or an admin-installed root keep working. See
+# docs/BRANTA_RECIPIENT_IDENTITY.md.
 reqwest = { version = "0.12.18", default-features = false, features = [
+	"charset",
+	"default-tls",
+	"http2",
 	"json",
 	"rustls-tls",
+	"socks",
 	"stream",
+	"system-proxy",
+] }
+# Same reason: the Liquid SDK stack also turned on OpenSSL's `vendored`
+# feature, so on Linux native-tls links a static, pinned OpenSSL rather than the
+# system libssl. macOS and Windows use their platform TLS and are unaffected.
+native-tls = { version = "0.2.14", features = ["vendored"] }
+# And for the same reason the Nostr/Mostro relay websockets: async-wsocket
+# calls tokio-tungstenite without a connector, which picks native-tls when its
+# feature is on and rustls with the bundled Mozilla roots otherwise. The Liquid
+# stack turned native-tls on; keep it.
+tokio-tungstenite = { version = "0.26.2", default-features = false, features = [
+	"native-tls-vendored",
 ] }
 reqwest-sse = "0.1"
 rust-ini = "0.21"

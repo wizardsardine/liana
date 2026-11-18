@@ -3863,7 +3863,7 @@ impl RecoverableVault {
     }
 
     /// Whether the master seed is escrowed for this caller — the Full-Cube
-    /// tier, which restores the entire Cube (Liquid + Spark + Vault) rather
+    /// tier, which restores the entire Cube (Spark + Vault) rather
     /// than just the watch-only Vault.
     pub fn has_seed_tier(&self) -> bool {
         self.available_tiers.iter().any(|t| t == "seed")

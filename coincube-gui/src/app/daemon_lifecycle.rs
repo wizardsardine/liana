@@ -1,0 +1,213 @@
+//! Handles daemon replacement results without mixing them into the dispatcher.
+use super::*;
+
+impl App {
+    pub(super) fn handle_daemon_restarted(&mut self, outcome: DaemonRestart) -> Task<Message> {
+        self.daemon_switch_in_progress = false;
+        self.cache.daemon_switch_in_progress = false;
+        // Non-blocking toast emitted on top of the normal result (e.g. a
+        // switch that succeeded but couldn't be persisted to disk).
+        let mut extra = Task::none();
+        let result = match outcome {
+            DaemonRestart::Started(daemon) => {
+                self.daemon = Some(daemon);
+                // A fresh successful switch (adopt / manual) re-arms
+                // auto-promotion that a prior failure had suppressed.
+                self.auto_switch_suppressed = false;
+                Ok(())
+            }
+            DaemonRestart::StartedNotPersisted(daemon) => {
+                // The switch succeeded (wallet is on the new backend); the
+                // only problem is the config wasn't saved. Report success
+                // but warn that it may not survive a restart.
+                self.daemon = Some(daemon);
+                self.auto_switch_suppressed = false;
+                extra = Task::done(Message::View(view::Message::ShowToast(
+                    log::Level::Warn,
+                    "Switched Bitcoin backend, but couldn't save the change to disk — \
+                     it may revert if you restart Coincube."
+                        .to_string(),
+                )));
+                Ok(())
+            }
+            DaemonRestart::Failed { error, recovered } => {
+                if let Some(daemon) = recovered {
+                    self.daemon = Some(daemon);
+                    // The recovered daemon still carries the armed
+                    // `auto_switch_to_pending` + `pending_bitcoind`, so
+                    // suppress auto-promotion to stop the same failing
+                    // switch re-firing every poll. A later user-initiated
+                    // switch re-arms it (see the Started arms).
+                    self.auto_switch_suppressed = true;
+                } else {
+                    // The old daemon was already stopped during the switch
+                    // and recovery couldn't bring one back. Drop it rather
+                    // than keep referencing a dead daemon that ticks and
+                    // config loads would keep poking.
+                    self.daemon = None;
+                }
+                error!("Daemon backend switch failed: {}", error);
+                Err(error)
+            }
+            DaemonRestart::Panicked(error) => {
+                // Unknown post-panic state. self.daemon still holds the
+                // pre-switch daemon (cloned, not taken), so leave it in
+                // place — a possibly-stopped backend the user can re-switch
+                // beats no backend on an open vault. Suppress auto-promotion
+                // so a still-armed config can't re-trigger the same panic
+                // every poll; a manual switch re-arms it.
+                self.auto_switch_suppressed = true;
+                error!("Daemon backend switch panicked; keeping previous daemon: {error}");
+                Err(error)
+            }
+        };
+        // A successful switch invalidates the previous node probe and
+        // clears its cached permission before polling the replacement.
+        if result.is_ok() {
+            self.bitcoind_sync_probe_in_progress = false;
+            self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
+            self.node_history_in_progress = false;
+            self.node_history_pending = None;
+            self.cache.node_history = node_history::Status::default();
+            self.cache.node_history_switch_requested = false;
+            self.cache.node_bitcoind_sync_progress = None;
+            self.cache.node_bitcoind_sync_heights = None;
+            self.cache.node_bitcoind_ibd = None;
+            self.cache.node_bitcoind_subversion = None;
+            self.cache.node_bitcoind_pruning = None;
+            self.cache.local_switch_history = None;
+            self.cache.node_bitcoind_last_log = None;
+            self.local_switch_hold = None;
+        }
+        let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));
+        Task::batch([
+            cfg_task,
+            extra,
+            Task::done(Message::CacheUpdated),
+            Task::done(Message::PollBitcoindSync),
+        ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_app(test: impl FnOnce(&mut App)) {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = crate::app::shell_tests::bitcoin_app(root.path());
+        app.daemon_switch_in_progress = true;
+        app.cache.daemon_switch_in_progress = true;
+        app.bitcoind_sync_probe_in_progress = true;
+        app.node_history_request_epoch = u64::MAX;
+        app.node_history_in_progress = true;
+        app.node_history_pending = Some(node_history::Action::Pause);
+        app.cache.node_history.busy = true;
+        app.cache.node_history.error = Some("old probe".into());
+        app.cache.node_history_switch_requested = true;
+        app.cache.node_bitcoind_sync_progress = Some(0.75);
+        app.cache.node_bitcoind_sync_heights = Some((30, 40));
+        app.cache.node_bitcoind_ibd = Some(true);
+        app.cache.node_bitcoind_subversion = Some("old node".into());
+        app.cache.node_bitcoind_pruning =
+            Some(local_switch::NodePruning::Pruned { prune_height: 5 });
+        app.cache.node_bitcoind_last_log = Some("old log".into());
+        test(&mut app);
+    }
+
+    #[test]
+    fn both_success_outcomes_install_backend_and_invalidate_previous_probes() {
+        for not_persisted in [false, true] {
+            with_app(|app| {
+                app.auto_switch_suppressed = true;
+                let replacement = crate::app::shell_tests::fixture_daemon(app);
+                app.daemon = None;
+                let outcome = if not_persisted {
+                    DaemonRestart::StartedNotPersisted(replacement.clone())
+                } else {
+                    DaemonRestart::Started(replacement.clone())
+                };
+                drop(app.update(Message::DaemonRestarted(outcome)));
+                assert!(Arc::ptr_eq(app.daemon.as_ref().unwrap(), &replacement));
+                assert!(!app.daemon_switch_in_progress);
+                assert!(!app.cache.daemon_switch_in_progress);
+                assert!(!app.auto_switch_suppressed);
+                assert!(!app.bitcoind_sync_probe_in_progress);
+                assert_eq!(app.node_history_request_epoch, 0);
+                assert!(!app.node_history_in_progress);
+                assert!(app.node_history_pending.is_none());
+                assert!(!app.cache.node_history.busy);
+                assert!(app.cache.node_history.error.is_none());
+                assert!(!app.cache.node_history_switch_requested);
+                assert!(app.cache.node_bitcoind_sync_progress.is_none());
+                assert!(app.cache.node_bitcoind_sync_heights.is_none());
+                assert!(app.cache.node_bitcoind_ibd.is_none());
+                assert!(app.cache.node_bitcoind_subversion.is_none());
+                assert!(app.cache.node_bitcoind_pruning.is_none());
+                assert!(app.cache.node_bitcoind_last_log.is_none());
+            });
+        }
+    }
+
+    #[test]
+    fn unsuccessful_outcomes_preserve_probes_and_distinguish_backend_ownership() {
+        for shape in ["recovered", "unrecovered", "panic"] {
+            for suppressed in [false, true] {
+                with_app(|app| {
+                    app.auto_switch_suppressed = suppressed;
+                    let previous = app.daemon.as_ref().unwrap().clone();
+                    let error = Error::Config("fixture restart failure".into());
+                    let outcome = match shape {
+                        "recovered" => DaemonRestart::Failed {
+                            error,
+                            recovered: Some(previous.clone()),
+                        },
+                        "unrecovered" => DaemonRestart::Failed {
+                            error,
+                            recovered: None,
+                        },
+                        _ => DaemonRestart::Panicked(error),
+                    };
+                    drop(app.update(Message::DaemonRestarted(outcome)));
+                    assert!(!app.daemon_switch_in_progress);
+                    assert!(!app.cache.daemon_switch_in_progress);
+                    if shape == "unrecovered" {
+                        assert!(app.daemon.is_none());
+                        assert_eq!(app.auto_switch_suppressed, suppressed);
+                    } else {
+                        assert!(Arc::ptr_eq(app.daemon.as_ref().unwrap(), &previous));
+                        assert!(app.auto_switch_suppressed);
+                    }
+                    assert!(app.bitcoind_sync_probe_in_progress);
+                    assert_eq!(app.node_history_request_epoch, u64::MAX);
+                    assert!(app.node_history_in_progress);
+                    assert!(matches!(
+                        app.node_history_pending,
+                        Some(node_history::Action::Pause)
+                    ));
+                    assert!(app.cache.node_history.busy);
+                    assert_eq!(app.cache.node_history.error.as_deref(), Some("old probe"));
+                    assert!(app.cache.node_history_switch_requested);
+                    assert_eq!(app.cache.node_bitcoind_sync_progress, Some(0.75));
+                    assert_eq!(app.cache.node_bitcoind_sync_heights, Some((30, 40)));
+                    assert_eq!(app.cache.node_bitcoind_ibd, Some(true));
+                    assert_eq!(
+                        app.cache.node_bitcoind_subversion.as_deref(),
+                        Some("old node")
+                    );
+                    assert_eq!(
+                        app.cache.node_bitcoind_pruning,
+                        Some(local_switch::NodePruning::Pruned { prune_height: 5 })
+                    );
+                    assert_eq!(app.cache.node_bitcoind_last_log.as_deref(), Some("old log"));
+                });
+            }
+        }
+    }
+}
