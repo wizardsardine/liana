@@ -273,15 +273,8 @@ impl HttpObservationSource {
                             snapshot.ancestry_transaction_search(root_chain, txid, max_bytes),
                             snapshot.transaction(root_chain, txid)
                         );
-                        let raw = raw.map_err(|(error, exceeded_graph_bytes)| {
-                            if exceeded_graph_bytes
-                                && max_bytes < claim_ancestry::MAX_TRANSACTION_BYTES
-                            {
-                                DiscoveryError::Structural(claim_ancestry::Error::ByteLimit)
-                            } else {
-                                observation(error)
-                            }
-                        })?;
+                        let raw =
+                            raw.map_err(|error| discovery_raw_read_error(error, max_bytes))?;
                         let transaction = transaction.map_err(observation)?;
                         trace.stage(root_chain, diagnostics::Stage::PreForkCheck);
                         let pre_fork = pruning
@@ -349,6 +342,17 @@ impl HttpObservationSource {
             );
         }
         result
+    }
+}
+
+fn discovery_raw_read_error(
+    (error, exceeded_graph_bytes): (FailureKind, bool),
+    max_bytes: usize,
+) -> DiscoveryError {
+    if exceeded_graph_bytes && max_bytes < claim_ancestry::MAX_TRANSACTION_BYTES {
+        DiscoveryError::Structural(claim_ancestry::Error::ByteLimit)
+    } else {
+        DiscoveryError::Observation(error)
     }
 }
 
