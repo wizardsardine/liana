@@ -150,30 +150,6 @@ impl OwnerKeychainRestoreStep {
             |res| Message::OwnerKeychainRestore(OwnerKeychainRestoreMsg::DecryptResult(res)),
         )
     }
-
-    fn apply_recovery_identity_and_session(&self, ctx: &mut Context, seed: Option<&SeedBlob>) {
-        // Carry the original Cube identity (UUID + name) out of the decrypted
-        // envelope so the post-install `find_or_create_cube` re-mints the same
-        // Cube. Reusing the UUID makes the Connect `register_cube` call
-        // (idempotent on UUID) reactivate the original Cube instead of creating
-        // a duplicate — the same duplicate-Cube bug the owner CRK restore had.
-        // Full scope only (a real Cube); Vault-only restores into an existing
-        // Cube with its own identity.
-        if matches!(self.scope, RestoreScope::Full) {
-            if let Some(seed) = seed {
-                ctx.cube_id = Some(seed.cube.uuid.clone());
-                ctx.cube_name = Some(seed.cube.name.clone());
-            }
-        }
-        // Thread the owner's Connect session into the context so the downstream
-        // `CoincubeConnectStep` skips a redundant re-auth and `Final` re-registers
-        // the recovered Cube under the owner's account — mirrors the owner CRK
-        // restore + heir restore JWT hand-off.
-        if let Some(token) = self.client.as_ref().and_then(|c| c.token()) {
-            ctx.connect_jwt = Some(Zeroizing::new(token.to_string()));
-            ctx.use_coincube_connect = true;
-        }
-    }
 }
 
 impl From<OwnerKeychainRestoreStep> for Box<dyn Step> {
@@ -291,13 +267,28 @@ impl Step for OwnerKeychainRestoreStep {
             }
         };
         staged.commit(ctx, RestoreSource::KeychainSeal);
-        ctx.restored_imported_wallet = imported_blob;
-        if let Some(imported) = &ctx.restored_imported_wallet {
-            ctx.descriptor = None;
-            ctx.restored_wallet_birthday = Some(imported.wallet.birthday);
-            ctx.wallet_alias = imported.wallet.name.clone();
+        apply_imported_wallet_metadata(ctx, imported_blob);
+        // Carry the original Cube identity (UUID + name) out of the decrypted
+        // envelope so the post-install `find_or_create_cube` re-mints the same
+        // Cube. Reusing the UUID makes the Connect `register_cube` call
+        // (idempotent on UUID) reactivate the original Cube instead of creating
+        // a duplicate — the same duplicate-Cube bug the owner CRK restore had.
+        // Full scope only (a real Cube); Vault-only restores into an existing
+        // Cube with its own identity.
+        if matches!(self.scope, RestoreScope::Full) {
+            if let Some(seed) = seed {
+                ctx.cube_id = Some(seed.cube.uuid.clone());
+                ctx.cube_name = Some(seed.cube.name.clone());
+            }
         }
-        self.apply_recovery_identity_and_session(ctx, seed.as_ref());
+        // Thread the owner's Connect session into the context so the downstream
+        // `CoincubeConnectStep` skips a redundant re-auth and `Final` re-registers
+        // the recovered Cube under the owner's account — mirrors the owner CRK
+        // restore + heir restore JWT hand-off.
+        if let Some(token) = self.client.as_ref().and_then(|c| c.token()) {
+            ctx.connect_jwt = Some(Zeroizing::new(token.to_string()));
+            ctx.use_coincube_connect = true;
+        }
         true
     }
 
@@ -341,6 +332,18 @@ impl Step for OwnerKeychainRestoreStep {
                 None,
             ),
         }
+    }
+}
+
+fn apply_imported_wallet_metadata(
+    ctx: &mut Context,
+    imported_blob: Option<crate::services::recovery::ImportedDescriptorBlob>,
+) {
+    ctx.restored_imported_wallet = imported_blob;
+    if let Some(imported) = &ctx.restored_imported_wallet {
+        ctx.descriptor = None;
+        ctx.restored_wallet_birthday = Some(imported.wallet.birthday);
+        ctx.wallet_alias = imported.wallet.name.clone();
     }
 }
 
