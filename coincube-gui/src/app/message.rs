@@ -109,6 +109,9 @@ pub enum Message {
     /// PLAN-duress-vault-gate PR 3). The result is logged inside the task and
     /// discarded here — it must never block or affect the UI.
     CubeVaultReported,
+    /// An imported Vault's Bitcoin Blake2b copy (its paired Cube) was
+    /// created, or why not.
+    ImportedCopyCreated(Result<(), String>),
     /// Terminal no-op for the fire-and-forget push of a Spark Stable Balance
     /// decision to the Cube's Connect record
     /// (`ConnectCubePanel::report_spark_stable_balance`). Logged inside the

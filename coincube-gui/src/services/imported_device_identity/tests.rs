@@ -236,10 +236,16 @@ async fn refuses_wrong_key_path_network_and_script_identity() {
     );
     let (mainnet, mainnet_accounts) = self::wallet("wpkh", ChainId::Bitcoin);
     let fork = mainnet.paired_blake2b().unwrap();
-    assert!(matches!(
-        check_wallet(&fork, &mainnet_accounts[0]),
-        Err(DeviceIdentityError::UnsupportedChain)
-    ));
+    // A Bitcoin Blake2b import checks its devices like any other chain
+    // (Robert, 2026-11-17); the identity is that chain's own.
+    assert_eq!(
+        check_wallet(&fork, &mainnet_accounts[0]).unwrap(),
+        fork.identity(fork.chain()).unwrap()
+    );
+    assert_ne!(
+        fork.identity(fork.chain()).unwrap(),
+        mainnet.identity(mainnet.chain()).unwrap()
+    );
 }
 
 #[tokio::test]

@@ -87,13 +87,13 @@ pub struct ReplayPill<'a> {
     pub unresolved: Vec<usize>,
 }
 
-/// The status pill plus, for a replayable spend, either the acknowledgement
-/// the user must give before Broadcast is enabled or — when a replayable
-/// input is known to also exist on Bitcoin (`#276` I13) — the requirement
-/// that cannot be acknowledged away.
+/// The status pill plus, for a replayable spend, the acknowledgement the user
+/// gives before Broadcast is enabled. When a replayable input is known to
+/// also exist on Bitcoin (`#276` I13), a warning above it names the input and
+/// offers **Split first**; sending anyway stays the user's choice.
 fn replay_status_view<'a>(pill: &ReplayPill<'a>) -> Element<'a, Message> {
     let (label, tone) = replay::pill_copy(&pill.review.status(), &pill.entangled);
-    let blocked = replay::blocked_entangled_inputs(&pill.review.status(), &pill.entangled);
+    let confirmed = replay::confirmed_entangled_inputs(&pill.review.status(), &pill.entangled);
     let style: fn(&theme::Theme) -> iced::widget::container::Style = match tone {
         PillTone::Success => theme::pill::success,
         PillTone::Warning => theme::pill::warning,
@@ -111,16 +111,15 @@ fn replay_status_view<'a>(pill: &ReplayPill<'a>) -> Element<'a, Message> {
                     .style(style),
             ),
     );
-    if let Some(required) = replay::blocked_entangled_copy(&blocked) {
-        // No checkbox: the acknowledgement does not apply to a required
-        // signature, and showing one would suggest it does.
+    if let Some(warning) = replay::confirmed_entangled_copy(&confirmed) {
         column = column
-            .push(p2_regular(required).style(theme::text::warning))
+            .push(p2_regular(warning).style(theme::text::warning))
             .push(
                 coincube_ui::component::button::secondary(None, localized_copy("Split first"))
                     .on_press(Message::SplitFirst),
             );
-    } else if pill.review.status().needs_acknowledgement() {
+    }
+    if pill.review.status().needs_acknowledgement() {
         if pill.checking {
             column = column.push(
                 p2_regular(localized_copy(replay::CHECKING_COPY)).style(theme::text::secondary),
@@ -148,7 +147,7 @@ fn replay_status_view<'a>(pill: &ReplayPill<'a>) -> Element<'a, Message> {
                 .style(theme::text::warning),
             );
         }
-        let acknowledged = pill.review.acknowledged();
+        let acknowledged = pill.review.acknowledgement_covers(&pill.entangled);
         column = column.push(
             checkbox(acknowledged)
                 .label(localized_copy(replay::REPLAYABLE_ACKNOWLEDGEMENT))
@@ -834,7 +833,7 @@ pub fn spend_overview_with_cancel<'a>(
     // signature counts below are progress hints only.
     let sign_or_broadcast = match &replay {
         None => !broadcast_ready,
-        Some(pill) => !pill.review.signatures_complete(&pill.entangled),
+        Some(pill) => !pill.review.signatures_complete(),
     };
     // Force the user to save (which commits the derivation-index increment to the
     // database) before exporting, otherwise the exported PSBT can lead to change
@@ -893,7 +892,7 @@ pub fn spend_overview_with_cancel<'a>(
                         key_aliases,
                         match &replay {
                             None => broadcast_ready,
-                            Some(pill) => pill.review.signatures_complete(&pill.entangled),
+                            Some(pill) => pill.review.signatures_complete(),
                         },
                     ))
                     .push_maybe(replay.as_ref().map(replay_status_view)),

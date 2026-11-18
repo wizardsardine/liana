@@ -2438,7 +2438,7 @@ impl Home {
                                 // flag (server default `false`). It flips later
                                 // via the vault-creation re-report
                                 // (PLAN-duress-vault-gate PR 3).
-                                has_vault: cube.vault_wallet_id.is_some().then_some(true),
+                                has_vault: cube.holds_vault().then_some(true),
                                 spark_stable_balance: cube.spark_stable_balance,
                             };
                             self.open_after_registration = Some(cube.id.clone());
@@ -4266,7 +4266,7 @@ impl Home {
                                                 // would clobber a `true` that device reported and
                                                 // silently unblock its duress gate.
                                                 let vault_report = vault_presence_report(
-                                                    cube.vault_wallet_id.is_some(),
+                                                    cube.holds_vault(),
                                                     sc.has_vault,
                                                 );
                                                 // Seed the server's Spark Stable Balance record
@@ -4304,10 +4304,7 @@ impl Home {
                                                     uuid: cube.id.clone(),
                                                     name: cube.name.clone(),
                                                     network: cube.api_network_string(),
-                                                    has_vault: cube
-                                                        .vault_wallet_id
-                                                        .is_some()
-                                                        .then_some(true),
+                                                    has_vault: cube.holds_vault().then_some(true),
                                                     spark_stable_balance: cube.spark_stable_balance,
                                                 };
                                                 client
