@@ -493,8 +493,8 @@ impl Panels {
                 cube_id.clone(),
                 cube_name,
                 cube_network,
-                // Connect's legacy hasVault contract requires an inheritance policy.
-                wallet.supports_inheritance(),
+                // Imported Vaults report `hasVault` like any Vault.
+                wallet.supports_inheritance() || wallet.is_imported(),
             ),
             buy_sell: breez_client.as_ref().map(|client| {
                 crate::app::view::buysell::BuySellPanel::new(
@@ -4133,6 +4133,9 @@ impl App {
             cube_settings.api_network_string(),
             cube_settings.bitcoin_import.clone(),
         );
+        // An imported Vault opens before its wallet loads; Connect still
+        // registers the Cube as holding a Vault.
+        panels.connect.cube.cube_has_vault = cube_settings.holds_vault();
         panels.global_home.imported_installed = cube_settings
             .bitcoin_import
             .as_deref()
@@ -6492,6 +6495,10 @@ impl App {
         self.panels.global_home.imported_balance = panel.authoritative_balance();
         let mut tasks = Vec::new();
         if first_load {
+            // An import finished this session: report the Vault to Connect.
+            if !self.panels.connect.cube.cube_has_vault {
+                tasks.push(self.panels.connect.report_vault_created());
+            }
             self.wallet = Some(wallet.clone());
             self.panels.build_vault_panels(
                 wallet.clone(),
@@ -8028,7 +8035,7 @@ impl App {
                     // surface the extra Recovery-Kit nudge line (master decision
                     // 6): the freshly-created Vault's Wallet Descriptor isn't in
                     // the kit yet, so a duress wipe of it would be irreversible.
-                    let report_task = if wallet.supports_inheritance() {
+                    let report_task = if wallet.supports_inheritance() || wallet.is_imported() {
                         self.panels.connect.report_vault_created()
                     } else {
                         Task::none()
@@ -11120,8 +11127,12 @@ pub(crate) mod tests {
         assert!(app.panels.transactions.is_some());
         assert!(app.panels.recovery.is_none());
         assert!(!app.claim_source_cube().has_vault);
-        assert!(!app.cache.has_vault); // Legacy inheritance/Connect capability.
+        assert!(!app.cache.has_vault); // Legacy inheritance capability.
         assert!(app.cache.has_imported_bitcoin);
+        assert!(
+            app.panels.connect.cube.cube_has_vault,
+            "Connect registers an imported Vault's Cube with hasVault"
+        );
         assert!(app.wallet.as_ref().unwrap().signer.is_none());
         assert_eq!(app.wallet.as_ref().unwrap().id(), attachment.wallet_id);
         assert!(Arc::ptr_eq(

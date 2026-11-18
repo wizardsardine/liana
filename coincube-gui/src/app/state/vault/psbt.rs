@@ -3380,13 +3380,15 @@ fn enforce_legacy_signature_policy(unified: bool, psbt: &Psbt) -> Result<(), Uni
 }
 
 /// [`merge_signatures_for_chain`] for the Keychain sign flow, so every merge
-/// site shares one definition.
+/// site shares one definition. Callers pass [`uses_unified_signatures`] for
+/// the wallet, never the bare chain: an imported wallet on Bitcoin Blake2b
+/// makes ordinary signatures and merges them the Bitcoin way.
 pub(crate) fn merge_signatures_pub(
-    chain: ChainId,
+    unified: bool,
     psbt: &mut Psbt,
     signed_psbt: &Psbt,
 ) -> Result<(), UnifiedFinalizeError> {
-    merge_signatures_for_chain(chain.is_blake2b(), psbt, signed_psbt)
+    merge_signatures_for_chain(unified, psbt, signed_psbt)
 }
 
 /// Reuse the application's signature-only merge in the opt-in integration runner.
