@@ -5927,6 +5927,11 @@ impl App {
                 let daemon = daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
+                let imported_generation = self
+                    .panels
+                    .imported_bitcoin
+                    .as_ref()
+                    .map(|panel| panel.runtime_generation());
                 tasks.push(Task::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
@@ -5945,7 +5950,12 @@ impl App {
                             last_tick: tick,
                         })
                     },
-                    Message::UpdateDaemonCache,
+                    move |result| match imported_generation {
+                        Some(generation) => {
+                            Message::UpdateImportedDaemonCache { generation, result }
+                        }
+                        None => Message::UpdateDaemonCache(result),
+                    },
                 ));
             }
 
@@ -7604,6 +7614,16 @@ impl App {
                 return self.handle_fiat_price(fiat_price);
             }
             Message::UpdateDaemonCache(res) => return self.handle_daemon_cache(res),
+            Message::UpdateImportedDaemonCache { generation, result } => {
+                if self
+                    .panels
+                    .imported_bitcoin
+                    .as_ref()
+                    .is_some_and(|panel| panel.runtime_generation() == generation)
+                {
+                    return self.handle_daemon_cache(result);
+                }
+            }
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
@@ -9517,15 +9537,17 @@ impl App {
             }
             // A send prepared or a PSBT signed on the Vault's screens
             // completes on them, even if the import panel took the route back
-            // while it ran (its wallet went back to syncing). Each handler
-            // checks its own generation, so a stale result is ignored there.
+            // while it ran. During a wider scan the old daemon can already
+            // be stopped, and these Vault panels require a live daemon.
             msg @ (Message::VaultSpendPrepared { .. }
             | Message::Signed(..)
             | Message::CubeKeys(_))
                 if self.panels.imported_holds_route() =>
             {
-                if let Some(panel) = self.panels.route_panel_mut() {
-                    return panel.update(self.daemon.clone(), &self.cache, msg);
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.route_panel_mut())
+                {
+                    return panel.update(Some(daemon), &self.cache, msg);
                 }
             }
             msg => {
@@ -10892,6 +10914,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn late_vault_results_are_ignored_while_import_discovery_has_no_daemon() {
+        let _guard = crate::app::session::test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _, _) = imported_vault_app(root.path());
+        app.daemon = None;
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        assert!(app.panels.imported_holds_route());
+        assert!(app.panels.route_panel_mut().is_some());
+        assert_eq!(
+            app.update(Message::VaultSpendPrepared {
+                generation: 1,
+                result: Err(Error::Unexpected("late prepare".into())),
+                identities: vec![],
+            })
+            .units(),
+            0
+        );
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::PSBTs(None));
+        assert!(app.panels.imported_holds_route());
+        assert!(app.panels.route_panel_mut().is_some());
+        assert_eq!(app.update(Message::CubeKeys(Ok(vec![]))).units(), 0);
+    }
+
+    #[test]
     fn imported_policy_loads_as_the_existing_vault_wallet() {
         let root =
             std::env::temp_dir().join(format!("imported-vault-app-{}", uuid::Uuid::new_v4()));
@@ -11030,12 +11076,21 @@ pub(crate) mod tests {
                 .complete_scan_for_tests(block_height, Vec::new());
             drop(app.adopt_imported_runtime());
         };
-        let poll = |app: &mut App, block_height: i32| {
+        let generation = app
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .unwrap()
+            .runtime_generation();
+        let poll = |app: &mut App, block_height: i32, generation: u64| {
             let polled = cache::DaemonCache {
                 blockheight: block_height,
                 ..app.cache.daemon_cache.clone()
             };
-            drop(app.update(Message::UpdateDaemonCache(Ok(polled))));
+            drop(app.update(Message::UpdateImportedDaemonCache {
+                generation,
+                result: Ok(polled),
+            }));
         };
         settle(&mut app);
 
@@ -11044,17 +11099,24 @@ pub(crate) mod tests {
             !app.panels.activity.vault_loading,
             "the scan is still running"
         );
-        poll(&mut app, 99);
+        poll(&mut app, 99, generation);
         assert_ne!(app.cache.blockheight(), 99, "a scanning poll is ignored");
 
         scanned(&mut app, 100);
         assert!(app.panels.activity.vault_loading, "the history is in");
         settle(&mut app);
 
-        poll(&mut app, 100);
+        poll(&mut app, 99, generation.wrapping_sub(1));
+        assert_eq!(
+            app.cache.blockheight(),
+            100,
+            "a replaced daemon's poll is ignored"
+        );
+
+        poll(&mut app, 100, generation);
         assert!(!app.panels.activity.vault_loading, "nothing changed");
 
-        poll(&mut app, 101);
+        poll(&mut app, 101, generation);
         assert_eq!(app.cache.blockheight(), 101);
         assert!(app.panels.activity.vault_loading, "a block arrived");
         settle(&mut app);
@@ -11070,7 +11132,7 @@ pub(crate) mod tests {
         app.panels.current = Menu::Cube(menu::CubeSubMenu::Settings(
             menu::CubeSettingsOption::General,
         ));
-        poll(&mut app, 102);
+        poll(&mut app, 102, generation);
         assert!(!app.panels.activity.vault_loading, "another page");
         let _ = std::fs::remove_dir_all(&root);
     }

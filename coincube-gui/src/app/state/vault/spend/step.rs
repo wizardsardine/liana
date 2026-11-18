@@ -549,11 +549,11 @@ impl DefineSpend {
         let destinations_is_empty = destinations.is_empty();
         // Clone for the result message; the original is moved into the future.
         let max_address_for_msg = max_address.clone();
-        // Mixed send-max (a remainder recipient plus other payments) must not
-        // put the remainder in the change slot: the daemon only accepts an
-        // external change address when the destination list is empty (a sweep).
+        // Imported wallets always require owned change. Native Vaults can use
+        // the remainder recipient as change only for a single-recipient sweep.
         let wallet_change = self.wallet.preview_change_address();
-        let fold_remainder = recipient_with_max.is_some() && !destinations.is_empty();
+        let fold_remainder =
+            recipient_with_max.is_some() && (self.wallet.is_imported() || !destinations.is_empty());
 
         // Run coin selection / PSBT construction off the UI thread. The result
         // is delivered as `Message::RedraftResult` and applied (if still
@@ -572,7 +572,7 @@ impl DefineSpend {
                         })
                         .map_err(|e| e.into())
                 } else if fold_remainder {
-                    Self::fold_mixed_send_max(
+                    Self::fold_send_max(
                         daemon,
                         &outpoints,
                         destinations,
@@ -603,13 +603,13 @@ impl DefineSpend {
         )
     }
 
-    /// Turns a mixed send-max into explicit destination amounts.
+    /// Turns a send-max that needs owned change into explicit destination amounts.
     ///
     /// The first build uses the wallet's preview change address and reads the
     /// leftover. That leftover is then a normal payment to the max recipient, and
     /// the build is repeated so any fee change is added to the same recipient or
     /// stepped down by `feerate * 64` when the extra output no longer fits.
-    async fn fold_mixed_send_max(
+    async fn fold_send_max(
         daemon: Arc<dyn Daemon + Sync + Send>,
         outpoints: &[OutPoint],
         mut destinations: HashMap<Address<address::NetworkUnchecked>, u64>,
@@ -2623,6 +2623,64 @@ mod tests {
                 .collect(),
         })
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn imported_single_recipient_max_uses_owned_change_and_an_explicit_payment() {
+        use crate::services::split_test_wallets::{imported_vault, Shape};
+        use iced::futures::StreamExt;
+        use serde_json::json;
+
+        let mut state = branta_form();
+        state.wallet = Arc::new(imported_vault(Shape::Wpkh));
+        state.recipients[0] = Recipient::default();
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.into()),
+        );
+        state.send_max_to_recipient = Some(0);
+        let change = state.wallet.preview_change_address();
+        let recipient = state.recipients[0].destination().unwrap();
+        let outpoint = state.coins[0].0.outpoint;
+        let response = |address: Address<address::NetworkUnchecked>| {
+            let mut psbt = prepared_outputs(&[49_000]);
+            psbt.unsigned_tx.output[0].script_pubkey = address.assume_checked().script_pubkey();
+            serde_json::to_value(CreateSpendResult::Success {
+                psbt,
+                warnings: vec![],
+            })
+            .unwrap()
+        };
+        let request = |destinations| {
+            Some(json!({"method": "createspend", "params": [destinations, [outpoint], 2, &change]}))
+        };
+        let explicit_payment = HashMap::from([(recipient.clone(), 49_000_u64)]);
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![
+                (request(json!({})), Ok(response(change.clone()))),
+                (
+                    request(json!(explicit_payment)),
+                    Ok(response(recipient.clone())),
+                ),
+            ])
+            .run(),
+        ));
+
+        let mut stream = iced_runtime::task::into_stream(state.run_redraft(daemon, 7)).unwrap();
+        let Some(iced_runtime::Action::Output(Message::RedraftResult {
+            result: Ok(CreateSpendResult::Success { psbt, .. }),
+            ..
+        })) = stream.next().await
+        else {
+            panic!("expected a successful MAX draft");
+        };
+        let output = &psbt.unsigned_tx.output[0];
+        assert_eq!(
+            output.script_pubkey,
+            recipient.assume_checked().script_pubkey()
+        );
+        assert_eq!(output.value.to_sat(), 49_000);
     }
 
     #[test]

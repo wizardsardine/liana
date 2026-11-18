@@ -2509,10 +2509,11 @@ impl SignModal {
             .position(|hw| hw.fingerprint() == Some(fp) && !hw.is_lan_phone())
         {
             match &self.hws.list[i] {
+                // Imported signing sessions register their own device policy on demand.
                 HardwareWallet::Supported {
                     registered: Some(false),
                     ..
-                } => {
+                } if !self.wallet.is_imported() => {
                     return (
                         Kind::Hardware,
                         St::Disabled("Register the wallet on this device to sign.".to_string()),
@@ -4568,6 +4569,55 @@ mod tests {
 
     const PHONE_FP: &str = "f714c228";
     const USB_FP: &str = "2522f23c";
+
+    #[test]
+    fn imported_signers_reach_on_demand_registration_from_the_picker() {
+        use crate::services::split_test_wallets::{imported_vault, master, Shape};
+        use async_hwi::DeviceKind;
+        use view::vault::psbt::{SigningKeyAction, SigningKeyState};
+
+        let imported_fp = master(1).fingerprint(&secp256k1::Secp256k1::new());
+        for (wallet, fingerprint) in [
+            (imported_vault(Shape::WshSortedMulti), imported_fp),
+            (wallet(), fingerprint(USB_FP)),
+        ] {
+            let imported = wallet.is_imported();
+            let mut modal = SignModal::new(
+                HashSet::new(),
+                Arc::new(wallet),
+                CoincubeDirectory::new(PathBuf::new()),
+                Network::Bitcoin,
+                true,
+                None,
+                None,
+                false,
+            );
+            for (kind, registered) in [
+                (DeviceKind::BitBox02, Some(false)),
+                (DeviceKind::Ledger, Some(false)),
+                (DeviceKind::Coldcard, None),
+            ] {
+                modal.hws.list = vec![HardwareWallet::Supported {
+                    id: "usb-device".into(),
+                    device: Arc::new(StubDevice(fingerprint)),
+                    kind,
+                    fingerprint,
+                    version: None,
+                    registered,
+                    alias: None,
+                }];
+                let (_, state) = modal.classify_signing_key(fingerprint, true);
+                if imported || registered.is_none() {
+                    assert!(matches!(
+                        state,
+                        SigningKeyState::Available(SigningKeyAction::Hardware(0))
+                    ));
+                } else {
+                    assert!(matches!(state, SigningKeyState::Disabled(_)));
+                }
+            }
+        }
+    }
 
     /// The DESC primary path with a Keychain phone on the LAN holding
     /// `PHONE_FP` (device index 0) and a USB wallet holding `USB_FP` (index 1).

@@ -689,6 +689,10 @@ impl ImportedBitcoinPanel {
         self.stored_keys
     }
 
+    pub(crate) fn runtime_generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn is_ready(&self) -> bool {
         self.import.is_ready()
             && self.coins.is_some()
