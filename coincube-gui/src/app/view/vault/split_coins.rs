@@ -39,6 +39,8 @@ pub struct SplitOverlay {
     pub here: ChainId,
     pub method: Method,
     pub signature_available: bool,
+    /// An imported Vault, whose signers make only ordinary signatures.
+    pub imported: bool,
     pub inputs: Vec<InputRow>,
     pub key_needed: bool,
     pub address: Option<String>,
@@ -163,15 +165,23 @@ pub fn selection_bar<'a>(count: usize, total: Amount, mask_amounts: bool) -> Ele
 
 /// The warning before Send selected spends coins that are on both chains.
 /// Either chain can send anyway after the acknowledgement; replay is the
-/// user's choice, never a block.
-pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, Message> {
+/// user's choice, never a block. `imported` names an imported Vault's reason:
+/// its signers make only ordinary signatures.
+pub fn send_warning<'a>(
+    here: ChainId,
+    count: usize,
+    ack: bool,
+    imported: bool,
+) -> Element<'a, Message> {
     let other = chain_name(twin(here));
     let question = if count == 1 {
         format!("1 selected coin also exists on {}", other)
     } else {
         format!("{} selected coins also exist on {}", count, other)
     };
-    let body = if here.is_blake2b() {
+    let body = if here.is_blake2b() && imported {
+        localized_copy("This imported wallet signs the standard Bitcoin way, so this transaction could be copied to Bitcoin and move your bitcoin too. Split these coins first, or continue if that doesn't matter to you.")
+    } else if here.is_blake2b() {
         localized_copy("A Bitcoin Blake2b transaction that spends them can be copied to Bitcoin and move those coins too, to the same recipient. Split them first, or continue if that doesn't matter to you.")
     } else {
         localized_copy("A Bitcoin transaction that spends them can be copied to Bitcoin Blake2b and move those coins too, to the same recipient. Split them first, or continue if that doesn't matter to you.")
@@ -383,6 +393,8 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
                     "Replay-protected signature",
                     if overlay.signature_available {
                         "Signed so that Bitcoin rejects it. No extra coin needed.".to_string()
+                    } else if overlay.imported {
+                        localized_copy("Not available: this imported wallet signs the standard Bitcoin way, so it can't make this signature.").to_string()
                     } else {
                         localized_copy(
                             "Not available: this Vault's signers can't make this signature.",
@@ -573,6 +585,7 @@ mod tests {
             here: ChainId::Bitcoin,
             method: Method::SplitKey,
             signature_available: false,
+            imported: false,
             inputs: vec![
                 row(1, 100_000, false),
                 row(2, 100_000, false),
@@ -650,5 +663,53 @@ mod tests {
         );
         assert!(mounted.contains("How to split"));
         assert!(mounted.contains("Not available: this Vault's signers can't make this signature."));
+
+        // An imported Vault names its own reason.
+        blake2b.imported = true;
+        let mounted = capture::inspect(
+            "vault-split-coins-overlay-imported",
+            split_overlay(&blake2b),
+            (1280, 900),
+            "light",
+            coincube_ui::theme::Theme::light(),
+        );
+        assert!(
+            mounted.contains("Not available: this imported wallet signs the standard Bitcoin way")
+        );
+    }
+
+    /// The Blake2b send warning names an imported Vault's reason, in English
+    /// and Spanish, and still lets it send after the tick.
+    #[test]
+    fn blake2b_send_warning_words_the_reason_for_an_imported_vault() {
+        use crate::app::view::shared::landing::capture;
+        let vault = capture::inspect(
+            "vault-split-coins-send-warning",
+            send_warning(ChainId::BitcoinBlake2b, 2, false, false),
+            (1024, 768),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+        );
+        assert!(vault.contains("A Bitcoin Blake2b transaction that spends them"));
+        let imported = capture::inspect(
+            "vault-split-coins-send-warning-imported",
+            send_warning(ChainId::BitcoinBlake2b, 2, true, true),
+            (1024, 768),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+        );
+        assert!(imported.contains("This imported wallet signs the standard Bitcoin way"));
+        assert!(imported.contains("Send anyway"));
+        let spanish =
+            coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+                capture::inspect(
+                    "vault-split-coins-send-warning-imported-es",
+                    send_warning(ChainId::BitcoinBlake2b, 2, true, true),
+                    (1024, 768),
+                    "dark",
+                    coincube_ui::theme::Theme::dark(),
+                )
+            });
+        assert!(spanish.contains("Esta cartera importada firma de la forma estándar de Bitcoin"));
     }
 }
