@@ -2913,7 +2913,8 @@ pub enum P2PMessage {
     CloseOrderDetail,
     CopyOrderId(String),
     CancelOrder(String),
-    CancelOrderResult(Result<(), String>),
+    /// `(order_id, result)` — the order the cancel was dispatched for.
+    CancelOrderResult(String, Result<(), String>),
     OrderSubmitResult(Result<super::p2p::mostro::OrderSubmitResponse, String>),
     TradeFilterChanged(super::p2p::components::TradeFilter),
     MostroTradesReceived(Vec<super::p2p::components::P2PTrade>),
@@ -3019,7 +3020,11 @@ pub enum P2PMessage {
     SubmitRating,
     CancelTrade,
     OpenDispute,
-    TradeActionResult(Result<super::p2p::mostro::TradeActionResponse, String>),
+    /// `(order_id, result)` — the trade the action was dispatched for.
+    TradeActionResult(
+        String,
+        Result<super::p2p::mostro::TradeActionResponse, String>,
+    ),
     // Real-time DM updates
     TradeUpdate {
         order_id: String,

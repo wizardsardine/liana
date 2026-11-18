@@ -568,15 +568,6 @@ fn restored_trade_session(
     details: Option<&mostro_core::order::SmallOrder>,
     restore_info: &mostro_core::message::RestoreSessionInfo,
 ) -> TradeSession {
-    let kind = details
-        .and_then(|d| {
-            d.kind.as_ref().map(|k| match k {
-                mostro_core::order::Kind::Buy => "buy".to_string(),
-                mostro_core::order::Kind::Sell => "sell".to_string(),
-            })
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-
     // Try to determine role from order's trade pubkeys
     let trade_keys = derive_trade_keys(mnemonic, trade_index).ok();
     let our_pubkey = trade_keys.as_ref().map(|k| k.public_key().to_hex());
@@ -595,12 +586,15 @@ fn restored_trade_session(
         "unknown"
     };
 
+    // `kind` stores the user's own side; a taker holds the opposite side of the order.
+    let kind = restored_session_kind(details.and_then(|d| d.kind.as_ref()), role);
+
     // Get status from restore info
     let status_str = restore_info
         .restore_orders
         .iter()
         .find(|o| o.order_id.to_string() == *order_id)
-        .map(|o| o.status.clone());
+        .map(|o| restored_status_action(&o.status));
 
     // Build initial message from the status if available
     let messages = if let Some(status) = &status_str {
@@ -641,6 +635,32 @@ fn restored_trade_session(
         }),
         admin_trade_pubkey: None, // admin pubkey is only set via DM, not restorable
     }
+}
+
+/// The user's own side for a restored session. `TradeSession::kind` stores the
+/// user's side (as `take_order` does), so a taker holds the opposite side of
+/// the order's kind. Creator and unknown-role sessions keep the order kind.
+fn restored_session_kind(order_kind: Option<&mostro_core::order::Kind>, role: &str) -> String {
+    use mostro_core::order::Kind;
+    match (order_kind, role) {
+        (None, _) => "unknown",
+        (Some(Kind::Buy), "taker") => "sell",
+        (Some(Kind::Sell), "taker") => "buy",
+        (Some(Kind::Buy), _) => "buy",
+        (Some(Kind::Sell), _) => "sell",
+    }
+    .to_string()
+}
+
+/// Normalize an order status from a restore response into the action string
+/// stored in the session history. The coordinator sends the kebab-case wire
+/// form (`waiting-buyer-invoice`); the history and `dm_action_to_status` use
+/// the `Status` variant name (`WaitingBuyerInvoice`). Unknown values are kept.
+fn restored_status_action(status: &str) -> String {
+    status
+        .parse::<mostro_core::order::Status>()
+        .map(|s| format!("{s:?}"))
+        .unwrap_or_else(|_| status.to_string())
 }
 
 /// Map `mostro_core::order::Status` to UI `TradeStatus`.
@@ -687,6 +707,16 @@ pub fn dm_action_to_status(action: &str) -> Option<TradeStatus> {
         }
         "AdminSettled" => Some(TradeStatus::Success),
         "PaymentFailed" => Some(TradeStatus::PaymentFailed),
+        // Order `Status` variant names, stored by session restore
+        // (`restored_status_action`). Mirrors `map_trade_status`.
+        "Pending" => Some(TradeStatus::Pending),
+        "Active" | "InProgress" | "SettledHoldInvoice" => Some(TradeStatus::Active),
+        "WaitingPayment" => Some(TradeStatus::WaitingPayment),
+        "Success" | "SettledByAdmin" | "CompletedByAdmin" => Some(TradeStatus::Success),
+        "CanceledByAdmin" => Some(TradeStatus::Canceled),
+        "CooperativelyCanceled" => Some(TradeStatus::CooperativelyCanceled),
+        "Dispute" => Some(TradeStatus::Dispute),
+        "Expired" => Some(TradeStatus::Expired),
         // Known actions that don't represent status transitions
         "NewOrder" | "CantDo" | "Peer" | "RateUser" | "Orders" | "LastTradeIndex" => None,
         _ => {
@@ -1719,6 +1749,29 @@ pub fn get_trade_messages(cube_name: &str, order_id: &str) -> Vec<TradeMessage> 
         .find(|t| t.order_id == order_id)
         .map(|t| t.messages.clone())
         .unwrap_or_default()
+}
+
+/// Chat history for every saved trade in one disk read: order ID → that
+/// trade's chat messages (`SendDm` / `AdminDm`), oldest first. Trades with no
+/// chat messages are omitted. Used by the Chat list so the view never reads
+/// the trade file per row per frame.
+pub fn get_chat_history(cube_name: &str) -> HashMap<String, Vec<TradeMessage>> {
+    chat_history_from_sessions(&load_data(cube_name).unwrap_or_default().trades)
+}
+
+fn chat_history_from_sessions(sessions: &[TradeSession]) -> HashMap<String, Vec<TradeMessage>> {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let chats: Vec<TradeMessage> = session
+                .messages
+                .iter()
+                .filter(|m| is_chat_action(&m.action))
+                .cloned()
+                .collect();
+            (!chats.is_empty()).then(|| (session.order_id.clone(), chats))
+        })
+        .collect()
 }
 
 /// Chat identity info for the user information panel.
@@ -2841,6 +2894,11 @@ async fn fetch_user_trades(
         }
     }
 
+    // Re-read saved sessions now that the relay has answered: a local action
+    // (e.g. Release) may have advanced a trade's DM history during the fetch,
+    // and building from the pre-fetch snapshot would roll its status back.
+    let sessions = load_data(cube_name).map(|d| d.trades).unwrap_or(sessions);
+
     // Build P2PTrade for each session
     let mut trades: Vec<P2PTrade> = Vec::new();
     for session in &sessions {
@@ -3011,6 +3069,13 @@ fn mostro_stream(
                     .await;
             }
 
+            // Register the notification receiver before any subscription or
+            // historical catch-up: `notifications()` does not replay events
+            // received before the call, so a peer DM landing between catch-up
+            // and the real-time loop would otherwise be lost. Overlap with the
+            // catch-up pass is deduplicated through `seen_dm_event_ids`.
+            let notifications = client.notifications();
+
             // Subscribe to order book events (kind 38383) for real-time updates
             let order_since =
                 Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
@@ -3045,6 +3110,17 @@ fn mostro_stream(
             )
             .await;
 
+            // The catch-up pass can discover new counterparty/admin keys;
+            // subscribe to their shared chat keys now rather than waiting
+            // for the periodic refresh. No-op when nothing is new.
+            update_dm_subscriptions(
+                &client,
+                &cube_name,
+                &mnemonic,
+                &mut subscribed_trade_pubkeys,
+            )
+            .await;
+
             // Initial order fetch — populates cache + emits to UI
             {
                 let since =
@@ -3067,6 +3143,7 @@ fn mostro_stream(
                 &mnemonic,
                 mostro_pk,
                 StreamSyncState {
+                    notifications,
                     order_cache: &mut order_cache,
                     seen_dm_event_ids: &mut seen_dm_event_ids,
                     subscribed_trade_pubkeys: &mut subscribed_trade_pubkeys,
@@ -3079,6 +3156,7 @@ fn mostro_stream(
 }
 
 struct StreamSyncState<'a> {
+    notifications: tokio::sync::broadcast::Receiver<RelayPoolNotification>,
     order_cache: &'a mut MostroOrderCache,
     seen_dm_event_ids: &'a mut HashSet<nostr_sdk::EventId>,
     subscribed_trade_pubkeys: &'a mut Vec<PublicKey>,
@@ -3093,12 +3171,12 @@ async fn run_stream_updates(
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
 ) {
     let StreamSyncState {
+        mut notifications,
         order_cache,
         seen_dm_event_ids,
         subscribed_trade_pubkeys,
     } = state;
 
-    let mut notifications = client.notifications();
     loop {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(FETCH_INTERVAL_SECS);
         // Process real-time notifications until the periodic timer fires
@@ -3300,28 +3378,31 @@ async fn process_stream_event(
     false
 }
 
+/// ECDH shared chat public keys for a session's counterparty and admin
+/// (P2P chat and dispute chat). Shared by DM subscription and catch-up.
+fn session_shared_pubkeys<'a>(
+    session: &'a TradeSession,
+    keys: &'a Keys,
+) -> impl Iterator<Item = PublicKey> + 'a {
+    // `IntoIterator::into_iter` yields the array by value (this crate is
+    // edition 2018, where `[..].into_iter()` would iterate by reference).
+    IntoIterator::into_iter([
+        session.counterparty_trade_pubkey.as_deref(),
+        session.admin_trade_pubkey.as_deref(),
+    ])
+    .flatten()
+    .filter_map(move |party_hex| shared_chat_hex(keys, Some(party_hex)))
+    .filter_map(|hex| PublicKey::from_hex(&hex).ok())
+}
+
 fn append_new_shared_pubkeys(
     session: &TradeSession,
     keys: &Keys,
     subscribed: &[PublicKey],
     new_pubkeys: &mut Vec<PublicKey>,
 ) {
-    for party_hex in [
-        session.counterparty_trade_pubkey.as_deref(),
-        session.admin_trade_pubkey.as_deref(),
-    ]
-    .iter()
-    .copied()
-    .flatten()
-    {
-        if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
-            if let Ok(spk) = PublicKey::from_hex(&hex) {
-                if !subscribed.contains(&spk) {
-                    new_pubkeys.push(spk);
-                }
-            }
-        }
-    }
+    new_pubkeys
+        .extend(session_shared_pubkeys(session, keys).filter(|spk| !subscribed.contains(spk)));
 }
 
 /// Subscribe to gift-wrap DMs for any new trade pubkeys not yet subscribed.
@@ -3668,20 +3749,7 @@ fn append_session_shared_pubkeys(
     keys: &Keys,
     all_pubkeys: &mut Vec<PublicKey>,
 ) {
-    for party_hex in [
-        session.counterparty_trade_pubkey.as_deref(),
-        session.admin_trade_pubkey.as_deref(),
-    ]
-    .iter()
-    .copied()
-    .flatten()
-    {
-        if let Some(hex) = shared_chat_hex(keys, Some(party_hex)) {
-            if let Ok(pk) = PublicKey::from_hex(&hex) {
-                all_pubkeys.push(pk);
-            }
-        }
-    }
+    all_pubkeys.extend(session_shared_pubkeys(session, keys));
 }
 
 /// Process any pending DM notifications from the persistent subscription.
