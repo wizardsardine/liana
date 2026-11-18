@@ -444,14 +444,12 @@ impl CoinsPanel {
                 }
                 match intent {
                     view::LabelMessage::Confirm => {
-                        let Some(item) = items.first().filter(|item| {
+                        let item = items.first().filter(|item| {
                             self.labels_edited
                                 .cache()
                                 .get(*item)
                                 .is_some_and(|value| value.valid)
-                        }) else {
-                            return None;
-                        };
+                        })?;
                         self.label_saving = item.parse().ok();
                     }
                     view::LabelMessage::Cancel => restore_focus = items.first().cloned(),
