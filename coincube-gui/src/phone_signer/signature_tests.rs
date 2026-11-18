@@ -171,28 +171,7 @@ fn preexisting_signatures_cannot_be_removed_or_replaced() {
         signatures::merge_verified(&mut target, &complete, &descriptor, &selected).unwrap();
         for replace in [false, true] {
             let mut bad = complete.clone();
-            if tap {
-                bad.inputs[0].tap_key_sig = if replace {
-                    Some(bitcoin::taproot::Signature {
-                        signature: bitcoin::secp256k1::schnorr::Signature::from_slice(&[1; 64])
-                            .unwrap(),
-                        sighash_type: bitcoin::sighash::TapSighashType::Default,
-                    })
-                } else {
-                    None
-                };
-            } else {
-                let pk = *original.inputs[0].partial_sigs.keys().next().unwrap();
-                if replace {
-                    bad.inputs[0]
-                        .partial_sigs
-                        .get_mut(&pk)
-                        .unwrap()
-                        .sighash_type = bitcoin::sighash::EcdsaSighashType::None;
-                } else {
-                    bad.inputs[0].partial_sigs.remove(&pk);
-                }
-            }
+            alter_preexisting_signature(&mut bad, &original, tap, replace);
             assert!(signatures::merge_verified(
                 &mut original.clone(),
                 &bad,
@@ -200,6 +179,30 @@ fn preexisting_signatures_cannot_be_removed_or_replaced() {
                 &selected
             )
             .is_err());
+        }
+    }
+}
+
+fn alter_preexisting_signature(bad: &mut Psbt, original: &Psbt, tap: bool, replace: bool) {
+    if tap {
+        bad.inputs[0].tap_key_sig = if replace {
+            Some(bitcoin::taproot::Signature {
+                signature: bitcoin::secp256k1::schnorr::Signature::from_slice(&[1; 64]).unwrap(),
+                sighash_type: bitcoin::sighash::TapSighashType::Default,
+            })
+        } else {
+            None
+        };
+    } else {
+        let pk = *original.inputs[0].partial_sigs.keys().next().unwrap();
+        if replace {
+            bad.inputs[0]
+                .partial_sigs
+                .get_mut(&pk)
+                .unwrap()
+                .sighash_type = bitcoin::sighash::EcdsaSighashType::None;
+        } else {
+            bad.inputs[0].partial_sigs.remove(&pk);
         }
     }
 }
