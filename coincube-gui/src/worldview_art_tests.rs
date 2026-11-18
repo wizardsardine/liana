@@ -167,18 +167,28 @@ fn check_worldview_art(artwork: ArtworkStyle, art_label: &str) {
                     appearance,
                     theme,
                 );
-                if !heading.is_empty() {
-                    assert!(rendered.contains(heading));
-                }
-                if let Some(line) = match screen {
-                    "sent" => sent_line,
-                    "received" => received_line,
-                    _ => None,
-                } {
-                    assert!(rendered.contains(line));
-                }
+                check_art_labels(&rendered, screen, heading, sent_line, received_line);
             }
         }
+    }
+}
+
+fn check_art_labels(
+    rendered: &capture::Inspection,
+    screen: &str,
+    heading: &str,
+    sent_line: Option<&str>,
+    received_line: Option<&str>,
+) {
+    if !heading.is_empty() {
+        assert!(rendered.contains(heading));
+    }
+    if let Some(line) = match screen {
+        "sent" => sent_line,
+        "received" => received_line,
+        _ => None,
+    } {
+        assert!(rendered.contains(line));
     }
 }
 
