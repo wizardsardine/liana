@@ -1922,27 +1922,7 @@ impl P2PPanel {
             )
             .width(Length::Fill);
 
-            let id_card = card::simple(
-                row![
-                    icon::clipboard_icon().style(theme::text::secondary),
-                    column![
-                        p2_regular("Order ID").style(theme::text::secondary),
-                        row![
-                            p2_regular(&trade.id).style(theme::text::secondary),
-                            Space::new().width(Length::Fill),
-                            button::secondary_compact(None, "Copy")
-                                .on_press(view::Message::Clipboard(trade.id.clone())),
-                        ]
-                        .spacing(8)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(4)
-                    .width(Length::Fill),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-            )
-            .width(Length::Fill);
+            let id_card = Self::trade_order_id_card(trade);
 
             let note = column![
                 p2_regular("This order will be published for 24 hours.")
@@ -2030,28 +2010,43 @@ impl P2PPanel {
         .width(Length::Fill);
 
         // Order ID card
-        let id_card = card::simple(
-            row![
-                icon::clipboard_icon().style(theme::text::secondary),
-                column![
-                    p2_regular("Order ID").style(theme::text::secondary),
-                    row![
-                        p2_regular(&trade.id).style(theme::text::secondary),
-                        Space::new().width(Length::Fill),
-                        button::secondary_compact(None, "Copy")
-                            .on_press(view::Message::Clipboard(trade.id.clone())),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::alignment::Vertical::Center),
-                ]
-                .spacing(4)
-                .width(Length::Fill),
-            ]
-            .spacing(12)
-            .align_y(iced::alignment::Vertical::Center),
-        )
-        .width(Length::Fill);
+        let id_card = Self::trade_order_id_card(trade);
 
+        let actions = self.trade_detail_actions(trade, is_buyer);
+
+        // ── Contact button ──
+        // Show contact/chat button for active trades only (not completed/canceled)
+        let chat_available = matches!(
+            trade.status,
+            TradeStatus::Active
+                | TradeStatus::FiatSent
+                | TradeStatus::SettledHoldInvoice
+                | TradeStatus::CooperativelyCanceled
+                | TradeStatus::Dispute
+                | TradeStatus::PaymentFailed
+        );
+
+        let mut content = column![info_card, id_card, actions]
+            .spacing(12)
+            .width(Length::Fill);
+
+        if chat_available {
+            content = content.push(
+                button::secondary(Some(icon::chat_icon()), localized_copy("Contact"))
+                    .on_press(p2p(P2PMessage::OpenChat))
+                    .width(Length::Fill),
+            );
+        }
+
+        content.into()
+    }
+
+    fn trade_detail_actions<'a>(
+        &'a self,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
         // Action buttons driven by last_dm_action (DM-driven), falling back to status (event-driven)
         let mut actions = column![].spacing(8);
         let loading = self.trade_action_loading;
@@ -2122,6 +2117,47 @@ impl P2PPanel {
             Some("DisputeInitiatedByYou" | "DisputeInitiatedByPeer" | "AdminTookDispute")
         ) || matches!(trade.status, TradeStatus::Dispute);
 
+        actions = Self::trade_countdown(actions, trade);
+
+        if !is_terminal {
+            actions = Self::trade_cancel_and_dispute_notices(
+                actions,
+                dm_action,
+                cancel_initiated_by_you,
+                cancel_initiated_by_peer,
+            );
+
+            // --- Primary trade action buttons (only if not in cooperative cancel or dispute) ---
+            // Button logic follows the Mostro protocol: Mostro sends different DM
+            // actions to buyer and seller, so we match on (dm_action, role) pairs.
+            if !in_cooperative_cancel && !dispute_initiated {
+                actions = self.trade_protocol_actions(actions, trade, is_buyer, loading, dm_action);
+            }
+
+            actions = Self::trade_action_footer(
+                actions,
+                trade,
+                loading,
+                dm_action,
+                cancel_initiated_by_you,
+                cancel_initiated_by_peer,
+                dispute_initiated,
+            );
+        } else {
+            // Terminal state — only Close
+            actions = actions.push(
+                button::secondary(None, localized_copy("Close"))
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+            );
+        }
+        actions
+    }
+
+    fn trade_countdown<'a>(
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+    ) -> Column<'a, view::Message> {
         // --- Countdown timer for time-limited states ---
         // Only show for PayInvoice/WaitingSellerToPay and AddInvoice/WaitingBuyerInvoice
         if let Some(start_ts) = trade.countdown_start_ts {
@@ -2160,710 +2196,676 @@ impl P2PPanel {
                 );
             }
         }
+        actions
+    }
 
-        if !is_terminal {
-            // --- Status message for cooperative cancel ---
-            if cancel_initiated_by_you {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Cancellation requested"),
-                            p2_regular(
-                                "You have initiated a cooperative cancel. \
-                                Waiting for your counterparty to accept. \
-                                If they don't respond, you can open a dispute.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
+    fn trade_cancel_and_dispute_notices<'a>(
+        mut actions: Column<'a, view::Message>,
+        dm_action: Option<&str>,
+        cancel_initiated_by_you: bool,
+        cancel_initiated_by_peer: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // --- Status message for cooperative cancel ---
+        if cancel_initiated_by_you {
+            actions = actions.push(Self::trade_notice_card(
+                "Cancellation requested",
+                "You have initiated a cooperative cancel. \
+                Waiting for your counterparty to accept. \
+                If they don't respond, you can open a dispute.",
+            ));
+        } else if cancel_initiated_by_peer {
+            actions = actions.push(Self::trade_notice_card(
+                "Cancel requested by counterparty",
+                "Your counterparty wants to cancel this order. \
+                If you agree, press Cancel. Otherwise, you can \
+                open a dispute.",
+            ));
+        }
+
+        // --- Status message for dispute ---
+        if matches!(dm_action, Some("DisputeInitiatedByYou")) {
+            actions = actions.push(Self::trade_notice_card(
+                "Dispute opened",
+                "You have initiated a dispute. A solver will be \
+                assigned soon to help resolve this.",
+            ));
+        } else if matches!(dm_action, Some("DisputeInitiatedByPeer")) {
+            actions = actions.push(Self::trade_notice_card(
+                "Dispute opened by counterparty",
+                "Your counterparty has opened a dispute. A solver will be \
+                assigned soon to help resolve this.",
+            ));
+        } else if matches!(dm_action, Some("AdminTookDispute")) {
+            actions = actions.push(Self::trade_notice_card(
+                "Admin reviewing dispute",
+                "A dispute resolver has been assigned to your case. \
+                Use the chat below to communicate with the admin.",
+            ));
+            // Chat with Admin button
+            actions = actions.push(
+                button::primary(Some(icon::chat_icon()), localized_copy("Chat with Admin"))
+                    .on_press(p2p(P2PMessage::OpenDisputeChat))
                     .width(Length::Fill),
-                );
-            } else if cancel_initiated_by_peer {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Cancel requested by counterparty"),
-                            p2_regular(
-                                "Your counterparty wants to cancel this order. \
-                                If you agree, press Cancel. Otherwise, you can \
-                                open a dispute.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-            }
-
-            // --- Status message for dispute ---
-            if matches!(dm_action, Some("DisputeInitiatedByYou")) {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Dispute opened"),
-                            p2_regular(
-                                "You have initiated a dispute. A solver will be \
-                                assigned soon to help resolve this.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-            } else if matches!(dm_action, Some("DisputeInitiatedByPeer")) {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Dispute opened by counterparty"),
-                            p2_regular(
-                                "Your counterparty has opened a dispute. A solver will be \
-                                assigned soon to help resolve this.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-            } else if matches!(dm_action, Some("AdminTookDispute")) {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Admin reviewing dispute"),
-                            p2_regular(
-                                "A dispute resolver has been assigned to your case. \
-                                Use the chat below to communicate with the admin.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-                // Chat with Admin button
-                actions = actions.push(
-                    button::primary(Some(icon::chat_icon()), localized_copy("Chat with Admin"))
-                        .on_press(p2p(P2PMessage::OpenDisputeChat))
-                        .width(Length::Fill),
-                );
-            }
-
-            // --- Primary trade action buttons (only if not in cooperative cancel or dispute) ---
-            // Button logic follows the Mostro protocol: Mostro sends different DM
-            // actions to buyer and seller, so we match on (dm_action, role) pairs.
-            if !in_cooperative_cancel && !dispute_initiated {
-                match dm_action {
-                    // ── Seller must pay hold invoice ──
-                    Some("PayInvoice") | Some("WaitingSellerToPay") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for seller to lock the Bitcoin"),
-                                        p2_regular(
-                                            "The seller has been asked to lock the Bitcoin in \
-                                            escrow. Once it's locked, you'll be prompted to send \
-                                            the fiat payment. If the seller doesn't lock it in \
-                                            time, the trade will be canceled — you won't have \
-                                            paid anything yet.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        } else {
-                            let mut invoice_col = column![
-                                p1_bold("Pay the hold invoice"),
-                                p2_regular(
-                                    "Please pay the hold invoice to lock your sats \
-                                    and start the trade. If you don't pay in time, \
-                                    the trade will be canceled.",
-                                )
-                                .style(theme::text::secondary),
-                            ]
-                            .spacing(8);
-
-                            invoice_col = self.push_hold_invoice_elements(
-                                invoice_col,
-                                &trade.id,
-                                trade.hold_invoice.as_ref(),
-                                trade.sats_amount,
-                            );
-
-                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
-                        }
-                    }
-
-                    // ── Hold invoice paid / Trade active ──
-                    Some("HoldInvoicePaymentAccepted") | Some("BuyerInvoiceAccepted") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Send fiat payment"),
-                                        p2_regular(
-                                            "Contact the seller to arrange payment. \
-                                            Once you've sent the fiat money, \
-                                            press the button below to notify the seller.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                            actions = actions.push(if !loading {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .on_press(p2p(P2PMessage::ConfirmFiatSent))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .width(Length::Fill)
-                            });
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for fiat payment"),
-                                        p2_regular(
-                                            "Contact the buyer to inform them how to send \
-                                            the fiat payment. You'll be notified when \
-                                            the buyer confirms the payment.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-                    // BuyerTookOrder: seller is notified a buyer took their order.
-                    // If the payload included a hold invoice, show it immediately.
-                    Some("BuyerTookOrder") => {
-                        let mut took_col = column![p1_bold("Buyer took your order"),].spacing(8);
-
-                        if let Some(ref invoice) = trade.hold_invoice {
-                            took_col = took_col.push(
-                                p2_regular(localized_copy(
-                                    "Pay the hold invoice to lock your sats \
-                                    and start the trade. If you don't pay in time, \
-                                    the trade will be canceled.",
-                                ))
-                                .style(theme::text::secondary),
-                            );
-                            took_col = self.push_hold_invoice_elements(
-                                took_col,
-                                &trade.id,
-                                Some(invoice),
-                                trade.sats_amount,
-                            );
-                        } else {
-                            took_col = took_col.push(
-                                p2_regular(localized_copy(
-                                    "A buyer has taken your order. Please wait while \
-                                    they decide to proceed. If they accept, you'll \
-                                    be notified to complete your part.",
-                                ))
-                                .style(theme::text::secondary),
-                            );
-                        }
-
-                        actions = actions.push(card::simple(took_col).width(Length::Fill));
-                    }
-
-                    // ── Buyer must submit invoice ──
-                    Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
-                        if is_buyer {
-                            let mut invoice_col = column![
-                                p1_bold("Submit your invoice"),
-                                p2_regular(
-                                    "Please send a Lightning invoice or address \
-                                    where you'll receive the sats. If you don't \
-                                    provide one in time, the trade will be canceled.",
-                                )
-                                .style(theme::text::secondary),
-                            ]
-                            .spacing(8);
-
-                            if let Some(sats) = trade.sats_amount.filter(|&s| s > 0) {
-                                invoice_col = invoice_col.push(
-                                    caption(localized_format!(
-                                        "Expected amount: {} sats. Use a zero-amount invoice \
-                                        or one matching this amount exactly. Invoice must not \
-                                        expire within 1 hour.", "Cantidad esperada: {} sats. Utilice una factura de valor cero o una que coincida con esta cantidad exactamente. La factura no debe expirar dentro de 1 hora.",
-                                        super::components::format_with_separators(sats),
-                                    ))
-                                    .style(theme::text::warning),
-                                );
-                            } else {
-                                invoice_col = invoice_col.push(
-                                    caption(localized_copy(
-                                        "Use a zero-amount invoice or a Lightning address. \
-                                        Invoice must not expire within 1 hour.",
-                                    ))
-                                    .style(theme::text::warning),
-                                );
-                            }
-
-                            invoice_col = invoice_col.push(
-                                form::Form::new_trimmed(
-                                    localized_copy("Enter lightning invoice or address"),
-                                    &self.trade_invoice_input,
-                                    |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(v)),
-                                )
-                                .padding(10),
-                            );
-
-                            invoice_col = invoice_col.push(
-                                if !self.trade_invoice_input.value.is_empty() && !loading {
-                                    button::primary(None, localized_copy("Submit Invoice"))
-                                        .on_press(p2p(P2PMessage::SubmitInvoice))
-                                        .width(Length::Fill)
-                                } else {
-                                    button::primary(None, localized_copy("Submit Invoice"))
-                                        .width(Length::Fill)
-                                },
-                            );
-
-                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for buyer invoice"),
-                                        p2_regular(
-                                            "Payment received! Your sats are now held. \
-                                            The buyer has been asked to provide an invoice. \
-                                            If they don't do so in time, your sats will be \
-                                            returned and the trade will be canceled.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Waiting for fiat payment (status-based fallback) ──
-                    Some("WaitingPayment") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Send fiat payment"),
-                                        p2_regular(
-                                            "Contact the seller to arrange payment. \
-                                            Once you've sent the fiat money, \
-                                            press the button below to notify the seller.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                            actions = actions.push(if !loading {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .on_press(p2p(P2PMessage::ConfirmFiatSent))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .width(Length::Fill)
-                            });
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for fiat payment"),
-                                        p2_regular(
-                                            "The buyer has been notified to send fiat. \
-                                            You'll be notified when they confirm.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Fiat sent / waiting for release ──
-                    Some("FiatSentOk") | Some("FiatSent") => {
-                        if !is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Buyer sent fiat"),
-                                        p2_regular(
-                                            "The buyer has confirmed sending the fiat payment. \
-                                            Once you've verified receipt, release the sats. \
-                                            This action cannot be undone.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                            actions = actions.push(if !loading {
-                                button::primary(None, localized_copy("Release Sats"))
-                                    .on_press(p2p(P2PMessage::ConfirmFiatReceived))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(None, localized_copy("Release Sats"))
-                                    .width(Length::Fill)
-                            });
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Fiat sent"),
-                                        p2_regular(
-                                            "The seller has been notified that you sent the fiat. \
-                                            Once the seller confirms receipt, they will release \
-                                            the sats. If they don't, you can open a dispute.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Released / settling ──
-                    Some("Released") | Some("Release") => {
-                        actions = actions.push(
-                            card::simple(
-                                column![
-                                    p1_bold("Sats released"),
-                                    p2_regular(if is_buyer {
-                                        "The seller has released the sats! Expect your \
-                                        invoice to be paid shortly. Make sure your wallet \
-                                        is online to receive via Lightning Network."
-                                    } else {
-                                        "You have released the sats. The payment is being \
-                                        processed to the buyer's invoice."
-                                    })
-                                    .style(theme::text::secondary),
-                                ]
-                                .spacing(4),
-                            )
-                            .width(Length::Fill),
-                        );
-                    }
-
-                    // ── Payment failed ──
-                    Some("PaymentFailed") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Payment failed"),
-                                        p2_regular(
-                                            "The payment to your invoice could not be completed. \
-                                            Please submit a new invoice to receive the sats.",
-                                        )
-                                        .style(theme::text::warning),
-                                        form::Form::new_trimmed(
-                                            "Enter lightning invoice or address",
-                                            &self.trade_invoice_input,
-                                            |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
-                                                v
-                                            )),
-                                        )
-                                        .padding(10),
-                                        if !self.trade_invoice_input.value.is_empty() && !loading {
-                                            button::primary(None, "Submit Invoice")
-                                                .on_press(p2p(P2PMessage::SubmitInvoice))
-                                                .width(Length::Fill)
-                                        } else {
-                                            button::primary(None, "Submit Invoice")
-                                                .width(Length::Fill)
-                                        },
-                                    ]
-                                    .spacing(8),
-                                )
-                                .width(Length::Fill),
-                            );
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Payment failed"),
-                                        p2_regular(
-                                            "Payment to the buyer's invoice failed. \
-                                            Waiting for the buyer to submit a new invoice.",
-                                        )
-                                        .style(theme::text::warning),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Trade completed — rate counterparty ──
-                    Some("HoldInvoicePaymentSettled")
-                    | Some("PurchaseCompleted")
-                    | Some("Rate") => {
-                        let selected = self.trade_rating;
-                        let star_buttons: Vec<Element<'_, view::Message>> = (1..=5u8)
-                            .map(|i| {
-                                let label = if i <= selected {
-                                    "\u{2605}"
-                                } else {
-                                    "\u{2606}"
-                                };
-                                iced::widget::button(iced::widget::text(label).size(28).style(
-                                    if i <= selected {
-                                        theme::text::primary
-                                    } else {
-                                        theme::text::secondary
-                                    },
-                                ))
-                                .on_press(p2p(P2PMessage::RatingSelected(i)))
-                                .style(theme::button::container)
-                                .into()
-                            })
-                            .collect();
-                        let stars = iced::widget::Row::with_children(star_buttons).spacing(4);
-
-                        actions = actions.push(
-                            card::simple(
-                                column![
-                                    p1_bold("Trade Complete!"),
-                                    p2_regular("Rate your counterparty")
-                                        .style(theme::text::secondary),
-                                    container(
-                                        column![
-                                            stars,
-                                            p2_regular(if selected > 0 {
-                                                format!("{} / 5", selected)
-                                            } else {
-                                                "Select a rating".to_string()
-                                            })
-                                            .style(theme::text::secondary),
-                                        ]
-                                        .spacing(4)
-                                        .align_x(Alignment::Center),
-                                    )
-                                    .width(Length::Fill)
-                                    .center_x(Length::Fill),
-                                    if selected > 0 && !loading {
-                                        button::primary(None, "Submit Rating")
-                                            .on_press(p2p(P2PMessage::SubmitRating))
-                                            .width(Length::Fill)
-                                    } else {
-                                        button::primary(None, "Submit Rating").width(Length::Fill)
-                                    },
-                                ]
-                                .spacing(12),
-                            )
-                            .width(Length::Fill),
-                        );
-                    }
-
-                    _ => {
-                        // No DM action or unrecognized — fall back to status-based buttons
-                        match trade.status {
-                            TradeStatus::WaitingBuyerInvoice if is_buyer => {
-                                actions = actions.push(
-                                    card::simple(
-                                        column![
-                                            p2_regular(
-                                                "Submit your Lightning invoice to receive sats"
-                                            )
-                                            .style(theme::text::secondary),
-                                            form::Form::new_trimmed(
-                                                "Enter lightning invoice or address",
-                                                &self.trade_invoice_input,
-                                                |v| view::Message::P2P(
-                                                    P2PMessage::TradeInvoiceEdited(v)
-                                                ),
-                                            )
-                                            .padding(10),
-                                            if !self.trade_invoice_input.value.is_empty()
-                                                && !loading
-                                            {
-                                                button::primary(None, "Submit Invoice")
-                                                    .on_press(p2p(P2PMessage::SubmitInvoice))
-                                                    .width(Length::Fill)
-                                            } else {
-                                                button::primary(None, "Submit Invoice")
-                                                    .width(Length::Fill)
-                                            },
-                                        ]
-                                        .spacing(8),
-                                    )
-                                    .width(Length::Fill),
-                                );
-                            }
-                            TradeStatus::Active if is_buyer => {
-                                actions = actions.push(if !loading {
-                                    button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                        .on_press(p2p(P2PMessage::ConfirmFiatSent))
-                                        .width(Length::Fill)
-                                } else {
-                                    button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                        .width(Length::Fill)
-                                });
-                            }
-                            TradeStatus::FiatSent if !is_buyer => {
-                                actions = actions.push(if !loading {
-                                    button::primary(
-                                        None,
-                                        localized_copy("Release (Confirm Fiat Received)"),
-                                    )
-                                    .on_press(p2p(P2PMessage::ConfirmFiatReceived))
-                                    .width(Length::Fill)
-                                } else {
-                                    button::primary(
-                                        None,
-                                        localized_copy("Release (Confirm Fiat Received)"),
-                                    )
-                                    .width(Length::Fill)
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            // --- Cancel / Dispute footer buttons ---
-            // Dispute only available once the trade is active (hold invoice paid)
-            let can_dispute = matches!(
-                trade.status,
-                TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
             );
-            // Hide once the trade is complete or past release
-            let trade_complete =
-                matches!(
-                    dm_action,
-                    Some(
-                        "Released"
-                            | "Release"
-                            | "HoldInvoicePaymentSettled"
-                            | "PurchaseCompleted"
-                            | "Rate"
-                            | "RateReceived"
-                            | "AdminSettled"
-                            | "AdminCanceled"
-                            | "CooperativeCancelAccepted"
-                    )
-                ) || matches!(trade.status, TradeStatus::Success | TradeStatus::Canceled);
-            if !loading && !trade_complete {
-                if cancel_initiated_by_peer {
-                    let mut btn_row = row![
-                        button::secondary(None, "Close")
-                            .on_press(p2p(P2PMessage::CloseTradeDetail))
-                            .width(Length::Fill),
-                        button::alert(None, "Accept Cancel")
-                            .on_press(p2p(P2PMessage::CancelTrade))
-                            .width(Length::Fill),
-                    ]
-                    .spacing(8);
-                    if can_dispute {
-                        btn_row = btn_row.push(
-                            button::alert(None, "Dispute")
-                                .on_press(p2p(P2PMessage::OpenDispute))
-                                .width(Length::Fill),
-                        );
-                    }
-                    actions = actions.push(btn_row);
-                } else if cancel_initiated_by_you {
-                    let mut btn_row = row![button::secondary(None, "Close")
-                        .on_press(p2p(P2PMessage::CloseTradeDetail))
-                        .width(Length::Fill),]
-                    .spacing(8);
-                    if can_dispute {
-                        btn_row = btn_row.push(
-                            button::alert(None, "Dispute")
-                                .on_press(p2p(P2PMessage::OpenDispute))
-                                .width(Length::Fill),
-                        );
-                    }
-                    actions = actions.push(btn_row);
-                } else if !dispute_initiated {
-                    let mut btn_row = row![
-                        button::secondary(None, "Close")
-                            .on_press(p2p(P2PMessage::CloseTradeDetail))
-                            .width(Length::Fill),
-                        button::secondary(None, "Cancel")
-                            .on_press(p2p(P2PMessage::CancelTrade))
-                            .width(Length::Fill),
-                    ]
-                    .spacing(8);
-                    if can_dispute {
-                        btn_row = btn_row.push(
-                            button::alert(None, "Dispute")
-                                .on_press(p2p(P2PMessage::OpenDispute))
-                                .width(Length::Fill),
-                        );
-                    }
-                    actions = actions.push(btn_row);
-                } else {
-                    // In dispute — only Close
-                    actions = actions.push(
-                        button::secondary(None, localized_copy("Close"))
-                            .on_press(p2p(P2PMessage::CloseTradeDetail))
-                            .width(Length::Fill),
-                    );
-                }
-            } else {
-                // Terminal / loading / past release — just Close
-                actions = actions.push(
-                    button::secondary(None, localized_copy("Close"))
-                        .on_press(p2p(P2PMessage::CloseTradeDetail))
-                        .width(Length::Fill),
+        }
+        actions
+    }
+
+    fn trade_protocol_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+        loading: bool,
+        dm_action: Option<&str>,
+    ) -> Column<'a, view::Message> {
+        match dm_action {
+            // ── Seller must pay hold invoice ──
+            Some("PayInvoice") | Some("WaitingSellerToPay") => {
+                actions = self.trade_hold_invoice_actions(actions, trade, is_buyer);
+            }
+
+            // ── Hold invoice paid / Trade active ──
+            Some("HoldInvoicePaymentAccepted") | Some("BuyerInvoiceAccepted") => {
+                actions = Self::trade_fiat_payment_actions(
+                    actions,
+                    is_buyer,
+                    loading,
+                    "Contact the buyer to inform them how to send \
+                    the fiat payment. You'll be notified when \
+                    the buyer confirms the payment.",
                 );
             }
+            // BuyerTookOrder: seller is notified a buyer took their order.
+            // If the payload included a hold invoice, show it immediately.
+            Some("BuyerTookOrder") => {
+                actions = self.trade_buyer_took_order_actions(actions, trade);
+            }
+
+            // ── Buyer must submit invoice ──
+            Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
+                actions = self.trade_receive_invoice_actions(actions, trade, is_buyer, loading);
+            }
+
+            // ── Waiting for fiat payment (status-based fallback) ──
+            Some("WaitingPayment") => {
+                actions = Self::trade_fiat_payment_actions(
+                    actions,
+                    is_buyer,
+                    loading,
+                    "The buyer has been notified to send fiat. \
+                    You'll be notified when they confirm.",
+                );
+            }
+
+            // ── Fiat sent / waiting for release ──
+            Some("FiatSentOk") | Some("FiatSent") => {
+                actions = Self::trade_fiat_sent_actions(actions, is_buyer, loading);
+            }
+
+            // ── Released / settling ──
+            Some("Released") | Some("Release") => {
+                actions = actions.push(
+                    card::simple(
+                        column![
+                            p1_bold("Sats released"),
+                            p2_regular(if is_buyer {
+                                "The seller has released the sats! Expect your \
+                                invoice to be paid shortly. Make sure your wallet \
+                                is online to receive via Lightning Network."
+                            } else {
+                                "You have released the sats. The payment is being \
+                                processed to the buyer's invoice."
+                            })
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4),
+                    )
+                    .width(Length::Fill),
+                );
+            }
+
+            // ── Payment failed ──
+            Some("PaymentFailed") => {
+                actions = self.trade_payment_failed_actions(actions, is_buyer, loading);
+            }
+
+            // ── Trade completed — rate counterparty ──
+            Some("HoldInvoicePaymentSettled") | Some("PurchaseCompleted") | Some("Rate") => {
+                actions = self.trade_rating_actions(actions, loading);
+            }
+
+            _ => {
+                actions = self.trade_status_actions(actions, trade, is_buyer, loading);
+            }
+        }
+        actions
+    }
+
+    fn trade_hold_invoice_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            actions = actions.push(Self::trade_notice_card(
+                "Waiting for seller to lock the Bitcoin",
+                "The seller has been asked to lock the Bitcoin in \
+                escrow. Once it's locked, you'll be prompted to send \
+                the fiat payment. If the seller doesn't lock it in \
+                time, the trade will be canceled — you won't have \
+                paid anything yet.",
+            ));
         } else {
-            // Terminal state — only Close
+            let mut invoice_col = column![
+                p1_bold("Pay the hold invoice"),
+                p2_regular(
+                    "Please pay the hold invoice to lock your sats \
+                    and start the trade. If you don't pay in time, \
+                    the trade will be canceled.",
+                )
+                .style(theme::text::secondary),
+            ]
+            .spacing(8);
+
+            invoice_col = self.push_hold_invoice_elements(
+                invoice_col,
+                &trade.id,
+                trade.hold_invoice.as_ref(),
+                trade.sats_amount,
+            );
+
+            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
+        }
+        actions
+    }
+
+    fn trade_fiat_payment_actions<'a>(
+        mut actions: Column<'a, view::Message>,
+        is_buyer: bool,
+        loading: bool,
+        seller_hint: &'static str,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            actions = actions.push(Self::trade_notice_card(
+                "Send fiat payment",
+                "Contact the seller to arrange payment. \
+                Once you've sent the fiat money, \
+                press the button below to notify the seller.",
+            ));
+            actions = actions.push(Self::trade_action_button(
+                !loading,
+                localized_copy("Confirm Fiat Sent"),
+                P2PMessage::ConfirmFiatSent,
+            ));
+        } else {
+            actions = actions.push(Self::trade_notice_card(
+                "Waiting for fiat payment",
+                seller_hint,
+            ));
+        }
+        actions
+    }
+
+    fn trade_buyer_took_order_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+    ) -> Column<'a, view::Message> {
+        let mut took_col = column![p1_bold("Buyer took your order"),].spacing(8);
+
+        if let Some(ref invoice) = trade.hold_invoice {
+            took_col = took_col.push(
+                p2_regular(localized_copy(
+                    "Pay the hold invoice to lock your sats \
+                    and start the trade. If you don't pay in time, \
+                    the trade will be canceled.",
+                ))
+                .style(theme::text::secondary),
+            );
+            took_col = self.push_hold_invoice_elements(
+                took_col,
+                &trade.id,
+                Some(invoice),
+                trade.sats_amount,
+            );
+        } else {
+            took_col = took_col.push(
+                p2_regular(localized_copy(
+                    "A buyer has taken your order. Please wait while \
+                    they decide to proceed. If they accept, you'll \
+                    be notified to complete your part.",
+                ))
+                .style(theme::text::secondary),
+            );
+        }
+
+        actions = actions.push(card::simple(took_col).width(Length::Fill));
+        actions
+    }
+
+    fn trade_receive_invoice_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            let mut invoice_col = column![
+                p1_bold("Submit your invoice"),
+                p2_regular(
+                    "Please send a Lightning invoice or address \
+                    where you'll receive the sats. If you don't \
+                    provide one in time, the trade will be canceled.",
+                )
+                .style(theme::text::secondary),
+            ]
+            .spacing(8);
+
+            if let Some(sats) = trade.sats_amount.filter(|&s| s > 0) {
+                invoice_col = invoice_col.push(
+                    caption(localized_format!(
+                        "Expected amount: {} sats. Use a zero-amount invoice \
+                        or one matching this amount exactly. Invoice must not \
+                        expire within 1 hour.", "Cantidad esperada: {} sats. Utilice una factura de valor cero o una que coincida con esta cantidad exactamente. La factura no debe expirar dentro de 1 hora.",
+                        super::components::format_with_separators(sats),
+                    ))
+                    .style(theme::text::warning),
+                );
+            } else {
+                invoice_col = invoice_col.push(
+                    caption(localized_copy(
+                        "Use a zero-amount invoice or a Lightning address. \
+                        Invoice must not expire within 1 hour.",
+                    ))
+                    .style(theme::text::warning),
+                );
+            }
+
+            invoice_col = invoice_col.push(
+                self.trade_invoice_entry(localized_copy("Enter lightning invoice or address")),
+            );
+
+            invoice_col = invoice_col.push(Self::trade_action_button(
+                !self.trade_invoice_input.value.is_empty() && !loading,
+                localized_copy("Submit Invoice"),
+                P2PMessage::SubmitInvoice,
+            ));
+
+            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
+        } else {
+            actions = actions.push(Self::trade_notice_card(
+                "Waiting for buyer invoice",
+                "Payment received! Your sats are now held. \
+                The buyer has been asked to provide an invoice. \
+                If they don't do so in time, your sats will be \
+                returned and the trade will be canceled.",
+            ));
+        }
+        actions
+    }
+
+    fn trade_fiat_sent_actions<'a>(
+        mut actions: Column<'a, view::Message>,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        if !is_buyer {
+            actions = actions.push(Self::trade_notice_card(
+                "Buyer sent fiat",
+                "The buyer has confirmed sending the fiat payment. \
+                Once you've verified receipt, release the sats. \
+                This action cannot be undone.",
+            ));
+            actions = actions.push(Self::trade_action_button(
+                !loading,
+                localized_copy("Release Sats"),
+                P2PMessage::ConfirmFiatReceived,
+            ));
+        } else {
+            actions = actions.push(Self::trade_notice_card(
+                "Fiat sent",
+                "The seller has been notified that you sent the fiat. \
+                Once the seller confirms receipt, they will release \
+                the sats. If they don't, you can open a dispute.",
+            ));
+        }
+        actions
+    }
+
+    fn trade_payment_failed_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            actions = actions.push(
+                card::simple(
+                    column![
+                        p1_bold("Payment failed"),
+                        p2_regular(
+                            "The payment to your invoice could not be completed. \
+                            Please submit a new invoice to receive the sats.",
+                        )
+                        .style(theme::text::warning),
+                        self.trade_invoice_entry("Enter lightning invoice or address"),
+                        Self::trade_action_button(
+                            !self.trade_invoice_input.value.is_empty() && !loading,
+                            "Submit Invoice",
+                            P2PMessage::SubmitInvoice
+                        ),
+                    ]
+                    .spacing(8),
+                )
+                .width(Length::Fill),
+            );
+        } else {
+            actions = actions.push(
+                card::simple(
+                    column![
+                        p1_bold("Payment failed"),
+                        p2_regular(
+                            "Payment to the buyer's invoice failed. \
+                            Waiting for the buyer to submit a new invoice.",
+                        )
+                        .style(theme::text::warning),
+                    ]
+                    .spacing(4),
+                )
+                .width(Length::Fill),
+            );
+        }
+        actions
+    }
+
+    fn trade_rating_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        let selected = self.trade_rating;
+        let star_buttons: Vec<Element<'_, view::Message>> = (1..=5u8)
+            .map(|i| {
+                let label = if i <= selected {
+                    "\u{2605}"
+                } else {
+                    "\u{2606}"
+                };
+                iced::widget::button(iced::widget::text(label).size(28).style(if i <= selected {
+                    theme::text::primary
+                } else {
+                    theme::text::secondary
+                }))
+                .on_press(p2p(P2PMessage::RatingSelected(i)))
+                .style(theme::button::container)
+                .into()
+            })
+            .collect();
+        let stars = iced::widget::Row::with_children(star_buttons).spacing(4);
+
+        actions = actions.push(
+            card::simple(
+                column![
+                    p1_bold("Trade Complete!"),
+                    p2_regular("Rate your counterparty").style(theme::text::secondary),
+                    container(
+                        column![
+                            stars,
+                            p2_regular(if selected > 0 {
+                                format!("{} / 5", selected)
+                            } else {
+                                "Select a rating".to_string()
+                            })
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4)
+                        .align_x(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+                    if selected > 0 && !loading {
+                        button::primary(None, "Submit Rating")
+                            .on_press(p2p(P2PMessage::SubmitRating))
+                            .width(Length::Fill)
+                    } else {
+                        button::primary(None, "Submit Rating").width(Length::Fill)
+                    },
+                ]
+                .spacing(12),
+            )
+            .width(Length::Fill),
+        );
+        actions
+    }
+
+    fn trade_status_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        // No DM action or unrecognized — fall back to status-based buttons
+        match trade.status {
+            TradeStatus::WaitingBuyerInvoice if is_buyer => {
+                actions = actions.push(
+                    card::simple(
+                        column![
+                            p2_regular("Submit your Lightning invoice to receive sats")
+                                .style(theme::text::secondary),
+                            self.trade_invoice_entry("Enter lightning invoice or address"),
+                            Self::trade_action_button(
+                                !self.trade_invoice_input.value.is_empty() && !loading,
+                                "Submit Invoice",
+                                P2PMessage::SubmitInvoice
+                            ),
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill),
+                );
+            }
+            TradeStatus::Active if is_buyer => {
+                actions = actions.push(Self::trade_action_button(
+                    !loading,
+                    localized_copy("Confirm Fiat Sent"),
+                    P2PMessage::ConfirmFiatSent,
+                ));
+            }
+            TradeStatus::FiatSent if !is_buyer => {
+                actions = actions.push(Self::trade_action_button(
+                    !loading,
+                    localized_copy("Release (Confirm Fiat Received)"),
+                    P2PMessage::ConfirmFiatReceived,
+                ));
+            }
+            _ => {}
+        }
+        actions
+    }
+
+    fn trade_action_footer<'a>(
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        loading: bool,
+        dm_action: Option<&str>,
+        cancel_initiated_by_you: bool,
+        cancel_initiated_by_peer: bool,
+        dispute_initiated: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // --- Cancel / Dispute footer buttons ---
+        // Dispute only available once the trade is active (hold invoice paid)
+        let can_dispute = matches!(
+            trade.status,
+            TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
+        );
+        // Hide once the trade is complete or past release
+        let trade_complete =
+            matches!(
+                dm_action,
+                Some(
+                    "Released"
+                        | "Release"
+                        | "HoldInvoicePaymentSettled"
+                        | "PurchaseCompleted"
+                        | "Rate"
+                        | "RateReceived"
+                        | "AdminSettled"
+                        | "AdminCanceled"
+                        | "CooperativeCancelAccepted"
+                )
+            ) || matches!(trade.status, TradeStatus::Success | TradeStatus::Canceled);
+        if !loading && !trade_complete {
+            actions = Self::trade_open_footer(
+                actions,
+                cancel_initiated_by_you,
+                cancel_initiated_by_peer,
+                dispute_initiated,
+                can_dispute,
+            );
+        } else {
+            // Terminal / loading / past release — just Close
             actions = actions.push(
                 button::secondary(None, localized_copy("Close"))
                     .on_press(p2p(P2PMessage::CloseTradeDetail))
                     .width(Length::Fill),
             );
         }
+        actions
+    }
 
-        // ── Contact button ──
-        // Show contact/chat button for active trades only (not completed/canceled)
-        let chat_available = matches!(
-            trade.status,
-            TradeStatus::Active
-                | TradeStatus::FiatSent
-                | TradeStatus::SettledHoldInvoice
-                | TradeStatus::CooperativelyCanceled
-                | TradeStatus::Dispute
-                | TradeStatus::PaymentFailed
-        );
-
-        let mut content = column![info_card, id_card, actions]
-            .spacing(12)
-            .width(Length::Fill);
-
-        if chat_available {
-            content = content.push(
-                button::secondary(Some(icon::chat_icon()), localized_copy("Contact"))
-                    .on_press(p2p(P2PMessage::OpenChat))
+    fn trade_open_footer<'a>(
+        mut actions: Column<'a, view::Message>,
+        cancel_initiated_by_you: bool,
+        cancel_initiated_by_peer: bool,
+        dispute_initiated: bool,
+        can_dispute: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        if cancel_initiated_by_peer {
+            let mut btn_row = row![
+                button::secondary(None, "Close")
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+                button::alert(None, "Accept Cancel")
+                    .on_press(p2p(P2PMessage::CancelTrade))
+                    .width(Length::Fill),
+            ]
+            .spacing(8);
+            if can_dispute {
+                btn_row = btn_row.push(
+                    button::alert(None, "Dispute")
+                        .on_press(p2p(P2PMessage::OpenDispute))
+                        .width(Length::Fill),
+                );
+            }
+            actions = actions.push(btn_row);
+        } else if cancel_initiated_by_you {
+            let mut btn_row = row![button::secondary(None, "Close")
+                .on_press(p2p(P2PMessage::CloseTradeDetail))
+                .width(Length::Fill),]
+            .spacing(8);
+            if can_dispute {
+                btn_row = btn_row.push(
+                    button::alert(None, "Dispute")
+                        .on_press(p2p(P2PMessage::OpenDispute))
+                        .width(Length::Fill),
+                );
+            }
+            actions = actions.push(btn_row);
+        } else if !dispute_initiated {
+            let mut btn_row = row![
+                button::secondary(None, "Close")
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+                button::secondary(None, "Cancel")
+                    .on_press(p2p(P2PMessage::CancelTrade))
+                    .width(Length::Fill),
+            ]
+            .spacing(8);
+            if can_dispute {
+                btn_row = btn_row.push(
+                    button::alert(None, "Dispute")
+                        .on_press(p2p(P2PMessage::OpenDispute))
+                        .width(Length::Fill),
+                );
+            }
+            actions = actions.push(btn_row);
+        } else {
+            // In dispute — only Close
+            actions = actions.push(
+                button::secondary(None, localized_copy("Close"))
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
                     .width(Length::Fill),
             );
         }
+        actions
+    }
 
-        content.into()
+    fn trade_order_id_card(trade: &P2PTrade) -> Container<'_, view::Message> {
+        card::simple(
+            row![
+                icon::clipboard_icon().style(theme::text::secondary),
+                column![
+                    p2_regular("Order ID").style(theme::text::secondary),
+                    row![
+                        p2_regular(&trade.id).style(theme::text::secondary),
+                        Space::new().width(Length::Fill),
+                        button::secondary_compact(None, "Copy")
+                            .on_press(view::Message::Clipboard(trade.id.clone())),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                ]
+                .spacing(4)
+                .width(Length::Fill),
+            ]
+            .spacing(12)
+            .align_y(iced::alignment::Vertical::Center),
+        )
+        .width(Length::Fill)
+    }
+
+    fn trade_notice_card<'a>(
+        heading: &'static str,
+        details: &'static str,
+    ) -> Container<'a, view::Message> {
+        card::simple(
+            column![
+                p1_bold(heading),
+                p2_regular(details).style(theme::text::secondary),
+            ]
+            .spacing(4),
+        )
+        .width(Length::Fill)
+    }
+
+    fn trade_action_button<'a>(
+        enabled: bool,
+        label: &'static str,
+        action: P2PMessage,
+    ) -> Button<'a, view::Message> {
+        let button = button::primary(None, label);
+        if enabled {
+            button
+                .on_press(view::Message::P2P(action))
+                .width(Length::Fill)
+        } else {
+            button.width(Length::Fill)
+        }
+    }
+
+    fn trade_invoice_entry(&self, prompt: &str) -> form::Form<'_, view::Message> {
+        form::Form::new_trimmed(prompt, &self.trade_invoice_input, |value| {
+            view::Message::P2P(P2PMessage::TradeInvoiceEdited(value))
+        })
+        .padding(10)
     }
 
     fn chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
