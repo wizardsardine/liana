@@ -2451,16 +2451,23 @@ mod native {
             );
         }
 
-        fn assert_capacity_lock_refused(case: &str) {
+        fn assert_capacity_lock_refused(case: &str, expected: &'static str) {
             use std::os::unix::fs::symlink;
 
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join(".device-secret.lock");
             let mut held = None;
+            // Kept alive until the assertion so the symlink target exists.
+            let mut _target_directory = None;
             if case == "symlink" {
-                let target = directory.path().join("target");
+                // The target lives in its own private, empty directory and is
+                // itself a valid lock, so only the symlink can cause the refusal.
+                let target_directory = tempfile::tempdir().unwrap();
+                let target = target_directory.path().join("target");
                 fs::write(&target, []).unwrap();
-                symlink(target, &path).unwrap();
+                fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+                symlink(&target, &path).unwrap();
+                _target_directory = Some(target_directory);
             } else {
                 fs::write(
                     &path,
@@ -2492,14 +2499,25 @@ mod native {
                     held = Some(file);
                 }
             }
-            assert!(capacity_case_entries(directory.path()).is_err(), "{}", case);
+            assert_eq!(
+                capacity_case_entries(directory.path()).err(),
+                Some(expected),
+                "{}",
+                case
+            );
             drop(held);
         }
 
         #[test]
         fn capacity_device_lock_refuses_unsafe_or_unexpected_entries() {
-            for case in ["nonempty", "symlink", "public", "busy", "unexpected"] {
-                assert_capacity_lock_refused(case);
+            for (case, expected) in [
+                ("nonempty", "native_abandon_device_lock"),
+                ("symlink", "native_abandon_device_lock"),
+                ("public", "native_abandon_device_lock"),
+                ("busy", "native_abandon_device_lock_busy"),
+                ("unexpected", "native_abandon_has_profile"),
+            ] {
+                assert_capacity_lock_refused(case, expected);
             }
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join(".device-secret.lock");
