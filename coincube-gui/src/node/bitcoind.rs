@@ -1704,6 +1704,45 @@ impl InternalBitcoindConfig {
         // accept it at all. The file is rebuilt from this struct rather than
         // edited, so nothing an older release wrote survives a rewrite.
 
+        self.write_inbound_tor_options(&mut conf_ini);
+
+        // Mempool memory cap — a standalone resource key, emitted whenever set
+        // (deliberately NOT gated on `inbound_tor`, unlike the Tor bandwidth
+        // caps). It lives in the section-less general part alongside the Tor
+        // keys. `None` means bitcoind's own 300 MB default, so the key is omitted
+        // and an untouched config produces a byte-identical file (invariant I2).
+        if let Some(mb) = self.max_mempool_mb {
+            conf_ini
+                .with_general_section()
+                .set("maxmempool", mb.to_string());
+        }
+
+        // OP_RETURN relay cap — the same shape as `maxmempool`: a standalone
+        // general-section key, emitted whenever set, `None` omitted so an
+        // untouched config (and the Bitcoin Blake2b family's, which never sets
+        // it) produces a byte-identical file.
+        if let Some(bytes) = self.data_carrier_size {
+            conf_ini
+                .with_general_section()
+                .set("datacarriersize", bytes.to_string());
+        }
+
+        for (network, network_conf) in &self.networks {
+            conf_ini
+                .with_section(Some(network.to_core_arg()))
+                .set("rpcport", network_conf.rpc_port.to_string())
+                .set("port", network_conf.p2p_port.to_string())
+                .set("prune", network_conf.prune.to_string());
+            if let Some(rpc_auth) = network_conf.rpc_auth.as_ref() {
+                conf_ini
+                    .with_section(Some(network.to_core_arg()))
+                    .set("rpcauth", rpc_auth.to_string());
+            }
+        }
+        conf_ini
+    }
+
+    fn write_inbound_tor_options(&self, conf_ini: &mut ini::Ini) {
         // Inbound-over-Tor. All of these are global (non-network-scoped)
         // bitcoind options, so they belong in the section-less general part of
         // the file. Emitted only when the feature is on; when off, the only
@@ -1752,41 +1791,6 @@ impl InternalBitcoindConfig {
             // It parses back as inbound off.
             conf_ini.with_general_section().set("listenonion", "0");
         }
-
-        // Mempool memory cap — a standalone resource key, emitted whenever set
-        // (deliberately NOT gated on `inbound_tor`, unlike the bandwidth caps
-        // above). It lives in the section-less general part alongside the Tor
-        // keys. `None` means bitcoind's own 300 MB default, so the key is omitted
-        // and an untouched config produces a byte-identical file (invariant I2).
-        if let Some(mb) = self.max_mempool_mb {
-            conf_ini
-                .with_general_section()
-                .set("maxmempool", mb.to_string());
-        }
-
-        // OP_RETURN relay cap — the same shape as `maxmempool`: a standalone
-        // general-section key, emitted whenever set, `None` omitted so an
-        // untouched config (and the Bitcoin Blake2b family's, which never sets
-        // it) produces a byte-identical file.
-        if let Some(bytes) = self.data_carrier_size {
-            conf_ini
-                .with_general_section()
-                .set("datacarriersize", bytes.to_string());
-        }
-
-        for (network, network_conf) in &self.networks {
-            conf_ini
-                .with_section(Some(network.to_core_arg()))
-                .set("rpcport", network_conf.rpc_port.to_string())
-                .set("port", network_conf.p2p_port.to_string())
-                .set("prune", network_conf.prune.to_string());
-            if let Some(rpc_auth) = network_conf.rpc_auth.as_ref() {
-                conf_ini
-                    .with_section(Some(network.to_core_arg()))
-                    .set("rpcauth", rpc_auth.to_string());
-            }
-        }
-        conf_ini
     }
 
     /// Replace the file at `path` with this config, atomically: a reader sees
@@ -5230,7 +5234,6 @@ mod tests {
     #[test]
     fn the_spawned_binary_gets_torexecute_0_exactly_when_it_is_knots() {
         use crate::node::revalidate::ManagedNodeState;
-        use std::io::{Read, Write};
         use std::os::unix::fs::PermissionsExt;
 
         struct Case {
@@ -5296,31 +5299,7 @@ mod tests {
             let server = {
                 let done = done.clone();
                 let argv_path = argv_path.clone();
-                std::thread::spawn(move || {
-                    for (n, stream) in listener.incoming().enumerate() {
-                        if done.load(std::sync::atomic::Ordering::SeqCst) {
-                            break;
-                        }
-                        let Ok(mut stream) = stream else { break };
-                        let _ = stream.set_read_timeout(Some(time::Duration::from_millis(200)));
-                        let _ = stream.read(&mut [0u8; 4096]);
-                        // The first request is the pre-spawn "is a node already
-                        // running?" check: answered at once. Every later one is
-                        // held until the spawned script has recorded its argv,
-                        // so the start cannot kill it first. Bounded, and a
-                        // second pre-spawn request would only cost its own 3 s
-                        // client timeout.
-                        let wait = if n == 0 { 0 } else { 20 };
-                        let deadline = time::Instant::now() + time::Duration::from_secs(wait);
-                        while !argv_path.exists() && time::Instant::now() < deadline {
-                            thread::sleep(time::Duration::from_millis(20));
-                        }
-                        let _ = stream.write_all(
-                            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                        );
-                        let _ = stream.flush();
-                    }
-                })
+                std::thread::spawn(move || serve_spawn_args_probe(listener, &argv_path, &done))
             };
             let config = BitcoindConfig {
                 rpc_auth: coincubed::config::BitcoindRpcAuth::UserPass(
@@ -5368,6 +5347,39 @@ mod tests {
                 assert!(torexecute.is_empty(), "case {}: {:?}", i, argv);
             }
             let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
+    #[cfg(unix)]
+    fn serve_spawn_args_probe(
+        listener: std::net::TcpListener,
+        argv_path: &Path,
+        done: &std::sync::atomic::AtomicBool,
+    ) {
+        use std::io::{Read, Write};
+
+        for (n, stream) in listener.incoming().enumerate() {
+            if done.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(time::Duration::from_millis(200)));
+            let _ = stream.read(&mut [0u8; 4096]);
+            // The first request is the pre-spawn "is a node already
+            // running?" check: answered at once. Every later one is
+            // held until the spawned script has recorded its argv,
+            // so the start cannot kill it first. Bounded, and a
+            // second pre-spawn request would only cost its own 3 s
+            // client timeout.
+            let wait = if n == 0 { 0 } else { 20 };
+            let deadline = time::Instant::now() + time::Duration::from_secs(wait);
+            while !argv_path.exists() && time::Instant::now() < deadline {
+                thread::sleep(time::Duration::from_millis(20));
+            }
+            let _ = stream.write_all(
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let _ = stream.flush();
         }
     }
 
@@ -5458,7 +5470,7 @@ mod tests {
 
     impl MockNode {
         fn serve(subversion: &'static str) -> Self {
-            use std::io::{Read, Write};
+            use std::io::Write;
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             let addr = listener.local_addr().unwrap();
             let methods = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -5466,33 +5478,9 @@ mod tests {
             std::thread::spawn(move || {
                 for stream in listener.incoming() {
                     let Ok(mut stream) = stream else { break };
-                    let mut buf = Vec::new();
-                    let mut chunk = [0u8; 4096];
-                    let (body_start, body_len) = loop {
-                        let n = stream.read(&mut chunk).unwrap_or(0);
-                        if n == 0 {
-                            break (None, 0);
-                        }
-                        buf.extend_from_slice(&chunk[..n]);
-                        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                            let head = String::from_utf8_lossy(&buf[..pos]).into_owned();
-                            let len = head
-                                .lines()
-                                .filter_map(|l| l.split_once(':'))
-                                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                                .and_then(|(_, v)| v.trim().parse::<usize>().ok())
-                                .unwrap_or(0);
-                            break (Some(pos + 4), len);
-                        }
+                    let Some((buf, start)) = Self::read_request(&mut stream) else {
+                        continue;
                     };
-                    let Some(start) = body_start else { continue };
-                    while buf.len() < start + body_len {
-                        let n = stream.read(&mut chunk).unwrap_or(0);
-                        if n == 0 {
-                            break;
-                        }
-                        buf.extend_from_slice(&chunk[..n]);
-                    }
                     let req: serde_json::Value =
                         serde_json::from_slice(&buf[start..]).unwrap_or(serde_json::Value::Null);
                     let method = req
@@ -5529,6 +5517,39 @@ mod tests {
                 // which is what a stopped node looks like to the shutdown wait.
             });
             Self { addr, methods }
+        }
+
+        fn read_request(stream: &mut std::net::TcpStream) -> Option<(Vec<u8>, usize)> {
+            use std::io::Read;
+
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let (body_start, body_len) = loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break (None, 0);
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..pos]).into_owned();
+                    let len = head
+                        .lines()
+                        .filter_map(|l| l.split_once(':'))
+                        .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                        .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    break (Some(pos + 4), len);
+                }
+            };
+            let start = body_start?;
+            while buf.len() < start + body_len {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            Some((buf, start))
         }
 
         fn methods(&self) -> Vec<String> {

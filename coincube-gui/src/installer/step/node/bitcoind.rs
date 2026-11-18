@@ -1123,6 +1123,32 @@ impl InternalBitcoindStep {
         self.show_advanced = true;
     }
 
+    fn load_resource_fields_once(&mut self) {
+        // Pre-fill the node-resource fields from any existing on-disk config
+        // exactly once (load_context calls this every frame). An untouched fresh
+        // install has no config, so the constructor defaults (15000 MB prune,
+        // blank mempool) stand. Reusing an existing datadir shows its current
+        // values instead.
+        if !self.resources_loaded {
+            self.resources_loaded = true;
+            if let Ok(conf) = InternalBitcoindConfig::from_file(
+                &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
+            ) {
+                if let Some(net_conf) = conf.networks.get(&self.network) {
+                    self.prune_mb.value = net_conf.prune.to_string();
+                    self.prune_mb.valid = true;
+                    self.prune_mb.warning = None;
+                }
+                self.max_mempool_mb.value = conf
+                    .max_mempool_mb
+                    .map(|mb| mb.to_string())
+                    .unwrap_or_default();
+                self.max_mempool_mb.valid = true;
+                self.max_mempool_mb.warning = None;
+            }
+        }
+    }
+
     /// Validate both resource fields and return the chosen values, marking the
     /// offending field invalid on failure. Returns `None` so `DefineConfig` bails
     /// without writing.
@@ -1197,28 +1223,7 @@ impl Step for InternalBitcoindStep {
             // Prune is per-network, so re-read the resource fields for the new one.
             self.resources_loaded = false;
         }
-        // Pre-fill the node-resource fields from any existing on-disk config
-        // exactly once (this runs every frame). An untouched fresh install has no
-        // config, so the constructor defaults (15000 MB prune, blank mempool)
-        // stand. Reusing an existing datadir shows its current values instead.
-        if !self.resources_loaded {
-            self.resources_loaded = true;
-            if let Ok(conf) = InternalBitcoindConfig::from_file(
-                &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
-            ) {
-                if let Some(net_conf) = conf.networks.get(&self.network) {
-                    self.prune_mb.value = net_conf.prune.to_string();
-                    self.prune_mb.valid = true;
-                    self.prune_mb.warning = None;
-                }
-                self.max_mempool_mb.value = conf
-                    .max_mempool_mb
-                    .map(|mb| mb.to_string())
-                    .unwrap_or_default();
-                self.max_mempool_mb.valid = true;
-                self.max_mempool_mb.warning = None;
-            }
-        }
+        self.load_resource_fields_once();
         if let Some(Ok(_)) = self.started {
             // This case can arise if a user switches from internal bitcoind to external and back to internal.
             if ctx.bitcoin_backend.is_none() {
