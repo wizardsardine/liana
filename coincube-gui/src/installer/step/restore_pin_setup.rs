@@ -7,9 +7,8 @@
 //! store_encrypted`). The Cube signer and Spark then decrypt the
 //! blob via the user's PIN at Cube-open time. Before this step
 //! existed, the restore flow wrote the restored mnemonic **unencrypted**,
-//! then tried to boot the app without constructing a BreezClient at
-//! all — the app hung on "Starting daemon…" because the loader's
-//! `Synced` branch expects a pre-loaded BreezClient.
+//! so nothing could later decrypt it under a PIN to resolve the Cube
+//! signer and Spark backend the Loader hands to the app.
 //!
 //! Inserting this step between `RecoveryKitRestoreStep` and the
 //! node-setup steps gives the user an explicit PIN-creation pad and

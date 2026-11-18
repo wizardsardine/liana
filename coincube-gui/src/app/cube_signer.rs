@@ -142,8 +142,8 @@ impl std::fmt::Debug for CubeSigner {
 pub(crate) mod golden {
     //! Golden vectors for master invariant I2: the same Cube yields
     //! byte-identical P2P mnemonic/identity, Connect `CubeEncryptionKey` and
-    //! Vault-builder encryption key before and after the signer leaves
-    //! `BreezClient`.
+    //! Vault-builder encryption key before and after the signer moved out of
+    //! the (since removed) Liquid wallet client.
     //!
     //! Two fixture Cubes, each on mainnet and testnet:
     //!
@@ -157,8 +157,8 @@ pub(crate) mod golden {
     //!   It has no seed file.
     //!
     //! The constants were captured once from the pre-change code (the signer
-    //! read through `BreezClient::liquid_signer()` after `load_breez_client`,
-    //! commit "pin golden vectors for the Cube master signer's consumers"),
+    //! read through the removed Liquid client's signer accessor, commit
+    //! "pin golden vectors for the Cube master signer's consumers"),
     //! and are hard-coded: the same assertions passed there and pass here on
     //! [`super::CubeSigner`], so a change to any derivation fails here.
 
