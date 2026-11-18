@@ -77,7 +77,8 @@ fn segwit(descriptor: &Descriptor<DefiniteDescriptorKey>) -> bool {
 
 /// Build an ordinary signed-later PSBT with authenticated full previous
 /// transactions, exact descriptor scripts and signer origins. The caller must
-/// reserve `change_addr` durably before requesting this construction.
+/// reserve a fresh owned change address durably. For an explicit sweep of
+/// selected coins, `change_addr` is the sole payment address.
 #[allow(clippy::too_many_arguments)]
 pub fn create_imported_spend(
     wallet: &ImportedWalletDescriptor,
@@ -102,17 +103,20 @@ pub fn create_imported_spend(
             InsaneFeeInfo::TooHighFeerate(feerate),
         ));
     }
-    if !matches!(
+    let owned_change = matches!(
         change_addr.info,
         Some(AddrInfo {
             is_change: true,
             ..
         })
-    ) {
+    );
+    let explicit_sweep = destinations.is_empty()
+        && !candidate_coins.is_empty()
+        && candidate_coins.iter().all(|coin| coin.must_select);
+    if !owned_change && !explicit_sweep {
         return Err(invalid("change must be an owned change-branch address"));
     }
-    let change_desc =
-        own_output(wallet, &change_addr)?.ok_or_else(|| invalid("missing change derivation"))?;
+    let change_desc = own_output(wallet, &change_addr)?;
     let mut seen = BTreeSet::new();
     for coin in candidate_coins {
         if !seen.insert(coin.outpoint) {
@@ -185,7 +189,7 @@ pub fn create_imported_spend(
         spend::check_output_value(change_amount)?;
         change_txo.value = change_amount;
         tx.output.push(change_txo);
-        owned_outputs.push(Some(change_desc));
+        owned_outputs.push(change_desc);
     } else if max_change_amount.to_sat() > 0 {
         warnings.push(CreateSpendWarning::ChangeAddedToFee(
             max_change_amount.to_sat(),
@@ -677,6 +681,64 @@ mod tests {
         )
         .unwrap();
         (wallet, signers, created)
+    }
+
+    #[test]
+    fn imported_sweep_sizes_the_actual_external_payment_and_requires_selected_coins() {
+        let (wallet, _, ordinary) = draft("wpkh");
+        let previous = ordinary.psbt.inputs[0].non_witness_utxo.clone().unwrap();
+        let (key, _) = account(99, "m/86h/1h/0h");
+        let secp = secp256k1::Secp256k1::new();
+        let (key, _) =
+            secp256k1::PublicKey::from_secret_key(&secp, &key.private_key).x_only_public_key();
+        let recipient = SpendOutputAddress {
+            addr: Address::p2tr(&secp, key, None, Network::Regtest),
+            info: None,
+        };
+        let build = |sats, must_select, destinations: &[(SpendOutputAddress, Amount)]| {
+            let mut previous = previous.clone();
+            let amount = Amount::from_sat(sats);
+            previous.output[0].value = amount;
+            let candidate = CandidateCoin {
+                outpoint: OutPoint::new(previous.compute_txid(), 0),
+                amount,
+                deriv_index: ChildNumber::Normal { index: 0 },
+                is_change: false,
+                must_select,
+                sequence: None,
+                ancestor_info: None,
+            };
+            create_imported_spend(
+                &wallet,
+                &secp256k1::Secp256k1::verification_only(),
+                &mut OneTx(previous),
+                destinations,
+                &[candidate],
+                SpendTxFees::Regular(10),
+                recipient.clone(),
+                LockTime::ZERO,
+            )
+        };
+
+        let large = build(150_000, true, &[]).unwrap();
+        let fee = large.psbt.fee().unwrap().to_sat();
+        let small = build(fee + 600, true, &[]).unwrap().psbt;
+        assert_eq!(
+            small.unsigned_tx.output,
+            [TxOut {
+                value: Amount::from_sat(600),
+                script_pubkey: recipient.addr.script_pubkey(),
+            }]
+        );
+        assert!(small.outputs[0].bip32_derivation.is_empty());
+        assert_eq!(small.fee().unwrap().to_sat(), fee);
+        assert!(build(150_000, false, &[]).is_err());
+        assert!(build(
+            150_000,
+            true,
+            &[(recipient.clone(), Amount::from_sat(50_000))]
+        )
+        .is_err());
     }
 
     #[test]
