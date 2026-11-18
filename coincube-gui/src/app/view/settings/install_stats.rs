@@ -273,26 +273,7 @@ impl<M> canvas::Program<M, coincube_ui::theme::Theme> for LineChart {
         let is_light = theme.mode == coincube_ui::theme::palette::ThemeMode::Light;
 
         // Theme-aware colors for the chart
-        let grid_color = if is_light {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.08)
-        } else {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.07)
-        };
-        let label_color = if is_light {
-            Color::from_rgba(0.0, 0.0, 0.0, 0.45)
-        } else {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.4)
-        };
-        let line_color = if is_light {
-            Color::from_rgb(0.97, 0.57, 0.10) // orange
-        } else {
-            Color::WHITE
-        };
-        let fill_color = if is_light {
-            Color::from_rgba(0.97, 0.57, 0.10, 0.12)
-        } else {
-            Color::from_rgba(1.0, 1.0, 1.0, 0.08)
-        };
+        let (grid_color, label_color, line_color, fill_color) = chart_palette(is_light);
         let dot_color = line_color;
 
         let pad_left = 38.0_f32;
@@ -383,6 +364,30 @@ impl<M> canvas::Program<M, coincube_ui::theme::Theme> for LineChart {
 
         vec![frame.into_geometry()]
     }
+}
+
+fn chart_palette(is_light: bool) -> (Color, Color, Color, Color) {
+    let grid_color = if is_light {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.08)
+    } else {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.07)
+    };
+    let label_color = if is_light {
+        Color::from_rgba(0.0, 0.0, 0.0, 0.45)
+    } else {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.4)
+    };
+    let line_color = if is_light {
+        Color::from_rgb(0.97, 0.57, 0.10) // orange
+    } else {
+        Color::WHITE
+    };
+    let fill_color = if is_light {
+        Color::from_rgba(0.97, 0.57, 0.10, 0.12)
+    } else {
+        Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+    };
+    (grid_color, label_color, line_color, fill_color)
 }
 
 fn short_date_label(date: &str) -> String {
