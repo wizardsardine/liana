@@ -934,47 +934,7 @@ pub(super) fn rest_face_svg(face: Face, marks: CubeMarks, light: bool) -> Option
         return ghost_face_svg(svg, face, marks, ghost, light);
     }
     match face {
-        Face::Top => {
-            // `.tc { transform: rotate(45deg) }`: coin, then the test tag.
-            let coin = s * 0.34;
-            let tag = launcher_coin::is_test_network(marks.network).then(|| marks.network.label());
-            let font = s * 0.095;
-            let tag_h = font * 1.2 + 2.0;
-            let column = coin + tag.map_or(0.0, |_| s * 0.04 + tag_h);
-            let top = (s - column) / 2.0;
-            let _ = write!(
-                svg,
-                "<g transform=\"rotate(45 {:.2} {:.2})\">",
-                s / 2.0,
-                s / 2.0
-            );
-            svg.push_str(&launcher_coin::fragment(
-                marks.network,
-                (s - coin) / 2.0,
-                top,
-                coin,
-                1.5,
-                s * 0.018,
-            ));
-            if let Some(tag) = tag {
-                let width = tag.chars().count() as f32 * font * 0.56 + font * 0.7;
-                let y = top + coin + s * 0.04;
-                let edge = edge(marks.network, light);
-                let _ = write!(
-                    svg,
-                    "<rect x=\"{:.2}\" y=\"{y:.2}\" width=\"{width:.2}\" height=\"{tag_h:.2}\" rx=\"{:.2}\" fill=\"none\" stroke=\"rgb({},{},{})\" stroke-opacity=\"0.6\" stroke-dasharray=\"2 2\"/><text x=\"{:.2}\" y=\"{:.2}\" font-family=\"IBM Plex Sans\" font-weight=\"600\" font-size=\"{font:.2}\" text-anchor=\"middle\" fill=\"{ink}\">{}</text>",
-                    (s - width) / 2.0,
-                    font * 0.3,
-                    edge[0],
-                    edge[1],
-                    edge[2],
-                    s / 2.0,
-                    y + 1.0 + font * 0.95,
-                    xml_text(tag)
-                );
-            }
-            svg.push_str("</g>");
-        }
+        Face::Top => append_rest_top(&mut svg, marks.network, light, &ink),
         Face::Left => {
             // `.lc`: centered row of `.wi` marks (.25s, gap .04s), in the
             // prototype's Vault, Spark order. Spark is known without an
@@ -992,55 +952,106 @@ pub(super) fn rest_face_svg(face: Face, marks: CubeMarks, light: bool) -> Option
             if paths.is_empty() {
                 return None;
             }
-            let size = s * 0.25;
-            let gap = s * 0.04;
-            let row = paths.len() as f32 * size + (paths.len() - 1) as f32 * gap;
-            for (i, path) in paths.into_iter().enumerate() {
-                let x = (s - row) / 2.0 + i as f32 * (size + gap);
-                let y = (s - size) / 2.0;
-                if path == SPARK {
-                    spark(&mut svg, x, y, size, &ink);
-                } else {
-                    icon(&mut svg, path, x, y, size, &ink);
-                }
-            }
+            append_wallet_icons(&mut svg, &paths, &ink);
         }
-        Face::Right => {
-            // `.rc`: `.pad` (.36s) and the `.bdg` (.21s, margin-top -.03s).
-            let pad = s * 0.36;
-            let badge = s * 0.21;
-            let gap = s * 0.02;
-            let warn = if light { "#77450b" } else { "#f3b465" };
-            let muted = if light { "#575a54" } else { "#b9bbb5" };
-            let mark = match marks.backup {
-                BackupMark::Confirmed => None,
-                BackupMark::NotConfirmed => Some((ATTENTION, warn)),
-                BackupMark::Unknown => Some((QUESTION, muted)),
-            };
-            let row = if mark.is_some() {
-                pad + gap + badge
-            } else {
-                pad
-            };
-            let x = (s - row) / 2.0;
-            let y = (s - pad) / 2.0;
-            icon(
-                &mut svg,
-                if marks.passkey { PASSKEY } else { LOCKED },
-                x,
-                y,
-                pad,
-                &ink,
-            );
-            if let Some((glyph, tone)) = mark {
-                let path = format!("{CIRCLE}{glyph}");
-                icon(&mut svg, &path, x + pad + gap, y - s * 0.03, badge, tone);
-            }
-        }
+        Face::Right => append_rest_lock(&mut svg, marks, light, &ink),
         Face::BackLeft | Face::BackRight | Face::Bottom => return None,
     }
     svg.push_str("</svg>");
     Some(svg)
+}
+
+fn append_rest_top(svg: &mut String, network: ChainId, light: bool, ink: &str) {
+    // `.tc { transform: rotate(45deg) }`: coin, then the test tag.
+    let s = REST_SIZE;
+    let coin = s * 0.34;
+    let tag = launcher_coin::is_test_network(network).then(|| network.label());
+    let font = s * 0.095;
+    let tag_h = font * 1.2 + 2.0;
+    let column = coin + tag.map_or(0.0, |_| s * 0.04 + tag_h);
+    let top = (s - column) / 2.0;
+    let _ = write!(
+        svg,
+        "<g transform=\"rotate(45 {:.2} {:.2})\">",
+        s / 2.0,
+        s / 2.0
+    );
+    svg.push_str(&launcher_coin::fragment(
+        network,
+        (s - coin) / 2.0,
+        top,
+        coin,
+        1.5,
+        s * 0.018,
+    ));
+    if let Some(tag) = tag {
+        let width = tag.chars().count() as f32 * font * 0.56 + font * 0.7;
+        let y = top + coin + s * 0.04;
+        let edge = edge(network, light);
+        let _ = write!(
+            svg,
+            "<rect x=\"{:.2}\" y=\"{y:.2}\" width=\"{width:.2}\" height=\"{tag_h:.2}\" rx=\"{:.2}\" fill=\"none\" stroke=\"rgb({},{},{})\" stroke-opacity=\"0.6\" stroke-dasharray=\"2 2\"/><text x=\"{:.2}\" y=\"{:.2}\" font-family=\"IBM Plex Sans\" font-weight=\"600\" font-size=\"{font:.2}\" text-anchor=\"middle\" fill=\"{ink}\">{}</text>",
+            (s - width) / 2.0,
+            font * 0.3,
+            edge[0],
+            edge[1],
+            edge[2],
+            s / 2.0,
+            y + 1.0 + font * 0.95,
+            xml_text(tag)
+        );
+    }
+    svg.push_str("</g>");
+}
+
+fn append_wallet_icons(svg: &mut String, paths: &[&str], ink: &str) {
+    let s = REST_SIZE;
+    let size = s * 0.25;
+    let gap = s * 0.04;
+    let row = paths.len() as f32 * size + (paths.len() - 1) as f32 * gap;
+    for (i, &path) in paths.iter().enumerate() {
+        let x = (s - row) / 2.0 + i as f32 * (size + gap);
+        let y = (s - size) / 2.0;
+        if path == SPARK {
+            spark(svg, x, y, size, ink);
+        } else {
+            icon(svg, path, x, y, size, ink);
+        }
+    }
+}
+
+fn append_rest_lock(svg: &mut String, marks: CubeMarks, light: bool, ink: &str) {
+    // `.rc`: `.pad` (.36s) and the `.bdg` (.21s, margin-top -.03s).
+    let s = REST_SIZE;
+    let pad = s * 0.36;
+    let badge = s * 0.21;
+    let gap = s * 0.02;
+    let warn = if light { "#77450b" } else { "#f3b465" };
+    let muted = if light { "#575a54" } else { "#b9bbb5" };
+    let mark = match marks.backup {
+        BackupMark::Confirmed => None,
+        BackupMark::NotConfirmed => Some((ATTENTION, warn)),
+        BackupMark::Unknown => Some((QUESTION, muted)),
+    };
+    let row = if mark.is_some() {
+        pad + gap + badge
+    } else {
+        pad
+    };
+    let x = (s - row) / 2.0;
+    let y = (s - pad) / 2.0;
+    icon(
+        svg,
+        if marks.passkey { PASSKEY } else { LOCKED },
+        x,
+        y,
+        pad,
+        ink,
+    );
+    if let Some((glyph, tone)) = mark {
+        let path = format!("{CIRCLE}{glyph}");
+        icon(svg, &path, x + pad + gap, y - s * 0.03, badge, tone);
+    }
 }
 
 /// `KIT` and `NOKIT` from P-Launcher: a case with a check, and the same case
@@ -1094,44 +1105,36 @@ fn ghost_face_svg(
                 paths.push(SPARK);
             }
             paths.push(CLOUD);
-            let size = s * 0.25;
-            let gap = s * 0.04;
-            let row = paths.len() as f32 * size + (paths.len() - 1) as f32 * gap;
-            for (i, path) in paths.into_iter().enumerate() {
-                let x = (s - row) / 2.0 + i as f32 * (size + gap);
-                let y = (s - size) / 2.0;
-                if path == SPARK {
-                    spark(&mut svg, x, y, size, muted);
-                } else {
-                    icon(&mut svg, path, x, y, size, muted);
-                }
-            }
+            append_wallet_icons(&mut svg, &paths, muted);
         }
-        Face::Right => {
-            // As a local Cube's `.rc`: `.pad` (.36s), then for a ghost no
-            // kit restores, the `.bdg` (.21s) in `--warn`.
-            let pad = s * 0.36;
-            let badge = s * 0.21;
-            let gap = s * 0.02;
-            let (path, tone) = match ghost {
-                Ghost::Restorable => (KIT, if light { "#23613b" } else { "#8bdfab" }),
-                Ghost::Unrestorable => (NOKIT, muted),
-            };
-            let warn = ghost == Ghost::Unrestorable;
-            let row = if warn { pad + gap + badge } else { pad };
-            let x = (s - row) / 2.0;
-            let y = (s - pad) / 2.0;
-            icon(&mut svg, path, x, y, pad, tone);
-            if warn {
-                let tone = if light { "#77450b" } else { "#f3b465" };
-                let path = format!("{CIRCLE}{ATTENTION}");
-                icon(&mut svg, &path, x + pad + gap, y - s * 0.03, badge, tone);
-            }
-        }
+        Face::Right => append_ghost_recovery_badge(&mut svg, ghost, light, muted),
         Face::BackLeft | Face::BackRight | Face::Bottom => return None,
     }
     svg.push_str("</svg>");
     Some(svg)
+}
+
+fn append_ghost_recovery_badge(svg: &mut String, ghost: Ghost, light: bool, muted: &str) {
+    // As a local Cube's `.rc`: `.pad` (.36s), then for a ghost no
+    // kit restores, the `.bdg` (.21s) in `--warn`.
+    let s = REST_SIZE;
+    let pad = s * 0.36;
+    let badge = s * 0.21;
+    let gap = s * 0.02;
+    let (path, tone) = match ghost {
+        Ghost::Restorable => (KIT, if light { "#23613b" } else { "#8bdfab" }),
+        Ghost::Unrestorable => (NOKIT, muted),
+    };
+    let warn = ghost == Ghost::Unrestorable;
+    let row = if warn { pad + gap + badge } else { pad };
+    let x = (s - row) / 2.0;
+    let y = (s - pad) / 2.0;
+    icon(svg, path, x, y, pad, tone);
+    if warn {
+        let tone = if light { "#77450b" } else { "#f3b465" };
+        let path = format!("{CIRCLE}{ATTENTION}");
+        icon(svg, &path, x + pad + gap, y - s * 0.03, badge, tone);
+    }
 }
 
 /// What a ghost's details face says, for the snapshot that rides the turn.
@@ -1177,25 +1180,36 @@ pub(super) fn ghost_details_svg(network: ChainId, light: bool, text: GhostText<'
         "<text x=\"28\" y=\"141\" font-size=\"13\" fill=\"{muted}\">Where</text><text x=\"124\" y=\"141\" font-size=\"14\" fill=\"{muted}\">In Connect, not on this device</text><text x=\"28\" y=\"173\" font-size=\"13\" fill=\"{muted}\">Recovery</text><text x=\"124\" y=\"173\" font-size=\"14\" fill=\"{tone}\">{}</text>",
         xml_text(&backup)
     );
-    let primary = if text.restorable {
+    append_ghost_primary_action(&mut svg, text.restorable, light, &ink, line, accent);
+    svg
+}
+
+fn append_ghost_primary_action(
+    svg: &mut String,
+    restorable: bool,
+    light: bool,
+    ink: &str,
+    line: &str,
+    accent: &str,
+) {
+    let primary = if restorable {
         "Restore to this device"
     } else {
         "Import with recovery phrase…"
     };
     let width = primary.chars().count() as f32 * 7.6 + 32.0;
-    let (fill, label) = if text.restorable {
+    let (fill, label) = if restorable {
         (accent, if light { "#ffffff" } else { "#201407" })
     } else {
-        ("none", ink.as_str())
+        ("none", ink)
     };
     let _ = write!(
         svg,
         "<rect x=\"28.5\" y=\"334.5\" width=\"{width:.1}\" height=\"35\" rx=\"8\" fill=\"{fill}\" stroke=\"{}\"/><text x=\"{:.1}\" y=\"357\" text-anchor=\"middle\" font-size=\"14\" font-weight=\"500\" fill=\"{label}\">{}</text></svg>",
-        if text.restorable { accent } else { line },
+        if restorable { accent } else { line },
         28.5 + width / 2.0,
         xml_text(primary)
     );
-    svg
 }
 
 /// `CLOUD` from P-Launcher: the ghost's avatar.
