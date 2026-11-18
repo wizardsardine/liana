@@ -1182,11 +1182,23 @@ impl<'a> LocalKeyRepository<'a> {
     /// Only a provably empty, live operation can acquire its first authority.
     /// A populated #830 repository needs an explicit owner-approved migration.
     fn provision_empty(&self) -> Result<(), String> {
+        self.provision_empty_with(|| {
+            #[cfg(not(test))]
+            self.check_active()?;
+            Ok(())
+        })
+    }
+
+    /// [`Self::provision_empty`] authorized by `authorize` instead of this
+    /// repository's own session check.
+    fn provision_empty_with(
+        &self,
+        authorize: impl Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
         if anchor::load(&self.anchor_scope())?.is_some() {
             return Ok(());
         }
-        #[cfg(not(test))]
-        self.check_active()?;
+        authorize()?;
         let empty = self.manifest(vec![]);
         let bytes = serde_json::to_vec(&empty).map_err(|_| "Cannot encode key manifest.")?;
         let path = self.root().join(MANIFEST);
@@ -1479,14 +1491,30 @@ impl<'a> LocalKeyRepository<'a> {
                 &device,
             )?
         };
+        // The copy can't pass its own session check while this Cube is the
+        // one unlocked, so every write to it is authorized as this wallet's
+        // pair instead, under this session's credential.
+        let authorize = || {
+            target.check_pair_of(self)?;
+            self.check_active().map(|_| ())
+        };
         let _restore_operation_lock = target.lock_unrestored_admission()?;
-        let lock = target.lock()?;
-        target.provision_empty()?;
-        let manifest = target.read_manifest_recoverable(&lock)?;
+        let _lock = target.lock()?;
+        target.provision_empty_with(authorize)?;
+        target.discard_proven_uncommitted_stage_with(
+            || authorize().map(|()| credential.clone()),
+            || target.device(false),
+        )?;
+        let manifest = target.read_manifest()?;
         let device = target.device(manifest.records.is_empty())?;
-        target.admit_new_batch_locked(manifest, entries, &credential, &device, || {
-            target.check_pair_of(self).is_ok() && self.check_active().is_ok() && is_current()
-        })
+        target.admit_new_batch_locked_with(
+            manifest,
+            entries,
+            &credential,
+            &device,
+            || authorize().is_ok() && is_current(),
+            authorize,
+        )
     }
 
     /// Open each record and check it signs for both this wallet and the
@@ -1653,6 +1681,24 @@ impl<'a> LocalKeyRepository<'a> {
         device: &coincube_core::seed_crypt::DeviceSecret,
         is_current: impl Fn() -> bool,
     ) -> Result<Vec<LocalKeyRecord>, String> {
+        self.admit_new_batch_locked_with(manifest, entries, credential, device, is_current, || {
+            #[cfg(not(test))]
+            self.check_active().map(|_| ())?;
+            Ok(())
+        })
+    }
+
+    /// [`Self::admit_new_batch_locked`] authorized by `authorize` instead of
+    /// this repository's own session check.
+    fn admit_new_batch_locked_with(
+        &self,
+        manifest: Manifest,
+        entries: Vec<(ImportedAccount, ImportedKeySecret)>,
+        credential: &str,
+        device: &coincube_core::seed_crypt::DeviceSecret,
+        is_current: impl Fn() -> bool,
+        authorize: impl Fn() -> Result<(), String>,
+    ) -> Result<Vec<LocalKeyRecord>, String> {
         checkpoint::ensure_unbound(&manifest)?;
         if entries.is_empty() || entries.len() > MAX_RECORDS {
             return Err("Imported key batch has an invalid size.".into());
@@ -1721,11 +1767,7 @@ impl<'a> LocalKeyRepository<'a> {
             credential,
             device,
             is_current,
-            || {
-                #[cfg(not(test))]
-                self.check_active().map(|_| ())?;
-                Ok(())
-            },
+            authorize,
             true,
             || {
                 for (record, ciphertext) in records.iter().zip(ciphertexts.iter()) {
@@ -2808,13 +2850,36 @@ mod tests {
             )
             .unwrap();
         let to = copy.repository();
+        // The copy is written while its source Cube is the one unlocked, so
+        // its own session check fails: only the pair check the copy passes in
+        // (`check_pair_of` in `copy_to_pair`) may authorize the write, and a
+        // refusal there writes nothing.
+        assert!(to.check_active().is_err());
+        assert!(to
+            .admit_new_batch_locked_with(
+                to.read_manifest().unwrap(),
+                from.copy_entries_locked(
+                    &manifest,
+                    &copy.attachment.descriptor,
+                    "synthetic unlock",
+                    &device,
+                )
+                .unwrap(),
+                "synthetic unlock",
+                &copy_device,
+                || true,
+                || Err("not this wallet's pair".into()),
+            )
+            .is_err());
+        assert!(to.read_manifest().unwrap().records.is_empty());
         let records = to
-            .admit_new_batch_locked(
+            .admit_new_batch_locked_with(
                 to.read_manifest().unwrap(),
                 entries,
                 "synthetic unlock",
                 &copy_device,
                 || true,
+                || Ok(()),
             )
             .unwrap();
         assert_eq!(records.len(), 3);
