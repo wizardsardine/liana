@@ -3,7 +3,7 @@
 COINCUBE Desktop performs optional, send-only Branta lookups during preparation of
 external Spark BOLT11 payments and VAULT Bitcoin/BIP21 requests containing both
 `branta_id` and `branta_secret`. No lookup runs on typing, internal-transfer paths,
-Liquid, Spark-native addresses/invoices, stablecoin/cross-chain sends, plain
+Spark-native addresses/invoices, stablecoin/cross-chain sends, plain
 Bitcoin addresses, BOLT12, LNURL or Lightning addresses. Ark and silent-payment
 support in the SDK does not enable those payment routes in COINCUBE Desktop.
 
@@ -141,14 +141,16 @@ and everything else to silence. Descriptions now come only from encrypted paymen
 metadata, so older registrations that stored a plaintext description show their
 platform without a description.
 
-Upstream reqwest 0.13 uses platform-verifier, whose Apple dependency conflicts
-with Breez's exact iOS build-dependency pin even on desktop because Cargo resolves
-across targets. No Liquid file or dependency pin was changed.
+The client stays on reqwest 0.12: upstream reqwest 0.13 uses platform-verifier,
+whose Apple dependency conflicted with the Breez Liquid SDK's exact iOS
+build-dependency pin even on desktop, because Cargo resolves across targets.
 
-Declaring `rustls-tls` does not select rustls at runtime. Cargo unifies reqwest
-`0.12.18` features across the workspace, and Breez (`breez-sdk-liquid`,
-`sdk-common`, `esplora-client` defaults) also enables `default-tls` (native-tls)
-and `system-proxy`. With `default-tls` present, reqwest's `TlsBackend::default()`
+Declaring `rustls-tls` does not select rustls at runtime. `coincube-gui`'s
+reqwest `0.12.18` dependency also declares `default-tls` (native-tls),
+`system-proxy`, `charset` and `socks`. Until the Liquid removal these came from
+Breez (`breez-sdk-liquid`, `sdk-common`, `esplora-client` defaults) through
+Cargo's feature unification; they are now declared directly so the removal does
+not change TLS or proxy behaviour. With `default-tls` present, reqwest's `TlsBackend::default()`
 is native-tls, and neither the SDK lookup client (`reqwest::Client::builder()`,
 patched only to disable redirects) nor the logo client calls `use_rustls_tls()`.
 Both therefore use the OS TLS stack and trust store (Security.framework on macOS,
