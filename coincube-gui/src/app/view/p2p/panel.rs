@@ -3228,7 +3228,7 @@ impl P2PPanel {
     }
 
     fn empty_chat_messages<'a>(
-        icon: Text<'a>,
+        icon: coincube_ui::widget::Text<'a>,
         title: &'static str,
         hint: &'static str,
     ) -> Container<'a, view::Message> {
@@ -3249,7 +3249,7 @@ impl P2PPanel {
     fn chat_message_bubble<'a>(
         is_own: bool,
         time_str: String,
-        peer_caption: impl FnOnce() -> Text<'a>,
+        peer_caption: impl FnOnce() -> coincube_ui::widget::Text<'a>,
         content: impl FnOnce() -> Element<'a, view::Message>,
     ) -> Column<'a, view::Message> {
         if is_own {
@@ -5085,7 +5085,11 @@ impl P2PPanel {
         }
     }
 
-    fn start_taking_order(&mut self, cache: &Cache) -> Option<Task<Message>> {
+    fn start_taking_order(
+        &mut self,
+        daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Option<Task<Message>> {
         // Hard-block: don't open the take flow when the active
         // coordinator's network doesn't match the wallet (COIN-371 Q4).
         if !self.coordinator_network_matches() {
@@ -5121,7 +5125,7 @@ impl P2PPanel {
             // No input needed — proceed directly
             self.taking_order = true;
             return Some(self.update(
-                _daemon,
+                daemon,
                 cache,
                 Message::View(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
             ));
@@ -6503,7 +6507,7 @@ impl State for P2PPanel {
 
     fn update(
         &mut self,
-        _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -6648,7 +6652,9 @@ impl State for P2PPanel {
             P2PMessage::MostroSelectActiveNode(pubkey) => self.select_coordinator_node(pubkey),
             // Take order flow
             P2PMessage::TakeOrder => {
-                return self.start_taking_order(cache).unwrap_or_else(Task::none)
+                return self
+                    .start_taking_order(daemon, cache)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::TakeOrderAmountEdited(v) => {
                 self.take_order_amount.value = v;
