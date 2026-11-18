@@ -163,7 +163,7 @@ pub fn items(facts: HubFacts) -> Vec<HubItem> {
                 detail: if facts.signature_available {
                     localized_copy("Available: this Vault can sign it. No split key needed.").into()
                 } else {
-                    localized_copy("Not available: this Vault has a hardware signer that can't make this signature. Use a split key.").into()
+                    localized_copy("Not available: this Vault's signers can't make this signature. Use a split key.").into()
                 },
                 state: if facts.signature_available {
                     ItemState::Done

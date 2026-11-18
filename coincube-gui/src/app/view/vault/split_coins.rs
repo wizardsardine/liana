@@ -384,8 +384,10 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
                     if overlay.signature_available {
                         "Signed so that Bitcoin rejects it. No extra coin needed.".to_string()
                     } else {
-                        "Not available: this Vault has a hardware signer that can't make this signature."
-                            .to_string()
+                        localized_copy(
+                            "Not available: this Vault's signers can't make this signature.",
+                        )
+                        .to_string()
                     },
                     Method::Signature,
                 ))
@@ -393,7 +395,10 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
                     overlay.method == Method::SplitKey,
                     true,
                     "Split key",
-                    format!("Spends a coin found only on {} with these coins.", chain_name(here)),
+                    format!(
+                        "Spends a coin found only on {} with these coins.",
+                        chain_name(here)
+                    ),
                     Method::SplitKey,
                 )),
         );
@@ -644,6 +649,6 @@ mod tests {
             coincube_ui::theme::Theme::light(),
         );
         assert!(mounted.contains("How to split"));
-        assert!(mounted.contains("Not available: this Vault has a hardware signer"));
+        assert!(mounted.contains("Not available: this Vault's signers can't make this signature."));
     }
 }
