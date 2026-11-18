@@ -206,7 +206,9 @@ impl Loader {
                 }
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
-                | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::NotFound), _)) => {
+                | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::NotFound), _))
+                // Socket path too long for the OS (macOS caps it at 104 bytes).
+                | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::InvalidInput), _)) => {
                     self.step = Step::StartingDaemon;
                     self.daemon_started = true;
                     self.waiting_daemon_bitcoind = true;
