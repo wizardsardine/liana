@@ -2456,7 +2456,10 @@ pub enum ConnectCubeMessage {
     /// `RetryLightningAddressReregister`. `Ok` clears the
     /// re-registration prompt; `Err` keeps it surfaced with an
     /// updated message.
-    LightningAddressReregistered(Result<coincube_spark_protocol::LightningAddressInfo, String>),
+    LightningAddressReregistered {
+        generation: u64,
+        result: Result<coincube_spark_protocol::LightningAddressInfo, String>,
+    },
     /// Manual retry of the SDK side of a Lightning Address rebind
     /// when reconcile flagged `ln_reconcile_needs_reregister`. Performs
     /// SDK delete (idempotent) then register against the DB-confirmed
