@@ -5,8 +5,9 @@ use crate::{
         menu::ConnectSubMenu,
         message::Message,
         view::{
-            self, ConnectAccountMessage, ContactsMessage, DuressContactsMessage, DuressMessage,
-            RetryAction, TwoFactorSettingsMessage, TwoFactorStatusResult,
+            self, ConnectAccountMessage, ContactsMessage, DeleteAccountMessage, DeletionFailure,
+            DuressContactsMessage, DuressMessage, RetryAction, TwoFactorSettingsMessage,
+            TwoFactorStatusResult,
         },
     },
     services::coincube::{
@@ -24,6 +25,7 @@ use crate::{
     user_error::UserError,
 };
 
+use super::delete_account::{deletion_failure, DeleteAccountState, DELETE_ACCOUNT_POLICY_URL};
 use super::{
     delete_connect_secret, read_connect_secret, write_connect_secret, CONNECT_KEYRING_USER,
 };
@@ -1580,6 +1582,8 @@ pub struct ConnectAccountPanel {
     pub pending_campaign_code: Option<String>,
     /// Devices & security › Authenticator app and Backup codes.
     pub two_factor: TwoFactorSettings,
+    /// Account › Delete account.
+    pub delete_account: DeleteAccountState,
     /// This sign-in spent a backup code: how many are left, shown as a
     /// reminder until dismissed or a new set is made.
     pub backup_codes_notice: Option<u32>,
@@ -1647,6 +1651,7 @@ impl ConnectAccountPanel {
             register_campaign_code: String::new(),
             pending_campaign_code: None,
             two_factor: TwoFactorSettings::default(),
+            delete_account: DeleteAccountState::default(),
             backup_codes_notice: None,
             signing_in_with_authenticator: false,
         }
@@ -1877,6 +1882,7 @@ impl ConnectAccountPanel {
         // The adopted session may be another account: nothing about the old
         // one's authenticator (an open setup key, codes on screen) carries over.
         self.two_factor.reset();
+        self.delete_account.reset();
         self.backup_codes_notice = None;
         self.signing_in_with_authenticator = false;
         self.step = ConnectFlowStep::CheckingSession;
@@ -2074,6 +2080,9 @@ impl ConnectAccountPanel {
     }
 
     pub fn reload_overview(&mut self) -> iced::Task<Message> {
+        // Opening the Account section starts on the overview, not on a
+        // Delete account page left open earlier.
+        self.delete_account.close();
         self.recovery_services = RecoveryServicesState::Loading;
         self.overview_seq = self.overview_seq.wrapping_add(1);
         load_overview_counts(
@@ -2761,6 +2770,7 @@ impl ConnectAccountPanel {
                 // authenticator carries over.
                 if self.user.as_ref().is_some_and(|u| u.id != user.id) {
                     self.two_factor.reset();
+                    self.delete_account.reset();
                     self.backup_codes_notice = None;
                 }
                 self.user = Some(user);
@@ -4281,6 +4291,7 @@ impl ConnectAccountPanel {
                         self.update_message(ConnectAccountMessage::Init)
                     }
                     RetryAction::SecurityData => self.reload_security(),
+                    RetryAction::DeletionStatus => self.load_deletion_status(),
                     RetryAction::UserProfile => {
                         let gen = self.session_generation;
                         let client = self.client.clone();
@@ -4578,8 +4589,129 @@ impl ConnectAccountPanel {
             }
             ConnectAccountMessage::Duress(m) => return self.update_duress(m),
             ConnectAccountMessage::DuressContacts(m) => return self.update_duress_contacts(m),
+            ConnectAccountMessage::DeleteAccount(m) => return self.update_delete_account(m),
         }
 
+        iced::Task::none()
+    }
+
+    /// Starts (or restarts) the Delete account page's status load.
+    fn load_deletion_status(&mut self) -> iced::Task<Message> {
+        if self.user.is_none() || !self.delete_account.open {
+            return iced::Task::none();
+        }
+        let seq = self.delete_account.begin_status_load();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .get_account_deletion_request()
+                    .await
+                    .map_err(|e| deletion_failure(&e))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::DeleteAccount(DeleteAccountMessage::StatusLoaded(
+                        res, seq,
+                    )),
+                ))
+            },
+        )
+    }
+
+    /// The server refused the session (`is_auth_error`: 401/403): the same
+    /// handling as any other ended session — sign out here and raise the
+    /// signed-out notice.
+    fn deletion_session_ended(&mut self) -> iced::Task<Message> {
+        log::warn!("[CONNECT] account deletion: session rejected; signing out");
+        let logout = self.update_message(ConnectAccountMessage::LogOut);
+        iced::Task::batch([
+            iced::Task::done(Message::ConnectSignedOutBy(
+                crate::app::SignedOutBy::SessionEnded,
+            )),
+            logout,
+        ])
+    }
+
+    fn update_delete_account(&mut self, msg: DeleteAccountMessage) -> iced::Task<Message> {
+        match msg {
+            DeleteAccountMessage::Open => {
+                // Only for a signed-in account.
+                if self.user.is_none() || !matches!(self.step, ConnectFlowStep::Dashboard) {
+                    return iced::Task::none();
+                }
+                self.review_sign_out = false;
+                self.error = None;
+                self.delete_account.open();
+                return self.load_deletion_status();
+            }
+            DeleteAccountMessage::Close => {
+                self.delete_account.close();
+                if matches!(
+                    self.error.as_ref().and_then(|e| e.retry),
+                    Some(RetryAction::DeletionStatus)
+                ) {
+                    self.error = None;
+                }
+            }
+            DeleteAccountMessage::Review(show) => {
+                if show {
+                    self.error = None;
+                }
+                self.delete_account.review(show);
+            }
+            DeleteAccountMessage::Confirm => {
+                let Some(seq) = self.delete_account.begin_request() else {
+                    return iced::Task::none();
+                };
+                self.error = None;
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move {
+                        client
+                            .request_account_deletion()
+                            .await
+                            .map_err(|e| deletion_failure(&e))
+                    },
+                    move |res| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::DeleteAccount(DeleteAccountMessage::Requested(
+                                res, seq,
+                            )),
+                        ))
+                    },
+                );
+            }
+            DeleteAccountMessage::OpenPolicy => {
+                return iced::Task::done(Message::View(view::Message::OpenUrl(
+                    DELETE_ACCOUNT_POLICY_URL.to_string(),
+                )));
+            }
+            DeleteAccountMessage::StatusLoaded(result, seq) => {
+                match self.delete_account.status_loaded(result, seq) {
+                    None => {}
+                    Some(DeletionFailure::SessionEnded) => return self.deletion_session_ended(),
+                    // Only while the page is open: its card's retry reloads
+                    // this page's status and means nothing on the overview.
+                    Some(DeletionFailure::Other(user)) if self.delete_account.open => {
+                        self.error = Some(PanelError::retryable(user, RetryAction::DeletionStatus));
+                    }
+                    Some(DeletionFailure::Other(_)) => {}
+                }
+            }
+            DeleteAccountMessage::Requested(result, seq) => {
+                match self.delete_account.request_finished(result, seq) {
+                    None => {}
+                    Some(DeletionFailure::SessionEnded) => return self.deletion_session_ended(),
+                    // The confirm step's button is still on screen: it is the
+                    // retry, and the step says the request didn't go through.
+                    Some(DeletionFailure::Other(user)) if self.delete_account.open => {
+                        self.error = Some(PanelError::settled(user));
+                    }
+                    Some(DeletionFailure::Other(_)) => {}
+                }
+            }
+        }
         iced::Task::none()
     }
 
@@ -5004,6 +5136,7 @@ impl ConnectAccountPanel {
         self.card_request_error = None;
         self.contacts_state.clear();
         self.two_factor.reset();
+        self.delete_account.reset();
         self.backup_codes_notice = None;
         self.signing_in_with_authenticator = false;
         self.duress_contacts.clear();
@@ -13703,5 +13836,175 @@ mod two_factor_tests {
         let file = backup_codes_file("fixture@example.invalid", &codes(2));
         assert!(file.contains("fixture@example.invalid"));
         assert!(file.contains("abcd-efgh-jk00\nabcd-efgh-jk01\n"));
+    }
+}
+
+#[cfg(test)]
+mod delete_account_panel_tests {
+    use super::*;
+    use crate::app::state::connect::delete_account::DeletionStatus;
+    use crate::services::coincube::AccountDeletionRequest;
+
+    fn signed_in() -> ConnectAccountPanel {
+        let mut panel = ConnectAccountPanel::new();
+        panel.step = ConnectFlowStep::Dashboard;
+        panel.user = Some(User {
+            id: 1,
+            email: "synthetic@example.test".into(),
+            email_verified: Some(true),
+        });
+        panel
+    }
+
+    fn delete(panel: &mut ConnectAccountPanel, m: DeleteAccountMessage) {
+        drop(panel.update_message(ConnectAccountMessage::DeleteAccount(m)));
+    }
+
+    fn pending() -> AccountDeletionRequest {
+        AccountDeletionRequest {
+            status: "pending".into(),
+            requested_at: "2026-11-18T12:34:56Z".into(),
+            source: "desktop".into(),
+        }
+    }
+
+    #[test]
+    fn open_is_ignored_when_signed_out() {
+        let mut panel = ConnectAccountPanel::new();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        assert!(!panel.delete_account.open);
+    }
+
+    #[test]
+    fn status_failure_shows_a_retryable_card_and_retry_reloads() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        assert!(panel.delete_account.open);
+        let seq = panel.delete_account.seq;
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(
+                Err(DeletionFailure::Other(UserError::new(
+                    "Can't reach COINCUBE",
+                    "Try again.",
+                    "CC-TEST",
+                    true,
+                ))),
+                seq,
+            ),
+        );
+        assert_eq!(panel.delete_account.status, DeletionStatus::Failed);
+        let error = panel.error.as_ref().expect("error card");
+        assert!(matches!(
+            error.retry_button(),
+            Some((_, ConnectAccountMessage::Retry(RetryAction::DeletionStatus)))
+        ));
+        drop(panel.update_message(ConnectAccountMessage::Retry(RetryAction::DeletionStatus)));
+        assert!(panel.error.is_none());
+        assert_eq!(panel.delete_account.status, DeletionStatus::Loading);
+        assert_ne!(panel.delete_account.seq, seq);
+    }
+
+    #[test]
+    fn session_ended_signs_out_and_resets_the_page() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        let seq = panel.delete_account.seq;
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(Err(DeletionFailure::SessionEnded), seq),
+        );
+        assert!(panel.user.is_none());
+        assert!(matches!(panel.step, ConnectFlowStep::Login { .. }));
+        assert!(!panel.delete_account.open);
+        assert_eq!(panel.delete_account.status, DeletionStatus::Unknown);
+    }
+
+    #[test]
+    fn confirmed_request_records_pending() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        let seq = panel.delete_account.seq;
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(Ok(None), seq),
+        );
+        delete(&mut panel, DeleteAccountMessage::Confirm);
+        assert!(
+            !panel.delete_account.submitting,
+            "no request without confirm"
+        );
+        delete(&mut panel, DeleteAccountMessage::Review(true));
+        delete(&mut panel, DeleteAccountMessage::Confirm);
+        assert!(panel.delete_account.submitting);
+        let seq = panel.delete_account.seq;
+        delete(
+            &mut panel,
+            DeleteAccountMessage::Requested(Ok(pending()), seq),
+        );
+        assert_eq!(
+            panel.delete_account.status,
+            DeletionStatus::Pending(pending())
+        );
+        assert!(panel.error.is_none());
+    }
+
+    #[test]
+    fn closing_mid_load_leaves_no_card_on_the_overview() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        let seq = panel.delete_account.seq;
+        delete(&mut panel, DeleteAccountMessage::Close);
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(
+                Err(DeletionFailure::Other(UserError::new(
+                    "Can't reach COINCUBE",
+                    "Try again.",
+                    "CC-TEST",
+                    true,
+                ))),
+                seq,
+            ),
+        );
+        assert!(panel.error.is_none());
+        assert!(!panel.delete_account.open);
+    }
+
+    #[test]
+    fn rejected_request_signs_out() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        let seq = panel.delete_account.seq;
+        delete(
+            &mut panel,
+            DeleteAccountMessage::StatusLoaded(Ok(None), seq),
+        );
+        delete(&mut panel, DeleteAccountMessage::Review(true));
+        delete(&mut panel, DeleteAccountMessage::Confirm);
+        let seq = panel.delete_account.seq;
+        let rejected = crate::app::state::connect::delete_account::deletion_failure(
+            &crate::services::coincube::CoincubeError::Unsuccessful(
+                crate::services::http::NotSuccessResponseInfo {
+                    status_code: 401,
+                    text: String::new(),
+                },
+            ),
+        );
+        delete(
+            &mut panel,
+            DeleteAccountMessage::Requested(Err(rejected), seq),
+        );
+        assert!(panel.user.is_none());
+        assert!(matches!(panel.step, ConnectFlowStep::Login { .. }));
+        assert!(!panel.delete_account.open);
+    }
+
+    #[test]
+    fn reopening_the_account_section_starts_on_the_overview() {
+        let mut panel = signed_in();
+        delete(&mut panel, DeleteAccountMessage::Open);
+        drop(panel.reload_overview());
+        assert!(!panel.delete_account.open);
     }
 }
