@@ -3125,6 +3125,44 @@ impl Tab {
                         )
                         .expect("A gui configuration file must be present");
 
+                        // The same fail-closed gate as the Loader's admission:
+                        // an installer holding no signer for a locked Cube
+                        // (one the Loader launched) goes back through that
+                        // Cube's unlock screen rather than into the App.
+                        if loader_admission_needs_unlock(
+                            cube,
+                            i.cube_signer.as_ref(),
+                            i.datadir.path(),
+                        ) {
+                            tracing::warn!(
+                                "Installer backed out to a Cube this session has not \
+                                 unlocked; routing to its unlock screen"
+                            );
+                            let cube = cube.clone();
+                            let datadir = i.datadir.clone();
+                            let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+                                datadir: datadir.clone(),
+                                config: cfg,
+                                network,
+                                internal_bitcoind: None,
+                                backup: None,
+                                wallet_settings: None,
+                                connect_client: i.context.coincube_client.clone(),
+                            };
+                            let duress_account_id =
+                                crate::services::duress::DuressLocalState::load(datadir.path())
+                                    .map(|st| st.account_id)
+                                    .unwrap_or(None);
+                            i.stop();
+                            self.state = unlock_state(
+                                cube,
+                                datadir.path().to_path_buf(),
+                                on_success,
+                                duress_account_id,
+                            );
+                            return Task::none();
+                        }
+
                         let (app, command) = match app::App::new_without_wallet(
                             i.cube_signer.clone(),
                             i.spark_backend.clone(),
@@ -7330,7 +7368,8 @@ fn cube_signer_after_unlock(
 /// unlock. A Cube from before the fingerprint was recorded has none until its
 /// first unlock backfills it, so for those the encrypted seed on disk under
 /// `datadir_root` decides (`CubeSettings::has_pin`, which also fails closed on
-/// an unreadable seed). Seed-less Cubes have nothing to unlock, and Bitcoin
+/// an unreadable seed), and a passkey Cube always needs its passkey. Seed-less
+/// Cubes have nothing to unlock, and Bitcoin
 /// Blake2b Cubes deliberately carry no Cube signer (they open with a Cube
 /// encryption key), so both are admitted as before.
 fn loader_admission_needs_unlock(
@@ -7343,7 +7382,9 @@ fn loader_admission_needs_unlock(
     }
     match cube.master_signer_fingerprint {
         Some(fp) => app::session::unlocked_signer(&cube.id, fp).is_none(),
-        None => cube.has_pin(datadir_root),
+        // A passkey Cube has no seed file, so `has_pin` is false for it; its
+        // passkey metadata alone says it has a signer to unlock.
+        None => cube.is_passkey_cube() || cube.has_pin(datadir_root),
     }
 }
 
@@ -7364,9 +7405,13 @@ mod loader_unlock_gate_tests {
         /// The installer's seed-only `CubeSaved` exit, which opens the App
         /// without a Loader.
         SeedOnlySave,
+        /// Backing out of an installer that holds the Cube's settings but no
+        /// signer for it (as one the Loader launched does), which reopens
+        /// the App without a Vault.
+        BackToApp,
     }
 
-    const ARMS: [Arm; 3] = [Arm::Synced, Arm::App, Arm::SeedOnlySave];
+    const ARMS: [Arm; 4] = [Arm::Synced, Arm::App, Arm::SeedOnlySave, Arm::BackToApp];
 
     /// Drives `adjust(fixture settings, fingerprint, datadir root)` through
     /// `arm` and returns the resulting tab state's name. `session_signer`
@@ -7461,6 +7506,32 @@ mod loader_unlock_gate_tests {
                             )),
                         )
                     }
+                    Arm::BackToApp => {
+                        drop((wallet, cache, daemon));
+                        let network = settings.network.bitcoin_network();
+                        let network_dir = root.network_directory(settings.network);
+                        network_dir.init().unwrap();
+                        app::Config::new(false)
+                            .to_file(&network_dir.path().join(app::config::DEFAULT_FILE_NAME))
+                            .unwrap();
+                        let (installer, startup) = Installer::try_new_for_chain(
+                            root,
+                            settings.network,
+                            UserFlow::AddWallet,
+                            true,
+                            Some(settings),
+                            None,
+                            None,
+                            false,
+                            None,
+                        )
+                        .unwrap();
+                        drop(startup);
+                        (
+                            Tab::new(1, State::Installer(Box::new(installer))),
+                            Message::Install(installer::Message::BackToApp(network)),
+                        )
+                    }
                 };
                 let mut queue = vec![message];
                 // Synced/App(Ok) hand off through WalletsLoaded; follow it.
@@ -7534,6 +7605,20 @@ mod loader_unlock_gate_tests {
         cube
     }
 
+    /// A passkey Cube from before `master_signer_fingerprint` was recorded: no
+    /// fingerprint and, like every passkey Cube, no seed file.
+    fn legacy_passkey(cube: CubeSettings, _: Fingerprint, root: &std::path::Path) -> CubeSettings {
+        let cube = cube.with_passkey(PasskeyMetadata {
+            credential_id: "Y3JlZC1pZA==".to_string(),
+            rp_id: "coincube.io".to_string(),
+            created_at: 1_786_122_245,
+            label: None,
+        });
+        assert!(cube.master_signer_fingerprint.is_none());
+        assert!(!cube.has_pin(root), "a passkey Cube has no seed file");
+        cube
+    }
+
     fn seedless(cube: CubeSettings, _: Fingerprint, root: &std::path::Path) -> CubeSettings {
         assert!(cube.master_signer_fingerprint.is_none());
         assert!(!cube.has_pin(root), "fixture must have no seed file");
@@ -7558,6 +7643,17 @@ mod loader_unlock_gate_tests {
     fn a_locked_passkey_cube_routes_to_passkey_unlock() {
         for arm in ARMS {
             assert_eq!(finish(arm, passkey, false), "PasskeyUnlock", "{arm:?}");
+        }
+    }
+
+    #[test]
+    fn a_locked_passkey_cube_without_a_recorded_fingerprint_routes_to_passkey_unlock() {
+        for arm in ARMS {
+            assert_eq!(
+                finish(arm, legacy_passkey, false),
+                "PasskeyUnlock",
+                "{arm:?}"
+            );
         }
     }
 
