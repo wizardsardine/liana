@@ -42,7 +42,7 @@ pub fn hw_list_view(
     signing: bool,
     can_sign: bool,
 ) -> Element<'_, Message> {
-    let mut bttn = Button::new(match hw {
+    let bttn = Button::new(match hw {
         HardwareWallet::Supported {
             kind,
             version,
@@ -102,6 +102,17 @@ pub fn hw_list_view(
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
     })
     .width(Length::Fill);
+    let bttn = configure_signing_wallet_button(bttn, i, hw, signing, can_sign);
+    with_advisory(hw, bttn.into())
+}
+
+fn configure_signing_wallet_button<'a>(
+    mut bttn: Button<'a, Message>,
+    i: usize,
+    hw: &HardwareWallet,
+    signing: bool,
+    can_sign: bool,
+) -> Button<'a, Message> {
     // While signing, the row is intentionally not clickable (no `on_press`),
     // but it shouldn't read as disabled/greyed — the user is actively being
     // asked to confirm on the device. Force the active style so the
@@ -120,7 +131,7 @@ pub fn hw_list_view(
             }
         }
     }
-    with_advisory(hw, bttn.into())
+    bttn
 }
 
 pub fn hw_list_view_for_registration(
