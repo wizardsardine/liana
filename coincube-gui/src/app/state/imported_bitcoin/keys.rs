@@ -821,33 +821,7 @@ pub(super) fn step<'a>(
     devices: &[ListedDevice],
     error: Option<&'a String>,
 ) -> (Element<'a, view::Message>, Element<'a, view::Message>) {
-    let count = keys.slots.len();
-    let lead = if adding {
-        localized_copy("Enter the recovery words for any of this wallet's signers. Each set is checked against its signer's fingerprint, then stored on this device for this Cube.")
-            .to_string()
-    } else if keys.multisig() && keys.threshold >= count {
-        // Every signer is needed, so there is nothing to skip.
-        coincube_ui::localized_format!(
-            "This wallet has {count} signers and all of them must sign to spend. \
-             Verify each key here; each is checked against its fingerprint.",
-            "Esta cartera tiene {count} claves de firma y todas deben firmar para gastar. \
-             Verifica cada clave aquí; cada una se verifica con su huella."
-        )
-    } else if keys.multisig() {
-        coincube_ui::localized_format!(
-            "This wallet has {count} signers and any {} can spend. Verify at least {} here. \
-             You can skip the rest; they can still sign from their own device or wallet. \
-             Each key is checked against its fingerprint.",
-            "Esta cartera tiene {count} claves de firma y basta con {} para gastar. Verifica \
-             al menos {} aquí. Puedes omitir las demás; pueden seguir firmando desde su propio \
-             dispositivo o cartera. Cada clave se verifica con su huella.",
-            keys.threshold,
-            keys.threshold
-        )
-    } else {
-        localized_copy("The descriptor names 1 signer. Provide its key; it is checked against its fingerprint before it is accepted.")
-            .to_string()
-    };
+    let lead = key_step_intro(keys, adding);
     let mut content = Column::new()
         .spacing(20)
         .push(h3(localized_copy("Add the wallet's keys")))
@@ -856,226 +830,7 @@ pub(super) fn step<'a>(
     let sources = keys.sources();
     let mut rows = Column::new().push(iced::widget::rule::horizontal(1));
     for (index, slot) in keys.slots.iter().enumerate() {
-        let status = key_line(keys, index, slot, devices);
-        let matched = status.device.is_some() || status.verified;
-        let identity = Column::new()
-            .spacing(2)
-            .width(Length::Fixed(148.0))
-            .push(
-                p1_bold(coincube_ui::localized_format!(
-                    "Key {}",
-                    "Clave {}",
-                    index + 1
-                ))
-                .style(if status.dimmed {
-                    theme::text::secondary
-                } else {
-                    theme::text::default
-                }),
-            )
-            .push(if matched {
-                fingerprint_chip(slot.account.fingerprint)
-            } else {
-                fingerprint_text(slot.account.fingerprint, theme::text::default)
-            })
-            .push(
-                iced::widget::text(format!("m/{}", slot.account.origin))
-                    .font(coincube_ui::font::MONO_REGULAR)
-                    .size(12)
-                    .style(theme::text::secondary),
-            );
-        let mut title = Row::new().spacing(8).align_y(Alignment::Center).push(
-            p1_bold(status.title.clone()).style(if status.dimmed {
-                theme::text::secondary
-            } else {
-                theme::text::default
-            }),
-        );
-        if let Some(device) = status.device {
-            if let Some(fingerprint) = device.fingerprint {
-                title = title.push(fingerprint_chip(fingerprint));
-            }
-        }
-        if status.verified {
-            title = title.push(verified_pill());
-        }
-        let mut row = Row::new()
-            .spacing(20)
-            .align_y(Alignment::Center)
-            .padding([12, 0])
-            .push(identity)
-            .push(
-                Row::new()
-                    .spacing(12)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill)
-                    .push(mark_tile(status.mark))
-                    .push(
-                        Column::new()
-                            .spacing(2)
-                            .width(Length::Fill)
-                            .push(title)
-                            .push(p2_regular(status.detail).style(status.detail_style)),
-                    ),
-            );
-        if let Some((label, action)) = status.action {
-            row = row.push(
-                button::primary(None, localized_copy(label))
-                    .width(Length::Shrink)
-                    .on_press_maybe((!busy).then_some(message(action))),
-            );
-        }
-        if slot.source == KeySource::Words && slot.status == KeyStatus::Verified {
-            row = row.push(
-                button::secondary(None, localized_copy("Enter different words"))
-                    .width(Length::Shrink)
-                    .on_press_maybe((!busy).then_some(message(ImportMessage::KeySourcePicked(
-                        index,
-                        KeySource::Words,
-                    )))),
-            );
-        }
-        // Adding to an attached wallet only stores words, so there is
-        // nothing to choose.
-        let menu_open = !adding && keys.menu == Some(index);
-        if !adding {
-            row = row.push(
-                iced::widget::button(
-                    Row::new()
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .push(p2_regular(slot.source.to_string()))
-                        .push(
-                            if menu_open {
-                                coincube_ui::icon::up_icon()
-                            } else {
-                                coincube_ui::icon::down_icon()
-                            }
-                            .size(12)
-                            .width(Length::Shrink),
-                        ),
-                )
-                .padding([6, 10])
-                .style(move |theme: &theme::Theme, status| {
-                    if menu_open {
-                        let shell = theme.colors.shell;
-                        iced::widget::button::Style {
-                            background: Some(iced::Background::Color(shell.selected)),
-                            text_color: shell.ink,
-                            border: iced::Border {
-                                radius: 8.0.into(),
-                                width: 1.0,
-                                color: shell.accent,
-                            },
-                            ..Default::default()
-                        }
-                    } else {
-                        theme::button::secondary(theme, status)
-                    }
-                })
-                .on_press_maybe((!busy).then_some(message(ImportMessage::KeySourceMenu(index)))),
-            );
-        }
-        let mut key = Column::new().push(row);
-        // Where the key is: each choice with what it means, opened under
-        // its row so the rows below move down rather than being covered.
-        if menu_open && !busy {
-            let mut choices = Column::new().spacing(4).padding(iced::Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: 12.0,
-                left: 168.0,
-            });
-            for &source in sources {
-                let picked = slot.source == source;
-                choices = choices.push(
-                    iced::widget::button(
-                        Row::new()
-                            .spacing(12)
-                            .align_y(Alignment::Center)
-                            .push(radio_mark(picked))
-                            .push(
-                                Column::new()
-                                    .spacing(2)
-                                    .push(p1_medium(source.to_string()))
-                                    .push(
-                                        p2_regular(localized_copy(source.description()))
-                                            .style(theme::text::secondary),
-                                    ),
-                            ),
-                    )
-                    .width(Length::Fill)
-                    .padding([8, 12])
-                    .style(move |theme: &theme::Theme, status| choice_style(theme, status, picked))
-                    .on_press(message(choice_message(
-                        index,
-                        source,
-                        slot.source,
-                    ))),
-                );
-            }
-            key = key.push(choices);
-        }
-        if slot.source == KeySource::Words && slot.status != KeyStatus::Verified {
-            key = key.push(
-                Column::new()
-                    .spacing(8)
-                    .padding(iced::Padding {
-                        top: 0.0,
-                        right: 0.0,
-                        bottom: 14.0,
-                        left: 168.0,
-                    })
-                    .push(
-                        text_input(
-                            localized_copy("12 or 24 words, separated by spaces"),
-                            slot.words.as_str(),
-                        )
-                        .on_input(move |value| {
-                            message(ImportMessage::KeyWordsEdited(
-                                index,
-                                super::SecretInput::new(value),
-                            ))
-                        })
-                        .padding(10),
-                    )
-                    .push(
-                        Row::new()
-                            .spacing(12)
-                            .align_y(Alignment::Center)
-                            .push(
-                                text_input(
-                                    localized_copy("Passphrase (if the wallet used one)"),
-                                    slot.passphrase.as_str(),
-                                )
-                                .on_input(move |value| {
-                                    message(ImportMessage::KeyPassphraseEdited(
-                                        index,
-                                        super::SecretInput::new(value),
-                                    ))
-                                })
-                                .secure(true)
-                                .padding(10)
-                                .width(Length::Fixed(320.0)),
-                            )
-                            .push(iced::widget::Space::new().width(Length::Fill))
-                            .push(
-                                button::secondary(None, localized_copy("Verify words"))
-                                    .width(Length::Shrink)
-                                    .on_press_maybe(
-                                        (!busy
-                                            && slot.status != KeyStatus::Checking
-                                            && !slot.words.trim().is_empty())
-                                        .then_some(message(ImportMessage::VerifyWords(index))),
-                                    ),
-                            ),
-                    )
-                    .push(
-                        caption(localized_copy("Words are checked here, then stored encrypted on this device for this Cube. They are not in the Recovery Kit yet, so keep your original backup."))
-                        .style(theme::text::secondary),
-                    ),
-            );
-        }
+        let key = key_section(keys, index, slot, devices, sources, adding, busy);
         rows = rows.push(key).push(iced::widget::rule::horizontal(1));
     }
     content = content.push(rows);
@@ -1113,44 +868,7 @@ pub(super) fn step<'a>(
         content = content.push(p1_regular(super::shown_notice(error)).style(theme::text::error));
     }
     // How far the keys are, beside the button they open.
-    let progress = (!adding && keys.multisig()).then(|| {
-        let provided = keys.provided().min(keys.threshold);
-        let mut line = coincube_ui::localized_format!(
-            "{provided} of {} needed keys verified",
-            "{provided} de {} claves necesarias verificadas",
-            keys.threshold
-        );
-        if keys.ready() {
-            let elsewhere: Vec<usize> = keys
-                .slots
-                .iter()
-                .enumerate()
-                .filter(|(_, slot)| !slot.provided())
-                .map(|(index, _)| index + 1)
-                .collect();
-            match elsewhere.as_slice() {
-                [] => {}
-                [only] => line.push_str(&coincube_ui::localized_format!(
-                    " · Key {only} not added",
-                    " · clave {only} sin añadir"
-                )),
-                many => line.push_str(&coincube_ui::localized_format!(
-                    " · {} keys not added",
-                    " · {} claves sin añadir",
-                    many.len()
-                )),
-            }
-        }
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(pips(provided, keys.threshold))
-            .push(p2_regular(line).style(if keys.ready() {
-                theme::text::success
-            } else {
-                theme::text::secondary
-            }))
-    });
+    let progress = (!adding && keys.multisig()).then(|| key_progress(keys));
     let actions = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -1182,4 +900,328 @@ pub(super) fn step<'a>(
             ),
         );
     (content.into(), actions.into())
+}
+
+fn key_step_intro(keys: &KeysState, adding: bool) -> String {
+    let count = keys.slots.len();
+    if adding {
+        localized_copy("Enter the recovery words for any of this wallet's signers. Each set is checked against its signer's fingerprint, then stored on this device for this Cube.")
+            .to_string()
+    } else if keys.multisig() && keys.threshold >= count {
+        // Every signer is needed, so there is nothing to skip.
+        coincube_ui::localized_format!(
+            "This wallet has {count} signers and all of them must sign to spend. \
+             Verify each key here; each is checked against its fingerprint.",
+            "Esta cartera tiene {count} claves de firma y todas deben firmar para gastar. \
+             Verifica cada clave aquí; cada una se verifica con su huella."
+        )
+    } else if keys.multisig() {
+        coincube_ui::localized_format!(
+            "This wallet has {count} signers and any {} can spend. Verify at least {} here. \
+             You can skip the rest; they can still sign from their own device or wallet. \
+             Each key is checked against its fingerprint.",
+            "Esta cartera tiene {count} claves de firma y basta con {} para gastar. Verifica \
+             al menos {} aquí. Puedes omitir las demás; pueden seguir firmando desde su propio \
+             dispositivo o cartera. Cada clave se verifica con su huella.",
+            keys.threshold,
+            keys.threshold
+        )
+    } else {
+        localized_copy("The descriptor names 1 signer. Provide its key; it is checked against its fingerprint before it is accepted.")
+            .to_string()
+    }
+}
+
+fn key_section<'a>(
+    keys: &KeysState,
+    index: usize,
+    slot: &'a KeySlot,
+    devices: &[ListedDevice],
+    sources: &[KeySource],
+    adding: bool,
+    busy: bool,
+) -> Column<'a, view::Message> {
+    let (row, menu_open) = key_row(keys, index, slot, devices, adding, busy);
+    let mut key = Column::new().push(row);
+    // Where the key is: each choice with what it means, opened under
+    // its row so the rows below move down rather than being covered.
+    if menu_open && !busy {
+        let mut choices = Column::new().spacing(4).padding(iced::Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 12.0,
+            left: 168.0,
+        });
+        for &source in sources {
+            let picked = slot.source == source;
+            choices = choices.push(
+                iced::widget::button(
+                    Row::new()
+                        .spacing(12)
+                        .align_y(Alignment::Center)
+                        .push(radio_mark(picked))
+                        .push(
+                            Column::new()
+                                .spacing(2)
+                                .push(p1_medium(source.to_string()))
+                                .push(
+                                    p2_regular(localized_copy(source.description()))
+                                        .style(theme::text::secondary),
+                                ),
+                        ),
+                )
+                .width(Length::Fill)
+                .padding([8, 12])
+                .style(move |theme: &theme::Theme, status| choice_style(theme, status, picked))
+                .on_press(message(choice_message(index, source, slot.source))),
+            );
+        }
+        key = key.push(choices);
+    }
+    if slot.source == KeySource::Words && slot.status != KeyStatus::Verified {
+        key = key.push(
+            Column::new()
+                .spacing(8)
+                .padding(iced::Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 14.0,
+                    left: 168.0,
+                })
+                .push(
+                    text_input(
+                        localized_copy("12 or 24 words, separated by spaces"),
+                        slot.words.as_str(),
+                    )
+                    .on_input(move |value| {
+                        message(ImportMessage::KeyWordsEdited(
+                            index,
+                            super::SecretInput::new(value),
+                        ))
+                    })
+                    .padding(10),
+                )
+                .push(
+                    Row::new()
+                        .spacing(12)
+                        .align_y(Alignment::Center)
+                        .push(
+                            text_input(
+                                localized_copy("Passphrase (if the wallet used one)"),
+                                slot.passphrase.as_str(),
+                            )
+                            .on_input(move |value| {
+                                message(ImportMessage::KeyPassphraseEdited(
+                                    index,
+                                    super::SecretInput::new(value),
+                                ))
+                            })
+                            .secure(true)
+                            .padding(10)
+                            .width(Length::Fixed(320.0)),
+                        )
+                        .push(iced::widget::Space::new().width(Length::Fill))
+                        .push(
+                            button::secondary(None, localized_copy("Verify words"))
+                                .width(Length::Shrink)
+                                .on_press_maybe(
+                                    (!busy
+                                        && slot.status != KeyStatus::Checking
+                                        && !slot.words.trim().is_empty())
+                                    .then_some(message(ImportMessage::VerifyWords(index))),
+                                ),
+                        ),
+                )
+                .push(
+                    caption(localized_copy("Words are checked here, then stored encrypted on this device for this Cube. They are not in the Recovery Kit yet, so keep your original backup."))
+                    .style(theme::text::secondary),
+                ),
+        );
+    }
+    key
+}
+
+fn key_row<'a>(
+    keys: &KeysState,
+    index: usize,
+    slot: &KeySlot,
+    devices: &[ListedDevice],
+    adding: bool,
+    busy: bool,
+) -> (Row<'a, view::Message>, bool) {
+    let status = key_line(keys, index, slot, devices);
+    let matched = status.device.is_some() || status.verified;
+    let identity = Column::new()
+        .spacing(2)
+        .width(Length::Fixed(148.0))
+        .push(
+            p1_bold(coincube_ui::localized_format!(
+                "Key {}",
+                "Clave {}",
+                index + 1
+            ))
+            .style(if status.dimmed {
+                theme::text::secondary
+            } else {
+                theme::text::default
+            }),
+        )
+        .push(if matched {
+            fingerprint_chip(slot.account.fingerprint)
+        } else {
+            fingerprint_text(slot.account.fingerprint, theme::text::default)
+        })
+        .push(
+            iced::widget::text(format!("m/{}", slot.account.origin))
+                .font(coincube_ui::font::MONO_REGULAR)
+                .size(12)
+                .style(theme::text::secondary),
+        );
+    let title = key_row_title(&status);
+    let mut row = Row::new()
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .padding([12, 0])
+        .push(identity)
+        .push(
+            Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .push(mark_tile(status.mark))
+                .push(
+                    Column::new()
+                        .spacing(2)
+                        .width(Length::Fill)
+                        .push(title)
+                        .push(p2_regular(status.detail).style(status.detail_style)),
+                ),
+        );
+    if let Some((label, action)) = status.action {
+        row = row.push(
+            button::primary(None, localized_copy(label))
+                .width(Length::Shrink)
+                .on_press_maybe((!busy).then_some(message(action))),
+        );
+    }
+    if slot.source == KeySource::Words && slot.status == KeyStatus::Verified {
+        row = row.push(
+            button::secondary(None, localized_copy("Enter different words"))
+                .width(Length::Shrink)
+                .on_press_maybe((!busy).then_some(message(ImportMessage::KeySourcePicked(
+                    index,
+                    KeySource::Words,
+                )))),
+        );
+    }
+    // Adding to an attached wallet only stores words, so there is
+    // nothing to choose.
+    let menu_open = !adding && keys.menu == Some(index);
+    if !adding {
+        row = row.push(key_source_button(slot.source, index, menu_open, busy));
+    }
+    (row, menu_open)
+}
+
+fn key_row_title<'a>(status: &KeyLine<'_>) -> Row<'a, view::Message> {
+    let mut title =
+        Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(p1_bold(status.title.clone()).style(if status.dimmed {
+                theme::text::secondary
+            } else {
+                theme::text::default
+            }));
+    if let Some(device) = status.device {
+        if let Some(fingerprint) = device.fingerprint {
+            title = title.push(fingerprint_chip(fingerprint));
+        }
+    }
+    if status.verified {
+        title = title.push(verified_pill());
+    }
+    title
+}
+
+fn key_source_button<'a>(
+    source: KeySource,
+    index: usize,
+    menu_open: bool,
+    busy: bool,
+) -> Element<'a, view::Message> {
+    iced::widget::button(
+        Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(p2_regular(source.to_string()))
+            .push(
+                if menu_open {
+                    coincube_ui::icon::up_icon()
+                } else {
+                    coincube_ui::icon::down_icon()
+                }
+                .size(12)
+                .width(Length::Shrink),
+            ),
+    )
+    .padding([6, 10])
+    .style(move |theme: &theme::Theme, status| {
+        if menu_open {
+            let shell = theme.colors.shell;
+            iced::widget::button::Style {
+                background: Some(iced::Background::Color(shell.selected)),
+                text_color: shell.ink,
+                border: iced::Border {
+                    radius: 8.0.into(),
+                    width: 1.0,
+                    color: shell.accent,
+                },
+                ..Default::default()
+            }
+        } else {
+            theme::button::secondary(theme, status)
+        }
+    })
+    .on_press_maybe((!busy).then_some(message(ImportMessage::KeySourceMenu(index))))
+    .into()
+}
+
+fn key_progress<'a>(keys: &KeysState) -> Row<'a, view::Message> {
+    let provided = keys.provided().min(keys.threshold);
+    let mut line = coincube_ui::localized_format!(
+        "{provided} of {} needed keys verified",
+        "{provided} de {} claves necesarias verificadas",
+        keys.threshold
+    );
+    if keys.ready() {
+        let elsewhere: Vec<usize> = keys
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, slot)| !slot.provided())
+            .map(|(index, _)| index + 1)
+            .collect();
+        match elsewhere.as_slice() {
+            [] => {}
+            [only] => line.push_str(&coincube_ui::localized_format!(
+                " · Key {only} not added",
+                " · clave {only} sin añadir"
+            )),
+            many => line.push_str(&coincube_ui::localized_format!(
+                " · {} keys not added",
+                " · {} claves sin añadir",
+                many.len()
+            )),
+        }
+    }
+    Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(pips(provided, keys.threshold))
+        .push(p2_regular(line).style(if keys.ready() {
+            theme::text::success
+        } else {
+            theme::text::secondary
+        }))
 }

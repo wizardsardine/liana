@@ -337,17 +337,9 @@ async fn get_transactions(
         }
 
         if history_txs.len() == limit as usize {
-            let first = if let Some(t) = history_txs.first().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
+            let first = history_transaction_time(history_txs.first().expect("checked"))?;
 
-            let last = if let Some(t) = history_txs.last().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
+            let last = history_transaction_time(history_txs.last().expect("checked"))?;
 
             // limit too low, all tx are in the same timestamp
             // we must increase limit and retry
@@ -356,10 +348,7 @@ async fn get_transactions(
                 continue;
             } else {
                 // add txs to map
-                for tx in history_txs {
-                    let txid = tx.txid;
-                    map.insert(txid, tx);
-                }
+                add_history_transactions(&mut map, history_txs);
                 limit = max;
                 end = first.min(last);
                 continue;
@@ -368,15 +357,26 @@ async fn get_transactions(
         /* history_txs.len() < limit */
         {
             // add txs to map
-            for tx in history_txs {
-                let txid = tx.txid;
-                map.insert(txid, tx);
-            }
+            add_history_transactions(&mut map, history_txs);
             break;
         }
     }
     let vec: Vec<_> = map.into_values().collect();
     Ok(vec)
+}
+
+fn history_transaction_time(tx: &HistoryTransaction) -> Result<u32, Error> {
+    tx.time.ok_or(Error::TxTimeMissing)
+}
+
+fn add_history_transactions(
+    map: &mut HashMap<Txid, HistoryTransaction>,
+    history_txs: Vec<HistoryTransaction>,
+) {
+    for tx in history_txs {
+        let txid = tx.txid;
+        map.insert(txid, tx);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
