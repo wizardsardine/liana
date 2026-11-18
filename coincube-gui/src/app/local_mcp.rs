@@ -412,9 +412,7 @@ impl Settings {
         if super::session::generation_for(cube_id).is_none() || self.pairing_poisoned {
             return None;
         }
-        let Some(generation) = super::session::generation_for(cube_id) else {
-            return None;
-        };
+        let generation = super::session::generation_for(cube_id)?;
         if self.pairing_generation != Some(generation) {
             self.paired.clear();
             self.pairing_generation = Some(generation);
