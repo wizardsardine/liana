@@ -244,7 +244,8 @@ pub struct Cache {
     pub has_connect_session: bool,
     /// The account panel can restore its own keyring session in this Cube.
     pub restorable_connect_session: bool,
-    /// Whether this cube has a vault wallet configured
+    /// Whether this Cube's Bitcoin Vault is loaded: a Vault or an imported
+    /// Vault. Inheritance-only screens use [`Self::has_inheritance_vault`].
     pub has_vault: bool,
     /// This Cube owns a pending or installed public Bitcoin wallet import.
     pub has_imported_bitcoin: bool,
@@ -599,6 +600,12 @@ impl std::default::Default for Cache {
 }
 
 impl Cache {
+    /// A Vault with recovery paths (inheritance, recovery alerts), not an
+    /// imported Vault.
+    pub fn has_inheritance_vault(&self) -> bool {
+        self.has_vault && !self.has_imported_bitcoin
+    }
+
     /// Passive amounts are visible only after the GUI has published an
     /// accepted installation-wide Show receipt. Missing or unresolved state
     /// always masks, including the first frame of a newly opened Cube.

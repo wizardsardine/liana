@@ -84,6 +84,18 @@ pub(crate) async fn next_receive_address(
     wallet: &Wallet,
     daemon: Arc<dyn Daemon + Sync + Send>,
 ) -> Result<(Address, ChildNumber), Error> {
+    vault_receive_address(data_dir, wallet, daemon)
+        .await
+        .map(|res| (res.address, res.derivation_index))
+}
+
+/// A new Vault receive address for any screen that hands one out (Receive,
+/// transfers into the Vault, refunds, Buy/Sell). See [`next_receive_address`].
+pub(crate) async fn vault_receive_address(
+    data_dir: CoincubeDirectory,
+    wallet: &Wallet,
+    daemon: Arc<dyn Daemon + Sync + Send>,
+) -> Result<crate::daemon::model::GetAddressResult, Error> {
     if wallet.is_imported() {
         return crate::app::state::imported_bitcoin::reserve_receive_address(
             data_dir,
@@ -91,14 +103,9 @@ pub(crate) async fn next_receive_address(
             daemon,
         )
         .await
-        .map(|res| (res.address, res.derivation_index))
         .map_err(Error::Unexpected);
     }
-    daemon
-        .get_new_address()
-        .await
-        .map(|res| (res.address, res.derivation_index))
-        .map_err(|e| e.into())
+    daemon.get_new_address().await.map_err(|e| e.into())
 }
 
 fn no_pending_restore_rescan(data_dir: &CoincubeDirectory, wallet: &Wallet) -> bool {
