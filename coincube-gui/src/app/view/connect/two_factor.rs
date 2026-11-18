@@ -20,10 +20,12 @@ use super::{
 use crate::app::{
     state::connect::account::{
         second_factor_code_complete, ConnectAccountPanel, TwoFactorNote, TwoFactorPanel,
-        TwoFactorStatusView, TwoFactorStepFailure,
+        TwoFactorSettings, TwoFactorStatusView, TwoFactorStepFailure,
     },
     view::{ConnectAccountMessage, SecretInput, TwoFactorSettingsMessage},
 };
+
+use crate::services::coincube::{BackupCodes, TotpSetup, TwoFactorStatus};
 
 /// Where someone with neither the app nor a backup code can turn. The same
 /// address the app gives for other account problems.
@@ -98,22 +100,7 @@ pub(super) fn sign_in_ux<'a>(
                     .width(Length::Fill),
             );
     } else {
-        let submit: Element<ConnectAccountMessage> = if sending {
-            iced::widget::button(
-                container(text::p1_regular(localized_copy("Verifying…")).color(color::GREY_3))
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fixed(44.0))
-            .style(theme::button::primary)
-            .into()
-        } else {
-            button::primary(None, localized_copy("Verify"))
-                .on_press_maybe(valid.then_some(ConnectAccountMessage::VerifyTwoFactor))
-                .width(Length::Fill)
-                .into()
-        };
+        let submit = sign_in_submit(sending, valid);
 
         col = col
             .push(text::p2_medium(localized_copy(label)).style(theme::text::primary))
@@ -128,28 +115,7 @@ pub(super) fn sign_in_ux<'a>(
                     .size(16)
                     .padding(15),
             );
-        match failure {
-            Some(TwoFactorStepFailure::Wrong) => {
-                let msg = if backup {
-                    "That backup code is wrong or was already used. Check for typos, or try another code."
-                } else {
-                    "That code didn't work. Codes change every 30 seconds; enter the one showing now."
-                };
-                col = col
-                    .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-                    .push(status_line(x_circle_icon(), msg, Tone::Bad));
-            }
-            Some(TwoFactorStepFailure::Limited) => {
-                col = col
-                    .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
-                    .push(status_line(
-                        warning_icon(),
-                        "Too many tries. Wait 5 minutes, then enter the code showing at that time.",
-                        Tone::Warn,
-                    ));
-            }
-            _ => {}
-        }
+        col = append_sign_in_failure(col, failure, backup);
         col = col
             .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
             .push(submit)
@@ -205,6 +171,55 @@ pub(super) fn sign_in_ux<'a>(
         .max_width(620)
         .width(Length::Fill)
         .into()
+}
+
+fn sign_in_submit<'a>(sending: bool, valid: bool) -> Element<'a, ConnectAccountMessage> {
+    if sending {
+        iced::widget::button(
+            container(text::p1_regular(localized_copy("Verifying…")).color(color::GREY_3))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(44.0))
+        .style(theme::button::primary)
+        .into()
+    } else {
+        button::primary(None, localized_copy("Verify"))
+            .on_press_maybe(valid.then_some(ConnectAccountMessage::VerifyTwoFactor))
+            .width(Length::Fill)
+            .into()
+    }
+}
+
+fn append_sign_in_failure<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+    failure: Option<TwoFactorStepFailure>,
+    backup: bool,
+) -> Column<'a, ConnectAccountMessage> {
+    match failure {
+        Some(TwoFactorStepFailure::Wrong) => {
+            let msg = if backup {
+                "That backup code is wrong or was already used. Check for typos, or try another code."
+            } else {
+                "That code didn't work. Codes change every 30 seconds; enter the one showing now."
+            };
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(status_line(x_circle_icon(), msg, Tone::Bad));
+        }
+        Some(TwoFactorStepFailure::Limited) => {
+            col = col
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(status_line(
+                    warning_icon(),
+                    "Too many tries. Wait 5 minutes, then enter the code showing at that time.",
+                    Tone::Warn,
+                ));
+        }
+        _ => {}
+    }
+    col
 }
 
 /// The reminder after a sign-in that spent a backup code.
@@ -433,257 +448,291 @@ pub(super) fn settings_ux<'a>(acct: &'a ConnectAccountPanel) -> Element<'a, Conn
             );
         }
         TwoFactorPanel::Setup { setup, qr } => {
-            let mut scan = Row::new().spacing(20).align_y(Alignment::Start);
-            if let Some(data) = qr {
-                scan = scan.push(
-                    container(iced::widget::qr_code(data).cell_size(4).style(|_| {
-                        iced::widget::qr_code::Style {
-                            background: color::WHITE,
-                            cell: color::BLACK,
-                        }
-                    }))
-                    .padding(8)
-                    .style(|_: &theme::Theme| container::Style {
-                        background: Some(iced::Background::Color(color::WHITE)),
-                        border: iced::Border {
-                            radius: 6.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                );
-            }
-            scan = scan.push(
-                Column::new()
-                    .push(group_title(localized_copy("Scan this with your authenticator app")))
-                    .push(lead(format!(
-                        "It adds COINCUBE ({email}). Any app that shows 6-digit codes works: 1Password, Google Authenticator, Authy and others."
-                    )))
-                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                    .push(tenshu_text::label(localized_copy("Can't scan? Enter this setup key instead")))
-                    .push(
-                        Row::new()
-                            .push(
-                                tenshu_text::body(setup.grouped_secret())
-                                    .font(coincube_ui::font::MONO_REGULAR),
-                            )
-                            .push(
-                                sheet_link("Copy key")
-                                    .on_press(settings(TwoFactorSettingsMessage::CopySetupKey)),
-                            )
-                            .spacing(12)
-                            .align_y(Alignment::Center),
-                    )
-                    .push(lead(localized_copy(
-                        "Treat the key like a password. Anyone who has it can make your codes.",
-                    )))
-                    .spacing(4)
-                    .width(Length::Fill),
-            );
-            let content = Column::new()
-                .push(scan)
-                .push(code_field(
-                    acct,
-                    "Enter the 6-digit code the app shows",
-                    false,
-                    "That code didn't match. Enter the one showing now; codes change every 30 seconds. If it keeps failing, check that this computer sets its clock automatically.",
-                    TwoFactorSettingsMessage::ConfirmSetup,
-                ))
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(panel_actions(
-                    acct,
-                    "Turn on",
-                    ActionKind::Primary,
-                    TwoFactorSettingsMessage::ConfirmSetup,
-                    false,
-                ))
-                .push(lead(localized_copy(
-                    "Next you'll get 10 backup codes. Keep them somewhere safe: they're how you get back into Connect if you lose this app.",
-                )));
-            col = col.push(review_block(content));
+            col = col.push(authenticator_setup_panel(acct, email, setup, qr));
         }
         TwoFactorPanel::Codes { codes, regenerated } => {
-            let mut grid = Column::new().spacing(6);
-            for pair in codes.codes.chunks(2) {
-                let mut row = Row::new().spacing(24);
-                for code in pair {
-                    row = row.push(
-                        tenshu_text::body(code.as_str())
-                            .font(coincube_ui::font::MONO_REGULAR)
-                            .width(Length::Fixed(150.0)),
-                    );
-                }
-                grid = grid.push(row);
-            }
-            let mut content = Column::new()
-                .push(group_title(localized_copy(if *regenerated {
-                    "Save your new backup codes"
-                } else {
-                    "Save your backup codes"
-                })))
-                .push(lead(localized_copy(
-                    "If you lose your authenticator app, each code signs you in once in its place. This is the only time COINCUBE shows them.",
-                )))
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(grid)
-                .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-                .push(
-                    Row::new()
-                        .push(
-                            sheet_button("Copy all", ActionKind::Secondary, false)
-                                .on_press(settings(TwoFactorSettingsMessage::CopyBackupCodes)),
-                        )
-                        .push(
-                            sheet_button("Save as text file…", ActionKind::Secondary, false)
-                                .on_press(settings(TwoFactorSettingsMessage::SaveBackupCodes)),
-                        )
-                        .push(
-                            sheet_button("I've saved them", ActionKind::Primary, false)
-                                .on_press(settings(TwoFactorSettingsMessage::FinishBackupCodes)),
-                        )
-                        .spacing(12),
-                );
-            match &tf.saved_to_file {
-                Some(Ok(())) => {
-                    content = content.push(status_line(
-                        check_circle_icon(),
-                        "Saved to a text file.",
-                        Tone::Good,
-                    ));
-                }
-                Some(Err(_)) => {
-                    content = content.push(status_line(
-                        x_circle_icon(),
-                        "Couldn't save the file. Copy the codes instead, or choose another folder.",
-                        Tone::Bad,
-                    ));
-                }
-                None => {}
-            }
-            content = content.push(lead(localized_copy(
-                "Store them apart from this computer, for example in a password manager or on paper. Anyone with a code and access to your email can sign in as you.",
-            )));
-            col = col.push(review_block(content));
+            col = col.push(issued_backup_codes_panel(tf, codes, *regenerated));
         }
         TwoFactorPanel::Disable { backup } => {
-            let backup = *backup;
-            let content =
-                Column::new()
-                    .push(group_title(localized_copy(
-                        "Turn off the authenticator app?",
-                    )))
-                    .push(lead(localized_copy(
-                        "Signing in to Connect will only need the code we email you.",
-                    )))
-                    .push(code_field(
-                        acct,
-                        if backup {
-                            "Backup code"
-                        } else {
-                            "Code from your authenticator app"
-                        },
-                        backup,
-                        if backup {
-                            "That backup code is wrong or was already used."
-                        } else {
-                            "That code didn't match. Enter the one showing now."
-                        },
-                        TwoFactorSettingsMessage::ConfirmDisable,
-                    ))
-                    .push(
-                        Row::new()
-                            .push(lead(localized_copy(if backup {
-                                "Have the app?"
-                            } else {
-                                "No longer have the app?"
-                            })))
-                            .push(
-                                sheet_link(if backup {
-                                    "Use a code from the app instead"
-                                } else {
-                                    "Use a backup code instead"
-                                })
-                                .on_press_maybe((!tf.busy).then(
-                                    || settings(TwoFactorSettingsMessage::ToggleDisableBackup),
-                                )),
-                            )
-                            .spacing(6)
-                            .align_y(Alignment::Center),
-                    )
-                    .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                    .push(panel_actions(
-                        acct,
-                        "Turn off",
-                        ActionKind::Destructive,
-                        TwoFactorSettingsMessage::ConfirmDisable,
-                        backup,
-                    ));
-            col = col.push(review_block(content));
+            col = col.push(disable_authenticator_panel(acct, *backup));
         }
         TwoFactorPanel::Regenerate => {}
     }
 
     if on {
-        let left = status.remaining;
-        let low = left <= LOW_BACKUP_CODES;
-        let detail = if left == 0 {
-            "None left. Make a new set so you can still get in without the app.".to_string()
-        } else if low {
-            "Make a new set before you run out. Each code works once.".to_string()
-        } else {
-            "Each code works once in place of the app.".to_string()
-        };
-        let total = if status.total == 0 { 10 } else { status.total };
-        let bc_status = if low {
-            status_line(
-                warning_icon(),
-                format!("{left} of {total} left"),
-                Tone::Warn,
-            )
-        } else {
-            status_line(
-                check_circle_icon(),
-                format!("{left} of {total} left"),
-                Tone::Good,
-            )
-        };
-        let bc_action: Option<Element<ConnectAccountMessage>> = closed.then(|| {
-            sheet_button("Make new codes…", ActionKind::Secondary, true)
-                .on_press(settings(TwoFactorSettingsMessage::AskRegenerate))
-                .into()
-        });
-        col = col
-            .push(setting_row(
-                "Backup codes",
-                detail,
-                Some(bc_status),
-                bc_action,
-            ))
-            .push(horizontal_rule());
-        if matches!(tf.panel, TwoFactorPanel::Regenerate) {
-            let content = Column::new()
-                .push(group_title(localized_copy("Make new backup codes?")))
-                .push(lead(localized_copy(
-                    "Your current codes stop working, including any you haven't used.",
-                )))
-                .push(code_field(
-                    acct,
-                    "Code from your authenticator app",
-                    false,
-                    "That code didn't match. Enter the one showing now.",
-                    TwoFactorSettingsMessage::ConfirmRegenerate,
-                ))
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(panel_actions(
-                    acct,
-                    "Make new codes",
-                    ActionKind::Primary,
-                    TwoFactorSettingsMessage::ConfirmRegenerate,
-                    false,
-                ));
-            col = col.push(review_block(content));
-        }
+        col = append_backup_code_settings(col, acct, status, closed);
     }
 
     col.width(Length::Fill).into()
+}
+
+fn authenticator_setup_panel<'a>(
+    acct: &'a ConnectAccountPanel,
+    email: &str,
+    setup: &TotpSetup,
+    qr: &'a Option<iced::widget::qr_code::Data>,
+) -> Element<'a, ConnectAccountMessage> {
+    let mut scan = Row::new().spacing(20).align_y(Alignment::Start);
+    if let Some(data) = qr {
+        scan = scan.push(
+            container(iced::widget::qr_code(data).cell_size(4).style(|_| {
+                iced::widget::qr_code::Style {
+                    background: color::WHITE,
+                    cell: color::BLACK,
+                }
+            }))
+            .padding(8)
+            .style(|_: &theme::Theme| container::Style {
+                background: Some(iced::Background::Color(color::WHITE)),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        );
+    }
+    scan = scan.push(
+        Column::new()
+            .push(group_title(localized_copy("Scan this with your authenticator app")))
+            .push(lead(format!(
+                "It adds COINCUBE ({email}). Any app that shows 6-digit codes works: 1Password, Google Authenticator, Authy and others."
+            )))
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(tenshu_text::label(localized_copy("Can't scan? Enter this setup key instead")))
+            .push(
+                Row::new()
+                    .push(
+                        tenshu_text::body(setup.grouped_secret())
+                            .font(coincube_ui::font::MONO_REGULAR),
+                    )
+                    .push(
+                        sheet_link("Copy key")
+                            .on_press(settings(TwoFactorSettingsMessage::CopySetupKey)),
+                    )
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+            )
+            .push(lead(localized_copy(
+                "Treat the key like a password. Anyone who has it can make your codes.",
+            )))
+            .spacing(4)
+            .width(Length::Fill),
+    );
+    let content = Column::new()
+        .push(scan)
+        .push(code_field(
+            acct,
+            "Enter the 6-digit code the app shows",
+            false,
+            "That code didn't match. Enter the one showing now; codes change every 30 seconds. If it keeps failing, check that this computer sets its clock automatically.",
+            TwoFactorSettingsMessage::ConfirmSetup,
+        ))
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(panel_actions(
+            acct,
+            "Turn on",
+            ActionKind::Primary,
+            TwoFactorSettingsMessage::ConfirmSetup,
+            false,
+        ))
+        .push(lead(localized_copy(
+            "Next you'll get 10 backup codes. Keep them somewhere safe: they're how you get back into Connect if you lose this app.",
+        )));
+    review_block(content)
+}
+
+fn issued_backup_codes_panel<'a>(
+    tf: &TwoFactorSettings,
+    codes: &'a BackupCodes,
+    regenerated: bool,
+) -> Element<'a, ConnectAccountMessage> {
+    let mut grid = Column::new().spacing(6);
+    for pair in codes.codes.chunks(2) {
+        let mut row = Row::new().spacing(24);
+        for code in pair {
+            row = row.push(
+                tenshu_text::body(code.as_str())
+                    .font(coincube_ui::font::MONO_REGULAR)
+                    .width(Length::Fixed(150.0)),
+            );
+        }
+        grid = grid.push(row);
+    }
+    let mut content = Column::new()
+        .push(group_title(localized_copy(if regenerated {
+            "Save your new backup codes"
+        } else {
+            "Save your backup codes"
+        })))
+        .push(lead(localized_copy(
+            "If you lose your authenticator app, each code signs you in once in its place. This is the only time COINCUBE shows them.",
+        )))
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(grid)
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(
+            Row::new()
+                .push(
+                    sheet_button("Copy all", ActionKind::Secondary, false)
+                        .on_press(settings(TwoFactorSettingsMessage::CopyBackupCodes)),
+                )
+                .push(
+                    sheet_button("Save as text file…", ActionKind::Secondary, false)
+                        .on_press(settings(TwoFactorSettingsMessage::SaveBackupCodes)),
+                )
+                .push(
+                    sheet_button("I've saved them", ActionKind::Primary, false)
+                        .on_press(settings(TwoFactorSettingsMessage::FinishBackupCodes)),
+                )
+                .spacing(12),
+        );
+    match &tf.saved_to_file {
+        Some(Ok(())) => {
+            content = content.push(status_line(
+                check_circle_icon(),
+                "Saved to a text file.",
+                Tone::Good,
+            ));
+        }
+        Some(Err(_)) => {
+            content = content.push(status_line(
+                x_circle_icon(),
+                "Couldn't save the file. Copy the codes instead, or choose another folder.",
+                Tone::Bad,
+            ));
+        }
+        None => {}
+    }
+    content = content.push(lead(localized_copy(
+        "Store them apart from this computer, for example in a password manager or on paper. Anyone with a code and access to your email can sign in as you.",
+    )));
+    review_block(content)
+}
+
+fn disable_authenticator_panel<'a>(
+    acct: &'a ConnectAccountPanel,
+    backup: bool,
+) -> Element<'a, ConnectAccountMessage> {
+    let tf = &acct.two_factor;
+    let content = Column::new()
+        .push(group_title(localized_copy(
+            "Turn off the authenticator app?",
+        )))
+        .push(lead(localized_copy(
+            "Signing in to Connect will only need the code we email you.",
+        )))
+        .push(code_field(
+            acct,
+            if backup {
+                "Backup code"
+            } else {
+                "Code from your authenticator app"
+            },
+            backup,
+            if backup {
+                "That backup code is wrong or was already used."
+            } else {
+                "That code didn't match. Enter the one showing now."
+            },
+            TwoFactorSettingsMessage::ConfirmDisable,
+        ))
+        .push(
+            Row::new()
+                .push(lead(localized_copy(if backup {
+                    "Have the app?"
+                } else {
+                    "No longer have the app?"
+                })))
+                .push(
+                    sheet_link(if backup {
+                        "Use a code from the app instead"
+                    } else {
+                        "Use a backup code instead"
+                    })
+                    .on_press_maybe(
+                        (!tf.busy).then(|| settings(TwoFactorSettingsMessage::ToggleDisableBackup)),
+                    ),
+                )
+                .spacing(6)
+                .align_y(Alignment::Center),
+        )
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(panel_actions(
+            acct,
+            "Turn off",
+            ActionKind::Destructive,
+            TwoFactorSettingsMessage::ConfirmDisable,
+            backup,
+        ));
+    review_block(content)
+}
+
+fn append_backup_code_settings<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+    acct: &'a ConnectAccountPanel,
+    status: &TwoFactorStatus,
+    closed: bool,
+) -> Column<'a, ConnectAccountMessage> {
+    let tf = &acct.two_factor;
+    let left = status.remaining;
+    let low = left <= LOW_BACKUP_CODES;
+    let detail = if left == 0 {
+        "None left. Make a new set so you can still get in without the app.".to_string()
+    } else if low {
+        "Make a new set before you run out. Each code works once.".to_string()
+    } else {
+        "Each code works once in place of the app.".to_string()
+    };
+    let total = if status.total == 0 { 10 } else { status.total };
+    let bc_status = if low {
+        status_line(
+            warning_icon(),
+            format!("{left} of {total} left"),
+            Tone::Warn,
+        )
+    } else {
+        status_line(
+            check_circle_icon(),
+            format!("{left} of {total} left"),
+            Tone::Good,
+        )
+    };
+    let bc_action: Option<Element<ConnectAccountMessage>> = closed.then(|| {
+        sheet_button("Make new codes…", ActionKind::Secondary, true)
+            .on_press(settings(TwoFactorSettingsMessage::AskRegenerate))
+            .into()
+    });
+    col = col
+        .push(setting_row(
+            "Backup codes",
+            detail,
+            Some(bc_status),
+            bc_action,
+        ))
+        .push(horizontal_rule());
+    if matches!(tf.panel, TwoFactorPanel::Regenerate) {
+        let content = Column::new()
+            .push(group_title(localized_copy("Make new backup codes?")))
+            .push(lead(localized_copy(
+                "Your current codes stop working, including any you haven't used.",
+            )))
+            .push(code_field(
+                acct,
+                "Code from your authenticator app",
+                false,
+                "That code didn't match. Enter the one showing now.",
+                TwoFactorSettingsMessage::ConfirmRegenerate,
+            ))
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(panel_actions(
+                acct,
+                "Make new codes",
+                ActionKind::Primary,
+                TwoFactorSettingsMessage::ConfirmRegenerate,
+                false,
+            ));
+        col = col.push(review_block(content));
+    }
+    col
 }
