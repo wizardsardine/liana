@@ -9,7 +9,7 @@ use crate::{
     app::{
         breez_spark::SparkClient,
         message::Message,
-        view::{self, ConnectCubeMessage},
+        view::{self, AvatarMessage, ConnectCubeMessage},
     },
     services::coincube::{
         vault_reconcile, AvatarGenerateRequest, AvatarSelectRequest, AvatarUserTraits,
@@ -692,32 +692,8 @@ impl ConnectCubePanel {
                                 if info.lightning_address == db_addr {
                                     ReconcileOutcome::ReRegistered(info)
                                 } else {
-                                    // Roll back the orphan binding we
-                                    // just created on the LNURL server
-                                    // — leaving it would squat the
-                                    // wrong-domain record forever.
-                                    // Best-effort: log if the cleanup
-                                    // itself fails so an operator can
-                                    // remove it manually.
-                                    let bound = info.lightning_address.clone();
-                                    let mut suffix = "";
-                                    if let Err(e) = spark.delete_lightning_address().await {
-                                        log::error!(
-                                            "[CONNECT-CUBE] failed to roll back \
-                                             orphan Spark registration {:?} after \
-                                             reconcile domain mismatch (expected {:?}): {}",
-                                            bound,
-                                            db_addr,
-                                            e
-                                        );
-                                        suffix = " (orphan SDK registration left behind \
-                                                  — please contact support)";
-                                    }
-                                    ReconcileOutcome::NeedsReRegistration(format!(
-                                        "Spark SDK registered '{}' but the confirmed \
-                                         reservation is '{}'{}",
-                                        bound, db_addr, suffix
-                                    ))
+                                    rollback_reconcile_domain_mismatch(&spark, &info, &db_addr)
+                                        .await
                                 }
                             }
                             Err(e) => ReconcileOutcome::NeedsReRegistration(e.to_string()),
@@ -1008,101 +984,7 @@ impl ConnectCubePanel {
         match msg {
             ConnectCubeMessage::FocusAction(id) => return iced::widget::operation::focus(id),
             ConnectCubeMessage::CubeRegistered { generation, result } => {
-                // Belongs to a session that has since ended — see
-                // `session_generation`. Drop it whole: it must not populate
-                // `server_cube_id`, and it must not clear a latch it no longer
-                // owns (the current session may have an attempt of its own in
-                // flight).
-                if generation != self.session_generation {
-                    log::debug!(
-                        "[CONNECT-CUBE] discarding a registration result from a \
-                         previous session (generation {}, now {})",
-                        generation,
-                        self.session_generation,
-                    );
-                    return iced::Task::none();
-                }
-                // Re-arm the trigger regardless of outcome: on success nothing
-                // will call `register_cube` again (`server_cube_id` is set), and
-                // on failure the next trigger is entitled to a fresh attempt.
-                self.registering = false;
-                match result {
-                    Ok(cube_resp) => {
-                        log::info!(
-                            "[CONNECT-CUBE] Registered cube {} (server ID: {})",
-                            cube_resp.uuid,
-                            cube_resp.id
-                        );
-                        self.server_cube_id = Some(cube_resp.id);
-                        self.registration_error = None;
-                        self.owned_by_other_account = false;
-                        // Store the lightning address from the backend (or clear if None)
-                        if cube_resp.lightning_address.is_some() {
-                            self.lightning_address = Some(LightningAddress {
-                                lightning_address: cube_resp.lightning_address,
-                            });
-                        } else {
-                            self.lightning_address = None;
-                        }
-                        // Phase 4g: if the DB has a confirmed address,
-                        // reconcile against the Spark SDK's local
-                        // state. Covers device reinstall / SDK storage
-                        // wipe / multi-device identity swap.
-                        let reconcile_task = self.reconcile_spark_lightning_address();
-                        // Trigger avatar load now that cube is registered.
-                        let avatar_task = self.load_avatar_if_needed();
-                        // The server cube id just became known, which is the
-                        // only thing the encryption-pubkey PUT was waiting on.
-                        // Publish now so invites created in this session carry
-                        // the key (PLAN-connect-blinding PR D2). Skip it when
-                        // the server already reports the key we'd send.
-                        if cube_resp.encryption_pubkey.is_some()
-                            && cube_resp.encryption_pubkey == self.cube_encryption_pubkey
-                        {
-                            self.enc_pubkey_registered = true;
-                        }
-                        let enc_key_task = self.register_encryption_pubkey();
-                        // Same trigger, same reason: the server cube id was the
-                        // only thing the vault-fingerprint PATCH was waiting on.
-                        // Skip it when the registration response already carries
-                        // the value we'd send.
-                        if cube_resp.vault.as_ref().is_some_and(|v| {
-                            Some(&v.fingerprint) == self.vault_fingerprint.as_ref()
-                        }) {
-                            self.vault_fingerprint_asserted = true;
-                        }
-                        let vault_fp_task = self.assert_vault_fingerprint();
-                        // Third thing waiting on the server cube id: the
-                        // COIN-373 membership reconcile. This is its main
-                        // trigger — the backfill fires it at `App::new`, before
-                        // this response has landed, so without this a Vault
-                        // missing a member row would stay broken on the phone
-                        // until someone started a desktop sign.
-                        let reconcile_members_task = self.reconcile_vault_members();
-                        // The server's Spark Stable Balance record is the
-                        // cross-device one; hand it to the App, which owns
-                        // the local record and the SDK reconcile. Sent even
-                        // when `None` so the App can push this device's
-                        // decision up if the server has none.
-                        let stable_balance_task = iced::Task::done(
-                            Message::SparkStableBalanceFromConnect(cube_resp.spark_stable_balance),
-                        );
-                        let mut tasks = vec![
-                            enc_key_task,
-                            vault_fp_task,
-                            reconcile_members_task,
-                            stable_balance_task,
-                        ];
-                        tasks.extend(reconcile_task);
-                        tasks.extend(avatar_task);
-                        return iced::Task::batch(tasks);
-                    }
-                    Err(e) => {
-                        log::error!("[CONNECT-CUBE] Failed to register cube: {}", e.message);
-                        self.owned_by_other_account = e.owned_by_other_account;
-                        self.registration_error = Some(e.message);
-                    }
-                }
+                return self.on_cube_registered(generation, result)
             }
 
             ConnectCubeMessage::EncryptionKeyRegistered(ok) => {
@@ -1142,225 +1024,19 @@ impl ConnectCubePanel {
             }
 
             ConnectCubeMessage::LnUsernameChanged(input) => {
-                self.ln_username_input = input.to_lowercase();
-                self.ln_username_available = None;
-                self.ln_username_error = None;
-                self.ln_claim_error = None;
-
-                // Client-side validation
-                if let Some(err) = validate_ln_username(&self.ln_username_input) {
-                    self.ln_check_version += 1;
-                    if let Some(handle) = self.ln_check_abort.take() {
-                        handle.abort();
-                    }
-                    self.ln_checking = false;
-                    self.ln_username_error = Some(err);
-                    return iced::Task::none();
-                }
-
-                let Some(spark) = self.spark_client.clone() else {
-                    // No Spark backend means no way to claim — skip
-                    // the debounced hint entirely. The claim button
-                    // surfaces the same "Spark unavailable" error.
-                    self.ln_check_version += 1;
-                    if let Some(handle) = self.ln_check_abort.take() {
-                        handle.abort();
-                    }
-                    self.ln_checking = false;
-                    return iced::Task::none();
-                };
-
-                // Debounced availability check. Two sources, ANDed:
-                // the Breez-hosted LNURL server (catches names
-                // registered outside our DB) and our own Go API
-                // (authoritative for @coincube.io — the same conflict
-                // source the reserve step hits, including unconfirmed
-                // or orphaned reservations Breez has never heard of;
-                // Breez-only checking showed "Available" for names the
-                // reserve then 409'd). The API result is still just a
-                // hint — reserve remains the authoritative gate — so
-                // an API *error* falls back to the Breez-only answer
-                // rather than blocking typing. Abort any previous
-                // in-flight task.
-                if let Some(handle) = self.ln_check_abort.take() {
-                    handle.abort();
-                }
-                self.ln_check_version += 1;
-                let version = self.ln_check_version;
-                let username = self.ln_username_input.clone();
-                let api_client = self.client.clone();
-                let api_cube_id = self.api_cube_id();
-                self.ln_checking = true;
-                let (task, abort_handle) = iced::Task::perform(
-                    async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let res = spark
-                            .check_lightning_address_available(username.clone())
-                            .await;
-                        let res = match res {
-                            Ok(true) => {
-                                if let (Some(client), Some(cube_id)) = (api_client, api_cube_id) {
-                                    match client
-                                        .check_lightning_address_available(&cube_id, &username)
-                                        .await
-                                    {
-                                        Ok(api_available) => Ok(api_available),
-                                        Err(e) => {
-                                            log::warn!(
-                                                "[CONNECT-CUBE] API availability check \
-                                                 failed, falling back to Breez-only \
-                                                 hint: {}",
-                                                e
-                                            );
-                                            Ok(true)
-                                        }
-                                    }
-                                } else {
-                                    Ok(true)
-                                }
-                            }
-                            other => other,
-                        };
-                        (res, version)
-                    },
-                    move |(res, v)| match res {
-                        Ok(available) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LnUsernameChecked {
-                                available,
-                                error_message: if available {
-                                    None
-                                } else {
-                                    Some("Username is taken".to_string())
-                                },
-                                version: v,
-                            },
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LnUsernameChecked {
-                                available: false,
-                                error_message: Some(e.to_string()),
-                                version: v,
-                            },
-                        )),
-                    },
-                )
-                .abortable();
-                self.ln_check_abort = Some(abort_handle);
-                return task;
+                return self.on_ln_username_changed(input)
             }
 
             ConnectCubeMessage::LnUsernameChecked {
                 available,
                 error_message,
                 version,
-            } => {
-                if version == self.ln_check_version {
-                    self.ln_checking = false;
-                    self.ln_username_available = Some(available);
-                    if !available {
-                        self.ln_username_error =
-                            Some(error_message.unwrap_or_else(|| "Username is taken".to_string()));
-                    }
-                }
-            }
+            } => self.on_ln_username_checked(available, error_message, version),
 
-            ConnectCubeMessage::ClaimLightningAddress => {
-                if self.ln_claiming {
-                    return iced::Task::none();
-                }
-                let Some(client) = self.client.clone() else {
-                    return iced::Task::none();
-                };
-                let Some(spark) = self.spark_client.clone() else {
-                    self.ln_claim_error =
-                        Some("Spark wallet is not available on this cube".to_string());
-                    return iced::Task::none();
-                };
-                self.ln_claiming = true;
-                self.ln_claim_error = None;
-                let generation = self.session_generation;
-                let username = self.ln_username_input.clone();
-                let Some(cube_id) = self.api_cube_id() else {
-                    self.ln_claiming = false;
-                    self.ln_claim_error = Some(
-                        self.registration_error
-                            .clone()
-                            .unwrap_or_else(|| "Cube registration pending".to_string()),
-                    );
-                    return iced::Task::none();
-                };
-                return iced::Task::perform(
-                    async move {
-                        claim_username(&client, &spark, &cube_id, &username)
-                            .await
-                            .map_err(|e| e.message)
-                    },
-                    move |res| match res {
-                        Ok(ln_addr) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressClaimed {
-                                generation,
-                                address: ln_addr,
-                            },
-                        )),
-                        Err(error) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressClaimFailed { generation, error },
-                        )),
-                    },
-                );
-            }
+            ConnectCubeMessage::ClaimLightningAddress => return self.claim_lightning_address(),
 
             ConnectCubeMessage::AutoAssignLightningAddress { retry } => {
-                use crate::app::cache::LightningAddressSetup;
-                // Only once the server has answered for this Cube (so an empty
-                // address really is empty), never over an address, a claim in
-                // flight or a running attempt, and after a failure only when
-                // the user asks again.
-                let has_address = self.lightning_address.as_ref().is_some_and(|la| {
-                    crate::services::coincube::display_lightning_address(
-                        la.lightning_address.as_deref(),
-                    )
-                    .is_some()
-                });
-                let blocked = match &self.ln_auto {
-                    LightningAddressSetup::Assigning => true,
-                    LightningAddressSetup::Failed(_) => !retry,
-                    LightningAddressSetup::Idle => false,
-                };
-                if has_address
-                    || blocked
-                    || self.ln_claiming
-                    || self.ln_changing
-                    || self.server_cube_id.is_none()
-                {
-                    return iced::Task::none();
-                }
-                let (Some(client), Some(spark), Some(cube_id)) = (
-                    self.client.clone(),
-                    self.spark_client.clone(),
-                    self.api_cube_id(),
-                ) else {
-                    return iced::Task::none();
-                };
-                self.ln_auto = LightningAddressSetup::Assigning;
-                self.ln_claiming = true;
-                let generation = self.session_generation;
-                return iced::Task::perform(
-                    async move { auto_claim(&client, &spark, &cube_id).await },
-                    move |res| match res {
-                        Ok(address) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressAutoAssigned {
-                                generation,
-                                address,
-                            },
-                        )),
-                        Err(error) => Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressAutoAssignFailed {
-                                generation,
-                                error,
-                            },
-                        )),
-                    },
-                );
+                return self.auto_assign_lightning_address(retry)
             }
 
             ConnectCubeMessage::LightningAddressAutoAssigned {
@@ -1391,24 +1067,10 @@ impl ConnectCubePanel {
             ConnectCubeMessage::LightningAddressClaimed {
                 generation,
                 address,
-            } => {
-                if generation != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.ln_claiming = false;
-                self.lightning_address = Some(address);
-                self.ln_username_input.clear();
-                self.ln_username_available = None;
-                self.ln_username_error = None;
-                self.ln_reconcile_needs_reregister = None;
-            }
+            } => self.on_lightning_address_claimed(generation, address),
 
             ConnectCubeMessage::LightningAddressClaimFailed { generation, error } => {
-                if generation != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.ln_claiming = false;
-                self.ln_claim_error = Some(error);
+                self.on_lightning_address_claim_failed(generation, error)
             }
 
             ConnectCubeMessage::BeginEditLightningAddress => {
@@ -1422,325 +1084,25 @@ impl ConnectCubePanel {
                 self.ln_claim_error = None;
             }
 
-            ConnectCubeMessage::CancelEditLightningAddress => {
-                if self.ln_changing {
-                    return iced::Task::none();
-                }
-                self.ln_editing = false;
-                self.ln_username_input.clear();
-                self.ln_username_available = None;
-                self.ln_username_error = None;
-                self.ln_claim_error = None;
-                self.ln_check_version += 1;
-                if let Some(handle) = self.ln_check_abort.take() {
-                    handle.abort();
-                }
-                self.ln_checking = false;
-            }
+            ConnectCubeMessage::CancelEditLightningAddress => self.cancel_edit_lightning_address(),
 
-            ConnectCubeMessage::SaveLightningAddress => {
-                if self.ln_changing {
-                    return iced::Task::none();
-                }
-                let new_username = self.ln_username_input.trim().to_string();
-                let valid_format = self.ln_username_error.is_none() && !new_username.is_empty();
-                let available = self.ln_username_available == Some(true);
-                let current_username = self
-                    .lightning_address
-                    .as_ref()
-                    .and_then(|la| la.lightning_address.as_deref())
-                    .and_then(|addr| addr.split('@').next());
-                let differs = current_username.is_none_or(|u| u != new_username);
-                if !(valid_format && available && differs) {
-                    return iced::Task::none();
-                }
-                let Some(client) = self.client.clone() else {
-                    return iced::Task::none();
-                };
-                let Some(spark) = self.spark_client.clone() else {
-                    self.ln_claim_error =
-                        Some("Spark wallet is not available on this cube".to_string());
-                    return iced::Task::none();
-                };
-                let Some(cube_id) = self.api_cube_id() else {
-                    self.ln_claim_error = Some(
-                        self.registration_error
-                            .clone()
-                            .unwrap_or_else(|| "Cube registration pending".to_string()),
-                    );
-                    return iced::Task::none();
-                };
-                self.ln_changing = true;
-                self.ln_claim_error = None;
-                let generation = self.session_generation;
-                return iced::Task::perform(
-                    async move {
-                        // Step 1: server-side atomic username swap.
-                        // Only the DB row changes — no DNS work.
-                        let new_addr = match client
-                            .update_lightning_address(&cube_id, &new_username)
-                            .await
-                        {
-                            Ok(addr) => addr,
-                            Err(e) => {
-                                return LightningAddressChangeOutcome::ServerError(format!(
-                                    "{}",
-                                    e
-                                ));
-                            }
-                        };
-
-                        // Step 2: release the old SDK binding from
-                        // Breez. Required because the SDK's register
-                        // call doesn't replace an existing binding —
-                        // see the reconciler at
-                        // `reconcile_spark_lightning_address`.
-                        if let Err(e) = spark.delete_lightning_address().await {
-                            log::error!(
-                                "[CONNECT-CUBE] change: SDK delete failed after \
-                                 server commit (cube={}, new={}): {}",
-                                cube_id,
-                                new_username,
-                                e
-                            );
-                            return LightningAddressChangeOutcome::SdkSyncFailed {
-                                addr: new_addr,
-                                message: format!(
-                                    "Could not release the previous Lightning Address \
-                                     binding on this device: {}. Tap Retry to finish \
-                                     switching to {}.",
-                                    e, new_username
-                                ),
-                            };
-                        }
-
-                        // Step 3: bind the new username on the
-                        // Breez-hosted LNURL server.
-                        if let Err(e) = spark
-                            .register_lightning_address(new_username.clone(), None)
-                            .await
-                        {
-                            log::error!(
-                                "[CONNECT-CUBE] change: SDK register failed after \
-                                 server commit + SDK delete (cube={}, new={}): {}",
-                                cube_id,
-                                new_username,
-                                e
-                            );
-                            return LightningAddressChangeOutcome::SdkSyncFailed {
-                                addr: new_addr,
-                                message: format!(
-                                    "Could not register {} with the Lightning Address \
-                                     server: {}. Tap Retry to finish.",
-                                    new_username, e
-                                ),
-                            };
-                        }
-
-                        LightningAddressChangeOutcome::Ok(new_addr)
-                    },
-                    move |outcome| {
-                        Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressUpdated {
-                                generation,
-                                outcome,
-                            },
-                        ))
-                    },
-                );
-            }
+            ConnectCubeMessage::SaveLightningAddress => return self.save_lightning_address(),
 
             ConnectCubeMessage::LightningAddressUpdated {
                 generation,
                 outcome,
-            } => {
-                if generation != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.ln_changing = false;
-                match outcome {
-                    LightningAddressChangeOutcome::Ok(addr) => {
-                        self.lightning_address = Some(addr);
-                        self.ln_editing = false;
-                        self.ln_username_input.clear();
-                        self.ln_username_available = None;
-                        self.ln_username_error = None;
-                        self.ln_claim_error = None;
-                        self.ln_reconcile_needs_reregister = None;
-                    }
-                    LightningAddressChangeOutcome::ServerError(msg) => {
-                        // Stay in edit mode so the user can correct
-                        // and retry; the address itself is unchanged.
-                        self.ln_claim_error = Some(msg);
-                    }
-                    LightningAddressChangeOutcome::SdkSyncFailed { addr, message } => {
-                        // Server committed; mirror that locally and
-                        // surface the existing re-registration prompt
-                        // so the user can retry the SDK side.
-                        self.lightning_address = Some(addr);
-                        self.ln_editing = false;
-                        self.ln_username_input.clear();
-                        self.ln_username_available = None;
-                        self.ln_username_error = None;
-                        self.ln_claim_error = None;
-                        self.ln_reconcile_needs_reregister = Some(message);
-                    }
-                }
-            }
+            } => self.on_lightning_address_updated(generation, outcome),
 
             ConnectCubeMessage::RetryLightningAddressReregister => {
-                if self.ln_reregistering {
-                    return iced::Task::none();
-                }
-                let Some(spark) = self.spark_client.clone() else {
-                    return iced::Task::none();
-                };
-                let Some(db_addr) = self
-                    .lightning_address
-                    .as_ref()
-                    .and_then(|la| la.lightning_address.as_ref())
-                    .cloned()
-                else {
-                    return iced::Task::none();
-                };
-                // Same malformed-record guard as
-                // `reconcile_spark_lightning_address`: without
-                // `@domain` in the DB record, the post-register
-                // comparison against the SDK's full `user@domain`
-                // can never match, and the user would be stuck in
-                // a retry loop they can't clear.
-                let db_username = match db_addr.split('@').next() {
-                    Some(u) if !u.is_empty() && db_addr.contains('@') => u.to_string(),
-                    _ => {
-                        log::warn!(
-                            "[CONNECT-CUBE] skipping retry rebind: malformed DB \
-                             lightning address {:?} (expected user@domain)",
-                            db_addr
-                        );
-                        self.ln_reconcile_needs_reregister = Some(coincube_ui::localized_format!(
-                            "Stored lightning address {:?} is malformed \
-                             (expected user@domain) — please re-claim a username",
-                            "La dirección Lightning guardada {:?} no tiene un formato válido \
-                             (se esperaba usuario@dominio). Vuelve a reclamar un nombre de usuario.",
-                            db_addr
-                        ));
-                        return iced::Task::none();
-                    }
-                };
-                self.ln_reregistering = true;
-                let generation = self.session_generation;
-                return iced::Task::perform(
-                    async move {
-                        // Idempotent: tolerates an already-empty SDK.
-                        // Ignore failure here — the register that
-                        // follows is the authoritative success
-                        // signal, and a Breez-side "already gone"
-                        // error shouldn't block recovery.
-                        if let Err(e) = spark.delete_lightning_address().await {
-                            log::warn!(
-                                "[CONNECT-CUBE] retry rebind: SDK delete \
-                                 returned {} (continuing to register)",
-                                e
-                            );
-                        }
-                        spark
-                            .register_lightning_address(db_username, None)
-                            .await
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectCube(
-                            ConnectCubeMessage::LightningAddressReregistered { generation, result },
-                        ))
-                    },
-                );
+                return self.retry_lightning_address_reregister()
             }
 
             ConnectCubeMessage::LightningAddressReregistered { generation, result } => {
-                if generation != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.ln_reregistering = false;
-                match result {
-                    Ok(info) => {
-                        let db_addr = self
-                            .lightning_address
-                            .as_ref()
-                            .and_then(|la| la.lightning_address.as_deref());
-                        if db_addr == Some(info.lightning_address.as_str()) {
-                            self.ln_reconcile_needs_reregister = None;
-                            log::info!(
-                                "[CONNECT-CUBE] manual rebind succeeded: {}",
-                                info.lightning_address
-                            );
-                        } else {
-                            // Domain-drift guard, mirroring the
-                            // reconciler. Don't claim "rebound" when
-                            // the SDK's full address doesn't match
-                            // the DB record.
-                            self.ln_reconcile_needs_reregister = Some(format!(
-                                "Spark SDK registered '{}' but the confirmed \
-                                 reservation is '{}'",
-                                info.lightning_address,
-                                db_addr.unwrap_or("")
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        self.ln_reconcile_needs_reregister = Some(e);
-                    }
-                }
+                self.on_lightning_address_reregistered(generation, result)
             }
 
             ConnectCubeMessage::SparkLightningAddressChanged(info) => {
-                match info {
-                    Some(info) => {
-                        // A `Some` payload means the SDK observed a
-                        // register/change — on this device at the
-                        // tail of the claim flow, or cross-device
-                        // via realtime-sync replay. Only treat it
-                        // as authoritative when it matches the
-                        // DB-confirmed reservation; a mismatched
-                        // payload means the SDK holds a binding we
-                        // haven't confirmed server-side (pre-confirm
-                        // claim-flow race, cross-device identity
-                        // swap, stale cache), and mirroring it to
-                        // the display would show the wrong address.
-                        let db_addr = self
-                            .lightning_address
-                            .as_ref()
-                            .and_then(|la| la.lightning_address.as_deref());
-                        if db_addr == Some(info.lightning_address.as_str()) {
-                            log::info!(
-                                "[CONNECT-CUBE] Spark lightning address confirmed: {}",
-                                info.lightning_address
-                            );
-                            // SDK matches the DB — any stale "needs
-                            // re-registration" state is resolved.
-                            self.ln_reconcile_needs_reregister = None;
-                        } else {
-                            log::warn!(
-                                "[CONNECT-CUBE] Spark reports {:?} but DB record \
-                                 is {:?} — triggering reconcile",
-                                info.lightning_address,
-                                db_addr
-                            );
-                            if let Some(task) = self.reconcile_spark_lightning_address() {
-                                return task;
-                            }
-                        }
-                    }
-                    None => {
-                        // If the DB still has a confirmed username
-                        // (i.e. the user didn't initiate the delete
-                        // on this device), trigger the same
-                        // auto-reconcile path as on startup so the
-                        // address rebinds without user action.
-                        if let Some(task) = self.reconcile_spark_lightning_address() {
-                            return task;
-                        }
-                    }
-                }
+                return self.on_spark_lightning_address_changed(info)
             }
 
             ConnectCubeMessage::LightningAddressReconciled(outcome) => match outcome {
@@ -1775,37 +1137,13 @@ impl ConnectCubePanel {
                 }
             },
 
-            ConnectCubeMessage::RetryRegistration => {
-                if self.registering {
-                    return iced::Task::none();
-                }
-                if self.client.is_none() {
-                    // A restored connect.json session may have registered
-                    // through App::EnsureConnectReady without a panel client.
-                    // Keep the failure visible while that path retries from
-                    // the cached tokens; it clears on CubeRegistered success.
-                    return iced::Task::done(Message::EnsureConnectReady);
-                }
-                self.registration_error = None;
-                return self.register_cube();
-            }
+            ConnectCubeMessage::RetryRegistration => return self.retry_registration(),
 
             ConnectCubeMessage::CopyToClipboard(text) => {
                 return iced::clipboard::write(text);
             }
 
-            ConnectCubeMessage::Error(e) => {
-                log::error!("[CONNECT-CUBE] Error: {}", e);
-                if self.ln_claiming {
-                    self.ln_claim_error = Some(e);
-                    self.ln_claiming = false;
-                } else if self.ln_checking {
-                    self.ln_username_error = Some(e);
-                    self.ln_checking = false;
-                } else {
-                    self.ln_claim_error = Some(e);
-                }
-            }
+            ConnectCubeMessage::Error(e) => self.on_connect_cube_error(e),
 
             ConnectCubeMessage::Avatar(avatar_msg) => {
                 return self.update_avatar(avatar_msg);
@@ -1824,73 +1162,692 @@ impl ConnectCubePanel {
         iced::Task::none()
     }
 
-    fn update_avatar(&mut self, msg: crate::app::view::AvatarMessage) -> iced::Task<Message> {
-        use crate::app::view::AvatarMessage;
-
-        match msg {
-            AvatarMessage::Enter => {
-                self.avatar_error = None;
-                let Some(client) = self.client.clone() else {
-                    self.avatar_error = Some("Not signed in".to_string());
-                    return iced::Task::none();
-                };
-                let Some(cid) = self.api_cube_id() else {
-                    if let Some(ref e) = self.registration_error {
-                        self.avatar_error = Some(e.clone());
-                    }
-                    return iced::Task::none();
-                };
-                return iced::Task::perform(async move { client.get_avatar(&cid).await }, |res| {
-                    Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                        AvatarMessage::Loaded(res.map_err(|e| e.to_string())),
-                    )))
-                });
+    fn on_cube_registered(
+        &mut self,
+        generation: u64,
+        result: Result<crate::services::coincube::CubeResponse, CubeRegistrationError>,
+    ) -> iced::Task<Message> {
+        // Belongs to a session that has since ended — see
+        // `session_generation`. Drop it whole: it must not populate
+        // `server_cube_id`, and it must not clear a latch it no longer
+        // owns (the current session may have an attempt of its own in
+        // flight).
+        if generation != self.session_generation {
+            log::debug!(
+                "[CONNECT-CUBE] discarding a registration result from a \
+                 previous session (generation {}, now {})",
+                generation,
+                self.session_generation,
+            );
+            return iced::Task::none();
+        }
+        // Re-arm the trigger regardless of outcome: on success nothing
+        // will call `register_cube` again (`server_cube_id` is set), and
+        // on failure the next trigger is entitled to a fresh attempt.
+        self.registering = false;
+        match result {
+            Ok(cube_resp) => {
+                log::info!(
+                    "[CONNECT-CUBE] Registered cube {} (server ID: {})",
+                    cube_resp.uuid,
+                    cube_resp.id
+                );
+                self.server_cube_id = Some(cube_resp.id);
+                self.registration_error = None;
+                self.owned_by_other_account = false;
+                // Store the lightning address from the backend (or clear if None)
+                if cube_resp.lightning_address.is_some() {
+                    self.lightning_address = Some(LightningAddress {
+                        lightning_address: cube_resp.lightning_address,
+                    });
+                } else {
+                    self.lightning_address = None;
+                }
+                // Phase 4g: if the DB has a confirmed address,
+                // reconcile against the Spark SDK's local
+                // state. Covers device reinstall / SDK storage
+                // wipe / multi-device identity swap.
+                let reconcile_task = self.reconcile_spark_lightning_address();
+                // Trigger avatar load now that cube is registered.
+                let avatar_task = self.load_avatar_if_needed();
+                // The server cube id just became known, which is the
+                // only thing the encryption-pubkey PUT was waiting on.
+                // Publish now so invites created in this session carry
+                // the key (PLAN-connect-blinding PR D2). Skip it when
+                // the server already reports the key we'd send.
+                if cube_resp.encryption_pubkey.is_some()
+                    && cube_resp.encryption_pubkey == self.cube_encryption_pubkey
+                {
+                    self.enc_pubkey_registered = true;
+                }
+                let enc_key_task = self.register_encryption_pubkey();
+                // Same trigger, same reason: the server cube id was the
+                // only thing the vault-fingerprint PATCH was waiting on.
+                // Skip it when the registration response already carries
+                // the value we'd send.
+                if cube_resp
+                    .vault
+                    .as_ref()
+                    .is_some_and(|v| Some(&v.fingerprint) == self.vault_fingerprint.as_ref())
+                {
+                    self.vault_fingerprint_asserted = true;
+                }
+                let vault_fp_task = self.assert_vault_fingerprint();
+                // Third thing waiting on the server cube id: the
+                // COIN-373 membership reconcile. This is its main
+                // trigger — the backfill fires it at `App::new`, before
+                // this response has landed, so without this a Vault
+                // missing a member row would stay broken on the phone
+                // until someone started a desktop sign.
+                let reconcile_members_task = self.reconcile_vault_members();
+                // The server's Spark Stable Balance record is the
+                // cross-device one; hand it to the App, which owns
+                // the local record and the SDK reconcile. Sent even
+                // when `None` so the App can push this device's
+                // decision up if the server has none.
+                let stable_balance_task = iced::Task::done(Message::SparkStableBalanceFromConnect(
+                    cube_resp.spark_stable_balance,
+                ));
+                let mut tasks = vec![
+                    enc_key_task,
+                    vault_fp_task,
+                    reconcile_members_task,
+                    stable_balance_task,
+                ];
+                tasks.extend(reconcile_task);
+                tasks.extend(avatar_task);
+                return iced::Task::batch(tasks);
             }
+            Err(e) => {
+                log::error!("[CONNECT-CUBE] Failed to register cube: {}", e.message);
+                self.owned_by_other_account = e.owned_by_other_account;
+                self.registration_error = Some(e.message);
+            }
+        }
+        iced::Task::none()
+    }
 
-            AvatarMessage::Loaded(result) => match result {
-                Ok(data) => {
-                    let has = data.has_avatar;
-                    let active_id = data
-                        .variants
-                        .iter()
-                        .find(|v| {
-                            data.active_avatar_url
-                                .as_deref()
-                                .map(|u| u.ends_with(&v.id.to_string()))
-                                .unwrap_or(false)
-                        })
-                        .map(|v| v.id);
-                    self.avatar_data = Some(data);
-                    if has {
-                        self.avatar_step = AvatarFlowStep::Settings;
-                        if let Some(id) = active_id {
-                            if !self.avatar_image_cache.contains_key(&id) {
-                                if let Some(client) = self.client.clone() {
-                                    return iced::Task::perform(
-                                        async move { client.fetch_avatar_image(id).await },
-                                        move |res| {
-                                            Message::View(view::Message::ConnectCube(
-                                                ConnectCubeMessage::Avatar(
-                                                    AvatarMessage::ImageLoaded {
-                                                        variant_id: id,
-                                                        result: res.map_err(|e| e.to_string()),
-                                                    },
-                                                ),
-                                            ))
-                                        },
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        self.avatar_step = AvatarFlowStep::Questionnaire;
+    fn on_ln_username_changed(&mut self, input: String) -> iced::Task<Message> {
+        self.ln_username_input = input.to_lowercase();
+        self.ln_username_available = None;
+        self.ln_username_error = None;
+        self.ln_claim_error = None;
+
+        // Client-side validation
+        if let Some(err) = validate_ln_username(&self.ln_username_input) {
+            self.ln_check_version += 1;
+            if let Some(handle) = self.ln_check_abort.take() {
+                handle.abort();
+            }
+            self.ln_checking = false;
+            self.ln_username_error = Some(err);
+            return iced::Task::none();
+        }
+
+        let Some(spark) = self.spark_client.clone() else {
+            // No Spark backend means no way to claim — skip
+            // the debounced hint entirely. The claim button
+            // surfaces the same "Spark unavailable" error.
+            self.ln_check_version += 1;
+            if let Some(handle) = self.ln_check_abort.take() {
+                handle.abort();
+            }
+            self.ln_checking = false;
+            return iced::Task::none();
+        };
+
+        // Debounced availability check. Two sources, ANDed:
+        // the Breez-hosted LNURL server (catches names
+        // registered outside our DB) and our own Go API
+        // (authoritative for @coincube.io — the same conflict
+        // source the reserve step hits, including unconfirmed
+        // or orphaned reservations Breez has never heard of;
+        // Breez-only checking showed "Available" for names the
+        // reserve then 409'd). The API result is still just a
+        // hint — reserve remains the authoritative gate — so
+        // an API *error* falls back to the Breez-only answer
+        // rather than blocking typing. Abort any previous
+        // in-flight task.
+        if let Some(handle) = self.ln_check_abort.take() {
+            handle.abort();
+        }
+        self.ln_check_version += 1;
+        let version = self.ln_check_version;
+        let username = self.ln_username_input.clone();
+        let api_client = self.client.clone();
+        let api_cube_id = self.api_cube_id();
+        self.ln_checking = true;
+        let (task, abort_handle) = iced::Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let res = spark
+                    .check_lightning_address_available(username.clone())
+                    .await;
+                let res = match res {
+                    Ok(true) => Ok(check_connect_ln_username_availability(
+                        api_client,
+                        api_cube_id,
+                        &username,
+                    )
+                    .await),
+                    other => other,
+                };
+                (res, version)
+            },
+            move |(res, v)| match res {
+                Ok(available) => Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LnUsernameChecked {
+                        available,
+                        error_message: if available {
+                            None
+                        } else {
+                            Some("Username is taken".to_string())
+                        },
+                        version: v,
+                    },
+                )),
+                Err(e) => Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LnUsernameChecked {
+                        available: false,
+                        error_message: Some(e.to_string()),
+                        version: v,
+                    },
+                )),
+            },
+        )
+        .abortable();
+        self.ln_check_abort = Some(abort_handle);
+        task
+    }
+
+    fn on_ln_username_checked(
+        &mut self,
+        available: bool,
+        error_message: Option<String>,
+        version: u32,
+    ) {
+        if version == self.ln_check_version {
+            self.ln_checking = false;
+            self.ln_username_available = Some(available);
+            if !available {
+                self.ln_username_error =
+                    Some(error_message.unwrap_or_else(|| "Username is taken".to_string()));
+            }
+        }
+    }
+
+    fn claim_lightning_address(&mut self) -> iced::Task<Message> {
+        if self.ln_claiming {
+            return iced::Task::none();
+        }
+        let Some(client) = self.client.clone() else {
+            return iced::Task::none();
+        };
+        let Some(spark) = self.spark_client.clone() else {
+            self.ln_claim_error = Some("Spark wallet is not available on this cube".to_string());
+            return iced::Task::none();
+        };
+        self.ln_claiming = true;
+        self.ln_claim_error = None;
+        let generation = self.session_generation;
+        let username = self.ln_username_input.clone();
+        let Some(cube_id) = self.api_cube_id() else {
+            self.ln_claiming = false;
+            self.ln_claim_error = Some(
+                self.registration_error
+                    .clone()
+                    .unwrap_or_else(|| "Cube registration pending".to_string()),
+            );
+            return iced::Task::none();
+        };
+        iced::Task::perform(
+            async move {
+                claim_username(&client, &spark, &cube_id, &username)
+                    .await
+                    .map_err(|e| e.message)
+            },
+            move |res| match res {
+                Ok(ln_addr) => Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LightningAddressClaimed {
+                        generation,
+                        address: ln_addr,
+                    },
+                )),
+                Err(error) => Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LightningAddressClaimFailed { generation, error },
+                )),
+            },
+        )
+    }
+
+    fn auto_assign_lightning_address(&mut self, retry: bool) -> iced::Task<Message> {
+        use crate::app::cache::LightningAddressSetup;
+        // Only once the server has answered for this Cube (so an empty
+        // address really is empty), never over an address, a claim in
+        // flight or a running attempt, and after a failure only when
+        // the user asks again.
+        let has_address = self.lightning_address.as_ref().is_some_and(|la| {
+            crate::services::coincube::display_lightning_address(la.lightning_address.as_deref())
+                .is_some()
+        });
+        let blocked = match &self.ln_auto {
+            LightningAddressSetup::Assigning => true,
+            LightningAddressSetup::Failed(_) => !retry,
+            LightningAddressSetup::Idle => false,
+        };
+        if has_address
+            || blocked
+            || self.ln_claiming
+            || self.ln_changing
+            || self.server_cube_id.is_none()
+        {
+            return iced::Task::none();
+        }
+        let (Some(client), Some(spark), Some(cube_id)) = (
+            self.client.clone(),
+            self.spark_client.clone(),
+            self.api_cube_id(),
+        ) else {
+            return iced::Task::none();
+        };
+        self.ln_auto = LightningAddressSetup::Assigning;
+        self.ln_claiming = true;
+        let generation = self.session_generation;
+        iced::Task::perform(
+            async move { auto_claim(&client, &spark, &cube_id).await },
+            move |res| match res {
+                Ok(address) => Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LightningAddressAutoAssigned {
+                        generation,
+                        address,
+                    },
+                )),
+                Err(error) => Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LightningAddressAutoAssignFailed { generation, error },
+                )),
+            },
+        )
+    }
+
+    fn on_lightning_address_claimed(&mut self, generation: u64, address: LightningAddress) {
+        if generation != self.session_generation {
+            return;
+        }
+        self.ln_claiming = false;
+        self.lightning_address = Some(address);
+        self.ln_username_input.clear();
+        self.ln_username_available = None;
+        self.ln_username_error = None;
+        self.ln_reconcile_needs_reregister = None;
+    }
+
+    fn on_lightning_address_claim_failed(&mut self, generation: u64, error: String) {
+        if generation != self.session_generation {
+            return;
+        }
+        self.ln_claiming = false;
+        self.ln_claim_error = Some(error);
+    }
+
+    fn cancel_edit_lightning_address(&mut self) {
+        if self.ln_changing {
+            return;
+        }
+        self.ln_editing = false;
+        self.ln_username_input.clear();
+        self.ln_username_available = None;
+        self.ln_username_error = None;
+        self.ln_claim_error = None;
+        self.ln_check_version += 1;
+        if let Some(handle) = self.ln_check_abort.take() {
+            handle.abort();
+        }
+        self.ln_checking = false;
+    }
+
+    fn save_lightning_address(&mut self) -> iced::Task<Message> {
+        if self.ln_changing {
+            return iced::Task::none();
+        }
+        let new_username = self.ln_username_input.trim().to_string();
+        let valid_format = self.ln_username_error.is_none() && !new_username.is_empty();
+        let available = self.ln_username_available == Some(true);
+        let current_username = self
+            .lightning_address
+            .as_ref()
+            .and_then(|la| la.lightning_address.as_deref())
+            .and_then(|addr| addr.split('@').next());
+        let differs = current_username.is_none_or(|u| u != new_username);
+        if !(valid_format && available && differs) {
+            return iced::Task::none();
+        }
+        let Some(client) = self.client.clone() else {
+            return iced::Task::none();
+        };
+        let Some(spark) = self.spark_client.clone() else {
+            self.ln_claim_error = Some("Spark wallet is not available on this cube".to_string());
+            return iced::Task::none();
+        };
+        let Some(cube_id) = self.api_cube_id() else {
+            self.ln_claim_error = Some(
+                self.registration_error
+                    .clone()
+                    .unwrap_or_else(|| "Cube registration pending".to_string()),
+            );
+            return iced::Task::none();
+        };
+        self.ln_changing = true;
+        self.ln_claim_error = None;
+        let generation = self.session_generation;
+        iced::Task::perform(
+            async move {
+                // Step 1: server-side atomic username swap.
+                // Only the DB row changes — no DNS work.
+                let new_addr = match client
+                    .update_lightning_address(&cube_id, &new_username)
+                    .await
+                {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        return LightningAddressChangeOutcome::ServerError(format!("{}", e));
+                    }
+                };
+
+                // Step 2: release the old SDK binding from
+                // Breez. Required because the SDK's register
+                // call doesn't replace an existing binding —
+                // see the reconciler at
+                // `reconcile_spark_lightning_address`.
+                if let Err(e) = spark.delete_lightning_address().await {
+                    log::error!(
+                        "[CONNECT-CUBE] change: SDK delete failed after \
+                         server commit (cube={}, new={}): {}",
+                        cube_id,
+                        new_username,
+                        e
+                    );
+                    return LightningAddressChangeOutcome::SdkSyncFailed {
+                        addr: new_addr,
+                        message: format!(
+                            "Could not release the previous Lightning Address \
+                             binding on this device: {}. Tap Retry to finish \
+                             switching to {}.",
+                            e, new_username
+                        ),
+                    };
+                }
+
+                // Step 3: bind the new username on the
+                // Breez-hosted LNURL server.
+                if let Err(e) = spark
+                    .register_lightning_address(new_username.clone(), None)
+                    .await
+                {
+                    log::error!(
+                        "[CONNECT-CUBE] change: SDK register failed after \
+                         server commit + SDK delete (cube={}, new={}): {}",
+                        cube_id,
+                        new_username,
+                        e
+                    );
+                    return LightningAddressChangeOutcome::SdkSyncFailed {
+                        addr: new_addr,
+                        message: format!(
+                            "Could not register {} with the Lightning Address \
+                             server: {}. Tap Retry to finish.",
+                            new_username, e
+                        ),
+                    };
+                }
+
+                LightningAddressChangeOutcome::Ok(new_addr)
+            },
+            move |outcome| {
+                Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LightningAddressUpdated {
+                        generation,
+                        outcome,
+                    },
+                ))
+            },
+        )
+    }
+
+    fn on_lightning_address_updated(
+        &mut self,
+        generation: u64,
+        outcome: LightningAddressChangeOutcome,
+    ) {
+        if generation != self.session_generation {
+            return;
+        }
+        self.ln_changing = false;
+        match outcome {
+            LightningAddressChangeOutcome::Ok(addr) => {
+                self.lightning_address = Some(addr);
+                self.ln_editing = false;
+                self.ln_username_input.clear();
+                self.ln_username_available = None;
+                self.ln_username_error = None;
+                self.ln_claim_error = None;
+                self.ln_reconcile_needs_reregister = None;
+            }
+            LightningAddressChangeOutcome::ServerError(msg) => {
+                // Stay in edit mode so the user can correct
+                // and retry; the address itself is unchanged.
+                self.ln_claim_error = Some(msg);
+            }
+            LightningAddressChangeOutcome::SdkSyncFailed { addr, message } => {
+                // Server committed; mirror that locally and
+                // surface the existing re-registration prompt
+                // so the user can retry the SDK side.
+                self.lightning_address = Some(addr);
+                self.ln_editing = false;
+                self.ln_username_input.clear();
+                self.ln_username_available = None;
+                self.ln_username_error = None;
+                self.ln_claim_error = None;
+                self.ln_reconcile_needs_reregister = Some(message);
+            }
+        }
+    }
+
+    fn retry_lightning_address_reregister(&mut self) -> iced::Task<Message> {
+        if self.ln_reregistering {
+            return iced::Task::none();
+        }
+        let Some(spark) = self.spark_client.clone() else {
+            return iced::Task::none();
+        };
+        let Some(db_addr) = self
+            .lightning_address
+            .as_ref()
+            .and_then(|la| la.lightning_address.as_ref())
+            .cloned()
+        else {
+            return iced::Task::none();
+        };
+        // Same malformed-record guard as
+        // `reconcile_spark_lightning_address`: without
+        // `@domain` in the DB record, the post-register
+        // comparison against the SDK's full `user@domain`
+        // can never match, and the user would be stuck in
+        // a retry loop they can't clear.
+        let db_username = match db_addr.split('@').next() {
+            Some(u) if !u.is_empty() && db_addr.contains('@') => u.to_string(),
+            _ => {
+                log::warn!(
+                    "[CONNECT-CUBE] skipping retry rebind: malformed DB \
+                     lightning address {:?} (expected user@domain)",
+                    db_addr
+                );
+                self.ln_reconcile_needs_reregister = Some(coincube_ui::localized_format!(
+                    "Stored lightning address {:?} is malformed \
+                     (expected user@domain) — please re-claim a username",
+                    "La dirección Lightning guardada {:?} no tiene un formato válido \
+                     (se esperaba usuario@dominio). Vuelve a reclamar un nombre de usuario.",
+                    db_addr
+                ));
+                return iced::Task::none();
+            }
+        };
+        self.ln_reregistering = true;
+        let generation = self.session_generation;
+        iced::Task::perform(
+            async move {
+                // Idempotent: tolerates an already-empty SDK.
+                // Ignore failure here — the register that
+                // follows is the authoritative success
+                // signal, and a Breez-side "already gone"
+                // error shouldn't block recovery.
+                if let Err(e) = spark.delete_lightning_address().await {
+                    log::warn!(
+                        "[CONNECT-CUBE] retry rebind: SDK delete \
+                         returned {} (continuing to register)",
+                        e
+                    );
+                }
+                spark
+                    .register_lightning_address(db_username, None)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectCube(
+                    ConnectCubeMessage::LightningAddressReregistered { generation, result },
+                ))
+            },
+        )
+    }
+
+    fn on_lightning_address_reregistered(
+        &mut self,
+        generation: u64,
+        result: Result<LightningAddressInfo, String>,
+    ) {
+        if generation != self.session_generation {
+            return;
+        }
+        self.ln_reregistering = false;
+        match result {
+            Ok(info) => {
+                let db_addr = self
+                    .lightning_address
+                    .as_ref()
+                    .and_then(|la| la.lightning_address.as_deref());
+                if db_addr == Some(info.lightning_address.as_str()) {
+                    self.ln_reconcile_needs_reregister = None;
+                    log::info!(
+                        "[CONNECT-CUBE] manual rebind succeeded: {}",
+                        info.lightning_address
+                    );
+                } else {
+                    // Domain-drift guard, mirroring the
+                    // reconciler. Don't claim "rebound" when
+                    // the SDK's full address doesn't match
+                    // the DB record.
+                    self.ln_reconcile_needs_reregister = Some(format!(
+                        "Spark SDK registered '{}' but the confirmed \
+                         reservation is '{}'",
+                        info.lightning_address,
+                        db_addr.unwrap_or("")
+                    ));
+                }
+            }
+            Err(e) => {
+                self.ln_reconcile_needs_reregister = Some(e);
+            }
+        }
+    }
+
+    fn on_spark_lightning_address_changed(
+        &mut self,
+        info: Option<LightningAddressInfo>,
+    ) -> iced::Task<Message> {
+        match info {
+            Some(info) => {
+                // A `Some` payload means the SDK observed a
+                // register/change — on this device at the
+                // tail of the claim flow, or cross-device
+                // via realtime-sync replay. Only treat it
+                // as authoritative when it matches the
+                // DB-confirmed reservation; a mismatched
+                // payload means the SDK holds a binding we
+                // haven't confirmed server-side (pre-confirm
+                // claim-flow race, cross-device identity
+                // swap, stale cache), and mirroring it to
+                // the display would show the wrong address.
+                let db_addr = self
+                    .lightning_address
+                    .as_ref()
+                    .and_then(|la| la.lightning_address.as_deref());
+                if db_addr == Some(info.lightning_address.as_str()) {
+                    log::info!(
+                        "[CONNECT-CUBE] Spark lightning address confirmed: {}",
+                        info.lightning_address
+                    );
+                    // SDK matches the DB — any stale "needs
+                    // re-registration" state is resolved.
+                    self.ln_reconcile_needs_reregister = None;
+                } else {
+                    log::warn!(
+                        "[CONNECT-CUBE] Spark reports {:?} but DB record \
+                         is {:?} — triggering reconcile",
+                        info.lightning_address,
+                        db_addr
+                    );
+                    if let Some(task) = self.reconcile_spark_lightning_address() {
+                        return task;
                     }
                 }
-                Err(e) => {
-                    log::error!("[AVATAR] Load error: {}", e);
-                    self.avatar_error = Some(e);
+            }
+            None => {
+                // If the DB still has a confirmed username
+                // (i.e. the user didn't initiate the delete
+                // on this device), trigger the same
+                // auto-reconcile path as on startup so the
+                // address rebinds without user action.
+                if let Some(task) = self.reconcile_spark_lightning_address() {
+                    return task;
                 }
-            },
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn retry_registration(&mut self) -> iced::Task<Message> {
+        if self.registering {
+            return iced::Task::none();
+        }
+        if self.client.is_none() {
+            // A restored connect.json session may have registered
+            // through App::EnsureConnectReady without a panel client.
+            // Keep the failure visible while that path retries from
+            // the cached tokens; it clears on CubeRegistered success.
+            return iced::Task::done(Message::EnsureConnectReady);
+        }
+        self.registration_error = None;
+        self.register_cube()
+    }
+
+    fn on_connect_cube_error(&mut self, e: String) {
+        log::error!("[CONNECT-CUBE] Error: {}", e);
+        if self.ln_claiming {
+            self.ln_claim_error = Some(e);
+            self.ln_claiming = false;
+        } else if self.ln_checking {
+            self.ln_username_error = Some(e);
+            self.ln_checking = false;
+        } else {
+            self.ln_claim_error = Some(e);
+        }
+    }
+
+    fn update_avatar(&mut self, msg: AvatarMessage) -> iced::Task<Message> {
+        match msg {
+            AvatarMessage::Enter => return self.enter_avatar(),
+
+            AvatarMessage::Loaded(result) => return self.on_avatar_loaded(result),
 
             AvatarMessage::SetStep(step) => {
                 self.avatar_step = step;
@@ -1904,170 +1861,19 @@ impl ConnectCubePanel {
             AvatarMessage::AccentMotifChanged(v) => self.avatar_draft.accent_motif = v,
             AvatarMessage::LaserEyesToggled(v) => self.avatar_draft.laser_eyes = v,
 
-            AvatarMessage::Generate => {
-                if self.avatar_generating {
-                    return iced::Task::none();
-                }
-                let Some(client) = self.client.clone() else {
-                    self.avatar_error = Some("Not signed in".to_string());
-                    return iced::Task::none();
-                };
-                let req = AvatarGenerateRequest {
-                    user_traits: self.avatar_draft.clone(),
-                };
-                let Some(cid) = self.api_cube_id() else {
-                    self.avatar_generating = false;
-                    self.avatar_error = Some(
-                        self.registration_error
-                            .clone()
-                            .unwrap_or_else(|| "Cube registration pending".to_string()),
-                    );
-                    return iced::Task::none();
-                };
-                self.avatar_generating = true;
-                self.avatar_error = None;
-                self.avatar_step = AvatarFlowStep::Generating;
-                return iced::Task::perform(
-                    async move { client.post_avatar_generate(&cid, req).await },
-                    |res| {
-                        Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                            AvatarMessage::GenerateComplete(res.map_err(|e| e.to_string())),
-                        )))
-                    },
-                );
-            }
+            AvatarMessage::Generate => return self.generate_avatar(),
 
             AvatarMessage::GenerateComplete(result) => {
-                self.avatar_generating = false;
-                match result {
-                    Ok(data) => {
-                        let variant_id = data.variant.id;
-                        let new_variant = data.variant.clone();
-                        if let Some(ref mut ad) = self.avatar_data {
-                            ad.has_avatar = true;
-                            ad.active_avatar_url = Some(new_variant.image_url.clone());
-                            if !ad.variants.iter().any(|v| v.id == new_variant.id) {
-                                ad.variants.push(new_variant);
-                            }
-                            ad.identity = Some(data.identity);
-                            // Decrement local regeneration count
-                            if ad.regenerations_remaining > 0 {
-                                ad.regenerations_remaining -= 1;
-                            }
-                        } else {
-                            self.avatar_data = Some(crate::services::coincube::GetAvatarData {
-                                has_avatar: true,
-                                active_avatar_url: Some(data.variant.image_url.clone()),
-                                identity: Some(data.identity),
-                                variants: vec![data.variant],
-                                regenerations_remaining: 0,
-                                created_at: None,
-                                updated_at: None,
-                            });
-                        }
-                        self.avatar_step = AvatarFlowStep::Reveal;
-                        if let Some(ref ad) = self.avatar_data {
-                            if let Some(ref identity) = ad.identity {
-                                self.avatar_draft = identity.user_traits.clone();
-                            }
-                        }
-                        // Fetch image + refresh regeneration count in parallel
-                        if let Some(client) = self.client.clone() {
-                            let client2 = client.clone();
-                            let Some(cid) = self.api_cube_id() else {
-                                return iced::Task::none();
-                            };
-                            return iced::Task::batch([
-                                iced::Task::perform(
-                                    async move { client.fetch_avatar_image(variant_id).await },
-                                    move |res| {
-                                        Message::View(view::Message::ConnectCube(
-                                            ConnectCubeMessage::Avatar(
-                                                AvatarMessage::ImageLoaded {
-                                                    variant_id,
-                                                    result: res.map_err(|e| e.to_string()),
-                                                },
-                                            ),
-                                        ))
-                                    },
-                                ),
-                                iced::Task::perform(
-                                    async move { client2.get_avatar_regenerations(&cid).await },
-                                    |res| {
-                                        Message::View(view::Message::ConnectCube(
-                                            ConnectCubeMessage::Avatar(
-                                                AvatarMessage::RegenerationsLoaded(
-                                                    res.map_err(|e| e.to_string()),
-                                                ),
-                                            ),
-                                        ))
-                                    },
-                                ),
-                            ]);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("[AVATAR] Generate error: {}", e);
-                        self.avatar_error = Some(e);
-                        self.avatar_step = AvatarFlowStep::Questionnaire;
-                    }
-                }
+                return self.on_avatar_generate_complete(result)
             }
 
             AvatarMessage::SelectVariant(variant_id) => {
-                let Some(client) = self.client.clone() else {
-                    self.avatar_error = Some("Not signed in".to_string());
-                    return iced::Task::none();
-                };
-                let Some(cid) = self.api_cube_id() else {
-                    self.avatar_error = Some(
-                        self.registration_error
-                            .clone()
-                            .unwrap_or_else(|| "Cube registration pending".to_string()),
-                    );
-                    return iced::Task::none();
-                };
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .post_avatar_select(&cid, AvatarSelectRequest { variant_id })
-                            .await
-                    },
-                    |res| {
-                        Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
-                            AvatarMessage::VariantSelected(res.map_err(|e| e.to_string())),
-                        )))
-                    },
-                );
+                return self.select_avatar_variant(variant_id)
             }
 
-            AvatarMessage::VariantSelected(result) => match result {
-                Ok(data) => {
-                    if let Some(ref mut ad) = self.avatar_data {
-                        ad.active_avatar_url = Some(data.active_avatar_url);
-                    }
-                    let variant_id = data.variant_id;
-                    if !self.avatar_image_cache.contains_key(&variant_id) {
-                        if let Some(client) = self.client.clone() {
-                            return iced::Task::perform(
-                                async move { client.fetch_avatar_image(variant_id).await },
-                                move |res| {
-                                    Message::View(view::Message::ConnectCube(
-                                        ConnectCubeMessage::Avatar(AvatarMessage::ImageLoaded {
-                                            variant_id,
-                                            result: res.map_err(|e| e.to_string()),
-                                        }),
-                                    ))
-                                },
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!("[AVATAR] Select error: {}", e);
-                    self.avatar_error = Some(e);
-                }
-            },
+            AvatarMessage::VariantSelected(result) => {
+                return self.on_avatar_variant_selected(result)
+            }
 
             AvatarMessage::RegenerationsLoaded(result) => match result {
                 Ok(data) => {
@@ -2099,42 +1905,7 @@ impl ConnectCubePanel {
                 self.avatar_step = AvatarFlowStep::Questionnaire;
             }
 
-            AvatarMessage::DownloadAvatar => {
-                let active_id = self.avatar_data.as_ref().and_then(|d| {
-                    let url = d.active_avatar_url.as_deref().unwrap_or("");
-                    d.variants
-                        .iter()
-                        .find(|v| url.ends_with(&v.id.to_string()))
-                        .map(|v| v.id)
-                });
-                if let Some(id) = active_id {
-                    if let Some((bytes, _)) = self.avatar_image_cache.get(&id) {
-                        let bytes = bytes.clone();
-                        return iced::Task::perform(
-                            async move {
-                                let Some(handle) = rfd::AsyncFileDialog::new()
-                                    .set_title("Save Avatar")
-                                    .set_file_name("coincube-avatar.png")
-                                    .add_filter("PNG Image", &["png"])
-                                    .save_file()
-                                    .await
-                                else {
-                                    return Ok(());
-                                };
-                                std::fs::write(handle.path(), &bytes).map_err(|e| e.to_string())
-                            },
-                            |res| match res {
-                                Ok(()) => Message::View(view::Message::ConnectCube(
-                                    ConnectCubeMessage::Avatar(AvatarMessage::Noop),
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectCube(
-                                    ConnectCubeMessage::Avatar(AvatarMessage::SaveError(e)),
-                                )),
-                            },
-                        );
-                    }
-                }
-            }
+            AvatarMessage::DownloadAvatar => return self.download_avatar(),
 
             AvatarMessage::SaveError(e) => {
                 log::error!("[AVATAR] Failed to save avatar to disk: {}", e);
@@ -2145,6 +1916,335 @@ impl ConnectCubePanel {
         }
 
         iced::Task::none()
+    }
+    fn enter_avatar(&mut self) -> iced::Task<Message> {
+        self.avatar_error = None;
+        let Some(client) = self.client.clone() else {
+            self.avatar_error = Some("Not signed in".to_string());
+            return iced::Task::none();
+        };
+        let Some(cid) = self.api_cube_id() else {
+            if let Some(ref e) = self.registration_error {
+                self.avatar_error = Some(e.clone());
+            }
+            return iced::Task::none();
+        };
+        iced::Task::perform(async move { client.get_avatar(&cid).await }, |res| {
+            Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                AvatarMessage::Loaded(res.map_err(|e| e.to_string())),
+            )))
+        })
+    }
+
+    fn on_avatar_loaded(
+        &mut self,
+        result: Result<crate::services::coincube::GetAvatarData, String>,
+    ) -> iced::Task<Message> {
+        match result {
+            Ok(data) => {
+                let has = data.has_avatar;
+                let active_id = data
+                    .variants
+                    .iter()
+                    .find(|v| {
+                        data.active_avatar_url
+                            .as_deref()
+                            .map(|u| u.ends_with(&v.id.to_string()))
+                            .unwrap_or(false)
+                    })
+                    .map(|v| v.id);
+                self.avatar_data = Some(data);
+                if has {
+                    self.avatar_step = AvatarFlowStep::Settings;
+                    if let Some(id) = active_id {
+                        return self.fetch_avatar_image_if_missing(id);
+                    }
+                } else {
+                    self.avatar_step = AvatarFlowStep::Questionnaire;
+                }
+            }
+            Err(e) => {
+                log::error!("[AVATAR] Load error: {}", e);
+                self.avatar_error = Some(e);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn generate_avatar(&mut self) -> iced::Task<Message> {
+        if self.avatar_generating {
+            return iced::Task::none();
+        }
+        let Some(client) = self.client.clone() else {
+            self.avatar_error = Some("Not signed in".to_string());
+            return iced::Task::none();
+        };
+        let req = AvatarGenerateRequest {
+            user_traits: self.avatar_draft.clone(),
+        };
+        let Some(cid) = self.api_cube_id() else {
+            self.avatar_generating = false;
+            self.avatar_error = Some(
+                self.registration_error
+                    .clone()
+                    .unwrap_or_else(|| "Cube registration pending".to_string()),
+            );
+            return iced::Task::none();
+        };
+        self.avatar_generating = true;
+        self.avatar_error = None;
+        self.avatar_step = AvatarFlowStep::Generating;
+        iced::Task::perform(
+            async move { client.post_avatar_generate(&cid, req).await },
+            |res| {
+                Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                    AvatarMessage::GenerateComplete(res.map_err(|e| e.to_string())),
+                )))
+            },
+        )
+    }
+
+    fn on_avatar_generate_complete(
+        &mut self,
+        result: Result<crate::services::coincube::AvatarGenerateData, String>,
+    ) -> iced::Task<Message> {
+        self.avatar_generating = false;
+        match result {
+            Ok(data) => {
+                let variant_id = data.variant.id;
+                let new_variant = data.variant.clone();
+                if let Some(ref mut ad) = self.avatar_data {
+                    ad.has_avatar = true;
+                    ad.active_avatar_url = Some(new_variant.image_url.clone());
+                    if !ad.variants.iter().any(|v| v.id == new_variant.id) {
+                        ad.variants.push(new_variant);
+                    }
+                    ad.identity = Some(data.identity);
+                    // Decrement local regeneration count
+                    if ad.regenerations_remaining > 0 {
+                        ad.regenerations_remaining -= 1;
+                    }
+                } else {
+                    self.avatar_data = Some(crate::services::coincube::GetAvatarData {
+                        has_avatar: true,
+                        active_avatar_url: Some(data.variant.image_url.clone()),
+                        identity: Some(data.identity),
+                        variants: vec![data.variant],
+                        regenerations_remaining: 0,
+                        created_at: None,
+                        updated_at: None,
+                    });
+                }
+                self.avatar_step = AvatarFlowStep::Reveal;
+                if let Some(ref ad) = self.avatar_data {
+                    if let Some(ref identity) = ad.identity {
+                        self.avatar_draft = identity.user_traits.clone();
+                    }
+                }
+                return self.fetch_generated_avatar_details(variant_id);
+            }
+            Err(e) => {
+                log::error!("[AVATAR] Generate error: {}", e);
+                self.avatar_error = Some(e);
+                self.avatar_step = AvatarFlowStep::Questionnaire;
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn fetch_generated_avatar_details(&self, variant_id: u64) -> iced::Task<Message> {
+        // Fetch image + refresh regeneration count in parallel
+        if let Some(client) = self.client.clone() {
+            let client2 = client.clone();
+            let Some(cid) = self.api_cube_id() else {
+                return iced::Task::none();
+            };
+            return iced::Task::batch([
+                iced::Task::perform(
+                    async move { client.fetch_avatar_image(variant_id).await },
+                    move |res| {
+                        Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                            AvatarMessage::ImageLoaded {
+                                variant_id,
+                                result: res.map_err(|e| e.to_string()),
+                            },
+                        )))
+                    },
+                ),
+                iced::Task::perform(
+                    async move { client2.get_avatar_regenerations(&cid).await },
+                    |res| {
+                        Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                            AvatarMessage::RegenerationsLoaded(res.map_err(|e| e.to_string())),
+                        )))
+                    },
+                ),
+            ]);
+        }
+        iced::Task::none()
+    }
+
+    fn select_avatar_variant(&mut self, variant_id: u64) -> iced::Task<Message> {
+        let Some(client) = self.client.clone() else {
+            self.avatar_error = Some("Not signed in".to_string());
+            return iced::Task::none();
+        };
+        let Some(cid) = self.api_cube_id() else {
+            self.avatar_error = Some(
+                self.registration_error
+                    .clone()
+                    .unwrap_or_else(|| "Cube registration pending".to_string()),
+            );
+            return iced::Task::none();
+        };
+        iced::Task::perform(
+            async move {
+                client
+                    .post_avatar_select(&cid, AvatarSelectRequest { variant_id })
+                    .await
+            },
+            |res| {
+                Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                    AvatarMessage::VariantSelected(res.map_err(|e| e.to_string())),
+                )))
+            },
+        )
+    }
+
+    fn on_avatar_variant_selected(
+        &mut self,
+        result: Result<crate::services::coincube::AvatarSelectData, String>,
+    ) -> iced::Task<Message> {
+        match result {
+            Ok(data) => {
+                if let Some(ref mut ad) = self.avatar_data {
+                    ad.active_avatar_url = Some(data.active_avatar_url);
+                }
+                let variant_id = data.variant_id;
+                return self.fetch_avatar_image_if_missing(variant_id);
+            }
+            Err(e) => {
+                log::error!("[AVATAR] Select error: {}", e);
+                self.avatar_error = Some(e);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn fetch_avatar_image_if_missing(&self, variant_id: u64) -> iced::Task<Message> {
+        if !self.avatar_image_cache.contains_key(&variant_id) {
+            if let Some(client) = self.client.clone() {
+                return iced::Task::perform(
+                    async move { client.fetch_avatar_image(variant_id).await },
+                    move |res| {
+                        Message::View(view::Message::ConnectCube(ConnectCubeMessage::Avatar(
+                            AvatarMessage::ImageLoaded {
+                                variant_id,
+                                result: res.map_err(|e| e.to_string()),
+                            },
+                        )))
+                    },
+                );
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn download_avatar(&self) -> iced::Task<Message> {
+        let active_id = self.avatar_data.as_ref().and_then(|d| {
+            let url = d.active_avatar_url.as_deref().unwrap_or("");
+            d.variants
+                .iter()
+                .find(|v| url.ends_with(&v.id.to_string()))
+                .map(|v| v.id)
+        });
+        if let Some(id) = active_id {
+            if let Some((bytes, _)) = self.avatar_image_cache.get(&id) {
+                let bytes = bytes.clone();
+                return iced::Task::perform(
+                    async move {
+                        let Some(handle) = rfd::AsyncFileDialog::new()
+                            .set_title("Save Avatar")
+                            .set_file_name("coincube-avatar.png")
+                            .add_filter("PNG Image", &["png"])
+                            .save_file()
+                            .await
+                        else {
+                            return Ok(());
+                        };
+                        std::fs::write(handle.path(), &bytes).map_err(|e| e.to_string())
+                    },
+                    |res| match res {
+                        Ok(()) => Message::View(view::Message::ConnectCube(
+                            ConnectCubeMessage::Avatar(AvatarMessage::Noop),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectCube(
+                            ConnectCubeMessage::Avatar(AvatarMessage::SaveError(e)),
+                        )),
+                    },
+                );
+            }
+        }
+        iced::Task::none()
+    }
+}
+
+async fn rollback_reconcile_domain_mismatch(
+    spark: &SparkClient,
+    info: &LightningAddressInfo,
+    db_addr: &str,
+) -> ReconcileOutcome {
+    // Roll back the orphan binding we
+    // just created on the LNURL server
+    // — leaving it would squat the
+    // wrong-domain record forever.
+    // Best-effort: log if the cleanup
+    // itself fails so an operator can
+    // remove it manually.
+    let bound = info.lightning_address.clone();
+    let mut suffix = "";
+    if let Err(e) = spark.delete_lightning_address().await {
+        log::error!(
+            "[CONNECT-CUBE] failed to roll back \
+             orphan Spark registration {:?} after \
+             reconcile domain mismatch (expected {:?}): {}",
+            bound,
+            db_addr,
+            e
+        );
+        suffix = " (orphan SDK registration left behind \
+                  — please contact support)";
+    }
+    ReconcileOutcome::NeedsReRegistration(format!(
+        "Spark SDK registered '{}' but the confirmed \
+         reservation is '{}'{}",
+        bound, db_addr, suffix
+    ))
+}
+
+async fn check_connect_ln_username_availability(
+    api_client: Option<CoincubeClient>,
+    api_cube_id: Option<String>,
+    username: &str,
+) -> bool {
+    if let (Some(client), Some(cube_id)) = (api_client, api_cube_id) {
+        match client
+            .check_lightning_address_available(&cube_id, username)
+            .await
+        {
+            Ok(api_available) => api_available,
+            Err(e) => {
+                log::warn!(
+                    "[CONNECT-CUBE] API availability check \
+                     failed, falling back to Breez-only \
+                     hint: {}",
+                    e
+                );
+                true
+            }
+        }
+    } else {
+        true
     }
 }
 
