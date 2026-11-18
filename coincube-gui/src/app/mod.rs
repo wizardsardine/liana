@@ -8580,6 +8580,22 @@ impl App {
                 return self.route_recovery_alerts(msg);
             }
 
+            // A Spark Send's results arrive asynchronously: the bridge waits
+            // up to 30 s for a Bolt11 send, and an unanswered or pending send
+            // re-checks for about two minutes. The fallback below hands a
+            // message to whichever panel is on screen, so a user who left Send
+            // mid-send lost them and the panel stayed locked in Sending or
+            // Checking until restart. Send's own intents come only from its
+            // view, so routing every SparkSend message to it is the same as
+            // the fallback while Send is on screen.
+            Message::View(view::Message::SparkSend(msg)) => {
+                return self.panels.spark_send.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::SparkSend(msg)),
+                );
+            }
+
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
@@ -15906,6 +15922,43 @@ mod settings_navigation_integration_tests {
         assert_eq!(app.cube_settings.spark_alias, None);
         assert_eq!(side_panel_spark_row(&app), ["Spark"]);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_spark_send_result_reaches_the_send_panel_from_any_route() {
+        // A send's answer can arrive up to 30 s (bridge Bolt11 wait) or about
+        // two minutes (pending re-checks) after Confirm. A user who navigated
+        // away meanwhile must not leave the Send panel waiting on an answer
+        // another panel swallowed.
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("spark-send-route-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        for away in [
+            Menu::Spark(menu::SparkSubMenu::Overview),
+            Menu::Cube(menu::CubeSubMenu::Overview),
+        ] {
+            drop(app.set_current_panel(away.clone()));
+            assert!(!matches!(
+                app.panels.spark_send.phase(),
+                state::spark::send::SparkSendPhase::Error(_)
+            ));
+            drop(app.update(Message::View(view::Message::SparkSend(
+                view::SparkSendMessage::SendFailed("rejected".into()),
+            ))));
+            assert!(
+                matches!(
+                    app.panels.spark_send.phase(),
+                    state::spark::send::SparkSendPhase::Error(e) if e == "rejected"
+                ),
+                "{:?}",
+                away
+            );
+            assert_eq!(app.panels.current, away, "routing must not navigate");
+            drop(app.update(Message::View(view::Message::SparkSend(
+                view::SparkSendMessage::Reset,
+            ))));
+        }
+        std::fs::remove_dir_all(root).ok();
     }
 
     /// The Spark page's share panel leads to Settings › Spark › Lightning
