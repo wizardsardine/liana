@@ -1383,6 +1383,54 @@ mod presentation_tests {
         image::save_buffer(path, &pixels, 1024, 768, image::ColorType::Rgba8).unwrap();
     }
 
+    fn capture_completed_grid_steps(
+        wizard: &mut BorderWalletWizard,
+        renderer: &mut iced::Renderer,
+        theme: &theme::Theme,
+        size: Size,
+        name: &str,
+    ) {
+        if let Ok(directory) = std::env::var("BORDER_WALLET_CAPTURE_DIR") {
+            wizard.error = None;
+            for col in 0..PATTERN_LENGTH as u8 {
+                let _ = wizard.on_toggle_cell(3, col);
+            }
+            for step in ["complete", "checksum", "confirm"] {
+                if step != "complete" {
+                    let _ = wizard.on_next();
+                }
+                let view = match wizard.step {
+                    WizardStep::Grid => wizard.view_grid(),
+                    WizardStep::Checksum => wizard.view_checksum(),
+                    _ => wizard.view_confirm(),
+                };
+                let mut element: Element<'_, Message> = Container::new(view)
+                    .padding(coincube_ui::widget::modal::WINDOW_MARGIN)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .into();
+                let mut tree = Tree::new(element.as_widget());
+                let node = element.as_widget_mut().layout(
+                    &mut tree,
+                    renderer,
+                    &layout::Limits::new(Size::ZERO, size),
+                );
+                capture(
+                    &std::path::Path::new(&directory).join(format!(
+                        "border-wallet-synthetic-{}-{}-1024x768.png",
+                        step, name
+                    )),
+                    &mut element,
+                    &mut tree,
+                    &node,
+                    renderer,
+                    theme,
+                    size,
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn tab_reveals_below_viewport_grid_cell_at_1024_in_both_themes() {
         assert_eq!(
@@ -1729,45 +1777,7 @@ mod presentation_tests {
 
             // The full pattern enables Continue; Checksum and Confirm follow.
             drop(error_element);
-            if let Ok(directory) = std::env::var("BORDER_WALLET_CAPTURE_DIR") {
-                wizard.error = None;
-                for col in 0..PATTERN_LENGTH as u8 {
-                    let _ = wizard.on_toggle_cell(3, col);
-                }
-                for step in ["complete", "checksum", "confirm"] {
-                    if step != "complete" {
-                        let _ = wizard.on_next();
-                    }
-                    let view = match wizard.step {
-                        WizardStep::Grid => wizard.view_grid(),
-                        WizardStep::Checksum => wizard.view_checksum(),
-                        _ => wizard.view_confirm(),
-                    };
-                    let mut element: Element<'_, Message> = Container::new(view)
-                        .padding(coincube_ui::widget::modal::WINDOW_MARGIN)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill)
-                        .into();
-                    let mut tree = Tree::new(element.as_widget());
-                    let node = element.as_widget_mut().layout(
-                        &mut tree,
-                        &renderer,
-                        &layout::Limits::new(Size::ZERO, size),
-                    );
-                    capture(
-                        &std::path::Path::new(&directory).join(format!(
-                            "border-wallet-synthetic-{}-{}-1024x768.png",
-                            step, name
-                        )),
-                        &mut element,
-                        &mut tree,
-                        &node,
-                        &mut renderer,
-                        &theme,
-                        size,
-                    );
-                }
-            }
+            capture_completed_grid_steps(&mut wizard, &mut renderer, &theme, size, name);
         }
     }
 }
