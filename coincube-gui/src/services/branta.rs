@@ -92,6 +92,18 @@ fn percent_decode(value: &str) -> String {
         .into_owned()
 }
 
+fn should_forward_bitcoin_parameter(key: &str) -> Option<bool> {
+    let forwarded_key = |key: &str| matches!(key, "branta_id" | "branta_secret" | "bc" | "tb");
+    if key.contains('%') {
+        // A percent-encoded spelling of an identifying key is ambiguous: reject it.
+        if forwarded_key(&percent_decode(key).to_ascii_lowercase()) {
+            return None;
+        }
+        return Some(false);
+    }
+    Some(forwarded_key(key))
+}
+
 /// Sensitive input deliberately has no derived Debug or serialization implementation.
 #[derive(Clone)]
 pub struct LookupRequest {
@@ -158,21 +170,13 @@ impl LookupRequest {
         // the SDK return `unknown` before it decrypts and compares the address, hiding
         // a swapped path address. Parameters that are not forwarded are not inspected, so
         // an unencoded space or other noise in a `label` cannot switch the check off.
-        let forwarded_key = |key: &str| matches!(key, "branta_id" | "branta_secret" | "bc" | "tb");
         let mut keys = std::collections::HashSet::new();
         let (mut id, mut secret) = (None, None);
         let mut forwarded = Vec::new();
         for pair in query.split('&') {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
             let key = key.to_ascii_lowercase();
-            if key.contains('%') {
-                // A percent-encoded spelling of an identifying key is ambiguous: reject it.
-                if forwarded_key(&percent_decode(&key).to_ascii_lowercase()) {
-                    return None;
-                }
-                continue;
-            }
-            if !forwarded_key(&key) {
+            if !should_forward_bitcoin_parameter(&key)? {
                 continue;
             }
             // Reject ambiguous or malformed identifying parameters before the SDK's
