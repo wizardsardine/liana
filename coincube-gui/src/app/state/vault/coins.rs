@@ -194,11 +194,14 @@ impl CoinsPanel {
             });
         }
         let included = inputs.iter().filter(|row| row.included && !row.key).count();
+        // The estimator counts one input beyond the shared ones: the key, or
+        // for a signature split an overestimate by one input. A Vault and an
+        // imported wallet are sized from their own spending policy.
         let vbytes = self.wallet.as_ref().and_then(|wallet| {
-            let descriptor = wallet.inheritance_descriptor()?;
-            // The estimator counts one input beyond the shared ones: the key,
-            // or for a signature split an overestimate by one input.
-            crate::services::split_coins::estimate_split_vbytes(descriptor, included.max(1))
+            crate::services::split_coins::estimate_split_vbytes(
+                &wallet.main_descriptor,
+                included.max(1),
+            )
         });
         Some(SplitOverlay {
             here: self.chain,
