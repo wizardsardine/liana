@@ -485,7 +485,7 @@ impl State for LiquidTransactions {
                 self.pending_vault_refund_id = None;
                 Task::none()
             }
-            Message::View(view::Message::Reload) => self.reload(None, None),
+            Message::View(view::Message::Reload) => self.refresh(),
             Message::View(view::Message::LiquidTransactions(
                 view::LiquidTransactionsMessage::BackgroundRefresh,
             ))
@@ -553,8 +553,8 @@ impl State for LiquidTransactions {
                 if self.asset_filter != filter {
                     self.asset_filter = filter;
                     // Reload with the new filter — also resets pagination
-                    // back to page 0 (see `reload`).
-                    return self.reload(None, None);
+                    // back to page 0 (see `refresh`).
+                    return self.refresh();
                 }
                 Task::none()
             }
@@ -931,6 +931,17 @@ impl State for LiquidTransactions {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.vault_wallet = wallet;
+        self.refresh()
+    }
+}
+
+impl LiquidTransactions {
+    /// Refetches the first page and the refundables. In-page reloads (the
+    /// Reload button, an asset-filter change) use this rather than
+    /// `State::reload(None, None)`, which would drop the Vault wallet the
+    /// App passed in and send "Use Vault address" past an imported Vault's
+    /// reservation lock.
+    fn refresh(&mut self) -> Task<Message> {
         self.loading = true;
         self.selected_payment = None;
         self.selected_refundable = None;
@@ -973,6 +984,39 @@ mod tests {
         let client = Arc::new(BreezClient::disconnected(Network::Bitcoin));
         let path = std::env::temp_dir().join("coincube-tx-test-missing-swaps.json");
         LiquidTransactions::new(Arc::new(LiquidBackend::new(client)), path)
+    }
+
+    /// The App hands the Vault wallet in through `State::reload`. An
+    /// in-page Reload or asset-filter change must keep it, or "Use Vault
+    /// address" falls back to `get_new_address` and skips an imported
+    /// Vault's reservation lock.
+    #[test]
+    fn in_page_reloads_keep_the_vault_wallet() {
+        use crate::services::split_test_wallets::{imported_vault, SHAPES};
+        let mut state = new_state();
+        let wallet = Arc::new(imported_vault(SHAPES[0]));
+        let _ = State::reload(&mut state, None, Some(wallet.clone()));
+        let cache = Cache::default();
+
+        let _ = state.update(None, &cache, Message::View(view::Message::Reload));
+        assert!(state
+            .vault_wallet
+            .as_ref()
+            .is_some_and(|w| Arc::ptr_eq(w, &wallet)));
+
+        let _ = state.update(
+            None,
+            &cache,
+            Message::View(view::Message::SetAssetFilter(AssetFilter::LbtcOnly)),
+        );
+        assert!(state
+            .vault_wallet
+            .as_ref()
+            .is_some_and(|w| Arc::ptr_eq(w, &wallet)));
+
+        // The App's own reload still replaces it, e.g. when the Vault unloads.
+        let _ = State::reload(&mut state, None, None);
+        assert!(state.vault_wallet.is_none());
     }
 
     #[test]
