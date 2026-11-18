@@ -79,6 +79,9 @@ pub struct HubFacts {
     pub key: Option<Amount>,
     pub signature_available: bool,
     pub copy_exists: bool,
+    /// Whether the copy wizard can create the copy here: a Vault. An
+    /// imported Vault's copy is its paired Cube, never a claimed Vault.
+    pub can_create_copy: bool,
 }
 
 /// The checklist, worded in the window's language: it is built while the
@@ -196,7 +199,8 @@ pub fn items(facts: HubFacts) -> Vec<HubItem> {
                 } else {
                     ItemState::Optional
                 },
-                action: (!facts.copy_exists).then_some(("Create copy", HubAction::CreateCopy)),
+                action: (!facts.copy_exists && facts.can_create_copy)
+                    .then_some(("Create copy", HubAction::CreateCopy)),
             },
         ]
     }
@@ -290,6 +294,7 @@ impl SplitHubPanel {
             key: cache.split_keys().first().map(|(coin, _)| coin.amount),
             signature_available: split_coins::signature_available(&self.wallet),
             copy_exists: cache.btcb2_already_claimed,
+            can_create_copy: self.wallet.supports_inheritance(),
         }
     }
 }
@@ -330,6 +335,7 @@ mod tests {
             key: None,
             signature_available: false,
             copy_exists: false,
+            can_create_copy: true,
         }
     }
 
@@ -500,6 +506,57 @@ mod tests {
         let done = items(facts);
         assert_eq!(done[0].state, ItemState::Done);
         assert!(done[0].detail.starts_with("None."));
+    }
+
+    /// An imported Vault gets the same checklist on both chains. Its signers
+    /// make ordinary signatures only, so it always needs a split key, and the
+    /// Vault copy wizard is not offered: its copy is the paired imported Cube.
+    #[test]
+    fn imported_vault_hub_needs_a_split_key_and_offers_no_copy_wizard() {
+        use crate::services::split_test_wallets::{imported_fork_vault, imported_vault, SHAPES};
+        for shape in SHAPES {
+            let bitcoin = imported_vault(shape);
+            let fork = imported_fork_vault(shape);
+            assert_eq!(fork.chain, ChainId::BitcoinBlake2b);
+            for wallet in [bitcoin, fork] {
+                let here = wallet.chain;
+                let panel = SplitHubPanel::new(Arc::new(wallet));
+                let facts = HubFacts {
+                    here,
+                    both_chains: 1,
+                    both_total: Amount::from_sat(50_000),
+                    ..panel.facts(&Cache::default())
+                };
+                assert!(!facts.signature_available, "{:?} {:?}", shape, here);
+                assert!(!facts.can_create_copy, "{:?} {:?}", shape, here);
+                let items = items(facts);
+                assert_eq!(items[0].action, Some(("Split coins", HubAction::Split)));
+                let key = items
+                    .iter()
+                    .find(|item| item.title.starts_with("Split key on"))
+                    .unwrap();
+                assert_eq!(key.state, ItemState::ToDo);
+                assert_eq!(key.action, Some(("Get a split key", HubAction::Split)));
+                assert!(items
+                    .iter()
+                    .all(|item| item.action != Some(("Create copy", HubAction::CreateCopy))));
+                if here.is_blake2b() {
+                    assert_eq!(items[1].title, "Replay-protected signature");
+                    assert_eq!(items[1].state, ItemState::Optional);
+                } else {
+                    assert_eq!(items[2].title, "Bitcoin Blake2b copy");
+                    assert_eq!(items[2].state, ItemState::Optional);
+                }
+            }
+        }
+        // With the paired Cube in place the copy line is checked off.
+        let items = items(HubFacts {
+            copy_exists: true,
+            can_create_copy: false,
+            ..facts()
+        });
+        assert_eq!(items[2].state, ItemState::Done);
+        assert_eq!(items[2].action, None);
     }
 
     #[test]

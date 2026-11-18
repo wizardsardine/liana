@@ -101,6 +101,16 @@ pub fn imported_vault(shape: Shape) -> crate::app::wallet::Wallet {
     )
 }
 
+/// The same wallet as [`imported_vault`], imported on Bitcoin Blake2b.
+pub fn imported_fork_vault(shape: Shape) -> crate::app::wallet::Wallet {
+    let bitcoin = imported_vault(shape).main_descriptor;
+    crate::app::wallet::Wallet::new(
+        coincube_core::wallet_descriptor::WalletDescriptor::Imported(
+            bitcoin.as_imported().unwrap().paired_blake2b().unwrap(),
+        ),
+    )
+}
+
 pub fn block_hash(height: u64) -> BlockHash {
     let mut bytes = [0; 32];
     bytes[..8].copy_from_slice(&height.to_le_bytes());
