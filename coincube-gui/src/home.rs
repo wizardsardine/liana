@@ -12859,9 +12859,8 @@ mod tests {
         let _ = recovery_input_view(&words, None, true);
     }
 
-    /// Tenshu v175 hides Liquid (master §3 decision 2), so creating or
-    /// recovering a Cube names no Liquid wallet. Restore this copy when
-    /// Liquid reopens.
+    /// The Liquid wallet has been removed, so creating or recovering a Cube
+    /// names no Liquid wallet.
     #[test]
     fn create_and_recovery_copy_names_no_liquid_wallet() {
         use crate::app::view::shared::landing::capture;

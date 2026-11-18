@@ -60,8 +60,8 @@ impl Step for ClaimOverview {
                     .style(theme::text::secondary),
                 )
                 .push(p1_regular(localized_format!(
-                    "Same seed and keys as {}. Bitcoin Blake2b Cubes hold a Vault only, no Spark or Liquid.",
-                    "La misma frase y las mismas claves que {}. Los Cubes de Bitcoin Blake2b solo tienen un Vault, sin Spark ni Liquid.",
+                    "Same seed and keys as {}. Bitcoin Blake2b Cubes hold a Vault only, no Spark wallet.",
+                    "La misma frase y las mismas claves que {}. Los Cubes de Bitcoin Blake2b solo tienen un Vault, sin cartera Spark.",
                     self.source_name
                 )))
                 .push(

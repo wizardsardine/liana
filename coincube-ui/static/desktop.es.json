@@ -1463,7 +1463,7 @@
   "Native review is temporarily unavailable. Try Review again.": "La revisión nativa no está disponible por ahora. Vuelve a pulsar Revisar.",
   "Navigate Back": "Volver",
   "Needed with the keys to restore this Vault. Decrypts with one of your signing devices or xpubs.": "Se necesita junto con las claves para restaurar este Vault. Se descifra con uno de tus dispositivos de firma o xpubs.",
-  "Needs a Vault run by COINCUBE Desktop on Bitcoin (mainnet, Testnet4 or Regtest) or Bitcoin Blake2b (mainnet or Testnet4). Spark, Liquid, imported wallets and external daemons aren't supported.": "Necesita un Vault gestionado por COINCUBE Desktop en Bitcoin (mainnet, Testnet4 o Regtest) o Bitcoin Blake2b (mainnet o Testnet4). Spark, Liquid, las carteras importadas y los daemons externos no son compatibles.",
+  "Needs a Vault run by COINCUBE Desktop on Bitcoin (mainnet, Testnet4 or Regtest) or Bitcoin Blake2b (mainnet or Testnet4). Spark, imported wallets and external daemons aren't supported.": "Necesita un Vault gestionado por COINCUBE Desktop en Bitcoin (mainnet, Testnet4 o Regtest) o Bitcoin Blake2b (mainnet o Testnet4). Spark, las carteras importadas y los daemons externos no son compatibles.",
   "Needs a Vault with a recovery path, registered with Connect.": "Necesita un Vault con una ruta de recuperación, registrado en Connect.",
   "Nested SegWit": "SegWit anidado",
   "Network": "Red",
