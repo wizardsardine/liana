@@ -1743,19 +1743,17 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
 pub fn imported_history_section<'a>(
     summary: &'a crate::app::state::imported_bitcoin::ImportedNodeSummary,
 ) -> Element<'a, Message> {
-    use crate::app::state::imported_bitcoin::ImportMessage;
+    use crate::app::state::imported_bitcoin::{ImportMessage, ImportedSyncStatus};
     use crate::app::view::settings::page;
     let idle = !summary.busy;
+    let (status, label) = match summary.sync_status {
+        ImportedSyncStatus::Synced => (page::Status::Ok, "Synced"),
+        ImportedSyncStatus::Syncing => (page::Status::Busy, "Syncing"),
+        ImportedSyncStatus::Failed => (page::Status::Warn, "Sync failed"),
+    };
     let mut rows: Vec<Element<'a, Message>> = vec![page::row(localized_copy("Server"))
         .description(summary.endpoint.clone())
-        .accessory(page::status(
-            if summary.ready {
-                page::Status::Ok
-            } else {
-                page::Status::Busy
-            },
-            localized_copy(if summary.ready { "Synced" } else { "Syncing" }),
-        ))
+        .accessory(page::status(status, localized_copy(label)))
         .control(page::button(
             "tenshu.settings.node.imported.retry",
             localized_copy("Retry synchronization"),
