@@ -98,6 +98,37 @@ fn is_countdown_action(action: &str) -> bool {
     )
 }
 
+/// Whether the Spark-pay session (if any) belongs to `order_id`. A cancel
+/// result for one order may reset Spark state only when this holds, so a
+/// payment in flight for another trade keeps its session.
+fn spark_session_owned_by(session_id: Option<&str>, order_id: &str) -> bool {
+    session_id.is_none_or(|id| id == order_id)
+}
+
+/// Put a failed chat message back into the input, unless the user has
+/// already typed a new draft. Returns `true` when the text was restored.
+fn restore_failed_draft(input: &mut String, failed_text: String) -> bool {
+    if input.trim().is_empty() {
+        *input = failed_text;
+        true
+    } else {
+        false
+    }
+}
+
+/// Error toast for a failed chat send. When the input already held a new
+/// draft, the failed message was not restored, so say so.
+fn chat_send_failed_message(kind: &str, error: &str, kept_draft: bool) -> String {
+    if kept_draft {
+        format!(
+            "{kind} send failed: {error}. Your new draft was kept; \
+             the unsent message was not restored."
+        )
+    } else {
+        format!("{kind} send failed: {error}")
+    }
+}
+
 /// A label–value row used in order confirmation and trade detail views.
 fn detail_row(label: impl ToString, value: impl ToString) -> Element<'static, view::Message> {
     row![
@@ -379,6 +410,8 @@ pub struct P2PPanel {
     selected_trade: Option<String>,
     trade_invoice_input: form::Value<String>,
     trade_action_loading: bool,
+    /// Trade whose action set `trade_action_loading`; its result alone clears it.
+    trade_action_order_id: Option<String>,
     trade_rating: u8, // 1-5 star rating for counterparty
     // Cached QR code for the hold invoice in the selected trade's detail view
     hold_invoice_qr: Option<qr_code::Data>,
@@ -424,6 +457,9 @@ pub struct P2PPanel {
     pub stream_error: Option<String>,
     /// Cached trade messages for the selected trade (avoids disk I/O per frame).
     cached_trade_messages: Vec<super::mostro::TradeMessage>,
+    /// Cached chat messages for every trade, keyed by order ID, so the Chat
+    /// list renders without reading the trade file per row per frame.
+    chat_history_cache: HashMap<String, Vec<super::mostro::TradeMessage>>,
     /// Cached chat identity info for the selected trade (avoids key-derivation per frame).
     cached_chat_identity: Option<super::mostro::ChatIdentityInfo>,
     /// Decrypted image cache, keyed by blossom URL.
@@ -529,6 +565,7 @@ impl P2PPanel {
             selected_trade: None,
             trade_invoice_input: Default::default(),
             trade_action_loading: false,
+            trade_action_order_id: None,
             trade_rating: 0,
             hold_invoice_qr: None,
             pending_payment_invoice: None,
@@ -554,6 +591,7 @@ impl P2PPanel {
             mostro_config_error,
             stream_error: None,
             cached_trade_messages: Vec::new(),
+            chat_history_cache: HashMap::new(),
             cached_chat_identity: None,
             image_cache: HashMap::new(),
             image_downloads_in_flight: HashSet::new(),
@@ -574,6 +612,7 @@ impl P2PPanel {
     /// `self.cached_trade_messages` / `self.cached_chat_identity` instead
     /// of hitting the disk on every frame.
     fn refresh_trade_cache(&mut self) {
+        self.refresh_chat_history_cache();
         let order_id = self.active_order_id();
         if let Some(order_id) = order_id {
             let cube_name = self.cube_name();
@@ -591,6 +630,7 @@ impl P2PPanel {
 
     /// Separate cache refresh for the Chat tab's selected trade.
     fn refresh_chat_trade_cache(&mut self) {
+        self.refresh_chat_history_cache();
         if let Some(ref order_id) = self.chat_selected_trade.clone() {
             let cube_name = self.cube_name();
             self.cached_trade_messages = super::mostro::get_trade_messages(&cube_name, order_id);
@@ -603,6 +643,11 @@ impl P2PPanel {
             self.cached_trade_messages = Vec::new();
             self.cached_chat_identity = None;
         }
+    }
+
+    /// Reload the Chat list's per-trade conversation cache (one disk read).
+    fn refresh_chat_history_cache(&mut self) {
+        self.chat_history_cache = super::mostro::get_chat_history(&self.cube_name());
     }
 
     /// The currently active order ID — prefers `chat_selected_trade` if set,
@@ -1226,7 +1271,8 @@ impl P2PPanel {
             return Task::none();
         }
         self.trade_action_loading = true;
-        if let Some(ref order_id) = self.selected_trade {
+        if let Some(order_id) = self.selected_trade.clone() {
+            self.trade_action_order_id = Some(order_id.clone());
             let data = super::mostro::TradeActionData {
                 order_id: order_id.clone(),
                 cube_name: self.cube_name(),
@@ -1235,8 +1281,10 @@ impl P2PPanel {
                 mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
                 relay_urls: self.resolved_coordinator().relays,
             };
-            return Task::perform(action(data), |result| {
-                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
+            return Task::perform(action(data), move |result| {
+                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(
+                    order_id, result,
+                )))
             });
         } else {
             tracing::warn!("perform_trade_action called with no selected trade");
@@ -4266,11 +4314,13 @@ impl P2PPanel {
     }
 
     fn chat_list_entries<'a>(&'a self, action_filter: &[&str]) -> Vec<(&'a P2PTrade, String, u64)> {
-        // Collect trades that have matching chat messages
-        let cube_name = self.cube_name();
+        // Collect trades that have matching chat messages (from the state
+        // cache — the view must not hit the disk per row per frame).
         let mut chat_entries: Vec<(&P2PTrade, String, u64)> = Vec::new();
         for trade in &self.trades {
-            let messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
+            let Some(messages) = self.chat_history_cache.get(&trade.id) else {
+                continue;
+            };
             let chat_msgs: Vec<_> = messages
                 .iter()
                 .filter(|m| action_filter.contains(&m.action.as_str()))
@@ -4838,6 +4888,7 @@ impl P2PPanel {
             .collect();
         self.trades = trades;
         self.trades.append(&mut retained);
+        self.refresh_chat_history_cache();
         // Recompute QR cache if the selected trade now has a hold invoice
         if let Some(ref sel_id) = self.selected_trade {
             if self.hold_invoice_qr.is_none() {
@@ -4900,22 +4951,39 @@ impl P2PPanel {
         self.dispatch_order_cancellation(order_id)
     }
 
-    fn finish_order_cancellation(&mut self, result: Result<(), String>) -> Task<Message> {
+    fn finish_order_cancellation(
+        &mut self,
+        order_id: String,
+        result: Result<(), String>,
+    ) -> Task<Message> {
         match result {
             Ok(()) => {
-                self.selected_order = None;
+                if self.selected_order.as_deref() == Some(order_id.as_str()) {
+                    self.selected_order = None;
+                }
+                if self
+                    .pending_payment_invoice
+                    .as_ref()
+                    .is_some_and(|(id, ..)| *id == order_id)
+                {
+                    self.pending_payment_invoice = None;
+                    self.invoice_copied = false;
+                }
                 // Mirror the modal-dismissal reset used by
                 // `DismissPaymentInvoice` and `SparkPaySent` so a
                 // subsequent SelectTrade/TakeOrderResult doesn't
-                // inherit stale Spark-pay state.
-                self.pending_payment_invoice = None;
-                self.invoice_copied = false;
-                self.spark_balance_sat = None;
-                self.spark_pay_amount_sat = None;
-                self.spark_pay_attempt = None;
-                self.spark_pay_phase = SparkPayPhase::Idle;
-                self.show_qr_fallback = false;
-                self.spark_pay_session_id = None;
+                // inherit stale Spark-pay state — but only when the
+                // Spark session belongs to the canceled order. A
+                // payment in flight for another trade must keep its
+                // session, or its result would be dropped as stale.
+                if spark_session_owned_by(self.spark_pay_session_id.as_deref(), &order_id) {
+                    self.spark_balance_sat = None;
+                    self.spark_pay_amount_sat = None;
+                    self.spark_pay_attempt = None;
+                    self.spark_pay_phase = SparkPayPhase::Idle;
+                    self.show_qr_fallback = false;
+                    self.spark_pay_session_id = None;
+                }
                 Task::done(Message::View(view::Message::ShowSuccess(
                     "Order canceled".to_string(),
                 )))
@@ -5726,10 +5794,11 @@ impl P2PPanel {
         if rating == 0 {
             return Task::none();
         }
-        let Some(ref order_id) = self.selected_trade else {
+        let Some(order_id) = self.selected_trade.clone() else {
             return Task::none();
         };
         self.trade_action_loading = true;
+        self.trade_action_order_id = Some(order_id.clone());
         let data = super::mostro::TradeActionData {
             order_id: order_id.clone(),
             cube_name: self.cube_name(),
@@ -5738,9 +5807,14 @@ impl P2PPanel {
             mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
             relay_urls: self.resolved_coordinator().relays,
         };
-        Task::perform(super::mostro::rate_counterparty(data, rating), |result| {
-            Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-        })
+        Task::perform(
+            super::mostro::rate_counterparty(data, rating),
+            move |result| {
+                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(
+                    order_id, result,
+                )))
+            },
+        )
     }
 
     fn cancel_active_trade(&mut self) -> Task<Message> {
@@ -5759,43 +5833,50 @@ impl P2PPanel {
 
     fn finish_trade_action(
         &mut self,
+        order_id: String,
         result: Result<super::mostro::TradeActionResponse, String>,
     ) -> Task<Message> {
-        self.trade_action_loading = false;
-        self.trade_rating = 0;
+        // Only the operation that set the loading state may clear it: a late
+        // result for trade A must not unlock an action in flight for trade B.
+        if self.trade_action_order_id.as_deref() == Some(order_id.as_str()) {
+            self.trade_action_order_id = None;
+            self.trade_action_loading = false;
+            self.trade_rating = 0;
+        }
         match result {
             Ok(resp) => {
                 let super::mostro::TradeActionResponse::Success { new_status } = resp;
-                tracing::info!("Trade action succeeded: {}", new_status);
+                tracing::info!("Trade action succeeded for {}: {}", order_id, new_status);
 
-                // Update last_dm_action, timestamp, and status on the matching in-memory trade
-                if let Some(ref order_id) = self.selected_trade {
-                    if let Some(trade) = self.trades.iter_mut().find(|t| t.id == *order_id) {
-                        let ts = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        trade.last_dm_action = Some(new_status.clone());
-                        if is_countdown_action(&new_status) {
-                            trade.countdown_start_ts = Some(ts);
-                        } else {
-                            trade.countdown_start_ts = None;
-                        }
-                        if let Some(s) = super::mostro::dm_action_to_status(&new_status) {
-                            trade.status = s;
-                        }
+                // Update last_dm_action, timestamp, and status on the originating
+                // trade — not whichever trade happens to be selected now.
+                if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    trade.last_dm_action = Some(new_status.clone());
+                    if is_countdown_action(&new_status) {
+                        trade.countdown_start_ts = Some(ts);
+                    } else {
+                        trade.countdown_start_ts = None;
                     }
-                    let cube_name = self.cube_name();
-                    super::mostro::append_trade_message(
-                        &cube_name,
-                        order_id,
-                        super::mostro::TradeMessage {
-                            timestamp: chrono::Utc::now().timestamp() as u64,
-                            action: new_status.clone(),
-                            payload_json: String::new(),
-                            is_own: false,
-                        },
-                    );
+                    if let Some(s) = super::mostro::dm_action_to_status(&new_status) {
+                        trade.status = s;
+                    }
+                }
+                let cube_name = self.cube_name();
+                super::mostro::append_trade_message(
+                    &cube_name,
+                    &order_id,
+                    super::mostro::TradeMessage {
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        action: new_status.clone(),
+                        payload_json: String::new(),
+                        is_own: false,
+                    },
+                );
+                if self.active_order_id().as_deref() == Some(order_id.as_str()) {
                     self.refresh_trade_cache();
                 }
 
@@ -5852,12 +5933,15 @@ impl P2PPanel {
                     self.record_acknowledged_chat(pending, "AdminDm");
                 }
                 Err(e) => {
-                    // Only restore input if the user is still viewing the same trade
-                    if self.active_order_id().as_deref() == Some(&pending.order_id) {
-                        self.dispute_chat_input.value = pending.original_text;
-                    }
+                    // Only restore input if the user is still viewing the same
+                    // trade and has not started a new draft meanwhile.
+                    let kept_draft = self.active_order_id().as_deref() == Some(&pending.order_id)
+                        && !restore_failed_draft(
+                            &mut self.dispute_chat_input.value,
+                            pending.original_text,
+                        );
                     return Some(Task::done(Message::View(view::Message::ShowError(
-                        format!("Dispute chat send failed: {}", e),
+                        chat_send_failed_message("Dispute chat", &e, kept_draft),
                     ))));
                 }
             }
@@ -5910,12 +5994,12 @@ impl P2PPanel {
                     self.record_acknowledged_chat(pending, "SendDm");
                 }
                 Err(e) => {
-                    // Only restore input if the user is still viewing the same trade
-                    if self.active_order_id().as_deref() == Some(&pending.order_id) {
-                        self.chat_input.value = pending.original_text;
-                    }
+                    // Only restore input if the user is still viewing the same
+                    // trade and has not started a new draft meanwhile.
+                    let kept_draft = self.active_order_id().as_deref() == Some(&pending.order_id)
+                        && !restore_failed_draft(&mut self.chat_input.value, pending.original_text);
                     return Some(Task::done(Message::View(view::Message::ShowError(
-                        format!("Chat send failed: {}", e),
+                        chat_send_failed_message("Chat", &e, kept_draft),
                     ))));
                 }
             }
@@ -5943,29 +6027,19 @@ impl P2PPanel {
             }
         }
 
-        // Chat messages are already persisted by process_dm_notifications.
-        // Still refresh the cache so the view picks up the new message.
+        // Every `TradeUpdate` comes from the relay handler
+        // (`persist_and_notify`), which has already persisted the message
+        // with its original rumor timestamp. Persisting it again here with
+        // the current time would store a second copy that can sort after
+        // later actions, so only refresh the caches.
         if is_chat {
+            self.refresh_chat_history_cache();
             if self.active_order_id().as_deref() == Some(&order_id) {
                 self.refresh_trade_cache();
                 return self.trigger_image_downloads();
             }
             return Task::none();
         }
-
-        // Persist non-chat protocol messages to disk
-        let cube_name = self.cube_name();
-        super::mostro::append_trade_message(
-            &cube_name,
-            &order_id,
-            super::mostro::TradeMessage {
-                timestamp: chrono::Utc::now().timestamp() as u64,
-                action: action.clone(),
-                payload_json,
-                is_own: false,
-            },
-        );
-
         // Refresh cache when this update belongs to the active trade
         if self.active_order_id().as_deref() == Some(&order_id) {
             self.refresh_trade_cache();
@@ -6199,8 +6273,6 @@ impl P2PPanel {
     fn start_spark_for_active_hold_invoice(
         &mut self,
         order_id: &str,
-        action: &str,
-        payload_json: &str,
         invoice: String,
         cache: &Cache,
     ) -> Option<Task<Message>> {
@@ -6216,9 +6288,9 @@ impl P2PPanel {
                 order_id,
                 self.spark_pay_phase,
             );
-            // Fall through to the shared persistence
-            // path; consume `invoice` so the binding
-            // isn't flagged as unused.
+            // Consume `invoice` so the binding isn't
+            // flagged as unused. The relay handler has
+            // already persisted the DM.
             let _ = invoice;
         } else {
             self.spark_pay_phase = SparkPayPhase::Idle;
@@ -6229,26 +6301,10 @@ impl P2PPanel {
             self.spark_pay_attempt = None;
             let balance = self.spark_balance_fetch_task(cache, order_id.to_owned());
             let parse = self.spark_parse_invoice_task(order_id.to_owned(), invoice);
-            // Persist before any Spark early-return — the
-            // shared non-chat persistence path below is
-            // bypassed by `return Task::batch(...)` / `return b`,
-            // and losing the PayInvoice/WaitingSellerToPay/
-            // BuyerTookOrder DM means the trade can't be
-            // rebuilt from disk after a restart. The
-            // `(None, _)` arm falls through and lets the
-            // shared path persist instead.
-            let persist_hold_invoice_dm = |this: &Self| {
-                super::mostro::append_trade_message(
-                    &this.cube_name(),
-                    order_id,
-                    super::mostro::TradeMessage {
-                        timestamp: chrono::Utc::now().timestamp() as u64,
-                        action: action.to_owned(),
-                        payload_json: payload_json.to_owned(),
-                        is_own: false,
-                    },
-                );
-            };
+            // The PayInvoice/WaitingSellerToPay/BuyerTookOrder
+            // DM is already on disk: the relay handler
+            // (`persist_and_notify`) stores it with its rumor
+            // timestamp before emitting the TradeUpdate.
             match (balance, parse) {
                 (Some(b), Some(p)) => {
                     tracing::info!(
@@ -6257,7 +6313,6 @@ impl P2PPanel {
                          kicking off balance fetch + invoice parse",
                         order_id,
                     );
-                    persist_hold_invoice_dm(self);
                     return Some(Task::batch([b, p]));
                 }
                 (Some(b), None) => {
@@ -6267,7 +6322,6 @@ impl P2PPanel {
                          kicking off balance fetch",
                         order_id,
                     );
-                    persist_hold_invoice_dm(self);
                     return Some(b);
                 }
                 (None, _) => {
@@ -6325,17 +6379,10 @@ impl P2PPanel {
             // the eventual SparkPaySent to be filtered as
             // stale, losing the `spark_funded_order_ids`
             // entry that keeps the trade visible if Mostro
-            // later cancels it. The shared non-chat
-            // persistence path below still writes the DM
-            // to disk.
+            // later cancels it. The relay handler has
+            // already written the DM to disk.
             if let Some(invoice) = active_invoice_just_arrived {
-                return self.start_spark_for_active_hold_invoice(
-                    order_id,
-                    action,
-                    payload_json,
-                    invoice,
-                    cache,
-                );
+                return self.start_spark_for_active_hold_invoice(order_id, invoice, cache);
             } else if action == "PayInvoice"
                 || action == "WaitingSellerToPay"
                 || action == "BuyerTookOrder"
@@ -6366,8 +6413,10 @@ impl P2PPanel {
             mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
             relay_urls: self.resolved_coordinator().relays,
         };
-        Task::perform(super::mostro::cancel_trade(data), |result| {
+        let canceled_id = data.order_id.clone();
+        Task::perform(super::mostro::cancel_trade(data), move |result| {
             Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
+                canceled_id,
                 result.map(|_| ()),
             )))
         })
@@ -6620,7 +6669,9 @@ impl State for P2PPanel {
                 return Task::done(Message::View(view::Message::Clipboard(id)));
             }
             P2PMessage::CancelOrder(order_id) => return self.cancel_order(order_id),
-            P2PMessage::CancelOrderResult(result) => return self.finish_order_cancellation(result),
+            P2PMessage::CancelOrderResult(order_id, result) => {
+                return self.finish_order_cancellation(order_id, result)
+            }
             P2PMessage::OrderSubmitResult(result) => {
                 return self
                     .finish_order_submission(result)
@@ -6762,7 +6813,9 @@ impl State for P2PPanel {
             P2PMessage::OpenDispute => {
                 return self.perform_trade_action(None, super::mostro::open_dispute);
             }
-            P2PMessage::TradeActionResult(result) => return self.finish_trade_action(result),
+            P2PMessage::TradeActionResult(order_id, result) => {
+                return self.finish_trade_action(order_id, result)
+            }
             // Chat
             P2PMessage::OpenChat => {
                 self.active_chat = ActiveChat::Peer;
@@ -6785,9 +6838,11 @@ impl State for P2PPanel {
             }
             P2PMessage::ChatListTabMessages => {
                 self.chat_list_tab = ChatListTab::Messages;
+                self.refresh_chat_history_cache();
             }
             P2PMessage::ChatListTabDisputes => {
                 self.chat_list_tab = ChatListTab::Disputes;
+                self.refresh_chat_history_cache();
             }
             P2PMessage::OpenDisputeChatForTrade(trade_id) => {
                 self.chat_selected_trade = Some(trade_id);
