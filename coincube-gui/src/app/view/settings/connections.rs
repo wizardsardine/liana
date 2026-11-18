@@ -111,49 +111,53 @@ pub fn connections_content<'a>(cache: &'a Cache, support_open: bool) -> Element<
 
     // Only when automatic renewal didn't work.
     if status == ConnectionStatus::RenewFailed {
-        let mut notice = Column::new()
-            .spacing(4)
-            .push(page::heading(localized_copy(crate::app::RENEW_FAILED_TITLE)).size(14))
-            .push(page::muted(crate::app::renew_failed_detail()))
-            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-            .push(
-                Row::new()
-                    .spacing(12)
-                    .align_y(iced::Alignment::Center)
-                    .push(page::primary(
-                        TRY_AGAIN_ID,
-                        localized_copy("Try again"),
-                        Some(Message::Settings(SettingsMessage::ReregisterConnectDevice)),
-                    ))
-                    .push(page::link(
-                        SUPPORT_DETAILS_ID,
-                        if support_open {
-                            "Hide details for support"
-                        } else {
-                            "Details for support"
-                        },
-                        Message::Settings(SettingsMessage::ToggleConnectSupportDetails),
-                    )),
-            );
-        if support_open {
-            if let Some(id) = cache.connect_device_id.as_deref() {
-                notice = notice.push(
-                    Row::new()
-                        .spacing(10)
-                        .align_y(iced::Alignment::Center)
-                        .push(page::muted(localized_copy("Device ID")))
-                        .push(page::muted(id).font(coincube_ui::font::MONO_REGULAR))
-                        .push(page::button(
-                            COPY_DEVICE_ID,
-                            localized_copy("Copy"),
-                            Some(Message::Clipboard(id.to_owned())),
-                        )),
-                );
-            }
-        }
-        content = content.push(page::note(Tone::Bad, notice, None));
+        content = content.push(renewal_failure_note(cache, support_open));
     }
     content.into()
+}
+
+fn renewal_failure_note(cache: &Cache, support_open: bool) -> Element<'_, Message> {
+    let mut notice = Column::new()
+        .spacing(4)
+        .push(page::heading(localized_copy(crate::app::RENEW_FAILED_TITLE)).size(14))
+        .push(page::muted(crate::app::renew_failed_detail()))
+        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+        .push(
+            Row::new()
+                .spacing(12)
+                .align_y(iced::Alignment::Center)
+                .push(page::primary(
+                    TRY_AGAIN_ID,
+                    localized_copy("Try again"),
+                    Some(Message::Settings(SettingsMessage::ReregisterConnectDevice)),
+                ))
+                .push(page::link(
+                    SUPPORT_DETAILS_ID,
+                    if support_open {
+                        "Hide details for support"
+                    } else {
+                        "Details for support"
+                    },
+                    Message::Settings(SettingsMessage::ToggleConnectSupportDetails),
+                )),
+        );
+    if support_open {
+        if let Some(id) = cache.connect_device_id.as_deref() {
+            notice = notice.push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                    .push(page::muted(localized_copy("Device ID")))
+                    .push(page::muted(id).font(coincube_ui::font::MONO_REGULAR))
+                    .push(page::button(
+                        COPY_DEVICE_ID,
+                        localized_copy("Copy"),
+                        Some(Message::Clipboard(id.to_owned())),
+                    )),
+            );
+        }
+    }
+    page::note(Tone::Bad, notice, None)
 }
 
 /// The one row the Spark Connections tab keeps for this computer's Connect
