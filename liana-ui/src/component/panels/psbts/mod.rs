@@ -109,12 +109,11 @@ pub fn list_entry<'a, M: Clone + 'static>(
 
     let status_pill = status_pill(status);
 
-    let max_lbl_chars = (available_width - 500.0) as usize / 22;
     let (kind, label) = if is_send_to_self {
         let label = new::h2(t!("common-self-transfer")).style(theme::text::primary);
         (PaymentKind::SendToSelf, label.into())
     } else {
-        let label = display_label(label, new::H2_SPEC, Some(max_lbl_chars));
+        let label = display_label(label, new::H2_SPEC);
         (PaymentKind::Outgoing, label)
     };
 

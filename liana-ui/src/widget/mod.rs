@@ -6,7 +6,10 @@ pub mod hover_tooltip;
 mod menu;
 pub mod menu_button;
 pub mod modal;
+pub mod priority;
+mod priority_row;
 pub mod text_input;
+mod truncated_text;
 
 use iced::Length;
 
@@ -22,6 +25,8 @@ pub type Button<'a, Message> = iced::widget::Button<'a, Message, Theme, Renderer
 pub type BistateButton<'a, Message> = copy_button::BistateButton<'a, Message, Theme, Renderer>;
 pub type MenuButton<'a, Message> = menu_button::MenuButton<'a, Message, Theme, Renderer>;
 pub type Fit<'a, Message> = fit::Fit<'a, Message>;
+pub type PriorityRow<'a, Message> = priority_row::PriorityRow<'a, Message>;
+pub type TruncatedText<'a, Message> = truncated_text::TruncatedText<'a, Message>;
 pub type CheckBox<'a, Message> = iced::widget::Checkbox<'a, Message, Theme, Renderer>;
 pub type Radio<'a, Message> = iced::widget::Radio<'a, Message, Theme, Renderer>;
 pub type Text<'a> = iced::widget::Text<'a, Theme, Renderer>;
