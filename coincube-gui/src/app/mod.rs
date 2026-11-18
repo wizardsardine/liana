@@ -5150,13 +5150,19 @@ impl App {
         };
         let source = self.cube_settings.clone();
         let credentials = source.master_signer_fingerprint.and_then(|fingerprint| {
+            // The PIN, or for a passkey Cube the password derived from its
+            // seed: what the copy's seed file is written under.
             Some((
                 session::unlocked_signer(&source.id, fingerprint)?,
-                session::pin_for(&source.id)?,
+                session::seed_file_password(&source)?,
             ))
         });
-        let Some((signer, pin)) = credentials else {
-            return error("Unlock this Cube with its PIN again to create the copy.");
+        let Some((signer, seed_password)) = credentials else {
+            return error(if source.is_passkey_cube() {
+                "Unlock this Cube with its passkey again to create the copy."
+            } else {
+                "Unlock this Cube with its PIN again to create the copy."
+            });
         };
         let signer = crate::signer::Signer::new(signer);
         let backend = coincubed::config::BitcoinBackend::Esplora(
@@ -5167,7 +5173,11 @@ impl App {
         Task::perform(
             async move {
                 crate::services::bitcoin_import::pairing::install_pair(
-                    &root, &source, &signer, &pin, backend,
+                    &root,
+                    &source,
+                    &signer,
+                    &seed_password,
+                    backend,
                 )
                 .await
                 .map(|_| ())

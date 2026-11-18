@@ -42,14 +42,8 @@ fn unique_wallet<'a>(saved: &'a Settings, id: &WalletId) -> Result<&'a WalletSet
 }
 
 fn source_binding(source: &CubeSettings) -> Result<ImportedClaimPair, String> {
-    if source.network != ChainId::Bitcoin
-        || source.vault_wallet_id.is_some()
-        || source.is_passkey_cube()
-    {
-        return Err(
-            "Open a PIN-unlocked imported Bitcoin wallet to create its Bitcoin Blake2b copy."
-                .into(),
-        );
+    if source.network != ChainId::Bitcoin || source.vault_wallet_id.is_some() {
+        return Err("Open an imported Bitcoin wallet to create its Bitcoin Blake2b copy.".into());
     }
     let import = source
         .bitcoin_import
@@ -88,6 +82,9 @@ fn validate_target(source: &CubeSettings, target: &CubeSettings) -> Result<(), S
         || target.vault_wallet_id.is_some()
         || target.master_signer_fingerprint != source.master_signer_fingerprint
         || target.master_signer_fingerprint.is_none()
+        // The copy unlocks the way its source does: the same PIN, or the
+        // same passkey.
+        || target.passkey_metadata != source.passkey_metadata
         || target.bitcoin_import.as_ref().and_then(|i| i.attachment()) != Some(&wallet)
     {
         return Err(
@@ -111,6 +108,7 @@ pub fn validate_target_record(target: &CubeSettings) -> Result<(), String> {
         ChainId::Bitcoin,
     );
     source.master_signer_fingerprint = target.master_signer_fingerprint;
+    source.passkey_metadata = target.passkey_metadata.clone();
     source.bitcoin_import = Some(Box::new(BitcoinImport {
         operation_id: binding.source_operation_id,
         stage: BitcoinImportStage::Ready {
@@ -188,18 +186,21 @@ fn validate_syncing_discovery(
 
 /// Create, or reuse, this imported Bitcoin wallet's Bitcoin Blake2b copy:
 /// a Cube of its own holding the paired imported wallet, unlocked with the
-/// same seed and PIN. Uses the normal staged import journal, and reuses a
-/// finished pair without reopening its database.
+/// same seed, and the same PIN or passkey. `seed_password` is what the
+/// source's seed file is encrypted under: its PIN, or for a passkey Cube the
+/// password derived from its seed ([`crate::app::session::seed_file_password`]).
+/// Uses the normal staged import journal, and reuses a finished pair without
+/// reopening its database.
 pub async fn install_pair(
     root: &CoincubeDirectory,
     source: &CubeSettings,
     signer: &Signer,
-    pin: &str,
+    seed_password: &str,
     backend: coincubed::config::BitcoinBackend,
 ) -> Result<CubeSettings, String> {
     let binding = source_binding(source)?;
-    if source.master_signer_fingerprint != Some(signer.fingerprint()) || pin.is_empty() {
-        return Err("Unlock this Cube with its PIN again before creating the copy.".into());
+    if source.master_signer_fingerprint != Some(signer.fingerprint()) || seed_password.is_empty() {
+        return Err("Unlock this Cube again before creating the copy.".into());
     }
     let source_dir = root.network_directory(source.network);
     let source_settings = Settings::from_file(&source_dir).map_err(|e| e.to_string())?;
@@ -207,6 +208,7 @@ pub async fn install_pair(
     if source_binding(current)? != binding
         || current.master_signer_fingerprint != source.master_signer_fingerprint
         || current.backed_up != source.backed_up
+        || current.passkey_metadata != source.passkey_metadata
     {
         return Err("This Cube changed. Open Split coins and try again.".into());
     }
@@ -299,6 +301,7 @@ pub async fn install_pair(
     target.master_signer_fingerprint = source.master_signer_fingerprint;
     target.backed_up = source.backed_up;
     target.mfa_done = source.mfa_done;
+    target.passkey_metadata = source.passkey_metadata.clone();
     target.imported_claim_source = Some(Box::new(binding));
     target.bitcoin_import = Some(Box::new(BitcoinImport {
         operation_id: Uuid::parse_str(&target.id).map_err(|e| e.to_string())?,
@@ -338,7 +341,7 @@ pub async fn install_pair(
         signer,
         root,
         ChainId::BitcoinBlake2b,
-        pin,
+        seed_password,
         &target.id,
         Some(&secret),
     )
@@ -655,14 +658,15 @@ pub(crate) mod tests {
             "Sign in to COINCUBE | Connect to create the Bitcoin Blake2b copy.",
             "Unlock this Cube with its PIN again to create the copy.",
             "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
-            "Unlock this Cube with its PIN again before creating the copy.",
+            "Unlock this Cube again before creating the copy.",
+            "Unlock this Cube with its passkey again to create the copy.",
             "This Cube changed. Open Split coins and try again.",
             "This unfinished paired wallet has no saved discovery range. Resolve its pending import before retrying the copy; no wallet data was changed.",
             "The unfinished paired wallet has no verified copied discovery range. Finish or resolve its pending import before retrying the copy.",
             "This wallet's storage changed. Open Split coins and try again.",
             "Wait for this wallet's scan to finish before creating the copy.",
             "This wallet's address range is too large to copy.",
-            "Open a PIN-unlocked imported Bitcoin wallet to create its Bitcoin Blake2b copy.",
+            "Open an imported Bitcoin wallet to create its Bitcoin Blake2b copy.",
             "The Bitcoin Blake2b copy conflicts with this wallet. No wallet was replaced.",
             "The paired imported wallet signer metadata changed.",
             "The source imported wallet is missing.",
@@ -686,5 +690,45 @@ pub(crate) mod tests {
                 });
             assert_ne!(spanish, message, "no Spanish for: {}", message);
         }
+    }
+
+    /// A passkey Cube pairs too: its copy carries the same passkey, and a
+    /// copy that doesn't is refused, in either direction.
+    #[test]
+    fn a_passkey_cubes_copy_unlocks_with_the_same_passkey() {
+        let passkey = crate::app::settings::PasskeyMetadata {
+            credential_id: "synthetic-credential".to_string(),
+            rp_id: "coincube.io".to_string(),
+            created_at: 0,
+            label: None,
+        };
+        let (mut source, mut target) = pair();
+        source.passkey_metadata = Some(passkey.clone());
+        assert!(source.is_passkey_cube());
+        assert!(
+            validate_target(&source, &target).is_err(),
+            "a copy without the passkey"
+        );
+        target.passkey_metadata = Some(passkey.clone());
+        validate_target(&source, &target).unwrap();
+        validate_target_record(&target).unwrap();
+        let mut other = passkey;
+        other.credential_id = "another-credential".to_string();
+        target.passkey_metadata = Some(other);
+        assert!(
+            validate_target(&source, &target).is_err(),
+            "another passkey"
+        );
+        // A PIN source's copy must not claim a passkey.
+        let (source, mut target) = pair();
+        target.passkey_metadata = source.passkey_metadata.clone();
+        validate_target(&source, &target).unwrap();
+        target.passkey_metadata = Some(crate::app::settings::PasskeyMetadata {
+            credential_id: "synthetic-credential".to_string(),
+            rp_id: "coincube.io".to_string(),
+            created_at: 0,
+            label: None,
+        });
+        assert!(validate_target(&source, &target).is_err());
     }
 }
