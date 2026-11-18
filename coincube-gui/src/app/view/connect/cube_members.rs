@@ -130,35 +130,7 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
     // The server Cube id is the boundary for every membership operation. A
     // registering Cube must not present an invite form that cannot submit.
     if !ready {
-        let reason = if state.owned_by_other_account {
-            "This Cube is registered to a different Connect account."
-        } else if state.registration_error.is_some() {
-            "Connect couldn't register this Cube. Retry, or check your Connect account if it keeps failing."
-        } else if state.client.is_none() {
-            "Sign in to Connect to manage this Cube's members."
-        } else {
-            "Not ready — the Cube is still registering."
-        };
-        let mut not_ready = Column::new().push(text::p1_regular(reason)).spacing(12);
-        if state.registration_error.is_some()
-            && !state.owned_by_other_account
-            && !state.is_registering()
-        {
-            not_ready = not_ready.push(action(
-                action_id("retry-registration"),
-                coincube_ui::locale::copy("Retry"),
-                ActionKind::Secondary,
-                Some(ConnectCubeMessage::RetryRegistration),
-            ));
-        }
-        return col
-            .push(
-                container(not_ready)
-                    .padding(20)
-                    .style(card_style)
-                    .width(Length::Fill),
-            )
-            .into();
+        return col.push(unavailable_members_card(state)).into();
     }
 
     col = col
@@ -206,6 +178,34 @@ pub fn cube_members_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCu
     }
 
     col.into()
+}
+
+fn unavailable_members_card<'a>(state: &ConnectCubePanel) -> Container<'a, ConnectCubeMessage> {
+    let reason = if state.owned_by_other_account {
+        "This Cube is registered to a different Connect account."
+    } else if state.registration_error.is_some() {
+        "Connect couldn't register this Cube. Retry, or check your Connect account if it keeps failing."
+    } else if state.client.is_none() {
+        "Sign in to Connect to manage this Cube's members."
+    } else {
+        "Not ready — the Cube is still registering."
+    };
+    let mut not_ready = Column::new().push(text::p1_regular(reason)).spacing(12);
+    if state.registration_error.is_some()
+        && !state.owned_by_other_account
+        && !state.is_registering()
+    {
+        not_ready = not_ready.push(action(
+            action_id("retry-registration"),
+            coincube_ui::locale::copy("Retry"),
+            ActionKind::Secondary,
+            Some(ConnectCubeMessage::RetryRegistration),
+        ));
+    }
+    container(not_ready)
+        .padding(20)
+        .style(card_style)
+        .width(Length::Fill)
 }
 
 // =============================================================================
