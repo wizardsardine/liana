@@ -1192,29 +1192,7 @@ fn list_layout<'a>(
             .on_press(ViewMessage::Catalog(CatalogMessage::ClearQuery))
         }));
     let mut list = Column::new().spacing(8).width(Length::Fill).push(search);
-    if projection.no_matches() && projection.query.trim().is_empty() {
-        list = list.push(tenshu::card(filtered_out(projection.hidden)));
-    } else if projection.no_matches() {
-        list = list.push(tenshu::card(
-            Column::new()
-                .spacing(8)
-                .push(tenshu::body(localized_format!(
-                    "No Cubes match “{}”.",
-                    "No Cubes coinciden con “{}”.",
-                    scene.query.trim()
-                )))
-                .push(
-                    ActionButton::new(
-                        clear_empty_id(),
-                        localized_copy("Clear search"),
-                        ActionKind::Quiet,
-                        focus,
-                    )
-                    .compact()
-                    .on_press(ViewMessage::Catalog(CatalogMessage::ClearQuery)),
-                ),
-        ));
-    }
+    list = append_list_search_feedback(list, projection, scene);
     if !projection.locals.is_empty() {
         list = list.push(section_heading("On this device", projection.locals.len()));
         if table {
@@ -1264,6 +1242,37 @@ fn list_layout<'a>(
             .push(list)
             .into(),
     }
+}
+
+fn append_list_search_feedback<'a>(
+    mut list: Column<'a, ViewMessage>,
+    projection: &Projection<'_>,
+    scene: &LauncherScene,
+) -> Column<'a, ViewMessage> {
+    if projection.no_matches() && projection.query.trim().is_empty() {
+        list = list.push(tenshu::card(filtered_out(projection.hidden)));
+    } else if projection.no_matches() {
+        list = list.push(tenshu::card(
+            Column::new()
+                .spacing(8)
+                .push(tenshu::body(localized_format!(
+                    "No Cubes match “{}”.",
+                    "No Cubes coinciden con “{}”.",
+                    scene.query.trim()
+                )))
+                .push(
+                    ActionButton::new(
+                        clear_empty_id(),
+                        localized_copy("Clear search"),
+                        ActionKind::Quiet,
+                        focus,
+                    )
+                    .compact()
+                    .on_press(ViewMessage::Catalog(CatalogMessage::ClearQuery)),
+                ),
+        ));
+    }
+    list
 }
 
 #[cfg(test)]
@@ -1822,17 +1831,7 @@ fn floor_layout<'a>(
     };
     // Paint order follows the DOM and z-index: peers, `.cb.prev`, `.cb.lead`.
     let previous = motion.and_then(|m| m.previous().or(m.returning_key()));
-    let rank = |key: &CubeCatalogKey| {
-        if Some(key) == selected_key {
-            2
-        } else if Some(key) == previous {
-            1
-        } else {
-            0
-        }
-    };
-    let mut order: Vec<usize> = (0..visible.len()).collect();
-    order.sort_by_key(|index| rank(&visible[*index].0));
+    let order = floor_paint_order(&visible, selected_key, previous);
     let count = visible.len();
     let ghost_text: Vec<_> = visible
         .iter()
@@ -1903,42 +1902,13 @@ fn floor_layout<'a>(
         stage = stage.push(super::launcher_activity::band_layer(band, sky, now));
     }
 
-    // `.cb.lead` and `.cb.prev` paint over their neighbours' labels.
-    let covers: Vec<_> = visible
-        .iter()
-        .enumerate()
-        .filter_map(|(index, (key, _))| {
-            let pose = pose(key);
-            (pose.spin > 0.0)
-                .then(|| launcher_scene::bounds(&layout, layout.rest_center(index, count), pose))
-        })
-        .collect();
-    let mut slots = Row::new().spacing(layout.gap()).align_y(Alignment::Start);
-    for (index, (key, entry)) in visible.iter().enumerate() {
-        let pose = pose(key);
-        let covered = covers.iter().any(|cover| {
-            launcher_scene::overlaps(*cover, launcher_scene::label_rect(&layout, index, count))
-        });
-        // The slot the open Cube left is part of the stage: a press there
-        // closes the face, as a press beside it does.
-        let closes_face = Some(key) == selected_key && pose == launcher_scene::Pose::DETAILS;
-        slots = slots.push(match entry {
-            FloorEntry::Local(row) => floor_slot(
-                row,
-                &layout,
-                pose.spin > 0.0 || covered,
-                pose.dim > 0.5,
-                closes_face,
-            ),
-            FloorEntry::Ghost(cube) => ghost_slot(
-                cube,
-                projection.connect_trouble,
-                &layout,
-                pose.spin > 0.0 || covered,
-                closes_face,
-            ),
-        });
-    }
+    let slots = floor_slots(
+        &layout,
+        &visible,
+        &pose,
+        selected_key,
+        projection.connect_trouble,
+    );
     stage = stage.push(
         Column::new()
             .width(Length::Fill)
@@ -1950,31 +1920,7 @@ fn floor_layout<'a>(
             ),
     );
 
-    if let (Some(entry), Some(key)) = (selected, selected_key) {
-        // The selected Cube becomes the centered face. Its controls arrive
-        // once it is square to the camera and remain real Iced widgets.
-        if pose(key) == launcher_scene::Pose::DETAILS {
-            let face = layout.face();
-            let (_, target_y) = layout.target();
-            let details = match entry {
-                FloorEntry::Local(row) => floor_details(row, light),
-                FloorEntry::Ghost(cube) => {
-                    ghost_details(cube, launcher_catalog::ghost_key(cube).chain, light)
-                }
-            };
-            stage = stage.push(
-                Column::new()
-                    .width(Length::Fill)
-                    .push(Space::new().height(Length::Fixed(target_y - face / 2.0)))
-                    .push(
-                        // Clicks on the face never reach the Cubes behind it.
-                        Container::new(iced::widget::opaque(details))
-                            .width(Length::Fill)
-                            .center_x(Length::Fill),
-                    ),
-            );
-        }
-    }
+    stage = append_floor_details(stage, &layout, selected, selected_key, &pose, light);
     // `.pgbtn` and `.pgdots` stay up under an open face, as in the prototype.
     if pages > 1 {
         stage = paging_layers(
@@ -2016,6 +1962,110 @@ fn floor_layout<'a>(
         .width(Length::Fill)
         .push(stage.clip(true))
         .into()
+}
+
+fn floor_paint_order(
+    visible: &[(CubeCatalogKey, launcher_catalog::FloorEntry<'_, '_>)],
+    selected_key: Option<&CubeCatalogKey>,
+    previous: Option<&CubeCatalogKey>,
+) -> Vec<usize> {
+    let rank = |key: &CubeCatalogKey| {
+        if Some(key) == selected_key {
+            2
+        } else if Some(key) == previous {
+            1
+        } else {
+            0
+        }
+    };
+    let mut order: Vec<usize> = (0..visible.len()).collect();
+    order.sort_by_key(|index| rank(&visible[*index].0));
+    order
+}
+
+fn floor_slots<'a>(
+    layout: &launcher_scene::Layout,
+    visible: &[(CubeCatalogKey, launcher_catalog::FloorEntry<'_, '_>)],
+    pose: &impl Fn(&CubeCatalogKey) -> launcher_scene::Pose,
+    selected_key: Option<&CubeCatalogKey>,
+    connect_trouble: Option<crate::services::connect::grpc::trouble::Trouble>,
+) -> Row<'a, ViewMessage> {
+    use launcher_catalog::FloorEntry;
+    let count = visible.len();
+    // `.cb.lead` and `.cb.prev` paint over their neighbours' labels.
+    let covers: Vec<_> = visible
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (key, _))| {
+            let pose = pose(key);
+            (pose.spin > 0.0)
+                .then(|| launcher_scene::bounds(layout, layout.rest_center(index, count), pose))
+        })
+        .collect();
+    let mut slots = Row::new().spacing(layout.gap()).align_y(Alignment::Start);
+    for (index, (key, entry)) in visible.iter().enumerate() {
+        let pose = pose(key);
+        let covered = covers.iter().any(|cover| {
+            launcher_scene::overlaps(*cover, launcher_scene::label_rect(layout, index, count))
+        });
+        // The slot the open Cube left is part of the stage: a press there
+        // closes the face, as a press beside it does.
+        let closes_face = Some(key) == selected_key && pose == launcher_scene::Pose::DETAILS;
+        slots = slots.push(match entry {
+            FloorEntry::Local(row) => floor_slot(
+                row,
+                layout,
+                pose.spin > 0.0 || covered,
+                pose.dim > 0.5,
+                closes_face,
+            ),
+            FloorEntry::Ghost(cube) => ghost_slot(
+                cube,
+                connect_trouble,
+                layout,
+                pose.spin > 0.0 || covered,
+                closes_face,
+            ),
+        });
+    }
+    slots
+}
+
+fn append_floor_details<'a>(
+    mut stage: Stack<'a, ViewMessage, theme::Theme>,
+    layout: &launcher_scene::Layout,
+    selected: Option<launcher_catalog::FloorEntry<'_, '_>>,
+    selected_key: Option<&CubeCatalogKey>,
+    pose: &impl Fn(&CubeCatalogKey) -> launcher_scene::Pose,
+    light: bool,
+) -> Stack<'a, ViewMessage, theme::Theme> {
+    use launcher_catalog::FloorEntry;
+    if let (Some(entry), Some(key)) = (selected, selected_key) {
+        // The selected Cube becomes the centered face. Its controls arrive
+        // once it is square to the camera and remain real Iced widgets.
+        if pose(key) == launcher_scene::Pose::DETAILS {
+            let face = layout.face();
+            let (_, target_y) = layout.target();
+            let details = match entry {
+                FloorEntry::Local(row) => floor_details(row, light),
+                FloorEntry::Ghost(cube) => {
+                    ghost_details(cube, launcher_catalog::ghost_key(cube).chain, light)
+                }
+            };
+            stage = stage.push(
+                Column::new()
+                    .width(Length::Fill)
+                    .push(Space::new().height(Length::Fixed(target_y - face / 2.0)))
+                    .push(
+                        // Clicks on the face never reach the Cubes behind it.
+                        Container::new(iced::widget::opaque(details))
+                            .width(Length::Fill)
+                            .center_x(Length::Fill),
+                    ),
+            );
+        }
+    }
+    stage
 }
 
 /// `.gintro { top: 118px }` and its copy.
@@ -2365,36 +2415,7 @@ fn floor_stage<'a, M: 'a + 'static>(
             .width(Length::Fill)
             .center_x(Length::Fill),
         );
-    let mut labels = Row::new().spacing(layout.gap()).align_y(Alignment::Start);
-    for (index, peer) in context.peers.iter().enumerate() {
-        let selected = index == context.selected_slot && peer.key == context.selected;
-        let label: Element<'a, M> = if selected {
-            Space::new().into()
-        } else {
-            floor_label(&peer.name, peer.status, true).into()
-        };
-        let covered = launcher_scene::overlaps(
-            launcher_scene::bounds(
-                &layout,
-                layout.rest_center(context.selected_slot, count),
-                selected_pose,
-            ),
-            launcher_scene::label_rect(&layout, index, count),
-        );
-        labels = labels.push(
-            Container::new(if covered { Space::new().into() } else { label })
-                .width(Length::Fixed(layout.slot()))
-                .height(Length::Fixed(layout.slot_height()))
-                .padding(iced::Padding {
-                    top: 0.0,
-                    right: 4.0,
-                    bottom: 10.0,
-                    left: 4.0,
-                })
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Bottom),
-        );
-    }
+    let labels = floor_stage_labels(context, &layout, count, selected_pose);
     stage = stage.push(
         Column::new()
             .width(Length::Fill)
@@ -2443,6 +2464,45 @@ fn floor_stage<'a, M: 'a + 'static>(
         .push(rule::horizontal(1))
         .push(launcher_chrome::quiet_dock(&context.chrome))
         .into()
+}
+
+fn floor_stage_labels<'a, M: 'a + 'static>(
+    context: &launcher_catalog::LauncherSceneContext,
+    layout: &launcher_scene::Layout,
+    count: usize,
+    selected_pose: launcher_scene::Pose,
+) -> Row<'a, M> {
+    let mut labels = Row::new().spacing(layout.gap()).align_y(Alignment::Start);
+    for (index, peer) in context.peers.iter().enumerate() {
+        let selected = index == context.selected_slot && peer.key == context.selected;
+        let label: Element<'a, M> = if selected {
+            Space::new().into()
+        } else {
+            floor_label(&peer.name, peer.status, true).into()
+        };
+        let covered = launcher_scene::overlaps(
+            launcher_scene::bounds(
+                layout,
+                layout.rest_center(context.selected_slot, count),
+                selected_pose,
+            ),
+            launcher_scene::label_rect(layout, index, count),
+        );
+        labels = labels.push(
+            Container::new(if covered { Space::new().into() } else { label })
+                .width(Length::Fixed(layout.slot()))
+                .height(Length::Fixed(layout.slot_height()))
+                .padding(iced::Padding {
+                    top: 0.0,
+                    right: 4.0,
+                    bottom: 10.0,
+                    left: 4.0,
+                })
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Bottom),
+        );
+    }
+    labels
 }
 
 pub(crate) fn unlock_face_on_floor<'a, M: 'a + 'static>(
