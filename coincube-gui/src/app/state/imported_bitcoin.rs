@@ -824,11 +824,9 @@ impl ImportedBitcoinPanel {
             Menu::Vault(VaultSubMenu::Recovery) => false,
             Menu::Vault(VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))) => false,
             Menu::Vault(_) if !self.is_ready() => true,
-            // A ready wallet sends and signs on the Vault's own screens,
-            // except on Bitcoin Blake2b, where sending is not available.
-            Menu::Vault(VaultSubMenu::Send | VaultSubMenu::PSBTs(_)) => self.chain().is_blake2b(),
-            // Vault Settings serves a ready wallet, Node included: it reads
-            // this panel's `node_summary` and sends its actions here.
+            // A ready wallet uses the Vault's own screens on every chain,
+            // Bitcoin Blake2b included. Vault Settings reads this panel's
+            // `node_summary` and sends its actions here.
             _ => false,
         }
     }
@@ -846,17 +844,7 @@ impl ImportedBitcoinPanel {
                 Task::none()
             };
         }
-        match menu {
-            // Only on Bitcoin Blake2b, where an imported wallet cannot send:
-            // the page says so.
-            Menu::Vault(VaultSubMenu::Send | VaultSubMenu::PSBTs(_)) => {
-                self.error = Some(
-                    "Sending from paired imported Bitcoin Blake2b wallets is not available.".into(),
-                );
-                Task::none()
-            }
-            _ => self.refresh(),
-        }
+        self.refresh()
     }
 
     pub fn abandoned(&self) -> bool {
@@ -3259,29 +3247,16 @@ impl ImportedBitcoinPanel {
         }
         content
     }
-
-    /// Send on Bitcoin Blake2b, where an imported wallet cannot send.
-    fn send_unavailable_view(&self) -> Element<'_, view::Message> {
-        Column::new()
-            .spacing(16)
-            .push(h2(localized_copy("Send")))
-            .push(p1_regular(localized_copy(
-                "Sending from paired imported Bitcoin Blake2b wallets is not available.",
-            )))
-            .into()
-    }
 }
 
 impl State for ImportedBitcoinPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let body = if self.import.active_attachment().is_none() {
             self.resume_view()
-        } else if !self.is_ready() {
-            self.wallet_view()
         } else {
-            // Once ready, `App` routes only Send and PSBTs here, on Bitcoin
-            // Blake2b; the Vault's own screens serve everything else.
-            self.send_unavailable_view()
+            // Once ready, `App` routes nothing here; the Vault's own screens
+            // serve the wallet. The scan page stays the fallback.
+            self.wallet_view()
         };
         view::dashboard(menu, cache, body)
     }

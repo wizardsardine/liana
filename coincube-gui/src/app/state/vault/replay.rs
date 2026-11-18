@@ -149,6 +149,44 @@ pub fn replay_status(
     }
 }
 
+/// [`replay_status`] for an imported wallet. Its signers (hardware, the
+/// original wallet, words stored in the Cube) make ordinary signatures only,
+/// and it finalises through the imported finaliser, which also covers the
+/// singlesig shapes the unified finaliser does not. A spend that finalises is
+/// therefore replayable on every input: the user is warned and decides.
+pub fn imported_replay_status(
+    wallet: &coincube_core::wallet_descriptor::ImportedWalletDescriptor,
+    psbt: &Psbt,
+    secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+) -> ReplayStatus {
+    use coincube_core::{
+        imported_spend::{finalize_imported_spend, ImportedFinalizeError},
+        public_wallet_finalize::FinalizeError,
+    };
+    if psbt
+        .inputs
+        .iter()
+        .all(|input| input.partial_sigs.is_empty())
+    {
+        return ReplayStatus::Unknown(UnknownReason::NotYetChecked);
+    }
+    let mut construction = psbt.clone();
+    for input in &mut construction.inputs {
+        input.partial_sigs.clear();
+        input.final_script_sig = None;
+        input.final_script_witness = None;
+    }
+    match finalize_imported_spend(wallet, &construction, psbt, secp) {
+        Ok(_) => ReplayStatus::Replayable {
+            inputs: (0..psbt.inputs.len()).collect(),
+        },
+        Err(ImportedFinalizeError::Signatures(FinalizeError::Unsatisfied)) => {
+            ReplayStatus::Unknown(UnknownReason::Incomplete)
+        }
+        Err(error) => ReplayStatus::Unknown(UnknownReason::Refused(error.to_string())),
+    }
+}
+
 /// Why a Bitcoin Blake2b PSBT must not be handed to any signer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchRefused {
@@ -318,6 +356,9 @@ pub struct ReplayReview {
     /// lookup that confirms another input afterwards asks again, so nobody
     /// sends past a warning they never saw.
     acknowledged_confirmed: BTreeSet<usize>,
+    /// Set for an imported wallet: its status comes from
+    /// [`imported_replay_status`], here and on every refresh.
+    imported: Option<Box<coincube_core::wallet_descriptor::ImportedWalletDescriptor>>,
 }
 
 impl ReplayReview {
@@ -328,6 +369,43 @@ impl ReplayReview {
             psbt_digest: psbt_digest(psbt),
             acknowledged_for: None,
             acknowledged_confirmed: BTreeSet::new(),
+            imported: None,
+        }
+    }
+
+    /// The review for an imported wallet's spend ([`imported_replay_status`]).
+    pub fn for_imported(
+        wallet: &coincube_core::wallet_descriptor::ImportedWalletDescriptor,
+        psbt: &Psbt,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+    ) -> Self {
+        Self {
+            status: imported_replay_status(wallet, psbt, secp),
+            imported: Some(Box::new(wallet.clone())),
+            ..Self::new_unchecked(psbt)
+        }
+    }
+
+    /// The review for this wallet's spend: imported or Vault.
+    pub fn for_wallet(
+        descriptor: &coincube_core::wallet_descriptor::WalletDescriptor,
+        psbt: &Psbt,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+    ) -> Self {
+        match descriptor.as_imported() {
+            Some(imported) => Self::for_imported(imported, psbt, secp),
+            None => Self::new(psbt, secp),
+        }
+    }
+
+    fn new_unchecked(psbt: &Psbt) -> Self {
+        Self {
+            status: ReplayStatus::Unknown(UnknownReason::NotYetChecked),
+            split_key: None,
+            psbt_digest: psbt_digest(psbt),
+            acknowledged_for: None,
+            acknowledged_confirmed: BTreeSet::new(),
+            imported: None,
         }
     }
 
@@ -363,7 +441,10 @@ impl ReplayReview {
         psbt: &Psbt,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
     ) -> Self {
-        let mut next = Self::new(psbt, secp);
+        let mut next = match &self.imported {
+            Some(wallet) => Self::for_imported(wallet, psbt, secp),
+            None => Self::new(psbt, secp),
+        };
         // The same transaction spends the same key; only signatures change.
         next.split_key = self.split_key.filter(|(index, outpoint)| {
             psbt.unsigned_tx
@@ -1009,6 +1090,141 @@ mod tests {
             &[(0, Entanglement::Entangled)]
         )
         .is_empty());
+    }
+
+    /// An imported Bitcoin Blake2b spend of every shape, singlesig included,
+    /// built by the imported constructor, unsigned and signed by its first
+    /// (and, for multisig, second) signer.
+    fn imported_blake2b_spend(
+        shape: crate::services::split_test_wallets::Shape,
+    ) -> (
+        coincube_core::wallet_descriptor::ImportedWalletDescriptor,
+        Psbt,
+        Psbt,
+    ) {
+        use crate::services::split_test_wallets::{imported_vault, master, Shape};
+        use coincube_core::{
+            imported_spend::create_imported_spend,
+            miniscript::bitcoin::{
+                absolute::LockTime, bip32::ChildNumber, transaction, Address, Amount, OutPoint,
+                Transaction, TxIn, TxOut,
+            },
+            spend::{AddrInfo, CandidateCoin, SpendOutputAddress, SpendTxFees, TxGetter},
+        };
+        struct OneTx(Transaction);
+        impl TxGetter for OneTx {
+            fn get_tx(&mut self, txid: &Txid) -> Option<Transaction> {
+                (self.0.compute_txid() == *txid).then(|| self.0.clone())
+            }
+        }
+        let wallet = imported_vault(shape)
+            .main_descriptor
+            .as_imported()
+            .unwrap()
+            .paired_blake2b()
+            .unwrap();
+        let network = wallet.chain().bitcoin_network();
+        let script = |change: bool, index| {
+            let descriptor = if change {
+                wallet.change_descriptor()
+            } else {
+                wallet.receive_descriptor()
+            };
+            descriptor
+                .at_derivation_index(index)
+                .unwrap()
+                .script_pubkey()
+        };
+        let previous = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn::default()],
+            output: vec![TxOut {
+                value: Amount::from_sat(300_000),
+                script_pubkey: script(false, 0),
+            }],
+        };
+        let coin = CandidateCoin {
+            outpoint: OutPoint {
+                txid: previous.compute_txid(),
+                vout: 0,
+            },
+            amount: Amount::from_sat(300_000),
+            deriv_index: ChildNumber::Normal { index: 0 },
+            is_change: false,
+            must_select: true,
+            sequence: None,
+            ancestor_info: None,
+        };
+        let change = SpendOutputAddress {
+            addr: Address::from_script(&script(true, 1), network).unwrap(),
+            info: Some(AddrInfo {
+                index: ChildNumber::Normal { index: 1 },
+                is_change: true,
+            }),
+        };
+        let recipient = SpendOutputAddress {
+            addr: Address::from_script(&script(false, 7), network).unwrap(),
+            info: None,
+        };
+        let secp = secp256k1::Secp256k1::new();
+        let unsigned = create_imported_spend(
+            &wallet,
+            &secp256k1::Secp256k1::verification_only(),
+            &mut OneTx(previous),
+            &[(recipient, Amount::from_sat(100_000))],
+            &[coin],
+            SpendTxFees::Regular(2),
+            change,
+            LockTime::ZERO,
+        )
+        .unwrap()
+        .psbt;
+        let mut signed = unsigned.clone();
+        let signers = if matches!(shape, Shape::WshMulti | Shape::WshSortedMulti) {
+            vec![master(1), master(2)]
+        } else {
+            vec![master(1)]
+        };
+        for signer in signers {
+            signed.sign(&signer, &secp).unwrap();
+        }
+        (wallet, unsigned, signed)
+    }
+
+    /// An imported Bitcoin Blake2b wallet's replay review comes from the
+    /// imported finaliser, so every shape (singlesig ones are not P2WSH) reads
+    /// Not yet checked, then Replayable on every input once signed, and the
+    /// tick makes it sendable. Refreshing keeps it on the imported finaliser.
+    #[test]
+    fn an_imported_blake2b_spend_of_every_shape_reads_replayable_and_sends_after_the_tick() {
+        use crate::services::split_test_wallets::SHAPES;
+        let secp = secp();
+        for shape in SHAPES {
+            let (wallet, unsigned, signed) = imported_blake2b_spend(shape);
+            let descriptor =
+                coincube_core::wallet_descriptor::WalletDescriptor::Imported(wallet.clone());
+            assert_eq!(
+                ReplayReview::for_wallet(&descriptor, &unsigned, &secp).status(),
+                ReplayStatus::Unknown(UnknownReason::NotYetChecked),
+                "{:?}",
+                shape
+            );
+            let review = ReplayReview::for_wallet(&descriptor, &unsigned, &secp);
+            let mut review = review.refreshed(&signed, &secp);
+            assert_eq!(
+                review.status(),
+                ReplayStatus::Replayable {
+                    inputs: (0..signed.inputs.len()).collect()
+                },
+                "{:?}",
+                shape
+            );
+            assert!(review.signatures_complete(), "{:?}", shape);
+            assert!(!review.broadcast_ready(&[]), "{:?}", shape);
+            review.acknowledge(true, &[]);
+            assert!(review.broadcast_ready(&[]), "{:?}", shape);
+        }
     }
 
     #[test]
