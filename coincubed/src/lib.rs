@@ -1354,15 +1354,7 @@ impl DaemonHandle {
         };
         let fresh_data_dir = !data_dir.exists() || !data_dir.sqlite_db_file_path().exists();
         preflight_startup_storage(&config, &data_dir, fresh_data_dir)?;
-        if !data_dir.exists() {
-            data_dir
-                .init()
-                .map_err(|e| StartupError::DatadirCreation(data_dir.path().to_path_buf(), e))?;
-            log::info!(
-                "Created a new data directory at '{}'",
-                data_dir.path().to_string_lossy()
-            );
-        }
+        initialize_startup_data_directory(&data_dir)?;
         // The RPC socket name is random, so two processes would otherwise both
         // bind and the second would overwrite `rpc.socket`. Hold the datadir
         // before any database or socket setup, and keep it until stop.
@@ -1692,6 +1684,19 @@ fn preflight_startup_storage(
     // caller-built configuration before any startup writes.
     if config.main_descriptor.as_vault().is_some() {
         config.check().map_err(StartupError::Config)?;
+    }
+    Ok(())
+}
+
+fn initialize_startup_data_directory(data_dir: &DataDirectory) -> Result<(), StartupError> {
+    if !data_dir.exists() {
+        data_dir
+            .init()
+            .map_err(|e| StartupError::DatadirCreation(data_dir.path().to_path_buf(), e))?;
+        log::info!(
+            "Created a new data directory at '{}'",
+            data_dir.path().to_string_lossy()
+        );
     }
     Ok(())
 }
