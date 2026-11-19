@@ -692,6 +692,11 @@ const TOAST_LIFETIME: Duration = Duration::from_secs(8);
 /// a burst are dropped unseen.
 const TOAST_MAX_WAITING: usize = 3;
 
+type TwinSplitChecks = Vec<(
+    bitcoin::Txid,
+    Option<std::collections::HashSet<bitcoin::OutPoint>>,
+)>;
+
 pub struct App {
     // Pairing records grow independently of the tab's by-value state. Keep them
     // on the heap so debug GUI transitions fit the Windows test-thread stack.
@@ -5885,165 +5890,178 @@ impl App {
         }
     }
 
-    fn route(&mut self, message: Message) -> Task<Message> {
-        self.refresh_mcp_pairings();
-        if let Message::View(view::Message::LocalMcp(message)) = message {
-            let focus_after = match &message {
-                local_mcp::Message::RequestRevokePair(_) => Some(iced::advanced::widget::Id::from(
-                    "tenshu.ai-access.revoke.keep",
-                )),
-                local_mcp::Message::CancelRevokePair => {
-                    self.local_mcp.pending_revoke().map(|(_, id)| {
-                        iced::advanced::widget::Id::from(format!(
-                            "tenshu.ai-access.client.{id}.revoke"
-                        ))
-                    })
-                }
-                local_mcp::Message::RevokePair(id)
-                    if self
-                        .local_mcp
-                        .pending_revoke()
-                        .is_some_and(|(_, pending)| pending == id) =>
-                {
-                    // The Cube-wide switch is on both AI access views and
-                    // stays focusable whenever access is available or on;
-                    // "Pair a client" is hidden while the form is open and
-                    // disabled after a storage failure.
-                    Some(iced::advanced::widget::Id::from(
-                        if self.mcp_proposals_supported()
-                            || (self.mcp_supported() && self.local_mcp.switch_focusable(true))
-                        {
-                            "tenshu.ai-access.enable"
-                        } else {
-                            view::nav::shell::CUBE_SWITCHER_ID
+    #[cfg(feature = "mcp-transactions")]
+    fn prepare_mcp_transaction_review(&self, client_id: &str, draft_id: &str) -> Task<Message> {
+        if self.mcp_supported()
+            && local_mcp::transactions::supported_chain(self.cube_settings.network)
+        {
+            if let Some(wallet) = &self.wallet {
+                if let Some(service) = self.local_mcp.transaction_service(client_id, wallet) {
+                    let client_id = client_id.to_owned();
+                    let draft_id = draft_id.to_owned();
+                    let check_id = draft_id.clone();
+                    let session_id = service.session_id();
+                    return Task::perform(
+                        async move { service.native_checked(&check_id).await },
+                        move |native| {
+                            Message::View(view::Message::LocalMcp(
+                                local_mcp::Message::ReviewTransactionChecked {
+                                    client_id,
+                                    draft_id,
+                                    session_id,
+                                    native,
+                                },
+                            ))
                         },
-                    ))
+                    );
                 }
-                _ => None,
-            };
-            let requested_revoke = matches!(&message, local_mcp::Message::RequestRevokePair(_));
-            // Controls that remove themselves hand focus to what replaces them.
-            let focus_later = match &message {
-                local_mcp::Message::Pair => Some(local_mcp::FocusAfter::Pair),
-                local_mcp::Message::TogglePairing => Some(local_mcp::FocusAfter::TogglePairing),
-                local_mcp::Message::TurnOnFromForm => Some(local_mcp::FocusAfter::Enable),
-                _ => None,
-            };
-            #[cfg(feature = "mcp-transactions")]
-            if let local_mcp::Message::ReviewTransaction {
+            }
+        }
+        Task::done(Message::View(view::Message::ShowError(
+            "The AI pairing or Vault changed. Reopen AI access and review the current draft."
+                .into(),
+        )))
+    }
+
+    #[cfg(feature = "mcp-transactions")]
+    fn open_reviewed_mcp_transaction(
+        &mut self,
+        client_id: &str,
+        draft_id: &str,
+        session_id: uuid::Uuid,
+        native: Option<&local_mcp::transactions::NativeDraft>,
+    ) -> Result<(), &'static str> {
+        let pairing_changed =
+            "The AI pairing or Vault changed. Reopen AI access and review the current draft.";
+        let unavailable = "Native review is temporarily unavailable. Try Review again.";
+        let stale = "This draft is stale. Ask the paired client to prepare a new request, then review it in COINCUBE Desktop.";
+        if !self.mcp_supported()
+            || !local_mcp::transactions::supported_chain(self.cube_settings.network)
+        {
+            return Err(pairing_changed);
+        }
+        let wallet = self.wallet.as_ref().ok_or(pairing_changed)?;
+        let service = self
+            .local_mcp
+            .transaction_service(client_id, wallet)
+            .ok_or(pairing_changed)?;
+        if service.session_id() != session_id {
+            return Err(pairing_changed);
+        }
+        match service.review_status(draft_id) {
+            local_mcp::transactions::ReviewStatus::Ready => {}
+            local_mcp::transactions::ReviewStatus::Stale => return Err(stale),
+            local_mcp::transactions::ReviewStatus::Unavailable => return Err(unavailable),
+        }
+        let native = native
+            .filter(|draft| draft.chain == wallet.chain)
+            .ok_or(unavailable)?;
+        if let Some(panel) = self.panels.current_mut() {
+            panel.interrupt();
+        }
+        self.panels.create_spend = Some(CreateSpendPanel::from_mcp_prepared(
+            wallet.clone(),
+            native.clone(),
+            self.cache.blockheight(),
+        ));
+        self.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        Ok(())
+    }
+
+    fn route_local_mcp(&mut self, message: local_mcp::Message) -> Task<Message> {
+        let focus_after = match &message {
+            local_mcp::Message::RequestRevokePair(_) => Some(iced::advanced::widget::Id::from(
+                "tenshu.ai-access.revoke.keep",
+            )),
+            local_mcp::Message::CancelRevokePair => {
+                self.local_mcp.pending_revoke().map(|(_, id)| {
+                    iced::advanced::widget::Id::from(format!("tenshu.ai-access.client.{id}.revoke"))
+                })
+            }
+            local_mcp::Message::RevokePair(id)
+                if self
+                    .local_mcp
+                    .pending_revoke()
+                    .is_some_and(|(_, pending)| pending == id) =>
+            {
+                // The Cube-wide switch is on both AI access views and
+                // stays focusable whenever access is available or on;
+                // "Pair a client" is hidden while the form is open and
+                // disabled after a storage failure.
+                Some(iced::advanced::widget::Id::from(
+                    if self.mcp_proposals_supported()
+                        || (self.mcp_supported() && self.local_mcp.switch_focusable(true))
+                    {
+                        "tenshu.ai-access.enable"
+                    } else {
+                        view::nav::shell::CUBE_SWITCHER_ID
+                    },
+                ))
+            }
+            _ => None,
+        };
+        let requested_revoke = matches!(&message, local_mcp::Message::RequestRevokePair(_));
+        // Controls that remove themselves hand focus to what replaces them.
+        let focus_later = match &message {
+            local_mcp::Message::Pair => Some(local_mcp::FocusAfter::Pair),
+            local_mcp::Message::TogglePairing => Some(local_mcp::FocusAfter::TogglePairing),
+            local_mcp::Message::TurnOnFromForm => Some(local_mcp::FocusAfter::Enable),
+            _ => None,
+        };
+        #[cfg(feature = "mcp-transactions")]
+        match &message {
+            local_mcp::Message::ReviewTransaction {
                 client_id,
                 draft_id,
-            } = &message
-            {
-                if self.mcp_supported()
-                    && local_mcp::transactions::supported_chain(self.cube_settings.network)
-                {
-                    if let Some(wallet) = &self.wallet {
-                        if let Some(service) = self.local_mcp.transaction_service(client_id, wallet)
-                        {
-                            let client_id = client_id.clone();
-                            let draft_id = draft_id.clone();
-                            let check_id = draft_id.clone();
-                            let session_id = service.session_id();
-                            return Task::perform(
-                                async move { service.native_checked(&check_id).await },
-                                move |native| {
-                                    Message::View(view::Message::LocalMcp(
-                                        local_mcp::Message::ReviewTransactionChecked {
-                                            client_id,
-                                            draft_id,
-                                            session_id,
-                                            native,
-                                        },
-                                    ))
-                                },
-                            );
-                        }
-                    }
-                }
-                return Task::done(Message::View(view::Message::ShowError(
-                    "The AI pairing or Vault changed. Reopen AI access and review the current draft."
-                        .into(),
-                )));
+            } => {
+                return self.prepare_mcp_transaction_review(client_id, draft_id);
             }
-            #[cfg(feature = "mcp-transactions")]
-            if let local_mcp::Message::ReviewTransactionChecked {
+            local_mcp::Message::ReviewTransactionChecked {
                 client_id,
                 draft_id,
                 session_id,
                 native,
-            } = &message
-            {
-                let pairing_changed = "The AI pairing or Vault changed. Reopen AI access and review the current draft.";
-                let unavailable = "Native review is temporarily unavailable. Try Review again.";
-                let stale = "This draft is stale. Ask the paired client to prepare a new request, then review it in COINCUBE Desktop.";
-                let failure = if self.mcp_supported()
-                    && local_mcp::transactions::supported_chain(self.cube_settings.network)
-                {
-                    if let Some(wallet) = &self.wallet {
-                        if let Some(service) = self.local_mcp.transaction_service(client_id, wallet)
-                        {
-                            if service.session_id() == *session_id {
-                                match service.review_status(draft_id) {
-                                    local_mcp::transactions::ReviewStatus::Ready => {
-                                        if let Some(native) = native
-                                            .as_ref()
-                                            .filter(|draft| draft.chain == wallet.chain)
-                                        {
-                                            if let Some(panel) = self.panels.current_mut() {
-                                                panel.interrupt();
-                                            }
-                                            self.panels.create_spend =
-                                                Some(CreateSpendPanel::from_mcp_prepared(
-                                                    wallet.clone(),
-                                                    native.clone(),
-                                                    self.cache.blockheight(),
-                                                ));
-                                            self.panels.current =
-                                                Menu::Vault(menu::VaultSubMenu::Send);
-                                            return Task::none();
-                                        }
-                                        unavailable
-                                    }
-                                    local_mcp::transactions::ReviewStatus::Stale => stale,
-                                    local_mcp::transactions::ReviewStatus::Unavailable => {
-                                        unavailable
-                                    }
-                                }
-                            } else {
-                                pairing_changed
-                            }
-                        } else {
-                            pairing_changed
-                        }
-                    } else {
-                        pairing_changed
+            } => {
+                return match self.open_reviewed_mcp_transaction(
+                    client_id,
+                    draft_id,
+                    *session_id,
+                    native.as_ref(),
+                ) {
+                    Ok(()) => Task::none(),
+                    Err(failure) => {
+                        Task::done(Message::View(view::Message::ShowError(failure.into())))
                     }
-                } else {
-                    pairing_changed
                 };
-                return Task::done(Message::View(view::Message::ShowError(failure.into())));
             }
-            let supported = self.mcp_supported() || self.mcp_proposals_supported();
-            let config = self.local_mcp.update(
-                message,
-                self.wallet.clone(),
-                self.daemon.clone(),
-                supported,
-                &self.cube_settings.id,
-            );
-            self.refresh_mcp_pairings();
-            let focus_after = focus_after
-                .or_else(|| focus_later.and_then(|after| self.local_mcp.focus_after(after)));
-            if let Some(id) = focus_after {
-                if !requested_revoke || self.local_mcp.pending_revoke().is_some() {
-                    return iced::widget::operation::focus(id);
-                }
-            }
-            return match config {
-                Some(config) => clipboard::write(config),
-                None => Task::none(),
-            };
+            _ => {}
+        }
+        let supported = self.mcp_supported() || self.mcp_proposals_supported();
+        let config = self.local_mcp.update(
+            message,
+            self.wallet.clone(),
+            self.daemon.clone(),
+            supported,
+            &self.cube_settings.id,
+        );
+        self.refresh_mcp_pairings();
+        let focus_after =
+            focus_after.or_else(|| focus_later.and_then(|after| self.local_mcp.focus_after(after)));
+        if let Some(id) =
+            focus_after.filter(|_| !requested_revoke || self.local_mcp.pending_revoke().is_some())
+        {
+            return iced::widget::operation::focus(id);
+        }
+        match config {
+            Some(config) => clipboard::write(config),
+            None => Task::none(),
+        }
+    }
+
+    fn route(&mut self, message: Message) -> Task<Message> {
+        self.refresh_mcp_pairings();
+        if let Message::View(view::Message::LocalMcp(message)) = message {
+            return self.route_local_mcp(message);
         }
 
         // Known metadata changes must not leave a previously healthy Kit
@@ -6360,311 +6378,1872 @@ impl App {
         }
     }
 
-    fn route_dispatch(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::ImportedBitcoin(event) => {
-                if self.panels.imported_bitcoin.is_none() {
-                    if let state::imported_bitcoin::ImportEvent::Opened(_, Ok(daemon)) = *event {
-                        return Task::perform(
-                            async move {
-                                if let Err(error) = daemon.stop().await {
-                                    log::error!(
-                                        "Could not stop orphan imported Bitcoin daemon: {error}"
-                                    );
-                                }
-                            },
-                            |_| Message::Tick,
-                        );
-                    }
-                    return Task::none();
-                }
-                if matches!(
-                    event.as_ref(),
-                    state::imported_bitcoin::ImportEvent::Installed(_, Ok(()))
-                        | state::imported_bitcoin::ImportEvent::Resumed(_, Ok(Some(_)))
-                        | state::imported_bitcoin::ImportEvent::Opened(_, Ok(_))
-                ) {
-                    self.imported_kit_metadata.invalidate();
-                }
-                let refresh_cube = matches!(
-                    event.as_ref(),
-                    state::imported_bitcoin::ImportEvent::Installed(_, Ok(()))
-                        | state::imported_bitcoin::ImportEvent::Resumed(_, Ok(Some(_)))
-                        | state::imported_bitcoin::ImportEvent::Refreshed(_, Ok(_))
-                        | state::imported_bitcoin::ImportEvent::Opened(_, Ok(_))
+    fn refresh_imported_cube_metadata(&mut self) {
+        if let Ok(settings) = settings::Settings::from_file(
+            &self.datadir.network_directory(self.cube_settings.network),
+        ) {
+            if let Some(cube) = settings
+                .cubes
+                .iter()
+                .find(|cube| cube.id == self.cube_settings.id)
+            {
+                self.imported_kit_metadata
+                    .replace(&self.datadir, cube, &settings);
+                self.cache
+                    .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+                    .recovery_kit_last_backed_up_descriptor_fingerprint
+                    .clone();
+                self.cache
+                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
+                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+                    .clone();
+                self.cube_settings = cube.clone();
+                self.panels.global_home.imported_installed = self
+                    .cube_settings
+                    .bitcoin_import
+                    .as_deref()
+                    .and_then(settings::BitcoinImport::active_attachment)
+                    .is_some();
+            }
+        }
+    }
+
+    fn reset_abandoned_import(&mut self) -> bool {
+        if let Ok(settings) = settings::Settings::from_file(
+            &self.datadir.network_directory(self.cube_settings.network),
+        ) {
+            if let Some(cube) = settings
+                .cubes
+                .into_iter()
+                .find(|cube| cube.id == self.cube_settings.id && cube.bitcoin_import.is_none())
+            {
+                self.cube_settings = cube;
+                self.cache.has_imported_bitcoin = false;
+                self.panels.global_home.imported_balance = None;
+                self.panels.global_home.imported_installed = false;
+                self.panels.imported_bitcoin = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn route_imported_bitcoin_event(
+        &mut self,
+        event: state::imported_bitcoin::ImportEvent,
+    ) -> Task<Message> {
+        if self.panels.imported_bitcoin.is_none() {
+            if let state::imported_bitcoin::ImportEvent::Opened(_, Ok(daemon)) = event {
+                return Task::perform(
+                    async move {
+                        if let Err(error) = daemon.stop().await {
+                            log::error!("Could not stop orphan imported Bitcoin daemon: {error}");
+                        }
+                    },
+                    |_| Message::Tick,
                 );
-                let import_client = self.authenticated_coincube_client();
-                let task = self
-                    .panels
-                    .imported_bitcoin
-                    .as_mut()
-                    .map_or_else(Task::none, |panel| {
-                        panel.set_connect_client(import_client.as_ref());
-                        panel.update_event(*event)
-                    });
-                if self
-                    .panels
-                    .imported_bitcoin
-                    .as_ref()
-                    .is_some_and(|panel| panel.abandoned())
-                {
-                    if let Ok(settings) = settings::Settings::from_file(
-                        &self.datadir.network_directory(self.cube_settings.network),
-                    ) {
-                        if let Some(cube) = settings.cubes.into_iter().find(|cube| {
-                            cube.id == self.cube_settings.id && cube.bitcoin_import.is_none()
-                        }) {
-                            self.cube_settings = cube;
-                            self.cache.has_imported_bitcoin = false;
-                            self.panels.global_home.imported_balance = None;
-                            self.panels.global_home.imported_installed = false;
-                            self.panels.imported_bitcoin = None;
-                            return Task::batch([
-                                task,
-                                self.set_current_panel(Menu::Cube(
-                                    crate::app::menu::CubeSubMenu::Overview,
-                                )),
-                            ]);
-                        }
-                    }
-                    return task;
-                }
-                if refresh_cube {
-                    if let Ok(settings) = settings::Settings::from_file(
-                        &self.datadir.network_directory(self.cube_settings.network),
-                    ) {
-                        if let Some(cube) = settings
-                            .cubes
-                            .iter()
-                            .find(|cube| cube.id == self.cube_settings.id)
-                        {
-                            self.imported_kit_metadata
-                                .replace(&self.datadir, cube, &settings);
-                            self.cache
-                                .recovery_kit_last_backed_up_descriptor_fingerprint = cube
-                                .recovery_kit_last_backed_up_descriptor_fingerprint
-                                .clone();
-                            self.cache
-                                .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
-                                .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
-                                .clone();
-                            self.cube_settings = cube.clone();
-                            self.panels.global_home.imported_installed = self
-                                .cube_settings
-                                .bitcoin_import
-                                .as_deref()
-                                .and_then(settings::BitcoinImport::active_attachment)
-                                .is_some();
-                        }
-                    }
-                }
-                let runtime = self.adopt_imported_runtime();
-                return Task::batch([task, runtime]);
             }
-            Message::View(view::Message::ImportedBitcoin(message)) => {
-                let client = self.authenticated_coincube_client();
-                let connect_epoch = self.panels.connect.account.session_generation();
-                let task = self
-                    .panels
-                    .imported_bitcoin
-                    .as_mut()
-                    .map_or_else(Task::none, |panel| {
-                        panel.update_view(message, client, connect_epoch)
-                    });
-                let runtime = self.adopt_imported_runtime();
-                return Task::batch([task, runtime]);
+            return Task::none();
+        }
+        if matches!(
+            &event,
+            state::imported_bitcoin::ImportEvent::Installed(_, Ok(()))
+                | state::imported_bitcoin::ImportEvent::Resumed(_, Ok(Some(_)))
+                | state::imported_bitcoin::ImportEvent::Opened(_, Ok(_))
+        ) {
+            self.imported_kit_metadata.invalidate();
+        }
+        let refresh_cube = matches!(
+            &event,
+            state::imported_bitcoin::ImportEvent::Installed(_, Ok(()))
+                | state::imported_bitcoin::ImportEvent::Resumed(_, Ok(Some(_)))
+                | state::imported_bitcoin::ImportEvent::Refreshed(_, Ok(_))
+                | state::imported_bitcoin::ImportEvent::Opened(_, Ok(_))
+        );
+        let import_client = self.authenticated_coincube_client();
+        let task = self
+            .panels
+            .imported_bitcoin
+            .as_mut()
+            .map_or_else(Task::none, |panel| {
+                panel.set_connect_client(import_client.as_ref());
+                panel.update_event(event)
+            });
+        if self
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .is_some_and(|panel| panel.abandoned())
+        {
+            if self.reset_abandoned_import() {
+                return Task::batch([
+                    task,
+                    self.set_current_panel(Menu::Cube(crate::app::menu::CubeSubMenu::Overview)),
+                ]);
             }
-            Message::View(view::Message::DismissToast(id)) => {
-                self.errors.retain(|(i, ..)| *i != id);
-                return self.arm_toast_timers();
-            }
-            Message::ExpireToast(id) => {
-                let now = std::time::Instant::now();
-                let due = self
-                    .errors
-                    .iter()
-                    .any(|(i, deadline, ..)| *i == id && deadline.is_some_and(|d| d <= now));
-                if due {
-                    self.errors.retain(|(i, ..)| *i != id);
-                    return self.arm_toast_timers();
-                }
-            }
-            Message::View(view::Message::ShowError(msg)) => {
-                // Redirect ShowError to ShowToast with Error level
-                return self.update_dispatch(Message::View(view::Message::ShowToast(
-                    log::Level::Error,
-                    msg,
-                )));
-            }
-            Message::View(view::Message::ShowSuccess(msg)) => {
-                return self.update_dispatch(Message::View(view::Message::ShowToast(
+            return task;
+        }
+        if refresh_cube {
+            self.refresh_imported_cube_metadata();
+        }
+        let runtime = self.adopt_imported_runtime();
+        Task::batch([task, runtime])
+    }
+
+    fn route_first_attached_wallet(
+        &mut self,
+        wallet: Arc<Wallet>,
+        vault_fp_task: Task<Message>,
+    ) -> Task<Message> {
+        if let Some(daemon) = &self.daemon {
+            self.panels.build_vault_panels(
+                wallet.clone(),
+                &self.cache,
+                daemon.backend(),
+                self.datadir.clone(),
+                self.internal_bitcoind.as_ref(),
+                self.config.clone(),
+                self.spark_backend(),
+            );
+        }
+
+        // W10 — nudge the user to back up the freshly-created
+        // Vault to their Connect Recovery Kit. Fires
+        // `LoadStatus` now; the `StatusLoaded` handler in
+        // `state::settings::recovery_kit` reads this flag
+        // and emits the toast only if the freshly-loaded
+        // status shows the descriptor isn't already
+        // backed up. Gating on the in-memory `status`
+        // here (pre-fetch) would misfire: on app startup
+        // and after Connect sign-out the cached value is
+        // `None` even for users whose kit is complete.
+        //
+        // Both the flag and the `LoadStatus` dispatch are
+        // gated on auth — unauthenticated users have no
+        // Connect account to fetch against, and dispatching
+        // the message anyway would just round-trip through
+        // `load_status`'s early-return. Skipping saves the
+        // message-queue hop and keeps the intent obvious.
+        let nudge_task: Option<Task<Message>> = if self.panels.connect.account.is_authenticated() {
+            self.panels
+                .global_settings
+                .recovery_kit
+                .nudge_on_next_status_load = true;
+            Some(Task::done(Message::View(view::Message::Settings(
+                view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
+            ))))
+        } else {
+            None
+        };
+
+        // Duress vault gate (PLAN-duress-vault-gate PR 3): the Cube
+        // just gained a Vault. Re-report `has_vault` to the server so
+        // other devices' duress gate sees it without waiting for a
+        // re-registration, and — if duress is already enrolled —
+        // surface the extra Recovery-Kit nudge line (master decision
+        // 6): the freshly-created Vault's Wallet Descriptor isn't in
+        // the kit yet, so a duress wipe of it would be irreversible.
+        let report_task = if wallet.supports_inheritance() || wallet.is_imported() {
+            self.panels.connect.report_vault_created()
+        } else {
+            Task::none()
+        };
+        let duress_nudge_task: Option<Task<Message>> =
+            if self.panels.connect.account.is_duress_enrolled() {
+                Some(Task::done(Message::View(view::Message::ShowToast(
                     log::Level::Info,
-                    msg,
+                    "Duress Mode is on — add this Vault's Wallet Descriptor to your \
+                     Recovery Kit so a duress wipe stays recoverable."
+                        .to_string(),
+                ))))
+            } else {
+                None
+            };
+        // Vault-setup-completion trigger (PR 3): the new Vault has a
+        // keyholder set and a Connect session — offer the one-time
+        // recovery-alerts consent prompt (alerts pre-selected on).
+        //
+        // Dispatched as a status load rather than a direct
+        // `maybe_show_recovery_alerts_prompt()` because the prompt
+        // gates on the recipient list, and that list is resolved by
+        // this very load. The `is_status_load` branch in the
+        // RecoveryAlerts dispatch offers the prompt once the load
+        // lands with the new Vault's keyholders in hand.
+        //
+        // Gated on an authenticated session with a resolved Connect
+        // cube, like the Recovery-Kit nudge above. Dispatching it
+        // without both doesn't merely waste a queue hop: the
+        // handler's early return still marks the monitoring config
+        // `loaded_once`, and that permanently disables the lazy
+        // hydrator in `recovery_heartbeat_task` (gated on
+        // `!loaded_once`) for the rest of the session — so a Vault
+        // built before signing in to Connect would neither
+        // heartbeat nor prompt until Settings was opened by hand.
+        let alerts_load_task: Option<Task<Message>> =
+            (self.panels.connect.account.is_authenticated()
+                && self.panels.connect.cube.server_cube_id.is_some())
+            .then(|| {
+                Task::done(Message::View(view::Message::Settings(
+                    view::SettingsMessage::RecoveryAlerts(view::RecoveryAlertsMessage::LoadStatus),
+                )))
+            });
+
+        // Fold the re-report, the optional duress nudge and the
+        // optional alerts load into a single extra task so the
+        // return arms below stay simple.
+        let report_task = Task::batch(
+            std::iter::once(report_task)
+                .chain(duress_nudge_task)
+                .chain(alerts_load_task),
+        );
+        // Forward to the current panel; batch the nudge and the
+        // has_vault re-report in when present.
+        if let (Some(daemon), Some(panel)) = (self.daemon.clone(), self.panels.current_mut()) {
+            let panel_task = panel.update(
+                Some(daemon),
+                &self.cache,
+                Message::WalletUpdated(Ok(wallet)),
+            );
+            return match nudge_task {
+                Some(nudge) => Task::batch([panel_task, nudge, report_task, vault_fp_task]),
+                None => Task::batch([panel_task, report_task, vault_fp_task]),
+            };
+        }
+        match nudge_task {
+            Some(nudge) => Task::batch([nudge, report_task, vault_fp_task]),
+            None => Task::batch([report_task, vault_fp_task]),
+        }
+    }
+
+    fn route_wallet_updated(&mut self, wallet: Arc<Wallet>) -> Task<Message> {
+        // Check if we're transitioning from no-vault to has-vault state
+        let was_vaultless = self.wallet.is_none();
+
+        if self.wallet.as_ref().map(|w| w.id()) != Some(wallet.id()) {
+            // A permission to switch is specific to the probed Vault.
+            self.cache.local_switch_history = None;
+            self.local_switch_hold = None;
+            self.bitcoind_sync_probe_in_progress = false;
+            self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
+            self.node_history_in_progress = false;
+            self.node_history_pending = None;
+            self.cache.node_history = node_history::Status::default();
+            self.cache.node_history_switch_requested = false;
+            self.cache.local_node_transfer_visible = false;
+        }
+        self.wallet = Some(wallet.clone());
+        self.imported_kit_metadata
+            .reload(&self.datadir, &self.cube_settings);
+        self.cache.has_vault = wallet.supports_inheritance() || wallet.is_imported();
+        self.cache.has_imported_bitcoin = wallet.is_imported();
+        self.cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
+
+        // A Vault attached mid-session never passes through `App::new`,
+        // so run the same identity backfill here — otherwise a Vault
+        // created in this session would render "Vault configured" with
+        // no id until the next relaunch
+        // (PLAN-vault-identity-unification D4).
+        let vault_fp_task = self.vault_fingerprint_backfill_task();
+
+        // The first Vault needs new panels and setup follow-up tasks.
+        if was_vaultless {
+            return self.route_first_attached_wallet(wallet, vault_fp_task);
+        }
+
+        // Forward the message to the current panel, with or without
+        // a daemon: a Register dialog waiting on this result must
+        // finish even while the daemon is restarting.
+        if let Some(panel) = self.panels.current_mut() {
+            let panel_task = panel.update(
+                self.daemon.clone(),
+                &self.cache,
+                Message::WalletUpdated(Ok(wallet)),
+            );
+            return Task::batch([panel_task, vault_fp_task]);
+        }
+        vault_fp_task
+    }
+
+    fn capture_connect_auth_snapshots(&mut self, msg: &Message) {
+        if matches!(
+            msg,
+            Message::View(view::Message::ConnectAccount(
+                view::ConnectAccountMessage::RefreshSession { .. }
+            ))
+        ) && !self.panels.connect.account.is_authenticated()
+        {
+            use crate::services::connect::client::cache::{ConnectCache, ConnectCacheError};
+            let network_dir = self
+                .cache
+                .datadir_path
+                .network_directory(self.cache.network);
+            let auth = self
+                .connect_auth
+                .as_ref()
+                .map(|arc| arc.try_read().map(|tokens| (arc.clone(), tokens.clone())));
+            self.in_app_restore_cache_snapshot = match (ConnectCache::from_file(&network_dir), auth)
+            {
+                (Ok(cache), Some(Ok(auth))) => Some(RestoreAuthSnapshot {
+                    cache,
+                    email: self.connect_email.clone(),
+                    auth: Some(auth),
+                }),
+                (Ok(cache), None) => Some(RestoreAuthSnapshot {
+                    cache,
+                    email: self.connect_email.clone(),
+                    auth: None,
+                }),
+                (Err(ConnectCacheError::NotFound), Some(Ok(auth))) => Some(RestoreAuthSnapshot {
+                    cache: ConnectCache::default(),
+                    email: self.connect_email.clone(),
+                    auth: Some(auth),
+                }),
+                (Err(ConnectCacheError::NotFound), None) => Some(RestoreAuthSnapshot {
+                    cache: ConnectCache::default(),
+                    email: self.connect_email.clone(),
+                    auth: None,
+                }),
+                (_, Some(Err(error))) => {
+                    tracing::warn!("Cannot capture Connect restore auth state: {error}");
+                    None
+                }
+                (Err(error), _) => {
+                    tracing::warn!("Cannot capture Connect restore cache state: {error}");
+                    None
+                }
+            };
+        }
+        if matches!(
+            msg,
+            Message::View(view::Message::ConnectAccount(
+                view::ConnectAccountMessage::VerifyOtp
+            ))
+        ) && self.panels.connect.account.can_begin_verify_otp()
+        {
+            use crate::services::connect::client::cache::{ConnectCache, ConnectCacheError};
+            let network_dir = self
+                .cache
+                .datadir_path
+                .network_directory(self.cache.network);
+            self.in_app_otp_cache_snapshot = match ConnectCache::from_file(&network_dir) {
+                Ok(cache) => Some(cache),
+                Err(ConnectCacheError::NotFound) => Some(ConnectCache::default()),
+                Err(error) => {
+                    tracing::warn!("Cannot capture Connect OTP cache state: {error}");
+                    None
+                }
+            };
+        }
+    }
+
+    fn reconcile_bound_connect_client(&mut self, explicit_logout: bool) {
+        if let Some(bound) = &self.fork_connect_client {
+            let current = self.panels.connect.account.authenticated_client();
+            let changed = current.as_ref().is_some_and(|current| {
+                current.base_url != bound.base_url || current.token() != bound.token()
+            });
+            if explicit_logout || changed || current.is_none() {
+                if self.requires_connect() {
+                    self.invalidate_fork_session();
+                } else {
+                    self.revoke_local_connect_services();
+                }
+            }
+        }
+    }
+
+    fn sync_connect_claim_session(&mut self, session_epoch: Option<u64>, explicit_logout: bool) {
+        // Connect-session reads (the unswept notice, the Chains
+        // column's proofs) work under the account's session. A
+        // sign-out, or a different account or client identity, revokes every
+        // Connect-session read here, synchronously, before anything
+        // else acts on the change, and advances the generation.
+        if session_epoch.is_some_and(|epoch| epoch >= self.claim_hold_epoch) {
+            self.claim_session_invalidated = false;
+        }
+        let claim_signed_in =
+            !explicit_logout && self.panels.connect.account.bitcoin_blake2b_enabled();
+        let claim_session = if claim_signed_in {
+            self.claim_connect_session()
+        } else {
+            None
+        };
+        let notice_replaced = self.unswept_session.as_ref().is_some_and(|old| {
+            !self.cache.btcb2_server_enabled
+                || claim_session
+                    .as_ref()
+                    .is_none_or(|new| !crate::app::connect_session::same_session(old, new))
+        });
+        // A first sign-in replaces nothing; another account,
+        // endpoint or credential (or a sign-out) does.
+        let previous_session = std::mem::replace(&mut self.seen_session, claim_session.clone());
+        let session_replaced = match (&previous_session, &claim_session) {
+            (Some(old), Some(new)) => !crate::app::connect_session::same_session(old, new),
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        if !claim_signed_in || session_replaced || notice_replaced {
+            self.revoke_claim();
+        }
+    }
+
+    fn sync_connect_sidebar(&mut self, was_authenticated: bool) {
+        if self.cache.chain().is_blake2b() {
+            self.cache.marketplace_flags = Default::default();
+        }
+        // Sync lightning address to cache for sidebar display
+        self.cache.lightning_address = self
+            .panels
+            .connect
+            .cube
+            .lightning_address
+            .as_ref()
+            .and_then(|la| {
+                crate::services::coincube::display_lightning_address(
+                    la.lightning_address.as_deref(),
+                )
+            });
+        self.cache.lightning_address_setup = self.panels.connect.cube.ln_auto.clone();
+        self.panels.spark_receive.sync_lightning_address_qr(
+            self.cache
+                .connect_authenticated
+                .then_some(self.cache.lightning_address.as_deref())
+                .flatten(),
+        );
+        if let Some(p2p) = self.panels.p2p.as_mut() {
+            p2p.sync_lightning_address_from_cache(&self.cache);
+            // Keep the panel's server-P2P mirror current so its Mostro
+            // subscription gate drops the relay stream when the server
+            // has P2P off (the cache flag was just refreshed above).
+            p2p.sync_marketplace_flags_from_cache(&self.cache);
+        }
+        // Sync avatar handle to cache for sidebar display across all panels.
+        // Only update when Some to avoid blinking during in-flight image loads.
+        // Clear on logout when auth state transitions from true to false.
+        self.cache.avatar_regenerations_remaining = self
+            .panels
+            .connect
+            .cube
+            .avatar_data
+            .as_ref()
+            .map(|data| data.regenerations_remaining);
+        if let Some(handle) = self.panels.connect.cube.get_active_avatar_handle() {
+            self.cache.avatar_handle = Some(handle);
+        } else if was_authenticated && !self.cache.connect_authenticated {
+            // Logout occurred - clear the avatar
+            self.cache.avatar_handle = None;
+        }
+    }
+
+    fn sync_connect_stream_after_auth(&mut self, was_authenticated: bool) {
+        // Connect logout: tear down the realtime stream. The
+        // subscription is keyed on `connect_stream_config`, so
+        // clearing it (plus the cache mirrors) drops the gRPC
+        // stream on the next `subscription()` tick — Iced's
+        // model is declarative, there is no task handle to
+        // cancel. NOTE: a subsequent in-place relogin does not
+        // yet rebuild the stream (would need the token Arc +
+        // email re-plumbed from the account panel); the stream
+        // currently only re-establishes on app restart.
+        if !was_authenticated && self.cache.connect_authenticated {
+            self.cache.connect_signed_out_by = None;
+        }
+        if was_authenticated && !self.cache.connect_authenticated {
+            self.connect_renewal = Renewal::default();
+            self.cache.connect_panel_open = false;
+            self.connect_stream_config = None;
+            self.connect_email = None;
+            self.cache.connect_grpc_url = None;
+            self.cache.connect_tokens = None;
+            self.cache.connect_device_id = None;
+            self.cache.connect_email = None;
+            self.cache.has_connect_session = false;
+            self.cache.lightning_address = None;
+            self.panels.spark_receive.sync_lightning_address_qr(None);
+            self.cache.connect_stream_status = ConnectionStatus::Inactive;
+            // Drop the previous session's vault-monitoring config so
+            // it can't leak into the next account and so the
+            // heartbeat's lazy `loaded_once` re-hydration re-fetches
+            // for whoever signs in next (the card itself lives here on
+            // `global_settings`, not on the connect panel that handles
+            // the rest of the logout scrub).
+            self.panels.global_settings.recovery_alerts =
+                crate::app::state::settings::recovery_alerts::RecoveryAlerts::new();
+            // Logout breaks the "Switch to Connect" trip the
+            // user started; firing the auto-return on a fresh
+            // unrelated login later would be surprising.
+            self.pending_switch_to_connect_after_login = false;
+        }
+    }
+
+    fn apply_committed_connect_login(
+        &mut self,
+        committed_login: Option<(crate::services::coincube::LoginResponse, bool)>,
+        auth_revision_before: u64,
+    ) -> Task<Message> {
+        let Some((login, refreshed)) = committed_login else {
+            return Task::none();
+        };
+        if self.panels.connect.account.accepted_auth_revision() == auth_revision_before {
+            return Task::none();
+        }
+        let needs_new_arc = self.connect_email.as_deref() != Some(login.user.email.as_str())
+            || self.connect_auth.is_none();
+        if needs_new_arc {
+            self.connect_stream_config = None;
+            self.cache.connect_grpc_url = None;
+            self.cache.connect_device_id = None;
+            let tokens = std::sync::Arc::new(tokio::sync::RwLock::new(
+                crate::services::connect::client::auth::AccessTokenResponse {
+                    access_token: login.token.clone(),
+                    refresh_token: login.refresh_token.clone(),
+                    expires_at: chrono::Utc::now().timestamp() + 30 * 24 * 60 * 60,
+                },
+            ));
+            self.connect_auth = Some(tokens.clone());
+            self.cache.connect_tokens = Some(tokens);
+        }
+        self.connect_email = Some(login.user.email.clone());
+        self.cache.connect_email = Some(login.user.email);
+        self.cache.has_connect_session = true;
+        if refreshed && needs_new_arc {
+            return Task::done(Message::InAppConnectLoginCompleted {
+                token: login.token,
+                refresh_token: login.refresh_token,
+                email: self.connect_email.clone().expect("just installed"),
+                epoch: self.panels.connect.account.auth_epoch(),
+            });
+        }
+        Task::none()
+    }
+
+    fn refresh_recovery_kit_after_connect_auth(
+        &self,
+        was_authenticated: bool,
+        previously_registered: bool,
+    ) -> Task<Message> {
+        if self.panels.connect.account.is_authenticated()
+            && self.panels.connect.cube.server_cube_id.is_some()
+            && (!was_authenticated || !previously_registered)
+        {
+            Task::done(Message::View(view::Message::Settings(
+                view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
+            )))
+        } else {
+            Task::none()
+        }
+    }
+
+    fn route_connect_panel_message(&mut self, msg: Message) -> Task<Message> {
+        let mut committed_login = None;
+        if let Message::View(view::Message::ConnectAccount(
+            view::ConnectAccountMessage::AuthCommitAccepted {
+                login,
+                epoch,
+                refreshed,
+            },
+        )) = &msg
+        {
+            let network_dir = self
+                .cache
+                .datadir_path
+                .network_directory(self.cache.network);
+            let still_current =
+                crate::services::connect::client::cache::ConnectCache::from_file(&network_dir)
+                    .ok()
+                    .and_then(|cache| cache.active_account().cloned())
+                    .is_some_and(|account| {
+                        account.email == login.user.email
+                            && account.tokens.access_token == login.token
+                            && account.tokens.refresh_token == login.refresh_token
+                    });
+            if !still_current {
+                return Task::done(Message::View(view::Message::ConnectAccount(
+                    view::ConnectAccountMessage::AuthCommitRejected { epoch: *epoch },
                 )));
             }
-            Message::View(view::Message::ShowToast(level, msg)) => {
-                // Show toast with specified level
-                self.errors
-                    .push((self.current_error_id, None, level, ToastContent::Text(msg)));
-                self.current_error_id += 1;
-                return self.arm_toast_timers();
+            committed_login = Some((login.clone(), *refreshed));
+        }
+        if self.cache.chain().is_blake2b() && !self.requires_connect() {
+            self.panels.connect.account.use_local_backend();
+        }
+        let was_authenticated = self.cache.connect_authenticated;
+        let previous_server_cube_id = self.panels.connect.cube.server_cube_id;
+        let explicit_logout = matches!(
+            &msg,
+            Message::View(view::Message::ConnectAccount(
+                view::ConnectAccountMessage::LogOut
+            ))
+        );
+        // The two completions that establish a session in this tab —
+        // a login or refresh result, and the user it loads — carry the
+        // authentication epoch of the operation that produced them.
+        // Nothing else (a features, plan, flags or activity load, a
+        // re-entry) lifts a hold on the claim's session, and neither
+        // does a completion of an operation begun before the hold
+        // (see `claim_session_invalidated`).
+        let session_epoch = match &msg {
+            Message::View(view::Message::ConnectAccount(
+                view::ConnectAccountMessage::SetSession(_, epoch)
+                | view::ConnectAccountMessage::AuthCommitAccepted { epoch, .. }
+                | view::ConnectAccountMessage::SessionLoaded { epoch, .. },
+            )) => Some(*epoch),
+            _ => None,
+        };
+        // Features and the post-login account check complete independently.
+        // A pending account check is not a revocation of this admitted Cube.
+        let current_features_denied = matches!(
+            &msg,
+            Message::View(view::Message::ConnectAccount(
+                view::ConnectAccountMessage::FeaturesLoaded(features, generation)
+            )) if *generation == self.panels.connect.account.session_generation()
+                && !crate::app::features::bitcoin_blake2b_enabled(
+                    features.as_ref().and_then(|f| f.bitcoin_blake2b_enabled).unwrap_or(false),
+                    self.panels.connect.account.bitcoin_blake2b_opt_in,
+                )
+        );
+        self.capture_connect_auth_snapshots(&msg);
+        let auth_revision_before = self.panels.connect.account.accepted_auth_revision();
+        let task = self
+            .panels
+            .connect
+            .update(self.daemon.clone(), &self.cache, msg);
+        let auth_bootstrap =
+            self.apply_committed_connect_login(committed_login, auth_revision_before);
+        self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
+        self.cache.restorable_connect_session = self.panels.connect.account.has_stored_session();
+        let refresh_recovery_kit = self.refresh_recovery_kit_after_connect_auth(
+            was_authenticated,
+            previous_server_cube_id.is_some(),
+        );
+        self.reconcile_bound_connect_client(explicit_logout);
+        // Mirror the server-controlled Marketplace flags so the nav
+        // rails and route guard reflect the latest `/connect/features`
+        // stance. Recomputed after every ConnectAccount/ConnectCube
+        // message (FeaturesLoaded flows through here, and logout clears
+        // `features` back to fail-closed OFF via the accessor).
+        self.cache.marketplace_flags = self.panels.connect.account.marketplace_server_flags();
+        // Same mirror for the fork account grant, so the Vault rail can
+        // answer "can this Cube start a claim?" without reaching into
+        // the Connect panel from the view layer.
+        self.cache.btcb2_server_enabled = self.panels.connect.account.bitcoin_blake2b_enabled();
+        if self.requires_connect() && current_features_denied {
+            self.invalidate_fork_session();
+            return Task::none();
+        }
+        self.sync_connect_claim_session(session_epoch, explicit_logout);
+        self.sync_connect_sidebar(was_authenticated);
+        self.sync_connect_stream_after_auth(was_authenticated);
+        // Auto-return for the "Switch to Connect" flow. When the user
+        // clicked it without an active session, we routed them to the
+        // Connect tab and set this flag. Now that they've signed in,
+        // jump back to Vault → Settings → Node and re-fire the switch
+        // — which will fast-path through the new session's JWT.
+        if !was_authenticated
+            && self.cache.connect_authenticated
+            && self.pending_switch_to_connect_after_login
+        {
+            self.pending_switch_to_connect_after_login = false;
+            let nav = self.set_current_panel(menu::Menu::Vault(menu::VaultSubMenu::Settings(
+                Some(menu::SettingsOption::Node),
+            )));
+            let switch = Task::done(Message::View(view::Message::Settings(
+                view::SettingsMessage::NodeSettings(view::NodeSettingsMessage::SwitchToConnect),
+            )));
+            return Task::batch([task, auth_bootstrap, refresh_recovery_kit, nav, switch]);
+        }
+        Task::batch([task, auth_bootstrap, refresh_recovery_kit])
+    }
+
+    fn route_spark_client_event(
+        &mut self,
+        client_event: crate::app::breez_spark::SparkClientEvent,
+    ) -> Task<Message> {
+        use coincube_spark_protocol::Event as SparkEvent;
+        let crate::app::breez_spark::SparkClientEvent(event) = client_event;
+        log::info!("App received Spark event: {:?}", event);
+
+        let mut tasks: Vec<Task<Message>> = Vec::new();
+
+        // Refresh Spark Overview on every event — balance
+        // moves on any payment state change, and `Synced`
+        // ticks are the SDK's "you're up to date, re-read
+        // state" signal. Deposits being claimed counts as a
+        // balance change too.
+        tasks.push(self.panels.spark_overview.reload(None, None));
+
+        // Also refresh the Home (Cube → Overview) Spark card.
+        // `global_home.reload` only runs on navigation, so on
+        // cold start the first `get_info` may return the SDK's
+        // persisted pre-sync value (e.g. zero before this
+        // session's incoming payments landed). The Home state
+        // gates `spark_balance_loaded` on observing at least
+        // one `Synced` from the bridge — `SparkSyncedObserved`
+        // (sent only for `SparkEvent::Synced`) flips that gate,
+        // and the `RefreshSparkBalance` dispatched alongside
+        // re-fetches whatever the SDK can now report.
+        // A periodic poll in `GlobalHome::subscription` is the
+        // safety net for the case where `Synced` fires before
+        // iced subscribes (tokio broadcast doesn't replay).
+        if matches!(event, SparkEvent::Synced) {
+            tasks.push(Task::done(Message::View(view::Message::Home(
+                view::HomeMessage::SparkSyncedObserved,
+            ))));
+            // First sync of the session: check the SDK's Stable
+            // Balance toggle against the Cube's recorded decision
+            // (and its USDB holding). Once per session — the
+            // outcome is durable, and later ticks have nothing new.
+            if !self.spark_stable_balance_reconciled {
+                self.spark_stable_balance_reconciled = true;
+                tasks.push(self.spark_stable_balance_state_task());
             }
-            Message::PendingBitcoindLog(log) => {
-                if let Some(line) = log {
-                    self.cache.node_bitcoind_last_log = Some(line);
-                }
-            }
-            Message::ConnectStreamReady(cfg) => {
-                return self.connect_stream_ready(cfg);
-            }
-            Message::ConnectStream(event) => {
-                return self.handle_connect_stream(event);
-            }
-            Message::InAppConnectAuthReady {
-                login,
-                epoch,
-                previous_refresh_token,
-            } => {
-                return self.connect_auth_ready(login, epoch, previous_refresh_token);
-            }
-            Message::InAppConnectAuthPersisted {
-                login,
-                epoch,
-                previous_refresh_token,
-                tokens,
-            } => {
-                return self.connect_auth_persisted(login, epoch, previous_refresh_token, tokens);
-            }
-            Message::InAppConnectLoginCompleted {
+        }
+        tasks.push(Task::done(Message::View(view::Message::Home(
+            view::HomeMessage::RefreshSparkBalance,
+        ))));
+
+        // Payment-related events reload the Transactions list
+        // so newly surfaced rows appear without the user
+        // manually navigating / pressing refresh. `Synced`
+        // and `DepositsChanged` alone don't imply new
+        // payment-list rows.
+        if matches!(
+            event,
+            SparkEvent::PaymentSucceeded { .. }
+                | SparkEvent::PaymentPending { .. }
+                | SparkEvent::PaymentFailed { .. }
+        ) {
+            tasks.push(self.panels.spark_transactions.reload(None, None));
+        }
+        // `PaymentUpdated` is late metadata on a payment that is
+        // already listed: refresh the page in view (and any open
+        // detail pane) without sending the user back to page 0.
+        if matches!(event, SparkEvent::PaymentUpdated { .. }) {
+            tasks.push(self.panels.spark_transactions.refresh_in_place());
+        }
+        // The Spark page's rows follow its own reload (`DataLoaded`).
+        if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
+            && overview_activity_spark_event(&event)
+        {
+            tasks.push(self.panels.activity.refresh_wallet(
+                view::activity::WalletFilter::Spark,
+                None,
+                None,
+            ));
+        }
+
+        match event {
+            SparkEvent::PaymentSucceeded {
+                id,
+                amount_sat,
+                bolt11,
                 token,
-                refresh_token,
-                email,
-                epoch,
             } => {
-                return self.connect_login_completed(token, refresh_token, email, epoch);
-            }
-            Message::TriggerConnectStreamReady {
-                network,
-                datadir,
-                tokens,
-                email,
-                cube_uuid,
-            } => {
-                return self
-                    .trigger_connect_stream_ready(network, datadir, tokens, email, cube_uuid);
-            }
-            Message::EnsureConnectReady => return self.ensure_connect_ready(),
-            Message::InstallStats(_) => {
-                if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(self.daemon.clone(), &self.cache, message);
-                }
-            }
-            Message::SetInternalBitcoind(bitcoind) => {
-                if let Some(settings) = self.panels.vault_settings.as_mut() {
-                    settings.set_managed_owner(
-                        bitcoind.owner_lock_path().map(std::path::PathBuf::from),
-                    );
-                }
-                self.internal_bitcoind = Some(bitcoind);
-            }
-            Message::BackgroundManagedNodeReady {
-                cube,
-                attempt,
-                flavor,
-                result,
-            } => {
-                // An earlier attempt's result may still adopt or release its
-                // node, but only the current attempt owns the shown status.
-                let current = self.background_node_attempt == Some(attempt);
-                let Some(cfg) = self.daemon.as_ref().and_then(|daemon| daemon.config()) else {
-                    return Task::none();
-                };
-                if cube != self.cube_settings.id {
-                    if let Ok((_, node)) = result {
-                        node.stop();
-                    }
-                    return Task::none();
-                }
-                if cfg.pending_managed_node_install.as_deref() != Some(flavor.as_str())
-                    || !matches!(
-                        cfg.bitcoin_backend,
-                        Some(coincubed::config::BitcoinBackend::Esplora(_))
-                    )
-                {
-                    if current {
-                        self.cache.background_node_install = cache::BackgroundNodeInstall::Idle;
-                    }
-                    if let Ok((_, node)) = result {
-                        node.stop();
-                    }
-                    return Task::none();
-                }
-                if self.daemon_switch_in_progress {
-                    // The pending-node config must be applied after the other
-                    // switch, or LoadDaemonConfig would discard this request.
-                    return Task::perform(
-                        async move {
-                            tokio::time::sleep(Duration::from_secs(5)).await;
-                            Message::BackgroundManagedNodeReady {
-                                cube,
-                                attempt,
-                                flavor,
-                                result,
-                            }
-                        },
-                        |message| message,
-                    );
-                }
-                match result {
-                    Ok((node_config, node)) => {
-                        // The pending node's sync card takes over from here.
-                        if current {
-                            self.cache.background_node_install = cache::BackgroundNodeInstall::Idle;
-                        }
-                        if let Some(settings) = self.panels.vault_settings.as_mut() {
-                            settings.set_managed_owner(
-                                node.owner_lock_path().map(std::path::PathBuf::from),
-                            );
-                        }
-                        self.internal_bitcoind = Some(node);
-                        let mut updated = cfg.clone();
-                        updated.pending_bitcoind = Some(node_config);
-                        updated.pending_managed_node_install = None;
-                        updated.auto_switch_to_pending = Some(true);
-                        return Task::done(Message::LoadDaemonConfig(Box::new(updated)));
-                    }
-                    Err(error) => {
-                        tracing::warn!("Background managed node setup failed: {error}");
-                        if !current {
-                            // A later attempt is running; its own result decides.
-                            return Task::none();
-                        }
-                        // Leave the request on disk so a retry, here or on
-                        // reopening the Vault, can pick it up.
-                        self.cache.background_node_install =
-                            cache::BackgroundNodeInstall::Failed(error.clone());
-                        return Task::done(Message::View(view::Message::ShowToast(
-                            log::Level::Warn,
-                            coincube_ui::localized_format!(
-                                "Local node setup paused: {error}. Connect remains available; retry from Settings → Node.",
-                                "La configuración del nodo local está en pausa: {error}. Connect sigue disponible; vuelve a intentarlo desde Ajustes → Nodo."
+                // Phase 4f: forward the BOLT11 field so the
+                // Receive panel can correlate against its
+                // currently displayed invoice. A token payment's
+                // amount is in token base units, so its token goes
+                // along to be read with it.
+                let is_token = token.is_some();
+                tasks.push(Task::done(Message::View(view::Message::SparkReceive(
+                    view::SparkReceiveMessage::PaymentReceived {
+                        payment_id: id,
+                        amount_sat,
+                        bolt11,
+                        token,
+                    },
+                ))));
+                // An auto-claim accepted before maturity settles
+                // through this event; Home needs the settled amount
+                // to complete its indicator and fire the splash. A
+                // token payment carries no sats.
+                if let Ok(amount_sat) = <u64 as std::convert::TryFrom<i64>>::try_from(amount_sat) {
+                    if amount_sat > 0 && !is_token {
+                        tasks.push(Task::done(Message::View(view::Message::Home(
+                            view::HomeMessage::SparkPaymentSucceeded { amount_sat },
+                        ))));
+                        // A claimed on-chain deposit lands as a
+                        // payment: let a settled cross-network
+                        // receive check whether it was its own,
+                        // rather than wait for its next timer tick.
+                        tasks.push(Task::done(Message::View(
+                            view::Message::SparkSideshiftReceive(
+                                view::SparkSideshiftReceiveMessage::CheckSettleClaim,
                             ),
                         )));
                     }
                 }
             }
-            Message::BackgroundManagedNodeProgress {
-                cube,
-                attempt,
-                progress,
-            } => {
-                if cube == self.cube_settings.id
-                    && self.background_node_attempt == Some(attempt)
-                    && self.cache.background_node_install.is_running()
-                {
-                    self.cache.background_node_install = progress;
+            SparkEvent::DepositsChanged => {
+                // Phase 4f: refresh the Receive panel's
+                // pending deposits card. The panel handles
+                // the actual `list_unclaimed_deposits` RPC
+                // dispatch.
+                tasks.push(Task::done(Message::View(view::Message::SparkReceive(
+                    view::SparkReceiveMessage::DepositsChanged,
+                ))));
+                // Transfer-redesign follow-up: the Home state tracks a
+                // `pending_spark_incoming` indicator for transfer-initiated
+                // deposits (VaultToSpark). Forward the
+                // event so Home can reconcile its own view (auto-claim a
+                // matured deposit, or clear the indicator once claimed).
+                tasks.push(Task::done(Message::View(view::Message::Home(
+                    view::HomeMessage::SparkDepositsChanged,
+                ))));
+            }
+            SparkEvent::LightningAddressChanged { info } => {
+                // Phase 4g: forward to ConnectCube so it can
+                // refresh its view and auto-re-register if
+                // the SDK state went Some → None unexpectedly.
+                tasks.push(Task::done(Message::View(view::Message::ConnectCube(
+                    view::ConnectCubeMessage::SparkLightningAddressChanged(info),
+                ))));
+            }
+            SparkEvent::StableBalancePaused { reason, failures } => {
+                log::error!(
+                    "Spark bridge paused Stable Balance after {failures} failed \
+                     auto-conversions: {reason}"
+                );
+                // The bridge already flipped the SDK setting off;
+                // the Settings toggle and Overview badge re-read it
+                // on reload. Record "off" as the Cube's decision so
+                // the next launch's reconcile doesn't re-arm the
+                // loop, then show the banner — after the record,
+                // which clears any banner it finds.
+                tasks.push(self.record_spark_stable_balance(false));
+                self.cache.spark_notice = Some(cache::SparkNotice::StableBalancePaused { reason });
+                tasks.push(self.panels.spark_settings.reload(None, None));
+            }
+            _ => {}
+        }
+
+        Task::batch(tasks)
+    }
+
+    fn stop_unadopted_background_node(
+        result: Result<(coincubed::config::BitcoindConfig, Bitcoind), String>,
+    ) {
+        if let Ok((_, node)) = result {
+            node.stop();
+        }
+    }
+
+    fn route_background_managed_node_ready(
+        &mut self,
+        cube: String,
+        attempt: u64,
+        flavor: String,
+        result: Result<(coincubed::config::BitcoindConfig, Bitcoind), String>,
+    ) -> Task<Message> {
+        // An earlier attempt's result may still adopt or release its
+        // node, but only the current attempt owns the shown status.
+        let current = self.background_node_attempt == Some(attempt);
+        let Some(cfg) = self.daemon.as_ref().and_then(|daemon| daemon.config()) else {
+            return Task::none();
+        };
+        if cube != self.cube_settings.id {
+            Self::stop_unadopted_background_node(result);
+            return Task::none();
+        }
+        if cfg.pending_managed_node_install.as_deref() != Some(flavor.as_str())
+            || !matches!(
+                cfg.bitcoin_backend,
+                Some(coincubed::config::BitcoinBackend::Esplora(_))
+            )
+        {
+            if current {
+                self.cache.background_node_install = cache::BackgroundNodeInstall::Idle;
+            }
+            Self::stop_unadopted_background_node(result);
+            return Task::none();
+        }
+        if self.daemon_switch_in_progress {
+            // The pending-node config must be applied after the other
+            // switch, or LoadDaemonConfig would discard this request.
+            return Task::perform(
+                async move {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    Message::BackgroundManagedNodeReady {
+                        cube,
+                        attempt,
+                        flavor,
+                        result,
+                    }
+                },
+                |message| message,
+            );
+        }
+        match result {
+            Ok((node_config, node)) => {
+                // The pending node's sync card takes over from here.
+                if current {
+                    self.cache.background_node_install = cache::BackgroundNodeInstall::Idle;
+                }
+                if let Some(settings) = self.panels.vault_settings.as_mut() {
+                    settings
+                        .set_managed_owner(node.owner_lock_path().map(std::path::PathBuf::from));
+                }
+                self.internal_bitcoind = Some(node);
+                let mut updated = cfg.clone();
+                updated.pending_bitcoind = Some(node_config);
+                updated.pending_managed_node_install = None;
+                updated.auto_switch_to_pending = Some(true);
+                Task::done(Message::LoadDaemonConfig(Box::new(updated)))
+            }
+            Err(error) => {
+                tracing::warn!("Background managed node setup failed: {error}");
+                if !current {
+                    // A later attempt is running; its own result decides.
+                    return Task::none();
+                }
+                // Leave the request on disk so a retry, here or on
+                // reopening the Vault, can pick it up.
+                self.cache.background_node_install =
+                    cache::BackgroundNodeInstall::Failed(error.clone());
+                Task::done(Message::View(view::Message::ShowToast(
+                    log::Level::Warn,
+                    coincube_ui::localized_format!(
+                        "Local node setup paused: {error}. Connect remains available; retry from Settings → Node.",
+                        "La configuración del nodo local está en pausa: {error}. Connect sigue disponible; vuelve a intentarlo desde Ajustes → Nodo."
+                    ),
+                )))
+            }
+        }
+    }
+
+    fn route_cache_updated(&mut self) -> Task<Message> {
+        // Cube (Home) Settings lives on every cube, vault or not,
+        // so its cache update must fire independently of the
+        // vault-panel branch below. Vault Settings and Cube
+        // Settings are distinct panels backed by separate state —
+        // each panel's "am I current?" flag only matches the one
+        // it actually owns.
+        let is_global_settings_current = matches!(
+            &self.panels.current,
+            Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_))
+        );
+        let mut commands = vec![self.panels.global_settings.update(
+            self.daemon.clone(),
+            &self.cache,
+            Message::UpdatePanelCache(is_global_settings_current),
+        )];
+
+        // Vault-specific panels only exist on cubes with a
+        // configured vault.
+        if let (Some(daemon), Some(vault_overview)) =
+            (&self.daemon, self.panels.vault_overview.as_mut())
+        {
+            let daemon = daemon.clone();
+            let current = &self.panels.current;
+            let cache = self.cache.clone();
+
+            let is_vault_settings_current = matches!(
+                current,
+                Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
+            );
+            let is_spend_current =
+                matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
+            let is_recovery_current = matches!(
+                current,
+                Menu::Vault(crate::app::menu::VaultSubMenu::Recovery)
+            );
+
+            commands.push(vault_overview.update(
+                Some(daemon.clone()),
+                &cache,
+                Message::UpdatePanelCache(
+                    current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
+                ),
+            ));
+            if let Some(vault_settings) = self.panels.vault_settings.as_mut() {
+                commands.push(vault_settings.update(
+                    Some(daemon.clone()),
+                    &cache,
+                    Message::UpdatePanelCache(is_vault_settings_current),
+                ));
+            }
+
+            // Also update create_spend panel if it exists
+            if let Some(create_spend) = self.panels.create_spend.as_mut() {
+                commands.push(create_spend.update(
+                    Some(daemon.clone()),
+                    &cache,
+                    Message::UpdatePanelCache(is_spend_current),
+                ));
+            }
+
+            // The recovery panel is a separate CreateSpendPanel and must
+            // be refreshed too, otherwise its sync status and balance stay
+            // frozen at the value captured when it was constructed.
+            if let Some(recovery) = self.panels.recovery.as_mut() {
+                commands.push(recovery.update(
+                    Some(daemon.clone()),
+                    &cache,
+                    Message::UpdatePanelCache(is_recovery_current),
+                ));
+            }
+        }
+
+        Task::batch(commands)
+    }
+
+    fn route_node_history_action(&mut self, action: node_history::Action) -> Task<Message> {
+        if self.cache.chain().is_blake2b() {
+            return Task::none();
+        }
+        if self.node_history_in_progress {
+            if !matches!(action, node_history::Action::Poll) {
+                self.cache.node_history.cancel_queued =
+                    matches!(action, node_history::Action::Cancel);
+                self.node_history_pending = Some(action);
+            }
+            return Task::none();
+        }
+        if self.daemon_switch_in_progress {
+            return Task::none();
+        }
+        let (Some(daemon), Some(wallet), Some(managed)) =
+            (&self.daemon, &self.wallet, &self.internal_bitcoind)
+        else {
+            return Task::none();
+        };
+        let Some(config) = daemon.config().and_then(local_node_sync_config).cloned() else {
+            return Task::none();
+        };
+        if config != managed.config {
+            return Task::none();
+        }
+        self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
+        let request_epoch = self.node_history_request_epoch;
+        self.node_history_in_progress = true;
+        // The 5-second background Poll is not a user's batch. Marking
+        // it busy made Node settings show recovery in progress and
+        // hide the switch for the length of each Poll, so the page
+        // flashed every 5 seconds. `node_history_in_progress` still
+        // keeps a second worker from starting.
+        if !matches!(action, node_history::Action::Poll) {
+            self.cache.node_history.busy = true;
+            self.cache.node_history.error = None;
+            self.node_history_epoch = self.node_history_epoch.wrapping_add(1);
+            self.cache.local_switch_history = None;
+        }
+        let app = self.cache.app_generation;
+        let wallet_id = wallet.id();
+        let context = node_history::Context {
+            datadir: self.cache.datadir_path.clone(),
+            network: self.cache.network,
+            chain: self.cache.chain(),
+            config: config.clone(),
+            managed_owner: managed.owner_lock_path().map(std::path::PathBuf::from),
+            daemon: daemon.clone(),
+            wallet: wallet.clone(),
+        };
+        Task::perform(
+            async move {
+                let result = context.run(action).await.map(Box::new);
+                Message::NodeHistoryCompleted {
+                    request_epoch,
+                    app,
+                    wallet: wallet_id,
+                    config,
+                    result,
+                }
+            },
+            |message| message,
+        )
+    }
+
+    fn route_node_history_completed(
+        &mut self,
+        request_epoch: u64,
+        app: crate::app::cache::AppGeneration,
+        wallet: crate::app::settings::WalletId,
+        config: coincubed::config::BitcoindConfig,
+        result: Result<Box<node_history::Outcome>, String>,
+    ) -> Task<Message> {
+        if request_epoch != self.node_history_request_epoch {
+            return Task::none();
+        }
+        // The current worker has finished even when its configuration
+        // disappeared. An older worker must never release a newer one.
+        self.node_history_in_progress = false;
+        self.cache.node_history.busy = false;
+        if app != self.cache.app_generation
+            || self.wallet.as_ref().map(|w| w.id()) != Some(wallet)
+            || self
+                .daemon
+                .as_ref()
+                .and_then(|d| d.config())
+                .and_then(local_node_sync_config)
+                != Some(&config)
+        {
+            self.node_history_pending = None;
+            self.cache.node_history.cancel_queued = false;
+            return Task::none();
+        }
+        match result {
+            Ok(outcome) => {
+                self.cache.node_history = outcome.status;
+                if let Some(node) = outcome.node {
+                    if let Some(settings) = self.panels.vault_settings.as_mut() {
+                        settings.set_managed_owner(
+                            node.owner_lock_path().map(std::path::PathBuf::from),
+                        );
+                    }
+                    self.internal_bitcoind = Some(node);
                 }
             }
+            Err(error) => self.cache.node_history.error = Some(error),
+        }
+        let cancel_queued = matches!(
+            self.node_history_pending.as_ref(),
+            Some(node_history::Action::Cancel)
+        );
+        let queued = self.node_history_pending.take().map(Message::NodeHistory);
+        self.cache.node_history.cancel_queued = cancel_queued;
+        Task::batch([
+            Task::done(Message::CacheUpdated),
+            Task::done(Message::PollBitcoindSync),
+            queued.map(Task::done).unwrap_or_else(Task::none),
+        ])
+    }
+
+    fn route_split_transactions(
+        &mut self,
+        origin: crate::app::cache::LookupOrigin,
+        transactions: std::collections::HashMap<
+            coincube_core::miniscript::bitcoin::Txid,
+            coincube_core::miniscript::bitcoin::Transaction,
+        >,
+        seq: u64,
+        twin_records: Vec<crate::services::split_coins::SplitRecord>,
+        twin_checked: TwinSplitChecks,
+        twin_checked_at: std::time::Instant,
+    ) -> Task<Message> {
+        let Some(wallet) = self.wallet.as_ref() else {
+            return Task::none();
+        };
+        if !self.cache.issued_here(origin) || origin.chain != wallet.chain {
+            return Task::none();
+        }
+        // Twin checks apply even from a pass that lands late: each
+        // replaces only an older check of the same split.
+        let checks_changed = crate::services::split_coins::record_twin_checks(
+            &mut self.twin_checks,
+            twin_checked,
+            twin_checked_at,
+        );
+        if !crate::services::split_coins::newer_pass(&mut self.split_refresh_applied, seq) {
+            if !checks_changed {
+                return Task::none();
+            }
+            self.cache.separated = crate::services::split_coins::twin_separated(
+                &self.twin_records,
+                &self.twin_checks,
+                std::time::Instant::now(),
+            );
+            return Task::done(Message::CacheUpdated);
+        }
+        self.twin_records = twin_records;
+        let twin_records = &self.twin_records;
+        self.twin_checks
+            .retain(|txid, _| twin_records.iter().any(|record| record.txid == *txid));
+        let coins = self.cache.coins().to_vec();
+        let tip = self.cache.blockheight();
+        let derived = crate::services::split_coins::derive(
+            &mut self.cache.split_records,
+            &coins,
+            tip,
+            &transactions,
+            std::time::SystemTime::now(),
+        );
+        self.cache.splitting = derived.splitting;
+        self.cache.split_unconfirmed = derived.unconfirmed;
+        self.cache.separated = crate::services::split_coins::twin_separated(
+            &self.twin_records,
+            &self.twin_checks,
+            std::time::Instant::now(),
+        );
+        let proved = crate::services::split_coins::merge_proofs(
+            &mut self.cache.chain_proofs,
+            derived.proofs,
+        );
+        if derived.changed {
+            self.save_split_records();
+        }
+        if proved {
+            self.save_chain_proofs();
+        }
+        Task::done(Message::CacheUpdated)
+    }
+
+    fn route_entangled_revalidated(
+        &mut self,
+        origin: crate::app::cache::LookupOrigin,
+        spend: coincube_core::miniscript::bitcoin::Txid,
+        generation: u64,
+        answers: Vec<crate::services::entangled::LookupAnswer>,
+    ) -> Task<Message> {
+        // The spend screen's own re-check of a replayable spend's
+        // inputs. Every resolved answer is cached before the reply is
+        // routed, stale-by-check-generation ones included: each
+        // carries its own observation instant and the cache is
+        // monotonic in it (`#395`), so a reply from a screen since
+        // closed, or from before a signature was added, cannot
+        // re-stamp a newer negative — and its `Entangled` is still
+        // true. The check generation is the *panel's* filter, for the
+        // claim it clears, not the cache's. A reply from a predecessor
+        // `App` instance (`#393`) contributes at most same-chain
+        // positives (`Cache::accept_entanglement`) and is not routed:
+        // the screen that asked is gone with that instance.
+        let changed = self
+            .cache
+            .accept_entanglement(origin, self.vault_chain(), &answers);
+        if !self.cache.issued_here(origin) {
+            if changed {
+                return Task::done(Message::CacheUpdated);
+            }
+            return Task::none();
+        }
+        let routed = Message::EntangledRevalidated {
+            origin,
+            spend,
+            generation,
+            answers,
+        };
+        let forwarded = match (self.daemon.clone(), self.panels.current_mut()) {
+            (Some(daemon), Some(panel)) => panel.update(Some(daemon), &self.cache, routed),
+            (None, Some(panel)) => panel.update(None, &self.cache, routed),
+            (_, None) => Task::none(),
+        };
+        if changed {
+            return Task::batch([forwarded, Task::done(Message::CacheUpdated)]);
+        }
+        forwarded
+    }
+
+    fn route_duress_enrollment(
+        &mut self,
+        payload: message::DuressEnrollmentPayload,
+    ) -> Task<Message> {
+        // Drop a completion that outlived its Connect session: a logout
+        // or session reset bumps `session_generation`, and persisting
+        // now would arm the duress PIN + DuressLocalState for an account
+        // the user is no longer signed into.
+        if payload.gen != self.panels.connect.account.session_generation() {
+            log::warn!("duress: ignoring enrollment completion from a stale session");
+            return Task::none();
+        }
+        // Phases 2 & 8: the Connect panel collected + validated the
+        // credentials and (for Connect tiers) enrolled on the server;
+        // persist the duress PIN + this device's encrypted code here,
+        // where the Cube + datadir context lives. Shared with the Home
+        // and Launcher surfaces, which also host the Connect Duress
+        // panel (see `persist_duress_enrollment`).
+        let crate::app::message::DuressEnrollmentPayload {
+            duress_pin,
+            duress_code,
+            account_id,
+            ..
+        } = payload;
+        let datadir = self.datadir.clone();
+        Task::perform(
+            persist_duress_enrollment(datadir, duress_pin, duress_code, account_id),
+            |res| res,
+        )
+        .then(|res| match res {
+            Ok(()) => Task::batch([
+                // Reflect the enabled state only now that the duress PIN
+                // is actually armed on every Cube.
+                Task::done(Message::View(view::Message::ConnectAccount(
+                    view::ConnectAccountMessage::Duress(
+                        view::DuressMessage::EnrollmentPersisted,
+                    ),
+                ))),
+                Task::done(Message::CacheUpdated),
+            ]),
+            Err(e) => Task::done(Message::View(view::Message::ShowError(
+                crate::user_error::UserError::logged(
+                    "Couldn't finish enabling duress mode",
+                    "Try again. If it keeps failing, contact support and quote the reference below.",
+                    crate::user_error::CC_API_BADRESP,
+                    true,
+                    e,
+                )
+                .toast(),
+            ))),
+        })
+    }
+
+    fn route_imported_copy_created(
+        &mut self,
+        attempt: cache::AppGeneration,
+        result: Result<Option<String>, String>,
+    ) -> Task<Message> {
+        // Another App's attempt (a predecessor in this tab): its
+        // result must not release this App's guard or speak for it.
+        if self.imported_copy_in_flight != Some(attempt) {
+            return Task::none();
+        }
+        self.imported_copy_in_flight = None;
+        self.refresh_copy_exists();
+        match result {
+            Ok(words_not_copied) => {
+                let created = Task::done(Message::View(view::Message::ShowToast(
+                    log::Level::Info,
+                    coincube_ui::locale::copy(
+                        "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
+                    )
+                    .to_string(),
+                )));
+                match words_not_copied {
+                    None => created,
+                    Some(reason) => Task::batch([
+                        created,
+                        Task::done(Message::View(view::Message::ShowToast(
+                            log::Level::Warn,
+                            coincube_ui::localized_format!(
+                                "This wallet's recovery words weren't copied: {} Add them in the copy.",
+                                "Las palabras de recuperación de esta cartera no se copiaron: {} Agrégalas en la copia.",
+                                coincube_ui::locale::copy(&reason)
+                            ),
+                        ))),
+                    ]),
+                }
+            }
+            // Pairing errors are English; show them in the window's language.
+            Err(error) => Task::done(Message::View(view::Message::ShowError(
+                coincube_ui::locale::copy(&error).to_string(),
+            ))),
+        }
+    }
+
+    fn route_daemon_config(&mut self, cfg: DaemonConfig) -> Task<Message> {
+        // Only switch if we have a vault (daemon and wallet exist). The
+        // stop-old/start-new runs off the UI thread; the pending "syncing"
+        // card is cleared in the `DaemonRestarted` success path.
+        if self.daemon.is_some() && self.wallet.is_some() && !self.daemon_switch_in_progress {
+            return self.spawn_daemon_switch(cfg);
+        } else if self.daemon_switch_in_progress {
+            tracing::warn!("Ignoring backend switch — one is already in progress");
+            // Every LoadDaemonConfig originates in the node-settings panel,
+            // which has already flipped its local `processing` flags and is
+            // awaiting a DaemonConfigLoaded reply. Dropping the request
+            // silently would leave those flags to be cleared by an
+            // *unrelated* switch's later success — masquerading as this
+            // one and losing its config. Route an explicit error back so
+            // the panel resets and the user can retry once the in-flight
+            // switch finishes.
+            return self.update_dispatch(Message::DaemonConfigLoaded(Err(Error::Config(
+                "A backend switch is already in progress. If a local node is still \
+                 scanning the blockchain this can take a while — please wait for it \
+                 to finish, then try again."
+                    .to_string(),
+            ))));
+        } else {
+            tracing::warn!("Attempted to load daemon config without vault");
+        }
+        Task::none()
+    }
+
+    fn route_spark_nickname_saved(
+        &mut self,
+        result: Result<Option<String>, String>,
+    ) -> Task<Message> {
+        self.spark_nickname_in_flight = None;
+        self.cache.spark_nickname_save = if result.is_ok() {
+            cache::NameSave::Saved
+        } else {
+            cache::NameSave::Failed
+        };
+        let mut tasks = Vec::new();
+        match result {
+            Ok(nickname) => {
+                // The side panel's name follows:
+                // `sync_panel_derived_cache_fields` rebuilds
+                // `cache.wallet_names` from the Cube settings after
+                // this message, before the next view.
+                self.cube_settings.spark_alias = nickname.clone();
+                tasks.push(self.panels.spark_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::SparkSettings(
+                        view::SparkSettingsMessage::NicknameSaved(nickname),
+                    )),
+                ));
+            }
+            Err(e) => tasks.push(Task::done(Message::View(view::Message::ShowError(
+                coincube_ui::localized_format!(
+                    "Couldn't save the Spark nickname: {}",
+                    "No se pudo guardar el apodo de Spark: {}",
+                    e
+                ),
+            )))),
+        }
+        // A request made while this write ran is written now, after
+        // it, unless it is what is saved.
+        if let Some(next) = self.spark_nickname_queued.take() {
+            if next == self.cube_settings.spark_alias {
+                self.settle_failed_spark_nickname();
+                tasks.push(self.panels.spark_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::SparkSettings(
+                        view::SparkSettingsMessage::NicknameSaved(next),
+                    )),
+                ));
+            } else {
+                tasks.push(self.start_spark_nickname_write(next));
+            }
+        }
+        Task::batch(tasks)
+    }
+
+    fn route_split_fetch(&mut self, fee: bool, address: bool) -> Task<Message> {
+        let Some(wallet) = self.wallet.as_ref() else {
+            return Task::none();
+        };
+        let mut tasks = Vec::new();
+        if fee {
+            let client = self.authenticated_coincube_client();
+            let chain = wallet.chain;
+            tasks.push(Task::perform(
+                crate::services::split_coins::fee_rate(client, chain),
+                Message::SplitFeeRate,
+            ));
+        }
+        if let (true, Some(daemon)) = (address, self.daemon.clone()) {
+            // An imported Vault's split address is reserved under the
+            // shared lock, like every other Vault receive address.
+            let (data_dir, wallet) = (self.cache.datadir_path.clone(), wallet.clone());
+            tasks.push(Task::perform(
+                async move {
+                    state::vault::receive::vault_receive_address(data_dir, &wallet, daemon)
+                        .await
+                        .map(|result| result.address.to_string())
+                        .map_err(|e| format!("Couldn't get an address: {}", e))
+                },
+                Message::SplitAddress,
+            ));
+        }
+        Task::batch(tasks)
+    }
+
+    fn route_split_request(
+        &mut self,
+        method: crate::services::split_coins::Method,
+        coins: Vec<bitcoin::OutPoint>,
+        key: Option<bitcoin::OutPoint>,
+        feerate_vb: u64,
+    ) -> Task<Message> {
+        let failed = |e: &str| Task::done(Message::SplitPrepared(Err(e.to_string())));
+        let (Some(wallet), Some(daemon)) = (self.wallet.clone(), self.daemon.clone()) else {
+            return failed("This Vault isn't loaded.");
+        };
+        if !self.blake2b_on() {
+            return failed("Split coins needs Bitcoin Blake2b to be on for this account.");
+        }
+        let Some(client) = self.authenticated_coincube_client() else {
+            return failed("Sign in to COINCUBE Connect to split coins.");
+        };
+        let key = match key {
+            Some(outpoint) => match self
+                .cache
+                .split_keys()
+                .into_iter()
+                .find(|(coin, _)| coin.outpoint == outpoint)
+            {
+                Some((_, path)) => Some(crate::services::split_coins::KeyChoice {
+                    outpoint,
+                    path: path.clone(),
+                }),
+                None => return failed("The split key is no longer available."),
+            },
+            None => None,
+        };
+        let generation = *self.panels.session_generation.borrow();
+        let live = self.panels.session_generation.subscribe();
+        Task::perform(
+            crate::services::split_coins::prepare(
+                daemon, wallet, method, coins, key, feerate_vb, client, generation, live,
+            ),
+            |result| Message::SplitPrepared(result.map(|prepared| Box::new(prepared.record))),
+        )
+    }
+
+    fn route_split_key_check(
+        &mut self,
+        spend: bitcoin::Txid,
+        key: bitcoin::OutPoint,
+        generation: u64,
+    ) -> Task<Message> {
+        let reply = move |result: Result<(), String>| Message::SplitKeyChecked {
+            spend,
+            key,
+            generation,
+            result,
+        };
+        let Some(wallet) = self.wallet.as_ref() else {
+            return Task::done(reply(Err("This Vault isn't loaded.".into())));
+        };
+        let chain = wallet.chain;
+        let Some(path) = self.cache.split_key_path(spend, key) else {
+            return Task::done(reply(Err(
+                "The split key has no proof to check. Build the split again.".into(),
+            )));
+        };
+        let Some(client) = self.authenticated_coincube_client() else {
+            return Task::done(reply(Err(
+                "Sign in to COINCUBE Connect to check the split key.".into(),
+            )));
+        };
+        let session = *self.panels.session_generation.borrow();
+        let live = self.panels.session_generation.subscribe();
+        Task::perform(
+            async move {
+                let key = crate::services::split_coins::KeyChoice {
+                    outpoint: key,
+                    path,
+                };
+                crate::services::split_coins::requalify(&client, chain, &key, session, live).await
+            },
+            reply,
+        )
+    }
+
+    fn route_split_prepared(
+        &mut self,
+        result: Result<Box<crate::services::split_coins::SplitRecord>, String>,
+    ) -> Task<Message> {
+        let txid = result.as_ref().ok().map(|record| record.txid);
+        let mut tasks = Vec::new();
+        if let Ok(record) = &result {
+            tasks.push(self.record_split((**record).clone()));
+        }
+        // To the Coins panel whichever panel is showing: its overlay
+        // stays locked until it hears the result.
+        if let (Some(daemon), Some(panel)) = (self.daemon.clone(), self.panels.coins.as_mut()) {
+            tasks.push(panel.update(Some(daemon), &self.cache, Message::SplitPrepared(result)));
+        }
+        if let Some(txid) = txid {
+            // Sign and broadcast through the Vault's normal PSBT screen.
+            tasks.push(Task::done(Message::View(view::Message::Menu(Menu::Vault(
+                menu::VaultSubMenu::PSBTs(Some(txid)),
+            )))));
+        }
+        Task::batch(tasks)
+    }
+
+    fn route_create_blake2b_copy(&mut self) -> Task<Message> {
+        // From the disk, not the cache (#503): a copy made earlier in
+        // this session leaves the cached flag stale, and the hub would
+        // otherwise start a second installer for the same Vault.
+        // A Vault is copied by the copy wizard; an imported Vault's
+        // copy is its paired imported Cube, made here.
+        if self.wallet.as_ref().is_some_and(|w| w.is_imported()) {
+            return self.create_imported_copy();
+        }
+        let Some(wallet) = self.wallet.as_ref().filter(|w| w.supports_inheritance()) else {
+            return Task::none();
+        };
+        if self.cube_settings.network != crate::chain::ChainId::Bitcoin {
+            return Task::none();
+        }
+        self.cache.btcb2_already_claimed =
+            claim_target_exists(&self.datadir, &wallet.descriptor_checksum);
+        if self.cache.btcb2_already_claimed {
+            return Task::none();
+        }
+        Task::done(Message::View(view::Message::StartClaimBlake2b))
+    }
+
+    fn route_send_selected_coins(&mut self, outpoints: Vec<bitcoin::OutPoint>) -> Task<Message> {
+        let Some(wallet) = self.wallet.clone() else {
+            return Task::none();
+        };
+        let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+            self.cache.coins(),
+            self.cache.blockheight() as u32,
+            wallet.recovery_timelock(),
+        );
+        self.panels.create_spend = Some(CreateSpendPanel::new_with_coins(
+            wallet.clone(),
+            self.cache.coins(),
+            self.cache.blockheight() as u32,
+            &outpoints,
+            self.cache.network,
+            balance,
+            unconfirmed_balance,
+            sync_status(
+                self.daemon_backend(),
+                self.cache.blockheight(),
+                self.cache.sync_progress(),
+                self.cache.last_poll_timestamp(),
+                self.cache.last_poll_at_startup,
+                self.cache.history_sync(),
+            ),
+            self.cache.bitcoin_unit,
+        ));
+        self.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        if let Some(panel) = self.panels.current_mut() {
+            return panel.reload(self.daemon.clone(), self.wallet.clone());
+        }
+        Task::none()
+    }
+
+    fn route_spark_stable_balance(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::CubeSparkStableBalanceReported => {}
+            Message::SparkStableBalanceFromConnect(server) => {
+                // Adopt the server's record only when this device has none:
+                // the registration request already carried a local decision,
+                // so a response that disagrees with one is a stale answer to
+                // an earlier request (the user toggled while it was in
+                // flight), not newer information. With no local decision the
+                // server's is the only one there is — adopt it, then re-check
+                // the SDK against it. `None` on both sides is the fresh-Cube
+                // case; a local decision with no server record was pushed by
+                // the registration itself.
+                match (self.cube_settings.spark_stable_balance, server) {
+                    (None, Some(enabled)) => {
+                        log::info!(
+                            "Spark Stable Balance decision from Connect: {}",
+                            if enabled { "on" } else { "off" }
+                        );
+                        return Task::batch([
+                            self.record_spark_stable_balance_locally(enabled),
+                            self.spark_stable_balance_state_task(),
+                        ]);
+                    }
+                    (Some(local), Some(remote)) if local != remote => {
+                        log::debug!(
+                            "Connect reports Spark Stable Balance {remote} but this device \
+                             decided {local}; keeping the local decision"
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            Message::SparkStableBalanceState(None) => {}
+            Message::SparkStableBalanceState(Some((sdk_active, holds_usdb))) => {
+                let preference = self.cube_settings.spark_stable_balance;
+                match reconcile_stable_balance(preference, sdk_active, holds_usdb) {
+                    StableBalanceReconcile::InSync => {}
+                    StableBalanceReconcile::Apply(enabled) => {
+                        let Some(backend) = self.spark_backend() else {
+                            return Task::none();
+                        };
+                        log::info!(
+                            "Spark Stable Balance is {} on the SDK but the Cube wants it {}; \
+                             re-applying",
+                            if sdk_active { "on" } else { "off" },
+                            if enabled { "on" } else { "off" },
+                        );
+                        return Task::perform(
+                            async move { backend.set_stable_balance(enabled).await },
+                            move |res| {
+                                Message::SparkStableBalanceApplied(
+                                    res.map(|()| enabled).map_err(|e| e.to_string()),
+                                )
+                            },
+                        );
+                    }
+                    StableBalanceReconcile::Adopt => {
+                        return self.record_spark_stable_balance(true);
+                    }
+                    StableBalanceReconcile::PromptHolding => {
+                        self.cache.spark_notice =
+                            Some(cache::SparkNotice::StableBalanceOffWithHolding);
+                    }
+                }
+            }
+            Message::SparkStableBalanceApplied(Ok(enabled)) => {
+                log::info!(
+                    "Spark Stable Balance preference re-applied: {}",
+                    if enabled { "on" } else { "off" }
+                );
+                // The Settings toggle and Overview badge read the SDK on
+                // reload; refresh both so they don't show the stale state.
+                return Task::batch([
+                    self.panels.spark_settings.reload(None, None),
+                    self.panels.spark_overview.reload(None, None),
+                ]);
+            }
+            Message::SparkStableBalanceApplied(Err(e)) => {
+                log::warn!("could not re-apply Spark Stable Balance preference: {e}");
+            }
+
+            // Swap's recent payments are priced with the cache, which
+            // `deliver` doesn't have.
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_spark_swap(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::View(view::Message::SparkSwap(
+                view::spark::SparkSwapMessage::PaymentsLoaded(payments),
+            )) => {
+                self.panels
+                    .spark_swap
+                    .set_recent_payments(&payments, &self.cache);
+            }
+            // Swap's answers reach its panel whichever page is showing, so a
+            // swap that settles while the user is elsewhere keeps its result.
+            Message::View(view::Message::SparkSwap(msg)) => {
+                let on_screen = self.panels.current == Menu::Spark(menu::SparkSubMenu::Swap);
+                return self.panels.spark_swap.deliver(msg, on_screen);
+            }
+
+            // The user changed the Stable Balance toggle and the bridge
+            // accepted it: record the decision before the panel updates its
+            // own state, then let it through. Routed to the settings panel
+            // directly (not `current_mut()`) so navigating away mid-save
+            // can't lose the reconcile.
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_spark_settings(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::View(view::Message::SparkSettings(
+                view::SparkSettingsMessage::StableBalanceSaved(Ok(enabled)),
+            )) => {
+                self.panels.spark_overview.finish_stable_balance_save();
+                let record = self.record_spark_stable_balance(enabled);
+                let panel = self.panels.spark_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::SparkSettings(
+                        view::SparkSettingsMessage::StableBalanceSaved(Ok(enabled)),
+                    )),
+                );
+                let receive = self
+                    .panels
+                    .spark_receive
+                    .stable_balance_settled(Some(enabled));
+                return Task::batch([
+                    record,
+                    panel,
+                    self.panels.spark_overview.reload(None, None),
+                    receive,
+                ]);
+            }
+            // Overview shares the same Settings save owner. Route both the
+            // request and failed settlement there even when Overview is active.
+            Message::View(view::Message::SparkSettings(
+                view::SparkSettingsMessage::StableBalanceToggled(enabled),
+            )) => {
+                if !self.panels.spark_overview.try_start_stable_balance_save() {
+                    return Task::none();
+                }
+                return self.panels.spark_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::SparkSettings(
+                        view::SparkSettingsMessage::StableBalanceToggled(enabled),
+                    )),
+                );
+            }
+            // Spark's nickname, from Settings › Spark › Balances & conversion.
+            // It lives on this device's Cube settings (Spark has no wallet
+            // settings of its own) and isn't sent to Connect.
+            Message::View(view::Message::SparkSettings(
+                view::SparkSettingsMessage::NicknameSubmitted(input),
+            )) => {
+                if !state::spark::settings::nickname_fits(&input) {
+                    return Task::none();
+                }
+                let nickname = state::spark::settings::saved_nickname(&input);
+                // A write is running: this request waits for it, so the
+                // latest request is the one that lands, even one going back
+                // to the saved name.
+                if self.spark_nickname_in_flight.is_some() {
+                    self.spark_nickname_queued = Some(nickname);
+                    self.cache.spark_nickname_save = cache::NameSave::Saving;
+                    return Task::none();
+                }
+                // So is one going back to the saved name while an earlier
+                // App's write for this Cube is still running (Lock Cube, then
+                // reopen): that write would land after the shortcut.
+                if nickname == self.cube_settings.spark_alias
+                    && !SparkNicknameWrite::pending(
+                        &self.spark_nickname_network_dir(),
+                        &self.cube_settings.id,
+                    )
+                {
+                    // What was asked for is what is saved: an earlier
+                    // failure no longer applies.
+                    self.settle_failed_spark_nickname();
+                    return self.panels.spark_settings.update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::SparkSettings(
+                            view::SparkSettingsMessage::NicknameSaved(nickname),
+                        )),
+                    );
+                }
+                return self.start_spark_nickname_write(nickname);
+            }
+            // Another Cube's save (the tab moved on while it was written)
+            // changes nothing here: its file write already happened.
+            Message::SparkNicknameSaved { cube_id, .. } if cube_id != self.cube_settings.id => {}
+            Message::SparkNicknameSaved { result, .. } => {
+                return self.route_spark_nickname_saved(result);
+            }
+            Message::View(view::Message::SparkSettings(
+                view::SparkSettingsMessage::StableBalanceSaved(Err(err)),
+            )) => {
+                self.panels.spark_overview.finish_stable_balance_save();
+                let panel = self.panels.spark_settings.update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::SparkSettings(
+                        view::SparkSettingsMessage::StableBalanceSaved(Err(err.clone())),
+                    )),
+                );
+                return Task::batch([
+                    panel,
+                    self.panels.spark_overview.reload(None, None),
+                    self.panels.spark_receive.stable_balance_settled(None),
+                    Task::done(Message::View(view::Message::ShowError(err))),
+                ]);
+            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_switch_to_connect(&mut self) -> Task<Message> {
+        let existing_jwt = self
+            .panels
+            .connect
+            .account
+            .authenticated_client()
+            .and_then(|c| c.token().map(str::to_owned));
+        if let Some(jwt) = existing_jwt {
+            let routed = Message::View(view::Message::Settings(
+                view::SettingsMessage::NodeSettings(
+                    view::NodeSettingsMessage::SwitchToConnectFastPath(view::ConnectJwt::new(jwt)),
+                ),
+            ));
+            if let (Some(daemon), Some(panel)) = (self.daemon.clone(), self.panels.current_mut()) {
+                return panel.update(Some(daemon), &self.cache, routed);
+            }
+        } else {
+            self.pending_switch_to_connect_after_login = true;
+            // No active Connect session on this Cube; bubble up
+            // through the tab/pane so the Home tab takes focus
+            // and the user can sign in there.
+            return iced::Task::done(Message::View(view::Message::OpenConnectSignIn));
+        }
+        Task::none()
+    }
+
+    fn route_node_settings_request(&mut self, message: Message) -> Task<Message> {
+        match message {
             Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
                 view::NodeSettingsMessage::RetryBackgroundNodeSetup,
             ))) => {
@@ -6723,127 +8302,181 @@ impl App {
                 }
                 return Task::none();
             }
-            Message::NodeHistory(action) => {
-                if self.cache.chain().is_blake2b() {
-                    return Task::none();
+            Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
+                view::NodeSettingsMessage::SwitchToConnect,
+            ))) => {
+                return self.route_switch_to_connect();
+            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_shell_view_action(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::View(view::Message::FlipDisplayMode) => {
+                if !self.cache.fiat_toggle_allowed() {
+                    self.cache.clear_btcb2_fiat();
+                    return Task::done(Message::CacheUpdated);
                 }
-                if self.node_history_in_progress {
-                    if !matches!(action, node_history::Action::Poll) {
-                        self.cache.node_history.cancel_queued =
-                            matches!(action, node_history::Action::Cancel);
-                        self.node_history_pending = Some(action);
-                    }
-                    return Task::none();
-                }
-                if self.daemon_switch_in_progress {
-                    return Task::none();
-                }
-                let (Some(daemon), Some(wallet), Some(managed)) =
-                    (&self.daemon, &self.wallet, &self.internal_bitcoind)
-                else {
-                    return Task::none();
-                };
-                let Some(config) = daemon.config().and_then(local_node_sync_config).cloned() else {
-                    return Task::none();
-                };
-                if config != managed.config {
-                    return Task::none();
-                }
-                self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
-                let request_epoch = self.node_history_request_epoch;
-                self.node_history_in_progress = true;
-                // The 5-second background Poll is not a user's batch. Marking
-                // it busy made Node settings show recovery in progress and
-                // hide the switch for the length of each Poll, so the page
-                // flashed every 5 seconds. `node_history_in_progress` still
-                // keeps a second worker from starting.
-                if !matches!(action, node_history::Action::Poll) {
-                    self.cache.node_history.busy = true;
-                    self.cache.node_history.error = None;
-                    self.node_history_epoch = self.node_history_epoch.wrapping_add(1);
-                    self.cache.local_switch_history = None;
-                }
-                let app = self.cache.app_generation;
-                let wallet_id = wallet.id();
-                let context = node_history::Context {
-                    datadir: self.cache.datadir_path.clone(),
-                    network: self.cache.network,
-                    chain: self.cache.chain(),
-                    config: config.clone(),
-                    managed_owner: managed.owner_lock_path().map(std::path::PathBuf::from),
-                    daemon: daemon.clone(),
-                    wallet: wallet.clone(),
-                };
+                let new_mode = self.cache.display_mode.flipped();
+                self.cache.display_mode = new_mode;
+                let network_dir = self.datadir.network_directory(self.cube_settings.network);
                 return Task::perform(
                     async move {
-                        let result = context.run(action).await.map(Box::new);
-                        Message::NodeHistoryCompleted {
-                            request_epoch,
-                            app,
-                            wallet: wallet_id,
-                            config,
-                            result,
-                        }
+                        settings::update_settings_file(&network_dir, move |mut current| {
+                            current.display_mode = new_mode;
+                            Some(current)
+                        })
+                        .await
                     },
-                    |message| message,
+                    |res| match res {
+                        Ok(()) => Message::SettingsSaved,
+                        Err(e) => Message::SettingsSaveFailed(e.into()),
+                    },
                 );
             }
-            Message::NodeHistoryCompleted {
-                request_epoch,
+            // Collapses the advisory detail panel for one device and persists
+            // that choice. The badge on the row is unaffected — an advisory is
+            // never dismissed away entirely.
+            Message::View(view::Message::DismissHwAdvisory(fingerprint, advisory_id)) => {
+                crate::hw_advisory::dismissals::dismiss(&fingerprint, advisory_id);
+            }
+            Message::View(view::Message::OpenUrl(url)) => {
+                if let Err(e) = crate::browser::open_url(&url) {
+                    tracing::error!("Error opening '{}': {}", url, e);
+                }
+            }
+            Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
+            Message::View(view::Message::CopyWithToast(text, notice)) => {
+                return clipboard::write(text.clone()).chain(clipboard::read().map(
+                    move |copied| {
+                        let (level, message) = if copied.as_deref() == Some(text.as_str()) {
+                            (log::Level::Info, notice.clone())
+                        } else {
+                            (
+                                log::Level::Error,
+                                "Could not copy to clipboard. Please try again.".to_string(),
+                            )
+                        };
+                        Message::View(view::Message::ShowToast(level, message))
+                    },
+                ));
+            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_toast_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::View(view::Message::DismissToast(id)) => {
+                self.errors.retain(|(i, ..)| *i != id);
+                return self.arm_toast_timers();
+            }
+            Message::ExpireToast(id) => {
+                let now = std::time::Instant::now();
+                let due = self
+                    .errors
+                    .iter()
+                    .any(|(i, deadline, ..)| *i == id && deadline.is_some_and(|d| d <= now));
+                if due {
+                    self.errors.retain(|(i, ..)| *i != id);
+                    return self.arm_toast_timers();
+                }
+            }
+            Message::View(view::Message::ShowError(msg)) => {
+                // Redirect ShowError to ShowToast with Error level
+                return self.update_dispatch(Message::View(view::Message::ShowToast(
+                    log::Level::Error,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowSuccess(msg)) => {
+                return self.update_dispatch(Message::View(view::Message::ShowToast(
+                    log::Level::Info,
+                    msg,
+                )));
+            }
+            Message::View(view::Message::ShowToast(level, msg)) => {
+                // Show toast with specified level
+                self.errors
+                    .push((self.current_error_id, None, level, ToastContent::Text(msg)));
+                self.current_error_id += 1;
+                return self.arm_toast_timers();
+            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_node_observation(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::PendingBitcoindLog(log) => {
+                if let Some(line) = log {
+                    self.cache.node_bitcoind_last_log = Some(line);
+                }
+            }
+            Message::SetInternalBitcoind(bitcoind) => {
+                if let Some(settings) = self.panels.vault_settings.as_mut() {
+                    settings.set_managed_owner(
+                        bitcoind.owner_lock_path().map(std::path::PathBuf::from),
+                    );
+                }
+                self.internal_bitcoind = Some(bitcoind);
+            }
+            Message::BackgroundManagedNodeReady {
+                cube,
+                attempt,
+                flavor,
+                result,
+            } => {
+                return self.route_background_managed_node_ready(cube, attempt, flavor, result);
+            }
+            Message::BackgroundManagedNodeProgress {
+                cube,
+                attempt,
+                progress,
+            } => {
+                if cube == self.cube_settings.id
+                    && self.background_node_attempt == Some(attempt)
+                    && self.cache.background_node_install.is_running()
+                {
+                    self.cache.background_node_install = progress;
+                }
+            }
+            Message::BitcoindNetStats(res) => {
+                self.node_net_stats_probe_in_progress = false;
+                match res {
+                    Ok(stats) => self.cache.node_net_stats = Some(stats),
+                    // Transient (e.g. mid-restart) — keep the last good stats.
+                    Err(e) => tracing::debug!("node net-stats poll failed: {e}"),
+                }
+            }
+            Message::BitcoindSyncProgress {
                 app,
+                history_epoch,
                 wallet,
                 config,
                 result,
+                vault_history,
             } => {
-                if request_epoch != self.node_history_request_epoch {
-                    return Task::none();
-                }
-                // The current worker has finished even when its configuration
-                // disappeared. An older worker must never release a newer one.
-                self.node_history_in_progress = false;
-                self.cache.node_history.busy = false;
-                if app != self.cache.app_generation
-                    || self.wallet.as_ref().map(|w| w.id()) != Some(wallet)
-                    || self
-                        .daemon
-                        .as_ref()
-                        .and_then(|d| d.config())
-                        .and_then(local_node_sync_config)
-                        != Some(&config)
-                {
-                    self.node_history_pending = None;
-                    self.cache.node_history.cancel_queued = false;
-                    return Task::none();
-                }
-                match result {
-                    Ok(outcome) => {
-                        self.cache.node_history = outcome.status;
-                        if let Some(node) = outcome.node {
-                            if let Some(settings) = self.panels.vault_settings.as_mut() {
-                                settings.set_managed_owner(
-                                    node.owner_lock_path().map(std::path::PathBuf::from),
-                                );
-                            }
-                            self.internal_bitcoind = Some(node);
-                        }
-                    }
-                    Err(error) => self.cache.node_history.error = Some(error),
-                }
-                let cancel_queued = matches!(
-                    self.node_history_pending.as_ref(),
-                    Some(node_history::Action::Cancel)
+                return self.handle_bitcoind_sync_progress(
+                    app,
+                    history_epoch,
+                    wallet,
+                    config,
+                    result,
+                    vault_history,
                 );
-                let queued = self.node_history_pending.take().map(Message::NodeHistory);
-                self.cache.node_history.cancel_queued = cancel_queued;
-                return Task::batch([
-                    Task::done(Message::CacheUpdated),
-                    Task::done(Message::PollBitcoindSync),
-                    queued.map(Task::done).unwrap_or_else(Task::none),
-                ]);
             }
-            Message::PollBitcoindSync => {
-                return self.poll_bitcoind_sync();
-            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_claim_observation(&mut self, message: Message) -> Task<Message> {
+        match message {
             Message::UnsweptNotice {
                 app,
                 generation,
@@ -6911,34 +8544,266 @@ impl App {
                 self.save_chain_proofs();
                 return Task::done(Message::CacheUpdated);
             }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_received_celebration(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::View(view::Message::ReceivedCelebrationActivity) => {
+                return Task::done(Message::View(view::Message::DismissReceivedCelebration)).chain(
+                    Task::done(Message::View(view::Message::Menu(Menu::Cube(
+                        crate::app::menu::CubeSubMenu::Activity,
+                    )))),
+                );
+            }
+            Message::View(view::Message::DismissReceivedCelebration) => {
+                self.show_received_celebration = false;
+                // Panels that render their own celebration overlay
+                // (e.g. the Vault overview) keep a separate
+                // `show_received_celebration` flag and reuse this same
+                // global dismiss message. Clearing only the app-level
+                // flag here would leave the panel stuck on the
+                // celebration screen, so forward the dismiss to the
+                // active panel as well — mirrors the generic
+                // message-forwarding catch-all below.
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.current_mut())
+                {
+                    return panel.update(
+                        Some(daemon),
+                        &self.cache,
+                        Message::View(view::Message::DismissReceivedCelebration),
+                    );
+                } else if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(
+                        None,
+                        &self.cache,
+                        Message::View(view::Message::DismissReceivedCelebration),
+                    );
+                }
+            }
+            Message::View(view::Message::DismissSparkNotice) => {
+                // Dismissing "USDB held but off" is an answer — keep it off
+                // and don't ask again on this device. The paused banner is
+                // just informational; closing it changes nothing.
+                if self.cache.spark_notice == Some(cache::SparkNotice::StableBalanceOffWithHolding)
+                {
+                    return self.record_spark_stable_balance(false);
+                }
+                self.cache.spark_notice = None;
+            }
+            Message::ShowReceivedCelebration {
+                context,
+                amount_sat,
+                payment_id,
+            } => {
+                // Drive the global "payment received" overlay for a Spark deposit that just claimed (the
+                // Spark bridge has no distinct "payment received" event for a
+                // claim — only `DepositsChanged` — so the celebration is fired
+                // explicitly from the auto-claim watcher in `GlobalHome`).
+                use coincube_ui::component::amount::DisplayAmount;
+                self.received_celebration_amount = format!(
+                    "{} {}",
+                    bitcoin::Amount::from_sat(amount_sat)
+                        .to_formatted_string_with_unit(self.cache.bitcoin_unit),
+                    self.cache.bitcoin_unit.label()
+                );
+                self.received_celebration_quote =
+                    coincube_ui::component::quote_display::random_quote(&context);
+                self.received_celebration_image =
+                    coincube_ui::component::quote_display::image_handle_for_context(&context);
+                self.received_celebration_context = context.clone();
+                self.received_celebration_wallet = "Into Spark";
+                self.received_celebration_id = payment_id
+                    .filter(|id| !id.is_empty())
+                    .map(|id| ("Payment ID", id));
+                self.show_received_celebration = true;
+                // A Spark swap's bitcoin just landed. Forward the arrival to the
+                // cross-network Receive flow so it advances from "Bitcoin
+                // arriving" to its arrived confirmation instead of sitting stale.
+                // Dispatched (not called inline) so it reaches the resident
+                // `spark_receive` panel even if the user is on another screen —
+                // arrival lands ~30 min after settle, by which point they've
+                // usually navigated away. The flow ignores it unless it's
+                // actually showing "Bitcoin arriving", so a plain (non-swap)
+                // Spark receive is unaffected.
+                if context == "spark-receive" {
+                    return Task::done(Message::View(view::Message::SparkSideshiftReceive(
+                        view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
+                    )));
+                }
+            }
+
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn route_current_panel_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            // A send prepared, a PSBT signed or a device registered on the
+            // Vault's screens completes on them, even if the import panel
+            // took the route back while it ran (its wallet went back to
+            // syncing). Each handler checks its own generation or attempt,
+            // so a stale result is ignored there. During a wider scan the
+            // old daemon can already be stopped. A send or signature needs a
+            // live daemon; a registration result does not, and dropping it
+            // would leave the Register dialog stuck processing.
+            msg @ (Message::VaultSpendPrepared { .. }
+            | Message::Signed(..)
+            | Message::CubeKeys(_)
+            | Message::DeviceRegistered { .. })
+                if self.panels.imported_holds_route() =>
+            {
+                let daemon = self.daemon.clone();
+                let delivers = daemon.is_some() || matches!(msg, Message::DeviceRegistered { .. });
+                if let (true, Some(panel)) = (delivers, self.panels.route_panel_mut()) {
+                    // `Updated` carries no origin: tag the save result the
+                    // forwarded work produces so it returns to this panel
+                    // (closing its signing picker, or reporting a failed
+                    // save) instead of reaching the import panel.
+                    return panel
+                        .update(daemon, &self.cache, msg)
+                        .map(|message| match message {
+                            Message::Updated(result) => {
+                                Message::RoutePanelResult(Box::new(Message::Updated(result)))
+                            }
+                            other => other,
+                        });
+                }
+            }
+            Message::RoutePanelResult(msg) => {
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.route_panel_mut())
+                {
+                    return panel.update(Some(daemon), &self.cache, *msg);
+                }
+            }
+
+            msg => {
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.current_mut())
+                {
+                    return panel.update(Some(daemon), &self.cache, msg);
+                } else if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(None, &self.cache, msg);
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn route_dispatch(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::ImportedBitcoin(event) => return self.route_imported_bitcoin_event(*event),
+            Message::View(view::Message::ImportedBitcoin(message)) => {
+                let client = self.authenticated_coincube_client();
+                let connect_epoch = self.panels.connect.account.session_generation();
+                let task = self
+                    .panels
+                    .imported_bitcoin
+                    .as_mut()
+                    .map_or_else(Task::none, |panel| {
+                        panel.update_view(message, client, connect_epoch)
+                    });
+                let runtime = self.adopt_imported_runtime();
+                return Task::batch([task, runtime]);
+            }
+            message @ (Message::ExpireToast(_)
+            | Message::View(
+                view::Message::DismissToast(_)
+                | view::Message::ShowError(_)
+                | view::Message::ShowSuccess(_)
+                | view::Message::ShowToast(..),
+            )) => return self.route_toast_message(message),
+            message @ (Message::PendingBitcoindLog(_)
+            | Message::SetInternalBitcoind(_)
+            | Message::BackgroundManagedNodeReady { .. }
+            | Message::BackgroundManagedNodeProgress { .. }
+            | Message::BitcoindNetStats(_)
+            | Message::BitcoindSyncProgress { .. }) => return self.route_node_observation(message),
+            Message::ConnectStreamReady(cfg) => {
+                return self.connect_stream_ready(cfg);
+            }
+            Message::ConnectStream(event) => {
+                return self.handle_connect_stream(event);
+            }
+            Message::InAppConnectAuthReady {
+                login,
+                epoch,
+                previous_refresh_token,
+            } => {
+                return self.connect_auth_ready(login, epoch, previous_refresh_token);
+            }
+            Message::InAppConnectAuthPersisted {
+                login,
+                epoch,
+                previous_refresh_token,
+                tokens,
+            } => {
+                return self.connect_auth_persisted(login, epoch, previous_refresh_token, tokens);
+            }
+            Message::InAppConnectLoginCompleted {
+                token,
+                refresh_token,
+                email,
+                epoch,
+            } => {
+                return self.connect_login_completed(token, refresh_token, email, epoch);
+            }
+            Message::TriggerConnectStreamReady {
+                network,
+                datadir,
+                tokens,
+                email,
+                cube_uuid,
+            } => {
+                return self
+                    .trigger_connect_stream_ready(network, datadir, tokens, email, cube_uuid);
+            }
+            Message::EnsureConnectReady => return self.ensure_connect_ready(),
+            Message::InstallStats(_) => {
+                if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(self.daemon.clone(), &self.cache, message);
+                }
+            }
+            message @ Message::View(view::Message::Settings(
+                view::SettingsMessage::NodeSettings(
+                    view::NodeSettingsMessage::RetryBackgroundNodeSetup
+                    | view::NodeSettingsMessage::SwitchToBitcoind
+                    | view::NodeSettingsMessage::RecoveryDismiss
+                    | view::NodeSettingsMessage::RecoveryCancel
+                    | view::NodeSettingsMessage::SwitchToConnect,
+                ),
+            )) => return self.route_node_settings_request(message),
+            Message::NodeHistory(action) => {
+                return self.route_node_history_action(action);
+            }
+            Message::NodeHistoryCompleted {
+                request_epoch,
+                app,
+                wallet,
+                config,
+                result,
+            } => {
+                return self.route_node_history_completed(
+                    request_epoch,
+                    app,
+                    wallet,
+                    config,
+                    result,
+                );
+            }
+            Message::PollBitcoindSync => {
+                return self.poll_bitcoind_sync();
+            }
+            message @ (Message::UnsweptNotice { .. }
+            | Message::EntangledLookups { .. }
+            | Message::ChainProofs { .. }) => return self.route_claim_observation(message),
             Message::SplitFetch { fee, address } => {
-                let Some(wallet) = self.wallet.as_ref() else {
-                    return Task::none();
-                };
-                let mut tasks = Vec::new();
-                if fee {
-                    let client = self.authenticated_coincube_client();
-                    let chain = wallet.chain;
-                    tasks.push(Task::perform(
-                        crate::services::split_coins::fee_rate(client, chain),
-                        Message::SplitFeeRate,
-                    ));
-                }
-                if let (true, Some(daemon)) = (address, self.daemon.clone()) {
-                    // An imported Vault's split address is reserved under the
-                    // shared lock, like every other Vault receive address.
-                    let (data_dir, wallet) = (self.cache.datadir_path.clone(), wallet.clone());
-                    tasks.push(Task::perform(
-                        async move {
-                            state::vault::receive::vault_receive_address(data_dir, &wallet, daemon)
-                                .await
-                                .map(|result| result.address.to_string())
-                                .map_err(|e| format!("Couldn't get an address: {}", e))
-                        },
-                        Message::SplitAddress,
-                    ));
-                }
-                return Task::batch(tasks);
+                return self.route_split_fetch(fee, address);
             }
             Message::SplitRequest {
                 method,
@@ -6946,128 +8811,20 @@ impl App {
                 key,
                 feerate_vb,
             } => {
-                let failed = |e: &str| Task::done(Message::SplitPrepared(Err(e.to_string())));
-                let (Some(wallet), Some(daemon)) = (self.wallet.clone(), self.daemon.clone())
-                else {
-                    return failed("This Vault isn't loaded.");
-                };
-                if !self.blake2b_on() {
-                    return failed("Split coins needs Bitcoin Blake2b to be on for this account.");
-                }
-                let Some(client) = self.authenticated_coincube_client() else {
-                    return failed("Sign in to COINCUBE Connect to split coins.");
-                };
-                let key = match key {
-                    Some(outpoint) => match self
-                        .cache
-                        .split_keys()
-                        .into_iter()
-                        .find(|(coin, _)| coin.outpoint == outpoint)
-                    {
-                        Some((_, path)) => Some(crate::services::split_coins::KeyChoice {
-                            outpoint,
-                            path: path.clone(),
-                        }),
-                        None => return failed("The split key is no longer available."),
-                    },
-                    None => None,
-                };
-                let generation = *self.panels.session_generation.borrow();
-                let live = self.panels.session_generation.subscribe();
-                return Task::perform(
-                    crate::services::split_coins::prepare(
-                        daemon, wallet, method, coins, key, feerate_vb, client, generation, live,
-                    ),
-                    |result| {
-                        Message::SplitPrepared(result.map(|prepared| Box::new(prepared.record)))
-                    },
-                );
+                return self.route_split_request(method, coins, key, feerate_vb);
             }
             Message::SplitKeyCheck {
                 spend,
                 key,
                 generation,
             } => {
-                let reply = move |result: Result<(), String>| Message::SplitKeyChecked {
-                    spend,
-                    key,
-                    generation,
-                    result,
-                };
-                let Some(wallet) = self.wallet.as_ref() else {
-                    return Task::done(reply(Err("This Vault isn't loaded.".into())));
-                };
-                let chain = wallet.chain;
-                let Some(path) = self.cache.split_key_path(spend, key) else {
-                    return Task::done(reply(Err(
-                        "The split key has no proof to check. Build the split again.".into(),
-                    )));
-                };
-                let Some(client) = self.authenticated_coincube_client() else {
-                    return Task::done(reply(Err(
-                        "Sign in to COINCUBE Connect to check the split key.".into(),
-                    )));
-                };
-                let session = *self.panels.session_generation.borrow();
-                let live = self.panels.session_generation.subscribe();
-                return Task::perform(
-                    async move {
-                        let key = crate::services::split_coins::KeyChoice {
-                            outpoint: key,
-                            path,
-                        };
-                        crate::services::split_coins::requalify(&client, chain, &key, session, live)
-                            .await
-                    },
-                    reply,
-                );
+                return self.route_split_key_check(spend, key, generation);
             }
             Message::SplitPrepared(result) => {
-                let txid = result.as_ref().ok().map(|record| record.txid);
-                let mut tasks = Vec::new();
-                if let Ok(record) = &result {
-                    tasks.push(self.record_split((**record).clone()));
-                }
-                // To the Coins panel whichever panel is showing: its overlay
-                // stays locked until it hears the result.
-                if let (Some(daemon), Some(panel)) =
-                    (self.daemon.clone(), self.panels.coins.as_mut())
-                {
-                    tasks.push(panel.update(
-                        Some(daemon),
-                        &self.cache,
-                        Message::SplitPrepared(result),
-                    ));
-                }
-                if let Some(txid) = txid {
-                    // Sign and broadcast through the Vault's normal PSBT screen.
-                    tasks.push(Task::done(Message::View(view::Message::Menu(Menu::Vault(
-                        menu::VaultSubMenu::PSBTs(Some(txid)),
-                    )))));
-                }
-                return Task::batch(tasks);
+                return self.route_split_prepared(result);
             }
             Message::View(view::Message::CreateBlake2bCopy) => {
-                // From the disk, not the cache (#503): a copy made earlier in
-                // this session leaves the cached flag stale, and the hub would
-                // otherwise start a second installer for the same Vault.
-                // A Vault is copied by the copy wizard; an imported Vault's
-                // copy is its paired imported Cube, made here.
-                if self.wallet.as_ref().is_some_and(|w| w.is_imported()) {
-                    return self.create_imported_copy();
-                }
-                let Some(wallet) = self.wallet.as_ref().filter(|w| w.supports_inheritance()) else {
-                    return Task::none();
-                };
-                if self.cube_settings.network != crate::chain::ChainId::Bitcoin {
-                    return Task::none();
-                }
-                self.cache.btcb2_already_claimed =
-                    claim_target_exists(&self.datadir, &wallet.descriptor_checksum);
-                if self.cache.btcb2_already_claimed {
-                    return Task::none();
-                }
-                return Task::done(Message::View(view::Message::StartClaimBlake2b));
+                return self.route_create_blake2b_copy();
             }
             Message::View(view::Message::SplitFirst) => {
                 let menu = Menu::Vault(menu::VaultSubMenu::Coins(None));
@@ -7080,37 +8837,7 @@ impl App {
                 ]);
             }
             Message::SendSelectedCoins(outpoints) => {
-                let Some(wallet) = self.wallet.clone() else {
-                    return Task::none();
-                };
-                let (balance, unconfirmed_balance, _, _) = state::coins_summary(
-                    self.cache.coins(),
-                    self.cache.blockheight() as u32,
-                    wallet.recovery_timelock(),
-                );
-                self.panels.create_spend = Some(CreateSpendPanel::new_with_coins(
-                    wallet.clone(),
-                    self.cache.coins(),
-                    self.cache.blockheight() as u32,
-                    &outpoints,
-                    self.cache.network,
-                    balance,
-                    unconfirmed_balance,
-                    sync_status(
-                        self.daemon_backend(),
-                        self.cache.blockheight(),
-                        self.cache.sync_progress(),
-                        self.cache.last_poll_timestamp(),
-                        self.cache.last_poll_at_startup,
-                        self.cache.history_sync(),
-                    ),
-                    self.cache.bitcoin_unit,
-                ));
-                self.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
-                if let Some(panel) = self.panels.current_mut() {
-                    return panel.reload(self.daemon.clone(), self.wallet.clone());
-                }
-                return Task::none();
+                return self.route_send_selected_coins(outpoints);
             }
             Message::SplitTransactions {
                 origin,
@@ -7120,61 +8847,14 @@ impl App {
                 twin_checked,
                 twin_checked_at,
             } => {
-                let Some(wallet) = self.wallet.as_ref() else {
-                    return Task::none();
-                };
-                if !self.cache.issued_here(origin) || origin.chain != wallet.chain {
-                    return Task::none();
-                }
-                // Twin checks apply even from a pass that lands late: each
-                // replaces only an older check of the same split.
-                let checks_changed = crate::services::split_coins::record_twin_checks(
-                    &mut self.twin_checks,
+                return self.route_split_transactions(
+                    origin,
+                    transactions,
+                    seq,
+                    twin_records,
                     twin_checked,
                     twin_checked_at,
                 );
-                if !crate::services::split_coins::newer_pass(&mut self.split_refresh_applied, seq) {
-                    if !checks_changed {
-                        return Task::none();
-                    }
-                    self.cache.separated = crate::services::split_coins::twin_separated(
-                        &self.twin_records,
-                        &self.twin_checks,
-                        std::time::Instant::now(),
-                    );
-                    return Task::done(Message::CacheUpdated);
-                }
-                self.twin_records = twin_records;
-                let twin_records = &self.twin_records;
-                self.twin_checks
-                    .retain(|txid, _| twin_records.iter().any(|record| record.txid == *txid));
-                let coins = self.cache.coins().to_vec();
-                let tip = self.cache.blockheight();
-                let derived = crate::services::split_coins::derive(
-                    &mut self.cache.split_records,
-                    &coins,
-                    tip,
-                    &transactions,
-                    std::time::SystemTime::now(),
-                );
-                self.cache.splitting = derived.splitting;
-                self.cache.split_unconfirmed = derived.unconfirmed;
-                self.cache.separated = crate::services::split_coins::twin_separated(
-                    &self.twin_records,
-                    &self.twin_checks,
-                    std::time::Instant::now(),
-                );
-                let proved = crate::services::split_coins::merge_proofs(
-                    &mut self.cache.chain_proofs,
-                    derived.proofs,
-                );
-                if derived.changed {
-                    self.save_split_records();
-                }
-                if proved {
-                    self.save_chain_proofs();
-                }
-                return Task::done(Message::CacheUpdated);
             }
             Message::EntangledRevalidated {
                 origin,
@@ -7182,67 +8862,7 @@ impl App {
                 generation,
                 answers,
             } => {
-                // The spend screen's own re-check of a replayable spend's
-                // inputs. Every resolved answer is cached before the reply is
-                // routed, stale-by-check-generation ones included: each
-                // carries its own observation instant and the cache is
-                // monotonic in it (`#395`), so a reply from a screen since
-                // closed, or from before a signature was added, cannot
-                // re-stamp a newer negative — and its `Entangled` is still
-                // true. The check generation is the *panel's* filter, for the
-                // claim it clears, not the cache's. A reply from a predecessor
-                // `App` instance (`#393`) contributes at most same-chain
-                // positives (`Cache::accept_entanglement`) and is not routed:
-                // the screen that asked is gone with that instance.
-                let changed = self
-                    .cache
-                    .accept_entanglement(origin, self.vault_chain(), &answers);
-                if !self.cache.issued_here(origin) {
-                    if changed {
-                        return Task::done(Message::CacheUpdated);
-                    }
-                    return Task::none();
-                }
-                let routed = Message::EntangledRevalidated {
-                    origin,
-                    spend,
-                    generation,
-                    answers,
-                };
-                let forwarded = match (self.daemon.clone(), self.panels.current_mut()) {
-                    (Some(daemon), Some(panel)) => panel.update(Some(daemon), &self.cache, routed),
-                    (None, Some(panel)) => panel.update(None, &self.cache, routed),
-                    (_, None) => Task::none(),
-                };
-                if changed {
-                    return Task::batch([forwarded, Task::done(Message::CacheUpdated)]);
-                }
-                return forwarded;
-            }
-            Message::BitcoindNetStats(res) => {
-                self.node_net_stats_probe_in_progress = false;
-                match res {
-                    Ok(stats) => self.cache.node_net_stats = Some(stats),
-                    // Transient (e.g. mid-restart) — keep the last good stats.
-                    Err(e) => tracing::debug!("node net-stats poll failed: {e}"),
-                }
-            }
-            Message::BitcoindSyncProgress {
-                app,
-                history_epoch,
-                wallet,
-                config,
-                result,
-                vault_history,
-            } => {
-                return self.handle_bitcoind_sync_progress(
-                    app,
-                    history_epoch,
-                    wallet,
-                    config,
-                    result,
-                    vault_history,
-                );
+                return self.route_entangled_revalidated(origin, spend, generation, answers);
             }
             Message::SettingsSaved => return self.handle_settings_saved(),
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
@@ -7260,53 +8880,7 @@ impl App {
                 }
             }
             Message::CompleteDuressEnrollment(payload) => {
-                // Drop a completion that outlived its Connect session: a logout
-                // or session reset bumps `session_generation`, and persisting
-                // now would arm the duress PIN + DuressLocalState for an account
-                // the user is no longer signed into.
-                if payload.gen != self.panels.connect.account.session_generation() {
-                    log::warn!("duress: ignoring enrollment completion from a stale session");
-                    return Task::none();
-                }
-                // Phases 2 & 8: the Connect panel collected + validated the
-                // credentials and (for Connect tiers) enrolled on the server;
-                // persist the duress PIN + this device's encrypted code here,
-                // where the Cube + datadir context lives. Shared with the Home
-                // and Launcher surfaces, which also host the Connect Duress
-                // panel (see `persist_duress_enrollment`).
-                let crate::app::message::DuressEnrollmentPayload {
-                    duress_pin,
-                    duress_code,
-                    account_id,
-                    ..
-                } = payload;
-                let datadir = self.datadir.clone();
-                return Task::perform(
-                    persist_duress_enrollment(datadir, duress_pin, duress_code, account_id),
-                    |res| res,
-                )
-                .then(|res| match res {
-                    Ok(()) => Task::batch([
-                        // Reflect the enabled state only now that the duress PIN
-                        // is actually armed on every Cube.
-                        Task::done(Message::View(view::Message::ConnectAccount(
-                            view::ConnectAccountMessage::Duress(
-                                view::DuressMessage::EnrollmentPersisted,
-                            ),
-                        ))),
-                        Task::done(Message::CacheUpdated),
-                    ]),
-                    Err(e) => Task::done(Message::View(view::Message::ShowError(
-                        crate::user_error::UserError::logged(
-                            "Couldn't finish enabling duress mode",
-                            "Try again. If it keeps failing, contact support and quote the reference below.",
-                            crate::user_error::CC_API_BADRESP,
-                            true,
-                            e,
-                        )
-                        .toast(),
-                    ))),
-                });
+                return self.route_duress_enrollment(payload);
             }
             Message::RecoveryHeartbeatSent(res) => {
                 // Fire-and-forget: the heartbeat must never affect app state
@@ -7319,42 +8893,7 @@ impl App {
                 return Task::none();
             }
             Message::ImportedCopyCreated(attempt, result) => {
-                // Another App's attempt (a predecessor in this tab): its
-                // result must not release this App's guard or speak for it.
-                if self.imported_copy_in_flight != Some(attempt) {
-                    return Task::none();
-                }
-                self.imported_copy_in_flight = None;
-                self.refresh_copy_exists();
-                return match result {
-                    Ok(words_not_copied) => {
-                        let created = Task::done(Message::View(view::Message::ShowToast(
-                            log::Level::Info,
-                            coincube_ui::locale::copy(
-                                "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
-                            )
-                            .to_string(),
-                        )));
-                        match words_not_copied {
-                            None => created,
-                            Some(reason) => Task::batch([
-                                created,
-                                Task::done(Message::View(view::Message::ShowToast(
-                                    log::Level::Warn,
-                                    coincube_ui::localized_format!(
-                                        "This wallet's recovery words weren't copied: {} Add them in the copy.",
-                                        "Las palabras de recuperación de esta cartera no se copiaron: {} Agrégalas en la copia.",
-                                        coincube_ui::locale::copy(&reason)
-                                    ),
-                                ))),
-                            ]),
-                        }
-                    }
-                    // Pairing errors are English; show them in the window's language.
-                    Err(error) => Task::done(Message::View(view::Message::ShowError(
-                        coincube_ui::locale::copy(&error).to_string(),
-                    ))),
-                };
+                return self.route_imported_copy_created(attempt, result);
             }
             Message::CubeVaultReported => {
                 // Fire-and-forget: the re-report task logs its own outcome; the
@@ -7378,284 +8917,16 @@ impl App {
                 return Task::none();
             }
             Message::CacheUpdated => {
-                // Cube (Home) Settings lives on every cube, vault or not,
-                // so its cache update must fire independently of the
-                // vault-panel branch below. Vault Settings and Cube
-                // Settings are distinct panels backed by separate state —
-                // each panel's "am I current?" flag only matches the one
-                // it actually owns.
-                let is_global_settings_current = matches!(
-                    &self.panels.current,
-                    Menu::Cube(crate::app::menu::CubeSubMenu::Settings(_))
-                );
-                let mut commands = vec![self.panels.global_settings.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::UpdatePanelCache(is_global_settings_current),
-                )];
-
-                // Vault-specific panels only exist on cubes with a
-                // configured vault.
-                if let (Some(daemon), Some(vault_overview)) =
-                    (&self.daemon, self.panels.vault_overview.as_mut())
-                {
-                    let daemon = daemon.clone();
-                    let current = &self.panels.current;
-                    let cache = self.cache.clone();
-
-                    let is_vault_settings_current = matches!(
-                        current,
-                        Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
-                    );
-                    let is_spend_current =
-                        matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
-                    let is_recovery_current = matches!(
-                        current,
-                        Menu::Vault(crate::app::menu::VaultSubMenu::Recovery)
-                    );
-
-                    commands.push(vault_overview.update(
-                        Some(daemon.clone()),
-                        &cache,
-                        Message::UpdatePanelCache(
-                            current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
-                        ),
-                    ));
-                    if let Some(vault_settings) = self.panels.vault_settings.as_mut() {
-                        commands.push(vault_settings.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(is_vault_settings_current),
-                        ));
-                    }
-
-                    // Also update create_spend panel if it exists
-                    if let Some(create_spend) = self.panels.create_spend.as_mut() {
-                        commands.push(create_spend.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(is_spend_current),
-                        ));
-                    }
-
-                    // The recovery panel is a separate CreateSpendPanel and must
-                    // be refreshed too, otherwise its sync status and balance stay
-                    // frozen at the value captured when it was constructed.
-                    if let Some(recovery) = self.panels.recovery.as_mut() {
-                        commands.push(recovery.update(
-                            Some(daemon.clone()),
-                            &cache,
-                            Message::UpdatePanelCache(is_recovery_current),
-                        ));
-                    }
-                }
-
-                return Task::batch(commands);
+                return self.route_cache_updated();
             }
             Message::LoadDaemonConfig(cfg) => {
-                // Only switch if we have a vault (daemon and wallet exist). The
-                // stop-old/start-new runs off the UI thread; the pending "syncing"
-                // card is cleared in the `DaemonRestarted` success path.
-                if self.daemon.is_some() && self.wallet.is_some() && !self.daemon_switch_in_progress
-                {
-                    return self.spawn_daemon_switch(*cfg);
-                } else if self.daemon_switch_in_progress {
-                    tracing::warn!("Ignoring backend switch — one is already in progress");
-                    // Every LoadDaemonConfig originates in the node-settings panel,
-                    // which has already flipped its local `processing` flags and is
-                    // awaiting a DaemonConfigLoaded reply. Dropping the request
-                    // silently would leave those flags to be cleared by an
-                    // *unrelated* switch's later success — masquerading as this
-                    // one and losing its config. Route an explicit error back so
-                    // the panel resets and the user can retry once the in-flight
-                    // switch finishes.
-                    return self.update_dispatch(Message::DaemonConfigLoaded(Err(Error::Config(
-                        "A backend switch is already in progress. If a local node is still \
-                         scanning the blockchain this can take a while — please wait for it \
-                         to finish, then try again."
-                            .to_string(),
-                    ))));
-                } else {
-                    tracing::warn!("Attempted to load daemon config without vault");
-                }
+                return self.route_daemon_config(*cfg);
             }
             Message::DaemonRestarted(outcome) => {
                 return self.handle_daemon_restarted(outcome);
             }
             Message::WalletUpdated(Ok(wallet)) => {
-                // Check if we're transitioning from no-vault to has-vault state
-                let was_vaultless = self.wallet.is_none();
-
-                if self.wallet.as_ref().map(|w| w.id()) != Some(wallet.id()) {
-                    // A permission to switch is specific to the probed Vault.
-                    self.cache.local_switch_history = None;
-                    self.local_switch_hold = None;
-                    self.bitcoind_sync_probe_in_progress = false;
-                    self.node_history_request_epoch =
-                        self.node_history_request_epoch.wrapping_add(1);
-                    self.node_history_in_progress = false;
-                    self.node_history_pending = None;
-                    self.cache.node_history = node_history::Status::default();
-                    self.cache.node_history_switch_requested = false;
-                    self.cache.local_node_transfer_visible = false;
-                }
-                self.wallet = Some(wallet.clone());
-                self.imported_kit_metadata
-                    .reload(&self.datadir, &self.cube_settings);
-                self.cache.has_vault = wallet.supports_inheritance() || wallet.is_imported();
-                self.cache.has_imported_bitcoin = wallet.is_imported();
-                self.cache.vault_lacks_keychain_key = wallet.lacks_keychain_key();
-
-                // A Vault attached mid-session never passes through `App::new`,
-                // so run the same identity backfill here — otherwise a Vault
-                // created in this session would render "Vault configured" with
-                // no id until the next relaunch
-                // (PLAN-vault-identity-unification D4).
-                let vault_fp_task = self.vault_fingerprint_backfill_task();
-
-                // If we didn't have a vault before, rebuild all vault panels
-                if was_vaultless {
-                    if let Some(daemon) = &self.daemon {
-                        self.panels.build_vault_panels(
-                            wallet.clone(),
-                            &self.cache,
-                            daemon.backend(),
-                            self.datadir.clone(),
-                            self.internal_bitcoind.as_ref(),
-                            self.config.clone(),
-                            self.spark_backend(),
-                        );
-                    }
-
-                    // W10 — nudge the user to back up the freshly-created
-                    // Vault to their Connect Recovery Kit. Fires
-                    // `LoadStatus` now; the `StatusLoaded` handler in
-                    // `state::settings::recovery_kit` reads this flag
-                    // and emits the toast only if the freshly-loaded
-                    // status shows the descriptor isn't already
-                    // backed up. Gating on the in-memory `status`
-                    // here (pre-fetch) would misfire: on app startup
-                    // and after Connect sign-out the cached value is
-                    // `None` even for users whose kit is complete.
-                    //
-                    // Both the flag and the `LoadStatus` dispatch are
-                    // gated on auth — unauthenticated users have no
-                    // Connect account to fetch against, and dispatching
-                    // the message anyway would just round-trip through
-                    // `load_status`'s early-return. Skipping saves the
-                    // message-queue hop and keeps the intent obvious.
-                    let nudge_task: Option<Task<Message>> =
-                        if self.panels.connect.account.is_authenticated() {
-                            self.panels
-                                .global_settings
-                                .recovery_kit
-                                .nudge_on_next_status_load = true;
-                            Some(Task::done(Message::View(view::Message::Settings(
-                                view::SettingsMessage::RecoveryKit(
-                                    view::RecoveryKitMessage::LoadStatus,
-                                ),
-                            ))))
-                        } else {
-                            None
-                        };
-
-                    // Duress vault gate (PLAN-duress-vault-gate PR 3): the Cube
-                    // just gained a Vault. Re-report `has_vault` to the server so
-                    // other devices' duress gate sees it without waiting for a
-                    // re-registration, and — if duress is already enrolled —
-                    // surface the extra Recovery-Kit nudge line (master decision
-                    // 6): the freshly-created Vault's Wallet Descriptor isn't in
-                    // the kit yet, so a duress wipe of it would be irreversible.
-                    let report_task = if wallet.supports_inheritance() || wallet.is_imported() {
-                        self.panels.connect.report_vault_created()
-                    } else {
-                        Task::none()
-                    };
-                    let duress_nudge_task: Option<Task<Message>> =
-                        if self.panels.connect.account.is_duress_enrolled() {
-                            Some(Task::done(Message::View(view::Message::ShowToast(
-                                log::Level::Info,
-                                "Duress Mode is on — add this Vault's Wallet Descriptor to your \
-                                 Recovery Kit so a duress wipe stays recoverable."
-                                    .to_string(),
-                            ))))
-                        } else {
-                            None
-                        };
-                    // Vault-setup-completion trigger (PR 3): the new Vault has a
-                    // keyholder set and a Connect session — offer the one-time
-                    // recovery-alerts consent prompt (alerts pre-selected on).
-                    //
-                    // Dispatched as a status load rather than a direct
-                    // `maybe_show_recovery_alerts_prompt()` because the prompt
-                    // gates on the recipient list, and that list is resolved by
-                    // this very load. The `is_status_load` branch in the
-                    // RecoveryAlerts dispatch offers the prompt once the load
-                    // lands with the new Vault's keyholders in hand.
-                    //
-                    // Gated on an authenticated session with a resolved Connect
-                    // cube, like the Recovery-Kit nudge above. Dispatching it
-                    // without both doesn't merely waste a queue hop: the
-                    // handler's early return still marks the monitoring config
-                    // `loaded_once`, and that permanently disables the lazy
-                    // hydrator in `recovery_heartbeat_task` (gated on
-                    // `!loaded_once`) for the rest of the session — so a Vault
-                    // built before signing in to Connect would neither
-                    // heartbeat nor prompt until Settings was opened by hand.
-                    let alerts_load_task: Option<Task<Message>> =
-                        (self.panels.connect.account.is_authenticated()
-                            && self.panels.connect.cube.server_cube_id.is_some())
-                        .then(|| {
-                            Task::done(Message::View(view::Message::Settings(
-                                view::SettingsMessage::RecoveryAlerts(
-                                    view::RecoveryAlertsMessage::LoadStatus,
-                                ),
-                            )))
-                        });
-
-                    // Fold the re-report, the optional duress nudge and the
-                    // optional alerts load into a single extra task so the
-                    // return arms below stay simple.
-                    let report_task = Task::batch(
-                        std::iter::once(report_task)
-                            .chain(duress_nudge_task)
-                            .chain(alerts_load_task),
-                    );
-                    // Forward to the current panel; batch the nudge and the
-                    // has_vault re-report in when present.
-                    if let (Some(daemon), Some(panel)) =
-                        (self.daemon.clone(), self.panels.current_mut())
-                    {
-                        let panel_task = panel.update(
-                            Some(daemon),
-                            &self.cache,
-                            Message::WalletUpdated(Ok(wallet)),
-                        );
-                        return match nudge_task {
-                            Some(nudge) => {
-                                Task::batch([panel_task, nudge, report_task, vault_fp_task])
-                            }
-                            None => Task::batch([panel_task, report_task, vault_fp_task]),
-                        };
-                    }
-                    return match nudge_task {
-                        Some(nudge) => Task::batch([nudge, report_task, vault_fp_task]),
-                        None => Task::batch([report_task, vault_fp_task]),
-                    };
-                }
-
-                // Forward the message to the current panel, with or without
-                // a daemon: a Register dialog waiting on this result must
-                // finish even while the daemon is restarting.
-                if let Some(panel) = self.panels.current_mut() {
-                    let panel_task = panel.update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::WalletUpdated(Ok(wallet)),
-                    );
-                    return Task::batch([panel_task, vault_fp_task]);
-                }
-                return vault_fp_task;
+                return self.route_wallet_updated(wallet);
             }
             Message::LocalForkFeatureChecked { attempt, enabled } => {
                 if self.local_feature_check != Some(attempt) {
@@ -7750,715 +9021,38 @@ impl App {
             }
             msg @ Message::View(view::Message::ConnectAccount(_))
             | msg @ Message::View(view::Message::ConnectCube(_)) => {
-                let mut committed_login = None;
-                if let Message::View(view::Message::ConnectAccount(
-                    view::ConnectAccountMessage::AuthCommitAccepted {
-                        login,
-                        epoch,
-                        refreshed,
-                    },
-                )) = &msg
-                {
-                    let network_dir = self
-                        .cache
-                        .datadir_path
-                        .network_directory(self.cache.network);
-                    let still_current =
-                        crate::services::connect::client::cache::ConnectCache::from_file(
-                            &network_dir,
-                        )
-                        .ok()
-                        .and_then(|cache| cache.active_account().cloned())
-                        .is_some_and(|account| {
-                            account.email == login.user.email
-                                && account.tokens.access_token == login.token
-                                && account.tokens.refresh_token == login.refresh_token
-                        });
-                    if !still_current {
-                        return Task::done(Message::View(view::Message::ConnectAccount(
-                            view::ConnectAccountMessage::AuthCommitRejected { epoch: *epoch },
-                        )));
-                    }
-                    committed_login = Some((login.clone(), *refreshed));
-                }
-                if self.cache.chain().is_blake2b() && !self.requires_connect() {
-                    self.panels.connect.account.use_local_backend();
-                }
-                let was_authenticated = self.cache.connect_authenticated;
-                let previous_server_cube_id = self.panels.connect.cube.server_cube_id;
-                let explicit_logout = matches!(
-                    &msg,
-                    Message::View(view::Message::ConnectAccount(
-                        view::ConnectAccountMessage::LogOut
-                    ))
-                );
-                // The two completions that establish a session in this tab —
-                // a login or refresh result, and the user it loads — carry the
-                // authentication epoch of the operation that produced them.
-                // Nothing else (a features, plan, flags or activity load, a
-                // re-entry) lifts a hold on the claim's session, and neither
-                // does a completion of an operation begun before the hold
-                // (see `claim_session_invalidated`).
-                let session_epoch = match &msg {
-                    Message::View(view::Message::ConnectAccount(
-                        view::ConnectAccountMessage::SetSession(_, epoch)
-                        | view::ConnectAccountMessage::AuthCommitAccepted { epoch, .. }
-                        | view::ConnectAccountMessage::SessionLoaded { epoch, .. },
-                    )) => Some(*epoch),
-                    _ => None,
-                };
-                // Features and the post-login account check complete independently.
-                // A pending account check is not a revocation of this admitted Cube.
-                let current_features_denied = matches!(
-                    &msg,
-                    Message::View(view::Message::ConnectAccount(
-                        view::ConnectAccountMessage::FeaturesLoaded(features, generation)
-                    )) if *generation == self.panels.connect.account.session_generation()
-                        && !crate::app::features::bitcoin_blake2b_enabled(
-                            features.as_ref().and_then(|f| f.bitcoin_blake2b_enabled).unwrap_or(false),
-                            self.panels.connect.account.bitcoin_blake2b_opt_in,
-                        )
-                );
-                if matches!(
-                    &msg,
-                    Message::View(view::Message::ConnectAccount(
-                        view::ConnectAccountMessage::RefreshSession { .. }
-                    ))
-                ) && !self.panels.connect.account.is_authenticated()
-                {
-                    use crate::services::connect::client::cache::{
-                        ConnectCache, ConnectCacheError,
-                    };
-                    let network_dir = self
-                        .cache
-                        .datadir_path
-                        .network_directory(self.cache.network);
-                    let auth = self
-                        .connect_auth
-                        .as_ref()
-                        .map(|arc| arc.try_read().map(|tokens| (arc.clone(), tokens.clone())));
-                    self.in_app_restore_cache_snapshot =
-                        match (ConnectCache::from_file(&network_dir), auth) {
-                            (Ok(cache), Some(Ok(auth))) => Some(RestoreAuthSnapshot {
-                                cache,
-                                email: self.connect_email.clone(),
-                                auth: Some(auth),
-                            }),
-                            (Ok(cache), None) => Some(RestoreAuthSnapshot {
-                                cache,
-                                email: self.connect_email.clone(),
-                                auth: None,
-                            }),
-                            (Err(ConnectCacheError::NotFound), Some(Ok(auth))) => {
-                                Some(RestoreAuthSnapshot {
-                                    cache: ConnectCache::default(),
-                                    email: self.connect_email.clone(),
-                                    auth: Some(auth),
-                                })
-                            }
-                            (Err(ConnectCacheError::NotFound), None) => Some(RestoreAuthSnapshot {
-                                cache: ConnectCache::default(),
-                                email: self.connect_email.clone(),
-                                auth: None,
-                            }),
-                            (_, Some(Err(error))) => {
-                                tracing::warn!(
-                                    "Cannot capture Connect restore auth state: {error}"
-                                );
-                                None
-                            }
-                            (Err(error), _) => {
-                                tracing::warn!(
-                                    "Cannot capture Connect restore cache state: {error}"
-                                );
-                                None
-                            }
-                        };
-                }
-                if matches!(
-                    &msg,
-                    Message::View(view::Message::ConnectAccount(
-                        view::ConnectAccountMessage::VerifyOtp
-                    ))
-                ) && self.panels.connect.account.can_begin_verify_otp()
-                {
-                    use crate::services::connect::client::cache::{
-                        ConnectCache, ConnectCacheError,
-                    };
-                    let network_dir = self
-                        .cache
-                        .datadir_path
-                        .network_directory(self.cache.network);
-                    self.in_app_otp_cache_snapshot = match ConnectCache::from_file(&network_dir) {
-                        Ok(cache) => Some(cache),
-                        Err(ConnectCacheError::NotFound) => Some(ConnectCache::default()),
-                        Err(error) => {
-                            tracing::warn!("Cannot capture Connect OTP cache state: {error}");
-                            None
-                        }
-                    };
-                }
-                let auth_revision_before = self.panels.connect.account.accepted_auth_revision();
-                let task = self
-                    .panels
-                    .connect
-                    .update(self.daemon.clone(), &self.cache, msg);
-                let mut auth_bootstrap = Task::none();
-                if let Some((login, refreshed)) = committed_login {
-                    if self.panels.connect.account.accepted_auth_revision() != auth_revision_before
-                    {
-                        let needs_new_arc = self.connect_email.as_deref()
-                            != Some(login.user.email.as_str())
-                            || self.connect_auth.is_none();
-                        if needs_new_arc {
-                            self.connect_stream_config = None;
-                            self.cache.connect_grpc_url = None;
-                            self.cache.connect_device_id = None;
-                            let tokens = std::sync::Arc::new(tokio::sync::RwLock::new(
-                                crate::services::connect::client::auth::AccessTokenResponse {
-                                    access_token: login.token.clone(),
-                                    refresh_token: login.refresh_token.clone(),
-                                    expires_at: chrono::Utc::now().timestamp() + 30 * 24 * 60 * 60,
-                                },
-                            ));
-                            self.connect_auth = Some(tokens.clone());
-                            self.cache.connect_tokens = Some(tokens);
-                        }
-                        self.connect_email = Some(login.user.email.clone());
-                        self.cache.connect_email = Some(login.user.email);
-                        self.cache.has_connect_session = true;
-                        if refreshed && needs_new_arc {
-                            auth_bootstrap = Task::done(Message::InAppConnectLoginCompleted {
-                                token: login.token,
-                                refresh_token: login.refresh_token,
-                                email: self.connect_email.clone().expect("just installed"),
-                                epoch: self.panels.connect.account.auth_epoch(),
-                            });
-                        }
-                    }
-                }
-                self.cache.connect_authenticated = self.panels.connect.account.is_authenticated();
-                self.cache.restorable_connect_session =
-                    self.panels.connect.account.has_stored_session();
-                let refresh_recovery_kit = if self.panels.connect.account.is_authenticated()
-                    && self.panels.connect.cube.server_cube_id.is_some()
-                    && (!was_authenticated || previous_server_cube_id.is_none())
-                {
-                    Task::done(Message::View(view::Message::Settings(
-                        view::SettingsMessage::RecoveryKit(view::RecoveryKitMessage::LoadStatus),
-                    )))
-                } else {
-                    Task::none()
-                };
-                if let Some(bound) = &self.fork_connect_client {
-                    let current = self.panels.connect.account.authenticated_client();
-                    let changed = current.as_ref().is_some_and(|current| {
-                        current.base_url != bound.base_url || current.token() != bound.token()
-                    });
-                    if explicit_logout || changed || current.is_none() {
-                        if self.requires_connect() {
-                            self.invalidate_fork_session();
-                        } else {
-                            self.revoke_local_connect_services();
-                        }
-                    }
-                }
-                // Mirror the server-controlled Marketplace flags so the nav
-                // rails and route guard reflect the latest `/connect/features`
-                // stance. Recomputed after every ConnectAccount/ConnectCube
-                // message (FeaturesLoaded flows through here, and logout clears
-                // `features` back to fail-closed OFF via the accessor).
-                self.cache.marketplace_flags =
-                    self.panels.connect.account.marketplace_server_flags();
-                // Same mirror for the fork account grant, so the Vault rail can
-                // answer "can this Cube start a claim?" without reaching into
-                // the Connect panel from the view layer.
-                self.cache.btcb2_server_enabled =
-                    self.panels.connect.account.bitcoin_blake2b_enabled();
-                if self.requires_connect() && current_features_denied {
-                    self.invalidate_fork_session();
-                    return Task::none();
-                }
-                // Connect-session reads (the unswept notice, the Chains
-                // column's proofs) work under the account's session. A
-                // sign-out, or a different account or client identity, revokes every
-                // Connect-session read here, synchronously, before anything
-                // else acts on the change, and advances the generation.
-                if session_epoch.is_some_and(|epoch| epoch >= self.claim_hold_epoch) {
-                    self.claim_session_invalidated = false;
-                }
-                let claim_signed_in =
-                    !explicit_logout && self.panels.connect.account.bitcoin_blake2b_enabled();
-                let claim_session = if claim_signed_in {
-                    self.claim_connect_session()
-                } else {
-                    None
-                };
-                let notice_replaced = self.unswept_session.as_ref().is_some_and(|old| {
-                    !self.cache.btcb2_server_enabled
-                        || claim_session
-                            .as_ref()
-                            .is_none_or(|new| !crate::app::connect_session::same_session(old, new))
-                });
-                // A first sign-in replaces nothing; another account,
-                // endpoint or credential (or a sign-out) does.
-                let previous_session =
-                    std::mem::replace(&mut self.seen_session, claim_session.clone());
-                let session_replaced = match (&previous_session, &claim_session) {
-                    (Some(old), Some(new)) => !crate::app::connect_session::same_session(old, new),
-                    (Some(_), None) => true,
-                    (None, _) => false,
-                };
-                if !claim_signed_in || session_replaced || notice_replaced {
-                    self.revoke_claim();
-                }
-                if self.cache.chain().is_blake2b() {
-                    self.cache.marketplace_flags = Default::default();
-                }
-                // Sync lightning address to cache for sidebar display
-                self.cache.lightning_address = self
-                    .panels
-                    .connect
-                    .cube
-                    .lightning_address
-                    .as_ref()
-                    .and_then(|la| {
-                        crate::services::coincube::display_lightning_address(
-                            la.lightning_address.as_deref(),
-                        )
-                    });
-                self.cache.lightning_address_setup = self.panels.connect.cube.ln_auto.clone();
-                self.panels.spark_receive.sync_lightning_address_qr(
-                    self.cache
-                        .connect_authenticated
-                        .then_some(self.cache.lightning_address.as_deref())
-                        .flatten(),
-                );
-                if let Some(p2p) = self.panels.p2p.as_mut() {
-                    p2p.sync_lightning_address_from_cache(&self.cache);
-                    // Keep the panel's server-P2P mirror current so its Mostro
-                    // subscription gate drops the relay stream when the server
-                    // has P2P off (the cache flag was just refreshed above).
-                    p2p.sync_marketplace_flags_from_cache(&self.cache);
-                }
-                // Sync avatar handle to cache for sidebar display across all panels.
-                // Only update when Some to avoid blinking during in-flight image loads.
-                // Clear on logout when auth state transitions from true to false.
-                self.cache.avatar_regenerations_remaining = self
-                    .panels
-                    .connect
-                    .cube
-                    .avatar_data
-                    .as_ref()
-                    .map(|data| data.regenerations_remaining);
-                if let Some(handle) = self.panels.connect.cube.get_active_avatar_handle() {
-                    self.cache.avatar_handle = Some(handle);
-                } else if was_authenticated && !self.cache.connect_authenticated {
-                    // Logout occurred - clear the avatar
-                    self.cache.avatar_handle = None;
-                }
-                // Connect logout: tear down the realtime stream. The
-                // subscription is keyed on `connect_stream_config`, so
-                // clearing it (plus the cache mirrors) drops the gRPC
-                // stream on the next `subscription()` tick — Iced's
-                // model is declarative, there is no task handle to
-                // cancel. NOTE: a subsequent in-place relogin does not
-                // yet rebuild the stream (would need the token Arc +
-                // email re-plumbed from the account panel); the stream
-                // currently only re-establishes on app restart.
-                if !was_authenticated && self.cache.connect_authenticated {
-                    self.cache.connect_signed_out_by = None;
-                }
-                if was_authenticated && !self.cache.connect_authenticated {
-                    self.connect_renewal = Renewal::default();
-                    self.cache.connect_panel_open = false;
-                    self.connect_stream_config = None;
-                    self.connect_email = None;
-                    self.cache.connect_grpc_url = None;
-                    self.cache.connect_tokens = None;
-                    self.cache.connect_device_id = None;
-                    self.cache.connect_email = None;
-                    self.cache.has_connect_session = false;
-                    self.cache.lightning_address = None;
-                    self.panels.spark_receive.sync_lightning_address_qr(None);
-                    self.cache.connect_stream_status = ConnectionStatus::Inactive;
-                    // Drop the previous session's vault-monitoring config so
-                    // it can't leak into the next account and so the
-                    // heartbeat's lazy `loaded_once` re-hydration re-fetches
-                    // for whoever signs in next (the card itself lives here on
-                    // `global_settings`, not on the connect panel that handles
-                    // the rest of the logout scrub).
-                    self.panels.global_settings.recovery_alerts =
-                        crate::app::state::settings::recovery_alerts::RecoveryAlerts::new();
-                    // Logout breaks the "Switch to Connect" trip the
-                    // user started; firing the auto-return on a fresh
-                    // unrelated login later would be surprising.
-                    self.pending_switch_to_connect_after_login = false;
-                }
-                // Auto-return for the "Switch to Connect" flow. When the user
-                // clicked it without an active session, we routed them to the
-                // Connect tab and set this flag. Now that they've signed in,
-                // jump back to Vault → Settings → Node and re-fire the switch
-                // — which will fast-path through the new session's JWT.
-                if !was_authenticated
-                    && self.cache.connect_authenticated
-                    && self.pending_switch_to_connect_after_login
-                {
-                    self.pending_switch_to_connect_after_login = false;
-                    let nav = self.set_current_panel(menu::Menu::Vault(
-                        menu::VaultSubMenu::Settings(Some(menu::SettingsOption::Node)),
-                    ));
-                    let switch = Task::done(Message::View(view::Message::Settings(
-                        view::SettingsMessage::NodeSettings(
-                            view::NodeSettingsMessage::SwitchToConnect,
-                        ),
-                    )));
-                    return Task::batch([task, auth_bootstrap, refresh_recovery_kit, nav, switch]);
-                }
-                return Task::batch([task, auth_bootstrap, refresh_recovery_kit]);
+                return self.route_connect_panel_message(msg);
             }
-            Message::View(view::Message::ReceivedCelebrationActivity) => {
-                return Task::done(Message::View(view::Message::DismissReceivedCelebration)).chain(
-                    Task::done(Message::View(view::Message::Menu(Menu::Cube(
-                        crate::app::menu::CubeSubMenu::Activity,
-                    )))),
-                );
+            message @ (Message::View(
+                view::Message::ReceivedCelebrationActivity
+                | view::Message::DismissReceivedCelebration
+                | view::Message::DismissSparkNotice,
+            )
+            | Message::ShowReceivedCelebration { .. }) => {
+                return self.route_received_celebration(message)
             }
-            Message::View(view::Message::DismissReceivedCelebration) => {
-                self.show_received_celebration = false;
-                // Panels that render their own celebration overlay
-                // (e.g. the Vault overview) keep a separate
-                // `show_received_celebration` flag and reuse this same
-                // global dismiss message. Clearing only the app-level
-                // flag here would leave the panel stuck on the
-                // celebration screen, so forward the dismiss to the
-                // active panel as well — mirrors the generic
-                // message-forwarding catch-all below.
-                if let (Some(daemon), Some(panel)) =
-                    (self.daemon.clone(), self.panels.current_mut())
-                {
-                    return panel.update(
-                        Some(daemon),
-                        &self.cache,
-                        Message::View(view::Message::DismissReceivedCelebration),
-                    );
-                } else if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(
-                        None,
-                        &self.cache,
-                        Message::View(view::Message::DismissReceivedCelebration),
-                    );
-                }
+            message @ (Message::CubeSparkStableBalanceReported
+            | Message::SparkStableBalanceFromConnect(_)
+            | Message::SparkStableBalanceState(_)
+            | Message::SparkStableBalanceApplied(_)) => {
+                return self.route_spark_stable_balance(message)
             }
-            Message::View(view::Message::DismissSparkNotice) => {
-                // Dismissing "USDB held but off" is an answer — keep it off
-                // and don't ask again on this device. The paused banner is
-                // just informational; closing it changes nothing.
-                if self.cache.spark_notice == Some(cache::SparkNotice::StableBalanceOffWithHolding)
-                {
-                    return self.record_spark_stable_balance(false);
-                }
-                self.cache.spark_notice = None;
+            message @ Message::View(view::Message::SparkSwap(_)) => {
+                return self.route_spark_swap(message)
             }
-            Message::CubeSparkStableBalanceReported => {}
-            Message::SparkStableBalanceFromConnect(server) => {
-                // Adopt the server's record only when this device has none:
-                // the registration request already carried a local decision,
-                // so a response that disagrees with one is a stale answer to
-                // an earlier request (the user toggled while it was in
-                // flight), not newer information. With no local decision the
-                // server's is the only one there is — adopt it, then re-check
-                // the SDK against it. `None` on both sides is the fresh-Cube
-                // case; a local decision with no server record was pushed by
-                // the registration itself.
-                match (self.cube_settings.spark_stable_balance, server) {
-                    (None, Some(enabled)) => {
-                        log::info!(
-                            "Spark Stable Balance decision from Connect: {}",
-                            if enabled { "on" } else { "off" }
-                        );
-                        return Task::batch([
-                            self.record_spark_stable_balance_locally(enabled),
-                            self.spark_stable_balance_state_task(),
-                        ]);
-                    }
-                    (Some(local), Some(remote)) if local != remote => {
-                        log::debug!(
-                            "Connect reports Spark Stable Balance {remote} but this device \
-                             decided {local}; keeping the local decision"
-                        );
-                    }
-                    _ => {}
-                }
-            }
-            Message::SparkStableBalanceState(None) => {}
-            Message::SparkStableBalanceState(Some((sdk_active, holds_usdb))) => {
-                let preference = self.cube_settings.spark_stable_balance;
-                match reconcile_stable_balance(preference, sdk_active, holds_usdb) {
-                    StableBalanceReconcile::InSync => {}
-                    StableBalanceReconcile::Apply(enabled) => {
-                        let Some(backend) = self.spark_backend() else {
-                            return Task::none();
-                        };
-                        log::info!(
-                            "Spark Stable Balance is {} on the SDK but the Cube wants it {}; \
-                             re-applying",
-                            if sdk_active { "on" } else { "off" },
-                            if enabled { "on" } else { "off" },
-                        );
-                        return Task::perform(
-                            async move { backend.set_stable_balance(enabled).await },
-                            move |res| {
-                                Message::SparkStableBalanceApplied(
-                                    res.map(|()| enabled).map_err(|e| e.to_string()),
-                                )
-                            },
-                        );
-                    }
-                    StableBalanceReconcile::Adopt => {
-                        return self.record_spark_stable_balance(true);
-                    }
-                    StableBalanceReconcile::PromptHolding => {
-                        self.cache.spark_notice =
-                            Some(cache::SparkNotice::StableBalanceOffWithHolding);
-                    }
-                }
-            }
-            Message::SparkStableBalanceApplied(Ok(enabled)) => {
-                log::info!(
-                    "Spark Stable Balance preference re-applied: {}",
-                    if enabled { "on" } else { "off" }
-                );
-                // The Settings toggle and Overview badge read the SDK on
-                // reload; refresh both so they don't show the stale state.
-                return Task::batch([
-                    self.panels.spark_settings.reload(None, None),
-                    self.panels.spark_overview.reload(None, None),
-                ]);
-            }
-            Message::SparkStableBalanceApplied(Err(e)) => {
-                log::warn!("could not re-apply Spark Stable Balance preference: {e}");
-            }
-
-            // Swap's recent payments are priced with the cache, which
-            // `deliver` doesn't have.
-            Message::View(view::Message::SparkSwap(
-                view::spark::SparkSwapMessage::PaymentsLoaded(payments),
-            )) => {
-                self.panels
-                    .spark_swap
-                    .set_recent_payments(&payments, &self.cache);
-            }
-            // Swap's answers reach its panel whichever page is showing, so a
-            // swap that settles while the user is elsewhere keeps its result.
-            Message::View(view::Message::SparkSwap(msg)) => {
-                let on_screen = self.panels.current == Menu::Spark(menu::SparkSubMenu::Swap);
-                return self.panels.spark_swap.deliver(msg, on_screen);
-            }
-
-            // The user changed the Stable Balance toggle and the bridge
-            // accepted it: record the decision before the panel updates its
-            // own state, then let it through. Routed to the settings panel
-            // directly (not `current_mut()`) so navigating away mid-save
-            // can't lose the reconcile.
-            Message::View(view::Message::SparkSettings(
-                view::SparkSettingsMessage::StableBalanceSaved(Ok(enabled)),
-            )) => {
-                self.panels.spark_overview.finish_stable_balance_save();
-                let record = self.record_spark_stable_balance(enabled);
-                let panel = self.panels.spark_settings.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::SparkSettings(
-                        view::SparkSettingsMessage::StableBalanceSaved(Ok(enabled)),
-                    )),
-                );
-                let receive = self
-                    .panels
-                    .spark_receive
-                    .stable_balance_settled(Some(enabled));
-                return Task::batch([
-                    record,
-                    panel,
-                    self.panels.spark_overview.reload(None, None),
-                    receive,
-                ]);
-            }
-            // Overview shares the same Settings save owner. Route both the
-            // request and failed settlement there even when Overview is active.
-            Message::View(view::Message::SparkSettings(
-                view::SparkSettingsMessage::StableBalanceToggled(enabled),
-            )) => {
-                if !self.panels.spark_overview.try_start_stable_balance_save() {
-                    return Task::none();
-                }
-                return self.panels.spark_settings.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::SparkSettings(
-                        view::SparkSettingsMessage::StableBalanceToggled(enabled),
-                    )),
-                );
-            }
-            // Spark's nickname, from Settings › Spark › Balances & conversion.
-            // It lives on this device's Cube settings (Spark has no wallet
-            // settings of its own) and isn't sent to Connect.
-            Message::View(view::Message::SparkSettings(
-                view::SparkSettingsMessage::NicknameSubmitted(input),
-            )) => {
-                if !state::spark::settings::nickname_fits(&input) {
-                    return Task::none();
-                }
-                let nickname = state::spark::settings::saved_nickname(&input);
-                // A write is running: this request waits for it, so the
-                // latest request is the one that lands, even one going back
-                // to the saved name.
-                if self.spark_nickname_in_flight.is_some() {
-                    self.spark_nickname_queued = Some(nickname);
-                    self.cache.spark_nickname_save = cache::NameSave::Saving;
-                    return Task::none();
-                }
-                // So is one going back to the saved name while an earlier
-                // App's write for this Cube is still running (Lock Cube, then
-                // reopen): that write would land after the shortcut.
-                if nickname == self.cube_settings.spark_alias
-                    && !SparkNicknameWrite::pending(
-                        &self.spark_nickname_network_dir(),
-                        &self.cube_settings.id,
-                    )
-                {
-                    // What was asked for is what is saved: an earlier
-                    // failure no longer applies.
-                    self.settle_failed_spark_nickname();
-                    return self.panels.spark_settings.update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::View(view::Message::SparkSettings(
-                            view::SparkSettingsMessage::NicknameSaved(nickname),
-                        )),
-                    );
-                }
-                return self.start_spark_nickname_write(nickname);
-            }
-            // Another Cube's save (the tab moved on while it was written)
-            // changes nothing here: its file write already happened.
-            Message::SparkNicknameSaved { cube_id, .. } if cube_id != self.cube_settings.id => {}
-            Message::SparkNicknameSaved { result, .. } => {
-                self.spark_nickname_in_flight = None;
-                self.cache.spark_nickname_save = if result.is_ok() {
-                    cache::NameSave::Saved
-                } else {
-                    cache::NameSave::Failed
-                };
-                let mut tasks = Vec::new();
-                match result {
-                    Ok(nickname) => {
-                        // The side panel's name follows:
-                        // `sync_panel_derived_cache_fields` rebuilds
-                        // `cache.wallet_names` from the Cube settings after
-                        // this message, before the next view.
-                        self.cube_settings.spark_alias = nickname.clone();
-                        tasks.push(self.panels.spark_settings.update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::View(view::Message::SparkSettings(
-                                view::SparkSettingsMessage::NicknameSaved(nickname),
-                            )),
-                        ));
-                    }
-                    Err(e) => tasks.push(Task::done(Message::View(view::Message::ShowError(
-                        coincube_ui::localized_format!(
-                            "Couldn't save the Spark nickname: {}",
-                            "No se pudo guardar el apodo de Spark: {}",
-                            e
-                        ),
-                    )))),
-                }
-                // A request made while this write ran is written now, after
-                // it, unless it is what is saved.
-                if let Some(next) = self.spark_nickname_queued.take() {
-                    if next == self.cube_settings.spark_alias {
-                        self.settle_failed_spark_nickname();
-                        tasks.push(self.panels.spark_settings.update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::View(view::Message::SparkSettings(
-                                view::SparkSettingsMessage::NicknameSaved(next),
-                            )),
-                        ));
-                    } else {
-                        tasks.push(self.start_spark_nickname_write(next));
-                    }
-                }
-                return Task::batch(tasks);
-            }
-            Message::View(view::Message::SparkSettings(
-                view::SparkSettingsMessage::StableBalanceSaved(Err(err)),
-            )) => {
-                self.panels.spark_overview.finish_stable_balance_save();
-                let panel = self.panels.spark_settings.update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::SparkSettings(
-                        view::SparkSettingsMessage::StableBalanceSaved(Err(err.clone())),
-                    )),
-                );
-                return Task::batch([
-                    panel,
-                    self.panels.spark_overview.reload(None, None),
-                    self.panels.spark_receive.stable_balance_settled(None),
-                    Task::done(Message::View(view::Message::ShowError(err))),
-                ]);
-            }
-            Message::View(view::Message::FlipDisplayMode) => {
-                if !self.cache.fiat_toggle_allowed() {
-                    self.cache.clear_btcb2_fiat();
-                    return Task::done(Message::CacheUpdated);
-                }
-                let new_mode = self.cache.display_mode.flipped();
-                self.cache.display_mode = new_mode;
-                let network_dir = self.datadir.network_directory(self.cube_settings.network);
-                return Task::perform(
-                    async move {
-                        settings::update_settings_file(&network_dir, move |mut current| {
-                            current.display_mode = new_mode;
-                            Some(current)
-                        })
-                        .await
-                    },
-                    |res| match res {
-                        Ok(()) => Message::SettingsSaved,
-                        Err(e) => Message::SettingsSaveFailed(e.into()),
-                    },
-                );
-            }
-            // Collapses the advisory detail panel for one device and persists
-            // that choice. The badge on the row is unaffected — an advisory is
-            // never dismissed away entirely.
-            Message::View(view::Message::DismissHwAdvisory(fingerprint, advisory_id)) => {
-                crate::hw_advisory::dismissals::dismiss(&fingerprint, advisory_id);
-            }
-            Message::View(view::Message::OpenUrl(url)) => {
-                if let Err(e) = crate::browser::open_url(&url) {
-                    tracing::error!("Error opening '{}': {}", url, e);
-                }
-            }
-            Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
-            Message::View(view::Message::CopyWithToast(text, notice)) => {
-                return clipboard::write(text.clone()).chain(clipboard::read().map(
-                    move |copied| {
-                        let (level, message) = if copied.as_deref() == Some(text.as_str()) {
-                            (log::Level::Info, notice.clone())
-                        } else {
-                            (
-                                log::Level::Error,
-                                "Could not copy to clipboard. Please try again.".to_string(),
-                            )
-                        };
-                        Message::View(view::Message::ShowToast(level, message))
-                    },
-                ));
-            }
+            message @ (Message::View(view::Message::SparkSettings(
+                view::SparkSettingsMessage::StableBalanceSaved(_)
+                | view::SparkSettingsMessage::StableBalanceToggled(_)
+                | view::SparkSettingsMessage::NicknameSubmitted(_),
+            ))
+            | Message::SparkNicknameSaved { .. }) => return self.route_spark_settings(message),
+            message @ Message::View(
+                view::Message::FlipDisplayMode
+                | view::Message::DismissHwAdvisory(..)
+                | view::Message::OpenUrl(_)
+                | view::Message::Clipboard(_)
+                | view::Message::CopyWithToast(..),
+            ) => return self.route_shell_view_action(message),
             Message::View(view::Message::Home(view::HomeMessage::TransferFromWallet(wallet))) => {
                 // A wallet page's Transfer: the flow lives on the Overview
                 // route, so switch there (the side menu keeps the wallet
@@ -8503,213 +9097,9 @@ impl App {
                     .update(self.daemon.clone(), &self.cache, msg);
             }
 
-            Message::ShowReceivedCelebration {
-                context,
-                amount_sat,
-                payment_id,
-            } => {
-                // Drive the global "payment received" overlay for a Spark deposit that just claimed (the
-                // Spark bridge has no distinct "payment received" event for a
-                // claim — only `DepositsChanged` — so the celebration is fired
-                // explicitly from the auto-claim watcher in `GlobalHome`).
-                use coincube_ui::component::amount::DisplayAmount;
-                self.received_celebration_amount = format!(
-                    "{} {}",
-                    bitcoin::Amount::from_sat(amount_sat)
-                        .to_formatted_string_with_unit(self.cache.bitcoin_unit),
-                    self.cache.bitcoin_unit.label()
-                );
-                self.received_celebration_quote =
-                    coincube_ui::component::quote_display::random_quote(&context);
-                self.received_celebration_image =
-                    coincube_ui::component::quote_display::image_handle_for_context(&context);
-                self.received_celebration_context = context.clone();
-                self.received_celebration_wallet = "Into Spark";
-                self.received_celebration_id = payment_id
-                    .filter(|id| !id.is_empty())
-                    .map(|id| ("Payment ID", id));
-                self.show_received_celebration = true;
-                // A Spark swap's bitcoin just landed. Forward the arrival to the
-                // cross-network Receive flow so it advances from "Bitcoin
-                // arriving" to its arrived confirmation instead of sitting stale.
-                // Dispatched (not called inline) so it reaches the resident
-                // `spark_receive` panel even if the user is on another screen —
-                // arrival lands ~30 min after settle, by which point they've
-                // usually navigated away. The flow ignores it unless it's
-                // actually showing "Bitcoin arriving", so a plain (non-swap)
-                // Spark receive is unaffected.
-                if context == "spark-receive" {
-                    return Task::done(Message::View(view::Message::SparkSideshiftReceive(
-                        view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
-                    )));
-                }
-            }
-
             Message::SparkEvent(client_event) => {
-                use coincube_spark_protocol::Event as SparkEvent;
-                let crate::app::breez_spark::SparkClientEvent(event) = client_event;
-                log::info!("App received Spark event: {:?}", event);
-
-                let mut tasks: Vec<Task<Message>> = Vec::new();
-
-                // Refresh Spark Overview on every event — balance
-                // moves on any payment state change, and `Synced`
-                // ticks are the SDK's "you're up to date, re-read
-                // state" signal. Deposits being claimed counts as a
-                // balance change too.
-                tasks.push(self.panels.spark_overview.reload(None, None));
-
-                // Also refresh the Home (Cube → Overview) Spark card.
-                // `global_home.reload` only runs on navigation, so on
-                // cold start the first `get_info` may return the SDK's
-                // persisted pre-sync value (e.g. zero before this
-                // session's incoming payments landed). The Home state
-                // gates `spark_balance_loaded` on observing at least
-                // one `Synced` from the bridge — `SparkSyncedObserved`
-                // (sent only for `SparkEvent::Synced`) flips that gate,
-                // and the `RefreshSparkBalance` dispatched alongside
-                // re-fetches whatever the SDK can now report.
-                // A periodic poll in `GlobalHome::subscription` is the
-                // safety net for the case where `Synced` fires before
-                // iced subscribes (tokio broadcast doesn't replay).
-                if matches!(event, SparkEvent::Synced) {
-                    tasks.push(Task::done(Message::View(view::Message::Home(
-                        view::HomeMessage::SparkSyncedObserved,
-                    ))));
-                    // First sync of the session: check the SDK's Stable
-                    // Balance toggle against the Cube's recorded decision
-                    // (and its USDB holding). Once per session — the
-                    // outcome is durable, and later ticks have nothing new.
-                    if !self.spark_stable_balance_reconciled {
-                        self.spark_stable_balance_reconciled = true;
-                        tasks.push(self.spark_stable_balance_state_task());
-                    }
-                }
-                tasks.push(Task::done(Message::View(view::Message::Home(
-                    view::HomeMessage::RefreshSparkBalance,
-                ))));
-
-                // Payment-related events reload the Transactions list
-                // so newly surfaced rows appear without the user
-                // manually navigating / pressing refresh. `Synced`
-                // and `DepositsChanged` alone don't imply new
-                // payment-list rows.
-                if matches!(
-                    event,
-                    SparkEvent::PaymentSucceeded { .. }
-                        | SparkEvent::PaymentPending { .. }
-                        | SparkEvent::PaymentFailed { .. }
-                ) {
-                    tasks.push(self.panels.spark_transactions.reload(None, None));
-                }
-                // `PaymentUpdated` is late metadata on a payment that is
-                // already listed: refresh the page in view (and any open
-                // detail pane) without sending the user back to page 0.
-                if matches!(event, SparkEvent::PaymentUpdated { .. }) {
-                    tasks.push(self.panels.spark_transactions.refresh_in_place());
-                }
-                // The Spark page's rows follow its own reload (`DataLoaded`).
-                if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
-                    && overview_activity_spark_event(&event)
-                {
-                    tasks.push(self.panels.activity.refresh_wallet(
-                        view::activity::WalletFilter::Spark,
-                        None,
-                        None,
-                    ));
-                }
-
-                match event {
-                    SparkEvent::PaymentSucceeded {
-                        id,
-                        amount_sat,
-                        bolt11,
-                        token,
-                    } => {
-                        // Phase 4f: forward the BOLT11 field so the
-                        // Receive panel can correlate against its
-                        // currently displayed invoice. A token payment's
-                        // amount is in token base units, so its token goes
-                        // along to be read with it.
-                        let is_token = token.is_some();
-                        tasks.push(Task::done(Message::View(view::Message::SparkReceive(
-                            view::SparkReceiveMessage::PaymentReceived {
-                                payment_id: id,
-                                amount_sat,
-                                bolt11,
-                                token,
-                            },
-                        ))));
-                        // An auto-claim accepted before maturity settles
-                        // through this event; Home needs the settled amount
-                        // to complete its indicator and fire the splash. A
-                        // token payment carries no sats.
-                        if let Ok(amount_sat) =
-                            <u64 as std::convert::TryFrom<i64>>::try_from(amount_sat)
-                        {
-                            if amount_sat > 0 && !is_token {
-                                tasks.push(Task::done(Message::View(view::Message::Home(
-                                    view::HomeMessage::SparkPaymentSucceeded { amount_sat },
-                                ))));
-                                // A claimed on-chain deposit lands as a
-                                // payment: let a settled cross-network
-                                // receive check whether it was its own,
-                                // rather than wait for its next timer tick.
-                                tasks.push(Task::done(Message::View(
-                                    view::Message::SparkSideshiftReceive(
-                                        view::SparkSideshiftReceiveMessage::CheckSettleClaim,
-                                    ),
-                                )));
-                            }
-                        }
-                    }
-                    SparkEvent::DepositsChanged => {
-                        // Phase 4f: refresh the Receive panel's
-                        // pending deposits card. The panel handles
-                        // the actual `list_unclaimed_deposits` RPC
-                        // dispatch.
-                        tasks.push(Task::done(Message::View(view::Message::SparkReceive(
-                            view::SparkReceiveMessage::DepositsChanged,
-                        ))));
-                        // Transfer-redesign follow-up: the Home state tracks a
-                        // `pending_spark_incoming` indicator for transfer-initiated
-                        // deposits (VaultToSpark). Forward the
-                        // event so Home can reconcile its own view (auto-claim a
-                        // matured deposit, or clear the indicator once claimed).
-                        tasks.push(Task::done(Message::View(view::Message::Home(
-                            view::HomeMessage::SparkDepositsChanged,
-                        ))));
-                    }
-                    SparkEvent::LightningAddressChanged { info } => {
-                        // Phase 4g: forward to ConnectCube so it can
-                        // refresh its view and auto-re-register if
-                        // the SDK state went Some → None unexpectedly.
-                        tasks.push(Task::done(Message::View(view::Message::ConnectCube(
-                            view::ConnectCubeMessage::SparkLightningAddressChanged(info),
-                        ))));
-                    }
-                    SparkEvent::StableBalancePaused { reason, failures } => {
-                        log::error!(
-                            "Spark bridge paused Stable Balance after {failures} failed \
-                             auto-conversions: {reason}"
-                        );
-                        // The bridge already flipped the SDK setting off;
-                        // the Settings toggle and Overview badge re-read it
-                        // on reload. Record "off" as the Cube's decision so
-                        // the next launch's reconcile doesn't re-arm the
-                        // loop, then show the banner — after the record,
-                        // which clears any banner it finds.
-                        tasks.push(self.record_spark_stable_balance(false));
-                        self.cache.spark_notice =
-                            Some(cache::SparkNotice::StableBalancePaused { reason });
-                        tasks.push(self.panels.spark_settings.reload(None, None));
-                    }
-                    _ => {}
-                }
-
-                return Task::batch(tasks);
+                return self.route_spark_client_event(client_event);
             }
-
             // Route P2P messages directly to the P2P panel regardless of active menu,
             // so real-time trade updates are processed even when viewing other panels.
             msg @ Message::View(view::Message::P2P(_)) => {
@@ -8749,37 +9139,6 @@ impl App {
             // canonical Connect session lives in `panels.connect.account`; we
             // either reuse its JWT for an immediate switch, or send the user
             // to the Connect tab to sign in and auto-return on success.
-            Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
-                view::NodeSettingsMessage::SwitchToConnect,
-            ))) => {
-                let existing_jwt = self
-                    .panels
-                    .connect
-                    .account
-                    .authenticated_client()
-                    .and_then(|c| c.token().map(str::to_owned));
-                if let Some(jwt) = existing_jwt {
-                    let routed = Message::View(view::Message::Settings(
-                        view::SettingsMessage::NodeSettings(
-                            view::NodeSettingsMessage::SwitchToConnectFastPath(
-                                view::ConnectJwt::new(jwt),
-                            ),
-                        ),
-                    ));
-                    if let (Some(daemon), Some(panel)) =
-                        (self.daemon.clone(), self.panels.current_mut())
-                    {
-                        return panel.update(Some(daemon), &self.cache, routed);
-                    }
-                } else {
-                    self.pending_switch_to_connect_after_login = true;
-                    // No active Connect session on this Cube; bubble up
-                    // through the tab/pane so the Home tab takes focus
-                    // and the user can sign in there.
-                    return iced::Task::done(Message::View(view::Message::OpenConnectSignIn));
-                }
-            }
-
             // Cube Recovery Kit dispatch. Handled at App level because
             // the handler needs the authenticated CoincubeClient, the
             // Connect numeric cube id, and the live Wallet — none of
@@ -8833,54 +9192,7 @@ impl App {
                     Message::View(view::Message::SparkSend(msg)),
                 );
             }
-            // A send prepared, a PSBT signed or a device registered on the
-            // Vault's screens completes on them, even if the import panel
-            // took the route back while it ran (its wallet went back to
-            // syncing). Each handler checks its own generation or attempt,
-            // so a stale result is ignored there. During a wider scan the
-            // old daemon can already be stopped. A send or signature needs a
-            // live daemon; a registration result does not, and dropping it
-            // would leave the Register dialog stuck processing.
-            msg @ (Message::VaultSpendPrepared { .. }
-            | Message::Signed(..)
-            | Message::CubeKeys(_)
-            | Message::DeviceRegistered { .. })
-                if self.panels.imported_holds_route() =>
-            {
-                let daemon = self.daemon.clone();
-                let delivers = daemon.is_some() || matches!(msg, Message::DeviceRegistered { .. });
-                if let (true, Some(panel)) = (delivers, self.panels.route_panel_mut()) {
-                    // `Updated` carries no origin: tag the save result the
-                    // forwarded work produces so it returns to this panel
-                    // (closing its signing picker, or reporting a failed
-                    // save) instead of reaching the import panel.
-                    return panel
-                        .update(daemon, &self.cache, msg)
-                        .map(|message| match message {
-                            Message::Updated(result) => {
-                                Message::RoutePanelResult(Box::new(Message::Updated(result)))
-                            }
-                            other => other,
-                        });
-                }
-            }
-            Message::RoutePanelResult(msg) => {
-                if let (Some(daemon), Some(panel)) =
-                    (self.daemon.clone(), self.panels.route_panel_mut())
-                {
-                    return panel.update(Some(daemon), &self.cache, *msg);
-                }
-            }
-
-            msg => {
-                if let (Some(daemon), Some(panel)) =
-                    (self.daemon.clone(), self.panels.current_mut())
-                {
-                    return panel.update(Some(daemon), &self.cache, msg);
-                } else if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(None, &self.cache, msg);
-                }
-            }
+            msg => return self.route_current_panel_message(msg),
         }
 
         Task::none()
