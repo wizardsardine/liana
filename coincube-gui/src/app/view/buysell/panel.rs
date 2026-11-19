@@ -753,49 +753,52 @@ mod entry_presenter_tests {
                         appearance,
                         theme,
                     );
-                    assert!(has_exact(&inspection, "Buy/Sell"), "{}", name);
-                    for (index, label) in ["Location", "Sign in", "Buy or sell"].iter().enumerate()
-                    {
-                        if index < *current {
-                            assert!(has_exact(&inspection, label), "{}: {}", name, label);
-                            assert!(
-                                !has_exact(&inspection, &format!("{}  {label}", index + 1)),
-                                "{}: completed step remains numbered",
-                                name
-                            );
-                        } else {
-                            let expected = format!("{}  {label}", index + 1);
-                            assert!(has_exact(&inspection, &expected), "{}: {}", name, expected);
-                        }
-                    }
-                    assert_eq!(
-                        inspection
-                            .text
-                            .iter()
-                            .filter(|(value, _)| value == "\u{f633}")
-                            .count(),
-                        *current,
-                        "{name}: stage completion must come from the current state"
-                    );
-                    match *name {
-                        "detecting" => assert!(inspection.contains("Detecting your location...")),
-                        "manual-country" => assert!(inspection.contains("Select Country:")),
-                        "login" => assert!(inspection.contains("Sign in to your account")),
-                        "otp" => assert!(inspection.contains("Resend in 28s")),
-                        "mode" => {
-                            assert!(inspection.contains("View Order History"));
-                            assert!(inspection.contains("Log Out"));
-                        }
-                        _ => unreachable!(),
-                    }
-                    if *name == "mode" {
-                        assert!(inspection.contains("Mavapay"));
-                    }
-                    if *name == "manual-country" || *name == "detecting" {
-                        assert!(!inspection.contains("Provider"));
-                    }
+                    assert_entry_stages(&inspection, name, *current);
                 }
             }
+        }
+    }
+
+    fn assert_entry_stages(inspection: &capture::Inspection, name: &str, current: usize) {
+        assert!(has_exact(inspection, "Buy/Sell"), "{}", name);
+        for (index, label) in ["Location", "Sign in", "Buy or sell"].iter().enumerate() {
+            if index < current {
+                assert!(has_exact(inspection, label), "{}: {}", name, label);
+                assert!(
+                    !has_exact(inspection, &format!("{}  {label}", index + 1)),
+                    "{}: completed step remains numbered",
+                    name
+                );
+            } else {
+                let expected = format!("{}  {label}", index + 1);
+                assert!(has_exact(inspection, &expected), "{}: {}", name, expected);
+            }
+        }
+        assert_eq!(
+            inspection
+                .text
+                .iter()
+                .filter(|(value, _)| value == "\u{f633}")
+                .count(),
+            current,
+            "{name}: stage completion must come from the current state"
+        );
+        match name {
+            "detecting" => assert!(inspection.contains("Detecting your location...")),
+            "manual-country" => assert!(inspection.contains("Select Country:")),
+            "login" => assert!(inspection.contains("Sign in to your account")),
+            "otp" => assert!(inspection.contains("Resend in 28s")),
+            "mode" => {
+                assert!(inspection.contains("View Order History"));
+                assert!(inspection.contains("Log Out"));
+            }
+            _ => unreachable!(),
+        }
+        if name == "mode" {
+            assert!(inspection.contains("Mavapay"));
+        }
+        if name == "manual-country" || name == "detecting" {
+            assert!(!inspection.contains("Provider"));
         }
     }
 }
