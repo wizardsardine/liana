@@ -1126,6 +1126,131 @@ impl PsbtState {
         Task::batch([cmd, kc_launch])
     }
 
+    fn finish_broadcast_modal(
+        &mut self,
+        cache: &Cache,
+        res: Result<HashSet<Txid>, Error>,
+    ) -> Task<Message> {
+        match res {
+            Ok(conflicting_txids) => {
+                // The click that asked for this dialog was gated, but the
+                // `list_coins` round trip is a window: a lookup landing in
+                // it must not open a dialog whose Confirm the gate would
+                // then refuse. Re-check now, and say why if it moved.
+                if !self.broadcast_ready(cache) {
+                    return match self.not_ready_reason(cache) {
+                        Some(reason) => Task::done(Message::View(view::Message::ShowError(reason))),
+                        None => Task::none(),
+                    };
+                }
+                use coincube_ui::component::amount::DisplayAmount;
+                let is_self_transfer = self.tx.is_send_to_self();
+                // For a self-transfer every output is change, so `spend_amount`
+                // is 0 by construction. Showing "0 has been sent" is nonsense;
+                // surface the total moved (sum of change outputs) instead.
+                let display_amount = if is_self_transfer {
+                    self.tx
+                        .psbt
+                        .unsigned_tx
+                        .output
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, o)| {
+                            if self.tx.change_indexes.contains(&i) {
+                                Some(o.value)
+                            } else {
+                                None
+                            }
+                        })
+                        .sum()
+                } else {
+                    self.tx.spend_amount
+                };
+                // Include the unit label ("SATS" / "BTC") so the success
+                // screen reads e.g. "149,794 SATS has been sent successfully"
+                // rather than a bare number.
+                let amount_display = format!(
+                    "{} {}",
+                    display_amount.to_formatted_string_with_unit(cache.bitcoin_unit),
+                    cache.bitcoin_unit.label(),
+                );
+                self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
+                    conflicting_txids,
+                    broadcast: false,
+                    broadcasting: false,
+                    error: None,
+                    sent_quote: coincube_ui::component::quote_display::random_quote("bitcoin-send"),
+                    sent_image_handle:
+                        coincube_ui::component::quote_display::image_handle_for_context(
+                            "bitcoin-send",
+                        ),
+                    spend_amount_display: amount_display,
+                    fee_display: self.tx.fee_amount.map(|fee| {
+                        format!(
+                            "{} {}",
+                            fee.to_formatted_string_with_unit(cache.bitcoin_unit),
+                            cache.bitcoin_unit.label(),
+                        )
+                    }),
+                    txid: self.tx.psbt.unsigned_tx.compute_txid(),
+                    is_self_transfer,
+                    wallet: self.wallet.clone(),
+                    recipient_identities: self.recipient_identities.clone().filter(|review| {
+                        review.ticket.is_current()
+                            && review.transaction_id == self.tx.psbt.unsigned_tx.compute_txid()
+                    }),
+                    recipient_outputs: self.tx.psbt.unsigned_tx.output.clone(),
+                    network: cache.network,
+                    bitcoin_unit: cache.bitcoin_unit,
+                    theme_mode: cache.theme_mode,
+                }));
+            }
+            Err(e) => {
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+        }
+        Task::none()
+    }
+
+    fn merge_imported_psbt(&mut self, psbt: Psbt) -> Task<Message> {
+        let previous = self.tx.psbt.clone();
+        if let Err(e) = merge_signatures_for_chain(
+            uses_unified_signatures(&self.wallet),
+            &mut self.tx.psbt,
+            &psbt,
+        ) {
+            let err_msg = replay::unsafe_legacy_policy_copy(&e)
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    crate::user_error::report(&Error::Unexpected(format!(
+                        "Couldn't merge the imported PSBT: {e}"
+                    )))
+                });
+            let e = Error::Unexpected(format!("Couldn't merge the imported PSBT: {e}"));
+            self.warning = Some(e);
+            return Task::done(Message::View(view::Message::ShowError(err_msg)));
+        }
+        match replay::spend_info_for_chain(
+            self.wallet.chain,
+            &self.wallet.main_descriptor,
+            &self.tx.psbt,
+        ) {
+            Ok(sigs) => self.tx.sigs = sigs,
+            // An unreadable result is refused, never half-applied.
+            Err(e) => {
+                self.tx.psbt = previous;
+                let e = Error::Desc(e);
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+        }
+        self.refresh_replay();
+        Task::none()
+    }
+
     fn update_inner(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -1317,124 +1442,9 @@ impl PsbtState {
                     return Task::batch([cmd, self.reconcile_and_maybe_close(cache)]);
                 }
             }
-            Message::BroadcastModal(res) => match res {
-                Ok(conflicting_txids) => {
-                    // The click that asked for this dialog was gated, but the
-                    // `list_coins` round trip is a window: a lookup landing in
-                    // it must not open a dialog whose Confirm the gate would
-                    // then refuse. Re-check now, and say why if it moved.
-                    if !self.broadcast_ready(cache) {
-                        return match self.not_ready_reason(cache) {
-                            Some(reason) => {
-                                Task::done(Message::View(view::Message::ShowError(reason)))
-                            }
-                            None => Task::none(),
-                        };
-                    }
-                    use coincube_ui::component::amount::DisplayAmount;
-                    let is_self_transfer = self.tx.is_send_to_self();
-                    // For a self-transfer every output is change, so `spend_amount`
-                    // is 0 by construction. Showing "0 has been sent" is nonsense;
-                    // surface the total moved (sum of change outputs) instead.
-                    let display_amount = if is_self_transfer {
-                        self.tx
-                            .psbt
-                            .unsigned_tx
-                            .output
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, o)| {
-                                if self.tx.change_indexes.contains(&i) {
-                                    Some(o.value)
-                                } else {
-                                    None
-                                }
-                            })
-                            .sum()
-                    } else {
-                        self.tx.spend_amount
-                    };
-                    // Include the unit label ("SATS" / "BTC") so the success
-                    // screen reads e.g. "149,794 SATS has been sent successfully"
-                    // rather than a bare number.
-                    let amount_display = format!(
-                        "{} {}",
-                        display_amount.to_formatted_string_with_unit(cache.bitcoin_unit),
-                        cache.bitcoin_unit.label(),
-                    );
-                    self.modal = Some(PsbtModal::Broadcast(BroadcastModal {
-                        conflicting_txids,
-                        broadcast: false,
-                        broadcasting: false,
-                        error: None,
-                        sent_quote: coincube_ui::component::quote_display::random_quote(
-                            "bitcoin-send",
-                        ),
-                        sent_image_handle:
-                            coincube_ui::component::quote_display::image_handle_for_context(
-                                "bitcoin-send",
-                            ),
-                        spend_amount_display: amount_display,
-                        fee_display: self.tx.fee_amount.map(|fee| {
-                            format!(
-                                "{} {}",
-                                fee.to_formatted_string_with_unit(cache.bitcoin_unit),
-                                cache.bitcoin_unit.label(),
-                            )
-                        }),
-                        txid: self.tx.psbt.unsigned_tx.compute_txid(),
-                        is_self_transfer,
-                        wallet: self.wallet.clone(),
-                        recipient_identities: self.recipient_identities.clone().filter(|review| {
-                            review.ticket.is_current()
-                                && review.transaction_id == self.tx.psbt.unsigned_tx.compute_txid()
-                        }),
-                        recipient_outputs: self.tx.psbt.unsigned_tx.output.clone(),
-                        network: cache.network,
-                        bitcoin_unit: cache.bitcoin_unit,
-                        theme_mode: cache.theme_mode,
-                    }));
-                }
-                Err(e) => {
-                    let err_msg = crate::user_error::report(&e);
-                    self.warning = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
+            Message::BroadcastModal(res) => return self.finish_broadcast_modal(cache, res),
             Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
-                let previous = self.tx.psbt.clone();
-                if let Err(e) = merge_signatures_for_chain(
-                    uses_unified_signatures(&self.wallet),
-                    &mut self.tx.psbt,
-                    &psbt,
-                ) {
-                    let err_msg = replay::unsafe_legacy_policy_copy(&e)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| {
-                            crate::user_error::report(&Error::Unexpected(format!(
-                                "Couldn't merge the imported PSBT: {e}"
-                            )))
-                        });
-                    let e = Error::Unexpected(format!("Couldn't merge the imported PSBT: {e}"));
-                    self.warning = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-                match replay::spend_info_for_chain(
-                    self.wallet.chain,
-                    &self.wallet.main_descriptor,
-                    &self.tx.psbt,
-                ) {
-                    Ok(sigs) => self.tx.sigs = sigs,
-                    // An unreadable result is refused, never half-applied.
-                    Err(e) => {
-                        self.tx.psbt = previous;
-                        let e = Error::Desc(e);
-                        let err_msg = crate::user_error::report(&e);
-                        self.warning = Some(e);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                    }
-                }
-                self.refresh_replay();
+                return self.merge_imported_psbt(psbt);
             }
             // Final dispatch is gated on the **current** cache, not on the
             // click that opened the dialog: a lookup that lands, a re-check
