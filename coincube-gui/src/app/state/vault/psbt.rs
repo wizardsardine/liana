@@ -2039,8 +2039,6 @@ impl BorderWalletReconstructionState {
         self.checksum_word = None;
     }
 
-    /// Handle a reconstruction message. Returns `Some((fingerprint, mnemonic))`
-    /// when reconstruction is complete and ready to sign.
     fn advance_reconstruction(&mut self) -> Option<(Fingerprint, coincube_core::bip39::Mnemonic)> {
         self.error = None;
         match self.step {
@@ -2103,6 +2101,8 @@ impl BorderWalletReconstructionState {
         None
     }
 
+    /// Handle a reconstruction message. Returns `Some((fingerprint, mnemonic))`
+    /// when reconstruction is complete and ready to sign.
     fn update(
         &mut self,
         msg: BorderWalletReconMessage,
@@ -2528,11 +2528,6 @@ impl SignModal {
         }
     }
 
-    /// Determine a descriptor key's display kind (for its icon) and signing
-    /// state (signed / in-progress / available / retry / disabled). Signability
-    /// is derived dynamically — a connected hardware wallet, the master signer,
-    /// a border wallet, or a Connect-resolved Keychain signer — so an
-    /// unidentified key is shown disabled rather than guessed as Keychain.
     fn connected_signing_key_state(
         &self,
         fp: Fingerprint,
@@ -2560,6 +2555,11 @@ impl SignModal {
         }
     }
 
+    /// Determine a descriptor key's display kind (for its icon) and signing
+    /// state (signed / in-progress / available / retry / disabled). Signability
+    /// is derived dynamically — a connected hardware wallet, the master signer,
+    /// a border wallet, or a Connect-resolved Keychain signer — so an
+    /// unidentified key is shown disabled rather than guessed as Keychain.
     fn classify_signing_key(
         &self,
         fp: Fingerprint,
