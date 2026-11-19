@@ -778,6 +778,27 @@ fn trade_status_fallbacks_and_countdown_do_not_need_a_live_coordinator() {
 }
 
 #[test]
+fn restored_waiting_payment_shows_escrow_instead_of_confirm_fiat() {
+    let p = panel();
+    for (side, expected_notice) in [
+        (OrderType::Buy, "Waiting for seller to lock the Bitcoin"),
+        (OrderType::Sell, "Pay the hold invoice"),
+    ] {
+        let mut restored = trade(TradeStatus::WaitingPayment, side);
+        restored.last_dm_action = Some("WaitingPayment".into());
+        let view = inspect(p.trade_detail_view(&restored));
+        assert!(view.contains(expected_notice), "{:?}", view.text);
+        assert!(!view.contains("Confirm Fiat Sent"), "{:?}", view.text);
+        assert!(
+            !view.contains("Waiting for fiat payment"),
+            "{:?}",
+            view.text
+        );
+        assert!(!view.contains("Time remaining"), "{:?}", view.text);
+    }
+}
+
+#[test]
 fn conversation_tabs_show_distinct_empty_states() {
     let mut p = panel();
     assert!(inspect(p.chat_list_view()).contains("No conversations yet"));

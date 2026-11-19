@@ -2345,8 +2345,8 @@ impl P2PPanel {
         dm_action: Option<&str>,
     ) -> Column<'a, view::Message> {
         match dm_action {
-            // ── Seller must pay hold invoice ──
-            Some("PayInvoice") | Some("WaitingSellerToPay") => {
+            // Restored orders can have the WaitingPayment status before a DM arrives.
+            Some("PayInvoice") | Some("WaitingSellerToPay") | Some("WaitingPayment") => {
                 actions = self.trade_hold_invoice_actions(actions, trade, is_buyer);
             }
 
@@ -2370,17 +2370,6 @@ impl P2PPanel {
             // ── Buyer must submit invoice ──
             Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
                 actions = self.trade_receive_invoice_actions(actions, trade, is_buyer, loading);
-            }
-
-            // ── Waiting for fiat payment (status-based fallback) ──
-            Some("WaitingPayment") => {
-                actions = Self::trade_fiat_payment_actions(
-                    actions,
-                    is_buyer,
-                    loading,
-                    "The buyer has been notified to send fiat. \
-                    You'll be notified when they confirm.",
-                );
             }
 
             // ── Fiat sent / waiting for release ──
