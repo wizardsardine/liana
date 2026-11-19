@@ -779,44 +779,7 @@ fn recovery_alerts_card<'a>(ra: &'a RecoveryAlerts, spark: bool) -> Element<'a, 
 
     // The keyholder list belongs to alerts (who'd be notified).
     if alerts_on {
-        let mut who = Column::new().spacing(2).width(Length::Fill);
-        if ra.recipients.notified.is_empty() {
-            // Deliberately does *not* say "add keyholders": a Vault's
-            // keyholders are its signers, fixed when the descriptor is sealed.
-            who = who.push(page::muted(localized_copy(
-                "No one would be alerted for this Vault. Alert recipients are this Vault's \
-                 keyholders and beneficiaries; its keyholders are fixed when the Vault is \
-                 built, so they can't be added to an existing Vault.",
-            )));
-        } else {
-            for r in &ra.recipients.notified {
-                // Tag beneficiaries so a mixed list stays honest under a
-                // heading that says "keyholders". Keyholders read plain.
-                let line = match r.role {
-                    VaultMemberRole::Keyholder => r.email.clone(),
-                    role => format!("{} — {}", r.email, role),
-                };
-                who = who.push(text(line).size(13));
-            }
-        }
-        // Members who hold a notifiable role but have no address on file.
-        if ra.recipients.unreachable > 0 {
-            let n = ra.recipients.unreachable;
-            let (noun, verb) = if n == 1 {
-                ("member", "has")
-            } else {
-                ("members", "have")
-            };
-            who = who.push(page::muted(localized_format!(
-                "{} {} of this Vault {} no email on file, so COINCUBE can't alert them.", "{} {} de este Vault {} no email en el archivo, por lo que COINCUBE no puede alertarlos.",
-                n, noun, verb,
-            )));
-        }
-        body = body.push(
-            page::row(localized_copy("Keyholders who'd be notified"))
-                .line(who)
-                .top(),
-        );
+        body = body.push(notified_keyholders_row(ra));
     }
 
     // ── Control 2: the escrow selector (what keyholders can recover) ───────
@@ -1414,112 +1377,29 @@ fn recovery_kit_card<'a>(
     // One source of truth for what's backed up, by which method (master
     // §definitions). Drives the row state, the method lines and Remove.
     let overview = backup_overview(status);
-    let CardState {
-        title,
-        subtitle,
-        primary_label,
-        primary_mode,
-    } = recovery_kit_card_state(&overview, has_vault, loading, status.is_some());
+    let state = recovery_kit_card_state(&overview, has_vault, loading, status.is_some());
     let has_kit = overview.any_enabled();
 
     // The row's status word, from the same state the card copy used.
-    let (kind, word) = if loading {
-        (page::Status::Busy, "Checking…")
-    } else if status.is_none() {
-        (page::Status::Unknown, "Status unavailable")
-    } else if stale {
-        (page::Status::Unknown, "Last known state")
-    } else if drift.any() {
-        (page::Status::Warn, "Out of date")
-    } else if !has_kit {
-        (page::Status::Off, "Not set up")
-    } else if title == "Recovery Kit backed up" {
-        (page::Status::Ok, "Backed up")
-    } else {
-        (page::Status::Warn, "Incomplete")
-    };
+    let (kind, word) = kit_status_word(loading, status, stale, &drift, has_kit, state.title);
 
     // Drift overrides the "complete" state: the action becomes "Update now"
     // and the detail names the stale method(s) (per-method drift, PR 3).
-    let (detail, primary_label, primary_mode) = if loading {
-        (None, primary_label, primary_mode)
-    } else if stale && status.is_some() {
-        (
-            Some(localized_copy("Showing the last known Recovery Kit state. Reconnect and refresh before changing it.").to_string()),
-            primary_label,
-            primary_mode,
-        )
-    } else if imported_state_unknown {
-        (
-            Some(localized_copy("Connect and refresh this Bitcoin wallet before checking or updating its Recovery Kit.").to_string()),
-            primary_label,
-            primary_mode,
-        )
-    } else if drift.any() {
-        (
-            Some(drift_subtitle(&drift).to_string()),
-            "Update now",
-            RecoveryKitMode::Rotate,
-        )
-    } else if status.is_none() || !has_kit {
-        (None, primary_label, primary_mode)
-    } else {
-        (Some(subtitle), primary_label, primary_mode)
-    };
+    let (detail, primary_label, primary_mode) = kit_detail_action(
+        loading,
+        stale,
+        status,
+        &drift,
+        imported_state_unknown,
+        has_kit,
+        state,
+    );
 
     let mut row = row.accessory(page::status(kind, localized_copy(word)));
     if let Some(detail) = detail {
         row = row.line(page::muted(detail));
     }
-    let (password_present, keychain_present) =
-        (overview.password.is_some(), overview.keychain.is_some());
-    if password_present || keychain_present {
-        let mut methods: Vec<&str> = Vec::new();
-        if password_present {
-            methods.push("Password");
-        }
-        if keychain_present {
-            methods.push("Mobile");
-        }
-        row = row.line(page::muted(localized_format!(
-            "Protected by: {}",
-            "Protegido por: {}",
-            methods
-                .iter()
-                .map(|method| localized_copy(method))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        )));
-    }
-    // What's actually *in* the backup, not only how it is protected.
-    match backup_contents(&overview) {
-        BackupContents::Nothing => {}
-        BackupContents::Shared(halves) => {
-            row = row.line(page::muted(localized_format!(
-                "Includes: {}",
-                "Incluye: {}",
-                halves
-                    .iter()
-                    .map(|half| localized_copy(half))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            )));
-        }
-        BackupContents::PerMethod(per_method) => {
-            for (method, halves) in per_method {
-                row = row.line(page::muted(localized_format!(
-                    "{} holds: {}",
-                    "{} contiene: {}",
-                    localized_copy(method),
-                    halves
-                        .iter()
-                        .map(|half| localized_copy(half))
-                        .collect::<Vec<_>>()
-                        .join(" · ")
-                )));
-            }
-        }
-    }
+    row = add_kit_backup_details(row, &overview);
     if drift.any() {
         row = row.line(
             text(localized_copy(drift_warning_line(&drift)))
@@ -1867,8 +1747,221 @@ fn drift_warning_line(d: &DescriptorDrift) -> &'static str {
     }
 }
 
+fn notified_keyholders_row<'a>(ra: &RecoveryAlerts) -> page::PageRow<'a, Message> {
+    let mut who = Column::new().spacing(2).width(Length::Fill);
+    if ra.recipients.notified.is_empty() {
+        // Deliberately does *not* say "add keyholders": a Vault's
+        // keyholders are its signers, fixed when the descriptor is sealed.
+        who = who.push(page::muted(localized_copy(
+            "No one would be alerted for this Vault. Alert recipients are this Vault's \
+             keyholders and beneficiaries; its keyholders are fixed when the Vault is \
+             built, so they can't be added to an existing Vault.",
+        )));
+    } else {
+        for r in &ra.recipients.notified {
+            // Tag beneficiaries so a mixed list stays honest under a
+            // heading that says "keyholders". Keyholders read plain.
+            let line = match r.role {
+                VaultMemberRole::Keyholder => r.email.clone(),
+                role => format!("{} — {}", r.email, role),
+            };
+            who = who.push(text(line).size(13));
+        }
+    }
+    // Members who hold a notifiable role but have no address on file.
+    if ra.recipients.unreachable > 0 {
+        let n = ra.recipients.unreachable;
+        let (noun, verb) = if n == 1 {
+            ("member", "has")
+        } else {
+            ("members", "have")
+        };
+        who = who.push(page::muted(localized_format!(
+            "{} {} of this Vault {} no email on file, so COINCUBE can't alert them.", "{} {} de este Vault {} no email en el archivo, por lo que COINCUBE no puede alertarlos.",
+            n, noun, verb,
+        )));
+    }
+    page::row(localized_copy("Keyholders who'd be notified"))
+        .line(who)
+        .top()
+}
+
+fn kit_status_word(
+    loading: bool,
+    status: Option<&RecoveryKitStatus>,
+    stale: bool,
+    drift: &DescriptorDrift,
+    has_kit: bool,
+    title: &str,
+) -> (page::Status, &'static str) {
+    if loading {
+        (page::Status::Busy, "Checking…")
+    } else if status.is_none() {
+        (page::Status::Unknown, "Status unavailable")
+    } else if stale {
+        (page::Status::Unknown, "Last known state")
+    } else if drift.any() {
+        (page::Status::Warn, "Out of date")
+    } else if !has_kit {
+        (page::Status::Off, "Not set up")
+    } else if title == "Recovery Kit backed up" {
+        (page::Status::Ok, "Backed up")
+    } else {
+        (page::Status::Warn, "Incomplete")
+    }
+}
+
+fn kit_detail_action(
+    loading: bool,
+    stale: bool,
+    status: Option<&RecoveryKitStatus>,
+    drift: &DescriptorDrift,
+    imported_state_unknown: bool,
+    has_kit: bool,
+    state: CardState,
+) -> (Option<String>, &'static str, RecoveryKitMode) {
+    let CardState {
+        subtitle,
+        primary_label,
+        primary_mode,
+        ..
+    } = state;
+    if loading {
+        (None, primary_label, primary_mode)
+    } else if stale && status.is_some() {
+        (
+            Some(localized_copy("Showing the last known Recovery Kit state. Reconnect and refresh before changing it.").to_string()),
+            primary_label,
+            primary_mode,
+        )
+    } else if imported_state_unknown {
+        (
+            Some(localized_copy("Connect and refresh this Bitcoin wallet before checking or updating its Recovery Kit.").to_string()),
+            primary_label,
+            primary_mode,
+        )
+    } else if drift.any() {
+        (
+            Some(drift_subtitle(drift).to_string()),
+            "Update now",
+            RecoveryKitMode::Rotate,
+        )
+    } else if status.is_none() || !has_kit {
+        (None, primary_label, primary_mode)
+    } else {
+        (Some(subtitle), primary_label, primary_mode)
+    }
+}
+
+fn add_kit_backup_details<'a>(
+    mut row: page::PageRow<'a, Message>,
+    overview: &BackupOverview,
+) -> page::PageRow<'a, Message> {
+    let (password_present, keychain_present) =
+        (overview.password.is_some(), overview.keychain.is_some());
+    if password_present || keychain_present {
+        let mut methods: Vec<&str> = Vec::new();
+        if password_present {
+            methods.push("Password");
+        }
+        if keychain_present {
+            methods.push("Mobile");
+        }
+        row = row.line(page::muted(localized_format!(
+            "Protected by: {}",
+            "Protegido por: {}",
+            methods
+                .iter()
+                .map(|method| localized_copy(method))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        )));
+    }
+    // What's actually *in* the backup, not only how it is protected.
+    match backup_contents(overview) {
+        BackupContents::Nothing => {}
+        BackupContents::Shared(halves) => {
+            row = row.line(page::muted(localized_format!(
+                "Includes: {}",
+                "Incluye: {}",
+                halves
+                    .iter()
+                    .map(|half| localized_copy(half))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            )));
+        }
+        BackupContents::PerMethod(per_method) => {
+            for (method, halves) in per_method {
+                row = row.line(page::muted(localized_format!(
+                    "{} holds: {}",
+                    "{} contiene: {}",
+                    localized_copy(method),
+                    halves
+                        .iter()
+                        .map(|half| localized_copy(half))
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                )));
+            }
+        }
+    }
+    row
+}
+
 #[cfg(test)]
 mod tests {
+    fn assert_amounts_and_currency(
+        inspection: &crate::app::view::shared::landing::capture::Inspection,
+        appearance: &str,
+        outer: (u32, u32),
+        enabled: bool,
+    ) {
+        use iced::advanced::widget::Id;
+
+        for label in [
+            "Bitcoin unit",
+            "Primary amount",
+            "Fiat estimates",
+            "Currency",
+            "Exchange-rate source",
+            "Direction badges",
+            "This device",
+        ] {
+            assert!(
+                inspection.contains(label),
+                "{} {:?}: {}",
+                appearance,
+                outer,
+                label,
+            );
+        }
+        for id in [
+            "settings-unit-btc",
+            "settings-primary-bitcoin",
+            "settings-fiat-estimates",
+            "settings-direction-badges",
+        ] {
+            assert!(
+                inspection.has_focus(Id::new(id)),
+                "{} {:?}: {}",
+                appearance,
+                outer,
+                id,
+            );
+        }
+        for id in ["settings-fiat-currency", "settings-fiat-source"] {
+            assert_eq!(
+                inspection.has_focus(Id::new(id)),
+                enabled,
+                "{} {:?}: {} enablement",
+                appearance,
+                outer,
+                id,
+            );
+        }
+    }
+
     #[test]
     fn cube_name_status_puts_unsaved_edits_before_sync_progress() {
         use super::{cube_name_status, page::Status};
@@ -2110,7 +2203,6 @@ mod tests {
     #[test]
     fn amounts_and_currency_fits_both_themes_and_window_sizes() {
         use crate::app::view::shared::landing::capture;
-        use iced::advanced::widget::Id;
 
         let unit = UnitSetting::default();
         let currencies = [Currency::USD, Currency::EUR];
@@ -2150,47 +2242,7 @@ mod tests {
                         appearance,
                         theme,
                     );
-                    for label in [
-                        "Bitcoin unit",
-                        "Primary amount",
-                        "Fiat estimates",
-                        "Currency",
-                        "Exchange-rate source",
-                        "Direction badges",
-                        "This device",
-                    ] {
-                        assert!(
-                            inspection.contains(label),
-                            "{} {:?}: {}",
-                            appearance,
-                            outer,
-                            label,
-                        );
-                    }
-                    for id in [
-                        "settings-unit-btc",
-                        "settings-primary-bitcoin",
-                        "settings-fiat-estimates",
-                        "settings-direction-badges",
-                    ] {
-                        assert!(
-                            inspection.has_focus(Id::new(id)),
-                            "{} {:?}: {}",
-                            appearance,
-                            outer,
-                            id,
-                        );
-                    }
-                    for id in ["settings-fiat-currency", "settings-fiat-source"] {
-                        assert_eq!(
-                            inspection.has_focus(Id::new(id)),
-                            enabled,
-                            "{} {:?}: {} enablement",
-                            appearance,
-                            outer,
-                            id,
-                        );
-                    }
+                    assert_amounts_and_currency(&inspection, appearance, outer, enabled);
                 }
             }
         }
@@ -2912,6 +2964,321 @@ mod tests {
         assert!(elsewhere.contains("restore the entire Cube, including its Vault."));
         for tier in [None, Some(EscrowTier::Off), Some(EscrowTier::VaultOnly)] {
             assert_eq!(escrow_copy(tier, true), escrow_copy(tier, false));
+        }
+    }
+
+    fn assert_recovery_card_copy(
+        inspection: &crate::app::view::shared::landing::capture::Inspection,
+        visible: &[&str],
+        hidden: &[&str],
+    ) {
+        for label in visible {
+            assert!(inspection.contains(label), "missing card copy: {}", label);
+        }
+        for label in hidden {
+            assert!(
+                !inspection.contains(label),
+                "unexpected card copy: {}",
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_alert_cards_keep_recipients_and_confirmation_admission() {
+        use crate::app::view::shared::landing::capture;
+        use crate::services::coincube::{
+            RecoveryRecipient, VaultMonitoringLevel, VaultMonitoringStatus,
+        };
+        use iced::advanced::widget::Id;
+
+        #[derive(Default)]
+        struct Case {
+            name: &'static str,
+            level: VaultMonitoringLevel,
+            recipients: Vec<RecoveryRecipient>,
+            unreachable: usize,
+            submitting: bool,
+            confirming: bool,
+            escrow: &'static [&'static str],
+            visible: &'static [&'static str],
+            hidden: &'static [&'static str],
+            toggle_enabled: bool,
+            confirm_enabled: bool,
+        }
+        let cases = [
+            Case {
+                name: "alerts-off-with-keyholder",
+                recipients: vec![RecoveryRecipient {
+                    email: "keyholder@example.invalid".into(),
+                    role: VaultMemberRole::Keyholder,
+                }],
+                visible: &["Your keyholders will NOT be alerted"],
+                hidden: &["Keyholders who'd be notified", "keyholder@example.invalid"],
+                toggle_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "alerts-on-no-recipient",
+                level: VaultMonitoringLevel::Heartbeat,
+                unreachable: 1,
+                visible: &[
+                    "No one would be alerted",
+                    "1 member of this Vault has no email",
+                ],
+                hidden: &["Your keyholders will NOT be alerted"],
+                toggle_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "alerts-on-mixed-recipients",
+                level: VaultMonitoringLevel::Heartbeat,
+                recipients: vec![
+                    RecoveryRecipient {
+                        email: "keyholder@example.invalid".into(),
+                        role: VaultMemberRole::Keyholder,
+                    },
+                    RecoveryRecipient {
+                        email: "beneficiary@example.invalid".into(),
+                        role: VaultMemberRole::Beneficiary,
+                    },
+                ],
+                unreachable: 2,
+                visible: &[
+                    "keyholder@example.invalid",
+                    "beneficiary@example.invalid — Beneficiary",
+                    "2 members of this Vault have no email",
+                ],
+                hidden: &[
+                    "No one would be alerted",
+                    "keyholder@example.invalid — Keyholder",
+                ],
+                toggle_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "alerts-off-confirmation-ready",
+                level: VaultMonitoringLevel::Heartbeat,
+                confirming: true,
+                visible: &["Turn off recovery alerts?", "Turn off", "Cancel"],
+                hidden: &["This also deletes the encrypted recovery kit"],
+                toggle_enabled: true,
+                confirm_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "alerts-off-confirmation-busy",
+                level: VaultMonitoringLevel::Full,
+                submitting: true,
+                confirming: true,
+                escrow: &["descriptor", "seed"],
+                visible: &[
+                    "This also deletes the encrypted recovery kit",
+                    "Turn off",
+                    "Cancel",
+                ],
+                ..Case::default()
+            },
+        ];
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            for case in &cases {
+                let mut alerts = RecoveryAlerts::new();
+                alerts.status = Some(VaultMonitoringStatus {
+                    level: case.level,
+                    escrowed_artifacts: Some(case.escrow.iter().map(|s| s.to_string()).collect()),
+                    ..VaultMonitoringStatus::default()
+                });
+                alerts.recipients.notified = case.recipients.clone();
+                alerts.recipients.unreachable = case.unreachable;
+                alerts.submitting = case.submitting;
+                alerts.confirming_alerts_off = case.confirming;
+                let inspection = capture::inspect(
+                    case.name,
+                    recovery_alerts_card(&alerts, true),
+                    (1024, 768),
+                    appearance,
+                    theme,
+                );
+                assert_recovery_card_copy(&inspection, case.visible, case.hidden);
+                assert_eq!(
+                    inspection.has_focus(Id::new(ALERTS_TOGGLE_ID)),
+                    case.toggle_enabled,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    inspection.has_focus(Id::new(ALERTS_OFF_CONFIRM_ID)),
+                    case.confirm_enabled,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    inspection.has_focus(Id::new(ALERTS_OFF_CANCEL_ID)),
+                    case.confirming,
+                    "{}",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn recovery_kit_cards_keep_status_details_and_action_admission() {
+        use crate::app::view::shared::landing::capture;
+        use iced::advanced::widget::Id;
+
+        #[derive(Default)]
+        struct Case {
+            name: &'static str,
+            status: Option<RecoveryKitStatus>,
+            loading: bool,
+            stale: bool,
+            drift: DescriptorDrift,
+            imported_unknown: bool,
+            visible: &'static [&'static str],
+            hidden: &'static [&'static str],
+            primary_enabled: bool,
+            remove_enabled: bool,
+        }
+        let cases = [
+            Case {
+                name: "kit-loading",
+                loading: true,
+                visible: &["Checking…", "Refresh status"],
+                hidden: &["Remove…"],
+                ..Case::default()
+            },
+            Case {
+                name: "kit-unavailable",
+                visible: &["Status unavailable", "Refresh status"],
+                hidden: &["Remove…"],
+                primary_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-not-created",
+                status: Some(status(false, false, None, None)),
+                visible: &["Not set up", "Set up Recovery Kit…"],
+                hidden: &["Protected by:", "Remove…"],
+                primary_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-password-complete",
+                status: Some(status(true, true, None, None)),
+                visible: &[
+                    "Backed up",
+                    "Protected by: Password",
+                    "Includes: Master Seed Phrase · Wallet Descriptor",
+                    "Update",
+                    "Remove…",
+                ],
+                primary_enabled: true,
+                remove_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-split-methods",
+                status: Some(status(
+                    true,
+                    false,
+                    None,
+                    Some(owner(&["descriptor"], None)),
+                )),
+                visible: &[
+                    "Incomplete",
+                    "Protected by: Password · Mobile",
+                    "Password holds: Master Seed Phrase",
+                    "Mobile holds: Wallet Descriptor",
+                ],
+                hidden: &["Includes:"],
+                primary_enabled: true,
+                remove_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-stale",
+                status: Some(status(true, true, None, None)),
+                stale: true,
+                visible: &[
+                    "Last known state",
+                    "Showing the last known Recovery Kit state",
+                    "Refresh status",
+                ],
+                hidden: &["Remove…"],
+                primary_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-descriptor-drift",
+                status: Some(status(true, true, None, None)),
+                drift: DescriptorDrift {
+                    password: true,
+                    keychain: false,
+                },
+                visible: &[
+                    "Out of date",
+                    "Your password backup's Wallet Descriptor is out of date",
+                    "Update now",
+                    "Your password descriptor is out of sync",
+                ],
+                primary_enabled: true,
+                remove_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-imported-unknown",
+                status: Some(status(true, true, None, None)),
+                imported_unknown: true,
+                visible: &[
+                    "Connect and refresh this Bitcoin wallet",
+                    "Update",
+                    "Remove…",
+                ],
+                remove_enabled: true,
+                ..Case::default()
+            },
+            Case {
+                name: "kit-loaded-refreshing",
+                status: Some(status(true, true, None, None)),
+                loading: true,
+                visible: &["Checking…", "Protected by: Password", "Update"],
+                hidden: &["Remove…"],
+                ..Case::default()
+            },
+        ];
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            for case in &cases {
+                let card = recovery_kit_card(
+                    true,
+                    case.status.as_ref(),
+                    case.loading,
+                    case.stale,
+                    case.drift,
+                    case.imported_unknown,
+                    page::row("Recovery Kit"),
+                );
+                let inspection = capture::inspect(case.name, card, (1024, 768), appearance, theme);
+                assert_recovery_card_copy(&inspection, case.visible, case.hidden);
+                assert_eq!(
+                    inspection.has_focus(Id::new(KIT_PRIMARY_ID)),
+                    case.primary_enabled,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    inspection.has_focus(Id::new(KIT_REMOVE_ID)),
+                    case.remove_enabled,
+                    "{}",
+                    case.name
+                );
+            }
         }
     }
 }
