@@ -1251,6 +1251,134 @@ impl PsbtState {
         Task::none()
     }
 
+    fn open_recipient_identity(&self, output: usize, identity_index: usize) {
+        if let Some((_, crate::services::branta::LookupResult::Identified(identities))) = self
+            .recipient_identities()
+            .iter()
+            .find(|(vout, _)| *vout == output)
+        {
+            if let Some(identity) = identities.get(identity_index) {
+                identity.open();
+            }
+        }
+    }
+
+    fn select_keychain_signer(
+        &mut self,
+        daemon: &Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        // Connect-readiness check, moved here from the old
+        // button-press: only when the user actually selects a
+        // Keychain signer do we require Connect. If it isn't ready,
+        // surface the sign-in / pair-a-phone modal (replacing the
+        // picker) instead of dead-ending on a technical error.
+        let missing = keychain_connect_missing(cache);
+        if !missing.is_empty() {
+            tracing::info!(
+                "Mobile signer selected but Connect not ready (missing {})",
+                missing.join(", ")
+            );
+            self.modal = Some(PsbtModal::KeychainUnavailable(KeychainUnavailableModal {
+                signed_in: connect_session_available(cache),
+                action_scope: self.action_scope,
+            }));
+            self.signer_focus_return = false;
+            return Task::none();
+        }
+        // Connect is ready. If the picker was opened before Connect
+        // came up, its nested Keychain flow is still `None` — build and
+        // launch it now (checked without holding a mutable borrow so
+        // `build_keychain_if_ready` can read `self.wallet`/`self.tx`).
+        // This click just kicks off the resolve; the keychain rows
+        // become actionable once it returns.
+        let needs_init = matches!(
+            &self.modal,
+            Some(PsbtModal::Sign(sign)) if sign.keychain_needs_init()
+        );
+        if needs_init {
+            let (keychain, launch) = build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
+            if let Some(PsbtModal::Sign(sign)) = self.modal.as_mut() {
+                sign.set_keychain(keychain);
+            }
+            return launch;
+        }
+        // Ready and initialized: forward to the picker's nested flow.
+        if let Some(modal) = self.modal.as_mut() {
+            return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+        }
+        Task::none()
+    }
+
+    fn request_broadcast_modal(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        // The button is disabled until `broadcast_ready`; this is the
+        // same gate for anything that reaches the handler another way.
+        if !self.broadcast_ready(cache) {
+            return Task::none();
+        }
+        let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
+        Task::perform(
+            async move {
+                daemon
+                    .list_coins(&[CoinStatus::Spending], &outpoints)
+                    .await
+                    .map(|res| {
+                        res.coins
+                            .iter()
+                            .filter_map(|c| c.spend_info.map(|info| info.txid))
+                            .collect()
+                    })
+                    .map_err(|e| e.into())
+            },
+            Message::BroadcastModal,
+        )
+    }
+
+    fn update_psbt_labels(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        message: Message,
+    ) -> Task<Message> {
+        match self.labels_edited.update(
+            daemon,
+            message,
+            std::iter::once(&mut self.tx).map(|tx| tx as &mut dyn LabelsLoader),
+        ) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                Task::done(Message::View(view::Message::ShowError(err_msg)))
+            }
+        }
+    }
+
+    fn psbt_saved(
+        &mut self,
+        daemon: &Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        self.saved = true;
+        if let Some(modal) = self.modal.as_mut() {
+            // Let the modal run its own side-effects (e.g. Keychain
+            // bookkeeping), then reconcile the collected signatures and
+            // decide whether to close. The recompute/close/close-after-
+            // dismiss logic lives in `reconcile_and_maybe_close` so
+            // every merge site (local sign, Keychain merge, dismissal
+            // drain) drives the same idempotent path regardless of
+            // persist ordering.
+            let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+            return Task::batch([cmd, self.reconcile_and_maybe_close(cache)]);
+        }
+        Task::none()
+    }
+
     fn update_inner(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -1267,15 +1395,7 @@ impl PsbtState {
         if let Message::View(view::Message::OpenVaultRecipientIdentity(output, identity_index)) =
             &message
         {
-            if let Some((_, crate::services::branta::LookupResult::Identified(identities))) = self
-                .recipient_identities()
-                .iter()
-                .find(|(vout, _)| vout == output)
-            {
-                if let Some(identity) = identities.get(*identity_index) {
-                    identity.open();
-                }
-            }
+            self.open_recipient_identity(*output, *identity_index);
             return Task::none();
         }
         match message {
@@ -1329,46 +1449,7 @@ impl PsbtState {
                 view::SpendTxMessage::SelectKeychainSigner(_)
                 | view::SpendTxMessage::RequestFromEveryone,
             )) => {
-                // Connect-readiness check, moved here from the old
-                // button-press: only when the user actually selects a
-                // Keychain signer do we require Connect. If it isn't ready,
-                // surface the sign-in / pair-a-phone modal (replacing the
-                // picker) instead of dead-ending on a technical error.
-                let missing = keychain_connect_missing(cache);
-                if !missing.is_empty() {
-                    tracing::info!(
-                        "Mobile signer selected but Connect not ready (missing {})",
-                        missing.join(", ")
-                    );
-                    self.modal = Some(PsbtModal::KeychainUnavailable(KeychainUnavailableModal {
-                        signed_in: connect_session_available(cache),
-                        action_scope: self.action_scope,
-                    }));
-                    self.signer_focus_return = false;
-                    return Task::none();
-                }
-                // Connect is ready. If the picker was opened before Connect
-                // came up, its nested Keychain flow is still `None` — build and
-                // launch it now (checked without holding a mutable borrow so
-                // `build_keychain_if_ready` can read `self.wallet`/`self.tx`).
-                // This click just kicks off the resolve; the keychain rows
-                // become actionable once it returns.
-                let needs_init = matches!(
-                    &self.modal,
-                    Some(PsbtModal::Sign(sign)) if sign.keychain_needs_init()
-                );
-                if needs_init {
-                    let (keychain, launch) =
-                        build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
-                    if let Some(PsbtModal::Sign(sign)) = self.modal.as_mut() {
-                        sign.set_keychain(keychain);
-                    }
-                    return launch;
-                }
-                // Ready and initialized: forward to the picker's nested flow.
-                if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                }
+                return self.select_keychain_signer(&daemon, cache, message);
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::AcknowledgeReplay(
                 acknowledged,
@@ -1379,46 +1460,13 @@ impl PsbtState {
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Broadcast)) => {
-                // The button is disabled until `broadcast_ready`; this is the
-                // same gate for anything that reaches the handler another way.
-                if !self.broadcast_ready(cache) {
-                    return Task::none();
-                }
-                let outpoints: Vec<_> = self.tx.coins.keys().cloned().collect();
-                return Task::perform(
-                    async move {
-                        daemon
-                            .list_coins(&[CoinStatus::Spending], &outpoints)
-                            .await
-                            .map(|res| {
-                                res.coins
-                                    .iter()
-                                    .filter_map(|c| c.spend_info.map(|info| info.txid))
-                                    .collect()
-                            })
-                            .map_err(|e| e.into())
-                    },
-                    Message::BroadcastModal,
-                );
+                return self.request_broadcast_modal(daemon, cache);
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Save)) => {
                 self.modal = Some(PsbtModal::Save(SaveModal::default()));
             }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
-                match self.labels_edited.update(
-                    daemon,
-                    message,
-                    std::iter::once(&mut self.tx).map(|tx| tx as &mut dyn LabelsLoader),
-                ) {
-                    Ok(cmd) => {
-                        return cmd;
-                    }
-                    Err(e) => {
-                        let err_msg = crate::user_error::report(&e);
-                        self.warning = Some(e);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                    }
-                };
+                return self.update_psbt_labels(daemon, message);
             }
             Message::Reconcile => {
                 // UI-only: recompute collected signatures and maybe close the
@@ -1428,20 +1476,7 @@ impl PsbtState {
                 // Export/Delete on a never-persisted spend.
                 return self.reconcile_and_maybe_close(cache);
             }
-            Message::Updated(Ok(_)) => {
-                self.saved = true;
-                if let Some(modal) = self.modal.as_mut() {
-                    // Let the modal run its own side-effects (e.g. Keychain
-                    // bookkeeping), then reconcile the collected signatures and
-                    // decide whether to close. The recompute/close/close-after-
-                    // dismiss logic lives in `reconcile_and_maybe_close` so
-                    // every merge site (local sign, Keychain merge, dismissal
-                    // drain) drives the same idempotent path regardless of
-                    // persist ordering.
-                    let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                    return Task::batch([cmd, self.reconcile_and_maybe_close(cache)]);
-                }
-            }
+            Message::Updated(Ok(_)) => return self.psbt_saved(&daemon, cache, message),
             Message::BroadcastModal(res) => return self.finish_broadcast_modal(cache, res),
             Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
                 return self.merge_imported_psbt(psbt);
