@@ -4263,6 +4263,236 @@ impl Tab {
         command.map(Message::Launch)
     }
 
+    async fn migrate_pin_unlocked_cube(
+        cube: &mut app::settings::CubeSettings,
+        datadir_clone: &CoincubeDirectory,
+        pin: &zeroize::Zeroizing<String>,
+        network_val: bitcoin::Network,
+    ) -> Option<String> {
+        let mut migration_error: Option<String> = None;
+        // Bring any legacy seed files up to the
+        // current wire version now that the PIN is
+        // in hand: plaintext files written by the
+        // pre-hardening installer, `ENCRYPTED_V1`
+        // files with unauthenticated headers, and
+        // `ENCRYPTED_V2` files on a machine that now
+        // has a device secret. Never eager — this
+        // only runs after an unlock has already
+        // succeeded. Logs a count, never content.
+        {
+            // Its own task: a Cancel that drops
+            // this future cannot separate a file
+            // write from the record that makes
+            // the device agree with it.
+            let joined = migrate_seed_files_on_unlock(
+                datadir_clone.path().to_path_buf(),
+                datadir_clone.network_directory(network_val),
+                cube.clone(),
+                pin.clone(),
+            )
+            .await;
+
+            // Do not discard this. `let _ = …` threw
+            // away the count *and* the `JoinError`,
+            // so a panic inside migration — in code
+            // that rewrites seed files — left no
+            // trace at all.
+            match joined {
+                Ok(Ok(UnlockMigration { outcome, new_slot })) => {
+                    if let Some(name) = new_slot {
+                        cube.duress_slot_file = Some(name);
+                    }
+                    if outcome.did_work() {
+                        info!(
+                            "migration: {} seed file(s) upgraded for cube {}",
+                            outcome.migrated, cube.id
+                        );
+                    }
+                    if outcome.skipped_no_backup {
+                        info!(
+                            "migration: cube {} stays at v2 until it \
+                             has a backup",
+                            cube.id
+                        );
+                    }
+                }
+                // The keystore was reachable-but-broken.
+                // The Cube still opens — the seed files
+                // were left exactly as they were — but
+                // the user has to know the upgrade did
+                // not happen.
+                Ok(Err(e)) => {
+                    error!("migration aborted for cube {}: {e}", cube.id);
+                    migration_error = Some(e.to_string());
+                }
+                Err(e) => {
+                    error!("migration task failed for cube {}: {e}", cube.id);
+                    migration_error = Some(
+                        "Coincube couldn't finish upgrading this \
+                         Cube's files. Your Cube is unchanged and \
+                         still opens."
+                            .to_string(),
+                    );
+                }
+            }
+            // Read from disk rather than from this
+            // unlock's migration: a Cancel may have
+            // dropped the unlock that disarmed. A
+            // failure above takes the one slot; the
+            // notice waits for the next unlock.
+            if migration_error.is_none() {
+                migration_error = duress_disarm_notice(datadir_clone.path());
+            }
+        }
+
+        migration_error
+    }
+
+    async fn backfill_pin_unlock_fingerprint(
+        cube: &mut app::settings::CubeSettings,
+        datadir_clone: &CoincubeDirectory,
+        pin: &zeroize::Zeroizing<String>,
+    ) {
+        // Backfill `master_signer_fingerprint` for
+        // Cubes minted before the field existed —
+        // without it, the Cube signer + Spark loaders
+        // below silently skip and the Connect
+        // Lightning Address claim flow / Spark
+        // panels stay disabled. Only the cube's
+        // own master seed will decrypt with this
+        // PIN, so a successful match is sound.
+        if cube.master_signer_fingerprint.is_none() {
+            if let Some(fp) = app::settings::derive_master_signer_fingerprint(
+                datadir_clone.path(),
+                cube.network,
+                pin,
+                &cube.id,
+                cube.created_at,
+            ) {
+                cube.master_signer_fingerprint = Some(fp);
+                let cube_id = cube.id.clone();
+                let network_dir = datadir_clone.network_directory(cube.network);
+                if let Err(e) = app::settings::update_settings_file(&network_dir, |mut s| {
+                    if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        c.master_signer_fingerprint = Some(fp);
+                    }
+                    Some(s)
+                })
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to persist backfilled \
+                         master_signer_fingerprint for cube {}: {}",
+                        cube.id,
+                        e
+                    );
+                } else {
+                    tracing::info!(
+                        "Backfilled master_signer_fingerprint {} \
+                         for legacy cube {}",
+                        fp,
+                        cube.id
+                    );
+                }
+            }
+        }
+    }
+
+    async fn derive_pin_unlock_connect_key(
+        cube: &mut app::settings::CubeSettings,
+        datadir_clone: &CoincubeDirectory,
+        pin: &zeroize::Zeroizing<String>,
+        master_signer_fingerprint: Option<bitcoin::bip32::Fingerprint>,
+    ) -> Option<String> {
+        let mut enc_key_error: Option<String> = None;
+        // Connect blinding (PLAN-connect-blinding
+        // PR D2): the Cube's encryption *public*
+        // key is seed-derived, so unlock is the
+        // only moment it can be computed — the
+        // registration wave that publishes it runs
+        // later, after Connect sign-in, with no PIN
+        // in hand. Derive once and persist; the
+        // private half is never stored and is
+        // re-derived on demand at decrypt time.
+        if cube.connect_encryption_pubkey.is_some() {
+            return None;
+        }
+        let Some(fp) = master_signer_fingerprint else {
+            return None;
+        };
+        use app::settings::ConnectEncryptionKey as CEK;
+        match app::settings::derive_connect_encryption_pubkey(
+            datadir_clone.path(),
+            cube.network,
+            fp,
+            pin,
+            &cube.id,
+        ) {
+            CEK::Derived(pubkey) => {
+                cube.connect_encryption_pubkey = Some(pubkey.clone());
+                let cube_id = cube.id.clone();
+                let network_dir = datadir_clone.network_directory(cube.network);
+                if let Err(e) = app::settings::update_settings_file(&network_dir, |mut s| {
+                    if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        c.connect_encryption_pubkey = Some(pubkey.clone());
+                    }
+                    Some(s)
+                })
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to persist Connect encryption \
+                         pubkey for cube {}: {}",
+                        cube.id,
+                        e
+                    );
+                }
+            }
+            // No seed on this device — expected for a
+            // watch-only restore or a passkey Cube. Nothing
+            // to derive and nothing wrong.
+            CEK::NoSeed => {
+                tracing::debug!(
+                    "Cube {} has no master seed on this \
+                     device; skipping Connect encryption-key \
+                     derivation",
+                    cube.id
+                );
+            }
+            // The Cube just unlocked and a seed file IS
+            // there, but it would not open for us — the
+            // credentials disagree with the unlock path
+            // (seed_crypt cube_id binding, or a v3 file
+            // reached without the device secret). Never
+            // skip this quietly: the Cube would silently
+            // never register an encryption pubkey, its
+            // Contacts could not enrol enveloped keys, and
+            // it would sit in the A5 coverage report as a
+            // straggler with no visible cause.
+            CEK::Unreadable(why) => {
+                tracing::error!(
+                    cube_id = %cube.id,
+                    fingerprint = %fp,
+                    error = %why,
+                    "Connect blinding: the master seed for \
+                     this Cube exists but could not be \
+                     opened to derive its encryption key. \
+                     This Cube will not register with \
+                     Connect and its Contacts cannot share \
+                     keys with it until this is fixed."
+                );
+                enc_key_error = Some(format!(
+                    "This Cube couldn't prepare its Connect \
+                     encryption key, so contacts can't share \
+                     keys with it yet. Details in the logs \
+                     ({why})."
+                ));
+            }
+        }
+
+        enc_key_error
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
@@ -4474,13 +4704,6 @@ impl Tab {
                             Task::perform(
                                 async move {
                                     let mut cube = cube;
-                                    // Carried out of the migration block so the
-                                    // failure reaches the user rather than only
-                                    // the log file.
-                                    let mut migration_error: Option<String> = None;
-                                    // Set only by the CEK::Unreadable arm below.
-                                    let mut enc_key_error: Option<String> = None;
-
                                     // The PIN stays available for the lifetime
                                     // of the open Cube. The Vault installer
                                     // (launched later, from inside the app) has
@@ -4489,237 +4712,32 @@ impl Tab {
                                     // it to fall back on. See `app::session`.
                                     app::session::open(cube.id.clone(), pin.clone());
 
-                                    // Bring any legacy seed files up to the
-                                    // current wire version now that the PIN is
-                                    // in hand: plaintext files written by the
-                                    // pre-hardening installer, `ENCRYPTED_V1`
-                                    // files with unauthenticated headers, and
-                                    // `ENCRYPTED_V2` files on a machine that now
-                                    // has a device secret. Never eager — this
-                                    // only runs after an unlock has already
-                                    // succeeded. Logs a count, never content.
-                                    {
-                                        // Its own task: a Cancel that drops
-                                        // this future cannot separate a file
-                                        // write from the record that makes
-                                        // the device agree with it.
-                                        let joined = migrate_seed_files_on_unlock(
-                                            datadir_clone.path().to_path_buf(),
-                                            datadir_clone.network_directory(network_val),
-                                            cube.clone(),
-                                            pin.clone(),
-                                        )
-                                        .await;
+                                    let migration_error = Self::migrate_pin_unlocked_cube(
+                                        &mut cube,
+                                        &datadir_clone,
+                                        &pin,
+                                        network_val,
+                                    )
+                                    .await;
 
-                                        // Do not discard this. `let _ = …` threw
-                                        // away the count *and* the `JoinError`,
-                                        // so a panic inside migration — in code
-                                        // that rewrites seed files — left no
-                                        // trace at all.
-                                        match joined {
-                                            Ok(Ok(UnlockMigration { outcome, new_slot })) => {
-                                                if let Some(name) = new_slot {
-                                                    cube.duress_slot_file = Some(name);
-                                                }
-                                                if outcome.did_work() {
-                                                    info!(
-                                                        "migration: {} seed file(s) upgraded for cube {}",
-                                                        outcome.migrated, cube.id
-                                                    );
-                                                }
-                                                if outcome.skipped_no_backup {
-                                                    info!(
-                                                        "migration: cube {} stays at v2 until it \
-                                                         has a backup",
-                                                        cube.id
-                                                    );
-                                                }
-                                            }
-                                            // The keystore was reachable-but-broken.
-                                            // The Cube still opens — the seed files
-                                            // were left exactly as they were — but
-                                            // the user has to know the upgrade did
-                                            // not happen.
-                                            Ok(Err(e)) => {
-                                                error!(
-                                                    "migration aborted for cube {}: {e}",
-                                                    cube.id
-                                                );
-                                                migration_error = Some(e.to_string());
-                                            }
-                                            Err(e) => {
-                                                error!(
-                                                    "migration task failed for cube {}: {e}",
-                                                    cube.id
-                                                );
-                                                migration_error = Some(
-                                                    "Coincube couldn't finish upgrading this \
-                                                     Cube's files. Your Cube is unchanged and \
-                                                     still opens."
-                                                        .to_string(),
-                                                );
-                                            }
-                                        }
-                                        // Read from disk rather than from this
-                                        // unlock's migration: a Cancel may have
-                                        // dropped the unlock that disarmed. A
-                                        // failure above takes the one slot; the
-                                        // notice waits for the next unlock.
-                                        if migration_error.is_none() {
-                                            migration_error =
-                                                duress_disarm_notice(datadir_clone.path());
-                                        }
-                                    }
-
-                                    // Backfill `master_signer_fingerprint` for
-                                    // Cubes minted before the field existed —
-                                    // without it, the Cube signer + Spark loaders
-                                    // below silently skip and the Connect
-                                    // Lightning Address claim flow / Spark
-                                    // panels stay disabled. Only the cube's
-                                    // own master seed will decrypt with this
-                                    // PIN, so a successful match is sound.
-                                    if cube.master_signer_fingerprint.is_none() {
-                                        if let Some(fp) =
-                                            app::settings::derive_master_signer_fingerprint(
-                                                datadir_clone.path(),
-                                                cube.network,
-                                                &pin,
-                                                &cube.id,
-                                                cube.created_at,
-                                            )
-                                        {
-                                            cube.master_signer_fingerprint = Some(fp);
-                                            let cube_id = cube.id.clone();
-                                            let network_dir =
-                                                datadir_clone.network_directory(cube.network);
-                                            if let Err(e) = app::settings::update_settings_file(
-                                                &network_dir,
-                                                |mut s| {
-                                                    if let Some(c) =
-                                                        s.cubes.iter_mut().find(|c| c.id == cube_id)
-                                                    {
-                                                        c.master_signer_fingerprint = Some(fp);
-                                                    }
-                                                    Some(s)
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                tracing::warn!(
-                                                    "Failed to persist backfilled \
-                                                     master_signer_fingerprint for cube {}: {}",
-                                                    cube.id,
-                                                    e
-                                                );
-                                            } else {
-                                                tracing::info!(
-                                                    "Backfilled master_signer_fingerprint {} \
-                                                     for legacy cube {}",
-                                                    fp,
-                                                    cube.id
-                                                );
-                                            }
-                                        }
-                                    }
+                                    Self::backfill_pin_unlock_fingerprint(
+                                        &mut cube,
+                                        &datadir_clone,
+                                        &pin,
+                                    )
+                                    .await;
 
                                     // The Cube signer and Spark load from the
                                     // same master seed fingerprint.
                                     let master_signer_fingerprint = cube.master_signer_fingerprint;
 
-                                    // Connect blinding (PLAN-connect-blinding
-                                    // PR D2): the Cube's encryption *public*
-                                    // key is seed-derived, so unlock is the
-                                    // only moment it can be computed — the
-                                    // registration wave that publishes it runs
-                                    // later, after Connect sign-in, with no PIN
-                                    // in hand. Derive once and persist; the
-                                    // private half is never stored and is
-                                    // re-derived on demand at decrypt time.
-                                    if cube.connect_encryption_pubkey.is_none() {
-                                        if let Some(fp) = master_signer_fingerprint {
-                                            use app::settings::ConnectEncryptionKey as CEK;
-                                            match app::settings::derive_connect_encryption_pubkey(
-                                                datadir_clone.path(),
-                                                cube.network,
-                                                fp,
-                                                &pin,
-                                                &cube.id,
-                                            ) {
-                                                CEK::Derived(pubkey) => {
-                                                    cube.connect_encryption_pubkey =
-                                                        Some(pubkey.clone());
-                                                    let cube_id = cube.id.clone();
-                                                    let network_dir = datadir_clone
-                                                        .network_directory(cube.network);
-                                                    if let Err(e) =
-                                                        app::settings::update_settings_file(
-                                                            &network_dir,
-                                                            |mut s| {
-                                                                if let Some(c) = s
-                                                                    .cubes
-                                                                    .iter_mut()
-                                                                    .find(|c| c.id == cube_id)
-                                                                {
-                                                                    c.connect_encryption_pubkey =
-                                                                        Some(pubkey.clone());
-                                                                }
-                                                                Some(s)
-                                                            },
-                                                        )
-                                                        .await
-                                                    {
-                                                        tracing::warn!(
-                                                            "Failed to persist Connect encryption \
-                                                             pubkey for cube {}: {}",
-                                                            cube.id,
-                                                            e
-                                                        );
-                                                    }
-                                                }
-                                                // No seed on this device — expected for a
-                                                // watch-only restore or a passkey Cube. Nothing
-                                                // to derive and nothing wrong.
-                                                CEK::NoSeed => {
-                                                    tracing::debug!(
-                                                        "Cube {} has no master seed on this \
-                                                         device; skipping Connect encryption-key \
-                                                         derivation",
-                                                        cube.id
-                                                    );
-                                                }
-                                                // The Cube just unlocked and a seed file IS
-                                                // there, but it would not open for us — the
-                                                // credentials disagree with the unlock path
-                                                // (seed_crypt cube_id binding, or a v3 file
-                                                // reached without the device secret). Never
-                                                // skip this quietly: the Cube would silently
-                                                // never register an encryption pubkey, its
-                                                // Contacts could not enrol enveloped keys, and
-                                                // it would sit in the A5 coverage report as a
-                                                // straggler with no visible cause.
-                                                CEK::Unreadable(why) => {
-                                                    tracing::error!(
-                                                        cube_id = %cube.id,
-                                                        fingerprint = %fp,
-                                                        error = %why,
-                                                        "Connect blinding: the master seed for \
-                                                         this Cube exists but could not be \
-                                                         opened to derive its encryption key. \
-                                                         This Cube will not register with \
-                                                         Connect and its Contacts cannot share \
-                                                         keys with it until this is fixed."
-                                                    );
-                                                    enc_key_error = Some(format!(
-                                                        "This Cube couldn't prepare its Connect \
-                                                         encryption key, so contacts can't share \
-                                                         keys with it yet. Details in the logs \
-                                                         ({why})."
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
+                                    let enc_key_error = Self::derive_pin_unlock_connect_key(
+                                        &mut cube,
+                                        &datadir_clone,
+                                        &pin,
+                                        master_signer_fingerprint,
+                                    )
+                                    .await;
 
                                     let signer_result =
                                         if let Some(fingerprint) = master_signer_fingerprint {
