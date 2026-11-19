@@ -3396,7 +3396,7 @@ mod tests {
     /// no local node or date rescan.
     #[tokio::test]
     async fn an_imported_vaults_node_page_shows_its_history_not_local_nodes() {
-        use crate::app::state::imported_bitcoin::ImportedNodeSummary;
+        use crate::app::state::imported_bitcoin::{ImportedNodeSummary, ImportedSyncStatus};
         use crate::home::restore_frame::rendered_labels;
         let summary = ImportedNodeSummary {
             server: "My Electrum server",
@@ -3411,11 +3411,19 @@ mod tests {
                 change_scanned: 200,
                 history_complete: true,
             }),
+            sync_status: ImportedSyncStatus::Synced,
             ready: true,
             busy: false,
             can_expand: true,
             notice: None,
         };
+        let failed = ImportedNodeSummary {
+            sync_status: ImportedSyncStatus::Failed,
+            ..summary.clone()
+        };
+        let shown = rendered_labels(view::vault::settings::imported_history_section(&failed)).await;
+        assert!(shown.iter().any(|label| label == "Sync failed"));
+        assert!(!shown.iter().any(|label| label == "Synced"));
         let state = BitcoindSettingsState::new(
             Some(config_with_backend(Some(BitcoinBackend::Electrum(
                 electrum_config(),

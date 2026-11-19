@@ -94,6 +94,10 @@ pub enum Message {
         enabled: bool,
     },
     UpdateDaemonCache(Result<DaemonCache, Error>),
+    UpdateImportedDaemonCache {
+        generation: u64,
+        result: Result<DaemonCache, Error>,
+    },
     CacheUpdated,
     /// Outcome of clearing a restored Vault's pending-rescan marker after a
     /// completed full scan: `Err` carries why the settings write failed, and the

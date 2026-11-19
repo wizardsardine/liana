@@ -691,17 +691,13 @@ impl DatabaseConnection for DummyDatabase {
             if let Some(time) = coin.block_info.map(|b| b.time) {
                 if time >= start && time <= end {
                     let row = (coin.outpoint.txid, time);
-                    if !txids_and_time.contains(&row) {
-                        txids_and_time.push(row);
-                    }
+                    append_unique_txid_time(&mut txids_and_time, row);
                 }
             }
             if let Some(time) = coin.spend_block.map(|b| b.time) {
                 if time >= start && time <= end {
                     let row = (coin.spend_txid.expect("spent_at is not none"), time);
-                    if !txids_and_time.contains(&row) {
-                        txids_and_time.push(row);
-                    }
+                    append_unique_txid_time(&mut txids_and_time, row);
                 }
             }
         }
@@ -763,6 +759,12 @@ impl DatabaseConnection for DummyDatabase {
 
     fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {
         todo!()
+    }
+}
+
+fn append_unique_txid_time(txids_and_time: &mut Vec<(Txid, u32)>, row: (Txid, u32)) {
+    if !txids_and_time.contains(&row) {
+        txids_and_time.push(row);
     }
 }
 

@@ -418,6 +418,14 @@ impl JourneyStep {
     }
 }
 
+/// Current synchronization health, separate from whether the import is ready to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportedSyncStatus {
+    Synced,
+    Syncing,
+    Failed,
+}
+
 /// An imported wallet's server and history scan, for Vault Settings → Node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportedNodeSummary {
@@ -425,6 +433,7 @@ pub struct ImportedNodeSummary {
     /// The server's scheme, host and port, without credentials or a path.
     pub endpoint: String,
     pub status: Option<coincubed::commands::ImportedWalletSync>,
+    pub sync_status: ImportedSyncStatus,
     pub ready: bool,
     pub busy: bool,
     /// A wider address search is offered (not on Bitcoin Blake2b).
@@ -577,6 +586,22 @@ impl ImportedBitcoinPanel {
     /// What Vault Settings → Node shows for this wallet: its server, its
     /// history scan, and whether its actions can run.
     pub fn node_summary(&self) -> ImportedNodeSummary {
+        let ready = self.is_ready();
+        let sync_status = match self.info.as_ref() {
+            _ if self.sync_requesting => ImportedSyncStatus::Syncing,
+            _ if self.sync_failed => ImportedSyncStatus::Failed,
+            Some(info)
+                if info.history_sync.last_failure.is_some()
+                    || info.chain_divergence
+                    || info.refused_reorg_depth.is_some() =>
+            {
+                ImportedSyncStatus::Failed
+            }
+            Some(info) if ready && bitcoin_import::history_scan_complete(info, false) => {
+                ImportedSyncStatus::Synced
+            }
+            _ => ImportedSyncStatus::Syncing,
+        };
         ImportedNodeSummary {
             server: if self.provider_known {
                 localized_copy(self.provider.label())
@@ -588,7 +613,8 @@ impl ImportedBitcoinPanel {
                 .info
                 .as_ref()
                 .and_then(|info| info.imported_wallet.clone()),
-            ready: self.is_ready(),
+            sync_status,
+            ready,
             busy: self.busy,
             can_expand: !self.chain().is_blake2b(),
             notice: self.error.as_deref().map(shown_notice),
@@ -667,6 +693,10 @@ impl ImportedBitcoinPanel {
     /// once read.
     pub fn stored_keys(&self) -> Option<usize> {
         self.stored_keys
+    }
+
+    pub(crate) fn runtime_generation(&self) -> u64 {
+        self.generation
     }
 
     pub fn is_ready(&self) -> bool {
@@ -4194,6 +4224,13 @@ mod tests {
     fn a_completed_import_stays_ready_through_sync_trouble() {
         let mut panel = ready_import_panel();
         assert!(panel.is_ready());
+        assert_eq!(panel.node_summary().sync_status, ImportedSyncStatus::Synced);
+        panel.info.as_mut().unwrap().sync = 0.5;
+        assert!(panel.is_ready());
+        assert_eq!(
+            panel.node_summary().sync_status,
+            ImportedSyncStatus::Syncing
+        );
         {
             let info = panel.info.as_mut().unwrap();
             info.history_sync.last_failure = Some(coincubed::commands::PollFailure {
@@ -4202,10 +4239,10 @@ mod tests {
                 last_at: 1,
                 consecutive: 3,
             });
-            info.sync = 0.5;
             info.history_sync.full_scan_in_progress = true;
         }
         assert!(panel.is_ready(), "a failing poll or catch-up sync");
+        assert_eq!(panel.node_summary().sync_status, ImportedSyncStatus::Failed);
         assert!(panel.authoritative_balance().is_some());
         let info = panel.info.clone().unwrap();
         assert!(bitcoin_import::history_scan_complete(&info, true));
@@ -4240,6 +4277,26 @@ mod tests {
             change(panel.info.as_mut().unwrap());
             assert!(!panel.is_ready(), "{}", why);
         }
+    }
+
+    #[test]
+    fn node_status_reports_a_failed_retry_even_with_a_healthy_prior_snapshot() {
+        let mut panel = ready_import_panel();
+        panel.sync_requesting = true;
+        assert_eq!(
+            panel.node_summary().sync_status,
+            ImportedSyncStatus::Syncing
+        );
+
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::SynchronizationRequested(
+            generation,
+            Err("server unavailable".into()),
+        ));
+        let summary = panel.node_summary();
+        assert!(summary.ready);
+        assert_eq!(summary.sync_status, ImportedSyncStatus::Failed);
+        assert!(summary.notice.is_some());
     }
 
     #[test]

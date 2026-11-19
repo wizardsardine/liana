@@ -6,6 +6,7 @@ use billing::plan_billing_ux;
 #[cfg(test)]
 use billing::renewal_banner;
 pub mod cube_members;
+mod delete_account;
 pub mod duress_contacts;
 pub mod duress_enroll;
 pub mod sign_in_prompt;
@@ -858,6 +859,9 @@ fn sheet_action<'a>(
 /// Account-wide presentation shared by the sheet and the older Home panel.
 /// Plan, counts, and Recovery services stay in their own destinations.
 fn sheet_account_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    if state.delete_account.open {
+        return delete_account::page(state);
+    }
     let email = state
         .user
         .as_ref()
@@ -945,6 +949,9 @@ fn sheet_account_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
             .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
             .push(lead(consequence));
     }
+    column = column
+        .push(iced::widget::Space::new().height(Length::Fixed(32.0)))
+        .push(delete_account::entry());
     column.width(Length::Fill).into()
 }
 
@@ -6597,5 +6604,150 @@ mod renewal_banner_tests {
         let security = labels(ConnectSheetSection::DevicesSecurity);
         assert!(security.iter().any(|l| l == "Verified Devices"));
         assert!(security.iter().any(|l| l == "Login Activity"));
+    }
+}
+
+#[cfg(test)]
+mod delete_account_view_tests {
+    use super::*;
+    use crate::app::state::connect::delete_account::DeletionStatus;
+    use crate::app::view::shared::landing::capture;
+    use crate::services::coincube::{AccountDeletionRequest, User};
+
+    fn signed_in() -> ConnectAccountPanel {
+        let mut account = ConnectAccountPanel::new();
+        account.step = ConnectFlowStep::Dashboard;
+        account.user = Some(User {
+            id: 1,
+            email: "synthetic@example.test".to_string(),
+            email_verified: Some(true),
+        });
+        account
+    }
+
+    fn render(account: &ConnectAccountPanel, scenario: &str) -> capture::Inspection {
+        capture::inspect_full_window(
+            scenario,
+            connect_sheet(
+                account,
+                ConnectSheetPage::Sections(ConnectSheetSection::Account),
+            ),
+            (1024, 768),
+            "dark",
+            theme::Theme::dark(),
+        )
+    }
+
+    fn assert_product_naming(inspection: &capture::Inspection) {
+        for (text, _) in &inspection.text {
+            assert!(!text.contains("Keychain"), "{}", text);
+            assert!(!text.to_lowercase().contains("hardware wallet"), "{}", text);
+        }
+    }
+
+    #[test]
+    fn account_overview_offers_delete_account_when_signed_in() {
+        let account = signed_in();
+        let inspection = render(&account, "delete-account-entry");
+        assert!(inspection.contains("Delete account…"));
+        assert!(inspection.contains("Sign out…"));
+    }
+
+    #[test]
+    fn signed_out_account_has_no_delete_entry() {
+        let mut account = ConnectAccountPanel::new();
+        account.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        let inspection = render(&account, "delete-account-signed-out");
+        assert!(!inspection.contains("Delete account"));
+    }
+
+    #[test]
+    fn delete_page_explains_and_gates_the_request() {
+        let mut account = signed_in();
+        account.delete_account.open = true;
+
+        account.delete_account.status = DeletionStatus::Loading;
+        let loading = render(&account, "delete-account-loading");
+        assert!(loading.contains("Checking for an existing request…"));
+        assert!(!loading.contains("Request account deletion…"));
+
+        account.delete_account.status = DeletionStatus::NotRequested;
+        let page = render(&account, "delete-account-page");
+        for needle in [
+            "Delete your COINCUBE account",
+            "across COINCUBE Desktop and COINCUBE Mobile",
+            "Encrypted Recovery Kit and inheritance backups",
+            "backups your heirs depend on",
+            "someone else's Cube",
+            "COINCUBE does not hold your bitcoin",
+            "back up your recovery phrase first",
+            "coincube.tech/legal/delete-account",
+            "we'll email you to confirm we received it",
+            "privacy@coincube.io",
+            "Request account deletion…",
+        ] {
+            assert!(page.contains(needle), "missing: {}", needle);
+        }
+        assert!(!page.contains("Sign out…"), "page replaces the overview");
+        assert_product_naming(&page);
+
+        account.delete_account.confirming = true;
+        let confirm = render(&account, "delete-account-confirm");
+        assert!(confirm.contains("Delete the COINCUBE account synthetic@example.test?"));
+        assert!(confirm.contains("Delete my account"));
+        assert!(confirm.contains("Cancel"));
+
+        assert!(confirm.contains("Once deletion is complete, it can't be undone."));
+        assert!(confirm.contains("Make sure your recovery phrase is backed up first."));
+        assert!(!confirm.contains("We couldn't send your request."));
+
+        account.delete_account.request_failed = true;
+        assert!(render(&account, "delete-account-failed")
+            .contains("We couldn't send your request. Check your connection and try again."));
+        account.delete_account.request_failed = false;
+
+        account.delete_account.submitting = true;
+        assert!(render(&account, "delete-account-sending").contains("Sending request…"));
+    }
+
+    #[test]
+    fn pending_request_replaces_the_button() {
+        let mut account = signed_in();
+        account.delete_account.open = true;
+        account.delete_account.status = DeletionStatus::Pending(AccountDeletionRequest {
+            status: "pending".to_string(),
+            requested_at: "2026-11-18T12:34:56Z".to_string(),
+            source: "mobile".to_string(),
+        });
+        let page = render(&account, "delete-account-pending");
+        assert!(page.contains("Request received"));
+        assert!(page.contains("Requested on Nov 18, 2026"));
+        assert!(page.contains("You should receive a confirmation email"));
+        assert!(!page.contains("Request account deletion…"));
+        assert_product_naming(&page);
+    }
+
+    #[test]
+    fn delete_page_is_fully_spanish() {
+        let mut account = signed_in();
+        account.delete_account.open = true;
+        account.delete_account.status = DeletionStatus::NotRequested;
+        account.delete_account.confirming = true;
+        account.delete_account.request_failed = true;
+        coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+            render(&account, "delete-account-es-page").assert_spanish("delete account page (es)");
+        });
+        account.delete_account.status = DeletionStatus::Pending(AccountDeletionRequest {
+            status: "pending".to_string(),
+            requested_at: "2026-11-18T12:34:56Z".to_string(),
+            source: "desktop".to_string(),
+        });
+        coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+            render(&account, "delete-account-es-pending")
+                .assert_spanish("delete account pending (es)");
+        });
     }
 }

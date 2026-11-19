@@ -94,6 +94,32 @@ impl SpendTx {
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
     ) -> Self {
+        Self::from_list_entry(
+            ListSpendEntry {
+                psbt,
+                updated_at,
+                broadcast_txid,
+            },
+            coins,
+            desc,
+            secp,
+            network,
+        )
+    }
+
+    /// A stored spend as the daemon lists it. See [`Self::new_recorded`].
+    pub(super) fn from_list_entry(
+        entry: ListSpendEntry,
+        coins: Vec<Coin>,
+        desc: &impl SpendAnalysis,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+        network: Network,
+    ) -> Self {
+        let ListSpendEntry {
+            psbt,
+            updated_at,
+            broadcast_txid,
+        } = entry;
         // Use primary path if no inputs are using a relative locktime.
         let use_primary_path = !psbt
             .unsigned_tx
@@ -185,7 +211,7 @@ impl SpendTx {
                     .filter_map(|(i, _)| {
                         if !change_indexes.contains(&i) {
                             Some(OutPoint {
-                                txid: psbt.unsigned_tx.compute_txid(),
+                                txid: unsigned_txid,
                                 vout: i as u32,
                             })
                         } else {
@@ -611,6 +637,69 @@ where
                     labels.remove(&item_str);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::split_test_wallets::{imported_vault, Shape};
+    use coincube_core::miniscript::bitcoin::{absolute, transaction, ScriptBuf, TxIn, TxOut};
+    use coincubed::commands::LCSpendInfo;
+
+    #[test]
+    fn imported_psbt_status_follows_the_final_broadcast_txid() {
+        let wallet = imported_vault(Shape::ShWpkh);
+        let address = wallet.preview_change_address().assume_checked();
+        let outpoint = OutPoint::null();
+        let unsigned = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: outpoint,
+                ..TxIn::default()
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(19_000),
+                script_pubkey: address.script_pubkey(),
+            }],
+        };
+        let unsigned_txid = unsigned.compute_txid();
+        let mut signed = unsigned.clone();
+        signed.input[0].script_sig = ScriptBuf::from_bytes(vec![1, 1]);
+        let txid = signed.compute_txid();
+        assert_ne!(unsigned_txid, txid);
+
+        let entry = ListSpendEntry {
+            updated_at: None,
+            broadcast_txid: Some(txid),
+            psbt: Psbt::from_unsigned_tx(unsigned).unwrap(),
+        };
+        for (height, status) in [
+            (None, SpendStatus::Broadcast),
+            (Some(101), SpendStatus::Spent),
+        ] {
+            let coin = Coin {
+                amount: Amount::from_sat(20_000),
+                outpoint,
+                address: address.clone(),
+                block_height: Some(100),
+                derivation_index: 0.into(),
+                spend_info: Some(LCSpendInfo { txid, height }),
+                is_immature: false,
+                is_change: false,
+                is_from_self: false,
+            };
+            let spend = SpendTx::from_list_entry(
+                entry.clone(),
+                vec![coin],
+                &wallet.main_descriptor,
+                &secp256k1::Secp256k1::verification_only(),
+                Network::Bitcoin,
+            );
+            assert_eq!(spend.status, status);
+            assert_eq!(spend.psbt.unsigned_tx.compute_txid(), unsigned_txid);
         }
     }
 }

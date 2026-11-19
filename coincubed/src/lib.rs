@@ -1318,39 +1318,7 @@ impl DaemonHandle {
     ) -> Result<Self, StartupError> {
         let secp = secp256k1::Secp256k1::verification_only();
 
-        // Before touching anything: the configuration must be self-consistent, and this build
-        // must be able to run the chain it names. Neither check does any I/O.
-        config
-            .bitcoin_config
-            .check_chain_encoding()
-            .map_err(StartupError::Config)?;
-        if config.main_descriptor.as_imported().is_some() {
-            config.check().map_err(StartupError::Config)?;
-        }
-        if config.main_descriptor.as_imported().is_some()
-            && matches!(
-                config.bitcoin_backend,
-                Some(config::BitcoinBackend::Bitcoind(_))
-            )
-        {
-            return Err(StartupError::Config(ConfigError::Unexpected(
-                "Bitcoin Core backend cannot safely complete imported-wallet historical sync yet; choose Electrum or Esplora".into(),
-            )));
-        }
-        if let Some(backend) = connect.as_ref() {
-            if backend.chain() != config.bitcoin_config.chain
-                || bitcoin.is_some()
-                || !matches!(
-                    config.bitcoin_backend.as_ref(),
-                    Some(config::BitcoinBackend::Esplora(selection)) if backend.matches_selection(selection)
-                )
-            {
-                return Err(StartupError::ConnectAdmission(
-                    connect::AdmissionError::InvalidBackend,
-                ));
-            }
-        }
-        runtime_gate(config.bitcoin_config.chain)?;
+        check_startup_admission(&config, &bitcoin, &connect, runtime_gate)?;
         // Authenticated admission precedes every filesystem/database/node write.
         let scan_abort = sync::Arc::new(sync::atomic::AtomicBool::new(false));
         let prepared_client = match connect {
@@ -1385,39 +1353,12 @@ impl DaemonHandle {
             None
         };
         let fresh_data_dir = !data_dir.exists() || !data_dir.sqlite_db_file_path().exists();
-        if !fresh_data_dir {
-            preflight_existing_database(&config, &data_dir.sqlite_db_file_path())?;
-        } else if data_dir.exists() {
-            // A directory without a database is only "fresh" if nothing of a database is left
-            // in it: a stray rollback journal or WAL sidecar means one was here.
-            preflight::refuse_orphan_sidecars(&data_dir.sqlite_db_file_path())
-                .map_err(StartupError::DbPreflight)?;
-        }
-        // Retain the historical Vault refusal order (chain admission and
-        // existing-database identity first), while still validating every
-        // caller-built configuration before any startup writes.
-        if config.main_descriptor.as_vault().is_some() {
-            config.check().map_err(StartupError::Config)?;
-        }
-        if !data_dir.exists() {
-            data_dir
-                .init()
-                .map_err(|e| StartupError::DatadirCreation(data_dir.path().to_path_buf(), e))?;
-            log::info!(
-                "Created a new data directory at '{}'",
-                data_dir.path().to_string_lossy()
-            );
-        }
+        preflight_startup_storage(&config, &data_dir, fresh_data_dir)?;
+        initialize_startup_data_directory(&data_dir)?;
         // The RPC socket name is random, so two processes would otherwise both
         // bind and the second would overwrite `rpc.socket`. Hold the datadir
         // before any database or socket setup, and keep it until stop.
-        let datadir_lock = match data_dir.try_lock() {
-            Ok(lock) => lock,
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                return Err(StartupError::AlreadyRunning);
-            }
-            Err(e) => return Err(StartupError::Io(e)),
-        };
+        let datadir_lock = lock_startup_data_directory(&data_dir)?;
 
         // Set up the connection to bitcoind (if using it) first as we may need it for the database
         // migration when setting up SQLite below.
@@ -1448,13 +1389,7 @@ impl DaemonHandle {
             )?)) as sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
         };
 
-        // A wallet whose scan window starts after the coins we already know about
-        // cannot track them, and nothing else notices — see `heal_scan_window`.
-        if let Some(bitcoind) = bitcoind.as_mut() {
-            if let Some(vault) = config.main_descriptor.as_vault() {
-                heal_scan_window(bitcoind, &db, vault);
-            }
-        }
+        heal_startup_scan_window(&mut bitcoind, &db, &config);
 
         // Shared abort flag: `stop` flips it so an in-flight Esplora scan stops
         // walking the provider chain and returns promptly, instead of the poller
@@ -1685,6 +1620,107 @@ impl DaemonHandle {
                 rpc_result?;
                 Ok(())
             }
+        }
+    }
+}
+
+fn check_startup_admission(
+    config: &Config,
+    bitcoin: &Option<impl BitcoinInterface>,
+    connect: &Option<connect::ConnectBackend>,
+    runtime_gate: fn(ChainId) -> Result<(), StartupError>,
+) -> Result<(), StartupError> {
+    // Before touching anything: the configuration must be self-consistent, and this build
+    // must be able to run the chain it names. Neither check does any I/O.
+    config
+        .bitcoin_config
+        .check_chain_encoding()
+        .map_err(StartupError::Config)?;
+    if config.main_descriptor.as_imported().is_some() {
+        config.check().map_err(StartupError::Config)?;
+    }
+    if config.main_descriptor.as_imported().is_some()
+        && matches!(
+            config.bitcoin_backend,
+            Some(config::BitcoinBackend::Bitcoind(_))
+        )
+    {
+        return Err(StartupError::Config(ConfigError::Unexpected(
+            "Bitcoin Core backend cannot safely complete imported-wallet historical sync yet; choose Electrum or Esplora".into(),
+        )));
+    }
+    if let Some(backend) = connect.as_ref() {
+        if backend.chain() != config.bitcoin_config.chain
+            || bitcoin.is_some()
+            || !matches!(
+                config.bitcoin_backend.as_ref(),
+                Some(config::BitcoinBackend::Esplora(selection)) if backend.matches_selection(selection)
+            )
+        {
+            return Err(StartupError::ConnectAdmission(
+                connect::AdmissionError::InvalidBackend,
+            ));
+        }
+    }
+    runtime_gate(config.bitcoin_config.chain)?;
+    Ok(())
+}
+
+fn preflight_startup_storage(
+    config: &Config,
+    data_dir: &DataDirectory,
+    fresh_data_dir: bool,
+) -> Result<(), StartupError> {
+    if !fresh_data_dir {
+        preflight_existing_database(config, &data_dir.sqlite_db_file_path())?;
+    } else if data_dir.exists() {
+        // A directory without a database is only "fresh" if nothing of a database is left
+        // in it: a stray rollback journal or WAL sidecar means one was here.
+        preflight::refuse_orphan_sidecars(&data_dir.sqlite_db_file_path())
+            .map_err(StartupError::DbPreflight)?;
+    }
+    // Retain the historical Vault refusal order (chain admission and
+    // existing-database identity first), while still validating every
+    // caller-built configuration before any startup writes.
+    if config.main_descriptor.as_vault().is_some() {
+        config.check().map_err(StartupError::Config)?;
+    }
+    Ok(())
+}
+
+fn initialize_startup_data_directory(data_dir: &DataDirectory) -> Result<(), StartupError> {
+    if !data_dir.exists() {
+        data_dir
+            .init()
+            .map_err(|e| StartupError::DatadirCreation(data_dir.path().to_path_buf(), e))?;
+        log::info!(
+            "Created a new data directory at '{}'",
+            data_dir.path().to_string_lossy()
+        );
+    }
+    Ok(())
+}
+
+fn lock_startup_data_directory(
+    data_dir: &DataDirectory,
+) -> Result<datadir::DaemonLock, StartupError> {
+    match data_dir.try_lock() {
+        Ok(lock) => Ok(lock),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(StartupError::AlreadyRunning),
+        Err(e) => Err(StartupError::Io(e)),
+    }
+}
+
+fn heal_startup_scan_window(
+    bitcoind: &mut Option<BitcoinD>,
+    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    config: &Config,
+) {
+    // A wallet whose scan window starts after the coins we already know about
+    // cannot track them, and nothing else notices — see `heal_scan_window`.
+    if let Some(bitcoind) = bitcoind.as_mut() {
+        if let Some(vault) = config.main_descriptor.as_vault() {
+            heal_scan_window(bitcoind, db, vault);
         }
     }
 }
@@ -2823,9 +2859,33 @@ mod tests {
             fs::remove_dir_all(tmp).unwrap();
         }
 
+        fn read_synthetic_connect_head(
+            stream: &mut net::TcpStream,
+            head: &mut Vec<u8>,
+            deadline: time::Instant,
+        ) {
+            use std::io::Read;
+            while head.len() < 8192
+                && time::Instant::now() < deadline
+                && !head.windows(4).any(|x| x == b"\r\n\r\n")
+            {
+                let mut chunk = [0; 1024];
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => head.extend_from_slice(&chunk[..n]),
+                    // A read slice elapsed with nothing new: keep
+                    // waiting until the deadline, do not give up.
+                    Err(e)
+                        if e.kind() == io::ErrorKind::WouldBlock
+                            || e.kind() == io::ErrorKind::TimedOut => {}
+                    Err(_) => break,
+                }
+            }
+        }
+
         #[test]
         fn authenticated_fork_creates_and_reopens_a_synthetic_wallet() {
-            use std::io::{Read, Write};
+            use std::io::Write;
             use std::sync::atomic::{AtomicBool, Ordering};
             struct Authority(connect::TrustedChainAnchor);
             impl connect::ConnectAnchorAuthority for Authority {
@@ -2877,22 +2937,7 @@ mod tests {
                         .unwrap();
                     let deadline = time::Instant::now() + time::Duration::from_secs(1);
                     let mut head = Vec::new();
-                    while head.len() < 8192
-                        && time::Instant::now() < deadline
-                        && !head.windows(4).any(|x| x == b"\r\n\r\n")
-                    {
-                        let mut chunk = [0; 1024];
-                        match stream.read(&mut chunk) {
-                            Ok(0) => break,
-                            Ok(n) => head.extend_from_slice(&chunk[..n]),
-                            // A read slice elapsed with nothing new: keep
-                            // waiting until the deadline, do not give up.
-                            Err(e)
-                                if e.kind() == io::ErrorKind::WouldBlock
-                                    || e.kind() == io::ErrorKind::TimedOut => {}
-                            Err(_) => break,
-                        }
-                    }
+                    read_synthetic_connect_head(&mut stream, &mut head, deadline);
                     let head = String::from_utf8_lossy(&head);
                     if !head.ends_with("\r\n\r\n") {
                         continue;

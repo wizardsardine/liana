@@ -2625,6 +2625,55 @@ mod tests {
         .unwrap()
     }
 
+    #[tokio::test]
+    async fn imported_single_recipient_max_drafts_a_sweep_to_the_recipient() {
+        use crate::services::split_test_wallets::{imported_vault, Shape};
+        use iced::futures::StreamExt;
+        use serde_json::json;
+
+        let mut state = branta_form();
+        state.wallet = Arc::new(imported_vault(Shape::Wpkh));
+        state.recipients[0] = Recipient::default();
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.into()),
+        );
+        state.send_max_to_recipient = Some(0);
+        let recipient = state.recipients[0].destination().unwrap();
+        let outpoint = state.coins[0].0.outpoint;
+        let mut psbt = prepared_outputs(&[49_000]);
+        psbt.unsigned_tx.output[0].script_pubkey =
+            recipient.clone().assume_checked().script_pubkey();
+        let response = serde_json::to_value(CreateSpendResult::Success {
+            psbt,
+            warnings: vec![],
+        })
+        .unwrap();
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![(
+                Some(json!({"method": "createspend", "params": [{}, [outpoint], 2, &recipient]})),
+                Ok(response),
+            )])
+            .run(),
+        ));
+
+        let mut stream = iced_runtime::task::into_stream(state.run_redraft(daemon, 7)).unwrap();
+        let Some(iced_runtime::Action::Output(Message::RedraftResult {
+            result: Ok(CreateSpendResult::Success { psbt, .. }),
+            ..
+        })) = stream.next().await
+        else {
+            panic!("expected a successful MAX draft");
+        };
+        let output = &psbt.unsigned_tx.output[0];
+        assert_eq!(
+            output.script_pubkey,
+            recipient.assume_checked().script_pubkey()
+        );
+        assert_eq!(output.value.to_sat(), 49_000);
+    }
+
     #[test]
     fn bip21_preserves_original_populates_amount_and_checks_network() {
         let mut recipient = bip21_recipient(1_234);
