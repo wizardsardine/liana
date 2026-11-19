@@ -83,21 +83,7 @@ pub fn spend_view<'a>(
             )))
             .push_maybe(mcp_review.then(|| mcp_prepared_review(tx, network)))
             .push(psbt::spend_header(tx, labels_editing, bitcoin_unit))
-            .push_maybe(if spend_warnings.is_empty() || saved {
-                None
-            } else {
-                Some(spend_warnings.iter().fold(
-                    Column::new().padding(15).spacing(5),
-                    |col, warning| {
-                        col.push(
-                            Row::new()
-                                .spacing(5)
-                                .push(icon::warning_icon().style(theme::text::warning))
-                                .push(text(warning).style(theme::text::warning)),
-                        )
-                    },
-                ))
-            })
+            .push_maybe(spend_review_warnings(spend_warnings, saved))
             .push(psbt::spend_overview_view(
                 action_scope,
                 tx,
@@ -132,57 +118,7 @@ pub fn spend_view<'a>(
                         cache.theme_mode,
                     )),
             )
-            .push(if saved {
-                Row::new()
-                    .push(
-                        button::secondary(None, localized_copy("Delete"))
-                            .width(Length::Fixed(200.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Spend(SpendTxMessage::Delete))
-                            }),
-                    )
-                    .width(Length::Fill)
-            } else {
-                Row::new()
-                    .push(
-                        button::secondary(None, "< Back")
-                            .width(Length::Fixed(150.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Previous)
-                            }),
-                    )
-                    .push(Space::new().width(Length::Fill))
-                    .push(
-                        button::secondary(
-                            None,
-                            if mcp_review {
-                                localized_copy("Sign in COINCUBE Desktop")
-                            } else {
-                                localized_copy("Save")
-                            },
-                        )
-                        .width(Length::Fixed(if mcp_review { 180.0 } else { 150.0 }))
-                        .on_press_maybe(if currently_signing {
-                            None
-                        } else if mcp_review {
-                            #[cfg(feature = "mcp-transactions")]
-                            {
-                                Some(Message::Spend(SpendTxMessage::ContinueNativeSigning))
-                            }
-                            #[cfg(not(feature = "mcp-transactions"))]
-                            {
-                                None
-                            }
-                        } else {
-                            Some(Message::Spend(SpendTxMessage::Save))
-                        }),
-                    )
-                    .width(Length::Fill)
-            }),
+            .push(spend_review_actions(saved, currently_signing, mcp_review)),
     )
 }
 
@@ -594,29 +530,16 @@ pub fn create_spend_tx<'a>(
         blocking_warning
     } else if can_proceed {
         None
-    } else if feerate.value.is_empty() {
-        Some("Please set a feerate.".to_string())
-    } else if !feerate.valid {
-        Some("Invalid feerate.".to_string())
-    } else if duplicate {
-        Some("Duplicate recipient address.".to_string())
-    } else if coins.iter().all(|(_, selected)| !selected) {
-        Some("Please select at least one coin.".to_string())
-    } else if !is_self_send && recovery_timelock.is_none() {
-        match amount_left {
-            // `amount_left` is only `None` once the recipient and amount are
-            // filled in but the background draft could not produce a result.
-            // If that draft failed with an error, show it rather than the
-            // generic "enter recipient/amount" hint, which is misleading once
-            // the fields are actually populated.
-            None => Some(
-                draft_warning.unwrap_or_else(|| "Enter recipient address and amount.".to_string()),
-            ),
-            Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds.".to_string()),
-            _ => None,
-        }
     } else {
-        None
+        incomplete_spend_hint(
+            feerate,
+            duplicate,
+            coins,
+            is_self_send,
+            recovery_timelock,
+            amount_left,
+            draft_warning,
+        )
     };
 
     let title = if recovery_timelock.is_some() {
@@ -628,70 +551,13 @@ pub fn create_spend_tx<'a>(
     };
     let balance_context = Column::new()
         .spacing(10)
-        .push(
-            Column::new()
-                .spacing(8)
-                .push(caption(localized_copy("Available in Vault")).style(theme::text::secondary))
-                .push(
-                    if mask_amounts {
-                        Column::new().push(text("••••••").size(H2_SIZE))
-                    } else if sync_status.is_synced() {
-                        Column::new()
-                            .spacing(5)
-                            .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
-                            .push_maybe(fiat_balance.map(|fiat| {
-                                fiat.to_text().size(P2_SIZE).style(theme::text::secondary)
-                            }))
-                    } else {
-                        Column::new().push(Row::new().push(spinner::Carousel::new(
-                            Duration::from_millis(1000),
-                            vec![
-                                amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit),
-                                amount_with_size_colors_and_unit(
-                                    balance,
-                                    H2_SIZE,
-                                    color::GREY_3,
-                                    Some(color::GREY_3),
-                                    bitcoin_unit,
-                                ),
-                            ],
-                        )))
-                    }
-                    .wrap(),
-                )
-                .push_maybe(if !sync_status.is_synced() {
-                    Some(
-                        Row::new()
-                            .push(
-                                match sync_status {
-                                    SyncStatus::BlockchainSync(progress) => {
-                                        text(localized_format!(
-                                            "Syncing blockchain ({:.2}%)",
-                                            "Sincing blockchain ({:.2}%)",
-                                            crate::utils::syncing_percent(*progress)
-                                        ))
-                                    }
-                                    SyncStatus::WalletFullScan { .. } => {
-                                        text(localized_copy("Syncing"))
-                                    }
-                                    SyncStatus::SyncFailing { .. } => text(localized_copy(
-                                        "Wallet sync is failing; the balance may be out of date",
-                                    )),
-                                    _ => text(localized_copy("Checking for new transactions")),
-                                }
-                                .style(theme::text::secondary),
-                            )
-                            .push(spinner::typing_text_carousel(
-                                "...",
-                                true,
-                                Duration::from_millis(2000),
-                                |content| text(content).style(theme::text::secondary),
-                            )),
-                    )
-                } else {
-                    None
-                }),
-        )
+        .push(spend_available_balance(
+            balance,
+            mask_amounts,
+            sync_status,
+            fiat_balance,
+            bitcoin_unit,
+        ))
         .push_maybe(
             if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
                 Some(
@@ -721,173 +587,24 @@ pub fn create_spend_tx<'a>(
     // Every slot below is always present, so a warning or batch label
     // appearing does not shift the widget state (focus, text cursor) of the
     // controls that follow it.
-    let recipient_groups = recipients.into_iter().enumerate().fold(
-        Column::new().spacing(16),
-        |column, (index, recipient)| {
-            if index == 0 {
-                column.push(recipient)
-            } else {
-                column.push(compose_divider()).push(recipient)
-            }
-        },
+    let recipient_groups = spend_recipient_groups(recipients);
+    let recipients_block = spend_recipients_block(
+        recipient_groups,
+        is_self_send,
+        recovery_timelock,
+        is_batch,
+        batch_label,
+        duplicate,
     );
-    let recipients_block: Element<'a, Message> = if is_self_send {
-        // An empty Column has zero rendered height but a non-void size hint,
-        // so the fee section keeps its position in Iced's widget tree.
-        Column::new().width(Length::Fill).into()
-    } else {
-        Column::new()
-            .push(compose_divider())
-            .push(compose_section(
-                Column::new()
-                    .spacing(8)
-                    .push(section_label(if recovery_timelock.is_some() {
-                        "Recipient"
-                    } else {
-                        "Recipients"
-                    }))
-                    // Keep this slot in the Column's tree when the label is absent.
-                    // A zero-height Space is discarded by Column::push and shifts
-                    // recipient input state when a second recipient is added.
-                    .push(
-                        Column::new()
-                            .width(Length::Fill)
-                            .push_maybe(is_batch.then(|| {
-                                form::Form::new(
-                                    coincube_ui::locale::copy("Batch label"),
-                                    batch_label,
-                                    |s| {
-                                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(
-                                            s,
-                                        ))
-                                    },
-                                )
-                                .warning(localized_copy(
-                                    "Invalid label length, cannot be superior to 100",
-                                ))
-                                .size(P1_SIZE)
-                                .padding(10)
-                            })),
-                    )
-                    .push(recipient_groups)
-                    .push(
-                        Row::new()
-                            .spacing(12)
-                            .align_y(Alignment::Center)
-                            .push(if duplicate {
-                                Element::from(
-                                    text(localized_copy("Two payment addresses are the same"))
-                                        .size(P2_SIZE)
-                                        .style(theme::text::warning),
-                                )
-                            } else {
-                                // Keep the warning slot in the Row even when
-                                // it draws nothing. Fixed(0) is dropped by
-                                // Row::push and would move Add recipient's state.
-                                Row::new().into()
-                            })
-                            .push(Space::new().width(Length::Fill))
-                            // Recipients cannot be added for recovery (exactly one recipient).
-                            .push_maybe(recovery_timelock.is_none().then(|| {
-                                quiet_action(
-                                    ADD_RECIPIENT_ID,
-                                    Some(icon::plus_icon()),
-                                    coincube_ui::locale::copy("Add recipient"),
-                                    Message::CreateSpend(CreateSpendMessage::AddRecipient),
-                                )
-                            })),
-                    ),
-            ))
-            .into()
-    };
 
-    let fee_section = Column::new()
-        .spacing(10)
-        .push(
-            Row::new()
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .push(
-                    section_label(coincube_ui::locale::copy("Fee rate (sat/vB)"))
-                        .width(Length::Fill),
-                )
-                .push(
-                    Container::new(
-                        Row::with_children(
-                            FEERATE_PRESETS
-                                .iter()
-                                .map(|&(label, block_target)| {
-                                    feerate_preset_button(
-                                        label,
-                                        block_target,
-                                        loading_fee_estimate,
-                                        selected_feerate_target.filter(|_| !custom_feerate),
-                                    )
-                                })
-                                .chain(std::iter::once(feerate_custom_button(custom_feerate))),
-                        )
-                        .spacing(PRESET_SPACING),
-                    )
-                    .padding(2)
-                    .style(|theme: &theme::Theme| {
-                        iced::widget::container::Style {
-                            background: Some(Background::Color(theme.colors.shell.background)),
-                            border: Border {
-                                color: theme.colors.shell.line,
-                                width: 1.0,
-                                radius: 10.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }),
-                ),
-        )
-        // Custom reveals the field; a preset fills it and shows its rate.
-        .push(if custom_feerate {
-            Element::from(
-                Container::new(
-                    form::Form::new_trimmed(
-                        localized_copy("42 (in sats/vbyte)"),
-                        feerate,
-                        move |msg| Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg)),
-                    )
-                    .warning(localized_copy(
-                        "Feerate must be an integer less than or equal to 1000 sats/vbyte",
-                    ))
-                    .size(P1_SIZE)
-                    .padding(10),
-                )
-                .width(Length::Fixed(240.0)),
-            )
-        } else {
-            text(
-                if loading_fee_estimate.is_some() || feerate.value.is_empty() {
-                    "Fetching the fee estimate…".to_string()
-                } else {
-                    format!("{} sat/vB", feerate.value)
-                },
-            )
-            .size(P2_SIZE)
-            .style(theme::text::secondary)
-            .into()
-        })
-        .push_maybe(fee_amount.map(|fee| {
-            Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(
-                    p2_regular(localized_copy("Fee for this transaction"))
-                        .style(theme::text::secondary),
-                )
-                .push(amount_with_size(fee, P1_SIZE))
-                .push(fiat_converter.map(|conv| {
-                    conv.convert(*fee)
-                        .to_text()
-                        .size(P2_SIZE)
-                        .style(theme::text::secondary)
-                }))
-                .wrap()
-        }));
+    let fee_section = spend_fee_section(
+        loading_fee_estimate,
+        selected_feerate_target,
+        custom_feerate,
+        feerate,
+        fee_amount,
+        fiat_converter,
+    );
 
     // Until the user chooses coins, the draft picks them: the section says
     // so and offers Choose coins, which opens the list below.
@@ -919,170 +636,35 @@ pub fn create_spend_tx<'a>(
                 .push(
                     section_label(coincube_ui::locale::copy("Coin selection")).width(Length::Fill),
                 )
-                .push(if is_self_send || recovery_timelock.is_some() {
-                    Row::new()
-                        .spacing(5)
-                        .push(amount_with_size(
-                            &Amount::from_sat(
-                                coins
-                                    .iter()
-                                    .filter_map(|(coin, selected)| {
-                                        if *selected {
-                                            Some(coin.amount.to_sat())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .sum(),
-                            ),
-                            P2_SIZE,
-                        ))
-                        .push(p2_regular("selected").style(theme::text::secondary))
-                } else if let Some(amount_left) = amount_left {
-                    if amount_left.to_sat() == 0 && !is_valid {
-                        // If amount left is set, the current configuration must be redraftable.
-                        // If it's not valid, either no coins are selected or there's a recipient
-                        // with max selected and invalid amount.
-                        if coins.iter().all(|(_, selected)| !selected) {
-                            // This can happen if we have a single recipient
-                            // and it has the max selected.
-                            Row::new().push(
-                                text(localized_copy("Select at least one coin."))
-                                    .style(theme::text::secondary),
-                            )
-                        } else {
-                            // There must be a recipient with max selected and value 0.
-                            Row::new().push(
-                                text(localized_copy("Check max amount for recipient."))
-                                    .style(theme::text::secondary),
-                            )
-                        }
-                    } else {
-                        Row::new()
-                            .spacing(5)
-                            .push(amount_with_size(amount_left, P2_SIZE))
-                            .push(
-                                p2_regular(localized_copy("left to select"))
-                                    .style(theme::text::secondary),
-                            )
-                    }
-                } else {
-                    Row::new().push(
-                        text(if feerate.value.is_empty() || !feerate.valid {
-                            localized_copy("Feerate needs to be set.")
-                        } else if !max_under_dust {
-                            localized_copy("Add recipient details.")
-                        } else {
-                            localized_copy("Select or add more funds.")
-                        })
-                        .style(theme::text::secondary),
-                    )
-                }),
+                .push(spend_coin_selection_status(
+                    is_self_send,
+                    recovery_timelock,
+                    coins,
+                    amount_left,
+                    is_valid,
+                    feerate,
+                    max_under_dust,
+                )),
         )
-        .push(
-            Container::new(
-                scrollable(coins.iter().enumerate().fold(
-                    Column::new().spacing(0),
-                    |col, (i, (coin, selected))| {
-                        let col = if i == 0 {
-                            col
-                        } else {
-                            col.push(compose_divider())
-                        };
-                        col.push(coin_list_view(
-                            i,
-                            coin,
-                            coins_labels,
-                            timelock,
-                            cache.blockheight() as u32,
-                            *selected,
-                            bitcoin_unit,
-                        ))
-                    },
-                ))
-                // Iced's default 10px scrollbar floats over its content.
-                // Embed it with a 2px gap so the coin unit remains legible.
-                .spacing(2.0),
-            )
-            .max_height(300),
-        );
+        .push(spend_coin_scroll(
+            coins,
+            coins_labels,
+            timelock,
+            cache,
+            bitcoin_unit,
+        ));
 
-    let hint: Element<'a, Message> = if let Some(hint) = disabled_hint {
-        Row::new()
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .push(
-                icon::warning_icon()
-                    .size(P2_SIZE)
-                    .style(theme::text::warning),
-            )
-            .push(
-                text(coincube_ui::locale::notice(hint))
-                    .size(P2_SIZE)
-                    .style(theme::text::warning),
-            )
-            .into()
-    } else if generating {
-        text(localized_copy("Preparing the unsigned transaction."))
-            .size(P2_SIZE)
-            .style(theme::text::secondary)
-            .into()
-    } else {
-        text(localized_copy("Builds an unsigned transaction to review."))
-            .size(P2_SIZE)
-            .style(theme::text::secondary)
-            .into()
-    };
-
-    let threshold_line = threshold.and_then(|(threshold, keys)| threshold_footer(threshold, keys));
-    let footer = Container::new(
-        Column::new()
-            .spacing(10)
-            .push(
-                Row::new()
-                    .spacing(12)
-                    .align_y(Alignment::Center)
-                    .push_maybe((!is_first_step).then(|| {
-                        quiet_action(
-                            BACK_ID,
-                            Some(icon::previous_icon()),
-                            coincube_ui::locale::copy("Back"),
-                            Message::Previous,
-                        )
-                    }))
-                    .push(Container::new(hint).width(Length::Fill))
-                    .push(quiet_action(
-                        CLEAR_ID,
-                        None,
-                        coincube_ui::locale::copy("Clear"),
-                        Message::CreateSpend(CreateSpendMessage::Clear),
-                    ))
-                    .push(prepare_action(can_proceed, generating)),
-            )
-            .push_maybe(
-                threshold_line.map(|line| text(line).size(P2_SIZE).style(theme::text::secondary)),
-            ),
-    )
-    .padding([16, 24])
-    .width(Length::Fill);
+    let footer = spend_compose_footer(
+        disabled_hint,
+        generating,
+        threshold,
+        is_first_step,
+        can_proceed,
+    );
 
     let compose_card = Container::new(
         Column::new()
-            .push(
-                Container::new(
-                    text(if recovery_timelock.is_some() {
-                        localized_copy("Recovery details")
-                    } else if is_self_send {
-                        localized_copy("Transfer details")
-                    } else {
-                        localized_copy("Payment details")
-                    })
-                    .size(H5_SIZE)
-                    .font(font::SEMIBOLD),
-                )
-                .padding([18, 24])
-                .width(Length::Fill),
-            )
+            .push(spend_compose_heading(recovery_timelock, is_self_send))
             .push(recipients_block)
             .push(compose_divider())
             .push(compose_section(fee_section))
@@ -1302,97 +884,8 @@ pub fn recipient_view<'a>(
                         Row::new()
                             .align_y(Alignment::Center)
                             .spacing(5)
-                            .push(if is_max_selected {
-                                let amount_txt = btc_amt
-                                    .map(|a| a.to_formatted_string_with_unit(bitcoin_unit))
-                                    .unwrap_or(amount.value.clone());
-                                Container::new(
-                                    text(amount_txt).size(P1_SIZE).style(theme::text::secondary),
-                                )
-                                .width(Length::Fill)
-                            } else {
-
-                                let form = match bitcoin_unit {
-                                    BitcoinDisplayUnit::BTC => {
-                                        form::Form::new_amount_btc(coincube_ui::locale::copy("0.001 (in BTC)"), amount, move |msg| {
-                                            CreateSpendMessage::RecipientEdited(index, "amount", msg)
-                                        })
-                                        .warning(localized_copy("Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)"))
-                                    }
-                                    BitcoinDisplayUnit::Sats => {
-                                        form::Form::new_amount_sats(coincube_ui::locale::copy("100 000 (in sats)"), amount, move |msg| {
-                                            CreateSpendMessage::RecipientEdited(index, "amount", msg)
-                                        })
-                                        .warning(localized_copy("Invalid amount. (Note amounts lower than 500 sats are invalid.)"))
-                                    }
-                                };
-
-                                form
-                                .invalid(insufficient)
-                                .size(P1_SIZE)
-                                .padding(10)
-                                .into_container()
-                            })
-                            .push(fiat_converter.map(|conv| {
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .spacing(5)
-                                    .push(Space::new().width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
-                                    // Don't show an empty fiat label when max is selected but no amount is known yet.
-                                    .push((!is_max_selected || btc_amt.is_some())
-                                        .then_some(p1_bold(format!("{}", conv.currency()))))
-                                    .push(Space::new().width(Length::Fixed(5.0)))
-                                    .push(if is_max_selected {
-                                        // fiat is derived from the btc amount; hide it entirely when unknown.
-                                        btc_amt.map(|a| {
-                                            let fiat_from_btc = conv.convert(a).to_formatted_string();
-                                            Container::new(
-                                                text(fiat_from_btc)
-                                                    .size(P1_SIZE)
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .width(Length::Fill)
-                                        })
-                                    } else {
-                                        let conv = *conv;
-                                        // The particular form shown depends on whether the user has entered a fiat amount or
-                                        // if we are instead converting the BTC amount.
-                                        let fiat_form = if let Some(val) = fiat_form_value {
-                                            val
-                                        } else if let Some(btc_amt) = btc_amt {
-                                            let fa = conv.convert(btc_amt);
-                                            &form::Value {
-                                                value: fa.to_rounded_string(), // required decimal places for currency
-                                                warning: None,
-                                                valid: true,
-                                            }
-                                        } else {
-                                            &form::Value::default()
-                                        };
-                                        Some(
-                                            form::Form::new_trimmed(
-                                                &localized_format!("Enter amount in {}", "Introduce el importe en {}", conv.currency()),
-                                                fiat_form,
-                                                move |msg| {
-                                                    CreateSpendMessage::RecipientFiatAmountEdited(
-                                                        index, msg, conv,
-                                                    )
-                                                },
-                                            )
-                                            .size(P1_SIZE)
-                                            .padding(10)
-                                            .into_container(),
-                                        )
-                                    })
-                                    .push((!is_max_selected || btc_amt.is_some()).then_some(
-                                        tooltip::Tooltip::new(
-                                            icon::tooltip_icon(),
-                                            conv.to_container_summary(),
-                                            tooltip::Position::Bottom,
-                                        ),
-                                    ))
-                                    .push(Space::new().width(Length::Fixed(10.0)))
-                            })),
+                            .push(recipient_bitcoin_input(index, amount, is_max_selected, btc_amt, bitcoin_unit, insufficient))
+                            .push(recipient_fiat_input(index, fiat_converter, is_max_selected, btc_amt, fiat_form_value)),
                     )
                     .push(
                         // The MAX option cannot be edited for recovery recipients.
@@ -1484,6 +977,700 @@ fn coin_list_view<'a>(
             ..Default::default()
         })
         .into()
+}
+
+fn spend_review_actions<'a>(
+    saved: bool,
+    currently_signing: bool,
+    mcp_review: bool,
+) -> coincube_ui::widget::Row<'a, Message> {
+    if saved {
+        Row::new()
+            .push(
+                button::secondary(None, localized_copy("Delete"))
+                    .width(Length::Fixed(200.0))
+                    .on_press_maybe(if currently_signing {
+                        None
+                    } else {
+                        Some(Message::Spend(SpendTxMessage::Delete))
+                    }),
+            )
+            .width(Length::Fill)
+    } else {
+        unsaved_spend_review_actions(currently_signing, mcp_review)
+    }
+}
+
+fn spend_review_warnings<'a>(
+    spend_warnings: &'a [String],
+    saved: bool,
+) -> Option<coincube_ui::widget::Column<'a, Message>> {
+    if spend_warnings.is_empty() || saved {
+        None
+    } else {
+        Some(
+            spend_warnings
+                .iter()
+                .fold(Column::new().padding(15).spacing(5), |col, warning| {
+                    col.push(
+                        Row::new()
+                            .spacing(5)
+                            .push(icon::warning_icon().style(theme::text::warning))
+                            .push(text(warning).style(theme::text::warning)),
+                    )
+                }),
+        )
+    }
+}
+
+fn incomplete_spend_hint(
+    feerate: &form::Value<String>,
+    duplicate: bool,
+    coins: &[(Coin, bool)],
+    is_self_send: bool,
+    recovery_timelock: Option<u16>,
+    amount_left: Option<&Amount>,
+    draft_warning: Option<String>,
+) -> Option<String> {
+    if feerate.value.is_empty() {
+        Some("Please set a feerate.".to_string())
+    } else if !feerate.valid {
+        Some("Invalid feerate.".to_string())
+    } else if duplicate {
+        Some("Duplicate recipient address.".to_string())
+    } else if coins.iter().all(|(_, selected)| !selected) {
+        Some("Please select at least one coin.".to_string())
+    } else if !is_self_send && recovery_timelock.is_none() {
+        match amount_left {
+            // `amount_left` is only `None` once the recipient and amount are
+            // filled in but the background draft could not produce a result.
+            // If that draft failed with an error, show it rather than the
+            // generic "enter recipient/amount" hint, which is misleading once
+            // the fields are actually populated.
+            None => Some(
+                draft_warning.unwrap_or_else(|| "Enter recipient address and amount.".to_string()),
+            ),
+            Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds.".to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn spend_available_balance<'a>(
+    balance: &'a Amount,
+    mask_amounts: bool,
+    sync_status: &SyncStatus,
+    fiat_balance: Option<crate::app::view::vault::fiat::FiatAmount>,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> coincube_ui::widget::Column<'a, Message> {
+    Column::new()
+        .spacing(8)
+        .push(caption(localized_copy("Available in Vault")).style(theme::text::secondary))
+        .push(
+            if mask_amounts {
+                Column::new().push(text("••••••").size(H2_SIZE))
+            } else if sync_status.is_synced() {
+                Column::new()
+                    .spacing(5)
+                    .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
+                    .push_maybe(
+                        fiat_balance
+                            .map(|fiat| fiat.to_text().size(P2_SIZE).style(theme::text::secondary)),
+                    )
+            } else {
+                Column::new().push(Row::new().push(spinner::Carousel::new(
+                    Duration::from_millis(1000),
+                    vec![
+                        amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit),
+                        amount_with_size_colors_and_unit(
+                            balance,
+                            H2_SIZE,
+                            color::GREY_3,
+                            Some(color::GREY_3),
+                            bitcoin_unit,
+                        ),
+                    ],
+                )))
+            }
+            .wrap(),
+        )
+        .push_maybe(if !sync_status.is_synced() {
+            Some(
+                Row::new()
+                    .push(
+                        match sync_status {
+                            SyncStatus::BlockchainSync(progress) => text(localized_format!(
+                                "Syncing blockchain ({:.2}%)",
+                                "Sincing blockchain ({:.2}%)",
+                                crate::utils::syncing_percent(*progress)
+                            )),
+                            SyncStatus::WalletFullScan { .. } => text(localized_copy("Syncing")),
+                            SyncStatus::SyncFailing { .. } => text(localized_copy(
+                                "Wallet sync is failing; the balance may be out of date",
+                            )),
+                            _ => text(localized_copy("Checking for new transactions")),
+                        }
+                        .style(theme::text::secondary),
+                    )
+                    .push(spinner::typing_text_carousel(
+                        "...",
+                        true,
+                        Duration::from_millis(2000),
+                        |content| text(content).style(theme::text::secondary),
+                    )),
+            )
+        } else {
+            None
+        })
+}
+
+fn spend_recipients_block<'a>(
+    recipient_groups: coincube_ui::widget::Column<'a, Message>,
+    is_self_send: bool,
+    recovery_timelock: Option<u16>,
+    is_batch: bool,
+    batch_label: &form::Value<String>,
+    duplicate: bool,
+) -> Element<'a, Message> {
+    let recipients_block: Element<'a, Message> = if is_self_send {
+        // An empty Column has zero rendered height but a non-void size hint,
+        // so the fee section keeps its position in Iced's widget tree.
+        Column::new().width(Length::Fill).into()
+    } else {
+        Column::new()
+            .push(compose_divider())
+            .push(compose_section(
+                Column::new()
+                    .spacing(8)
+                    .push(section_label(if recovery_timelock.is_some() {
+                        "Recipient"
+                    } else {
+                        "Recipients"
+                    }))
+                    // Keep this slot in the Column's tree when the label is absent.
+                    // A zero-height Space is discarded by Column::push and shifts
+                    // recipient input state when a second recipient is added.
+                    .push(
+                        Column::new()
+                            .width(Length::Fill)
+                            .push_maybe(is_batch.then(|| {
+                                form::Form::new(
+                                    coincube_ui::locale::copy("Batch label"),
+                                    batch_label,
+                                    |s| {
+                                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(
+                                            s,
+                                        ))
+                                    },
+                                )
+                                .warning(localized_copy(
+                                    "Invalid label length, cannot be superior to 100",
+                                ))
+                                .size(P1_SIZE)
+                                .padding(10)
+                            })),
+                    )
+                    .push(recipient_groups)
+                    .push(
+                        Row::new()
+                            .spacing(12)
+                            .align_y(Alignment::Center)
+                            .push(if duplicate {
+                                Element::from(
+                                    text(localized_copy("Two payment addresses are the same"))
+                                        .size(P2_SIZE)
+                                        .style(theme::text::warning),
+                                )
+                            } else {
+                                // Keep the warning slot in the Row even when
+                                // it draws nothing. Fixed(0) is dropped by
+                                // Row::push and would move Add recipient's state.
+                                Row::new().into()
+                            })
+                            .push(Space::new().width(Length::Fill))
+                            // Recipients cannot be added for recovery (exactly one recipient).
+                            .push_maybe(recovery_timelock.is_none().then(|| {
+                                quiet_action(
+                                    ADD_RECIPIENT_ID,
+                                    Some(icon::plus_icon()),
+                                    coincube_ui::locale::copy("Add recipient"),
+                                    Message::CreateSpend(CreateSpendMessage::AddRecipient),
+                                )
+                            })),
+                    ),
+            ))
+            .into()
+    };
+
+    recipients_block
+}
+
+fn spend_fee_section<'a>(
+    loading_fee_estimate: Option<usize>,
+    selected_feerate_target: Option<usize>,
+    custom_feerate: bool,
+    feerate: &form::Value<String>,
+    fee_amount: Option<&Amount>,
+    fiat_converter: Option<&FiatAmountConverter>,
+) -> coincube_ui::widget::Column<'a, Message> {
+    let fee_section = Column::new()
+        .spacing(10)
+        .push(
+            Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(
+                    section_label(coincube_ui::locale::copy("Fee rate (sat/vB)"))
+                        .width(Length::Fill),
+                )
+                .push(
+                    Container::new(
+                        Row::with_children(
+                            FEERATE_PRESETS
+                                .iter()
+                                .map(|&(label, block_target)| {
+                                    feerate_preset_button(
+                                        label,
+                                        block_target,
+                                        loading_fee_estimate,
+                                        selected_feerate_target.filter(|_| !custom_feerate),
+                                    )
+                                })
+                                .chain(std::iter::once(feerate_custom_button(custom_feerate))),
+                        )
+                        .spacing(PRESET_SPACING),
+                    )
+                    .padding(2)
+                    .style(|theme: &theme::Theme| {
+                        iced::widget::container::Style {
+                            background: Some(Background::Color(theme.colors.shell.background)),
+                            border: Border {
+                                color: theme.colors.shell.line,
+                                width: 1.0,
+                                radius: 10.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }),
+                ),
+        )
+        // Custom reveals the field; a preset fills it and shows its rate.
+        .push(if custom_feerate {
+            Element::from(
+                Container::new(
+                    form::Form::new_trimmed(
+                        localized_copy("42 (in sats/vbyte)"),
+                        feerate,
+                        move |msg| Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg)),
+                    )
+                    .warning(localized_copy(
+                        "Feerate must be an integer less than or equal to 1000 sats/vbyte",
+                    ))
+                    .size(P1_SIZE)
+                    .padding(10),
+                )
+                .width(Length::Fixed(240.0)),
+            )
+        } else {
+            text(
+                if loading_fee_estimate.is_some() || feerate.value.is_empty() {
+                    "Fetching the fee estimate…".to_string()
+                } else {
+                    format!("{} sat/vB", feerate.value)
+                },
+            )
+            .size(P2_SIZE)
+            .style(theme::text::secondary)
+            .into()
+        })
+        .push_maybe(fee_amount.map(|fee| {
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(localized_copy("Fee for this transaction"))
+                        .style(theme::text::secondary),
+                )
+                .push(amount_with_size(fee, P1_SIZE))
+                .push(fiat_converter.map(|conv| {
+                    conv.convert(*fee)
+                        .to_text()
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary)
+                }))
+                .wrap()
+        }));
+
+    fee_section
+}
+
+fn spend_coin_selection_status<'a>(
+    is_self_send: bool,
+    recovery_timelock: Option<u16>,
+    coins: &[(Coin, bool)],
+    amount_left: Option<&Amount>,
+    is_valid: bool,
+    feerate: &form::Value<String>,
+    max_under_dust: bool,
+) -> coincube_ui::widget::Row<'a, Message> {
+    if is_self_send || recovery_timelock.is_some() {
+        Row::new()
+            .spacing(5)
+            .push(amount_with_size(
+                &Amount::from_sat(
+                    coins
+                        .iter()
+                        .filter_map(|(coin, selected)| {
+                            if *selected {
+                                Some(coin.amount.to_sat())
+                            } else {
+                                None
+                            }
+                        })
+                        .sum(),
+                ),
+                P2_SIZE,
+            ))
+            .push(p2_regular("selected").style(theme::text::secondary))
+    } else if let Some(amount_left) = amount_left {
+        remaining_coin_selection_status(amount_left, is_valid, coins)
+    } else {
+        Row::new().push(
+            text(if feerate.value.is_empty() || !feerate.valid {
+                localized_copy("Feerate needs to be set.")
+            } else if !max_under_dust {
+                localized_copy("Add recipient details.")
+            } else {
+                localized_copy("Select or add more funds.")
+            })
+            .style(theme::text::secondary),
+        )
+    }
+}
+
+fn remaining_coin_selection_status<'a>(
+    amount_left: &Amount,
+    is_valid: bool,
+    coins: &[(Coin, bool)],
+) -> coincube_ui::widget::Row<'a, Message> {
+    if amount_left.to_sat() == 0 && !is_valid {
+        // If amount left is set, the current configuration must be redraftable.
+        // If it's not valid, either no coins are selected or there's a recipient
+        // with max selected and invalid amount.
+        if coins.iter().all(|(_, selected)| !selected) {
+            // This can happen if we have a single recipient
+            // and it has the max selected.
+            Row::new().push(
+                text(localized_copy("Select at least one coin.")).style(theme::text::secondary),
+            )
+        } else {
+            // There must be a recipient with max selected and value 0.
+            Row::new().push(
+                text(localized_copy("Check max amount for recipient."))
+                    .style(theme::text::secondary),
+            )
+        }
+    } else {
+        Row::new()
+            .spacing(5)
+            .push(amount_with_size(amount_left, P2_SIZE))
+            .push(p2_regular(localized_copy("left to select")).style(theme::text::secondary))
+    }
+}
+
+fn recipient_bitcoin_input<'a>(
+    index: usize,
+    amount: &'a form::Value<String>,
+    is_max_selected: bool,
+    btc_amt: Option<Amount>,
+    bitcoin_unit: BitcoinDisplayUnit,
+    insufficient: bool,
+) -> coincube_ui::widget::Container<'a, CreateSpendMessage> {
+    if is_max_selected {
+        let amount_txt = btc_amt
+            .map(|a| a.to_formatted_string_with_unit(bitcoin_unit))
+            .unwrap_or(amount.value.clone());
+        Container::new(text(amount_txt).size(P1_SIZE).style(theme::text::secondary))
+            .width(Length::Fill)
+    } else {
+        let form = match bitcoin_unit {
+            BitcoinDisplayUnit::BTC => form::Form::new_amount_btc(
+                coincube_ui::locale::copy("0.001 (in BTC)"),
+                amount,
+                move |msg| CreateSpendMessage::RecipientEdited(index, "amount", msg),
+            )
+            .warning(localized_copy(
+                "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)",
+            )),
+            BitcoinDisplayUnit::Sats => form::Form::new_amount_sats(
+                coincube_ui::locale::copy("100 000 (in sats)"),
+                amount,
+                move |msg| CreateSpendMessage::RecipientEdited(index, "amount", msg),
+            )
+            .warning(localized_copy(
+                "Invalid amount. (Note amounts lower than 500 sats are invalid.)",
+            )),
+        };
+
+        form.invalid(insufficient)
+            .size(P1_SIZE)
+            .padding(10)
+            .into_container()
+    }
+}
+
+fn recipient_fiat_input<'a>(
+    index: usize,
+    fiat_converter: Option<&FiatAmountConverter>,
+    is_max_selected: bool,
+    btc_amt: Option<Amount>,
+    fiat_form_value: Option<&form::Value<String>>,
+) -> Option<coincube_ui::widget::Row<'a, CreateSpendMessage>> {
+    fiat_converter.map(|conv| {
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(5)
+            .push(Space::new().width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
+            // Don't show an empty fiat label when max is selected but no amount is known yet.
+            .push(
+                (!is_max_selected || btc_amt.is_some())
+                    .then_some(p1_bold(format!("{}", conv.currency()))),
+            )
+            .push(Space::new().width(Length::Fixed(5.0)))
+            .push(if is_max_selected {
+                // fiat is derived from the btc amount; hide it entirely when unknown.
+                btc_amt.map(|a| {
+                    let fiat_from_btc = conv.convert(a).to_formatted_string();
+                    Container::new(
+                        text(fiat_from_btc)
+                            .size(P1_SIZE)
+                            .style(theme::text::secondary),
+                    )
+                    .width(Length::Fill)
+                })
+            } else {
+                let conv = *conv;
+                // The particular form shown depends on whether the user has entered a fiat amount or
+                // if we are instead converting the BTC amount.
+                let fiat_form = if let Some(val) = fiat_form_value {
+                    val
+                } else if let Some(btc_amt) = btc_amt {
+                    let fa = conv.convert(btc_amt);
+                    &form::Value {
+                        value: fa.to_rounded_string(), // required decimal places for currency
+                        warning: None,
+                        valid: true,
+                    }
+                } else {
+                    &form::Value::default()
+                };
+                Some(
+                    form::Form::new_trimmed(
+                        &localized_format!(
+                            "Enter amount in {}",
+                            "Introduce el importe en {}",
+                            conv.currency()
+                        ),
+                        fiat_form,
+                        move |msg| CreateSpendMessage::RecipientFiatAmountEdited(index, msg, conv),
+                    )
+                    .size(P1_SIZE)
+                    .padding(10)
+                    .into_container(),
+                )
+            })
+            .push(
+                (!is_max_selected || btc_amt.is_some()).then_some(tooltip::Tooltip::new(
+                    icon::tooltip_icon(),
+                    conv.to_container_summary(),
+                    tooltip::Position::Bottom,
+                )),
+            )
+            .push(Space::new().width(Length::Fixed(10.0)))
+    })
+}
+
+fn unsaved_spend_review_actions<'a>(
+    currently_signing: bool,
+    mcp_review: bool,
+) -> coincube_ui::widget::Row<'a, Message> {
+    Row::new()
+        .push(
+            button::secondary(None, "< Back")
+                .width(Length::Fixed(150.0))
+                .on_press_maybe(if currently_signing {
+                    None
+                } else {
+                    Some(Message::Previous)
+                }),
+        )
+        .push(Space::new().width(Length::Fill))
+        .push(
+            button::secondary(
+                None,
+                if mcp_review {
+                    localized_copy("Sign in COINCUBE Desktop")
+                } else {
+                    localized_copy("Save")
+                },
+            )
+            .width(Length::Fixed(if mcp_review { 180.0 } else { 150.0 }))
+            .on_press_maybe(if currently_signing {
+                None
+            } else if mcp_review {
+                #[cfg(feature = "mcp-transactions")]
+                {
+                    Some(Message::Spend(SpendTxMessage::ContinueNativeSigning))
+                }
+                #[cfg(not(feature = "mcp-transactions"))]
+                {
+                    None
+                }
+            } else {
+                Some(Message::Spend(SpendTxMessage::Save))
+            }),
+        )
+        .width(Length::Fill)
+}
+
+fn spend_recipient_groups<'a>(
+    recipients: Vec<Element<'a, Message>>,
+) -> coincube_ui::widget::Column<'a, Message> {
+    let recipient_groups = recipients.into_iter().enumerate().fold(
+        Column::new().spacing(16),
+        |column, (index, recipient)| {
+            if index == 0 {
+                column.push(recipient)
+            } else {
+                column.push(compose_divider()).push(recipient)
+            }
+        },
+    );
+    recipient_groups
+}
+
+fn spend_coin_scroll<'a>(
+    coins: &[(Coin, bool)],
+    coins_labels: &'a HashMap<String, String>,
+    timelock: Option<u16>,
+    cache: &Cache,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> coincube_ui::widget::Container<'a, Message> {
+    Container::new(
+        scrollable(coins.iter().enumerate().fold(
+            Column::new().spacing(0),
+            |col, (i, (coin, selected))| {
+                let col = if i == 0 {
+                    col
+                } else {
+                    col.push(compose_divider())
+                };
+                col.push(coin_list_view(
+                    i,
+                    coin,
+                    coins_labels,
+                    timelock,
+                    cache.blockheight() as u32,
+                    *selected,
+                    bitcoin_unit,
+                ))
+            },
+        ))
+        // Iced's default 10px scrollbar floats over its content.
+        // Embed it with a 2px gap so the coin unit remains legible.
+        .spacing(2.0),
+    )
+    .max_height(300)
+}
+
+fn spend_compose_footer<'a>(
+    disabled_hint: Option<String>,
+    generating: bool,
+    threshold: Option<(usize, usize)>,
+    is_first_step: bool,
+    can_proceed: bool,
+) -> coincube_ui::widget::Container<'a, Message> {
+    let hint: Element<'a, Message> = if let Some(hint) = disabled_hint {
+        Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(
+                icon::warning_icon()
+                    .size(P2_SIZE)
+                    .style(theme::text::warning),
+            )
+            .push(
+                text(coincube_ui::locale::notice(hint))
+                    .size(P2_SIZE)
+                    .style(theme::text::warning),
+            )
+            .into()
+    } else if generating {
+        text(localized_copy("Preparing the unsigned transaction."))
+            .size(P2_SIZE)
+            .style(theme::text::secondary)
+            .into()
+    } else {
+        text(localized_copy("Builds an unsigned transaction to review."))
+            .size(P2_SIZE)
+            .style(theme::text::secondary)
+            .into()
+    };
+
+    let threshold_line = threshold.and_then(|(threshold, keys)| threshold_footer(threshold, keys));
+    let footer = Container::new(
+        Column::new()
+            .spacing(10)
+            .push(
+                Row::new()
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .push_maybe((!is_first_step).then(|| {
+                        quiet_action(
+                            BACK_ID,
+                            Some(icon::previous_icon()),
+                            coincube_ui::locale::copy("Back"),
+                            Message::Previous,
+                        )
+                    }))
+                    .push(Container::new(hint).width(Length::Fill))
+                    .push(quiet_action(
+                        CLEAR_ID,
+                        None,
+                        coincube_ui::locale::copy("Clear"),
+                        Message::CreateSpend(CreateSpendMessage::Clear),
+                    ))
+                    .push(prepare_action(can_proceed, generating)),
+            )
+            .push_maybe(
+                threshold_line.map(|line| text(line).size(P2_SIZE).style(theme::text::secondary)),
+            ),
+    )
+    .padding([16, 24])
+    .width(Length::Fill);
+
+    footer
+}
+
+fn spend_compose_heading<'a>(
+    recovery_timelock: Option<u16>,
+    is_self_send: bool,
+) -> coincube_ui::widget::Container<'a, Message> {
+    Container::new(
+        text(if recovery_timelock.is_some() {
+            localized_copy("Recovery details")
+        } else if is_self_send {
+            localized_copy("Transfer details")
+        } else {
+            localized_copy("Payment details")
+        })
+        .size(H5_SIZE)
+        .font(font::SEMIBOLD),
+    )
+    .padding([18, 24])
+    .width(Length::Fill)
 }
 
 #[cfg(test)]
@@ -2355,65 +2542,21 @@ mod tests {
         for (appearance, mode, theme) in themes() {
             let fixture = Fixture::new(mode, 3);
             for outer in [COMPACT, WIDE] {
-                for Case {
+                for case @ Case {
                     name,
                     scenario,
                     present,
                     absent,
-                    prepare_enabled,
-                    add_shown,
+                    prepare_enabled: _,
+                    add_shown: _,
                 } in &cases
                 {
                     let mut harness = Harness::new(compose(&fixture, scenario), outer);
                     let probe = harness.probe();
                     let context = format!("{name} {appearance} {outer:?}");
-                    for text in present.iter() {
-                        assert!(probe.contains(text), "{}: missing {:?}", context, text);
-                    }
-                    for text in absent.iter() {
-                        assert!(!probe.contains(text), "{}: unexpected {:?}", context, text);
-                    }
-                    for (text, bounds) in &probe.text {
-                        assert!(
-                            bounds.x >= -1.0 && bounds.x + bounds.width <= outer.0 as f32 + 1.0,
-                            "{}: {:?} at {:?} leaves the window",
-                            context,
-                            text,
-                            bounds
-                        );
-                    }
-                    assert_eq!(probe.has_focus(&prepare), *prepare_enabled, "{context}");
-                    assert_eq!(probe.has_focus(&add), *add_shown, "{context}");
-                    assert_eq!(probe.has_focus(&back), !scenario.first_step, "{context}");
-                    assert!(probe.has_focus(&clear), "{}", context);
-                    for (_, block_target) in FEERATE_PRESETS {
-                        assert!(probe.has_focus(&preset(block_target)), "{}", context);
-                    }
-                    // Native editing stays native: the fee form, every passed
-                    // recipient form, and the batch label for 2+ recipients.
-                    let inputs = probe.inputs();
-                    let custom = fee_is_custom(scenario);
-                    assert!(
-                        !custom
-                            || inputs.contains(&scenario.feerate.0)
-                            || (scenario.feerate.0.is_empty()
-                                && inputs.contains(&"42 (in sats/vbyte)")),
-                        "{}: fee input {:?}",
-                        context,
-                        inputs
-                    );
-                    assert!(probe.has_focus(&Id::new(FEERATE_CUSTOM_ID)), "{}", context);
-                    assert_eq!(
-                        inputs.contains(&"Batch label"),
-                        scenario.recipients > 1,
-                        "{context}: {inputs:?}"
-                    );
-                    assert_eq!(
-                        inputs.len(),
-                        usize::from(custom)
-                            + 3 * scenario.recipients
-                            + usize::from(scenario.recipients > 1),
-                        "{context}: {inputs:?}"
+                    assert_compose_case_text(&probe, present, absent, outer, &context);
+                    assert_compose_case_controls(
+                        &probe, case, &add, &back, &clear, &prepare, &context,
                     );
                     harness.capture(name, appearance, &theme);
                     if capture_tall
@@ -3080,71 +3223,8 @@ mod tests {
                 for outer in [COMPACT, WIDE] {
                     let mut harness = Harness::new(compose(&fixture, &scenario), outer);
                     let probe = harness.probe();
-                    assert!(probe.contains("Recipient 1"), "{} {}", name, appearance);
-                    assert!(probe.contains("Address") && probe.contains("Description"));
-                    assert_eq!(probe.contains("Remove"), name != "recovery");
-                    assert_eq!(probe.contains("Recipient 2"), name == "batch-btc");
-                    assert_eq!(probe.contains("Amount BTC"), name == "batch-btc");
-                    assert_eq!(probe.contains("Amount (sats)"), name != "batch-btc");
-                    assert_eq!(probe.contains("USD"), name == "fiat-editing");
-                    if name == "fiat-editing" {
-                        assert!(
-                            probe
-                                .inputs()
-                                .windows(2)
-                                .any(|pair| pair == ["5000", "2.50"]),
-                            "fiat preview must pair 5,000 sats with USD 2.50"
-                        );
-                    }
-                    if name == "recovery" {
-                        assert!(!probe.contains("MAX"));
-                    }
-                    if outer == COMPACT && (name == "coin-mix" || name == "batch-btc") {
-                        let expected_amount = match scenario.unit {
-                            BitcoinDisplayUnit::Sats => "50,000",
-                            BitcoinDisplayUnit::BTC => "50 000",
-                        };
-                        let label = probe.text.iter().find(|(text, _)| text ==
-                            "Long-term savings for the extended household and future school expenses")
-                            .map(|(_, bounds)| *bounds).expect("long coin label");
-                        let amount = probe
-                            .text
-                            .iter()
-                            .find(|(text, bounds)| {
-                                text == expected_amount
-                                    && bounds.y < label.y + label.height
-                                    && bounds.y + bounds.height > label.y
-                            })
-                            .map(|(_, bounds)| *bounds)
-                            .expect("same-row amount");
-                        let checkbox = harness.coin_checkbox_bounds(label);
-                        assert!(
-                            checkbox.x >= 0.0
-                                && checkbox.x + checkbox.width < label.x
-                                && checkbox.y < label.y + label.height
-                                && checkbox.y + checkbox.height > label.y,
-                            "actual compact coin checkbox {:?} left of {:?}",
-                            checkbox,
-                            label
-                        );
-                        assert!(
-                            label.width > 0.0
-                                && label.height > 0.0
-                                && label.x + label.width <= amount.x
-                                && amount.x + amount.width <= outer.0 as f32,
-                            "{} compact {:?} label {:?}, amount {:?}",
-                            name,
-                            scenario.unit,
-                            label,
-                            amount
-                        );
-                    }
-                    assert!(
-                        probe.scrollables.iter().any(|(height, content)| {
-                            *height <= 300.5 && (name != "coin-mix" || content > height)
-                        }),
-                        "{}: expected the native coin scroll",
-                        name
+                    assert_dashboard_compose_case(
+                        &harness, &probe, &scenario, name, appearance, outer,
                     );
                     harness.capture_r07c(name, appearance, &theme);
                 }
@@ -3167,28 +3247,6 @@ mod tests {
         // be narrower than the glyphs in a constrained amount row. Measure
         // each actual Iced paragraph again with ample width, preserving its
         // loaded font, size, line height, and shaping from the native Tree.
-        fn full_text_width(tree: &Tree, content: &str) -> f32 {
-            type NativeParagraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
-
-            fn find(tree: &Tree, content: &str) -> Option<f32> {
-                if let iced::advanced::widget::tree::State::Some(state) = &tree.state {
-                    if let Some(paragraph) = state.downcast_ref::<Plain<NativeParagraph>>() {
-                        if paragraph.content() == content
-                            && (paragraph.raw().size().0 - P1_SIZE as f32).abs() < 0.5
-                        {
-                            let mut text = paragraph.as_text();
-                            text.bounds = Size::new(10_000.0, 100.0);
-                            return Some(NativeParagraph::with_text(text).min_bounds().width);
-                        }
-                    }
-                }
-                tree.children.iter().find_map(|child| find(child, content))
-            }
-
-            find(tree, content)
-                .unwrap_or_else(|| panic!("native P1 paragraph absent for {:?}", content))
-        }
-
         for (appearance, mode, _) in themes() {
             for name in ["single-sats", "batch-btc", "coin-mix"] {
                 let (fixture, scenario) = r07c_case(mode, name);
@@ -3198,144 +3256,15 @@ mod tests {
                 };
                 for outer in [COMPACT, WIDE, TALL] {
                     let mut harness = Harness::new(compose(&fixture, &scenario), outer);
-                    let probe = harness.probe();
-                    assert_eq!(probe.scrollable_bounds.len(), probe.scrollables.len());
-                    let (viewport, (reported_height, content_height)) = probe
-                        .scrollable_bounds
-                        .iter()
-                        .zip(&probe.scrollables)
-                        .find(|(bounds, _)| bounds.height <= 300.5)
-                        .expect("native coin-list viewport");
-                    assert!((viewport.height - *reported_height).abs() < 0.01);
-                    // Iced embeds its 10px rail plus this scroll's 2px gap
-                    // only while the native content exceeds the viewport.
-                    let right_reserve = if *content_height > viewport.height {
-                        12.0
-                    } else {
-                        2.0
-                    };
-                    let viewport = *viewport;
-                    let visible_coin_text: Vec<_> = probe
-                        .text
-                        .iter()
-                        .filter(|(_, bounds)| {
-                            bounds.x >= viewport.x
-                                && bounds.y + bounds.height / 2.0 >= viewport.y
-                                && bounds.y + bounds.height / 2.0 <= viewport.y + viewport.height
-                        })
-                        .collect();
-                    // The second coin has a short identity even in the batch
-                    // fixture, which makes it the useful clipping regression.
-                    // Match its complete split numeric formatting and unit on
-                    // one line, then check those three actual text bounds.
-                    let formatted = fixture.coins[1]
-                        .amount
-                        .to_formatted_string_with_unit(scenario.unit);
-                    let split = formatted
-                        .char_indices()
-                        .find(|(_, character)| character.is_ascii_digit() && *character != '0')
-                        .map(|(index, _)| index)
-                        .expect("nonzero second coin");
-                    let (leading, significant) = formatted.split_at(split);
-                    let amount = visible_coin_text
-                        .iter()
-                        .find_map(|entry| {
-                            let (text, bounds) = *entry;
-                            (text == significant).then_some(*bounds)
-                        })
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{} {} {:?}: missing formatted second coin {:?} in {:?}",
-                                appearance, name, outer, formatted, viewport
-                            )
-                        });
-                    let same_line =
-                        |a: Rectangle, b: Rectangle| a.y < b.y + b.height && b.y < a.y + a.height;
-                    let leading_bounds = (!leading.is_empty()).then(|| {
-                        visible_coin_text
-                            .iter()
-                            .find_map(|entry| {
-                                let (text, bounds) = *entry;
-                                (text == leading
-                                    && same_line(*bounds, amount)
-                                    && bounds.x + bounds.width <= amount.x + 1.0)
-                                    .then_some(*bounds)
-                            })
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "{} {} {:?}: missing leading amount {:?} on coin row",
-                                    appearance, name, outer, leading
-                                )
-                            })
-                    });
-                    let unit_bounds = visible_coin_text
-                        .iter()
-                        .find_map(|entry| {
-                            let (text, bounds) = *entry;
-                            (text == unit
-                                && same_line(*bounds, amount)
-                                && bounds.x >= amount.x + amount.width)
-                                .then_some(*bounds)
-                        })
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{} {} {:?}: missing {} beside second coin {:?}",
-                                appearance, name, outer, unit, formatted
-                            )
-                        });
-                    let significant_width = full_text_width(&harness.tree, significant);
-                    let unit_width = full_text_width(&harness.tree, unit);
-                    assert!(
-                        amount.x + significant_width + 4.0 <= unit_bounds.x,
-                        "{} {} {:?}: full second-coin amount {:?} at {:?} overlaps unit at {:?}",
+                    assert_coin_scroll_case(
+                        &mut harness,
+                        &fixture,
+                        &scenario,
                         appearance,
                         name,
                         outer,
-                        formatted,
-                        amount,
-                        unit_bounds
+                        unit,
                     );
-                    let mut parts = vec![
-                        ("amount", amount, significant_width),
-                        ("unit", unit_bounds, unit_width),
-                    ];
-                    if let Some(bounds) = leading_bounds {
-                        let leading_width = full_text_width(&harness.tree, leading);
-                        assert!(
-                            bounds.x + leading_width <= amount.x + 1.0,
-                            "{} {} {:?}: full leading amount {:?} at {:?} overlaps significant digits at {:?}",
-                            appearance, name, outer, leading, bounds, amount
-                        );
-                        parts.push(("leading amount", bounds, leading_width));
-                    }
-                    for (part, bounds, full_width) in parts {
-                        assert!(
-                            bounds.x >= viewport.x
-                                && bounds.x + full_width <= viewport.x + viewport.width - right_reserve,
-                            "{} {} {:?}: {} of {:?} starts at {:?}, needs {:.1}px of actual text, exceeds inner {:?}",
-                            appearance, name, outer, part, formatted, bounds, full_width, viewport
-                        );
-                    }
-                    assert!(
-                        visible_coin_text.iter().any(|(text, _)| text == unit),
-                        "{} {} {:?}: no visible coin unit in {:?}",
-                        appearance,
-                        name,
-                        outer,
-                        viewport
-                    );
-                    for (text, bounds) in visible_coin_text {
-                        assert!(
-                            bounds.x + bounds.width <= viewport.x + viewport.width - right_reserve,
-                            "{} {} {:?}: coin text {:?} at {:?} exceeds inner {:?}",
-                            appearance,
-                            name,
-                            outer,
-                            text,
-                            bounds,
-                            viewport
-                        );
-                    }
                 }
             }
         }
@@ -3850,5 +3779,363 @@ mod tests {
                 assert!(moved.is_empty(), "{:?}: {:?}", outer, moved);
             }
         }
+    }
+    fn assert_compose_case_text(
+        probe: &Probe,
+        present: &[&str],
+        absent: &[&str],
+        outer: (u32, u32),
+        context: &str,
+    ) {
+        for text in present.iter() {
+            assert!(probe.contains(text), "{}: missing {:?}", context, text);
+        }
+        for text in absent.iter() {
+            assert!(!probe.contains(text), "{}: unexpected {:?}", context, text);
+        }
+        for (text, bounds) in &probe.text {
+            assert!(
+                bounds.x >= -1.0 && bounds.x + bounds.width <= outer.0 as f32 + 1.0,
+                "{}: {:?} at {:?} leaves the window",
+                context,
+                text,
+                bounds
+            );
+        }
+    }
+
+    fn assert_compose_case_controls(
+        probe: &Probe,
+        case: &Case,
+        add: &Id,
+        back: &Id,
+        clear: &Id,
+        prepare: &Id,
+        context: &str,
+    ) {
+        let Case {
+            scenario,
+            prepare_enabled,
+            add_shown,
+            ..
+        } = case;
+        assert_eq!(probe.has_focus(prepare), *prepare_enabled, "{context}");
+        assert_eq!(probe.has_focus(add), *add_shown, "{context}");
+        assert_eq!(probe.has_focus(back), !scenario.first_step, "{context}");
+        assert!(probe.has_focus(clear), "{}", context);
+        for (_, block_target) in FEERATE_PRESETS {
+            assert!(probe.has_focus(&preset(block_target)), "{}", context);
+        }
+        // Native editing stays native: the fee form, every passed
+        // recipient form, and the batch label for 2+ recipients.
+        let inputs = probe.inputs();
+        let custom = fee_is_custom(scenario);
+        assert!(
+            !custom
+                || inputs.contains(&scenario.feerate.0)
+                || (scenario.feerate.0.is_empty() && inputs.contains(&"42 (in sats/vbyte)")),
+            "{}: fee input {:?}",
+            context,
+            inputs
+        );
+        assert!(probe.has_focus(&Id::new(FEERATE_CUSTOM_ID)), "{}", context);
+        assert_eq!(
+            inputs.contains(&"Batch label"),
+            scenario.recipients > 1,
+            "{context}: {inputs:?}"
+        );
+        assert_eq!(
+            inputs.len(),
+            usize::from(custom) + 3 * scenario.recipients + usize::from(scenario.recipients > 1),
+            "{context}: {inputs:?}"
+        );
+    }
+
+    fn assert_dashboard_compose_case(
+        harness: &Harness<'_>,
+        probe: &Probe,
+        scenario: &Scenario,
+        name: &str,
+        appearance: &str,
+        outer: (u32, u32),
+    ) {
+        assert!(probe.contains("Recipient 1"), "{} {}", name, appearance);
+        assert!(probe.contains("Address") && probe.contains("Description"));
+        assert_eq!(probe.contains("Remove"), name != "recovery");
+        assert_eq!(probe.contains("Recipient 2"), name == "batch-btc");
+        assert_eq!(probe.contains("Amount BTC"), name == "batch-btc");
+        assert_eq!(probe.contains("Amount (sats)"), name != "batch-btc");
+        assert_eq!(probe.contains("USD"), name == "fiat-editing");
+        if name == "fiat-editing" {
+            assert!(
+                probe
+                    .inputs()
+                    .windows(2)
+                    .any(|pair| pair == ["5000", "2.50"]),
+                "fiat preview must pair 5,000 sats with USD 2.50"
+            );
+        }
+        if name == "recovery" {
+            assert!(!probe.contains("MAX"));
+        }
+        assert_compact_coin_identity(harness, probe, scenario, name, outer);
+        assert!(
+            probe.scrollables.iter().any(|(height, content)| {
+                *height <= 300.5 && (name != "coin-mix" || content > height)
+            }),
+            "{}: expected the native coin scroll",
+            name
+        );
+    }
+
+    fn assert_compact_coin_identity(
+        harness: &Harness<'_>,
+        probe: &Probe,
+        scenario: &Scenario,
+        name: &str,
+        outer: (u32, u32),
+    ) {
+        if outer == COMPACT && (name == "coin-mix" || name == "batch-btc") {
+            let expected_amount = match scenario.unit {
+                BitcoinDisplayUnit::Sats => "50,000",
+                BitcoinDisplayUnit::BTC => "50 000",
+            };
+            let label = probe
+                .text
+                .iter()
+                .find(|(text, _)| {
+                    text
+                        == "Long-term savings for the extended household and future school expenses"
+                })
+                .map(|(_, bounds)| *bounds)
+                .expect("long coin label");
+            let amount = probe
+                .text
+                .iter()
+                .find(|(text, bounds)| {
+                    text == expected_amount
+                        && bounds.y < label.y + label.height
+                        && bounds.y + bounds.height > label.y
+                })
+                .map(|(_, bounds)| *bounds)
+                .expect("same-row amount");
+            let checkbox = harness.coin_checkbox_bounds(label);
+            assert!(
+                checkbox.x >= 0.0
+                    && checkbox.x + checkbox.width < label.x
+                    && checkbox.y < label.y + label.height
+                    && checkbox.y + checkbox.height > label.y,
+                "actual compact coin checkbox {:?} left of {:?}",
+                checkbox,
+                label
+            );
+            assert!(
+                label.width > 0.0
+                    && label.height > 0.0
+                    && label.x + label.width <= amount.x
+                    && amount.x + amount.width <= outer.0 as f32,
+                "{} compact {:?} label {:?}, amount {:?}",
+                name,
+                scenario.unit,
+                label,
+                amount
+            );
+        }
+    }
+
+    fn preserved_native_text_width(tree: &Tree, content: &str) -> f32 {
+        {
+            type NativeParagraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
+
+            fn find(tree: &Tree, content: &str) -> Option<f32> {
+                if let iced::advanced::widget::tree::State::Some(state) = &tree.state {
+                    if let Some(paragraph) = state.downcast_ref::<Plain<NativeParagraph>>() {
+                        if paragraph.content() == content
+                            && (paragraph.raw().size().0 - P1_SIZE as f32).abs() < 0.5
+                        {
+                            let mut text = paragraph.as_text();
+                            text.bounds = Size::new(10_000.0, 100.0);
+                            return Some(NativeParagraph::with_text(text).min_bounds().width);
+                        }
+                    }
+                }
+                tree.children.iter().find_map(|child| find(child, content))
+            }
+
+            find(tree, content)
+                .unwrap_or_else(|| panic!("native P1 paragraph absent for {:?}", content))
+        }
+    }
+
+    fn assert_coin_scroll_case(
+        harness: &mut Harness<'_>,
+        fixture: &Fixture,
+        scenario: &Scenario,
+        appearance: &str,
+        name: &str,
+        outer: (u32, u32),
+        unit: &str,
+    ) {
+        let probe = harness.probe();
+        assert_eq!(probe.scrollable_bounds.len(), probe.scrollables.len());
+        let (viewport, (reported_height, content_height)) = probe
+            .scrollable_bounds
+            .iter()
+            .zip(&probe.scrollables)
+            .find(|(bounds, _)| bounds.height <= 300.5)
+            .expect("native coin-list viewport");
+        assert!((viewport.height - *reported_height).abs() < 0.01);
+        // Iced embeds its 10px rail plus this scroll's 2px gap
+        // only while the native content exceeds the viewport.
+        let right_reserve = if *content_height > viewport.height {
+            12.0
+        } else {
+            2.0
+        };
+        let viewport = *viewport;
+        let visible_coin_text: Vec<_> = probe
+            .text
+            .iter()
+            .filter(|(_, bounds)| {
+                bounds.x >= viewport.x
+                    && bounds.y + bounds.height / 2.0 >= viewport.y
+                    && bounds.y + bounds.height / 2.0 <= viewport.y + viewport.height
+            })
+            .collect();
+        // The second coin has a short identity even in the batch
+        // fixture, which makes it the useful clipping regression.
+        // Match its complete split numeric formatting and unit on
+        // one line, then check those three actual text bounds.
+        let formatted = fixture.coins[1]
+            .amount
+            .to_formatted_string_with_unit(scenario.unit);
+        let (leading, significant, amount, leading_bounds, unit_bounds) = coin_amount_text_parts(
+            &formatted,
+            unit,
+            &visible_coin_text,
+            appearance,
+            name,
+            outer,
+            viewport,
+        );
+        let significant_width = preserved_native_text_width(&harness.tree, significant);
+        let unit_width = preserved_native_text_width(&harness.tree, unit);
+        assert!(
+            amount.x + significant_width + 4.0 <= unit_bounds.x,
+            "{} {} {:?}: full second-coin amount {:?} at {:?} overlaps unit at {:?}",
+            appearance,
+            name,
+            outer,
+            formatted,
+            amount,
+            unit_bounds
+        );
+        let mut parts = vec![
+            ("amount", amount, significant_width),
+            ("unit", unit_bounds, unit_width),
+        ];
+        if let Some(bounds) = leading_bounds {
+            let leading_width = preserved_native_text_width(&harness.tree, leading);
+            assert!(
+                bounds.x + leading_width <= amount.x + 1.0,
+                "{} {} {:?}: full leading amount {:?} at {:?} overlaps significant digits at {:?}",
+                appearance,
+                name,
+                outer,
+                leading,
+                bounds,
+                amount
+            );
+            parts.push(("leading amount", bounds, leading_width));
+        }
+        for (part, bounds, full_width) in parts {
+            assert!(
+                bounds.x >= viewport.x
+                    && bounds.x + full_width <= viewport.x + viewport.width - right_reserve,
+                "{} {} {:?}: {} of {:?} starts at {:?}, needs {:.1}px of actual text, exceeds inner {:?}",
+                appearance, name, outer, part, formatted, bounds, full_width, viewport
+            );
+        }
+        assert!(
+            visible_coin_text.iter().any(|(text, _)| text == unit),
+            "{} {} {:?}: no visible coin unit in {:?}",
+            appearance,
+            name,
+            outer,
+            viewport
+        );
+        for (text, bounds) in visible_coin_text {
+            assert!(
+                bounds.x + bounds.width <= viewport.x + viewport.width - right_reserve,
+                "{} {} {:?}: coin text {:?} at {:?} exceeds inner {:?}",
+                appearance,
+                name,
+                outer,
+                text,
+                bounds,
+                viewport
+            );
+        }
+    }
+
+    fn coin_amount_text_parts<'a>(
+        formatted: &'a str,
+        unit: &str,
+        visible_coin_text: &[&(String, Rectangle)],
+        appearance: &str,
+        name: &str,
+        outer: (u32, u32),
+        viewport: Rectangle,
+    ) -> (&'a str, &'a str, Rectangle, Option<Rectangle>, Rectangle) {
+        let split = formatted
+            .char_indices()
+            .find(|(_, character)| character.is_ascii_digit() && *character != '0')
+            .map(|(index, _)| index)
+            .expect("nonzero second coin");
+        let (leading, significant) = formatted.split_at(split);
+        let amount = visible_coin_text
+            .iter()
+            .find_map(|entry| {
+                let (text, bounds) = *entry;
+                (text == significant).then_some(*bounds)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} {} {:?}: missing formatted second coin {:?} in {:?}",
+                    appearance, name, outer, formatted, viewport
+                )
+            });
+        let same_line = |a: Rectangle, b: Rectangle| a.y < b.y + b.height && b.y < a.y + a.height;
+        let leading_bounds = (!leading.is_empty()).then(|| {
+            visible_coin_text
+                .iter()
+                .find_map(|entry| {
+                    let (text, bounds) = *entry;
+                    (text == leading
+                        && same_line(*bounds, amount)
+                        && bounds.x + bounds.width <= amount.x + 1.0)
+                        .then_some(*bounds)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} {} {:?}: missing leading amount {:?} on coin row",
+                        appearance, name, outer, leading
+                    )
+                })
+        });
+        let unit_bounds = visible_coin_text
+            .iter()
+            .find_map(|entry| {
+                let (text, bounds) = *entry;
+                (text == unit && same_line(*bounds, amount) && bounds.x >= amount.x + amount.width)
+                    .then_some(*bounds)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} {} {:?}: missing {} beside second coin {:?}",
+                    appearance, name, outer, unit, formatted
+                )
+            });
+        (leading, significant, amount, leading_bounds, unit_bounds)
     }
 }
