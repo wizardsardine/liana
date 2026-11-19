@@ -9490,13 +9490,17 @@ impl App {
                 };
                 return panel.update(self.daemon.clone(), &self.cache, msg);
             }
-            // A send prepared or a PSBT signed on the Vault's screens
-            // completes on them, even if the import panel took the route back
-            // while it ran. During a wider scan the old daemon can already
-            // be stopped, and these Vault panels require a live daemon.
+            // A send prepared, a PSBT signed or a device registered on the
+            // Vault's screens completes on them, even if the import panel
+            // took the route back while it ran (its wallet went back to
+            // syncing). Each handler checks its own generation or attempt,
+            // so a stale result is ignored there. During a wider scan the
+            // old daemon can already be stopped, and these Vault panels
+            // require a live daemon.
             msg @ (Message::VaultSpendPrepared { .. }
             | Message::Signed(..)
-            | Message::CubeKeys(_))
+            | Message::CubeKeys(_)
+            | Message::DeviceRegistered { .. })
                 if self.panels.imported_holds_route() =>
             {
                 if let (Some(daemon), Some(panel)) =
@@ -12367,8 +12371,9 @@ pub(crate) mod tests {
         );
     }
 
-    /// While a syncing import stands in for Send and PSBTs, a sign or prepare
-    /// started on the Vault's own panel still has that panel to land on.
+    /// While a syncing import stands in for Send, PSBTs and Settings, a sign,
+    /// prepare or device registration started on the Vault's own panel still
+    /// has that panel to land on.
     #[test]
     fn vault_send_and_psbt_panels_stay_reachable_under_a_syncing_import() {
         use std::str::FromStr;
@@ -12406,6 +12411,8 @@ pub(crate) mod tests {
         for menu in [
             Menu::Vault(menu::VaultSubMenu::Send),
             Menu::Vault(menu::VaultSubMenu::PSBTs(None)),
+            // A device registration started in Vault Settings.
+            Menu::Vault(menu::VaultSubMenu::Settings(None)),
         ] {
             panels.current = menu;
             assert!(panels.imported_holds_route());

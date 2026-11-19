@@ -206,6 +206,18 @@ fn imported_wallet_binding(wallet: &Wallet) -> Option<SplitPolicyBinding> {
     })
 }
 
+/// The registration a listed device reports. An imported wallet's signing
+/// session (`split_hardware`) checks its device policy and registers it when
+/// needed, so the listing doesn't know and must not report `Some(false)`,
+/// which the signer picker treats as blocked. Jade reports the same.
+fn listed_registration(wallet: Option<&Wallet>, registered: bool) -> Option<bool> {
+    if wallet.is_some_and(|wallet| wallet.main_descriptor.as_imported().is_some()) {
+        None
+    } else {
+        Some(registered)
+    }
+}
+
 /// No descriptor (xpubs) in logs or message traces.
 impl std::fmt::Debug for SplitPolicyBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -552,7 +564,7 @@ async fn unlock_bitbox(
             fingerprint,
             device: bitbox2.into(),
             version,
-            registered: Some(registered),
+            registered: listed_registration(wallet.as_deref(), registered),
             alias: None,
         })
     }
@@ -1295,7 +1307,7 @@ async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send 
                     fingerprint,
                     device: Arc::new(device),
                     version: Some(version),
-                    registered: Some(registered),
+                    registered: listed_registration(wallet, registered),
                     alias: keys_aliases.get(&fingerprint).cloned(),
                 })
             } else {
@@ -1601,6 +1613,25 @@ mod tests {
     use std::net::SocketAddr;
 
     const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
+
+    /// An imported wallet's devices are never listed as unregistered: its
+    /// signing session registers the policy, and the picker would otherwise
+    /// disable them. A Vault and a wallet-less listing keep the device's
+    /// answer.
+    #[test]
+    fn an_imported_wallets_devices_are_not_listed_as_unregistered() {
+        let imported = crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::Shape::WshSortedMulti,
+        );
+        assert_eq!(listed_registration(Some(&imported), false), None);
+        assert_eq!(listed_registration(Some(&imported), true), None);
+        use coincube_core::descriptors::CoincubeDescriptor;
+        use std::str::FromStr;
+        let vault = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
+        assert_eq!(listed_registration(Some(&vault), false), Some(false));
+        assert_eq!(listed_registration(Some(&vault), true), Some(true));
+        assert_eq!(listed_registration(None, false), Some(false));
+    }
 
     fn refresh_hash(wallet: Option<Arc<Wallet>>, root: &str) -> u64 {
         refresh_hash_with(wallet, root, None)

@@ -438,6 +438,7 @@ pub struct RegisterWalletModal {
     hws: HardwareWallets,
     registered: HashSet<Fingerprint>,
     processing: bool,
+    registration_attempt: Option<uuid::Uuid>,
 }
 
 impl RegisterWalletModal {
@@ -455,6 +456,7 @@ impl RegisterWalletModal {
             wallet,
             processing: false,
             registered,
+            registration_attempt: None,
         }
     }
 }
@@ -519,10 +521,18 @@ impl RegisterWalletModal {
                 }
                 Task::none()
             }
-            Message::DeviceRegistered(fingerprint, res) => {
+            Message::DeviceRegistered {
+                attempt,
+                fingerprint,
+                result,
+            } => {
+                if self.registration_attempt != Some(attempt) {
+                    return Task::none();
+                }
+                self.registration_attempt = None;
                 self.processing = false;
                 self.chosen_hw = None;
-                match res {
+                match result {
                     Ok(()) => {
                         self.registered.insert(fingerprint);
                         Task::none()
@@ -572,6 +582,9 @@ impl RegisterWalletModal {
     /// Ledger's token is not stored (P6), so Ledger asks again when it signs.
     fn register_imported(&mut self, i: usize) -> Task<Message> {
         use crate::split_hardware::{bind::ProductionBinder, policy::imported_policy};
+        if self.registration_attempt.is_some() {
+            return Task::none();
+        }
         let Some(imported) = self.wallet.main_descriptor.as_imported() else {
             return Task::none();
         };
@@ -594,11 +607,17 @@ impl RegisterWalletModal {
             }
         };
         let binder = Arc::new(ProductionBinder::from_listing(&self.hws));
+        let attempt = uuid::Uuid::new_v4();
+        self.registration_attempt = Some(attempt);
         self.chosen_hw = Some(i);
         self.processing = true;
         Task::perform(
             register_imported_policy(device, policy, binder),
-            move |res| Message::DeviceRegistered(fingerprint, res),
+            move |result| Message::DeviceRegistered {
+                attempt,
+                fingerprint,
+                result,
+            },
         )
     }
 }
@@ -1231,6 +1250,78 @@ mod chain_tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_closed_imported_registration_does_not_finish_the_reopened_dialog() {
+        use crate::services::split_test_wallets::{imported_vault, master, Shape};
+
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+        let wallet = Arc::new(imported_vault(Shape::WshSortedMulti));
+        let mut state = WalletSettingsState::new(
+            CoincubeDirectory::new(std::env::temp_dir().join(uuid::Uuid::new_v4().to_string())),
+            wallet,
+            Arc::new(Config::new(false)),
+        );
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let cache = Cache::default();
+        let send = |state: &mut WalletSettingsState, message| {
+            state.update(Some(daemon.clone()), &cache, message)
+        };
+        let start = |state: &mut WalletSettingsState, fingerprint: Fingerprint| {
+            drop(send(
+                state,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::RegisterWallet,
+                )),
+            ));
+            let Modal::RegisterWallet(modal) = &mut state.modal else {
+                panic!("registration dialog did not open");
+            };
+            modal.hws.list = vec![HardwareWallet::Supported {
+                id: fingerprint.to_string(),
+                device: Arc::new(StoringDevice {
+                    fingerprint,
+                    stored: Default::default(),
+                }),
+                kind: async_hwi::DeviceKind::Jade,
+                fingerprint,
+                version: None,
+                registered: None,
+                alias: None,
+            }];
+            send(state, Message::View(view::Message::SelectHardwareWallet(0)))
+        };
+        let completion = async |task| {
+            let mut stream = iced_runtime::task::into_stream(task).expect("registration task");
+            let Some(iced_runtime::Action::Output(message)) = stream.next().await else {
+                panic!("expected registration completion");
+            };
+            message
+        };
+
+        let old = start(&mut state, master(1).fingerprint(&secp));
+        drop(send(&mut state, Message::View(view::Message::Close)));
+        let fingerprint = master(2).fingerprint(&secp);
+        let current = start(&mut state, fingerprint);
+
+        drop(send(&mut state, completion(old).await));
+        let Modal::RegisterWallet(modal) = &state.modal else {
+            panic!("reopened registration dialog closed");
+        };
+        assert!(modal.processing);
+        assert_eq!(modal.chosen_hw, Some(0));
+        assert!(modal.registered.is_empty());
+
+        drop(send(&mut state, completion(current).await));
+        let Modal::RegisterWallet(modal) = &state.modal else {
+            panic!("current registration dialog closed");
+        };
+        assert!(!modal.processing);
+        assert_eq!(modal.chosen_hw, None);
+        assert_eq!(modal.registered, HashSet::from([fingerprint]));
+    }
+
     /// Registering an imported multisig Vault from Settings sends the device
     /// the same policy its signing session uses, marks the device registered
     /// in the modal and writes nothing to the Cube's settings.
@@ -1278,10 +1369,15 @@ mod chain_tests {
         assert!(result.is_ok(), "{:?}", result);
         assert_eq!(*device.stored.lock().unwrap(), vec![(name, descriptor)]);
 
+        let attempt = modal.registration_attempt.unwrap();
         let _ = modal.update(
             Some(daemon),
             &Cache::default(),
-            Message::DeviceRegistered(fingerprint, result),
+            Message::DeviceRegistered {
+                attempt,
+                fingerprint,
+                result,
+            },
         );
         assert!(!modal.processing);
         assert!(modal.registered.contains(&fingerprint));
