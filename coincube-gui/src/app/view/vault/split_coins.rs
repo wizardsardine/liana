@@ -351,6 +351,16 @@ fn method_choice<'a>(
     }
 }
 
+fn signature_method_description(overlay: &SplitOverlay) -> String {
+    if overlay.signature_available {
+        "Signed so that Bitcoin rejects it. No extra coin needed.".to_string()
+    } else if overlay.imported {
+        localized_copy("Not available: this imported wallet signs the standard Bitcoin way, so it can't make this signature.").to_string()
+    } else {
+        localized_copy("Not available: this Vault's signers can't make this signature.").to_string()
+    }
+}
+
 /// The Split coins dialog.
 pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
     let here = overlay.here;
@@ -391,16 +401,7 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
                     overlay.method == Method::Signature,
                     overlay.signature_available,
                     "Replay-protected signature",
-                    if overlay.signature_available {
-                        "Signed so that Bitcoin rejects it. No extra coin needed.".to_string()
-                    } else if overlay.imported {
-                        localized_copy("Not available: this imported wallet signs the standard Bitcoin way, so it can't make this signature.").to_string()
-                    } else {
-                        localized_copy(
-                            "Not available: this Vault's signers can't make this signature.",
-                        )
-                        .to_string()
-                    },
+                    signature_method_description(overlay),
                     Method::Signature,
                 ))
                 .push(method_choice(
