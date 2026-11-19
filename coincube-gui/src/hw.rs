@@ -390,108 +390,106 @@ impl HardwareWallets {
     ) -> Result<Task<HardwareWalletMessage>, async_hwi::Error> {
         match message {
             HardwareWalletMessage::Error(e) => Err(async_hwi::Error::Device(e)),
-            HardwareWalletMessage::List(ConnectedList { still, mut new }) => {
-                // remove disconnected
-                self.list.retain(|hw| still.contains(hw.id()));
-                self.list.append(&mut new);
-                let mut cmds = Vec::new();
-                for hw in &mut self.list {
-                    match hw {
-                        HardwareWallet::Supported {
-                            fingerprint, alias, ..
-                        } => {
-                            *alias = self.aliases.get(fingerprint).cloned();
-                        }
-                        HardwareWallet::Locked { device, id, .. } => {
-                            match device.lock().unwrap().take() {
-                                None => {}
-                                Some(LockedDevice::BitBox02(bb)) => {
-                                    let id = id.to_string();
-                                    let network = self.network;
-                                    let wallet = self.wallet.clone();
-                                    let split_policy = self.split_policy.clone();
-                                    cmds.push(Task::perform(
-                                        async move {
-                                            (
-                                                id.clone(),
-                                                unlock_bitbox(
-                                                    id,
-                                                    network,
-                                                    bb,
-                                                    wallet,
-                                                    split_policy,
-                                                )
-                                                .await,
-                                            )
-                                        },
-                                        |(id, res)| HardwareWalletMessage::Unlocked(id, res),
-                                    ));
-                                }
-                                Some(LockedDevice::Jade(device)) => {
-                                    let id = id.clone();
-                                    let id_cloned = id.clone();
-                                    let network = self.network;
-                                    let wallet = self.wallet.clone();
-                                    cmds.push(Task::perform(
-                                        async move {
-                                            if let Err(e) = device.auth().await {
-                                                return (id_cloned, Err(e.into()));
-                                            }
-                                            let res = handle_jade_device(
-                                                id,
-                                                network,
-                                                device,
-                                                wallet.as_ref().map(|w| w.as_ref()),
-                                                None,
-                                            )
-                                            .await;
-                                            (id_cloned, res)
-                                        },
-                                        |(id_cloned, res)| {
-                                            HardwareWalletMessage::Unlocked(id_cloned, res)
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if cmds.is_empty() {
-                    Ok(Task::none())
-                } else {
-                    Ok(Task::batch(cmds))
-                }
-            }
+            HardwareWalletMessage::List(list) => Ok(self.update_connected_list(list)),
             HardwareWalletMessage::Unlocked(id, res) => {
-                match res {
-                    Err(e) => {
-                        warn!("Pairing failed with an external device {}", e);
-                        self.list.retain(|hw| hw.id() != &id);
-                        // E.g. a BitBox02 found while locked: once unlocked,
-                        // the scan pairs it again after a backoff.
-                        self.unlock_retry.failed(&id, std::time::Instant::now());
+                self.apply_unlock_result(id, res);
+                Ok(Task::none())
+            }
+        }
+    }
+
+    fn update_connected_list(
+        &mut self,
+        ConnectedList { still, mut new }: ConnectedList,
+    ) -> Task<HardwareWalletMessage> {
+        // remove disconnected
+        self.list.retain(|hw| still.contains(hw.id()));
+        self.list.append(&mut new);
+        let mut cmds = Vec::new();
+        for hw in &mut self.list {
+            match hw {
+                HardwareWallet::Supported {
+                    fingerprint, alias, ..
+                } => {
+                    *alias = self.aliases.get(fingerprint).cloned();
+                }
+                HardwareWallet::Locked { device, id, .. } => match device.lock().unwrap().take() {
+                    None => {}
+                    Some(LockedDevice::BitBox02(bb)) => {
+                        let id = id.to_string();
+                        let network = self.network;
+                        let wallet = self.wallet.clone();
+                        let split_policy = self.split_policy.clone();
+                        cmds.push(Task::perform(
+                            async move {
+                                (
+                                    id.clone(),
+                                    unlock_bitbox(id, network, bb, wallet, split_policy).await,
+                                )
+                            },
+                            |(id, res)| HardwareWalletMessage::Unlocked(id, res),
+                        ));
                     }
-                    Ok(hw) => {
-                        self.unlock_retry.unlocked(hw.id());
-                        if let Some(h) = self.list.iter_mut().find(|hw1| {
-                            if let HardwareWallet::Locked { id, .. } = hw1 {
-                                id == hw.id()
-                            } else {
-                                false
-                            }
-                        }) {
-                            *h = hw;
-                            if let HardwareWallet::Supported {
-                                fingerprint, alias, ..
-                            } = h
-                            {
-                                *alias = self.aliases.get(fingerprint).cloned();
-                            }
-                        }
+                    Some(LockedDevice::Jade(device)) => {
+                        let id = id.clone();
+                        let id_cloned = id.clone();
+                        let network = self.network;
+                        let wallet = self.wallet.clone();
+                        cmds.push(Task::perform(
+                            async move {
+                                if let Err(e) = device.auth().await {
+                                    return (id_cloned, Err(e.into()));
+                                }
+                                let res = handle_jade_device(
+                                    id,
+                                    network,
+                                    device,
+                                    wallet.as_ref().map(|w| w.as_ref()),
+                                    None,
+                                )
+                                .await;
+                                (id_cloned, res)
+                            },
+                            |(id_cloned, res)| HardwareWalletMessage::Unlocked(id_cloned, res),
+                        ));
+                    }
+                },
+                _ => {}
+            }
+        }
+        if cmds.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(cmds)
+        }
+    }
+
+    fn apply_unlock_result(&mut self, id: String, res: Result<HardwareWallet, async_hwi::Error>) {
+        match res {
+            Err(e) => {
+                warn!("Pairing failed with an external device {}", e);
+                self.list.retain(|hw| hw.id() != &id);
+                // E.g. a BitBox02 found while locked: once unlocked,
+                // the scan pairs it again after a backoff.
+                self.unlock_retry.failed(&id, std::time::Instant::now());
+            }
+            Ok(hw) => {
+                self.unlock_retry.unlocked(hw.id());
+                if let Some(h) = self.list.iter_mut().find(|hw1| {
+                    if let HardwareWallet::Locked { id, .. } = hw1 {
+                        id == hw.id()
+                    } else {
+                        false
+                    }
+                }) {
+                    *h = hw;
+                    if let HardwareWallet::Supported {
+                        fingerprint, alias, ..
+                    } = h
+                    {
+                        *alias = self.aliases.get(fingerprint).cloned();
                     }
                 }
-                Ok(Task::none())
             }
         }
     }
@@ -1276,7 +1274,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
 
 async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send + 'static>(
     id: String,
-    mut device: ledger::Ledger<T>,
+    device: ledger::Ledger<T>,
     wallet: Option<&'a Wallet>,
     keys_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Result<HardwareWallet, HWIError> {
@@ -1286,21 +1284,7 @@ async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send 
     ) {
         (Ok(fingerprint), Ok(version)) => {
             if ledger_version_supported(&version) {
-                let mut registered = false;
-                if let Some(w) = &wallet {
-                    if let Some(cfg) = w
-                        .hardware_wallets
-                        .iter()
-                        .find(|cfg| cfg.fingerprint == fingerprint)
-                    {
-                        if let Some(descriptor) = w.inheritance_descriptor() {
-                            device = device
-                                .with_wallet(&w.name, &descriptor.to_string(), Some(cfg.token()))
-                                .expect("Configuration must be correct");
-                            registered = true;
-                        }
-                    }
-                }
+                let (device, registered) = bind_ledger_wallet(device, wallet, fingerprint);
                 Ok(HardwareWallet::Supported {
                     id,
                     kind: device.device_kind(),
@@ -1329,6 +1313,29 @@ async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send 
             reason: UnsupportedReason::AppIsNotOpen,
         }),
     }
+}
+
+fn bind_ledger_wallet<T: async_hwi::ledger::Transport + Sync + Send + 'static>(
+    mut device: ledger::Ledger<T>,
+    wallet: Option<&Wallet>,
+    fingerprint: Fingerprint,
+) -> (ledger::Ledger<T>, bool) {
+    let mut registered = false;
+    if let Some(w) = &wallet {
+        if let Some(cfg) = w
+            .hardware_wallets
+            .iter()
+            .find(|cfg| cfg.fingerprint == fingerprint)
+        {
+            if let Some(descriptor) = w.inheritance_descriptor() {
+                device = device
+                    .with_wallet(&w.name, &descriptor.to_string(), Some(cfg.token()))
+                    .expect("Configuration must be correct");
+                registered = true;
+            }
+        }
+    }
+    (device, registered)
 }
 
 async fn handle_jade_device(
@@ -1364,72 +1371,81 @@ async fn handle_jade_device(
                 device: Arc::new(Mutex::new(Some(LockedDevice::Jade(device)))),
             }),
             jade::api::JadeState::Ready => {
-                let kind = device.device_kind();
-                let version = device.get_version().await.ok();
-                let fingerprint = match device.get_master_fingerprint().await {
-                    Err(HWIError::NetworkMismatch) => {
-                        return Ok(HardwareWallet::Unsupported {
-                            id: id.clone(),
-                            kind,
-                            version,
-                            reason: UnsupportedReason::WrongNetwork,
-                        });
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
-                    Ok(fingerprint) => fingerprint,
-                };
-                let alias = keys_aliases.and_then(|aliases| aliases.get(&fingerprint).cloned());
-                if let Some(wallet) = &wallet {
-                    if wallet.descriptor_keys().contains(&fingerprint) {
-                        let Some(descriptor) = wallet.inheritance_descriptor() else {
-                            // An imported wallet registers its own device
-                            // policy when it signs (`split_hardware`), so
-                            // whether it is registered is not known here.
-                            return Ok(HardwareWallet::Supported {
-                                id: id.clone(),
-                                kind,
-                                fingerprint,
-                                device: Arc::new(device),
-                                version,
-                                registered: None,
-                                alias,
-                            });
-                        };
-                        let desc = descriptor.to_string();
-                        let device = device.with_wallet(wallet.name.clone());
-                        let registered = device.is_wallet_registered(&wallet.name, &desc).await?;
-                        Ok(HardwareWallet::Supported {
-                            id: id.clone(),
-                            kind,
-                            fingerprint,
-                            device: Arc::new(device),
-                            version,
-                            registered: Some(registered),
-                            alias,
-                        })
-                    } else {
-                        Ok(HardwareWallet::Unsupported {
-                            id: id.clone(),
-                            kind,
-                            version,
-                            reason: UnsupportedReason::NotPartOfWallet(fingerprint),
-                        })
-                    }
-                } else {
-                    Ok(HardwareWallet::Supported {
-                        id: id.clone(),
-                        kind,
-                        fingerprint,
-                        device: Arc::new(device),
-                        version,
-                        registered: Some(false),
-                        alias,
-                    })
-                }
+                handle_ready_jade(id, device, wallet, keys_aliases).await
             }
         }
+    }
+}
+
+async fn handle_ready_jade(
+    id: String,
+    device: Jade<async_hwi::jade::SerialTransport>,
+    wallet: Option<&Wallet>,
+    keys_aliases: Option<&HashMap<Fingerprint, String>>,
+) -> Result<HardwareWallet, HWIError> {
+    let kind = device.device_kind();
+    let version = device.get_version().await.ok();
+    let fingerprint = match device.get_master_fingerprint().await {
+        Err(HWIError::NetworkMismatch) => {
+            return Ok(HardwareWallet::Unsupported {
+                id: id.clone(),
+                kind,
+                version,
+                reason: UnsupportedReason::WrongNetwork,
+            });
+        }
+        Err(e) => {
+            return Err(e);
+        }
+        Ok(fingerprint) => fingerprint,
+    };
+    let alias = keys_aliases.and_then(|aliases| aliases.get(&fingerprint).cloned());
+    if let Some(wallet) = &wallet {
+        if wallet.descriptor_keys().contains(&fingerprint) {
+            let Some(descriptor) = wallet.inheritance_descriptor() else {
+                // An imported wallet registers its own device
+                // policy when it signs (`split_hardware`), so
+                // whether it is registered is not known here.
+                return Ok(HardwareWallet::Supported {
+                    id: id.clone(),
+                    kind,
+                    fingerprint,
+                    device: Arc::new(device),
+                    version,
+                    registered: None,
+                    alias,
+                });
+            };
+            let desc = descriptor.to_string();
+            let device = device.with_wallet(wallet.name.clone());
+            let registered = device.is_wallet_registered(&wallet.name, &desc).await?;
+            Ok(HardwareWallet::Supported {
+                id: id.clone(),
+                kind,
+                fingerprint,
+                device: Arc::new(device),
+                version,
+                registered: Some(registered),
+                alias,
+            })
+        } else {
+            Ok(HardwareWallet::Unsupported {
+                id: id.clone(),
+                kind,
+                version,
+                reason: UnsupportedReason::NotPartOfWallet(fingerprint),
+            })
+        }
+    } else {
+        Ok(HardwareWallet::Supported {
+            id: id.clone(),
+            kind,
+            fingerprint,
+            device: Arc::new(device),
+            version,
+            registered: Some(false),
+            alias,
+        })
     }
 }
 
