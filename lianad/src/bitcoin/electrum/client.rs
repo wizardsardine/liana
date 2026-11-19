@@ -34,6 +34,7 @@ const RETRY_LIMIT: u8 = 6;
 pub enum Error {
     Server(electrum_client::Error),
     TipChanged(BlockId, BlockId),
+    Disconnected,
 }
 
 impl std::fmt::Display for Error {
@@ -46,11 +47,12 @@ impl std::fmt::Display for Error {
                 tip_from_block_id(*expected),
                 tip_from_block_id(*actual),
             ),
+            Error::Disconnected => write!(f, "Electrum client is disconnected."),
         }
     }
 }
 
-pub struct Client(BdkElectrumClient<electrum_client::Client>);
+pub struct Client(Option<BdkElectrumClient<electrum_client::Client>>);
 
 impl Client {
     /// Create a new client and perform sanity checks.
@@ -76,11 +78,19 @@ impl Client {
         let inner = electrum_client::Client::from_config(&electrum_config.addr, config)
             .map_err(Error::Server)?;
         let inner = BdkElectrumClient::new(inner);
-        Ok(Client(inner))
+        Ok(Client(Some(inner)))
+    }
+
+    fn inner(&self) -> Result<&BdkElectrumClient<electrum_client::Client>, Error> {
+        self.0.as_ref().ok_or(Error::Disconnected)
+    }
+
+    pub fn disconnect(&mut self) {
+        self.0 = None;
     }
 
     pub fn chain_tip(&self) -> Result<BlockChainTip, Error> {
-        self.0
+        self.inner()?
             .inner
             .block_headers_subscribe()
             .map_err(Error::Server)
@@ -91,7 +101,7 @@ impl Client {
     }
 
     fn genesis_block_header(&self) -> Result<bitcoin::block::Header, Error> {
-        self.0.inner.block_header(0).map_err(Error::Server)
+        self.inner()?.inner.block_header(0).map_err(Error::Server)
     }
 
     pub fn genesis_block_timestamp(&self) -> Result<u32, Error> {
@@ -106,12 +116,14 @@ impl Client {
     }
 
     pub fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<bitcoin::Txid, Error> {
-        self.0.transaction_broadcast(tx).map_err(Error::Server)
+        self.inner()?
+            .transaction_broadcast(tx)
+            .map_err(Error::Server)
     }
 
     pub fn tip_time(&self) -> Result<u32, Error> {
         let tip_height = self.chain_tip()?.height;
-        self.0
+        self.inner()?
             .inner
             .block_header(height_usize_from_i32(tip_height))
             .map_err(Error::Server)
@@ -119,8 +131,10 @@ impl Client {
     }
 
     /// Returns a reference to the wrapped `BdkElectrumClient`.
-    pub fn bdk_electrum_client(&self) -> &BdkElectrumClient<electrum_client::Client> {
-        &self.0
+    pub fn bdk_electrum_client(
+        &self,
+    ) -> Result<&BdkElectrumClient<electrum_client::Client>, Error> {
+        self.inner()
     }
 
     fn sync_with_confirmation_height_anchor(
@@ -129,7 +143,7 @@ impl Client {
         fetch_prev_txouts: bool,
     ) -> Result<SyncResult<ConfirmationHeightAnchor>, Error> {
         Ok(self
-            .0
+            .inner()?
             .sync(request, DEFAULT_BATCH_SIZE, fetch_prev_txouts)
             .map_err(Error::Server)?
             .with_confirmation_height_anchor())
@@ -141,10 +155,10 @@ impl Client {
         request: SyncRequest,
         fetch_prev_txouts: bool,
     ) -> Result<SyncResult, Error> {
-        self.0
+        self.inner()?
             .sync(request, DEFAULT_BATCH_SIZE, fetch_prev_txouts)
             .map_err(Error::Server)?
-            .with_confirmation_time_height_anchor(&self.0)
+            .with_confirmation_time_height_anchor(self.inner()?)
             .map_err(Error::Server)
     }
 
@@ -155,10 +169,10 @@ impl Client {
         stop_gap: usize,
         fetch_prev_txouts: bool,
     ) -> Result<FullScanResult<K>, Error> {
-        self.0
+        self.inner()?
             .full_scan(request, stop_gap, DEFAULT_BATCH_SIZE, fetch_prev_txouts)
             .map_err(Error::Server)?
-            .with_confirmation_time_height_anchor(&self.0)
+            .with_confirmation_time_height_anchor(self.inner()?)
             .map_err(Error::Server)
     }
 
@@ -220,7 +234,7 @@ impl Client {
         // As they are descendants, we can assume they are all unconfirmed.
         while !desc_ops.is_empty() {
             log::debug!("Syncing descendant outpoints: {:?}", desc_ops);
-            self.0.populate_tx_cache(&graph);
+            self.inner()?.populate_tx_cache(&graph);
             let request =
                 SyncRequest::from_chain_tip(local_chain.tip()).chain_outpoints(desc_ops.clone());
             // Fetch prev txouts to ensure we have all required txs in the graph to calculate fees.
@@ -269,7 +283,7 @@ impl Client {
             .collect();
         while !anc_txids.is_empty() {
             log::debug!("Syncing ancestor txids: {:?}", anc_txids);
-            self.0.populate_tx_cache(&graph);
+            self.inner()?.populate_tx_cache(&graph);
             let request =
                 SyncRequest::from_chain_tip(local_chain.tip()).chain_txids(anc_txids.clone());
             // We expect to have prev txouts for all unconfirmed ancestors in our graph so no need to fetch them here.
