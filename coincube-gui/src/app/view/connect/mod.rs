@@ -2673,20 +2673,7 @@ fn append_locally_armed_duress<'a>(
     // recovery/cryptic screen, but guard anyway). Styled as a
     // destructive-secondary action with a one-line explainer.
     if !duress_active {
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-        col = col.push(
-            button::secondary(None, localized_copy("Disable Duress Mode"))
-                .width(Length::Fixed(240.0))
-                .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
-        );
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-        col = col.push(
-            text::p2_regular(localized_copy(
-                "Turns off duress on all your devices. You can re-enable it anytime.",
-            ))
-            .width(Length::Fill)
-            .style(theme::text::secondary),
-        );
+        col = append_duress_disable_controls(col);
     }
 
     col
@@ -2720,22 +2707,29 @@ fn append_other_device_duress<'a>(
     // disable propagates to every device); this one just has no local PIN
     // hashes to clear. Shown only while inactive.
     if !duress_active {
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-        col = col.push(
-            button::secondary(None, localized_copy("Disable Duress Mode"))
-                .width(Length::Fixed(240.0))
-                .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
-        );
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-        col = col.push(
-            text::p2_regular(localized_copy(
-                "Turns off duress on all your devices. You can re-enable it anytime.",
-            ))
-            .width(Length::Fill)
-            .style(theme::text::secondary),
-        );
+        col = append_duress_disable_controls(col);
     }
 
+    col
+}
+
+fn append_duress_disable_controls<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+) -> Column<'a, ConnectAccountMessage> {
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+    col = col.push(
+        button::secondary(None, localized_copy("Disable Duress Mode"))
+            .width(Length::Fixed(240.0))
+            .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
+    );
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+    col = col.push(
+        text::p2_regular(localized_copy(
+            "Turns off duress on all your devices. You can re-enable it anytime.",
+        ))
+        .width(Length::Fill)
+        .style(theme::text::secondary),
+    );
     col
 }
 
