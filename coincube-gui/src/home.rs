@@ -9608,8 +9608,32 @@ async fn check_network_datadir(
     let mut daemon_config_path = path.clone().path().to_path_buf();
     daemon_config_path.push("daemon.toml");
 
+    validate_existing_network_daemon_config(&daemon_config_path)?;
+
+    // Try to load cubes from settings
+    match settings::Settings::from_file(&path) {
+        Ok(s) => {
+            // All cubes are required to have PINs
+            if s.cubes.is_empty() {
+                Ok(State::NoCube { create_cube: false })
+            } else {
+                Ok(State::Cubes {
+                    cubes: s.cubes,
+                    create_cube: false,
+                    source,
+                })
+            }
+        }
+        Err(settings::SettingsError::NotFound) => Ok(State::NoCube { create_cube: false }),
+        Err(e) => Err(format!("Failed to read settings: {}", e)),
+    }
+}
+
+fn validate_existing_network_daemon_config(
+    daemon_config_path: &std::path::Path,
+) -> Result<(), String> {
     if daemon_config_path.exists() {
-        coincubed::config::Config::from_file(Some(daemon_config_path.clone())).map_err(
+        coincubed::config::Config::from_file(Some(daemon_config_path.to_path_buf())).map_err(
             |e| match e {
                 ConfigError::FileNotFound | ConfigError::DatadirNotFound => {
                     format!(
@@ -9636,24 +9660,7 @@ async fn check_network_datadir(
             },
         )?;
     }
-
-    // Try to load cubes from settings
-    match settings::Settings::from_file(&path) {
-        Ok(s) => {
-            // All cubes are required to have PINs
-            if s.cubes.is_empty() {
-                Ok(State::NoCube { create_cube: false })
-            } else {
-                Ok(State::Cubes {
-                    cubes: s.cubes,
-                    create_cube: false,
-                    source,
-                })
-            }
-        }
-        Err(settings::SettingsError::NotFound) => Ok(State::NoCube { create_cube: false }),
-        Err(e) => Err(format!("Failed to read settings: {}", e)),
-    }
+    Ok(())
 }
 
 #[cfg(all(test, feature = "mcp-proposals"))]
@@ -10359,9 +10366,7 @@ mod tests {
     #[test]
     #[ignore = "writes PNG frames; needs a headless renderer"]
     fn create_journey_capture_1024() {
-        use iced::advanced::{
-            layout, mouse, renderer::Headless, widget::Tree, Layout, Renderer as _, Shell,
-        };
+        use iced::advanced::renderer::Headless;
 
         let Ok(directory) = std::env::var("CREATE_CAPTURE_DIR") else {
             return;
@@ -10382,12 +10387,7 @@ mod tests {
         let size = iced::Size::new(1024.0, 768.0);
 
         for light in [false, true] {
-            let appearance = if light { "light" } else { "dark" };
-            let palette = if light {
-                theme::Theme::light()
-            } else {
-                theme::Theme::dark()
-            };
+            let (appearance, palette, theme_mode) = create_capture_appearance(light);
             let mut home = home();
             home.state = State::NoCube { create_cube: true };
             home.developer_mode = true;
@@ -10397,11 +10397,7 @@ mod tests {
                 ChainId::Signet,
                 ChainId::Regtest,
             ];
-            home.theme_mode = if light {
-                coincube_ui::theme::palette::ThemeMode::Light
-            } else {
-                coincube_ui::theme::palette::ThemeMode::Dark
-            };
+            home.theme_mode = theme_mode;
             let words: Vec<String> = MasterSigner::generate(Network::Bitcoin)
                 .unwrap()
                 .words()
@@ -10477,58 +10473,12 @@ mod tests {
                     Some(step) => State::CreationBackup(step),
                     None => State::NoCube { create_cube: true },
                 };
-                let mut element = home.create_journey_view();
-                let mut tree = Tree::new(element.as_widget());
-                let node = element.as_widget_mut().layout(
-                    &mut tree,
-                    &renderer,
-                    &layout::Limits::new(iced::Size::ZERO, size),
-                );
-                if bottom {
-                    let mut snap = iced::advanced::widget::operation::scrollable::snap_to(
-                        Id::new(CREATE_BODY_SCROLL_ID),
-                        iced::widget::scrollable::RelativeOffset {
-                            x: None,
-                            y: Some(1.0),
-                        },
-                    );
-                    element.as_widget_mut().operate(
-                        &mut tree,
-                        Layout::new(&node),
-                        &renderer,
-                        &mut snap,
-                    );
-                }
-                let viewport = iced::Rectangle::with_size(size);
-                renderer.reset(viewport);
-                let mut messages = Vec::new();
-                element.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        std::time::Instant::now(),
-                    )),
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut Shell::new(&mut messages),
-                    &viewport,
-                );
-                element.as_widget().draw(
-                    &tree,
+                let pixels = render_create_journey_capture(
+                    home.create_journey_view(),
                     &mut renderer,
                     &palette,
-                    &iced::advanced::renderer::Style {
-                        text_color: palette.colors.shell.ink,
-                    },
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &viewport,
-                );
-                let pixels = renderer.screenshot(
-                    iced::Size::new(1024, 768),
-                    1.0,
-                    palette.colors.shell.background,
+                    size,
+                    bottom,
                 );
                 ::image::save_buffer(
                     format!("{directory}/{appearance}-{name}-1024x768.png"),
@@ -10540,6 +10490,83 @@ mod tests {
                 .unwrap();
             }
         }
+    }
+
+    fn create_capture_appearance(
+        light: bool,
+    ) -> (
+        &'static str,
+        theme::Theme,
+        coincube_ui::theme::palette::ThemeMode,
+    ) {
+        use coincube_ui::theme::palette::ThemeMode;
+        if light {
+            ("light", theme::Theme::light(), ThemeMode::Light)
+        } else {
+            ("dark", theme::Theme::dark(), ThemeMode::Dark)
+        }
+    }
+
+    fn render_create_journey_capture(
+        mut element: Element<Message>,
+        renderer: &mut iced::Renderer,
+        palette: &theme::Theme,
+        size: iced::Size,
+        bottom: bool,
+    ) -> Vec<u8> {
+        use iced::advanced::{
+            layout, mouse, renderer::Headless, widget::Tree, Layout, Renderer as _, Shell,
+        };
+
+        let mut tree = Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        if bottom {
+            let mut snap = iced::advanced::widget::operation::scrollable::snap_to(
+                Id::new(CREATE_BODY_SCROLL_ID),
+                iced::widget::scrollable::RelativeOffset {
+                    x: None,
+                    y: Some(1.0),
+                },
+            );
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), renderer, &mut snap);
+        }
+        let viewport = iced::Rectangle::with_size(size);
+        renderer.reset(viewport);
+        let mut messages = Vec::new();
+        element.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut Shell::new(&mut messages),
+            &viewport,
+        );
+        element.as_widget().draw(
+            &tree,
+            renderer,
+            palette,
+            &iced::advanced::renderer::Style {
+                text_color: palette.colors.shell.ink,
+            },
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        renderer.screenshot(
+            iced::Size::new(1024, 768),
+            1.0,
+            palette.colors.shell.background,
+        )
     }
 
     #[test]
@@ -15689,85 +15716,87 @@ mod tests {
     fn backup_hub_requires_the_kits_registering_account() {
         for passkey in [false, true] {
             for switch_during_upload in [false, true] {
-                let dir = tmp_datadir("hub-kit-account");
-                let mut home = signed_in_home_with_datadir(&dir);
-                if passkey {
-                    passkey_create_form(&mut home, "AccountBound");
-                    let _ = drain(webview_registration(&mut home, "cred", 19));
-                } else {
-                    enter_backup_step(&mut home, "AccountBound", "4321");
-                }
-                confirm_seed_from_hub(&mut home);
-                home.state = State::CreationBackup(CreationBackupStep::KitUploading);
-                if switch_during_upload {
-                    home.connect_account.user.as_mut().unwrap().id = 8;
-                }
-                let _ = drain(
-                    home.update(Message::View(ViewMessage::CreationKitUploaded(Ok((
-                        7,
-                        kit_evidence(42),
-                    ))))),
-                );
-                assert_eq!(
-                    home.creation_kit_evidence.as_ref().map(|(id, _)| *id),
-                    Some(7)
-                );
-                home.connect_account.user.as_mut().unwrap().id = 8;
-                let pending_id = home.pending_cube_id;
-
-                for signed_out in [false, true] {
-                    if signed_out {
-                        home.connect_account.user = None;
-                        assert_eq!(home.connect_account_id(), None);
-                    }
-                    assert!(
-                        drain(home.update(Message::View(ViewMessage::CreationBackupContinue)))
-                            .is_empty()
-                    );
-                    assert_eq!(step(&home), CreationBackupStep::Choice);
-                    assert!(home.error.as_deref().unwrap().contains("Sign back in"));
-                    assert!(!home.creating_cube);
-                    assert_eq!(home.pending_cube_id, pending_id);
-                    assert!(home.creation_kit_evidence.is_some());
-                    assert!(home.creation_backup_words.is_some());
-                    assert!(cubes_on_disk(&dir).is_empty());
-                }
-
-                // Signing back in to the registering account can finish the
-                // same Cube with both backups and the correct Connect owner.
-                if passkey {
-                    home.connect_account.step = ConnectFlowStep::Dashboard;
-                    home.connect_account.user = Some(User {
-                        id: 7,
-                        email: "founder@example.com".to_string(),
-                        email_verified: Some(true),
-                    });
-                    let out =
-                        drain(home.update(Message::View(ViewMessage::CreationBackupContinue)));
-                    let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
-                        panic!("expected one successful CubeCreated, got {:?}", out);
-                    };
-                    assert!(cube.remote_synced);
-                    assert!(cube.backed_up);
-                    assert_eq!(
-                        cube.connect_owner.as_ref().map(|owner| owner.user_id),
-                        Some(7)
-                    );
-                    assert_eq!(
-                        cube.creation_recovery_kit.as_ref().map(|kit| kit.cube_id),
-                        Some(42)
-                    );
-                    let _ = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
-                } else {
-                    let _ = home.update(Message::View(ViewMessage::CancelCreationBackup));
-                }
-                assert!(
-                    home.creation_kit_evidence.is_none(),
-                    "the registering account is cleared too"
-                );
-                let _ = std::fs::remove_dir_all(&dir);
+                check_backup_hub_account_binding(passkey, switch_during_upload);
             }
         }
+    }
+
+    fn check_backup_hub_account_binding(passkey: bool, switch_during_upload: bool) {
+        let dir = tmp_datadir("hub-kit-account");
+        let mut home = signed_in_home_with_datadir(&dir);
+        if passkey {
+            passkey_create_form(&mut home, "AccountBound");
+            let _ = drain(webview_registration(&mut home, "cred", 19));
+        } else {
+            enter_backup_step(&mut home, "AccountBound", "4321");
+        }
+        confirm_seed_from_hub(&mut home);
+        home.state = State::CreationBackup(CreationBackupStep::KitUploading);
+        if switch_during_upload {
+            home.connect_account.user.as_mut().unwrap().id = 8;
+        }
+        let _ = drain(
+            home.update(Message::View(ViewMessage::CreationKitUploaded(Ok((
+                7,
+                kit_evidence(42),
+            ))))),
+        );
+        assert_eq!(
+            home.creation_kit_evidence.as_ref().map(|(id, _)| *id),
+            Some(7)
+        );
+        home.connect_account.user.as_mut().unwrap().id = 8;
+        let pending_id = home.pending_cube_id;
+
+        for signed_out in [false, true] {
+            if signed_out {
+                home.connect_account.user = None;
+                assert_eq!(home.connect_account_id(), None);
+            }
+            assert!(
+                drain(home.update(Message::View(ViewMessage::CreationBackupContinue))).is_empty()
+            );
+            assert_eq!(step(&home), CreationBackupStep::Choice);
+            assert!(home.error.as_deref().unwrap().contains("Sign back in"));
+            assert!(!home.creating_cube);
+            assert_eq!(home.pending_cube_id, pending_id);
+            assert!(home.creation_kit_evidence.is_some());
+            assert!(home.creation_backup_words.is_some());
+            assert!(cubes_on_disk(&dir).is_empty());
+        }
+
+        // Signing back in to the registering account can finish the
+        // same Cube with both backups and the correct Connect owner.
+        if passkey {
+            home.connect_account.step = ConnectFlowStep::Dashboard;
+            home.connect_account.user = Some(User {
+                id: 7,
+                email: "founder@example.com".to_string(),
+                email_verified: Some(true),
+            });
+            let out = drain(home.update(Message::View(ViewMessage::CreationBackupContinue)));
+            let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+                panic!("expected one successful CubeCreated, got {:?}", out);
+            };
+            assert!(cube.remote_synced);
+            assert!(cube.backed_up);
+            assert_eq!(
+                cube.connect_owner.as_ref().map(|owner| owner.user_id),
+                Some(7)
+            );
+            assert_eq!(
+                cube.creation_recovery_kit.as_ref().map(|kit| kit.cube_id),
+                Some(42)
+            );
+            let _ = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
+        } else {
+            let _ = home.update(Message::View(ViewMessage::CancelCreationBackup));
+        }
+        assert!(
+            home.creation_kit_evidence.is_none(),
+            "the registering account is cleared too"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test(flavor = "multi_thread")]
