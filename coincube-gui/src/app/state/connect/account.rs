@@ -2349,210 +2349,24 @@ impl ConnectAccountPanel {
 
     fn dispatch_session_refresh(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
         match message {
-            ConnectAccountMessage::Init => {
-                if self.admitted_client {
-                    if self.user.is_some() || self.admitted_user_loading {
-                        return iced::Task::none();
-                    }
-                    self.admitted_user_loading = true;
-                    let client = self.client.clone();
-                    let generation = self.session_generation;
-                    let epoch = self.auth_epoch;
-                    return iced::Task::perform(
-                        async move {
-                            client
-                                .get_user()
-                                .await
-                                .map_err(|error| ((&error).into(), error.is_auth_error()))
-                        },
-                        move |user| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::AdmittedUserLoaded {
-                                    user,
-                                    generation,
-                                    epoch,
-                                },
-                            ))
-                        },
-                    );
-                }
-                // Already authenticated (e.g. broadcast Init from a
-                // sibling tab that just signed in): nothing to do.
-                if matches!(self.step, ConnectFlowStep::Dashboard) {
-                    return iced::Task::none();
-                }
-                // A RefreshSession spawned by a previous Init is still
-                // in flight. Firing another now would race two token
-                // refreshes against each other and double the downstream
-                // post-login bootstrap. Wait for the in-flight one to
-                // resolve (success → Dashboard; failure → Login with
-                // loading=false, which Init can pick up again).
-                if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
-                    return iced::Task::none();
-                }
-                // The session is already loaded and its post-sign-in duress
-                // gate is running. A refresh now would abandon that gate and
-                // mint another session, whose sign-in broadcast makes Home
-                // re-adopt and re-announce, which sends this Init again: the
-                // tab would never reach the dashboard.
-                if matches!(
-                    self.step,
-                    ConnectFlowStep::CheckingDuress {
-                        status: DuressGateStatus::Checking
-                    }
-                ) {
-                    return iced::Task::none();
-                }
-                // Clear any previous failure. Past the re-entry guards above,
-                // this path always either starts a refresh or falls back to the
-                // login form, and both make the old card stale: this is also
-                // the "Try again" button, so leaving it up while the retry runs
-                // makes a working retry look like a no-op — and leaving it up
-                // on the no-session fallback strands it on screen with nothing
-                // left to retry.
-                self.error = None;
-                // A code stashed during an abandoned signup must not ride into
-                // a restored or next session — it belongs to that signup only.
-                // Clearing here (and in SubmitLogin) confines redemption to the
-                // uninterrupted signup → verify → SessionLoaded path.
-                self.pending_campaign_code = None;
-                if let Some(session) = self.load_session_from_keyring() {
-                    let refresh_token = session.login.refresh_token.clone();
-                    // Transition out of CheckingSession so re-navigation
-                    // won't re-trigger Init while the refresh is in flight.
-                    self.step = ConnectFlowStep::Login {
-                        email: String::new(),
-                        loading: true,
-                    };
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::RefreshSession { refresh_token },
-                    )));
-                }
-                // No session stored - show Login form.
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
-            }
+            ConnectAccountMessage::Init => return self.init_connect_account(),
 
             ConnectAccountMessage::AdmittedUserLoaded {
                 user,
                 generation,
                 epoch,
-            } => {
-                if !self.admitted_client
-                    || generation != self.session_generation
-                    || self.stale_completion(epoch, "AdmittedUserLoaded")
-                {
-                    return iced::Task::none();
-                }
-                self.admitted_user_loading = false;
-                match user {
-                    Ok(user) => {
-                        return self.dispatch_message(ConnectAccountMessage::SessionLoaded {
-                            user,
-                            plan: None,
-                            epoch,
-                        })
-                    }
-                    Err((error, auth_error)) => {
-                        if auth_error {
-                            let logout = self.update_message(ConnectAccountMessage::LogOut);
-                            return iced::Task::batch([
-                                iced::Task::done(Message::ConnectSignedOutBy(
-                                    crate::app::SignedOutBy::SessionEnded,
-                                )),
-                                logout,
-                            ]);
-                        }
-                        self.error = Some(PanelError::retryable(error, RetryAction::Session));
-                    }
-                }
-            }
+            } => return self.apply_admitted_user(user, generation, epoch),
 
             ConnectAccountMessage::RefreshSession { refresh_token } => {
-                let client = self.client.clone();
-                let epoch = self.auth_epoch;
-                let previous_refresh_token = refresh_token.clone();
-                return iced::Task::perform(
-                    async move { client.refresh_login(&refresh_token).await },
-                    move |res| match res {
-                        Ok(login) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::RefreshedSession(
-                                login,
-                                epoch,
-                                previous_refresh_token,
-                            ),
-                        )),
-                        Err(e) => {
-                            if e.is_auth_error() {
-                                // Whether this logs out is decided against the
-                                // epoch current when it arrives, not here.
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshRejected { epoch },
-                                ))
-                            } else if let Some(trouble) = refresh_trouble(&e) {
-                                log::warn!("[CONNECT] Session refresh didn't reach Connect: {}", e);
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshUnreachable { trouble, epoch },
-                                ))
-                            } else {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshFailed((&e).into()),
-                                ))
-                            }
-                        }
-                    },
-                );
+                return self.refresh_connect_session(refresh_token)
             }
 
             ConnectAccountMessage::RefreshRejected { epoch } => {
-                if self.stale_completion(epoch, "a refresh's authentication failure") {
-                    return iced::Task::none();
-                }
-                // A current refresh was refused: the session is gone. Dispatched
-                // as the message it always was, so the GUI broadcasts it, after
-                // the notice that Connect ended it.
-                return iced::Task::batch([
-                    iced::Task::done(Message::ConnectSignedOutBy(
-                        crate::app::SignedOutBy::SessionEnded,
-                    )),
-                    iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::LogOut,
-                    ))),
-                ]);
+                return self.apply_refresh_rejection(epoch)
             }
 
             ConnectAccountMessage::RefreshUnreachable { trouble, epoch } => {
-                if self.stale_completion(epoch, "a refresh that didn't reach Connect") {
-                    return iced::Task::none();
-                }
-                // Keep the stored session (L1): leave the sign-in form idle,
-                // remember whose session it is, and check it again later.
-                let Some(email) = self
-                    .load_session_from_keyring()
-                    .map(|session| session.login.user.email)
-                else {
-                    self.step = ConnectFlowStep::Login {
-                        email: String::new(),
-                        loading: false,
-                    };
-                    return iced::Task::none();
-                };
-                let attempts = self.unverified.as_ref().map_or(0, |u| u.attempts) + 1;
-                let unverified = UnverifiedSession {
-                    email,
-                    trouble,
-                    attempts,
-                };
-                // The Launcher's and the Cube's subscriptions send
-                // `RecheckSession` after `backoff()`, only while mounted.
-                self.unverified = Some(unverified);
-                self.error = None;
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
+                return self.apply_unreachable_refresh(trouble, epoch)
             }
 
             ConnectAccountMessage::RecheckSession => {
@@ -2592,110 +2406,27 @@ impl ConnectAccountPanel {
     ) -> iced::Task<Message> {
         match message {
             ConnectAccountMessage::SetSession(login, epoch) => {
-                if self.stale_completion(epoch, "SetSession") {
-                    return iced::Task::none();
-                }
-                let session = StoredSession { login };
-                return self.post_login_tasks(session, epoch, true);
+                return self.apply_set_session(login, epoch)
             }
 
             ConnectAccountMessage::OtpVerified(login, epoch, attempt) => {
-                if self.stale_completion(epoch, "OtpVerified")
-                    || attempt != self.otp_attempt_generation
-                    || !matches!(
-                        self.step,
-                        ConnectFlowStep::OtpVerification { sending: true, .. }
-                    )
-                {
-                    return iced::Task::none();
-                }
-                if self.defer_auth_cache_commit {
-                    if self.auth_commit_pending {
-                        return iced::Task::none();
-                    }
-                    self.auth_commit_pending = true;
-                    return iced::Task::done(Message::InAppConnectAuthReady {
-                        login,
-                        epoch,
-                        previous_refresh_token: None,
-                    });
-                }
-                return self.post_login_tasks(StoredSession { login }, epoch, true);
+                return self.apply_verified_otp(login, epoch, attempt)
             }
 
             ConnectAccountMessage::OtpVerifyFailed(error, epoch, attempt) => {
-                if self.stale_completion(epoch, "OtpVerifyFailed")
-                    || attempt != self.otp_attempt_generation
-                    || !matches!(self.step, ConnectFlowStep::OtpVerification { .. })
-                {
-                    return iced::Task::none();
-                }
-                return self.update_message(ConnectAccountMessage::Error(error));
+                return self.apply_failed_otp(error, epoch, attempt)
             }
 
             ConnectAccountMessage::TwoFactorRequired(challenge, epoch, attempt) => {
-                if self.stale_completion(epoch, "TwoFactorRequired")
-                    || attempt != self.otp_attempt_generation
-                {
-                    return iced::Task::none();
-                }
-                let ConnectFlowStep::OtpVerification {
-                    email,
-                    sending: true,
-                    ..
-                } = &self.step
-                else {
-                    return iced::Task::none();
-                };
-                // Only `login_verify_otp` can raise this, so it is never a sign-up.
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                self.error = None;
-                self.signing_in_with_authenticator = true;
-                self.step = ConnectFlowStep::TwoFactor {
-                    email: email.clone(),
-                    challenge,
-                    code: view::SecretInput::default(),
-                    backup: false,
-                    sending: false,
-                    failure: None,
-                    lost_open: false,
-                };
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
+                return self.begin_two_factor_challenge(challenge, epoch, attempt)
             }
 
             ConnectAccountMessage::TwoFactorCodeChanged(input) => {
-                if let ConnectFlowStep::TwoFactor {
-                    code,
-                    backup,
-                    sending: false,
-                    failure,
-                    ..
-                } = &mut self.step
-                {
-                    zeroize::Zeroize::zeroize(&mut code.0);
-                    code.0 = filter_second_factor_input(&input.0, *backup);
-                    if *failure == Some(TwoFactorStepFailure::Wrong) {
-                        *failure = None;
-                    }
-                }
+                return self.edit_two_factor_challenge_code(input)
             }
 
             ConnectAccountMessage::TwoFactorToggleBackup => {
-                if let ConnectFlowStep::TwoFactor {
-                    code,
-                    backup,
-                    sending: false,
-                    failure,
-                    ..
-                } = &mut self.step
-                {
-                    zeroize::Zeroize::zeroize(&mut code.0);
-                    *backup = !*backup;
-                    if *failure == Some(TwoFactorStepFailure::Wrong) {
-                        *failure = None;
-                    }
-                    return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
-                }
+                return self.toggle_two_factor_challenge_backup()
             }
 
             ConnectAccountMessage::TwoFactorToggleLost => {
@@ -2704,126 +2435,14 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ConnectAccountMessage::VerifyTwoFactor => {
-                let ConnectFlowStep::TwoFactor {
-                    challenge,
-                    code,
-                    backup,
-                    sending,
-                    failure,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *sending
-                    || *failure == Some(TwoFactorStepFailure::Expired)
-                    || !second_factor_code_complete(&code.0, *backup)
-                {
-                    return iced::Task::none();
-                }
-                *sending = true;
-                *failure = None;
-                self.error = None;
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-                let challenge = challenge.clone();
-                let typed = zeroize::Zeroizing::new(code.0.clone());
-                let backup = *backup;
-                let client = self.client.clone();
-                let epoch = self.auth_epoch;
-                return iced::Task::perform(
-                    async move {
-                        let code = if backup {
-                            SecondFactorCode::Backup(&typed)
-                        } else {
-                            SecondFactorCode::App(&typed)
-                        };
-                        client.login_verify_2fa(&challenge, code).await
-                    },
-                    move |res| match res {
-                        Ok(login) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::TwoFactorVerified(login, epoch, attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::TwoFactorFailed(
-                                CodeFailure::classify(&e),
-                                epoch,
-                                attempt,
-                            ),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::VerifyTwoFactor => return self.verify_two_factor_challenge(),
 
-            ConnectAccountMessage::TwoFactorVerified(
-                TwoFactorLogin {
-                    login,
-                    backup_codes_remaining,
-                },
-                epoch,
-                attempt,
-            ) => {
-                if self.stale_completion(epoch, "TwoFactorVerified")
-                    || attempt != self.otp_attempt_generation
-                {
-                    return iced::Task::none();
-                }
-                let ConnectFlowStep::TwoFactor {
-                    code,
-                    sending: true,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                zeroize::Zeroize::zeroize(&mut code.0);
-                self.backup_codes_notice = backup_codes_remaining;
-                if self.defer_auth_cache_commit {
-                    if self.auth_commit_pending {
-                        return iced::Task::none();
-                    }
-                    self.auth_commit_pending = true;
-                    return iced::Task::done(Message::InAppConnectAuthReady {
-                        login,
-                        epoch,
-                        previous_refresh_token: None,
-                    });
-                }
-                return self.post_login_tasks(StoredSession { login }, epoch, true);
+            ConnectAccountMessage::TwoFactorVerified(response, epoch, attempt) => {
+                return self.apply_verified_two_factor(response, epoch, attempt)
             }
 
             ConnectAccountMessage::TwoFactorFailed(why, epoch, attempt) => {
-                if self.stale_completion(epoch, "TwoFactorFailed")
-                    || attempt != self.otp_attempt_generation
-                {
-                    return iced::Task::none();
-                }
-                let ConnectFlowStep::TwoFactor {
-                    code,
-                    sending,
-                    failure,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                *sending = false;
-                match why {
-                    CodeFailure::Wrong => {
-                        zeroize::Zeroize::zeroize(&mut code.0);
-                        *failure = Some(TwoFactorStepFailure::Wrong);
-                    }
-                    CodeFailure::Limited => *failure = Some(TwoFactorStepFailure::Limited),
-                    CodeFailure::Expired => {
-                        zeroize::Zeroize::zeroize(&mut code.0);
-                        *failure = Some(TwoFactorStepFailure::Expired);
-                    }
-                    CodeFailure::Other(error) => {
-                        return self.update_message(ConnectAccountMessage::Error(error));
-                    }
-                }
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
+                return self.apply_failed_two_factor(why, epoch, attempt)
             }
 
             ConnectAccountMessage::DismissBackupCodesNotice => {
@@ -2877,27 +2496,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::AuthCommitRejected { epoch } => {
-                if self.stale_completion(epoch, "AuthCommitRejected") {
-                    return iced::Task::none();
-                }
-                if !self.auth_commit_pending {
-                    return iced::Task::none();
-                }
-                self.auth_commit_pending = false;
-                self.signing_in_with_authenticator = false;
-                self.error = Some(PanelError::retryable(
-                    UserError::new(
-                        "Connect session changed",
-                        "Sign in again to use the current account.",
-                        crate::user_error::CC_API_BADRESP,
-                        true,
-                    ),
-                    RetryAction::Session,
-                ));
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
+                return self.apply_rejected_auth_commit(epoch)
             }
 
             // A completion of an operation begun before the last invalidation
@@ -2905,64 +2504,7 @@ impl ConnectAccountPanel {
             // hold); a current one is handled the same whichever operation
             // produced it.
             ConnectAccountMessage::SessionLoaded { user, plan, epoch } => {
-                if self.stale_completion(epoch, "SessionLoaded") {
-                    return iced::Task::none();
-                }
-                self.session_generation += 1;
-                // Another account's session: nothing about this account's
-                // authenticator carries over.
-                if self.user.as_ref().is_some_and(|u| u.id != user.id) {
-                    self.two_factor.reset();
-                    self.delete_account.reset();
-                    self.backup_codes_notice = None;
-                }
-                self.user = Some(user);
-                self.plan = plan;
-                // Phase 6: gate on the duress check FIRST — don't reveal the
-                // dashboard until we've confirmed the account isn't in duress.
-                self.step = ConnectFlowStep::CheckingDuress {
-                    status: DuressGateStatus::Checking,
-                };
-                self.error = None;
-                // Fetch features + gate on duress in background (non-blocking).
-                let gen = self.session_generation;
-                let c2 = self.client.clone();
-                let c3 = self.client.clone();
-                let mut tasks = vec![
-                    iced::Task::perform(
-                        async move { (c2.get_connect_features().await.ok(), gen) },
-                        |(features, g)| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::FeaturesLoaded(features, g),
-                            ))
-                        },
-                    ),
-                    // Phase 6: gate on duress state. If the account is in
-                    // duress, the recovery flow replaces the dashboard. A
-                    // failed check retries (see the handler) so a transient
-                    // error doesn't leave a duress account on the dashboard.
-                    duress_state_check_task(c3, gen, 0),
-                ];
-                // Redeem an account-creation promo/referral code now that the
-                // session is authenticated. Best-effort: a bad code never
-                // blocks sign-in — the outcome surfaces in Settings → Plan.
-                if let Some(code) = self.pending_campaign_code.take() {
-                    // Defer the plan fetch to the redeem (which fetches on
-                    // either outcome). Firing get_connect_plan here *and* again
-                    // after redemption races two PlanLoaded responses at the
-                    // same generation, and a slow pre-redeem fetch could
-                    // overwrite the granted tier/provenance.
-                    self.campaign_redeem.submitting = true;
-                    // Surface the code in the Settings → Plan field so that, if
-                    // the redeem fails, the error reads against the code and
-                    // the user can edit/retry without retyping. Cleared on
-                    // success by `CampaignRedeemed`.
-                    self.campaign_redeem.code = code.clone();
-                    tasks.push(self.redeem_campaign_task(code));
-                } else {
-                    tasks.push(self.plan_fetch_task());
-                }
-                return iced::Task::batch(tasks);
+                return self.apply_loaded_connect_session(user, plan, epoch)
             }
             _ => {}
         }
@@ -2978,30 +2520,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::PlanReloaded(plan, gen, seq) => {
-                // An unconfirmed change shows whether its refresh landed.
-                if gen == self.session_generation {
-                    if let Some(CheckoutPhase::ChangeUnconfirmed { refresh, .. }) =
-                        self.checkout.as_mut().map(|cs| &mut cs.phase)
-                    {
-                        if let PlanRefresh::Pending(waiting) = *refresh {
-                            if seq >= waiting {
-                                *refresh = if plan.is_some() {
-                                    PlanRefresh::Updated
-                                } else {
-                                    PlanRefresh::Failed
-                                };
-                            }
-                        }
-                    }
-                }
-                // A response applies only if it is newer than the last one
-                // applied: one sent before a payment never lands over one
-                // sent after it, and a failed newer fetch doesn't throw away
-                // an older good answer.
-                if gen == self.session_generation && seq > self.applied_plan_seq && plan.is_some() {
-                    self.applied_plan_seq = seq;
-                    self.apply_loaded_plan(plan);
-                }
+                return self.apply_connect_plan_reload(plan, gen, seq)
             }
 
             ConnectAccountMessage::OverviewCountsLoaded {
@@ -3011,23 +2530,13 @@ impl ConnectAccountPanel {
                 generation,
                 request_seq,
             } => {
-                if generation == self.session_generation && request_seq == self.overview_seq {
-                    // Only overwrite a field when its fetch succeeded, so a
-                    // partial failure doesn't blank out a previously-loaded
-                    // count.
-                    if contacts.is_some() {
-                        self.overview_contact_count = contacts;
-                    }
-                    if cubes.is_some() {
-                        self.overview_cube_count = cubes;
-                    }
-                    self.recovery_services = match recovery {
-                        Ok(cubes) => RecoveryServicesState::Ready(
-                            cubes.into_iter().map(RecoveryServiceRow::from).collect(),
-                        ),
-                        Err(error) => RecoveryServicesState::Failed(error),
-                    };
-                }
+                return self.apply_account_overview_counts(
+                    contacts,
+                    cubes,
+                    recovery,
+                    generation,
+                    request_seq,
+                )
             }
 
             ConnectAccountMessage::RefreshRecoveryServices => {
@@ -3043,21 +2552,7 @@ impl ConnectAccountPanel {
                 self.review_sign_out = show && self.user.is_some();
             }
 
-            ConnectAccountMessage::LogOut => {
-                let was_logged_in = self.user.is_some();
-                self.clear_session();
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
-                // Only notify BuySell if this logout originated here (not
-                // forwarded back from BuySell) to avoid a redundant cycle.
-                if was_logged_in {
-                    return iced::Task::done(Message::View(view::Message::BuySell(
-                        view::BuySellMessage::LogOut,
-                    )));
-                }
-            }
+            ConnectAccountMessage::LogOut => return self.log_out_connect_account(),
             _ => {}
         }
         iced::Task::none()
@@ -4799,6 +4294,645 @@ impl ConnectAccountPanel {
             _ => {}
         }
         iced::Task::none()
+    }
+
+    fn init_connect_account(&mut self) -> iced::Task<Message> {
+        if self.admitted_client {
+            if self.user.is_some() || self.admitted_user_loading {
+                return iced::Task::none();
+            }
+            self.admitted_user_loading = true;
+            let client = self.client.clone();
+            let generation = self.session_generation;
+            let epoch = self.auth_epoch;
+            return iced::Task::perform(
+                async move {
+                    client
+                        .get_user()
+                        .await
+                        .map_err(|error| ((&error).into(), error.is_auth_error()))
+                },
+                move |user| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::AdmittedUserLoaded {
+                            user,
+                            generation,
+                            epoch,
+                        },
+                    ))
+                },
+            );
+        }
+        // Already authenticated (e.g. broadcast Init from a
+        // sibling tab that just signed in): nothing to do.
+        if matches!(self.step, ConnectFlowStep::Dashboard) {
+            return iced::Task::none();
+        }
+        // A RefreshSession spawned by a previous Init is still
+        // in flight. Firing another now would race two token
+        // refreshes against each other and double the downstream
+        // post-login bootstrap. Wait for the in-flight one to
+        // resolve (success → Dashboard; failure → Login with
+        // loading=false, which Init can pick up again).
+        if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
+            return iced::Task::none();
+        }
+        // The session is already loaded and its post-sign-in duress
+        // gate is running. A refresh now would abandon that gate and
+        // mint another session, whose sign-in broadcast makes Home
+        // re-adopt and re-announce, which sends this Init again: the
+        // tab would never reach the dashboard.
+        if matches!(
+            self.step,
+            ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Checking
+            }
+        ) {
+            return iced::Task::none();
+        }
+        // Clear any previous failure. Past the re-entry guards above,
+        // this path always either starts a refresh or falls back to the
+        // login form, and both make the old card stale: this is also
+        // the "Try again" button, so leaving it up while the retry runs
+        // makes a working retry look like a no-op — and leaving it up
+        // on the no-session fallback strands it on screen with nothing
+        // left to retry.
+        self.error = None;
+        // A code stashed during an abandoned signup must not ride into
+        // a restored or next session — it belongs to that signup only.
+        // Clearing here (and in SubmitLogin) confines redemption to the
+        // uninterrupted signup → verify → SessionLoaded path.
+        self.pending_campaign_code = None;
+        if let Some(session) = self.load_session_from_keyring() {
+            let refresh_token = session.login.refresh_token.clone();
+            // Transition out of CheckingSession so re-navigation
+            // won't re-trigger Init while the refresh is in flight.
+            self.step = ConnectFlowStep::Login {
+                email: String::new(),
+                loading: true,
+            };
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::RefreshSession { refresh_token },
+            )));
+        }
+        // No session stored - show Login form.
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        iced::Task::none()
+    }
+
+    fn apply_admitted_user(
+        &mut self,
+        user: Result<crate::services::coincube::User, (crate::user_error::UserError, bool)>,
+        generation: u64,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if !self.admitted_client
+            || generation != self.session_generation
+            || self.stale_completion(epoch, "AdmittedUserLoaded")
+        {
+            return iced::Task::none();
+        }
+        self.admitted_user_loading = false;
+        match user {
+            Ok(user) => {
+                return self.dispatch_message(ConnectAccountMessage::SessionLoaded {
+                    user,
+                    plan: None,
+                    epoch,
+                })
+            }
+            Err((error, auth_error)) => {
+                if auth_error {
+                    let logout = self.update_message(ConnectAccountMessage::LogOut);
+                    return iced::Task::batch([
+                        iced::Task::done(Message::ConnectSignedOutBy(
+                            crate::app::SignedOutBy::SessionEnded,
+                        )),
+                        logout,
+                    ]);
+                }
+                self.error = Some(PanelError::retryable(error, RetryAction::Session));
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn refresh_connect_session(&mut self, refresh_token: String) -> iced::Task<Message> {
+        let client = self.client.clone();
+        let epoch = self.auth_epoch;
+        let previous_refresh_token = refresh_token.clone();
+        iced::Task::perform(
+            async move { client.refresh_login(&refresh_token).await },
+            move |res| match res {
+                Ok(login) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::RefreshedSession(login, epoch, previous_refresh_token),
+                )),
+                Err(e) => {
+                    if e.is_auth_error() {
+                        // Whether this logs out is decided against the
+                        // epoch current when it arrives, not here.
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::RefreshRejected { epoch },
+                        ))
+                    } else if let Some(trouble) = refresh_trouble(&e) {
+                        log::warn!("[CONNECT] Session refresh didn't reach Connect: {}", e);
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::RefreshUnreachable { trouble, epoch },
+                        ))
+                    } else {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::RefreshFailed((&e).into()),
+                        ))
+                    }
+                }
+            },
+        )
+    }
+
+    fn apply_refresh_rejection(&mut self, epoch: u64) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "a refresh's authentication failure") {
+            return iced::Task::none();
+        }
+        // A current refresh was refused: the session is gone. Dispatched
+        // as the message it always was, so the GUI broadcasts it, after
+        // the notice that Connect ended it.
+        iced::Task::batch([
+            iced::Task::done(Message::ConnectSignedOutBy(
+                crate::app::SignedOutBy::SessionEnded,
+            )),
+            iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::LogOut,
+            ))),
+        ])
+    }
+
+    fn apply_unreachable_refresh(
+        &mut self,
+        trouble: crate::services::connect::grpc::trouble::Trouble,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "a refresh that didn't reach Connect") {
+            return iced::Task::none();
+        }
+        // Keep the stored session (L1): leave the sign-in form idle,
+        // remember whose session it is, and check it again later.
+        let Some(email) = self
+            .load_session_from_keyring()
+            .map(|session| session.login.user.email)
+        else {
+            self.step = ConnectFlowStep::Login {
+                email: String::new(),
+                loading: false,
+            };
+            return iced::Task::none();
+        };
+        let attempts = self.unverified.as_ref().map_or(0, |u| u.attempts) + 1;
+        let unverified = UnverifiedSession {
+            email,
+            trouble,
+            attempts,
+        };
+        // The Launcher's and the Cube's subscriptions send
+        // `RecheckSession` after `backoff()`, only while mounted.
+        self.unverified = Some(unverified);
+        self.error = None;
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        iced::Task::none()
+    }
+
+    fn apply_verified_otp(
+        &mut self,
+        login: crate::services::coincube::LoginResponse,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "OtpVerified")
+            || attempt != self.otp_attempt_generation
+            || !matches!(
+                self.step,
+                ConnectFlowStep::OtpVerification { sending: true, .. }
+            )
+        {
+            return iced::Task::none();
+        }
+        if self.defer_auth_cache_commit {
+            if self.auth_commit_pending {
+                return iced::Task::none();
+            }
+            self.auth_commit_pending = true;
+            return iced::Task::done(Message::InAppConnectAuthReady {
+                login,
+                epoch,
+                previous_refresh_token: None,
+            });
+        }
+        self.post_login_tasks(StoredSession { login }, epoch, true)
+    }
+
+    fn begin_two_factor_challenge(
+        &mut self,
+        challenge: crate::services::coincube::SecondFactorChallenge,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "TwoFactorRequired")
+            || attempt != self.otp_attempt_generation
+        {
+            return iced::Task::none();
+        }
+        let ConnectFlowStep::OtpVerification {
+            email,
+            sending: true,
+            ..
+        } = &self.step
+        else {
+            return iced::Task::none();
+        };
+        // Only `login_verify_otp` can raise this, so it is never a sign-up.
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        self.error = None;
+        self.signing_in_with_authenticator = true;
+        self.step = ConnectFlowStep::TwoFactor {
+            email: email.clone(),
+            challenge,
+            code: view::SecretInput::default(),
+            backup: false,
+            sending: false,
+            failure: None,
+            lost_open: false,
+        };
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID)
+    }
+
+    fn verify_two_factor_challenge(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::TwoFactor {
+            challenge,
+            code,
+            backup,
+            sending,
+            failure,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *sending
+            || *failure == Some(TwoFactorStepFailure::Expired)
+            || !second_factor_code_complete(&code.0, *backup)
+        {
+            return iced::Task::none();
+        }
+        *sending = true;
+        *failure = None;
+        self.error = None;
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+        let challenge = challenge.clone();
+        let typed = zeroize::Zeroizing::new(code.0.clone());
+        let backup = *backup;
+        let client = self.client.clone();
+        let epoch = self.auth_epoch;
+        iced::Task::perform(
+            async move {
+                let code = if backup {
+                    SecondFactorCode::Backup(&typed)
+                } else {
+                    SecondFactorCode::App(&typed)
+                };
+                client.login_verify_2fa(&challenge, code).await
+            },
+            move |res| match res {
+                Ok(login) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::TwoFactorVerified(login, epoch, attempt),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::TwoFactorFailed(
+                        CodeFailure::classify(&e),
+                        epoch,
+                        attempt,
+                    ),
+                )),
+            },
+        )
+    }
+
+    fn apply_failed_two_factor(
+        &mut self,
+        why: crate::services::coincube::CodeFailure,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "TwoFactorFailed") || attempt != self.otp_attempt_generation
+        {
+            return iced::Task::none();
+        }
+        let ConnectFlowStep::TwoFactor {
+            code,
+            sending,
+            failure,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        *sending = false;
+        match why {
+            CodeFailure::Wrong => {
+                zeroize::Zeroize::zeroize(&mut code.0);
+                *failure = Some(TwoFactorStepFailure::Wrong);
+            }
+            CodeFailure::Limited => *failure = Some(TwoFactorStepFailure::Limited),
+            CodeFailure::Expired => {
+                zeroize::Zeroize::zeroize(&mut code.0);
+                *failure = Some(TwoFactorStepFailure::Expired);
+            }
+            CodeFailure::Other(error) => {
+                return self.update_message(ConnectAccountMessage::Error(error));
+            }
+        }
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID)
+    }
+
+    fn apply_rejected_auth_commit(&mut self, epoch: u64) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "AuthCommitRejected") {
+            return iced::Task::none();
+        }
+        if !self.auth_commit_pending {
+            return iced::Task::none();
+        }
+        self.auth_commit_pending = false;
+        self.signing_in_with_authenticator = false;
+        self.error = Some(PanelError::retryable(
+            UserError::new(
+                "Connect session changed",
+                "Sign in again to use the current account.",
+                crate::user_error::CC_API_BADRESP,
+                true,
+            ),
+            RetryAction::Session,
+        ));
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        iced::Task::none()
+    }
+
+    fn apply_loaded_connect_session(
+        &mut self,
+        user: crate::services::coincube::User,
+        plan: Option<crate::services::coincube::ConnectPlan>,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "SessionLoaded") {
+            return iced::Task::none();
+        }
+        self.session_generation += 1;
+        // Another account's session: nothing about this account's
+        // authenticator carries over.
+        if self.user.as_ref().is_some_and(|u| u.id != user.id) {
+            self.two_factor.reset();
+            self.delete_account.reset();
+            self.backup_codes_notice = None;
+        }
+        self.user = Some(user);
+        self.plan = plan;
+        // Phase 6: gate on the duress check FIRST — don't reveal the
+        // dashboard until we've confirmed the account isn't in duress.
+        self.step = ConnectFlowStep::CheckingDuress {
+            status: DuressGateStatus::Checking,
+        };
+        self.error = None;
+        // Fetch features + gate on duress in background (non-blocking).
+        let gen = self.session_generation;
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let mut tasks = vec![
+            iced::Task::perform(
+                async move { (c2.get_connect_features().await.ok(), gen) },
+                |(features, g)| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::FeaturesLoaded(features, g),
+                    ))
+                },
+            ),
+            // Phase 6: gate on duress state. If the account is in
+            // duress, the recovery flow replaces the dashboard. A
+            // failed check retries (see the handler) so a transient
+            // error doesn't leave a duress account on the dashboard.
+            duress_state_check_task(c3, gen, 0),
+        ];
+        // Redeem an account-creation promo/referral code now that the
+        // session is authenticated. Best-effort: a bad code never
+        // blocks sign-in — the outcome surfaces in Settings → Plan.
+        if let Some(code) = self.pending_campaign_code.take() {
+            // Defer the plan fetch to the redeem (which fetches on
+            // either outcome). Firing get_connect_plan here *and* again
+            // after redemption races two PlanLoaded responses at the
+            // same generation, and a slow pre-redeem fetch could
+            // overwrite the granted tier/provenance.
+            self.campaign_redeem.submitting = true;
+            // Surface the code in the Settings → Plan field so that, if
+            // the redeem fails, the error reads against the code and
+            // the user can edit/retry without retyping. Cleared on
+            // success by `CampaignRedeemed`.
+            self.campaign_redeem.code = code.clone();
+            tasks.push(self.redeem_campaign_task(code));
+        } else {
+            tasks.push(self.plan_fetch_task());
+        }
+        iced::Task::batch(tasks)
+    }
+
+    fn apply_connect_plan_reload(
+        &mut self,
+        plan: Option<crate::services::coincube::ConnectPlan>,
+        gen: u64,
+        seq: u64,
+    ) -> iced::Task<Message> {
+        // An unconfirmed change shows whether its refresh landed.
+        if gen == self.session_generation {
+            self.update_pending_plan_refresh(seq, plan.is_some());
+        }
+        // A response applies only if it is newer than the last one
+        // applied: one sent before a payment never lands over one
+        // sent after it, and a failed newer fetch doesn't throw away
+        // an older good answer.
+        if gen == self.session_generation && seq > self.applied_plan_seq && plan.is_some() {
+            self.applied_plan_seq = seq;
+            self.apply_loaded_plan(plan);
+        }
+        iced::Task::none()
+    }
+
+    fn update_pending_plan_refresh(&mut self, seq: u64, loaded: bool) {
+        if let Some(CheckoutPhase::ChangeUnconfirmed { refresh, .. }) =
+            self.checkout.as_mut().map(|cs| &mut cs.phase)
+        {
+            if let PlanRefresh::Pending(waiting) = *refresh {
+                if seq >= waiting {
+                    *refresh = if loaded {
+                        PlanRefresh::Updated
+                    } else {
+                        PlanRefresh::Failed
+                    };
+                }
+            }
+        }
+    }
+
+    fn apply_account_overview_counts(
+        &mut self,
+        contacts: Option<usize>,
+        cubes: Option<usize>,
+        recovery: Result<Vec<crate::services::coincube::CubeResponse>, UserError>,
+        generation: u64,
+        request_seq: u64,
+    ) -> iced::Task<Message> {
+        if generation == self.session_generation && request_seq == self.overview_seq {
+            // Only overwrite a field when its fetch succeeded, so a
+            // partial failure doesn't blank out a previously-loaded
+            // count.
+            if contacts.is_some() {
+                self.overview_contact_count = contacts;
+            }
+            if cubes.is_some() {
+                self.overview_cube_count = cubes;
+            }
+            self.recovery_services = match recovery {
+                Ok(cubes) => RecoveryServicesState::Ready(
+                    cubes.into_iter().map(RecoveryServiceRow::from).collect(),
+                ),
+                Err(error) => RecoveryServicesState::Failed(error),
+            };
+        }
+        iced::Task::none()
+    }
+
+    fn log_out_connect_account(&mut self) -> iced::Task<Message> {
+        let was_logged_in = self.user.is_some();
+        self.clear_session();
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        // Only notify BuySell if this logout originated here (not
+        // forwarded back from BuySell) to avoid a redundant cycle.
+        if was_logged_in {
+            return iced::Task::done(Message::View(view::Message::BuySell(
+                view::BuySellMessage::LogOut,
+            )));
+        }
+        iced::Task::none()
+    }
+
+    fn apply_set_session(
+        &mut self,
+        login: crate::services::coincube::LoginResponse,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "SetSession") {
+            return iced::Task::none();
+        }
+        let session = StoredSession { login };
+        self.post_login_tasks(session, epoch, true)
+    }
+
+    fn apply_failed_otp(
+        &mut self,
+        error: crate::user_error::UserError,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "OtpVerifyFailed")
+            || attempt != self.otp_attempt_generation
+            || !matches!(self.step, ConnectFlowStep::OtpVerification { .. })
+        {
+            return iced::Task::none();
+        }
+        self.update_message(ConnectAccountMessage::Error(error))
+    }
+
+    fn edit_two_factor_challenge_code(&mut self, input: SecretInput) -> iced::Task<Message> {
+        if let ConnectFlowStep::TwoFactor {
+            code,
+            backup,
+            sending: false,
+            failure,
+            ..
+        } = &mut self.step
+        {
+            zeroize::Zeroize::zeroize(&mut code.0);
+            code.0 = filter_second_factor_input(&input.0, *backup);
+            if *failure == Some(TwoFactorStepFailure::Wrong) {
+                *failure = None;
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn toggle_two_factor_challenge_backup(&mut self) -> iced::Task<Message> {
+        if let ConnectFlowStep::TwoFactor {
+            code,
+            backup,
+            sending: false,
+            failure,
+            ..
+        } = &mut self.step
+        {
+            zeroize::Zeroize::zeroize(&mut code.0);
+            *backup = !*backup;
+            if *failure == Some(TwoFactorStepFailure::Wrong) {
+                *failure = None;
+            }
+            return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
+        }
+        iced::Task::none()
+    }
+
+    fn apply_verified_two_factor(
+        &mut self,
+        response: crate::services::coincube::TwoFactorLogin,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        let TwoFactorLogin {
+            login,
+            backup_codes_remaining,
+        } = response;
+        if self.stale_completion(epoch, "TwoFactorVerified")
+            || attempt != self.otp_attempt_generation
+        {
+            return iced::Task::none();
+        }
+        let ConnectFlowStep::TwoFactor {
+            code,
+            sending: true,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        zeroize::Zeroize::zeroize(&mut code.0);
+        self.backup_codes_notice = backup_codes_remaining;
+        if self.defer_auth_cache_commit {
+            if self.auth_commit_pending {
+                return iced::Task::none();
+            }
+            self.auth_commit_pending = true;
+            return iced::Task::done(Message::InAppConnectAuthReady {
+                login,
+                epoch,
+                previous_refresh_token: None,
+            });
+        }
+        self.post_login_tasks(StoredSession { login }, epoch, true)
     }
 
     /// Starts (or restarts) the Delete account page's status load.
