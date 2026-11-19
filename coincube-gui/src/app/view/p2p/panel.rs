@@ -64,6 +64,22 @@ enum ActiveChat {
     Dispute,
 }
 
+impl ActiveChat {
+    fn recipient<'a>(&self, trade: &'a P2PTrade) -> Option<&'a str> {
+        match self {
+            Self::Peer => trade.counterparty_pubkey.as_deref(),
+            Self::Dispute if matches!(trade.status, TradeStatus::Dispute) => {
+                trade.admin_pubkey.as_deref()
+            }
+            _ => None,
+        }
+    }
+
+    fn can_send(&self, trade: &P2PTrade) -> bool {
+        self.recipient(trade).is_some()
+    }
+}
+
 #[derive(Default)]
 struct FormValidation {
     amount: Option<&'static str>,
@@ -103,30 +119,6 @@ fn is_countdown_action(action: &str) -> bool {
 /// payment in flight for another trade keeps its session.
 fn spark_session_owned_by(session_id: Option<&str>, order_id: &str) -> bool {
     session_id.is_none_or(|id| id == order_id)
-}
-
-/// Put a failed chat message back into the input, unless the user has
-/// already typed a new draft. Returns `true` when the text was restored.
-fn restore_failed_draft(input: &mut String, failed_text: String) -> bool {
-    if input.trim().is_empty() {
-        *input = failed_text;
-        true
-    } else {
-        false
-    }
-}
-
-/// Error toast for a failed chat send. When the input already held a new
-/// draft, the failed message was not restored, so say so.
-fn chat_send_failed_message(kind: &str, error: &str, kept_draft: bool) -> String {
-    if kept_draft {
-        format!(
-            "{kind} send failed: {error}. Your new draft was kept; \
-             the unsent message was not restored."
-        )
-    } else {
-        format!("{kind} send failed: {error}")
-    }
 }
 
 /// A label–value row used in order confirmation and trade detail views.
@@ -208,14 +200,54 @@ enum ImageCacheEntry {
     Failed(String),
 }
 
-/// Data for a chat message whose send is in-flight.
+/// Data for a chat message that has yet to be acknowledged.
 struct PendingChatMessage {
+    id: uuid::Uuid,
     order_id: String,
     cube_name: String,
+    recipient: String,
     payload: String,
     timestamp: u64,
-    /// Original input text, restored on send failure.
+    /// Original input text, kept with its recipient on send failure.
     original_text: String,
+    retrying: bool,
+    retry_blocked: bool,
+}
+
+impl PendingChatMessage {
+    fn belongs_to(&self, cube_name: &str, order_id: &str) -> bool {
+        self.cube_name == cube_name && self.order_id == order_id
+    }
+
+    fn can_retry_to(&self, recipient: &str) -> bool {
+        !self.retry_blocked && self.recipient.eq_ignore_ascii_case(recipient)
+    }
+
+    fn retain_failure(mut self, failed: &mut Vec<Self>, error: &str) {
+        self.retry_blocked = error == super::mostro::CHAT_RECIPIENT_CHANGED;
+        if self.retrying && !self.retry_blocked {
+            // Keep the retried message ahead of any later failed messages.
+            failed.insert(0, self);
+        } else {
+            failed.push(self);
+        }
+    }
+
+    fn first_to_show<'a>(
+        failed: &'a [Self],
+        cube_name: &str,
+        order_id: &str,
+        recipient: Option<&str>,
+    ) -> Option<(&'a Self, bool)> {
+        let mut in_trade = failed
+            .iter()
+            .filter(|entry| entry.belongs_to(cube_name, order_id));
+        in_trade
+            .clone()
+            .find(|entry| recipient.is_some_and(|recipient| entry.can_retry_to(recipient)))
+            .map(|entry| (entry, true))
+            .or_else(|| in_trade.next().map(|entry| (entry, false)))
+    }
 }
 
 /// Phase of the "Pay from Spark" flow inside the payment-required modal.
@@ -426,14 +458,16 @@ pub struct P2PPanel {
     active_chat: ActiveChat,
     chat_input: form::Value<String>,
     /// Holds the data for a chat message that is currently being sent.
-    /// On success the message is appended to the transcript; on error the
-    /// input text is restored and no phantom entry is created.
+    /// On success the message is appended to the transcript. On failure it
+    /// stays separate from the draft and bound to the original recipient.
     pending_chat_message: Option<PendingChatMessage>,
+    failed_chat_messages: Vec<PendingChatMessage>,
     chat_show_trade_info: bool,
     chat_show_user_info: bool,
     // Dispute chat
     dispute_chat_input: form::Value<String>,
     pending_dispute_chat_message: Option<PendingChatMessage>,
+    failed_dispute_chat_messages: Vec<PendingChatMessage>,
     // Bitcoin network this cube runs on. Drives network-aware coordinator
     // selection (`MostroConfig::active_for`) — needed in `subscription`,
     // which has no `Cache` access.
@@ -575,10 +609,12 @@ impl P2PPanel {
             active_chat: ActiveChat::None,
             chat_input: Default::default(),
             pending_chat_message: None,
+            failed_chat_messages: Vec::new(),
             chat_show_trade_info: false,
             chat_show_user_info: false,
             dispute_chat_input: Default::default(),
             pending_dispute_chat_message: None,
+            failed_dispute_chat_messages: Vec::new(),
             network,
             // Fail-closed until the account panel mirrors `/connect/features`
             // in (via `sync_marketplace_flags_from_cache`).
@@ -2309,8 +2345,8 @@ impl P2PPanel {
         dm_action: Option<&str>,
     ) -> Column<'a, view::Message> {
         match dm_action {
-            // ── Seller must pay hold invoice ──
-            Some("PayInvoice") | Some("WaitingSellerToPay") => {
+            // Restored orders can have the WaitingPayment status before a DM arrives.
+            Some("PayInvoice") | Some("WaitingSellerToPay") | Some("WaitingPayment") => {
                 actions = self.trade_hold_invoice_actions(actions, trade, is_buyer);
             }
 
@@ -2334,17 +2370,6 @@ impl P2PPanel {
             // ── Buyer must submit invoice ──
             Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
                 actions = self.trade_receive_invoice_actions(actions, trade, is_buyer, loading);
-            }
-
-            // ── Waiting for fiat payment (status-based fallback) ──
-            Some("WaitingPayment") => {
-                actions = Self::trade_fiat_payment_actions(
-                    actions,
-                    is_buyer,
-                    loading,
-                    "The buyer has been notified to send fiat. \
-                    You'll be notified when they confirm.",
-                );
             }
 
             // ── Fiat sent / waiting for release ──
@@ -2919,7 +2944,7 @@ impl P2PPanel {
     fn chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
 
-        let chat_enabled = trade.counterparty_pubkey.is_some();
+        let chat_enabled = ActiveChat::Peer.can_send(trade);
 
         let chat_messages: Vec<&super::mostro::TradeMessage> = self
             .cached_trade_messages
@@ -3143,6 +3168,7 @@ impl P2PPanel {
                 .spacing(2),
             );
         }
+        let msg_col = msg_col.push_maybe(self.chat_retry_row(trade, ActiveChat::Peer));
 
         let chat_scroll = iced::widget::scrollable(msg_col)
             .height(Length::Fill)
@@ -3885,8 +3911,7 @@ impl P2PPanel {
     fn dispute_chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
 
-        let chat_enabled =
-            trade.admin_pubkey.is_some() && matches!(trade.status, TradeStatus::Dispute);
+        let chat_enabled = ActiveChat::Dispute.can_send(trade);
 
         let admin_messages: Vec<&super::mostro::TradeMessage> = self
             .cached_trade_messages
@@ -3895,7 +3920,8 @@ impl P2PPanel {
             .collect();
 
         // Message list
-        let msg_col = Self::dispute_message_list(&admin_messages, chat_enabled);
+        let msg_col = Self::dispute_message_list(&admin_messages, chat_enabled)
+            .push_maybe(self.chat_retry_row(trade, ActiveChat::Dispute));
 
         let chat_scroll = iced::widget::scrollable(msg_col)
             .height(Length::Fill)
@@ -3945,6 +3971,59 @@ impl P2PPanel {
         )
         .width(Length::Fixed(450.0))
         .into()
+    }
+
+    fn chat_retry_row(
+        &self,
+        trade: &P2PTrade,
+        channel: ActiveChat,
+    ) -> Option<Element<'_, view::Message>> {
+        let (pending, failed, message) = match channel {
+            ActiveChat::Peer => (
+                &self.pending_chat_message,
+                &self.failed_chat_messages,
+                P2PMessage::RetryChatMessage as fn(uuid::Uuid) -> P2PMessage,
+            ),
+            ActiveChat::Dispute => (
+                &self.pending_dispute_chat_message,
+                &self.failed_dispute_chat_messages,
+                P2PMessage::RetryDisputeChatMessage as fn(uuid::Uuid) -> P2PMessage,
+            ),
+            ActiveChat::None => return None,
+        };
+        let cube_name = self
+            .wallet
+            .as_ref()
+            .map_or("default", |wallet| wallet.name.as_str());
+        let (failed, can_retry) = PendingChatMessage::first_to_show(
+            failed,
+            cube_name,
+            &trade.id,
+            channel.recipient(trade),
+        )?;
+        let action: Element<'_, view::Message> = if can_retry {
+            button::secondary_compact(None, localized_copy("Retry failed message"))
+                .on_press_maybe(
+                    pending
+                        .is_none()
+                        .then_some(view::Message::P2P(message(failed.id))),
+                )
+                .into()
+        } else {
+            caption(localized_copy("Retry unavailable for this recipient"))
+                .style(theme::text::secondary)
+                .into()
+        };
+        Some(
+            column![
+                p2_regular(&failed.original_text)
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
+                action,
+            ]
+            .spacing(6)
+            .into(),
+        )
     }
 
     fn dispute_message_list<'a>(
@@ -5901,29 +5980,23 @@ impl P2PPanel {
         if text.is_empty() || self.pending_dispute_chat_message.is_some() {
             return Some(Task::none());
         }
-        if let Some(ref order_id) = self.active_order_id() {
-            let cube_name = self.cube_name();
-            self.pending_dispute_chat_message =
-                Some(Self::pending_chat_record(order_id, &cube_name, &text));
-            self.dispute_chat_input = Default::default();
-            let data = super::mostro::TradeActionData {
-                order_id: order_id.clone(),
-                cube_name,
-                mnemonic: self.mnemonic.clone(),
-                invoice: Some(text),
-                mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                relay_urls: self.resolved_coordinator().relays,
-            };
-            return Some(Task::perform(
-                super::mostro::send_admin_chat_message(data),
-                |result| {
-                    Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
-                        result,
-                    )))
-                },
-            ));
-        }
-        None
+        let pending = self.pending_chat_record(&text, ActiveChat::Dispute)?;
+        self.dispute_chat_input = Default::default();
+        Some(self.start_dispute_chat_send(pending))
+    }
+
+    fn start_dispute_chat_send(&mut self, pending: PendingChatMessage) -> Task<Message> {
+        let data = self.chat_send_data(&pending);
+        let recipient = pending.recipient.clone();
+        self.pending_dispute_chat_message = Some(pending);
+        Task::perform(
+            super::mostro::send_admin_chat_message(data, recipient),
+            |result| {
+                Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
+                    result,
+                )))
+            },
+        )
     }
 
     fn finish_dispute_chat_send(&mut self, result: Result<(), String>) -> Option<Task<Message>> {
@@ -5933,15 +6006,9 @@ impl P2PPanel {
                     self.record_acknowledged_chat(pending, "AdminDm");
                 }
                 Err(e) => {
-                    // Only restore input if the user is still viewing the same
-                    // trade and has not started a new draft meanwhile.
-                    let kept_draft = self.active_order_id().as_deref() == Some(&pending.order_id)
-                        && !restore_failed_draft(
-                            &mut self.dispute_chat_input.value,
-                            pending.original_text,
-                        );
+                    pending.retain_failure(&mut self.failed_dispute_chat_messages, &e);
                     return Some(Task::done(Message::View(view::Message::ShowError(
-                        chat_send_failed_message("Dispute chat", &e, kept_draft),
+                        format!("Dispute chat send failed: {e}"),
                     ))));
                 }
             }
@@ -5961,30 +6028,70 @@ impl P2PPanel {
         if text.is_empty() || self.pending_chat_message.is_some() {
             return Some(Task::none());
         }
-        if let Some(ref order_id) = self.active_order_id() {
-            let cube_name = self.cube_name();
+        let pending = self.pending_chat_record(&text, ActiveChat::Peer)?;
+        self.chat_input = Default::default();
+        Some(self.start_peer_chat_send(pending))
+    }
 
-            // Build payload but defer persisting until send succeeds
-            self.pending_chat_message =
-                Some(Self::pending_chat_record(order_id, &cube_name, &text));
+    fn start_peer_chat_send(&mut self, pending: PendingChatMessage) -> Task<Message> {
+        let data = self.chat_send_data(&pending);
+        let recipient = pending.recipient.clone();
+        self.pending_chat_message = Some(pending);
+        Task::perform(
+            super::mostro::send_chat_message(data, recipient),
+            |result| Message::View(view::Message::P2P(P2PMessage::ChatMessageSent(result))),
+        )
+    }
 
-            self.chat_input = Default::default();
-
-            // Fire async send
-            let data = super::mostro::TradeActionData {
-                order_id: order_id.clone(),
-                cube_name,
-                mnemonic: self.mnemonic.clone(),
-                invoice: Some(text),
-                mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                relay_urls: self.resolved_coordinator().relays,
-            };
-            return Some(Task::perform(
-                super::mostro::send_chat_message(data),
-                |result| Message::View(view::Message::P2P(P2PMessage::ChatMessageSent(result))),
-            ));
+    fn chat_send_data(&self, pending: &PendingChatMessage) -> super::mostro::TradeActionData {
+        let coordinator = self.resolved_coordinator();
+        super::mostro::TradeActionData {
+            order_id: pending.order_id.clone(),
+            cube_name: pending.cube_name.clone(),
+            mnemonic: self.mnemonic.clone(),
+            invoice: Some(pending.original_text.clone()),
+            mostro_pubkey_hex: coordinator.pubkey_hex,
+            relay_urls: coordinator.relays,
         }
-        None
+    }
+
+    fn take_chat_retry(
+        &mut self,
+        message_id: uuid::Uuid,
+        channel: ActiveChat,
+    ) -> Option<PendingChatMessage> {
+        if self.active_chat != channel {
+            return None;
+        }
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return None;
+        }
+        let order_id = self.active_order_id()?;
+        let trade = self.trades.iter().find(|trade| trade.id == order_id)?;
+        let recipient = channel.recipient(trade)?;
+
+        let cube_name = self.cube_name();
+        let (pending, failed) = match channel {
+            ActiveChat::Peer => (&self.pending_chat_message, &mut self.failed_chat_messages),
+            ActiveChat::Dispute => (
+                &self.pending_dispute_chat_message,
+                &mut self.failed_dispute_chat_messages,
+            ),
+            ActiveChat::None => return None,
+        };
+        if pending.is_some() {
+            return None;
+        }
+        let index = failed.iter().position(|failed| {
+            failed.id == message_id
+                && failed.belongs_to(&cube_name, &order_id)
+                && failed.can_retry_to(recipient)
+        })?;
+        let mut retry = failed.remove(index);
+        retry.retrying = true;
+        retry.timestamp = chrono::Utc::now().timestamp() as u64;
+        Some(retry)
     }
 
     fn finish_peer_chat_send(&mut self, result: Result<(), String>) -> Option<Task<Message>> {
@@ -5994,12 +6101,9 @@ impl P2PPanel {
                     self.record_acknowledged_chat(pending, "SendDm");
                 }
                 Err(e) => {
-                    // Only restore input if the user is still viewing the same
-                    // trade and has not started a new draft meanwhile.
-                    let kept_draft = self.active_order_id().as_deref() == Some(&pending.order_id)
-                        && !restore_failed_draft(&mut self.chat_input.value, pending.original_text);
+                    pending.retain_failure(&mut self.failed_chat_messages, &e);
                     return Some(Task::done(Message::View(view::Message::ShowError(
-                        chat_send_failed_message("Chat", &e, kept_draft),
+                        format!("Chat send failed: {e}"),
                     ))));
                 }
             }
@@ -6422,18 +6526,25 @@ impl P2PPanel {
         })
     }
 
-    fn pending_chat_record(order_id: &str, cube_name: &str, text: &str) -> PendingChatMessage {
+    fn pending_chat_record(&self, text: &str, channel: ActiveChat) -> Option<PendingChatMessage> {
+        let order_id = self.active_order_id()?;
+        let trade = self.trades.iter().find(|trade| trade.id == order_id)?;
+        let recipient = channel.recipient(trade)?.to_owned();
         let payload = serde_json::to_string(&Some(mostro_core::message::Payload::TextMessage(
             text.to_owned(),
         )))
         .unwrap_or_default();
-        PendingChatMessage {
-            order_id: order_id.to_owned(),
-            cube_name: cube_name.to_owned(),
+        Some(PendingChatMessage {
+            id: uuid::Uuid::new_v4(),
+            order_id,
+            cube_name: self.cube_name(),
+            recipient,
             payload,
             timestamp: chrono::Utc::now().timestamp() as u64,
             original_text: text.to_owned(),
-        }
+            retrying: false,
+            retry_blocked: false,
+        })
     }
 
     fn record_acknowledged_chat(&mut self, pending: PendingChatMessage, action: &str) {
@@ -6882,12 +6993,22 @@ impl State for P2PPanel {
             P2PMessage::SendDisputeChatMessage => {
                 return self.send_dispute_chat().unwrap_or_else(Task::none)
             }
+            P2PMessage::RetryDisputeChatMessage(message_id) => {
+                return self
+                    .take_chat_retry(message_id, ActiveChat::Dispute)
+                    .map_or_else(Task::none, |pending| self.start_dispute_chat_send(pending))
+            }
             P2PMessage::DisputeChatMessageSent(result) => {
                 return self
                     .finish_dispute_chat_send(result)
                     .unwrap_or_else(Task::none)
             }
             P2PMessage::SendChatMessage => return self.send_peer_chat().unwrap_or_else(Task::none),
+            P2PMessage::RetryChatMessage(message_id) => {
+                return self
+                    .take_chat_retry(message_id, ActiveChat::Peer)
+                    .map_or_else(Task::none, |pending| self.start_peer_chat_send(pending))
+            }
             P2PMessage::ChatMessageSent(result) => {
                 return self
                     .finish_peer_chat_send(result)

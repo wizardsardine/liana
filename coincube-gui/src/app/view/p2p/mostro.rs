@@ -719,10 +719,13 @@ pub fn dm_action_to_status(action: &str) -> Option<TradeStatus> {
         "Expired" => Some(TradeStatus::Expired),
         // Known actions that don't represent status transitions
         "NewOrder" | "CantDo" | "Peer" | "RateUser" | "Orders" | "LastTradeIndex" => None,
-        _ => {
-            tracing::warn!("Unknown DM action: {action}");
-            None
-        }
+        _ => match action.parse::<mostro_core::order::Status>() {
+            Ok(status) => Some(map_trade_status(&status)),
+            Err(_) => {
+                tracing::warn!("Unknown DM action: {action}");
+                None
+            }
+        },
     }
 }
 
@@ -1651,9 +1654,41 @@ enum ChatTarget {
     Admin,
 }
 
+pub(super) const CHAT_RECIPIENT_CHANGED: &str = "Chat recipient changed. The message was not sent.";
+
+fn chat_recipient(
+    session: &TradeSession,
+    target: ChatTarget,
+    expected: Option<&str>,
+) -> Result<(PublicKey, &'static str), String> {
+    let (recipient_hex, label, missing_recipient) = match target {
+        ChatTarget::Peer => (
+            session.counterparty_trade_pubkey.as_deref(),
+            "chat",
+            "No counterparty trade pubkey — chat not yet possible",
+        ),
+        ChatTarget::Admin => (
+            session.admin_trade_pubkey.as_deref(),
+            "dispute chat",
+            "No admin trade pubkey — dispute chat not yet possible",
+        ),
+    };
+    if expected.is_some_and(|key| !recipient_hex.is_some_and(|hex| hex.eq_ignore_ascii_case(key))) {
+        return Err(CHAT_RECIPIENT_CHANGED.to_string());
+    }
+    let recipient_hex = recipient_hex.ok_or(missing_recipient)?;
+    let recipient_pubkey =
+        PublicKey::from_hex(recipient_hex).map_err(|e| format!("Invalid {label} pubkey: {e}"))?;
+    Ok((recipient_pubkey, label))
+}
+
 /// Send an encrypted P2P chat message via NIP-59 gift wrap.
 /// The target determines which shared key (peer or admin) is used.
-async fn send_encrypted_chat(data: &TradeActionData, target: ChatTarget) -> Result<(), String> {
+async fn send_encrypted_chat(
+    data: &TradeActionData,
+    target: ChatTarget,
+    expected_recipient: Option<&str>,
+) -> Result<(), String> {
     let text = data.invoice.as_deref().ok_or("Chat text is required")?;
     if text.trim().is_empty() {
         return Err("Empty message".to_string());
@@ -1664,26 +1699,7 @@ async fn send_encrypted_chat(data: &TradeActionData, target: ChatTarget) -> Resu
         .iter()
         .find(|s| s.order_id == data.order_id)
         .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
-
-    let (recipient_hex, label) = match target {
-        ChatTarget::Peer => (
-            session
-                .counterparty_trade_pubkey
-                .as_deref()
-                .ok_or("No counterparty trade pubkey — chat not yet possible")?,
-            "chat",
-        ),
-        ChatTarget::Admin => (
-            session
-                .admin_trade_pubkey
-                .as_deref()
-                .ok_or("No admin trade pubkey — dispute chat not yet possible")?,
-            "dispute chat",
-        ),
-    };
-    let recipient_pubkey =
-        PublicKey::from_hex(recipient_hex).map_err(|e| format!("Invalid {label} pubkey: {e}"))?;
-
+    let (recipient_pubkey, label) = chat_recipient(session, target, expected_recipient)?;
     let trade_keys = derive_trade_keys(&data.mnemonic, session.trade_index)?;
     let shared_keys = derive_shared_chat_keys(&trade_keys, &recipient_pubkey)?;
     let shared_pubkey = shared_keys.public_key();
@@ -1732,13 +1748,16 @@ async fn send_encrypted_chat(data: &TradeActionData, target: ChatTarget) -> Resu
 }
 
 /// Send a chat message to the counterparty.
-pub async fn send_chat_message(data: TradeActionData) -> Result<(), String> {
-    send_encrypted_chat(&data, ChatTarget::Peer).await
+pub async fn send_chat_message(data: TradeActionData, recipient: String) -> Result<(), String> {
+    send_encrypted_chat(&data, ChatTarget::Peer, Some(&recipient)).await
 }
 
 /// Send a dispute chat message to the admin/solver.
-pub async fn send_admin_chat_message(data: TradeActionData) -> Result<(), String> {
-    send_encrypted_chat(&data, ChatTarget::Admin).await
+pub async fn send_admin_chat_message(
+    data: TradeActionData,
+    recipient: String,
+) -> Result<(), String> {
+    send_encrypted_chat(&data, ChatTarget::Admin, Some(&recipient)).await
 }
 
 /// Get all trade messages for a given order from disk.
@@ -2427,7 +2446,7 @@ pub async fn send_image_attachment(data: AttachmentData) -> Result<String, Strin
         mostro_pubkey_hex: data.mostro_pubkey_hex,
         relay_urls: data.relay_urls,
     };
-    send_encrypted_chat(&chat_data, ChatTarget::Peer).await?;
+    send_encrypted_chat(&chat_data, ChatTarget::Peer, None).await?;
 
     Ok(metadata_json)
 }
@@ -2539,7 +2558,7 @@ pub async fn send_file_attachment(data: AttachmentData) -> Result<String, String
         mostro_pubkey_hex: data.mostro_pubkey_hex,
         relay_urls: data.relay_urls,
     };
-    send_encrypted_chat(&chat_data, ChatTarget::Peer).await?;
+    send_encrypted_chat(&chat_data, ChatTarget::Peer, None).await?;
 
     Ok(metadata_json)
 }
@@ -2840,7 +2859,7 @@ fn trade_from_live_order(
         created_at_ts: event_ts as i64,
         created_at: String::new(),
         time_ago: format_time_ago(event_ts),
-        last_dm_action: latest_dm_action(session).map(String::from),
+        last_dm_action: latest_dm_action(session).map(restored_status_action),
         countdown_start_ts: countdown_start_timestamp(session),
         counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
         admin_pubkey: session.admin_trade_pubkey.clone(),
@@ -2964,7 +2983,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         created_at_ts: session.created_at,
         created_at: String::new(),
         time_ago: format_time_ago(session.created_at as u64),
-        last_dm_action: latest_dm_action(session).map(String::from),
+        last_dm_action: latest_dm_action(session).map(restored_status_action),
         countdown_start_ts: countdown_start_timestamp(session),
         counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
         admin_pubkey: session.admin_trade_pubkey.clone(),
