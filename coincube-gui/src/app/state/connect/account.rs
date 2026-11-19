@@ -2231,6 +2231,124 @@ impl ConnectAccountPanel {
 
     fn dispatch_message(&mut self, msg: ConnectAccountMessage) -> iced::Task<Message> {
         match msg {
+            message @ (ConnectAccountMessage::Init
+            | ConnectAccountMessage::AdmittedUserLoaded { .. }
+            | ConnectAccountMessage::RefreshSession { .. }
+            | ConnectAccountMessage::RefreshRejected { .. }
+            | ConnectAccountMessage::RefreshUnreachable { .. }
+            | ConnectAccountMessage::RecheckSession
+            | ConnectAccountMessage::RefreshFailed(_)) => self.dispatch_session_refresh(message),
+            message @ (ConnectAccountMessage::SetSession(_, _)
+            | ConnectAccountMessage::OtpVerified(_, _, _)
+            | ConnectAccountMessage::OtpVerifyFailed(_, _, _)
+            | ConnectAccountMessage::TwoFactorRequired(_, _, _)
+            | ConnectAccountMessage::TwoFactorCodeChanged(_)
+            | ConnectAccountMessage::TwoFactorToggleBackup
+            | ConnectAccountMessage::TwoFactorToggleLost
+            | ConnectAccountMessage::VerifyTwoFactor
+            | ConnectAccountMessage::TwoFactorVerified(_, _, _)
+            | ConnectAccountMessage::TwoFactorFailed(_, _, _)
+            | ConnectAccountMessage::DismissBackupCodesNotice
+            | ConnectAccountMessage::TwoFactorSettings(_)) => {
+                self.dispatch_authentication_results(message)
+            }
+            message @ (ConnectAccountMessage::RefreshedSession(_, _, _)
+            | ConnectAccountMessage::AuthCommitAccepted { .. }
+            | ConnectAccountMessage::AuthCommitRejected { .. }
+            | ConnectAccountMessage::SessionLoaded { .. }) => {
+                self.dispatch_authenticated_session(message)
+            }
+            message @ (ConnectAccountMessage::PlanLoaded(_, _)
+            | ConnectAccountMessage::PlanReloaded(_, _, _)
+            | ConnectAccountMessage::OverviewCountsLoaded { .. }
+            | ConnectAccountMessage::RefreshRecoveryServices
+            | ConnectAccountMessage::OpenRecoveryService(_)
+            | ConnectAccountMessage::ReviewSignOut(_)
+            | ConnectAccountMessage::LogOut) => self.dispatch_account_overview(message),
+            message @ (ConnectAccountMessage::EmailChanged(_)
+            | ConnectAccountMessage::SubmitLogin
+            | ConnectAccountMessage::SubmitRegistration
+            | ConnectAccountMessage::CreateAccount
+            | ConnectAccountMessage::OtpRequested { .. }
+            | ConnectAccountMessage::OtpChanged(_)
+            | ConnectAccountMessage::BackToEmail
+            | ConnectAccountMessage::OtpCooldownTick(_)
+            | ConnectAccountMessage::ResendOtp
+            | ConnectAccountMessage::OtpResent(_)
+            | ConnectAccountMessage::OtpResendFailed(_, _)
+            | ConnectAccountMessage::VerifyOtp
+            | ConnectAccountMessage::EmailNotVerified { .. }) => self.dispatch_login_form(message),
+            message @ (ConnectAccountMessage::VerifiedDevicesLoaded(_, _)
+            | ConnectAccountMessage::LoginActivityLoaded(_, _)
+            | ConnectAccountMessage::ReviewVerifiedDeviceRemoval(_)
+            | ConnectAccountMessage::DeleteVerifiedDevice(_)
+            | ConnectAccountMessage::VerifiedDeviceDeleted(_, _, _)
+            | ConnectAccountMessage::CopyToClipboard(_)
+            | ConnectAccountMessage::FeaturesLoaded(_, _)
+            | ConnectAccountMessage::FocusAction(_)) => self.dispatch_security_panel(message),
+            message @ (ConnectAccountMessage::BillingCycleSelected(_)
+            | ConnectAccountMessage::SelectPlanTier(_)
+            | ConnectAccountMessage::ReviewPlanChange(_)
+            | ConnectAccountMessage::StartCheckout(_)
+            | ConnectAccountMessage::CheckoutCreated(_, _, _)
+            | ConnectAccountMessage::PollChargeStatus(_)
+            | ConnectAccountMessage::ChargeStatusUpdated(_, _, _)) => {
+                self.dispatch_lightning_checkout(message)
+            }
+            message @ (ConnectAccountMessage::SetReviewCycle(_)
+            | ConnectAccountMessage::SelectPayWith(_)
+            | ConnectAccountMessage::StartCardCheckout
+            | ConnectAccountMessage::CardCheckoutCreated(_, _, _)
+            | ConnectAccountMessage::PollCardPlan(_)
+            | ConnectAccountMessage::CardPlanPolled(_, _, _, _)
+            | ConnectAccountMessage::ReopenCardPage
+            | ConnectAccountMessage::BackToReview { .. }) => self.dispatch_card_checkout(message),
+            message @ (ConnectAccountMessage::ChangePreviewLoaded(_, _, _)
+            | ConnectAccountMessage::ConfirmPlanChange
+            | ConnectAccountMessage::PlanChangeApplied(_, _, _)
+            | ConnectAccountMessage::RetryPlanRefresh
+            | ConnectAccountMessage::ShowAutoRenewOff(_)
+            | ConnectAccountMessage::SetAutoRenew(_)
+            | ConnectAccountMessage::OpenCardPortal
+            | ConnectAccountMessage::KeepCurrentPlan
+            | ConnectAccountMessage::CardRequestDone(_, _)) => {
+                self.dispatch_plan_management(message)
+            }
+            message @ (ConnectAccountMessage::SelectPaymentNetwork(_)
+            | ConnectAccountMessage::ShowInvoiceHere
+            | ConnectAccountMessage::ResumeChargePolling
+            | ConnectAccountMessage::DismissCheckout
+            | ConnectAccountMessage::OpenCheckoutUrl(_)
+            | ConnectAccountMessage::DismissRenewalBanner
+            | ConnectAccountMessage::OpenPlanBilling
+            | ConnectAccountMessage::ComparePlans(_)
+            | ConnectAccountMessage::ShowCampaignRedeem(_)
+            | ConnectAccountMessage::RenewCurrentPlan
+            | ConnectAccountMessage::ToggleBillingHistory
+            | ConnectAccountMessage::Contacts(_)) => self.dispatch_billing_view(message),
+            message @ (ConnectAccountMessage::Error(_)
+            | ConnectAccountMessage::BillingHistoryLoaded(_, _)
+            | ConnectAccountMessage::UserProfileLoaded(_, _)
+            | ConnectAccountMessage::UserProfileFailed(_, _)
+            | ConnectAccountMessage::SecurityDataFailed(_, _)
+            | ConnectAccountMessage::Retry(_)) => self.dispatch_account_results(message),
+            message @ (ConnectAccountMessage::CampaignCodeChanged(_)
+            | ConnectAccountMessage::RegisterCampaignCodeChanged(_)
+            | ConnectAccountMessage::RedeemCampaignCode
+            | ConnectAccountMessage::CampaignRedeemed(_, _)) => self.dispatch_campaign(message),
+            message @ (ConnectAccountMessage::DuressStateChecked(_, _, _)
+            | ConnectAccountMessage::RetryDuressCheck
+            | ConnectAccountMessage::DuressDeviceRegistered) => {
+                self.dispatch_sign_in_duress(message)
+            }
+            ConnectAccountMessage::Duress(m) => self.update_duress(m),
+            ConnectAccountMessage::DuressContacts(m) => self.update_duress_contacts(m),
+            ConnectAccountMessage::DeleteAccount(m) => self.update_delete_account(m),
+        }
+    }
+
+    fn dispatch_session_refresh(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::Init => {
                 if self.admitted_client {
                     if self.user.is_some() || self.admitted_user_loading {
@@ -2463,7 +2581,16 @@ impl ConnectAccountPanel {
                     loading: false,
                 };
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_authentication_results(
+        &mut self,
+        message: ConnectAccountMessage,
+    ) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::SetSession(login, epoch) => {
                 if self.stale_completion(epoch, "SetSession") {
                     return iced::Task::none();
@@ -2706,7 +2833,16 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::TwoFactorSettings(msg) => {
                 return self.update_two_factor(msg);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_authenticated_session(
+        &mut self,
+        message: ConnectAccountMessage,
+    ) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::RefreshedSession(login, epoch, previous_refresh_token) => {
                 if self.stale_completion(epoch, "RefreshedSession") {
                     return iced::Task::none();
@@ -2828,7 +2964,13 @@ impl ConnectAccountPanel {
                 }
                 return iced::Task::batch(tasks);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_account_overview(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
                 if gen == self.session_generation && plan.is_some() {
                     self.apply_loaded_plan(plan);
@@ -2916,7 +3058,13 @@ impl ConnectAccountPanel {
                     )));
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_login_form(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::EmailChanged(email) => match &mut self.step {
                 ConnectFlowStep::Login { email: e, loading }
                 | ConnectFlowStep::Register { email: e, loading } => {
@@ -3240,7 +3388,13 @@ impl ConnectAccountPanel {
                     },
                 );
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_security_panel(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::VerifiedDevicesLoaded(devices, gen) => {
                 if gen == self.session_generation && matches!(self.step, ConnectFlowStep::Dashboard)
                 {
@@ -3330,7 +3484,16 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::FocusAction(id) => {
                 return iced::widget::operation::focus(id);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_lightning_checkout(
+        &mut self,
+        message: ConnectAccountMessage,
+    ) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::BillingCycleSelected(cycle) => {
                 self.selected_billing_cycle = cycle;
             }
@@ -3618,7 +3781,13 @@ impl ConnectAccountPanel {
                     }
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_card_checkout(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::SetReviewCycle(cycle) => {
                 if let Some(cs) = self
                     .checkout
@@ -3844,7 +4013,13 @@ impl ConnectAccountPanel {
                     cs.poll_errors = 0;
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_plan_management(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::ChangePreviewLoaded(result, gen, id) => {
                 if gen != self.session_generation || !self.is_current_checkout(id) {
                     return iced::Task::none();
@@ -4061,7 +4236,13 @@ impl ConnectAccountPanel {
                     }
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_billing_view(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::SelectPaymentNetwork(network) => {
                 if let Some(cs) = self.checkout.as_mut() {
                     cs.network = network;
@@ -4218,6 +4399,13 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::Contacts(contacts_msg) => {
                 return self.update_contacts(contacts_msg);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn dispatch_account_results(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::Error(error_msg) => {
                 // No card button: every sender of this variant is an action the
                 // user started from a control that is still on screen (Continue,
@@ -4338,6 +4526,13 @@ impl ConnectAccountPanel {
             }
 
             // ── Campaign code redemption (v2 campaign engine) ─────────────
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn dispatch_campaign(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::CampaignCodeChanged(code) => {
                 // Ignore edits while a redeem is in flight — otherwise the
                 // response for the submitted code could land against
@@ -4406,6 +4601,13 @@ impl ConnectAccountPanel {
                 // plan fetch on that path, so there's no racing PlanLoaded.
                 return self.plan_fetch_task();
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn dispatch_sign_in_duress(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::DuressStateChecked(outcome, gen, attempt) => {
                 // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
                 // this resolves, so the dashboard is never shown to a possibly-
@@ -4594,11 +4796,8 @@ impl ConnectAccountPanel {
                 // or syncing DuressLocalState.active to the server's duress
                 // state — set on the post-sign-in mirror, reset on recovery).
             }
-            ConnectAccountMessage::Duress(m) => return self.update_duress(m),
-            ConnectAccountMessage::DuressContacts(m) => return self.update_duress_contacts(m),
-            ConnectAccountMessage::DeleteAccount(m) => return self.update_delete_account(m),
+            _ => {}
         }
-
         iced::Task::none()
     }
 
