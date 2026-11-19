@@ -2886,6 +2886,32 @@ impl GUI {
         }
     }
 
+    // The old fork App is gone. Apply its auth operation to the replacement
+    // Home so logout clears saved login state instead of being discarded.
+    fn route_fork_app_auth_to_home(message: Message, auth_from_fork_app: bool) -> Message {
+        if auth_from_fork_app {
+            match message {
+                Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match *inner {
+                    tab::Message::Run(AppMessage::View(
+                        crate::app::view::Message::ConnectAccount(msg),
+                    )) => Message::Pane(
+                        pane_id,
+                        pane::Message::tab(
+                            tab_id,
+                            tab::Message::Launch(home::Message::View(
+                                home::ViewMessage::ConnectAccount(msg),
+                            )),
+                        ),
+                    ),
+                    other => Message::Pane(pane_id, pane::Message::tab(tab_id, other)),
+                },
+                message => message,
+            }
+        } else {
+            message
+        }
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         self.reconcile_overlay_origins();
         let message = match self.intercept_verified_unlock_duress(message) {
@@ -2906,48 +2932,20 @@ impl GUI {
         }
         self.relay_tab_sign_out_notice(&message);
         let auth_change = self.tab_auth_change(&message);
-        let auth_from_fork_app = if auth_change.is_some() {
-            match &message {
-                Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) => self
-                    .panes
-                    .get(*pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                    .is_some_and(
-                        |tab| matches!(&tab.state, tab::State::App(app) if app.requires_connect()),
-                    ),
-                _ => false,
-            }
-        } else {
-            false
-        };
+        let auth_from_fork_app = auth_change.as_ref().is_some_and(|(_, pane_id, tab_id)| {
+            self.panes
+                .get(*pane_id)
+                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
+                .is_some_and(
+                    |tab| matches!(&tab.state, tab::State::App(app) if app.requires_connect()),
+                )
+        });
         let completed_login = Self::completed_tab_login(&message);
         let accepted_before = auth_change
             .as_ref()
             .and_then(|(_, pane_id, tab_id)| self.accepted_tab_auth_revision(*pane_id, *tab_id));
         let mut auth_tasks = Vec::new();
-        // The old fork App is gone. Apply its auth operation to the replacement
-        // Home so logout clears saved login state instead of being discarded.
-        let message = if auth_from_fork_app {
-            match message {
-                Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match *inner {
-                    tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::ConnectAccount(msg),
-                    )) => Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            tab_id,
-                            tab::Message::Launch(home::Message::View(
-                                home::ViewMessage::ConnectAccount(msg),
-                            )),
-                        ),
-                    ),
-                    other => Message::Pane(pane_id, pane::Message::tab(tab_id, other)),
-                },
-                message => message,
-            }
-        } else {
-            message
-        };
+        let message = Self::route_fork_app_auth_to_home(message, auth_from_fork_app);
         // Both the scoped seed-export proof and the existing Cube-unlock PIN
         // verdict enter Duress before their async wipe task runs. The unlock
         // verdict has no private proof object, so its live PinEntry and exact
