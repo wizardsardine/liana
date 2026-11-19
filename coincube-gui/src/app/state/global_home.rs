@@ -1117,99 +1117,13 @@ impl State for GlobalHome {
                         Task::none()
                     }
                     HomeMessage::FetchTransferFeeratePreset(preset) => {
-                        if self.is_sending {
-                            return Task::none();
-                        }
-                        // Fire a mempool estimate for the requested target.
-                        // The corresponding button is gated non-pressable while
-                        // `transfer_feerate_loading == Some(preset)`.
-                        self.transfer_feerate_loading = Some(preset);
-                        Task::perform(
-                            async move {
-                                let estimator = FeeEstimator::new();
-                                match preset {
-                                    FeeratePreset::Fast => estimator.get_high_priority_rate().await,
-                                    FeeratePreset::Normal => {
-                                        estimator.get_mid_priority_rate().await
-                                    }
-                                    FeeratePreset::Slow => estimator.get_low_priority_rate().await,
-                                }
-                            },
-                            move |result| {
-                                Message::View(view::Message::Home(
-                                    HomeMessage::TransferFeerateEstimated {
-                                        preset,
-                                        result: result.map(|r| r as u32).map_err(|e| e.to_string()),
-                                    },
-                                ))
-                            },
-                        )
+                        self.fetch_transfer_feerate_preset(preset)
                     }
                     HomeMessage::TransferFeerateEstimated { preset, result } => {
-                        if self.is_sending {
-                            self.transfer_feerate_loading = None;
-                            return Task::none();
-                        }
-                        // If a different preset is now pending, ignore this stale
-                        // response so a late Fast result doesn't clobber a more
-                        // recent Slow click.
-                        if self.transfer_feerate_loading != Some(preset) {
-                            return Task::none();
-                        }
-                        self.transfer_feerate_loading = None;
-                        match result {
-                            Ok(sats_per_vb) => {
-                                let clamped = sats_per_vb.clamp(1, 1000);
-                                self.transfer_feerate = form::Value {
-                                    value: clamped.to_string(),
-                                    valid: true,
-                                    warning: None,
-                                };
-                                // Re-preview the Vault-source PSBT at the new
-                                // feerate (see `vault_transfer_preview_task`).
-                                self.spend_tx_fees = None;
-                                self.vault_transfer_preview_task(cache, &daemon)
-                            }
-                            Err(e) => {
-                                Task::done(Message::View(view::Message::ShowError(
-                                    crate::user_error::UserError::logged(
-                                        "Couldn't fetch the current fee rate",
-                                        "Check your internet connection and try again, or enter a fee rate yourself.",
-                                        crate::user_error::CC_NET_UNKNOWN,
-                                        true,
-                                        format!("fee estimator, preset {preset:?}: {e}"),
-                                    )
-                                    .toast(),
-                                )))
-                            }
-                        }
+                        self.on_transfer_feerate_estimated(&daemon, cache, preset, result)
                     }
                     HomeMessage::SetTransferFeerate(value) => {
-                        if self.is_sending {
-                            return Task::none();
-                        }
-                        let parsed = value.trim().parse::<u64>();
-                        let (valid, warning) = match parsed {
-                            Ok(v) if v > 0 && v <= 1000 => (true, None),
-                            Ok(_) => (false, Some("Feerate must be 1..=1000 sats/vbyte")),
-                            Err(_) if value.trim().is_empty() => {
-                                (false, Some("Feerate is required"))
-                            }
-                            Err(_) => (false, Some("Feerate must be an integer")),
-                        };
-                        self.transfer_feerate = form::Value {
-                            value,
-                            valid,
-                            warning,
-                        };
-                        // Feerate changed → any prior preview fee is now stale.
-                        // Clear it immediately so the confirm screen doesn't
-                        // show a number that no longer matches the input, then
-                        // re-run the preview. The result handler gates on the
-                        // feerate_vb it was dispatched with, so late results
-                        // from the old feerate get dropped.
-                        self.spend_tx_fees = None;
-                        self.vault_transfer_preview_task(cache, &daemon)
+                        self.set_transfer_feerate(&daemon, cache, value)
                     }
                     HomeMessage::OpenWalletPicker(side) => {
                         self.open_transfer_wallet_picker(cache, side)
@@ -1833,58 +1747,12 @@ impl State for GlobalHome {
             }
             Message::View(view::Message::ShowQrCode(_)) => self.show_transfer_address_qr(),
             Message::View(view::Message::Close) => self.close_transfer_modal(),
-            Message::Updated(result) => {
-                let persisted = result.is_ok();
-                let signing_request = self.transfer_psbt_ready_for;
-                let wallet = self.wallet.clone();
-                if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
-                    if let Some(ref mut spend_tx) = self.transfer_spend_tx {
-                        use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                        let task = sign_modal.update(daemon, Message::Updated(result), spend_tx);
-                        let threshold_met = wallet
-                            .as_ref()
-                            .and_then(|wallet| {
-                                crate::app::state::vault::replay::spend_info_for_chain(
-                                    wallet.chain,
-                                    &wallet.main_descriptor,
-                                    &spend_tx.psbt,
-                                )
-                                .ok()
-                            })
-                            .is_some_and(|info| {
-                                let primary = info.primary_path();
-                                primary.sigs_count >= primary.threshold
-                                    || info
-                                        .recovery_paths()
-                                        .values()
-                                        .any(|path| path.sigs_count >= path.threshold)
-                            });
-                        if let Some(completion) = transfer_signing_completion_message(
-                            persisted,
-                            threshold_met,
-                            signing_request,
-                        ) {
-                            return Task::batch(vec![
-                                task,
-                                Task::done(Message::View(view::Message::Home(completion))),
-                            ]);
-                        }
-                        return task;
-                    }
-                }
-                Task::none()
-            }
+            Message::Updated(result) => self.on_transfer_signing_updated(daemon, result),
             Message::Signed(_, _)
             | Message::HardwareWallets(_)
             | Message::View(view::Message::SelectHardwareWallet(_))
             | Message::View(view::Message::Spend(_)) => {
-                if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
-                    if let Some(ref mut spend_tx) = self.transfer_spend_tx {
-                        use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                        return sign_modal.update(daemon, message, spend_tx);
-                    }
-                }
-                Task::none()
+                self.update_transfer_signer(daemon, message)
             }
             Message::Tick => self.reconcile_pending_vault_receive(cache),
             _ => Task::none(),
@@ -1907,6 +1775,165 @@ impl State for GlobalHome {
 }
 
 impl GlobalHome {
+    fn fetch_transfer_feerate_preset(&mut self, preset: FeeratePreset) -> Task<Message> {
+        if self.is_sending {
+            return Task::none();
+        }
+        // Fire a mempool estimate for the requested target.
+        // The corresponding button is gated non-pressable while
+        // `transfer_feerate_loading == Some(preset)`.
+        self.transfer_feerate_loading = Some(preset);
+        Task::perform(
+            async move {
+                let estimator = FeeEstimator::new();
+                match preset {
+                    FeeratePreset::Fast => estimator.get_high_priority_rate().await,
+                    FeeratePreset::Normal => estimator.get_mid_priority_rate().await,
+                    FeeratePreset::Slow => estimator.get_low_priority_rate().await,
+                }
+            },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::TransferFeerateEstimated {
+                    preset,
+                    result: result.map(|r| r as u32).map_err(|e| e.to_string()),
+                }))
+            },
+        )
+    }
+
+    fn on_transfer_feerate_estimated(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        preset: FeeratePreset,
+        result: Result<u32, String>,
+    ) -> Task<Message> {
+        if self.is_sending {
+            self.transfer_feerate_loading = None;
+            return Task::none();
+        }
+        // If a different preset is now pending, ignore this stale
+        // response so a late Fast result doesn't clobber a more
+        // recent Slow click.
+        if self.transfer_feerate_loading != Some(preset) {
+            return Task::none();
+        }
+        self.transfer_feerate_loading = None;
+        match result {
+            Ok(sats_per_vb) => {
+                let clamped = sats_per_vb.clamp(1, 1000);
+                self.transfer_feerate = form::Value {
+                    value: clamped.to_string(),
+                    valid: true,
+                    warning: None,
+                };
+                // Re-preview the Vault-source PSBT at the new
+                // feerate (see `vault_transfer_preview_task`).
+                self.spend_tx_fees = None;
+                self.vault_transfer_preview_task(cache, daemon)
+            }
+            Err(e) => Task::done(Message::View(view::Message::ShowError(
+                crate::user_error::UserError::logged(
+                    "Couldn't fetch the current fee rate",
+                    "Check your internet connection and try again, or enter a fee rate yourself.",
+                    crate::user_error::CC_NET_UNKNOWN,
+                    true,
+                    format!("fee estimator, preset {preset:?}: {e}"),
+                )
+                .toast(),
+            ))),
+        }
+    }
+
+    fn set_transfer_feerate(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        value: String,
+    ) -> Task<Message> {
+        if self.is_sending {
+            return Task::none();
+        }
+        let parsed = value.trim().parse::<u64>();
+        let (valid, warning) = match parsed {
+            Ok(v) if v > 0 && v <= 1000 => (true, None),
+            Ok(_) => (false, Some("Feerate must be 1..=1000 sats/vbyte")),
+            Err(_) if value.trim().is_empty() => (false, Some("Feerate is required")),
+            Err(_) => (false, Some("Feerate must be an integer")),
+        };
+        self.transfer_feerate = form::Value {
+            value,
+            valid,
+            warning,
+        };
+        // Feerate changed → any prior preview fee is now stale.
+        // Clear it immediately so the confirm screen doesn't
+        // show a number that no longer matches the input, then
+        // re-run the preview. The result handler gates on the
+        // feerate_vb it was dispatched with, so late results
+        // from the old feerate get dropped.
+        self.spend_tx_fees = None;
+        self.vault_transfer_preview_task(cache, daemon)
+    }
+
+    fn on_transfer_signing_updated(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        result: Result<(), crate::app::error::Error>,
+    ) -> Task<Message> {
+        let persisted = result.is_ok();
+        let signing_request = self.transfer_psbt_ready_for;
+        let wallet = self.wallet.clone();
+        if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
+            if let Some(ref mut spend_tx) = self.transfer_spend_tx {
+                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                let task = sign_modal.update(daemon, Message::Updated(result), spend_tx);
+                let threshold_met = wallet
+                    .as_ref()
+                    .and_then(|wallet| {
+                        crate::app::state::vault::replay::spend_info_for_chain(
+                            wallet.chain,
+                            &wallet.main_descriptor,
+                            &spend_tx.psbt,
+                        )
+                        .ok()
+                    })
+                    .is_some_and(|info| {
+                        let primary = info.primary_path();
+                        primary.sigs_count >= primary.threshold
+                            || info
+                                .recovery_paths()
+                                .values()
+                                .any(|path| path.sigs_count >= path.threshold)
+                    });
+                if let Some(completion) =
+                    transfer_signing_completion_message(persisted, threshold_met, signing_request)
+                {
+                    return Task::batch(vec![
+                        task,
+                        Task::done(Message::View(view::Message::Home(completion))),
+                    ]);
+                }
+                return task;
+            }
+        }
+        Task::none()
+    }
+
+    fn update_transfer_signer(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        message: Message,
+    ) -> Task<Message> {
+        if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
+            if let Some(ref mut spend_tx) = self.transfer_spend_tx {
+                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                return sign_modal.update(daemon, message, spend_tx);
+            }
+        }
+        Task::none()
+    }
+
     fn on_swap_settled_awaiting_arrival(
         &mut self,
         amount_sat: u64,
