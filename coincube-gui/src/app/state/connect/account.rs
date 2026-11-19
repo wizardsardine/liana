@@ -5622,11 +5622,45 @@ impl ConnectAccountPanel {
         iced::Task::none()
     }
 
-    /// Recovery flow (Phase 6) + enrollment wizard (Phases 2 & 8) dispatcher.
+    /// Dispatch account recovery, enrollment, and disable messages.
     fn update_duress(&mut self, msg: DuressMessage) -> iced::Task<Message> {
-        use crate::services::duress::enroll;
         match msg {
-            // ── Recovery (Phase 6) ──
+            message @ (DuressMessage::RecoveryPassphraseChanged(_)
+            | DuressMessage::SubmitClear
+            | DuressMessage::ClearResult(_, _)
+            | DuressMessage::ForgotAllClear
+            | DuressMessage::FinishRecovery) => self.update_duress_recovery(message),
+            message @ (DuressMessage::StartEnrollment
+            | DuressMessage::ReloadCubes
+            | DuressMessage::CancelEnrollment
+            | DuressMessage::DuressPinChanged(_)
+            | DuressMessage::DuressPinConfirmChanged(_)
+            | DuressMessage::AllClearChanged(_)
+            | DuressMessage::CrkPasswordChanged(_)
+            | DuressMessage::DelaySelected(_)
+            | DuressMessage::MemorizedToggled(_)
+            | DuressMessage::EnrollBack
+            | DuressMessage::EnrollNext) => self.update_duress_enrollment_form(message),
+            message @ (DuressMessage::SubmitEnrollment
+            | DuressMessage::EnrollPreflightDone(_, _)
+            | DuressMessage::EnrollResult(_, _)) => self.update_duress_enrollment_requests(message),
+            message @ (DuressMessage::CubesLoaded(_, _, _)
+            | DuressMessage::StateLoaded(_, _)
+            | DuressMessage::EnrollmentPersisted) => self.update_duress_device_state(message),
+            message @ (DuressMessage::DisableStart
+            | DuressMessage::DisableMethodProbed(_, _)
+            | DuressMessage::DisablePinChanged(_)
+            | DuressMessage::DisableCancel
+            | DuressMessage::DisableSubmit
+            | DuressMessage::DisablePasskeySubmit) => self.update_duress_disable_dialog(message),
+            message @ (DuressMessage::DisableStepUpDone(_, _)
+            | DuressMessage::DisableResult(_, _)
+            | DuressMessage::DisarmComplete(_, _)) => self.update_duress_disable_results(message),
+        }
+    }
+
+    fn update_duress_recovery(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::RecoveryPassphraseChanged(text) => {
                 if let ConnectFlowStep::DuressRecovery { passphrase, .. } = &mut self.step {
                     *passphrase = text;
@@ -5744,6 +5778,13 @@ impl ConnectAccountPanel {
             }
 
             // ── Enrollment wizard (Phases 2 & 8) ──
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_enrollment_form(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::StartEnrollment => {
                 // An abandoned submission still owns the server response and
                 // its local arming payload; do not replace it with a new wizard.
@@ -5855,6 +5896,14 @@ impl ConnectAccountPanel {
                     }
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_enrollment_requests(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        use crate::services::duress::enroll;
+        match message {
             DuressMessage::SubmitEnrollment => {
                 // Vault gate backstop (PLAN-duress-vault-gate). The gate is
                 // enforced at StartEnrollment, but Cube state can change while
@@ -6084,6 +6133,13 @@ impl ConnectAccountPanel {
                     }
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_device_state(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::CubesLoaded(cubes, gen, seq) => {
                 // Apply only the newest fetch: `gen` guards against a prior
                 // session, `seq` against an older in-flight fetch in this
@@ -6169,6 +6225,13 @@ impl ConnectAccountPanel {
             }
 
             // ── Disable (Issue 2 — turn duress off) ──
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_disable_dialog(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::DisableStart => {
                 // Open the step-up re-auth dialog. The trigger is only surfaced
                 // when enrolled & inactive (see `duress_ux`).
@@ -6354,6 +6417,13 @@ impl ConnectAccountPanel {
                     }
                 }
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_disable_results(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::DisableStepUpDone(res, gen) => {
                 if gen != self.session_generation {
                     return iced::Task::none();
@@ -6502,6 +6572,7 @@ impl ConnectAccountPanel {
                     }
                 }
             }
+            _ => {}
         }
         iced::Task::none()
     }
