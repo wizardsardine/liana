@@ -1879,51 +1879,7 @@ impl Home {
                 Task::none()
             }
             Message::View(ViewMessage::RestoreFromAnyRecoveryKit) => self.restore_from_any_kit(),
-            Message::View(ViewMessage::ShowImportBitcoin) => {
-                self.catalog.dismiss_popovers();
-                if self.creating_cube
-                    || !matches!(
-                        self.state,
-                        State::Cubes { .. } | State::NoCube { .. } | State::Unchecked
-                    )
-                {
-                    return Task::none();
-                }
-                if self.network != ChainId::Bitcoin {
-                    self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
-                    return Task::none();
-                }
-                // Every entry is disabled at the limit; this refuses a queued
-                // or stale press before the user fills in a name and PIN.
-                if launcher_catalog::project(self).at_limit() {
-                    self.set_error(
-                        if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
-                            "Bitcoin mainnet has no free Cube slot on your plan. Delete a \
-                             Bitcoin mainnet Cube to import a wallet."
-                        } else {
-                            "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or \
-                             delete a Bitcoin mainnet Cube, to import a wallet."
-                        },
-                    );
-                    return Task::none();
-                }
-                if self.pending_bitcoin_import.is_none() {
-                    self.pending_bitcoin_import = Some(Box::new(BitcoinImport::pending()));
-                }
-                self.restore_hub = false;
-                self.restore_phone = false;
-                // A passkey can't hold an imported secret: import sets a PIN.
-                self.passkey_mode = false;
-                match &mut self.state {
-                    State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
-                        *create_cube = true;
-                    }
-                    State::Unchecked => {}
-                    _ => return Task::none(),
-                }
-                self.error = None;
-                Task::none()
-            }
+            Message::View(ViewMessage::ShowImportBitcoin) => self.show_import_bitcoin(),
             Message::View(ViewMessage::CubeNameEdited(name)) => {
                 self.create_cube_name.value = name;
                 self.create_cube_name.valid = !self.create_cube_name.value.trim().is_empty();
@@ -2344,255 +2300,13 @@ impl Home {
             Message::View(ViewMessage::Run(index)) => self.run_cube(index),
             Message::View(ViewMessage::ToggleRecoveryCheckBox) => Task::none(),
             Message::View(ViewMessage::RecoveryWordInput { index, word }) => {
-                if index < 12 {
-                    let normalized = word
-                        .chars()
-                        .filter(|c| c.is_ascii_alphabetic())
-                        .collect::<String>()
-                        .to_lowercase();
-
-                    let mut valid_prefix = String::new();
-                    for ch in normalized.chars() {
-                        let mut next = valid_prefix.clone();
-                        next.push(ch);
-                        if bip39_suggestions(&next, 1).is_empty() {
-                            break;
-                        }
-                        valid_prefix = next;
-                    }
-
-                    self.recovery_words[index] = valid_prefix.clone();
-                    self.recovery_active_index = if valid_prefix.is_empty() {
-                        None
-                    } else {
-                        Some(index)
-                    };
-                    self.error = None;
-                }
-                Task::none()
+                self.edit_recovery_word(index, word)
             }
             Message::View(ViewMessage::SelectRecoverySuggestion { index, word }) => {
-                if index < 12 {
-                    self.recovery_words[index] = word;
-                    self.recovery_active_index = None;
-                    self.error = None;
-                }
-                Task::none()
+                self.select_recovery_suggestion(index, word)
             }
-            Message::View(ViewMessage::SubmitRecovery) => {
-                let words = self.recovery_words.join(" ");
-                match bip39::Mnemonic::parse_in(bip39::Language::English, words) {
-                    Ok(mnemonic) => {
-                        log::info!("Mnemonic parsed successfully");
-
-                        if self.creating_cube {
-                            return Task::none();
-                        }
-
-                        if self.create_cube_name.value.trim().is_empty() {
-                            return Task::none();
-                        }
-
-                        // Validate PIN (always required)
-                        if !self.create_cube_pin.is_complete() {
-                            self.error = Some("Please enter all 4 PIN digits".to_string());
-                            return Task::none();
-                        }
-                        if !self.create_cube_pin_confirm.is_complete() {
-                            self.error = Some("Please confirm all 4 PIN digits".to_string());
-                            return Task::none();
-                        }
-                        if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
-                            self.error = Some("PIN codes do not match".to_string());
-                            return Task::none();
-                        }
-
-                        self.creating_cube = true;
-                        let network = self.network;
-                        let cube_name = self.create_cube_name.value.trim().to_string();
-                        let pin = self.create_cube_pin.value();
-                        let datadir_path = self.datadir_path.clone();
-                        let pending_bitcoin_import = self.pending_bitcoin_import.clone();
-                        // A ghost's import takes the ghost's identity only when
-                        // the phrase proves it is that Cube's seed, so Connect's
-                        // registration is reclaimed rather than duplicated. The
-                        // ghost's ID never enters `pending_cube_id`: that slot
-                        // outlives this form (a failed write keeps it for a
-                        // retry), and a later Create or import must not reuse it.
-                        let ghost_id = match &self.ghost_import {
-                            Some(ghost) => match self
-                                .ghost_still_registered(ghost)
-                                .and_then(|()| ghost_import_identity(ghost, network, &mnemonic))
-                            {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    self.creating_cube = false;
-                                    self.error = Some(e);
-                                    return Task::none();
-                                }
-                            },
-                            None => None,
-                        };
-                        // Held until the write lands: its registration must
-                        // go only to the account the ghost was listed under.
-                        self.ghost_claim = ghost_id.map(|id| {
-                            (
-                                id.to_string(),
-                                self.ghost_import.as_ref().and_then(|ghost| ghost.account),
-                            )
-                        });
-                        // Otherwise reuse the UUID that was pre-generated when
-                        // the user first clicked "Create Cube" (recovery path).
-                        let cube_id = match ghost_id {
-                            Some(id) => id,
-                            None => *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4),
-                        };
-
-                        Task::perform(
-                            async move {
-                                // Same device-secret mint + refusal as the
-                                // non-recovery path above.
-                                let device_secret = match unlock::device_secret::capability() {
-                                    unlock::device_secret::Capability::Available => Some(
-                                        unlock::device_secret::get_or_create(
-                                            datadir_path.path(),
-                                            &cube_id.to_string(),
-                                        )
-                                        .map_err(|e| e.to_string())?,
-                                    ),
-                                    unlock::device_secret::Capability::Unavailable(why) => {
-                                        return Err(why)
-                                    }
-                                };
-
-                                // Restore MasterSigner from recovery mnemonic
-                                let master_signer = MasterSigner::from_mnemonic(
-                                    network.bitcoin_network(),
-                                    mnemonic,
-                                )
-                                .map_err(|e| format!("Failed to restore from mnemonic: {}", e))?;
-
-                                // Create secp context for fingerprint calculation
-                                let secp =
-                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let master_fingerprint = master_signer.fingerprint(&secp);
-
-                                // Store master seed mnemonic (encrypted with PIN)
-                                let network_dir = datadir_path.network_directory(network);
-                                network_dir.init().map_err(|e| {
-                                    format!("Failed to create network directory: {}", e)
-                                })?;
-
-                                // One timestamp for the seed file and the Cube
-                                // — see the note on the non-recovery path (X7).
-                                let timestamp = chrono::Utc::now().timestamp();
-                                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                                // Store master seed mnemonic encrypted with PIN (always required)
-                                master_signer
-                                    .store_encrypted_for_chain(
-                                        datadir_path.path(),
-                                        network,
-                                        &secp,
-                                        Some((master_checksum, timestamp)),
-                                        &pin,
-                                        &cube_id.to_string(),
-                                        device_secret.as_ref(),
-                                    )
-                                    .map_err(|e| {
-                                        format!("Failed to store master seed mnemonic: {}", e)
-                                    })?;
-
-                                tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
-
-                                // Build Cube settings using the pre-generated,
-                                // stable UUID. No PIN hash — see the note on
-                                // the non-recovery path above.
-                                let mut cube =
-                                    CubeSettings::new_with_id(cube_id, cube_name, network)
-                                        .with_master_signer(master_fingerprint);
-                                cube.bitcoin_import = pending_bitcoin_import;
-                                // Same instant the seed file carries (X7).
-                                cube.created_at = timestamp;
-                                // The Cube's second slot, written at creation —
-                                // see the note on the non-recovery path (6b).
-                                let slot_name = unlock::marker::new_file_name(timestamp);
-                                match unlock::marker::write_decoy(
-                                    datadir_path.path(),
-                                    network,
-                                    &cube_id.to_string(),
-                                    &slot_name,
-                                    device_secret.as_ref(),
-                                ) {
-                                    Ok(()) => cube.duress_slot_file = Some(slot_name),
-                                    Err(e) => tracing::warn!(
-                                        "could not write the Cube's second slot: {}",
-                                        e
-                                    ),
-                                }
-                                // Reaching here means the user typed all twelve
-                                // words of this seed back into the app and they
-                                // passed the BIP39 checksum. That *is* the
-                                // backup demonstration — a stricter one than
-                                // the creation flow's three-word challenge, and
-                                // it is the same claim `backed_up` makes
-                                // everywhere else ("the user wrote the seed
-                                // phrase down and confirmed it").
-                                //
-                                // Recording it is what makes arming the gate
-                                // below safe: a restored Cube satisfies
-                                // `creation_gate::evaluate` on its own local
-                                // evidence and opens immediately.
-                                cube.backed_up = true;
-                                cube.creation_backup_required = true;
-
-                                // Save Cube settings to settings file.
-                                // Idempotency: skip insert if UUID already exists.
-                                settings::update_settings_file(&network_dir, |mut settings| {
-                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
-                                        return Some(settings);
-                                    }
-                                    settings.cubes.push(cube.clone());
-                                    Some(settings)
-                                })
-                                .await
-                                .map(|_| cube)
-                                .map_err(|e| e.to_string())
-                            },
-                            Message::CubeCreated,
-                        )
-                    }
-                    Err(error) => {
-                        // Clear recovery words on error
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
-                        self.error = Some(error.to_string());
-                        Task::none()
-                    }
-                }
-            }
-            Message::View(ViewMessage::CancelRecovery) => {
-                // Once the write has started it runs to completion; the
-                // form's Cancel is disabled until it does.
-                if self.creating_cube {
-                    return Task::none();
-                }
-                for word in &mut self.recovery_words {
-                    word.clear();
-                    word.shrink_to_fit();
-                }
-                self.recovery_active_index = None;
-                self.create_cube_name = coincube_ui::component::form::Value::default();
-                self.create_cube_pin = pin_input::PinInput::new();
-                self.create_cube_pin_confirm = pin_input::PinInput::new();
-                self.pending_bitcoin_import = None;
-                self.ghost_import = None;
-                self.error = None;
-                self.reload()
-            }
+            Message::View(ViewMessage::SubmitRecovery) => self.submit_recovery(),
+            Message::View(ViewMessage::CancelRecovery) => self.cancel_recovery(),
 
             Message::View(ViewMessage::GoToSection(section)) => {
                 self.catalog.dismiss_popovers();
@@ -2841,90 +2555,7 @@ impl Home {
                 request,
                 result,
             } => {
-                if request != self.recovery_open_request
-                    || session_generation != self.connect_account.session_generation()
-                    || !self.connect_account.is_authenticated()
-                    || self.connect_account.user.as_ref().map(|user| user.id) != Some(user_id)
-                    || !matches!(
-                        self.active_section,
-                        HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                    )
-                    || !matches!(
-                        &self.connect_account.recovery_services,
-                        RecoveryServicesState::Ready(rows)
-                            if rows.iter().filter(|row| row.target == target).count() == 1
-                    )
-                {
-                    return Task::none();
-                }
-                let destination = match result {
-                    Ok(destination) => destination,
-                    Err(detail) => {
-                        self.connect_account.error =
-                            Some(crate::app::state::connect::account::PanelError::settled(
-                                crate::user_error::UserError::logged(
-                                    "Couldn't open this Cube",
-                                    "Refresh Recovery services, then try again.",
-                                    crate::user_error::CC_API_BADRESP,
-                                    false,
-                                    detail,
-                                ),
-                            ));
-                        return Task::none();
-                    }
-                };
-                let chain = match &destination {
-                    RecoveryServiceDestination::Local(chain, ..)
-                    | RecoveryServiceDestination::Remote(chain) => *chain,
-                };
-                if !(self.developer_mode
-                    || chain == ChainId::Bitcoin
-                    || chain == ChainId::BitcoinBlake2b
-                        && self.chain_availability(chain).is_available())
-                    || !self.chain_availability(chain).is_available()
-                {
-                    self.connect_account.error =
-                        Some(crate::app::state::connect::account::PanelError::settled(
-                            crate::user_error::UserError::new(
-                                "This Cube network is unavailable",
-                                "Enable its network in Global Settings before opening this Cube.",
-                                crate::user_error::CC_API_BADRESP,
-                                false,
-                            ),
-                        ));
-                    return Task::none();
-                }
-                self.connect_account.error = None;
-                match destination {
-                    RecoveryServiceDestination::Local(chain, cube, config) => Task::done(
-                        Message::RunToRecovery(self.datadir_path.clone(), config, chain, cube),
-                    ),
-                    RecoveryServiceDestination::Remote(chain) => {
-                        if chain.is_blake2b() {
-                            self.connect_account.error = Some(
-                                crate::app::state::connect::account::PanelError::settled(
-                                    crate::user_error::UserError::new(
-                                        "This Cube cannot be opened here",
-                                        "This remote Bitcoin Blake2b Cube is not available in the local Cube catalog. Recover it on its original device.",
-                                        crate::user_error::CC_API_BADRESP,
-                                        false,
-                                    ),
-                                ),
-                            );
-                            return Task::none();
-                        }
-                        // A Connect record is not an unlock credential. Show
-                        // the existing remote-only restore card in the Cube
-                        // catalog; the user chooses its normal recovery flow.
-                        // Refresh the catalog as its earlier account-scoped
-                        // fetch may predate this newly selected server row.
-                        self.active_section = HomeSection::Cubes;
-                        Task::batch([
-                            self.update(Message::View(ViewMessage::SelectNetwork(chain))),
-                            self.fetch_remote_cubes(),
-                        ])
-                    }
-                }
+                self.recovery_service_resolved(target, session_generation, user_id, request, result)
             }
             Message::View(
                 view @ (ViewMessage::ConnectAccount(_) | ViewMessage::ConnectSheetAccount(_)),
@@ -3240,6 +2871,391 @@ impl Home {
             }
 
             _ => self.update_delete_modal(message),
+        }
+    }
+
+    fn show_import_bitcoin(&mut self) -> Task<Message> {
+        self.catalog.dismiss_popovers();
+        if self.creating_cube
+            || !matches!(
+                self.state,
+                State::Cubes { .. } | State::NoCube { .. } | State::Unchecked
+            )
+        {
+            return Task::none();
+        }
+        if self.network != ChainId::Bitcoin {
+            self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
+            return Task::none();
+        }
+        // Every entry is disabled at the limit; this refuses a queued
+        // or stale press before the user fills in a name and PIN.
+        if launcher_catalog::project(self).at_limit() {
+            self.set_error(
+                if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+                    "Bitcoin mainnet has no free Cube slot on your plan. Delete a \
+                     Bitcoin mainnet Cube to import a wallet."
+                } else {
+                    "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or \
+                     delete a Bitcoin mainnet Cube, to import a wallet."
+                },
+            );
+            return Task::none();
+        }
+        if self.pending_bitcoin_import.is_none() {
+            self.pending_bitcoin_import = Some(Box::new(BitcoinImport::pending()));
+        }
+        self.restore_hub = false;
+        self.restore_phone = false;
+        // A passkey can't hold an imported secret: import sets a PIN.
+        self.passkey_mode = false;
+        match &mut self.state {
+            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                *create_cube = true;
+            }
+            State::Unchecked => {}
+            _ => return Task::none(),
+        }
+        self.error = None;
+        Task::none()
+    }
+
+    fn edit_recovery_word(&mut self, index: usize, word: String) -> Task<Message> {
+        if index < 12 {
+            let normalized = word
+                .chars()
+                .filter(|c| c.is_ascii_alphabetic())
+                .collect::<String>()
+                .to_lowercase();
+
+            let mut valid_prefix = String::new();
+            for ch in normalized.chars() {
+                let mut next = valid_prefix.clone();
+                next.push(ch);
+                if bip39_suggestions(&next, 1).is_empty() {
+                    break;
+                }
+                valid_prefix = next;
+            }
+
+            self.recovery_words[index] = valid_prefix.clone();
+            self.recovery_active_index = if valid_prefix.is_empty() {
+                None
+            } else {
+                Some(index)
+            };
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn select_recovery_suggestion(&mut self, index: usize, word: String) -> Task<Message> {
+        if index < 12 {
+            self.recovery_words[index] = word;
+            self.recovery_active_index = None;
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn cancel_recovery(&mut self) -> Task<Message> {
+        // Once the write has started it runs to completion; the
+        // form's Cancel is disabled until it does.
+        if self.creating_cube {
+            return Task::none();
+        }
+        for word in &mut self.recovery_words {
+            word.clear();
+            word.shrink_to_fit();
+        }
+        self.recovery_active_index = None;
+        self.create_cube_name = coincube_ui::component::form::Value::default();
+        self.create_cube_pin = pin_input::PinInput::new();
+        self.create_cube_pin_confirm = pin_input::PinInput::new();
+        self.pending_bitcoin_import = None;
+        self.ghost_import = None;
+        self.error = None;
+        self.reload()
+    }
+
+    fn submit_recovery(&mut self) -> Task<Message> {
+        let words = self.recovery_words.join(" ");
+        match bip39::Mnemonic::parse_in(bip39::Language::English, words) {
+            Ok(mnemonic) => self.recover_cube_from_mnemonic(mnemonic),
+            Err(error) => {
+                // Clear recovery words on error
+                for word in &mut self.recovery_words {
+                    word.clear();
+                    word.shrink_to_fit();
+                }
+                self.recovery_active_index = None;
+                self.error = Some(error.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn recover_cube_from_mnemonic(&mut self, mnemonic: bip39::Mnemonic) -> Task<Message> {
+        log::info!("Mnemonic parsed successfully");
+
+        if self.creating_cube {
+            return Task::none();
+        }
+
+        if self.create_cube_name.value.trim().is_empty() {
+            return Task::none();
+        }
+
+        // Validate PIN (always required)
+        if !self.validate_creation_pin() {
+            return Task::none();
+        }
+
+        self.creating_cube = true;
+        let network = self.network;
+        let cube_name = self.create_cube_name.value.trim().to_string();
+        let pin = self.create_cube_pin.value();
+        let datadir_path = self.datadir_path.clone();
+        let pending_bitcoin_import = self.pending_bitcoin_import.clone();
+        // A ghost's import takes the ghost's identity only when
+        // the phrase proves it is that Cube's seed, so Connect's
+        // registration is reclaimed rather than duplicated. The
+        // ghost's ID never enters `pending_cube_id`: that slot
+        // outlives this form (a failed write keeps it for a
+        // retry), and a later Create or import must not reuse it.
+        let ghost_id = match &self.ghost_import {
+            Some(ghost) => match self
+                .ghost_still_registered(ghost)
+                .and_then(|()| ghost_import_identity(ghost, network, &mnemonic))
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    self.creating_cube = false;
+                    self.error = Some(e);
+                    return Task::none();
+                }
+            },
+            None => None,
+        };
+        // Held until the write lands: its registration must
+        // go only to the account the ghost was listed under.
+        self.ghost_claim = ghost_id.map(|id| {
+            (
+                id.to_string(),
+                self.ghost_import.as_ref().and_then(|ghost| ghost.account),
+            )
+        });
+        // Otherwise reuse the UUID that was pre-generated when
+        // the user first clicked "Create Cube" (recovery path).
+        let cube_id = match ghost_id {
+            Some(id) => id,
+            None => *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4),
+        };
+
+        Task::perform(
+            async move {
+                // Same device-secret mint + refusal as the
+                // non-recovery path above.
+                let device_secret = match unlock::device_secret::capability() {
+                    unlock::device_secret::Capability::Available => Some(
+                        unlock::device_secret::get_or_create(
+                            datadir_path.path(),
+                            &cube_id.to_string(),
+                        )
+                        .map_err(|e| e.to_string())?,
+                    ),
+                    unlock::device_secret::Capability::Unavailable(why) => return Err(why),
+                };
+
+                // Restore MasterSigner from recovery mnemonic
+                let master_signer =
+                    MasterSigner::from_mnemonic(network.bitcoin_network(), mnemonic)
+                        .map_err(|e| format!("Failed to restore from mnemonic: {}", e))?;
+
+                // Create secp context for fingerprint calculation
+                let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                let master_fingerprint = master_signer.fingerprint(&secp);
+
+                // Store master seed mnemonic (encrypted with PIN)
+                let network_dir = datadir_path.network_directory(network);
+                network_dir
+                    .init()
+                    .map_err(|e| format!("Failed to create network directory: {}", e))?;
+
+                // One timestamp for the seed file and the Cube
+                // — see the note on the non-recovery path (X7).
+                let timestamp = chrono::Utc::now().timestamp();
+                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
+
+                // Store master seed mnemonic encrypted with PIN (always required)
+                master_signer
+                    .store_encrypted_for_chain(
+                        datadir_path.path(),
+                        network,
+                        &secp,
+                        Some((master_checksum, timestamp)),
+                        &pin,
+                        &cube_id.to_string(),
+                        device_secret.as_ref(),
+                    )
+                    .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+
+                tracing::info!(
+                    "Master signer created and stored (encrypted with PIN) with fingerprint: {}",
+                    master_fingerprint
+                );
+
+                // Build Cube settings using the pre-generated,
+                // stable UUID. No PIN hash — see the note on
+                // the non-recovery path above.
+                let mut cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                    .with_master_signer(master_fingerprint);
+                cube.bitcoin_import = pending_bitcoin_import;
+                // Same instant the seed file carries (X7).
+                cube.created_at = timestamp;
+                // The Cube's second slot, written at creation —
+                // see the note on the non-recovery path (6b).
+                let slot_name = unlock::marker::new_file_name(timestamp);
+                match unlock::marker::write_decoy(
+                    datadir_path.path(),
+                    network,
+                    &cube_id.to_string(),
+                    &slot_name,
+                    device_secret.as_ref(),
+                ) {
+                    Ok(()) => cube.duress_slot_file = Some(slot_name),
+                    Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
+                }
+                // Reaching here means the user typed all twelve
+                // words of this seed back into the app and they
+                // passed the BIP39 checksum. That *is* the
+                // backup demonstration — a stricter one than
+                // the creation flow's three-word challenge, and
+                // it is the same claim `backed_up` makes
+                // everywhere else ("the user wrote the seed
+                // phrase down and confirmed it").
+                //
+                // Recording it is what makes arming the gate
+                // below safe: a restored Cube satisfies
+                // `creation_gate::evaluate` on its own local
+                // evidence and opens immediately.
+                cube.backed_up = true;
+                cube.creation_backup_required = true;
+
+                // Save Cube settings to settings file.
+                // Idempotency: skip insert if UUID already exists.
+                settings::update_settings_file(&network_dir, |mut settings| {
+                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                        return Some(settings);
+                    }
+                    settings.cubes.push(cube.clone());
+                    Some(settings)
+                })
+                .await
+                .map(|_| cube)
+                .map_err(|e| e.to_string())
+            },
+            Message::CubeCreated,
+        )
+    }
+
+    fn recovery_service_resolved(
+        &mut self,
+        target: RecoveryServiceTarget,
+        session_generation: u64,
+        user_id: u32,
+        request: u64,
+        result: Result<RecoveryServiceDestination, String>,
+    ) -> Task<Message> {
+        if request != self.recovery_open_request
+            || session_generation != self.connect_account.session_generation()
+            || !self.connect_account.is_authenticated()
+            || self.connect_account.user.as_ref().map(|user| user.id) != Some(user_id)
+            || !matches!(
+                self.active_section,
+                HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+            )
+            || !matches!(
+                &self.connect_account.recovery_services,
+                RecoveryServicesState::Ready(rows)
+                    if rows.iter().filter(|row| row.target == target).count() == 1
+            )
+        {
+            return Task::none();
+        }
+        let destination = match result {
+            Ok(destination) => destination,
+            Err(detail) => {
+                self.connect_account.error =
+                    Some(crate::app::state::connect::account::PanelError::settled(
+                        crate::user_error::UserError::logged(
+                            "Couldn't open this Cube",
+                            "Refresh Recovery services, then try again.",
+                            crate::user_error::CC_API_BADRESP,
+                            false,
+                            detail,
+                        ),
+                    ));
+                return Task::none();
+            }
+        };
+        self.open_recovery_service_destination(destination)
+    }
+
+    fn open_recovery_service_destination(
+        &mut self,
+        destination: RecoveryServiceDestination,
+    ) -> Task<Message> {
+        let chain = match &destination {
+            RecoveryServiceDestination::Local(chain, ..)
+            | RecoveryServiceDestination::Remote(chain) => *chain,
+        };
+        if !(self.developer_mode
+            || chain == ChainId::Bitcoin
+            || chain == ChainId::BitcoinBlake2b && self.chain_availability(chain).is_available())
+            || !self.chain_availability(chain).is_available()
+        {
+            self.connect_account.error =
+                Some(crate::app::state::connect::account::PanelError::settled(
+                    crate::user_error::UserError::new(
+                        "This Cube network is unavailable",
+                        "Enable its network in Global Settings before opening this Cube.",
+                        crate::user_error::CC_API_BADRESP,
+                        false,
+                    ),
+                ));
+            return Task::none();
+        }
+        self.connect_account.error = None;
+        match destination {
+            RecoveryServiceDestination::Local(chain, cube, config) => Task::done(
+                Message::RunToRecovery(self.datadir_path.clone(), config, chain, cube),
+            ),
+            RecoveryServiceDestination::Remote(chain) => {
+                if chain.is_blake2b() {
+                    self.connect_account.error = Some(
+                        crate::app::state::connect::account::PanelError::settled(
+                            crate::user_error::UserError::new(
+                                "This Cube cannot be opened here",
+                                "This remote Bitcoin Blake2b Cube is not available in the local Cube catalog. Recover it on its original device.",
+                                crate::user_error::CC_API_BADRESP,
+                                false,
+                            ),
+                        ),
+                    );
+                    return Task::none();
+                }
+                // A Connect record is not an unlock credential. Show
+                // the existing remote-only restore card in the Cube
+                // catalog; the user chooses its normal recovery flow.
+                // Refresh the catalog as its earlier account-scoped
+                // fetch may predate this newly selected server row.
+                self.active_section = HomeSection::Cubes;
+                Task::batch([
+                    self.update(Message::View(ViewMessage::SelectNetwork(chain))),
+                    self.fetch_remote_cubes(),
+                ])
+            }
         }
     }
 
