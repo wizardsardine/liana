@@ -19,12 +19,12 @@ jobs:
   linter:
     runs-on: ubuntu-latest
     env:
-      RUSTUP_TOOLCHAIN: 1.88.0
+      RUSTUP_TOOLCHAIN: 1.90.0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
           components: rustfmt
       - name: rustfmt
         run: cargo fmt -- --check
@@ -45,7 +45,7 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     env:
-      RUSTUP_TOOLCHAIN: 1.88.0
+      RUSTUP_TOOLCHAIN: 1.90.0
     steps:
       - uses: actions/checkout@v4
       # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
@@ -54,12 +54,12 @@ jobs:
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
-          shared-key: ubuntu-latest-1.88.0
+          shared-key: ubuntu-latest-1.90.0
           save-if: false
       - name: Install system dependencies
         run: |
@@ -71,7 +71,7 @@ jobs:
   lint-i18n:
     runs-on: ubuntu-latest
     env:
-      RUSTUP_TOOLCHAIN: 1.88.0
+      RUSTUP_TOOLCHAIN: 1.90.0
     steps:
       - uses: actions/checkout@v4
       # rust-cache keys on every installed toolchain: keep the ones of the runner image out.
@@ -80,11 +80,11 @@ jobs:
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}
-          shared-key: ubuntu-latest-1.88.0
+          shared-key: ubuntu-latest-1.90.0
           save-if: false
       - name: Check locale catalogs are synced from English
         run: cargo run -p liana-i18n-toolbox -- sync --verify
@@ -122,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [1.88.0, nightly]
+        toolchain: [1.90.0, nightly]
         os: [ubuntu-latest, macOS-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
@@ -159,7 +159,7 @@ jobs:
               cargo test $flags $packages --no-run
             done
       - name: Build clippy
-        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == '1.88.0'
+        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == '1.90.0'
         run: cargo clippy --all-features --all-targets
 
   unit_tests:
@@ -167,7 +167,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [1.88.0, nightly]
+        toolchain: [1.90.0, nightly]
         slice: ${{ fromJSON(needs.slices.outputs.unit-tests) }}
     name: unit_tests (${{ matrix.toolchain }}, ${{ matrix.slice.os }}, ${{ matrix.slice.name }})
     runs-on: ${{ matrix.slice.os }}
@@ -208,7 +208,7 @@ jobs:
     name: release (${{ matrix.slice.name }})
     runs-on: ubuntu-latest
     env:
-      RUSTUP_TOOLCHAIN: 1.88.0
+      RUSTUP_TOOLCHAIN: 1.90.0
     steps:
       # The release build is the longest CI job, so the install overlaps the next steps.
       - name: Start installing the system dependencies
@@ -222,7 +222,7 @@ jobs:
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: v0-rust-${{ hashFiles('.github/crate-slices.json') }}

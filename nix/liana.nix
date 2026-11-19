@@ -1,4 +1,4 @@
-{ craneLib, pkgs, lib, lipo, rootPath }:
+{ craneLib, craneLibBootstrap, craneLibBootstrapApple, pkgs, lib, lipo, rootPath }:
 let
   commonBuildSettings = {
     src = lib.fileset.toSource {
@@ -21,7 +21,9 @@ let
 
   mkWindowsInstaller = import ./windows-installer.nix { inherit pkgs lib rootPath; };
 
-  x86_64-pc-windows-gnu-exe = craneLib.buildPackage {
+  normalizeElf = import ./normalize-elf.nix { inherit pkgs; };
+
+  x86_64-pc-windows-gnu-exe = craneLibBootstrap.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -57,7 +59,49 @@ let
     icon = rootPath + "/liana-ui/static/logos/liana.ico";
   };
 
-  x86_64-apple-darwin = craneLib.buildPackage {
+  # Linux and Windows use the bootstrapped toolchain, whose `std` is cross-compiled
+  # from source. The Apple targets use craneLibBootstrapApple: same compiler, plus
+  # an Apple `std` that needs the proprietary macOS SDK to link.
+  x86_64-unknown-linux-gnu = craneLibBootstrap.buildPackage {
+    inherit (commonBuildSettings) src strictDeps doCheck;
+    inherit (lianaInfo) pname version;
+
+    CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
+    # `libudev.so` itself is built against the glibc of nixpkgs: let the linker ignore the
+    # symbols it needs from a newer glibc than the one we target. Only the `libudev.so.1`
+    # dependency and the udev symbols we use end up in the binary.
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,--allow-shlib-undefined";
+    # The glibc version suffix makes zig link against its own 2.31 stubs, so the binaries
+    # also run on distributions shipping an older glibc than the one of the build machine.
+    buildPhaseCargoCommand = ''
+      cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p liana-gui --no-default-features --message-format json-render-diagnostics
+      cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p lianad --message-format json-render-diagnostics
+    '';
+    doNotPostBuildInstallCargoBinaries = true;
+
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ pkgs.udev ];
+    depsBuildBuild = [ pkgs.zig pkgs.cargo-zigbuild ];
+
+    preBuild = ''
+      # hidapi compiles its own `hid.c`, which includes `libudev.h`, without asking pkg-config.
+      export CFLAGS_x86_64_unknown_linux_gnu="$(pkg-config --cflags libudev)"
+      export XDG_CACHE_HOME=$TMPDIR/xdg_cache
+      mkdir -p $XDG_CACHE_HOME
+      export CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/cargo-zigbuild-cache
+      mkdir -p $CARGO_ZIGBUILD_CACHE_DIR
+    '';
+
+    installPhaseCommand = ''
+      mkdir -p $out/x86_64-unknown-linux-gnu
+      for bin in liana-gui lianad liana-cli; do
+        install -m 755 target/x86_64-unknown-linux-gnu/release/$bin $out/x86_64-unknown-linux-gnu/$bin
+        ${normalizeElf} $out/x86_64-unknown-linux-gnu/$bin
+      done
+    '';
+  };
+
+  x86_64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -97,7 +141,7 @@ let
     '';
   };
 
-  aarch64-apple-darwin = craneLib.buildPackage {
+  aarch64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaInfo) pname version;
 
@@ -147,10 +191,11 @@ let
   '';
 
 in {
-  inherit x86_64-pc-windows-gnu x86_64-pc-windows-gnu-exe x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
+  inherit x86_64-unknown-linux-gnu x86_64-pc-windows-gnu x86_64-pc-windows-gnu-exe x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
   release = pkgs.buildEnv {
     name = "release";
     paths = [
+      x86_64-unknown-linux-gnu
       x86_64-pc-windows-gnu
       x86_64-apple-darwin
       aarch64-apple-darwin

@@ -12,7 +12,7 @@ concurrency:
 env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
-  RUSTUP_TOOLCHAIN: 1.88.0
+  RUSTUP_TOOLCHAIN: 1.90.0
 
 jobs:
   build:
@@ -25,7 +25,7 @@ jobs:
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lianad-release

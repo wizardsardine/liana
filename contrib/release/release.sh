@@ -32,11 +32,6 @@ if [ -z "${IN_LIANA_RELEASE_SHELL:-}" ]; then
     exec nix develop "$PWD#release" --command "$0" "$@"
 fi
 
-if ! command -v guix >/dev/null 2>&1; then
-    echo "Error: guix is needed to build the Linux binaries, see contrib/reproducible/guix/README.md"
-    exit 1
-fi
-
 # Auto-detect version from git:
 # - If HEAD is exactly at a matching tag, use the tag version (e.g., v13.1 -> 13.1)
 # - Otherwise, use the latest matching tag (by version sort) combined with the short
@@ -87,9 +82,7 @@ create_dir "$RELEASE_DIR"
 create_dir "$BUILD_DIR"
 
 if [ "$TARGET" = "liana" ]; then
-    # Build liana using Guix for Linux and Nix for other platforms
-    OUT_DIR="$BUILD_DIR" ./contrib/reproducible/guix/guix-build.sh
-
+    # Build liana for all the platforms using Nix
     nix build .#liana.release
     NIX_BUILD_DIR="$(nix path-info .#liana.release)"
 
@@ -97,13 +90,14 @@ if [ "$TARGET" = "liana" ]; then
     (
         cd "$BUILD_DIR"
         create_dir "$LINUX_DIR_NAME"
-        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
+        install -m 755 "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/lianad" "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/liana-cli" "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/liana-gui" "$LINUX_DIR_NAME"
+        cp ../README.md "$LINUX_DIR_NAME"
         tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
         mv "$LINUX_ARCHIVE" "$RELEASE_DIR"
 
         unzip ../contrib/release/debian/package.zip
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
-        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ./package/usr/bin/
+        install -m 755 "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/lianad" "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/liana-cli" "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/liana-gui" ./package/usr/bin/
         DIRNAME="$LIANA_PREFIX-1_amd64"
         mv ./package "$DIRNAME"
         dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
@@ -136,17 +130,15 @@ if [ "$TARGET" = "liana" ]; then
         mv "$LIANA_PREFIX-macos-noncodesigned.dmg" "$RELEASE_DIR/"
     )
 else
-    # Build liana-business using Guix for Linux and Nix for other platforms
-    OUT_DIR="$BUILD_DIR" ./contrib/reproducible/guix/guix-build.sh
-
-    # Build liana-business using Nix only
+    # Build liana-business for all the platforms using Nix
     nix build .#liana-business.release
     NIX_BUILD_DIR="$(nix path-info .#liana-business.release)"
 
     (
         cd "$BUILD_DIR"
         create_dir "$LINUX_DIR_NAME"
-        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-business" ../README.md "$LINUX_DIR_NAME"
+        install -m 755 "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/liana-business" "$LINUX_DIR_NAME"
+        cp ../README.md "$LINUX_DIR_NAME"
         tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
         mv "$LINUX_ARCHIVE" "$RELEASE_DIR"
 
@@ -160,7 +152,7 @@ else
         rm ./package/usr/share/icons/liana-icon.png
         cp ../contrib/liana-business/liana-business-icon.png ./package/usr/share/icons/liana-business-icon.png
         mv ./package/usr/share/applications/Liana.desktop ./package/usr/share/applications/LianaBusiness.desktop
-        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-business" ./package/usr/bin/
+        install -m 755 "$NIX_BUILD_DIR/x86_64-unknown-linux-gnu/liana-business" ./package/usr/bin/
         DIRNAME="$LIANA_PREFIX-1_amd64"
         mv ./package "$DIRNAME"
         dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"

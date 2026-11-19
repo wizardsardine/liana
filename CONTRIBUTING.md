@@ -69,11 +69,11 @@ query).
 
 ## Minimum Supported Rust Version
 
-`lianad` should always compile and pass tests using **Rust 1.63**. The rationale behind this is
-support something reasonable, and preferably supported by all of:
-- [Guix](https://guix.gnu.org/)
-- Popular distributions' packages (especially Debian which is the most conservative)
-- [Mrustc](https://github.com/thepowersgang/mrustc)
+`lianad` should always compile and pass tests using **Rust 1.90**. This is the version pinned in
+[`rust-toolchain.toml`](rust-toolchain.toml), the one CI runs, and the one the release binaries are
+built with: the toolchain described in
+[`contrib/reproducible/README.md`](contrib/reproducible/README.md) is a
+[mrustc](https://github.com/thepowersgang/mrustc)-bootstrapped Rust 1.90.
 
 ## Style
 

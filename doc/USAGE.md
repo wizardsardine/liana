@@ -30,10 +30,9 @@ makepkg -si
 
 *Skip this section if you are not running Linux or don't plan on using a released binary.*
 
-Due to technical limitations in our reproducible builds system, the Linux binaries currently link
-against `glibc` version `2.33`. This means you can't run a released Linux binary if your system has
-an older glibc. This is the case most notably of Ubuntu 20 (Focal) and below, and Debian 11
-(Bullseye) and below.
+The Linux binaries link against `glibc` version `2.31`. This means you can't run a released Linux
+binary if your system has an older glibc. This is the case most notably of Ubuntu 18 (Bionic) and
+below, and Debian 10 (Buster) and below.
 
 The simplest workaround is to simply build the project yourself. Fear not, it's really trivial if
 you are a Linux user. Instructions [here](BUILD.md).
@@ -186,7 +185,7 @@ on how to recover a Liana wallet backup with Bitcoin Core 25.0 and above](RECOVE
 
 ### Reproducible builds
 
-Releases of Liana are reproducibly built. Linux binaries are also bootstrappable. See
+Releases of Liana are reproducibly built. The Linux and Windows binaries are also bootstrappable. See
 [`contrib/reproducible`](../contrib/reproducible) for details and instructions if you want to check a
 release.
 

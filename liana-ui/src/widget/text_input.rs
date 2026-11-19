@@ -570,9 +570,6 @@ where
                     state.menu.is_open = false;
                 } else if cursor.is_over(layout.bounds()) {
                     state.menu.is_open = true;
-                    return;
-                } else {
-                    return;
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
