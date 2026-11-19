@@ -45,6 +45,7 @@ default = [
     "service",
 ]
 jade = [
+    "regex",
     "tokio",
     "tokio-serial",
     "serde",

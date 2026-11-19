@@ -156,6 +156,199 @@ pub fn extract_keys_and_template<T: FromStr>(policy: &str) -> Result<(String, Ve
     }
 }
 
+/// The script wrapper of a plain multisig descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultisigWrapper {
+    /// `wsh(multi(..))`
+    Wsh,
+    /// `sh(wsh(multi(..)))`
+    ShWsh,
+    /// `sh(multi(..))`
+    Sh,
+}
+
+/// A plain `multi` / `sortedmulti` policy whose keys all derive on the
+/// standard receive/change branches (`/<0;1>/*` or `/**`): the shape a
+/// device's multisig registry (Jade's, for one) holds, as opposed to its
+/// descriptor or miniscript registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultisigPolicy {
+    pub wrapper: MultisigWrapper,
+    pub sorted: bool,
+    pub threshold: u32,
+    /// Keys in descriptor order, with their origin.
+    pub keys: Vec<(Option<bitcoin::bip32::Fingerprint>, bitcoin::bip32::Xpub)>,
+}
+
+#[cfg(feature = "regex")]
+impl MultisigPolicy {
+    /// `None` for anything that is not such a multisig.
+    pub fn parse(policy: &str) -> Option<Self> {
+        let (template, keys) = extract_keys_and_template::<String>(policy).ok()?;
+        let (wrapper, inner) = if let Some(inner) = template
+            .strip_prefix("sh(wsh(")
+            .and_then(|t| t.strip_suffix("))"))
+        {
+            (MultisigWrapper::ShWsh, inner)
+        } else if let Some(inner) = template
+            .strip_prefix("wsh(")
+            .and_then(|t| t.strip_suffix(')'))
+        {
+            (MultisigWrapper::Wsh, inner)
+        } else {
+            (
+                MultisigWrapper::Sh,
+                template.strip_prefix("sh(")?.strip_suffix(')')?,
+            )
+        };
+        let (sorted, args) = if let Some(args) = inner.strip_prefix("sortedmulti(") {
+            (true, args)
+        } else {
+            (false, inner.strip_prefix("multi(")?)
+        };
+        let mut args = args.strip_suffix(')')?.split(',');
+        let threshold: u32 = args.next()?.parse().ok()?;
+        let placeholders: Vec<&str> = args.collect();
+        if placeholders.len() != keys.len() || keys.is_empty() {
+            return None;
+        }
+        for (i, placeholder) in placeholders.iter().enumerate() {
+            let rest = placeholder.strip_prefix(&format!("@{i}"))?;
+            if rest != "/**" && rest != "/<0;1>/*" {
+                return None;
+            }
+        }
+        let keys = keys
+            .iter()
+            .map(|key| {
+                let (fingerprint, xpub) = match key.strip_prefix('[') {
+                    Some(rest) => {
+                        let (origin, xpub) = rest.split_once(']')?;
+                        let fingerprint = origin.split('/').next()?;
+                        (
+                            Some(bitcoin::bip32::Fingerprint::from_str(fingerprint).ok()?),
+                            xpub,
+                        )
+                    }
+                    None => (None, key.as_str()),
+                };
+                Some((fingerprint, bitcoin::bip32::Xpub::from_str(xpub).ok()?))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            wrapper,
+            sorted,
+            threshold,
+            keys,
+        })
+    }
+
+    /// Whether `xpubs` are this policy's keys, whatever network prefix they
+    /// were exported with: in any order for `sortedmulti` (BIP67 sorts them
+    /// in the script), in this order for `multi`, where order changes the
+    /// script.
+    pub fn has_keys(&self, xpubs: &[bitcoin::bip32::Xpub]) -> bool {
+        let id = |x: &bitcoin::bip32::Xpub| (x.public_key, x.chain_code);
+        let mut ours: Vec<_> = self.keys.iter().map(|(_, x)| id(x)).collect();
+        let mut theirs: Vec<_> = xpubs.iter().map(id).collect();
+        if self.sorted {
+            ours.sort();
+            theirs.sort();
+        }
+        ours == theirs
+    }
+}
+
+/// A descriptor as registered, compared loosely: hardened markers `'` and
+/// `h` are the same step, and a trailing checksum is ignored.
+pub fn same_descriptor(a: &str, b: &str) -> bool {
+    let normalize = |s: &str| {
+        let s = s.rsplit_once('#').map(|(d, _)| d).unwrap_or(s);
+        s.replace('\'', "h")
+    };
+    normalize(a) == normalize(b)
+}
+
+#[cfg(all(test, feature = "regex"))]
+mod multisig_policy_tests {
+    use super::*;
+
+    const KEYS: [&str; 3] = [
+        "[b0822927/48'/1'/0'/2']tpubDEvZxV86Br8Knbm9tWcr5Hvmg5cYTYsg92vinqH6Bie6U8ix8CsoN9W11NQygdqVwmHUJpsHXxNsi5gXn36g4xNfLWkMqPuFhRZAmMQ7jjQ",
+        "[7fc39c07/48'/1'/0'/2']tpubDEvjgXtrUuH3Qtkapny9aE8gN847xiXsf9MDM5XueGf9nrvStqAuBSva3ajGyTvtp8Ti55FvVXsgYSXuS1tQkBeopFuodx2hRUDmQbvKxbZ",
+        "[1a1ffd98/48'/1'/0'/2']tpubDFZqzTvGijYb13BC73CkS1er8DrP5YdzMhziN3kWCKUFaW51Yj6ggvf99YpdrkTJy4RT85mxQMHXDiFAKRxzf6BykQgT4pRRBNPshSJJcKo",
+    ];
+
+    fn desc(wrap: &str, branch: &str) -> String {
+        let keys: Vec<String> = KEYS.iter().map(|k| format!("{k}{branch}")).collect();
+        wrap.replace("KEYS", &keys.join(","))
+    }
+
+    #[test]
+    fn parses_plain_multisig_shapes() {
+        for (wrap, wrapper, sorted) in [
+            ("wsh(sortedmulti(2,KEYS))", MultisigWrapper::Wsh, true),
+            ("sh(wsh(sortedmulti(2,KEYS)))", MultisigWrapper::ShWsh, true),
+            ("sh(multi(2,KEYS))", MultisigWrapper::Sh, false),
+            ("wsh(multi(2,KEYS))", MultisigWrapper::Wsh, false),
+        ] {
+            for branch in ["/<0;1>/*", "/**"] {
+                let policy = MultisigPolicy::parse(&desc(wrap, branch)).unwrap();
+                assert_eq!(policy.wrapper, wrapper);
+                assert_eq!(policy.sorted, sorted);
+                assert_eq!(policy.threshold, 2);
+                assert_eq!(policy.keys.len(), 3);
+                assert_eq!(
+                    policy.keys[0].0,
+                    Some(bitcoin::bip32::Fingerprint::from_str("b0822927").unwrap())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_anything_a_multisig_registry_cannot_hold() {
+        // Other branches, miniscript, singlesig.
+        assert!(MultisigPolicy::parse(&desc("wsh(sortedmulti(2,KEYS))", "/<2;3>/*")).is_none());
+        assert!(MultisigPolicy::parse(&format!(
+            "wsh(or_d(pk({}/<0;1>/*),pk({}/<0;1>/*)))",
+            KEYS[0], KEYS[1]
+        ))
+        .is_none());
+        assert!(MultisigPolicy::parse(&format!("wpkh({}/<0;1>/*)", KEYS[0])).is_none());
+    }
+
+    #[test]
+    fn sortedmulti_keys_compare_in_any_order() {
+        let policy = MultisigPolicy::parse(&desc("wsh(sortedmulti(2,KEYS))", "/**")).unwrap();
+        let mut xpubs: Vec<_> = policy.keys.iter().map(|(_, x)| *x).collect();
+        xpubs.reverse();
+        assert!(policy.has_keys(&xpubs));
+        assert!(!policy.has_keys(&xpubs[..2]));
+    }
+
+    #[test]
+    fn multi_keys_compare_in_order() {
+        let policy = MultisigPolicy::parse(&desc("wsh(multi(2,KEYS))", "/**")).unwrap();
+        let mut xpubs: Vec<_> = policy.keys.iter().map(|(_, x)| *x).collect();
+        assert!(policy.has_keys(&xpubs));
+        xpubs.reverse();
+        assert!(!policy.has_keys(&xpubs));
+    }
+
+    #[test]
+    fn descriptors_compare_across_hardened_markers_and_checksums() {
+        assert!(same_descriptor(
+            "wsh(pk([aa/48'/0']x))#abcd",
+            "wsh(pk([aa/48h/0h]x))"
+        ));
+        assert!(!same_descriptor(
+            "wsh(pk([aa/48'/0']x))",
+            "wsh(pk([aa/48'/1']x))"
+        ));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

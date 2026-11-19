@@ -28,7 +28,7 @@ pub use tokio_serial::SerialStream;
 
 use crate::{parse_version, utils};
 
-use super::{AddressScript, DeviceKind, Error as HWIError, HWI};
+use super::{AddressScript, DeviceKind, Error as HWIError, WalletRegistration, HWI};
 use async_trait::async_trait;
 
 pub const JADE_NETWORK_MAINNET: &str = "mainnet";
@@ -113,6 +113,51 @@ impl<T: Transport + Sync + Send> Jade<T> {
             .await?
             .into_result()?;
         Ok(registered)
+    }
+
+    /// The name of a registered multisig wallet (the registry Specter and
+    /// other HWI-based apps write to, apart from registered descriptors) with
+    /// exactly `policy`'s shape and keys. Firmware without the multisig query
+    /// RPCs, or any entry it cannot read, counts as not found.
+    pub async fn find_registered_multisig(&self, policy: &utils::MultisigPolicy) -> Option<String> {
+        let summaries: serde_cbor::Value = self
+            .transport
+            .request(
+                "get_registered_multisigs",
+                Option::<api::EmptyRequest>::None,
+            )
+            .await
+            .ok()?
+            .into_result()
+            .ok()?;
+        let serde_cbor::Value::Map(summaries) = summaries else {
+            return None;
+        };
+        for (name, summary) in summaries {
+            let serde_cbor::Value::Text(name) = name else {
+                continue;
+            };
+            if !multisig_summary_matches(&summary, policy) {
+                continue;
+            }
+            let detail: Option<serde_cbor::Value> = match self
+                .transport
+                .request(
+                    "get_registered_multisig",
+                    Some(api::GetRegisteredMultisigParams {
+                        multisig_name: &name,
+                    }),
+                )
+                .await
+            {
+                Ok(response) => response.into_result().ok(),
+                Err(_) => None,
+            };
+            if detail.is_some_and(|detail| multisig_detail_matches(&detail, policy)) {
+                return Some(name);
+            }
+        }
+        None
     }
 
     pub async fn auth(&self) -> Result<(), JadeError> {
@@ -252,6 +297,50 @@ impl<T: Transport + Sync + Send> HWI for Jade<T> {
             && registered.datavalues == datavalues)
     }
 
+    /// Searches every registered descriptor (`name` first), then the
+    /// multisig registry. Jade signs a PSBT against whichever registration
+    /// matches its inputs, so any match can sign without registering again.
+    /// Errors reading the list or `name` itself propagate, as the plain
+    /// name check's do; an entry under another name that cannot be read is
+    /// skipped, so it never hides a later match.
+    async fn find_wallet_registration(
+        &self,
+        name: &str,
+        policy: &str,
+    ) -> Result<Option<WalletRegistration>, HWIError> {
+        let (descriptor_template, keys) = utils::extract_keys_and_template::<String>(policy)?;
+        let descriptors = self.get_registered_descriptors().await?;
+        let names = descriptors
+            .keys()
+            .filter(|n| n.as_str() == name)
+            .chain(descriptors.keys().filter(|n| n.as_str() != name));
+        for registered_name in names {
+            let registered = match self.get_registered_descriptor(registered_name).await {
+                Ok(registered) => registered,
+                Err(e) if registered_name == name => return Err(e),
+                Err(_) => continue,
+            };
+            let same_keys = registered.datavalues.len() == keys.len()
+                && keys.iter().enumerate().all(|(i, key)| {
+                    registered
+                        .datavalues
+                        .get(&format!("@{i}"))
+                        .is_some_and(|value| utils::same_descriptor(value, key))
+                });
+            if same_keys && utils::same_descriptor(&registered.descriptor, &descriptor_template) {
+                return Ok(Some(WalletRegistration {
+                    name: Some(registered_name.clone()),
+                }));
+            }
+        }
+        if let Some(multisig) = utils::MultisigPolicy::parse(policy) {
+            if let Some(name) = self.find_registered_multisig(&multisig).await {
+                return Ok(Some(WalletRegistration { name: Some(name) }));
+            }
+        }
+        Ok(None)
+    }
+
     async fn sign_tx(&self, psbt: &mut Psbt) -> Result<(), HWIError> {
         let first: api::Response<serde_bytes::ByteBuf> = self
             .transport
@@ -314,6 +403,97 @@ impl<T: Transport + Sync + Send> HWI for Jade<T> {
 
         Ok(())
     }
+}
+
+fn cbor_field<'a>(value: &'a serde_cbor::Value, key: &str) -> Option<&'a serde_cbor::Value> {
+    match value {
+        serde_cbor::Value::Map(map) => map.get(&serde_cbor::Value::Text(key.to_string())),
+        _ => None,
+    }
+}
+
+fn cbor_u64(value: &serde_cbor::Value) -> Option<u64> {
+    match value {
+        serde_cbor::Value::Integer(i) => std::convert::TryFrom::try_from(*i).ok(),
+        _ => None,
+    }
+}
+
+/// Jade's name for a multisig script variant.
+fn jade_variant(wrapper: utils::MultisigWrapper) -> &'static str {
+    match wrapper {
+        utils::MultisigWrapper::Wsh => "wsh(multi(k))",
+        utils::MultisigWrapper::ShWsh => "sh(wsh(multi(k)))",
+        utils::MultisigWrapper::Sh => "sh(multi(k))",
+    }
+}
+
+/// Whether a `get_registered_multisigs` entry (or the config inside a
+/// `get_registered_multisig` reply) can be `policy`.
+fn multisig_summary_matches(summary: &serde_cbor::Value, policy: &utils::MultisigPolicy) -> bool {
+    // Variant, sortedness and threshold must be reported: a reply that
+    // leaves one out cannot show the entry is this policy. The signer count
+    // may be left out; the detail's keys settle it.
+    let field_is = |key: &str, expected: &serde_cbor::Value| {
+        cbor_field(summary, key).is_some_and(|value| value == expected)
+    };
+    let number_is = |key: &str, expected: u64| {
+        cbor_field(summary, key).is_some_and(|value| cbor_u64(value) == Some(expected))
+    };
+    let count_is = |key: &str, expected: u64| {
+        cbor_field(summary, key).is_none_or(|value| cbor_u64(value) == Some(expected))
+    };
+    field_is(
+        "variant",
+        &serde_cbor::Value::Text(jade_variant(policy.wrapper).to_string()),
+    ) && field_is("sorted", &serde_cbor::Value::Bool(policy.sorted))
+        && number_is("threshold", u64::from(policy.threshold))
+        && count_is("num_signers", policy.keys.len() as u64)
+}
+
+/// Walks a `get_registered_multisig` reply: every signer xpub must be one of
+/// `policy`'s keys and every key present, no signer may carry an extra
+/// derivation `path` (the registry then derives off the standard branches),
+/// and the config's threshold, sortedness and variant must agree.
+fn multisig_detail_matches(detail: &serde_cbor::Value, policy: &utils::MultisigPolicy) -> bool {
+    fn walk(
+        value: &serde_cbor::Value,
+        policy: &utils::MultisigPolicy,
+        xpubs: &mut Vec<Xpub>,
+        ok: &mut bool,
+    ) {
+        match value {
+            serde_cbor::Value::Text(text) => {
+                if let Ok(xpub) = Xpub::from_str(text) {
+                    xpubs.push(xpub);
+                }
+            }
+            serde_cbor::Value::Array(items) => {
+                for item in items {
+                    walk(item, policy, xpubs, ok);
+                }
+            }
+            serde_cbor::Value::Map(map) => {
+                if cbor_field(value, "threshold").is_some()
+                    && !multisig_summary_matches(value, policy)
+                {
+                    *ok = false;
+                }
+                if let Some(serde_cbor::Value::Array(path)) = cbor_field(value, "path") {
+                    if !path.is_empty() {
+                        *ok = false;
+                    }
+                }
+                for item in map.values() {
+                    walk(item, policy, xpubs, ok);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut xpubs, mut ok) = (Vec::new(), true);
+    walk(detail, policy, &mut xpubs, &mut ok);
+    ok && policy.has_keys(&xpubs)
 }
 
 impl<T: 'static + Transport + Sync + Send> From<Jade<T>> for Box<dyn HWI + Send> {
@@ -559,5 +739,269 @@ impl From<JadeError> for HWIError {
                 HWIError::Device("Handshake with pinserver refused".to_string())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+    use serde_cbor::Value;
+
+    const KEYS: [&str; 3] = [
+        "[b0822927/48'/1'/0'/2']tpubDEvZxV86Br8Knbm9tWcr5Hvmg5cYTYsg92vinqH6Bie6U8ix8CsoN9W11NQygdqVwmHUJpsHXxNsi5gXn36g4xNfLWkMqPuFhRZAmMQ7jjQ",
+        "[7fc39c07/48'/1'/0'/2']tpubDEvjgXtrUuH3Qtkapny9aE8gN847xiXsf9MDM5XueGf9nrvStqAuBSva3ajGyTvtp8Ti55FvVXsgYSXuS1tQkBeopFuodx2hRUDmQbvKxbZ",
+        "[1a1ffd98/48'/1'/0'/2']tpubDFZqzTvGijYb13BC73CkS1er8DrP5YdzMhziN3kWCKUFaW51Yj6ggvf99YpdrkTJy4RT85mxQMHXDiFAKRxzf6BykQgT4pRRBNPshSJJcKo",
+    ];
+
+    fn text(s: &str) -> Value {
+        Value::Text(s.to_string())
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(entries.into_iter().map(|(k, v)| (text(k), v)).collect())
+    }
+
+    fn policy() -> utils::MultisigPolicy {
+        utils::MultisigPolicy::parse(&format!(
+            "wsh(sortedmulti(2,{}/<0;1>/*,{}/<0;1>/*,{}/<0;1>/*))",
+            KEYS[0], KEYS[1], KEYS[2]
+        ))
+        .unwrap()
+    }
+
+    fn summary(variant: &str, sorted: bool, threshold: i128, signers: i128) -> Value {
+        map(vec![
+            ("variant", text(variant)),
+            ("sorted", Value::Bool(sorted)),
+            ("threshold", Value::Integer(threshold)),
+            ("num_signers", Value::Integer(signers)),
+        ])
+    }
+
+    fn detail(xpubs: &[&str], path: Vec<Value>) -> Value {
+        let signers = xpubs
+            .iter()
+            .map(|key| {
+                let xpub = key.rsplit_once(']').map_or(*key, |(_, x)| x);
+                map(vec![
+                    ("fingerprint", Value::Bytes(vec![0, 0, 0, 0])),
+                    ("derivation", Value::Array(vec![])),
+                    ("xpub", text(xpub)),
+                    ("path", Value::Array(path.clone())),
+                ])
+            })
+            .collect();
+        map(vec![
+            ("multisig_name", text("Specter")),
+            (
+                "descriptor",
+                map(vec![
+                    ("variant", text("wsh(multi(k))")),
+                    ("sorted", Value::Bool(true)),
+                    ("threshold", Value::Integer(2)),
+                    ("signers", Value::Array(signers)),
+                ]),
+            ),
+        ])
+    }
+
+    /// Answers each `(method, name parameter)` from `replies`; anything
+    /// else fails as a transport error.
+    #[derive(Debug)]
+    struct FakeTransport {
+        replies: Vec<((&'static str, Option<&'static str>), Value)>,
+    }
+
+    #[async_trait]
+    impl Transport for FakeTransport {
+        async fn request<S: Serialize + Send + Unpin, D: DeserializeOwned + Unpin + Send>(
+            &self,
+            method: &str,
+            params: Option<S>,
+        ) -> Result<api::Response<D>, JadeError> {
+            let params = params.map(|p| serde_cbor::value::to_value(p).unwrap());
+            let name = match &params {
+                Some(Value::Map(m)) => m.values().find_map(|v| match v {
+                    Value::Text(t) => Some(t.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            let reply = self
+                .replies
+                .iter()
+                .find(|((m, n), _)| *m == method && n.map(str::to_string) == name)
+                .map(|(_, reply)| reply.clone())
+                .ok_or(TransportError::NoErrorOrResult)?;
+            Ok(api::Response {
+                id: "0".to_string(),
+                seqlen: None,
+                seqnum: None,
+                result: Some(
+                    serde_cbor::value::from_value(reply)
+                        .map_err(|_| TransportError::NoErrorOrResult)?,
+                ),
+                error: None,
+            })
+        }
+    }
+
+    fn descriptor_info() -> Value {
+        map(vec![
+            ("descriptor_len", Value::Integer(1)),
+            ("num_datavalues", Value::Integer(1)),
+        ])
+    }
+
+    fn sortedmulti() -> String {
+        format!(
+            "wsh(sortedmulti(2,{}/<0;1>/*,{}/<0;1>/*,{}/<0;1>/*))",
+            KEYS[0], KEYS[1], KEYS[2]
+        )
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_descriptor_under_another_name_does_not_hide_the_multisig_registry() {
+        let jade = Jade::new(FakeTransport {
+            replies: vec![
+                (
+                    ("get_registered_descriptors", None),
+                    map(vec![("Broken", descriptor_info())]),
+                ),
+                (
+                    ("get_registered_multisigs", None),
+                    map(vec![("Specter", summary("wsh(multi(k))", true, 2, 3))]),
+                ),
+                (
+                    ("get_registered_multisig", Some("Specter")),
+                    detail(&KEYS, vec![]),
+                ),
+            ],
+        });
+        assert_eq!(
+            jade.find_wallet_registration("Import0000", &sortedmulti())
+                .await
+                .unwrap(),
+            Some(WalletRegistration {
+                name: Some("Specter".to_string())
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_descriptor_registered_under_another_name_is_found() {
+        let (template, keys) = utils::extract_keys_and_template::<String>(&sortedmulti()).unwrap();
+        let registered = |keys: &[String]| {
+            map(vec![
+                ("descriptor_name", text("Specter")),
+                ("descriptor", text(&template.replace('\'', "h"))),
+                (
+                    "datavalues",
+                    Value::Map(
+                        keys.iter()
+                            .enumerate()
+                            .map(|(i, key)| (text(&format!("@{i}")), text(&key.replace('\'', "h"))))
+                            .collect(),
+                    ),
+                ),
+            ])
+        };
+        let lookup = |reply: Value| {
+            Jade::new(FakeTransport {
+                replies: vec![
+                    (
+                        ("get_registered_descriptors", None),
+                        map(vec![("Specter", descriptor_info())]),
+                    ),
+                    (("get_registered_descriptor", Some("Specter")), reply),
+                ],
+            })
+        };
+        assert_eq!(
+            lookup(registered(&keys))
+                .find_wallet_registration("Import0000", &sortedmulti())
+                .await
+                .unwrap(),
+            Some(WalletRegistration {
+                name: Some("Specter".to_string())
+            })
+        );
+        // The same keys in another order are another descriptor.
+        let mut swapped = keys.clone();
+        swapped.swap(0, 1);
+        assert_eq!(
+            lookup(registered(&swapped))
+                .find_wallet_registration("Import0000", &sortedmulti())
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_descriptor_under_our_name_is_an_error() {
+        let jade = Jade::new(FakeTransport {
+            replies: vec![(
+                ("get_registered_descriptors", None),
+                map(vec![("Import0000", descriptor_info())]),
+            )],
+        });
+        assert!(jade
+            .find_wallet_registration("Import0000", &sortedmulti())
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn summary_must_agree_on_every_reported_field() {
+        let p = policy();
+        assert!(multisig_summary_matches(
+            &summary("wsh(multi(k))", true, 2, 3),
+            &p
+        ));
+        // Fields left out cannot vouch for the entry.
+        assert!(!multisig_summary_matches(&map(vec![]), &p));
+        assert!(!multisig_summary_matches(
+            &map(vec![
+                ("variant", text("wsh(multi(k))")),
+                ("sorted", Value::Bool(true)),
+            ]),
+            &p
+        ));
+        assert!(multisig_summary_matches(
+            &map(vec![
+                ("variant", text("wsh(multi(k))")),
+                ("sorted", Value::Bool(true)),
+                ("threshold", Value::Integer(2)),
+            ]),
+            &p
+        ));
+        assert!(!multisig_summary_matches(
+            &summary("sh(wsh(multi(k)))", true, 2, 3),
+            &p
+        ));
+        assert!(!multisig_summary_matches(
+            &summary("wsh(multi(k))", false, 2, 3),
+            &p
+        ));
+        assert!(!multisig_summary_matches(
+            &summary("wsh(multi(k))", true, 1, 3),
+            &p
+        ));
+        assert!(!multisig_summary_matches(
+            &summary("wsh(multi(k))", true, 2, 4),
+            &p
+        ));
+    }
+
+    #[test]
+    fn detail_must_hold_exactly_the_policy_keys_on_standard_branches() {
+        let p = policy();
+        assert!(multisig_detail_matches(&detail(&KEYS, vec![]), &p));
+        assert!(!multisig_detail_matches(&detail(&KEYS[..2], vec![]), &p));
+        assert!(!multisig_detail_matches(
+            &detail(&KEYS, vec![Value::Integer(5)]),
+            &p
+        ));
     }
 }
