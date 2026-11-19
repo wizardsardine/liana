@@ -1438,6 +1438,149 @@ fn signer_paths(
     paths.join(", ")
 }
 
+fn wallet_signer_row<'a>(
+    fingerprint: &Fingerprint,
+    name: &'a form::Value<String>,
+    policy: &Option<CoincubePolicy>,
+    keys_aliases: &[(Fingerprint, form::Value<String>)],
+    provider_keys: &HashMap<Fingerprint, ProviderKey>,
+    save: &Option<Message>,
+) -> Element<'a, Message> {
+    use crate::app::view::settings::page;
+    use coincube_ui::component::tenshu::{self as tenshu_ui, FieldSize};
+    let fg = *fingerprint;
+    let mut detail = fg.to_string();
+    if let Some(policy) = policy {
+        let paths = signer_paths(policy, &fg, provider_keys);
+        if !paths.is_empty() {
+            detail = format!("{} · {}", detail, paths);
+        }
+    }
+    if provider_keys.contains_key(&fg) {
+        detail = localized_format!("{} · Provider key", "{} · clave del proveedor", detail);
+    }
+    let field = tenshu_ui::text_field(
+        iced::advanced::widget::Id::from(format!("tenshu.settings.vault.signer.{}", fg)),
+        localized_copy("Signer name"),
+        &name.value,
+        Message::FocusAction,
+    )
+    .hide_label()
+    .size(FieldSize::Compact)
+    .width(Length::Fixed(280.0))
+    .error_maybe((!name.valid).then_some(localized_copy("Please enter correct alias")))
+    .on_input(move |value| Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, value)));
+    let field = match (*save).clone() {
+        Some(save) => field.on_submit(save),
+        None => field,
+    };
+    page::row(signer_name(&fg, keys_aliases))
+        .line(tenshu_ui::mono(detail))
+        .control(Container::new(field).width(Length::Fixed(280.0)))
+        .into()
+}
+
+fn wallet_advanced_body<'a>(
+    vault: Option<&coincube_core::descriptors::CoincubeDescriptor>,
+    hardware_registration_allowed: bool,
+) -> Element<'a, Message> {
+    use crate::app::view::settings::page;
+    let mut descriptor_row = page::row("Descriptor")
+        .description(localized_copy(
+            "Hidden. Copying exposes the wallet policy and public keys to other apps.",
+        ))
+        .control(page::button(
+            VAULT_COPY_ID,
+            localized_copy("Copy…"),
+            Some(Message::Settings(SettingsMessage::ReviewDescriptorCopy)),
+        ));
+    if vault.is_some() {
+        descriptor_row = descriptor_row.control(page::button(
+            VAULT_EXPORT_ID,
+            localized_copy("Export encrypted…"),
+            Some(Message::Settings(
+                SettingsMessage::ExportEncryptedDescriptor,
+            )),
+        ));
+    }
+    let mut advanced: Vec<Element<'a, Message>> = vec![descriptor_row.into()];
+    if hardware_registration_allowed {
+        advanced.push(
+            page::row(localized_copy("Hardware registration"))
+                .description(localized_copy(
+                    "Register this wallet on a hardware device. Re-register after policy changes.",
+                ))
+                .control(page::button(
+                    VAULT_REGISTER_ID,
+                    localized_copy("Register on device…"),
+                    Some(Message::Settings(SettingsMessage::RegisterWallet)),
+                ))
+                .into(),
+        );
+    }
+    if vault.is_some() {
+        advanced.push(
+            page::row(localized_copy("Recovery path, coin control and PSBTs"))
+                .control(page::button(
+                    VAULT_TOOLS_ID,
+                    localized_copy("Open Vault tools"),
+                    Some(Message::Menu(Menu::Vault(VaultSubMenu::Recovery))),
+                ))
+                .into(),
+        );
+    }
+    page::disclosure_body(advanced)
+}
+
+fn wallet_phone_signing_group<'a>(
+    vault: Option<&coincube_core::descriptors::CoincubeDescriptor>,
+    cache: &Cache,
+) -> Element<'a, Message> {
+    use crate::app::view::settings::page;
+    // A Vault without a Keychain key has no Keychain tab to open.
+    let pairable = vault.is_some() && !cache.vault_lacks_keychain_key;
+    let pair_row = page::row("Mobile").description(if pairable {
+        localized_copy(
+            "Pair a phone holding this Vault's Mobile key. Same Wi-Fi. No Connect account needed.",
+        )
+    } else if vault.is_some() {
+        localized_copy(
+            "Unavailable: this Vault has no Mobile key. One can only be added when a Vault is \
+         created.",
+        )
+    } else {
+        localized_copy("Unavailable: this wallet has no Mobile-eligible key in COINCUBE Desktop.")
+    });
+    let pair_row = if pairable {
+        pair_row.control(page::button(
+            VAULT_PAIR_ID,
+            localized_copy("Pair phone"),
+            Some(Message::Menu(Menu::Vault(VaultSubMenu::Settings(Some(
+                crate::app::menu::SettingsOption::LocalSigning,
+            ))))),
+        ))
+    } else {
+        pair_row.control(page::status(
+            page::Status::Off,
+            localized_copy("Unavailable"),
+        ))
+    };
+    page::group(
+        localized_copy("Phone signing and members"),
+        None,
+        page::rows([
+            pair_row.into(),
+            page::row(localized_copy("Members"))
+                .accessory(page::status(
+                    page::Status::Off,
+                    localized_copy("Not enabled"),
+                ))
+                .description(localized_copy("For eligible Connect Vaults only."))
+                .into(),
+        ]),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn wallet_settings<'a>(
     menu: &'a Menu,
@@ -1513,38 +1656,14 @@ pub fn wallet_settings<'a>(
     ));
 
     let signer_rows = keys_aliases.iter().map(|(fingerprint, name)| {
-        let fg = *fingerprint;
-        let mut detail = fg.to_string();
-        if let Some(policy) = &policy {
-            let paths = signer_paths(policy, &fg, provider_keys);
-            if !paths.is_empty() {
-                detail = format!("{} · {}", detail, paths);
-            }
-        }
-        if provider_keys.contains_key(&fg) {
-            detail = localized_format!("{} · Provider key", "{} · clave del proveedor", detail);
-        }
-        let field = tenshu_ui::text_field(
-            iced::advanced::widget::Id::from(format!("tenshu.settings.vault.signer.{}", fg)),
-            localized_copy("Signer name"),
-            &name.value,
-            Message::FocusAction,
+        wallet_signer_row(
+            fingerprint,
+            name,
+            &policy,
+            keys_aliases,
+            provider_keys,
+            &save,
         )
-        .hide_label()
-        .size(FieldSize::Compact)
-        .width(Length::Fixed(280.0))
-        .error_maybe((!name.valid).then_some(localized_copy("Please enter correct alias")))
-        .on_input(move |value| {
-            Message::Settings(SettingsMessage::FingerprintAliasEdited(fg, value))
-        });
-        let field = match save.clone() {
-            Some(save) => field.on_submit(save),
-            None => field,
-        };
-        page::row(signer_name(&fg, keys_aliases))
-            .line(tenshu_ui::mono(detail))
-            .control(Container::new(field).width(Length::Fixed(280.0)))
-            .into()
     });
     content = content
         .push(page::group(
@@ -1554,48 +1673,7 @@ pub fn wallet_settings<'a>(
         ))
         .push(page::saved_line(updated));
 
-    // A Vault without a Keychain key has no Keychain tab to open.
-    let pairable = vault.is_some() && !cache.vault_lacks_keychain_key;
-    let pair_row = page::row("Mobile").description(if pairable {
-        localized_copy(
-            "Pair a phone holding this Vault's Mobile key. Same Wi-Fi. No Connect account needed.",
-        )
-    } else if vault.is_some() {
-        localized_copy(
-            "Unavailable: this Vault has no Mobile key. One can only be added when a Vault is \
-         created.",
-        )
-    } else {
-        localized_copy("Unavailable: this wallet has no Mobile-eligible key in COINCUBE Desktop.")
-    });
-    let pair_row = if pairable {
-        pair_row.control(page::button(
-            VAULT_PAIR_ID,
-            localized_copy("Pair phone"),
-            Some(Message::Menu(Menu::Vault(VaultSubMenu::Settings(Some(
-                crate::app::menu::SettingsOption::LocalSigning,
-            ))))),
-        ))
-    } else {
-        pair_row.control(page::status(
-            page::Status::Off,
-            localized_copy("Unavailable"),
-        ))
-    };
-    content = content.push(page::group(
-        localized_copy("Phone signing and members"),
-        None,
-        page::rows([
-            pair_row.into(),
-            page::row(localized_copy("Members"))
-                .accessory(page::status(
-                    page::Status::Off,
-                    localized_copy("Not enabled"),
-                ))
-                .description(localized_copy("For eligible Connect Vaults only."))
-                .into(),
-        ]),
-    ));
+    content = content.push(wallet_phone_signing_group(vault, cache));
 
     content = content.push(page::disclosure(
         VAULT_ADVANCED_ID,
@@ -1605,49 +1683,7 @@ pub fn wallet_settings<'a>(
         Message::Settings(SettingsMessage::ToggleWalletExpert),
     ));
     if expert_open {
-        let mut descriptor_row = page::row("Descriptor")
-            .description(localized_copy(
-                "Hidden. Copying exposes the wallet policy and public keys to other apps.",
-            ))
-            .control(page::button(
-                VAULT_COPY_ID,
-                localized_copy("Copy…"),
-                Some(Message::Settings(SettingsMessage::ReviewDescriptorCopy)),
-            ));
-        if vault.is_some() {
-            descriptor_row = descriptor_row.control(page::button(
-                VAULT_EXPORT_ID,
-                localized_copy("Export encrypted…"),
-                Some(Message::Settings(
-                    SettingsMessage::ExportEncryptedDescriptor,
-                )),
-            ));
-        }
-        let mut advanced: Vec<Element<'a, Message>> = vec![descriptor_row.into()];
-        if hardware_registration_allowed {
-            advanced.push(
-                page::row(localized_copy("Hardware registration"))
-                    .description(localized_copy("Register this wallet on a hardware device. Re-register after policy changes."))
-                    .control(page::button(
-                        VAULT_REGISTER_ID,
-                        localized_copy("Register on device…"),
-                        Some(Message::Settings(SettingsMessage::RegisterWallet)),
-                    ))
-                    .into(),
-            );
-        }
-        if vault.is_some() {
-            advanced.push(
-                page::row(localized_copy("Recovery path, coin control and PSBTs"))
-                    .control(page::button(
-                        VAULT_TOOLS_ID,
-                        localized_copy("Open Vault tools"),
-                        Some(Message::Menu(Menu::Vault(VaultSubMenu::Recovery))),
-                    ))
-                    .into(),
-            );
-        }
-        content = content.push(page::disclosure_body(advanced));
+        content = content.push(wallet_advanced_body(vault, hardware_registration_allowed));
     }
 
     dashboard(menu, cache, content)
@@ -2751,22 +2787,11 @@ enum StepState {
     Todo,
 }
 
-/// One numbered step: a 28px marker, the title with a right-hand note, and
-/// the step's body below the title.
-fn history_step<'a>(
+fn history_step_marker<'a>(
     number: u8,
     state: StepState,
-    title: &'a str,
-    note: Option<String>,
-    body: Option<Element<'a, NodeSettingsMessage>>,
-) -> Element<'a, NodeSettingsMessage> {
-    use coincube_ui::component::tenshu::Tone;
-    let tone = match state {
-        StepState::Done => Tone::Good,
-        StepState::Current => Tone::Neutral,
-        StepState::Stopped => Tone::Warn,
-        StepState::Todo => Tone::Muted,
-    };
+    tone: coincube_ui::component::tenshu::Tone,
+) -> Container<'a, NodeSettingsMessage> {
     let glyph: Element<'a, NodeSettingsMessage> = match state {
         StepState::Done => icon::check_icon()
             .size(14)
@@ -2791,7 +2816,7 @@ fn history_step<'a>(
             })
             .into(),
     };
-    let marker = Container::new(glyph)
+    Container::new(glyph)
         .width(Length::Fixed(28.0))
         .height(Length::Fixed(28.0))
         .center_x(Length::Fixed(28.0))
@@ -2812,7 +2837,26 @@ fn history_step<'a>(
                 },
                 ..Default::default()
             }
-        });
+        })
+}
+
+/// One numbered step: a 28px marker, the title with a right-hand note, and
+/// the step's body below the title.
+fn history_step<'a>(
+    number: u8,
+    state: StepState,
+    title: &'a str,
+    note: Option<String>,
+    body: Option<Element<'a, NodeSettingsMessage>>,
+) -> Element<'a, NodeSettingsMessage> {
+    use coincube_ui::component::tenshu::Tone;
+    let tone = match state {
+        StepState::Done => Tone::Good,
+        StepState::Current => Tone::Neutral,
+        StepState::Stopped => Tone::Warn,
+        StepState::Todo => Tone::Muted,
+    };
+    let marker = history_step_marker(number, state, tone);
     let title_text = text(title)
         .size(15)
         .font(
@@ -4232,9 +4276,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn node_retention_reports_actual_depth_separately_from_target() {
-        use crate::app::{local_switch::NodePruning, node_history::Status};
+    fn assert_node_retention_scenario(
+        renderer: &mut iced::Renderer,
+        days: &form::Value<String>,
+        scenario: &str,
+        pruning: Option<crate::app::local_switch::NodePruning>,
+        tip: Option<u64>,
+        target: Option<u32>,
+        expected: &str,
+    ) {
+        use crate::app::node_history::Status;
         use iced::advanced::{
             layout,
             renderer::Headless,
@@ -4252,6 +4303,145 @@ mod tests {
                 self.0.push((text.to_owned(), bounds));
             }
         }
+        let status = Status {
+            policy: target.map(|days| crate::node::retention::Policy {
+                version: 1,
+                days,
+                previous_size_mb: 15000,
+                temporary: false,
+                keep_from: None,
+            }),
+            ..Status::default()
+        };
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            for width in [760, 1200] {
+                let mut element: Element<NodeSettingsMessage> = Container::new(
+                    Column::new()
+                        .push(node_backend_status(
+                            "Local Node",
+                            icon::bitcoin_icon(),
+                            Some(1.0),
+                            Some((974597, 974597)),
+                            Some(false),
+                            Some("/Satoshi:29.0.0/"),
+                            Some("Node log"),
+                            false,
+                            true,
+                            false,
+                            false,
+                            false,
+                            false,
+                            false,
+                            false,
+                            None,
+                        ))
+                        .push(rolling_retention_section(days, &status, pruning, tip)),
+                )
+                .padding(24)
+                .width(Length::Fill)
+                .into();
+                let size = iced::Size::new(width as f32, 650.0);
+                let mut tree = Tree::new(element.as_widget());
+                let node = element.as_widget_mut().layout(
+                    &mut tree,
+                    renderer,
+                    &layout::Limits::new(iced::Size::ZERO, size),
+                );
+                let mut labels = Labels::default();
+                element.as_widget_mut().operate(
+                    &mut tree,
+                    Layout::new(&node),
+                    renderer,
+                    &mut labels,
+                );
+                assert!(
+                    labels.0.iter().any(|(text, _)| text == expected),
+                    "{}: {}",
+                    scenario,
+                    expected
+                );
+                assert!(!labels
+                    .0
+                    .iter()
+                    .any(|(text, _)| text.contains("has finished initial")));
+                assert!(!labels.0.iter().any(|(text, _)| text == "Keep more history"));
+                assert_eq!(
+                    labels
+                        .0
+                        .iter()
+                        .any(|(text, _)| text == "Current target: 180 days of blocks."),
+                    target.is_some()
+                );
+                let bounds =
+                    |label: &str| labels.0.iter().find(|(text, _)| text == label).unwrap().1;
+                let title = bounds("Local node · Bitcoin Core 29.0.0");
+                let complete = bounds("Blockchain sync complete");
+                assert!(complete.x > title.x + title.width);
+                assert!((complete.center_y() - title.center_y()).abs() < 2.0);
+                for (text, bounds) in &labels.0 {
+                    assert!(
+                        bounds.x >= 0.0 && bounds.x + bounds.width <= size.width + 1.0,
+                        "{}/{}: text exceeds width: {}: {:?}",
+                        scenario,
+                        width,
+                        text,
+                        bounds
+                    );
+                }
+                if matches!(scenario, "pruned" | "rolling") {
+                    if let Ok(directory) = std::env::var("NODE_SETTINGS_PREVIEW_DIR") {
+                        let viewport = iced::Rectangle::with_size(size);
+                        element.as_widget_mut().update(
+                            &mut tree,
+                            &iced::Event::Window(iced::window::Event::RedrawRequested(
+                                std::time::Instant::now(),
+                            )),
+                            Layout::new(&node),
+                            iced::mouse::Cursor::Unavailable,
+                            renderer,
+                            &mut iced::advanced::clipboard::Null,
+                            &mut iced::advanced::Shell::new(&mut Vec::new()),
+                            &viewport,
+                        );
+                        iced::advanced::Renderer::reset(renderer, viewport);
+                        element.as_widget().draw(
+                            &tree,
+                            renderer,
+                            &theme,
+                            &iced::advanced::renderer::Style {
+                                text_color: theme.colors.text.primary,
+                            },
+                            Layout::new(&node),
+                            iced::mouse::Cursor::Unavailable,
+                            &viewport,
+                        );
+                        let pixels = renderer.screenshot(
+                            iced::Size::new(width, 650),
+                            1.0,
+                            theme.colors.general.background,
+                        );
+                        image::save_buffer(
+                            std::path::Path::new(&directory)
+                                .join(format!("node-{scenario}-{appearance}-{width}.png")),
+                            &pixels,
+                            width,
+                            650,
+                            image::ColorType::Rgba8,
+                        )
+                        .expect("save node settings preview");
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn node_retention_reports_actual_depth_separately_from_target() {
+        use crate::app::local_switch::NodePruning;
+        use iced::advanced::renderer::Headless;
         for bytes in [
             coincube_ui::font::REGULAR_BYTES,
             coincube_ui::font::MEDIUM_BYTES,
@@ -4323,139 +4513,15 @@ mod tests {
                 "Blocks retained from height 970000 · waiting for the current node height.",
             ),
         ] {
-            let status = Status {
-                policy: target.map(|days| crate::node::retention::Policy {
-                    version: 1,
-                    days,
-                    previous_size_mb: 15000,
-                    temporary: false,
-                    keep_from: None,
-                }),
-                ..Status::default()
-            };
-            for (appearance, theme) in [
-                ("dark", theme::Theme::dark()),
-                ("light", theme::Theme::light()),
-            ] {
-                for width in [760, 1200] {
-                    let mut element: Element<NodeSettingsMessage> = Container::new(
-                        Column::new()
-                            .push(node_backend_status(
-                                "Local Node",
-                                icon::bitcoin_icon(),
-                                Some(1.0),
-                                Some((974597, 974597)),
-                                Some(false),
-                                Some("/Satoshi:29.0.0/"),
-                                Some("Node log"),
-                                false,
-                                true,
-                                false,
-                                false,
-                                false,
-                                false,
-                                false,
-                                false,
-                                None,
-                            ))
-                            .push(rolling_retention_section(&days, &status, pruning, tip)),
-                    )
-                    .padding(24)
-                    .width(Length::Fill)
-                    .into();
-                    let size = iced::Size::new(width as f32, 650.0);
-                    let mut tree = Tree::new(element.as_widget());
-                    let node = element.as_widget_mut().layout(
-                        &mut tree,
-                        &renderer,
-                        &layout::Limits::new(iced::Size::ZERO, size),
-                    );
-                    let mut labels = Labels::default();
-                    element.as_widget_mut().operate(
-                        &mut tree,
-                        Layout::new(&node),
-                        &renderer,
-                        &mut labels,
-                    );
-                    assert!(
-                        labels.0.iter().any(|(text, _)| text == expected),
-                        "{}: {}",
-                        scenario,
-                        expected
-                    );
-                    assert!(!labels
-                        .0
-                        .iter()
-                        .any(|(text, _)| text.contains("has finished initial")));
-                    assert!(!labels.0.iter().any(|(text, _)| text == "Keep more history"));
-                    assert_eq!(
-                        labels
-                            .0
-                            .iter()
-                            .any(|(text, _)| text == "Current target: 180 days of blocks."),
-                        target.is_some()
-                    );
-                    let bounds =
-                        |label: &str| labels.0.iter().find(|(text, _)| text == label).unwrap().1;
-                    let title = bounds("Local node · Bitcoin Core 29.0.0");
-                    let complete = bounds("Blockchain sync complete");
-                    assert!(complete.x > title.x + title.width);
-                    assert!((complete.center_y() - title.center_y()).abs() < 2.0);
-                    for (text, bounds) in &labels.0 {
-                        assert!(
-                            bounds.x >= 0.0 && bounds.x + bounds.width <= size.width + 1.0,
-                            "{}/{}: text exceeds width: {}: {:?}",
-                            scenario,
-                            width,
-                            text,
-                            bounds
-                        );
-                    }
-                    if matches!(scenario, "pruned" | "rolling") {
-                        if let Ok(directory) = std::env::var("NODE_SETTINGS_PREVIEW_DIR") {
-                            let viewport = iced::Rectangle::with_size(size);
-                            element.as_widget_mut().update(
-                                &mut tree,
-                                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                                    std::time::Instant::now(),
-                                )),
-                                Layout::new(&node),
-                                iced::mouse::Cursor::Unavailable,
-                                &renderer,
-                                &mut iced::advanced::clipboard::Null,
-                                &mut iced::advanced::Shell::new(&mut Vec::new()),
-                                &viewport,
-                            );
-                            iced::advanced::Renderer::reset(&mut renderer, viewport);
-                            element.as_widget().draw(
-                                &tree,
-                                &mut renderer,
-                                &theme,
-                                &iced::advanced::renderer::Style {
-                                    text_color: theme.colors.text.primary,
-                                },
-                                Layout::new(&node),
-                                iced::mouse::Cursor::Unavailable,
-                                &viewport,
-                            );
-                            let pixels = renderer.screenshot(
-                                iced::Size::new(width, 650),
-                                1.0,
-                                theme.colors.general.background,
-                            );
-                            image::save_buffer(
-                                std::path::Path::new(&directory)
-                                    .join(format!("node-{scenario}-{appearance}-{width}.png")),
-                                &pixels,
-                                width,
-                                650,
-                                image::ColorType::Rgba8,
-                            )
-                            .expect("save node settings preview");
-                        }
-                    }
-                }
-            }
+            assert_node_retention_scenario(
+                &mut renderer,
+                &days,
+                scenario,
+                pruning,
+                tip,
+                target,
+                expected,
+            );
         }
     }
 
@@ -4608,8 +4674,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn local_node_wizard_shows_switching_then_all_steps_complete() {
+    async fn assert_local_node_wizard_step(
+        theme_name: &str,
+        theme: &theme::Theme,
+        name: &str,
+        step: LocalNodeSwitchStep,
+        start: &form::Value<String>,
+        status: &crate::app::node_history::Status,
+    ) {
         use iced::advanced::{
             layout,
             renderer::Headless,
@@ -4629,6 +4701,135 @@ mod tests {
                 }
             }
         }
+        let mut renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        // Successful restart clears the RPC/history caches. Completion
+        // must remain visible even before the replacement probe answers.
+        let height = (step != LocalNodeSwitchStep::Complete).then_some(974594);
+        let mut element = wallet_history_section(start, status, false, false, height, step);
+        let mut tree = Tree::new(element.as_widget());
+        let size = iced::Size::new(1000.0, 720.0);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        let mut labels = Labels::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        for title in [
+            "Sync the blockchain",
+            "Bring this Vault's history to your node",
+            "Switch to your local node",
+        ] {
+            assert!(labels.0.iter().any(|text| text == title));
+        }
+        assert_eq!(
+            labels.0.iter().any(|text| text == "Switch to local node"),
+            step == LocalNodeSwitchStep::Ready
+        );
+        assert_eq!(
+            labels
+                .0
+                .iter()
+                .any(|text| text == "Switching to your local node…"),
+            step == LocalNodeSwitchStep::Switching
+        );
+        if step == LocalNodeSwitchStep::Complete {
+            assert!(labels
+                .0
+                .iter()
+                .any(|text| text == "Vault moved to your local node"));
+            assert_eq!(
+                labels
+                    .0
+                    .iter()
+                    .filter(|text| text.as_str() == "Done")
+                    .count(),
+                4,
+                "all three steps plus the Done action: {:?}",
+                labels.0
+            );
+            assert!(!labels
+                .0
+                .iter()
+                .any(|text| text.contains("Connect keeps working")));
+            let mut messages = Vec::new();
+            for event in [
+                iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),
+                iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left),
+            ] {
+                element.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Mouse(event),
+                    Layout::new(&node),
+                    iced::mouse::Cursor::Available(labels.1.expect("Done action").center()),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut iced::advanced::Shell::new(&mut messages),
+                    &iced::Rectangle::with_size(size),
+                );
+            }
+            assert!(
+                matches!(messages.as_slice(), [NodeSettingsMessage::RecoveryDismiss]),
+                "Done dismisses the completed checklist"
+            );
+        }
+        if step == LocalNodeSwitchStep::Switching {
+            assert!(!labels.0.iter().any(|text| text == "Not now"
+                || text
+                    == "All steps complete. COINCUBE Desktop reads this Vault from your node."));
+        }
+        if let Ok(directory) = std::env::var("LOCAL_NODE_WIZARD_CAPTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            let mut messages = Vec::new();
+            element.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut iced::advanced::Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+            element.as_widget().draw(
+                &tree,
+                &mut renderer,
+                theme,
+                &iced::advanced::renderer::Style {
+                    text_color: theme.colors.text.primary,
+                },
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &iced::Rectangle::with_size(size),
+            );
+            let pixels = renderer.screenshot(
+                iced::Size::new(1000, 720),
+                1.0,
+                theme.colors.general.background,
+            );
+            image::save_buffer(
+                std::path::Path::new(&directory).join(format!("{name}-{theme_name}.png")),
+                &pixels,
+                1000,
+                720,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn local_node_wizard_shows_switching_then_all_steps_complete() {
         for bytes in coincube_ui::font::load() {
             iced::advanced::graphics::text::font_system()
                 .write()
@@ -4646,134 +4847,8 @@ mod tests {
                 ("switching", LocalNodeSwitchStep::Switching),
                 ("complete", LocalNodeSwitchStep::Complete),
             ] {
-                let mut renderer = <iced::Renderer as Headless>::new(
-                    coincube_ui::font::REGULAR,
-                    iced::Pixels(16.0),
-                    Some("tiny-skia"),
-                )
-                .await
-                .expect("software renderer");
-                // Successful restart clears the RPC/history caches. Completion
-                // must remain visible even before the replacement probe answers.
-                let height = (step != LocalNodeSwitchStep::Complete).then_some(974594);
-                let mut element =
-                    wallet_history_section(&start, &status, false, false, height, step);
-                let mut tree = Tree::new(element.as_widget());
-                let size = iced::Size::new(1000.0, 720.0);
-                let node = element.as_widget_mut().layout(
-                    &mut tree,
-                    &renderer,
-                    &layout::Limits::new(iced::Size::ZERO, size),
-                );
-                let mut labels = Labels::default();
-                element.as_widget_mut().operate(
-                    &mut tree,
-                    Layout::new(&node),
-                    &renderer,
-                    &mut labels,
-                );
-                for title in [
-                    "Sync the blockchain",
-                    "Bring this Vault's history to your node",
-                    "Switch to your local node",
-                ] {
-                    assert!(labels.0.iter().any(|text| text == title));
-                }
-                assert_eq!(
-                    labels.0.iter().any(|text| text == "Switch to local node"),
-                    step == LocalNodeSwitchStep::Ready
-                );
-                assert_eq!(
-                    labels
-                        .0
-                        .iter()
-                        .any(|text| text == "Switching to your local node…"),
-                    step == LocalNodeSwitchStep::Switching
-                );
-                if step == LocalNodeSwitchStep::Complete {
-                    assert!(labels
-                        .0
-                        .iter()
-                        .any(|text| text == "Vault moved to your local node"));
-                    assert_eq!(
-                        labels
-                            .0
-                            .iter()
-                            .filter(|text| text.as_str() == "Done")
-                            .count(),
-                        4,
-                        "all three steps plus the Done action: {:?}",
-                        labels.0
-                    );
-                    assert!(!labels
-                        .0
-                        .iter()
-                        .any(|text| text.contains("Connect keeps working")));
-                    let mut messages = Vec::new();
-                    for event in [
-                        iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),
-                        iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left),
-                    ] {
-                        element.as_widget_mut().update(
-                            &mut tree,
-                            &iced::Event::Mouse(event),
-                            Layout::new(&node),
-                            iced::mouse::Cursor::Available(labels.1.expect("Done action").center()),
-                            &renderer,
-                            &mut iced::advanced::clipboard::Null,
-                            &mut iced::advanced::Shell::new(&mut messages),
-                            &iced::Rectangle::with_size(size),
-                        );
-                    }
-                    assert!(
-                        matches!(messages.as_slice(), [NodeSettingsMessage::RecoveryDismiss]),
-                        "Done dismisses the completed checklist"
-                    );
-                }
-                if step == LocalNodeSwitchStep::Switching {
-                    assert!(!labels.0.iter().any(|text| text == "Not now"
-                        || text == "All steps complete. COINCUBE Desktop reads this Vault from your node."));
-                }
-                if let Ok(directory) = std::env::var("LOCAL_NODE_WIZARD_CAPTURE_DIR") {
-                    std::fs::create_dir_all(&directory).unwrap();
-                    let mut messages = Vec::new();
-                    element.as_widget_mut().update(
-                        &mut tree,
-                        &iced::Event::Window(iced::window::Event::RedrawRequested(
-                            std::time::Instant::now(),
-                        )),
-                        Layout::new(&node),
-                        iced::mouse::Cursor::Unavailable,
-                        &renderer,
-                        &mut iced::advanced::clipboard::Null,
-                        &mut iced::advanced::Shell::new(&mut messages),
-                        &iced::Rectangle::with_size(size),
-                    );
-                    element.as_widget().draw(
-                        &tree,
-                        &mut renderer,
-                        &theme,
-                        &iced::advanced::renderer::Style {
-                            text_color: theme.colors.text.primary,
-                        },
-                        Layout::new(&node),
-                        iced::mouse::Cursor::Unavailable,
-                        &iced::Rectangle::with_size(size),
-                    );
-                    let pixels = renderer.screenshot(
-                        iced::Size::new(1000, 720),
-                        1.0,
-                        theme.colors.general.background,
-                    );
-                    image::save_buffer(
-                        std::path::Path::new(&directory).join(format!("{name}-{theme_name}.png")),
-                        &pixels,
-                        1000,
-                        720,
-                        image::ColorType::Rgba8,
-                    )
-                    .unwrap();
-                }
+                assert_local_node_wizard_step(theme_name, &theme, name, step, &start, &status)
+                    .await;
             }
         }
     }
