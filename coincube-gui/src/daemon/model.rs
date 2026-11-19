@@ -78,11 +78,27 @@ impl SpendTx {
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
         network: Network,
     ) -> Self {
+        Self::new_recorded(updated_at, psbt, None, coins, desc, secp, network)
+    }
+
+    /// [`Self::new`] for a stored spend, with the transaction ID the daemon
+    /// recorded when it broadcast it. Finalizing a `pkh` or `sh(wpkh)` input
+    /// adds a `scriptSig`, so the broadcast ID differs from the unsigned
+    /// PSBT's; coins spent by either count as spent by this transaction.
+    pub fn new_recorded(
+        updated_at: Option<u32>,
+        psbt: Psbt,
+        broadcast_txid: Option<Txid>,
+        coins: Vec<Coin>,
+        desc: &impl SpendAnalysis,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
+        network: Network,
+    ) -> Self {
         Self::from_list_entry(
             ListSpendEntry {
                 psbt,
                 updated_at,
-                broadcast_txid: None,
+                broadcast_txid,
             },
             coins,
             desc,
@@ -91,6 +107,7 @@ impl SpendTx {
         )
     }
 
+    /// A stored spend as the daemon lists it. See [`Self::new_recorded`].
     pub(super) fn from_list_entry(
         entry: ListSpendEntry,
         coins: Vec<Coin>,
@@ -103,8 +120,6 @@ impl SpendTx {
             updated_at,
             broadcast_txid,
         } = entry;
-        let unsigned_txid = psbt.unsigned_tx.compute_txid();
-        let spending_txid = broadcast_txid.unwrap_or(unsigned_txid);
         // Use primary path if no inputs are using a relative locktime.
         let use_primary_path = !psbt
             .unsigned_tx
@@ -126,10 +141,11 @@ impl SpendTx {
         );
 
         let mut status = SpendStatus::Pending;
+        let unsigned_txid = psbt.unsigned_tx.compute_txid();
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
         for coin in coins {
             if let Some(info) = coin.spend_info {
-                if info.txid == spending_txid {
+                if info.txid == unsigned_txid || Some(info.txid) == broadcast_txid {
                     if info.height.is_some() {
                         status = SpendStatus::Spent
                     } else {

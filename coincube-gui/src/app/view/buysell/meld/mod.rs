@@ -217,6 +217,7 @@ impl MeldState {
         cache: &Cache,
         daemon: Option<std::sync::Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         client: &'a CoincubeClient,
+        wallet: &std::sync::Arc<crate::app::wallet::Wallet>,
     ) -> Option<iced::Task<view::Message>> {
         match msg {
             MeldMessage::NavigateBack => {
@@ -296,7 +297,9 @@ impl MeldState {
                 }
             }
 
-            MeldMessage::CreateNewAddress => return Some(Self::create_new_address(daemon)),
+            MeldMessage::CreateNewAddress => {
+                return Some(Self::create_new_address(cache, daemon, wallet))
+            }
             MeldMessage::NewAddressCreated(coincubed::commands::GetAddressResult {
                 address,
                 ..
@@ -609,12 +612,20 @@ impl MeldState {
         }
     }
 
+    /// The Vault's next receive address, reserved the way its Receive
+    /// screen reserves one (an imported Vault takes its source lock).
     fn create_new_address(
+        cache: &Cache,
         daemon: Option<std::sync::Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        wallet: &std::sync::Arc<crate::app::wallet::Wallet>,
     ) -> iced::Task<view::Message> {
         let daemon = daemon.expect("Daemon must be available for BuySell panel");
+        let (data_dir, wallet) = (cache.datadir_path.clone(), wallet.clone());
         iced::Task::perform(
-            async move { daemon.as_ref().get_new_address().await },
+            async move {
+                crate::app::state::vault::receive::vault_receive_address(data_dir, &wallet, daemon)
+                    .await
+            },
             |res| match res {
                 Ok(new) => view::Message::BuySell(view::BuySellMessage::Meld(
                     MeldMessage::NewAddressCreated(new),

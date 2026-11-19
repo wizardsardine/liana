@@ -33,27 +33,52 @@ pub(crate) fn cube_key_records(
 }
 
 /// Sign `current` with each of `records` in turn: every stored account
-/// behind one master fingerprint.
+/// behind one master fingerprint. An account that has already signed adds
+/// nothing and is skipped, so a later account can still add its signature;
+/// the batch fails only when no account added one, or on any real failure.
 pub(crate) fn sign_with_cube_keys(
     datadir: &crate::dir::CoincubeDirectory,
     chain: crate::chain::ChainId,
     records: &[crate::services::imported_keys::LocalKeyRecord],
     current: &Psbt,
 ) -> Result<Psbt, String> {
-    records.iter().try_fold(current.clone(), |psbt, record| {
-        sign_with_cube_key(datadir, chain, record, &psbt)
+    sign_each(records, current, |record, psbt| {
+        sign_with_cube_key(datadir, chain, record, psbt)
     })
+}
+
+/// Fold `sign` over `records`, carrying each result forward. `Ok(None)` is a
+/// verified account with nothing to add; at least one must contribute.
+fn sign_each<R>(
+    records: &[R],
+    current: &Psbt,
+    mut sign: impl FnMut(&R, &Psbt) -> Result<Option<Psbt>, String>,
+) -> Result<Psbt, String> {
+    let mut psbt = current.clone();
+    let mut contributed = false;
+    for record in records {
+        if let Some(signed) = sign(record, &psbt)? {
+            psbt = signed;
+            contributed = true;
+        }
+    }
+    if contributed {
+        Ok(psbt)
+    } else {
+        Err("Imported signing failed verification.".into())
+    }
 }
 
 /// Sign `current` with one stored key. The unsigned construction is `current`
 /// without its signatures; the key checks that every earlier signature is
-/// kept and the transaction is unchanged.
+/// kept and the transaction is unchanged. `Ok(None)` when the key verified
+/// but had no signature left to add.
 pub(crate) fn sign_with_cube_key(
     datadir: &crate::dir::CoincubeDirectory,
     chain: crate::chain::ChainId,
     record: &crate::services::imported_keys::LocalKeyRecord,
     current: &Psbt,
-) -> Result<Psbt, String> {
+) -> Result<Option<Psbt>, String> {
     let mut original = current.clone();
     for input in &mut original.inputs {
         input.partial_sigs.clear();
@@ -61,7 +86,7 @@ pub(crate) fn sign_with_cube_key(
         input.final_script_witness = None;
     }
     with_repository(datadir, chain, |repository| {
-        repository.sign(
+        repository.sign_contribution(
             record.record_id,
             record.revision,
             &original,
@@ -98,3 +123,49 @@ fn with_repository<T>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod sign_each_tests {
+    use super::sign_each;
+    use coincube_core::miniscript::bitcoin::{
+        absolute::LockTime, psbt::Psbt, transaction::Version, Transaction,
+    };
+
+    fn psbt(lock: u32) -> Psbt {
+        Psbt::from_unsigned_tx(Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::from_consensus(lock),
+            input: vec![],
+            output: vec![],
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn an_account_that_already_signed_does_not_stop_the_next() {
+        let calls = std::cell::Cell::new(0);
+        let signed = sign_each(&[1, 2], &psbt(0), |record, _| {
+            calls.set(calls.get() + 1);
+            Ok((*record == 2).then(|| psbt(2)))
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 2);
+        assert_eq!(signed, psbt(2));
+    }
+
+    #[test]
+    fn no_contribution_from_any_account_is_an_error() {
+        assert!(sign_each(&[1, 2], &psbt(0), |_, _| Ok(None)).is_err());
+    }
+
+    #[test]
+    fn a_real_failure_still_stops_the_batch() {
+        let calls = std::cell::Cell::new(0);
+        let result = sign_each(&[1, 2], &psbt(0), |_, _| {
+            calls.set(calls.get() + 1);
+            Err("bad key".to_string())
+        });
+        assert_eq!(result.unwrap_err(), "bad key");
+        assert_eq!(calls.get(), 1);
+    }
+}

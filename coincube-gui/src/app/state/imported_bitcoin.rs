@@ -315,10 +315,12 @@ pub enum ImportMessage {
     Hardware(HardwareWalletMessage),
 }
 
+/// Readiness rests on the scan status and coins alone. The shared Vault and
+/// Activity panels load their own history, so a failing history list never
+/// revokes a valid completed scan.
 type RefreshSnapshot = (
     model::GetInfoResult,
     model::ListCoinsResult,
-    Vec<model::HistoryTransaction>,
     BitcoinImportStage,
 );
 
@@ -468,8 +470,12 @@ pub struct ImportedBitcoinPanel {
     sync_failed: bool,
     info: Option<model::GetInfoResult>,
     coins: Option<model::ListCoinsResult>,
-    history: Vec<model::HistoryTransaction>,
     address: Option<model::GetAddressResult>,
+    /// The shared Vault Receive screen reserved (or is reserving) an
+    /// address since `info` was read, so its allocation indexes may be
+    /// behind the daemon. Withholds them until a fresh snapshot is read;
+    /// readiness and the Vault routes are unaffected.
+    address_state_stale: bool,
     show_details: bool,
     abandoned: bool,
     connect_token: Option<String>,
@@ -543,8 +549,8 @@ impl ImportedBitcoinPanel {
             sync_failed: false,
             info: None,
             coins: None,
-            history: Vec::new(),
             address: None,
+            address_state_stale: false,
             show_details: false,
             abandoned: false,
             connect_token: None,
@@ -629,6 +635,60 @@ impl ImportedBitcoinPanel {
         self.bind_runtime(daemon)
     }
 
+    /// Let go of the App's runtime after a server switch stopped it and
+    /// nothing replaced it. Pending results from the stopped runtime are
+    /// invalidated and its scan evidence is dropped, so neither readiness nor
+    /// a later refresh can resurrect it. A daemon this panel started and
+    /// still owns (before App adoption) is not the App's to drop.
+    pub fn detach_runtime(&mut self) {
+        if self.owns_daemon {
+            return;
+        }
+        self.daemon = None;
+        self.generation = fresh_generation();
+        self.generation_gate
+            .store(self.generation, Ordering::SeqCst);
+        self.busy = false;
+        self.address_reserving = false;
+        self.sync_requesting = false;
+        self.progress_polling = false;
+        self.snapshot_failed = false;
+        self.clear_runtime_evidence();
+    }
+
+    /// The shared Vault Receive screen is reserving an address outside this
+    /// panel: stop vouching for the snapshot's allocation indexes until
+    /// [`Self::reread_after_reservation`] reads them back.
+    pub fn reservation_started_elsewhere(&mut self) {
+        self.address_state_stale = true;
+        // A snapshot already in flight was read before this reservation and
+        // must not vouch for the indexes again: revoke it, as the panel's own
+        // reservation does.
+        self.generation = fresh_generation();
+        self.generation_gate
+            .store(self.generation, Ordering::SeqCst);
+        self.busy = false;
+        self.progress_polling = false;
+        self.sync_requesting = false;
+    }
+
+    /// Read the snapshot back after a reservation made outside this panel,
+    /// so the allocation indexes it vouches for are current again.
+    pub fn reread_after_reservation(&mut self) -> Task<Message> {
+        if !self.address_state_stale || self.daemon.is_none() {
+            return Task::none();
+        }
+        self.refresh()
+    }
+
+    /// Drop what a runtime reported (scan status, coins, history, the
+    /// reserved address). Key inventory and the persisted attachment stay.
+    fn clear_runtime_evidence(&mut self) {
+        self.info = None;
+        self.coins = None;
+        self.address = None;
+    }
+
     /// Keys from recovery words stored in this Cube for the attached wallet,
     /// once read.
     pub fn stored_keys(&self) -> Option<usize> {
@@ -683,6 +743,9 @@ impl ImportedBitcoinPanel {
     /// reporting for this exact Cube attachment. Historical scan bounds are
     /// deliberately not used as address-allocation state.
     pub fn verified_address_state(&self) -> Option<(u32, u32)> {
+        if self.address_state_stale {
+            return None;
+        }
         let wallet = self.import.active_attachment()?;
         let info = self.info.as_ref()?;
         let status = info.imported_wallet.as_ref()?;
@@ -758,6 +821,16 @@ impl ImportedBitcoinPanel {
         } else {
             self.provider_known = false;
             self.endpoint.clear();
+        }
+        // A different runtime has not yet reported for this attachment: its
+        // predecessor's scan snapshot must not keep readiness, Vault routes
+        // or verified address indexes open until the refresh lands.
+        if !self
+            .daemon
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &daemon))
+        {
+            self.clear_runtime_evidence();
         }
         self.generation = fresh_generation();
         self.generation_gate
@@ -1400,7 +1473,6 @@ impl ImportedBitcoinPanel {
                 self.owns_daemon = false;
                 self.info = None;
                 self.coins = None;
-                self.history.clear();
                 self.address = None;
                 self.import.stage = BitcoinImportStage::Syncing {
                     wallet: wallet.clone(),
@@ -1651,11 +1723,11 @@ impl ImportedBitcoinPanel {
             ImportEvent::Refreshed(generation, result) if generation == self.generation => {
                 self.busy = false;
                 match result {
-                    Ok((info, coins, history, stage)) => {
+                    Ok((info, coins, stage)) => {
                         self.snapshot_failed = false;
+                        self.address_state_stale = false;
                         self.info = Some(info);
                         self.coins = Some(coins);
-                        self.history = history;
                         self.import.stage = stage;
                         self.error = None;
                         self.sync_failed = false;
@@ -1665,7 +1737,6 @@ impl ImportedBitcoinPanel {
                         self.snapshot_failed = true;
                         self.info = None;
                         self.coins = None;
-                        self.history.clear();
                         self.address = None;
                         self.sync_failed = true;
                         self.error = Some("Could not synchronize this Bitcoin wallet. Check the Bitcoin server and your connection, then retry synchronization.".into());
@@ -1962,11 +2033,7 @@ impl ImportedBitcoinPanel {
                     .list_coins(&[CoinStatus::Confirmed, CoinStatus::Unconfirmed], &[])
                     .await
                     .map_err(|e| e.to_string())?;
-                let history = daemon
-                    .list_history_txs(0, u32::MAX, 20)
-                    .await
-                    .map_err(|e| e.to_string())?;
-                Ok((info, coins, history, stage))
+                Ok((info, coins, stage))
             },
             move |result| {
                 Message::ImportedBitcoin(Box::new(ImportEvent::Refreshed(generation, result)))
@@ -6239,12 +6306,27 @@ mod tests {
         let old = runtime("old");
         let new = runtime("new");
         panel.daemon = Some(old.clone());
+        assert!(panel.is_ready());
         let _ = panel.replace_runtime(new.clone());
         assert!(Arc::ptr_eq(panel.daemon.as_ref().unwrap(), &new));
         assert!(panel.error.is_none(), "{:?}", panel.error);
+        // The old runtime's scan is not evidence for the new one.
+        assert!(!panel.is_ready());
+        assert!(panel.verified_address_state().is_none());
+        assert!(panel.import.active_attachment().is_some());
         let generation = panel.generation;
+        panel.complete_scan_for_tests(100, vec![]);
         let _ = panel.replace_runtime(new.clone());
         assert_eq!(panel.generation, generation, "the same runtime is a no-op");
+        assert!(panel.is_ready(), "the same runtime keeps its snapshot");
+
+        // A switch that left no daemon detaches the stopped one and drops
+        // its snapshot and pending results.
+        panel.detach_runtime();
+        assert!(panel.daemon.is_none());
+        assert_ne!(panel.generation, generation);
+        assert!(!panel.is_ready());
+        assert!(panel.import.active_attachment().is_some());
     }
 
     /// A PSBT built like the daemon's: one coin, an outside payment and
@@ -6374,8 +6456,8 @@ mod tests {
         };
         let tx = SpendTx::new(
             None,
-            psbt,
-            vec![spent],
+            psbt.clone(),
+            vec![spent.clone()],
             &wallet.main_descriptor,
             &secp256k1::Secp256k1::verification_only(),
             Network::Bitcoin,
@@ -6385,6 +6467,33 @@ mod tests {
         assert_eq!(tx.sigs.primary_path().threshold, 1);
         assert!(tx.sigs.recovery_paths().is_empty());
         assert_eq!(tx.status, crate::daemon::model::SpendStatus::Pending);
+
+        // Finalizing a `pkh`/`sh(wpkh)` input changes the transaction ID: the
+        // spend is still recognised by the ID the daemon recorded at
+        // broadcast, not left Pending (or Deprecated once confirmed).
+        let broadcast =
+            <Txid as coincube_core::miniscript::bitcoin::hashes::Hash>::from_byte_array([9; 32]);
+        assert_ne!(broadcast, psbt.unsigned_tx.compute_txid());
+        for (height, expected) in [
+            (None, crate::daemon::model::SpendStatus::Broadcast),
+            (Some(2), crate::daemon::model::SpendStatus::Spent),
+        ] {
+            let mut coin = spent.clone();
+            coin.spend_info = Some(coincubed::commands::LCSpendInfo {
+                txid: broadcast,
+                height,
+            });
+            let recorded = SpendTx::new_recorded(
+                None,
+                psbt.clone(),
+                Some(broadcast),
+                vec![coin],
+                &wallet.main_descriptor,
+                &secp256k1::Secp256k1::verification_only(),
+                Network::Bitcoin,
+            );
+            assert_eq!(recorded.status, expected);
+        }
 
         let state = PsbtState::new(wallet, tx, true);
         assert!(state.desc_policy.is_some());

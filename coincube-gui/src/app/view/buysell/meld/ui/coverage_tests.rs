@@ -72,6 +72,9 @@ fn update(s: &mut MeldState, message: MeldMessage) {
         &crate::app::Cache::default(),
         None,
         &CoincubeClient::new(),
+        &std::sync::Arc::new(crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::SHAPES[0],
+        )),
     );
 }
 
@@ -450,6 +453,9 @@ fn sse_events_without_an_active_session_schedule_nothing() {
             &crate::app::Cache::default(),
             None,
             &CoincubeClient::new(),
+            &std::sync::Arc::new(crate::services::split_test_wallets::imported_vault(
+                crate::services::split_test_wallets::SHAPES[0],
+            )),
         );
         assert!(task.is_none(), "{}", status);
     }
