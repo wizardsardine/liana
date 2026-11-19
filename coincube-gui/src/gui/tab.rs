@@ -3397,6 +3397,337 @@ impl Tab {
         })
     }
 
+    fn persist_installer_exit(
+        &mut self,
+        settings_opt: Option<Box<WalletSettings>>,
+        internal_bitcoind: Option<crate::node::bitcoind::Bitcoind>,
+    ) -> Task<Message> {
+        let State::Installer(i) = &mut self.state else {
+            unreachable!();
+        };
+        // Associate wallet with cube, and — for the Recovery
+        // Kit restore flow specifically — resolve the Cube
+        // signer and the Spark backend in the same async task,
+        // so the restored Cube opens with them.
+        let chain = i.context.bitcoin_config.chain;
+        let network_dir = i.datadir.network_directory(chain);
+        let datadir = i.datadir.clone();
+        // The Vault's identity, both halves. The installer context
+        // is the only place the descriptor is in hand at exit —
+        // `WalletSettings` carries the checksum but not the
+        // descriptor. Persisting the fingerprint
+        // now is what lets the home cube list render a vault id
+        // without parsing a descriptor per row
+        // (`plans/PLAN-vault-identity-unification.md` D1).
+        let vault = settings_opt.as_ref().map(|s| {
+            app::settings::VaultIdentity::new(s.wallet_id(), i.context.descriptor.as_ref())
+        });
+        let wallet_alias = settings_opt.as_ref().and_then(|s| s.alias.clone());
+        let network = i.network;
+        let originating_cube_id = i.cube_settings.as_ref().map(|c| c.id.clone());
+
+        // Recovery-Kit *seed* restore: the deleted Cube's original
+        // UUID + name, threaded through the context by
+        // `RecoveryKitRestoreStep` from the decrypted kit.
+        // `find_or_create_cube` re-mints the Cube with this UUID so
+        // Connect re-registration reactivates the deleted Cube
+        // instead of creating a duplicate. Gated on
+        // `cube_settings.is_none()`: that's the wiped-install
+        // recovery flow (launched from Home with no local Cube to
+        // attach to). When a Cube shell already exists locally
+        // (`cube_settings.is_some()`, e.g. AddWallet inside a Cube)
+        // the `originating_cube_id` path owns that association, and
+        // `context.cube_id` there is that existing Cube's identity —
+        // not a restore target — so we deliberately skip it.
+        let restored_cube = installer_exit_identity(i);
+
+        // Capture restore-flow state up-front. Cloning the
+        // `Zeroizing<String>` here means the PIN copy
+        // carried into the Task is its own heap-zeroing
+        // value — it's dropped (and zeroed) once the task
+        // completes.
+        // Only a *password* Recovery Kit evidences the flag the
+        // Home badge reads. The keychain seal keeps its own record
+        // and an heir has no kit of their own, yet both reach the
+        // same commit seam — so this asks which restore it was, not
+        // merely whether one happened.
+        let from_password_kit = matches!(
+            i.context.restore_source,
+            Some(installer::RestoreSource::PasswordKit)
+        );
+        let restore_seed = installer_exit_seed(i);
+        let imported_restore = i.context.restored_imported_wallet.clone();
+        let imported_kit_source = match i.context.restore_source {
+            Some(installer::RestoreSource::PasswordKit) => {
+                Some(crate::services::bitcoin_import::RestoredKitSource::Password)
+            }
+            Some(installer::RestoreSource::KeychainSeal) => {
+                Some(crate::services::bitcoin_import::RestoredKitSource::OwnerKeychain)
+            }
+            _ => None,
+        };
+        // Kit restore uses the authenticated Connect Esplora proxy;
+        // imported wallets never enter the remote Vault backend.
+        let imported_backend = i
+            .context
+            .connect_jwt
+            .as_ref()
+            .map(|jwt| {
+                coincubed::config::BitcoinBackend::Esplora(installer::connect_esplora_config(
+                    chain,
+                    jwt.as_str(),
+                ))
+            })
+            .or_else(|| i.context.bitcoin_backend.clone());
+
+        let generation = self.fork_session_generation;
+        let task = Task::perform(
+            async move {
+                let mut cube = if let Some(blob) = imported_restore.as_ref() {
+                    find_or_create_cube_for_imported_restore(
+                        &network_dir,
+                        vault.as_ref(),
+                        &wallet_alias,
+                        chain,
+                        originating_cube_id,
+                        restored_cube,
+                        restore_seed.as_ref(),
+                        blob,
+                    )
+                    .await?
+                } else {
+                    find_or_create_cube(
+                        &network_dir,
+                        vault.as_ref(),
+                        &wallet_alias,
+                        chain,
+                        originating_cube_id,
+                        restored_cube,
+                        restore_seed.as_ref(),
+                    )
+                    .await?
+                };
+                if let Some(blob) = &imported_restore {
+                    let backend = imported_backend.ok_or_else(|| {
+                        "Sign in to Connect to restore this imported Bitcoin wallet.".to_string()
+                    })?;
+                    cube = crate::services::bitcoin_import::restore_from_kit(
+                        &network_dir,
+                        &cube.id,
+                        blob,
+                        backend,
+                        imported_kit_source.ok_or_else(|| {
+                            "Imported wallets require owner recovery.".to_string()
+                        })?,
+                    )
+                    .await?;
+                }
+
+                Self::open_installer_restore_session(chain, &cube, restore_seed.as_ref());
+
+                Self::record_restored_password_kit(&network_dir, &cube, from_password_kit).await;
+
+                // Only the restore path needs to resolve the
+                // Cube signer up-front — the fresh-install flow
+                // does it at PIN entry.
+                if chain.is_blake2b() {
+                    return Ok((cube, None, None));
+                }
+                let cube_signer = Self::resolve_installer_restore_signer(
+                    &datadir,
+                    network,
+                    &cube,
+                    restore_seed.as_ref(),
+                )?;
+
+                // Mirror the PIN-entry path (tab.rs Spark
+                // load near line 781): spawn the bridge
+                // subprocess against the just-encrypted
+                // mnemonic so the Loader can hand a live
+                // SparkBackend to App. Failures here are
+                // non-fatal — without this, the first
+                // boot after restore landed in the app
+                // with `spark_backend = None` and the
+                // Spark panels only populated after the
+                // user closed + re-opened the Cube.
+                let spark_backend = Self::load_installer_restore_spark(
+                    &datadir,
+                    network,
+                    &cube,
+                    restore_seed.as_ref(),
+                )
+                .await;
+
+                Ok((cube, cube_signer, spark_backend))
+            },
+            move |result| {
+                let msg = installer::Message::CubeSaved(
+                    result,
+                    settings_opt.clone(),
+                    internal_bitcoind.clone(),
+                );
+                if chain.is_blake2b() {
+                    Message::ForkInstallCompleted(generation, msg)
+                } else {
+                    Message::Install(msg)
+                }
+            },
+        );
+        if chain.is_blake2b() {
+            let (task, handle) = task.abortable();
+            self.fork_save_task = Some(handle.abort_on_drop());
+            task
+        } else {
+            task
+        }
+    }
+
+    fn open_installer_restore_session(
+        chain: crate::chain::ChainId,
+        cube: &app::settings::CubeSettings,
+        restore_seed: Option<&RestoreCubeSeed>,
+    ) {
+        // Hand the freshly minted Cube's PIN to the session.
+        //
+        // `session::open` is otherwise called from exactly
+        // one place — the PIN-entry unlock screen — and a
+        // restore never passes through it: it goes installer
+        // → app directly. So the session held no PIN for the
+        // Cube that had just been created, `pin_for` answered
+        // `None`, and `Wallet::load_hotsigners` fell to its
+        // no-credential branch. The Vault then could not open
+        // the hot signer whose seed the installer had written
+        // moments earlier, under this very PIN, and the
+        // signing picker reported the key as unreachable
+        // until the app was restarted and unlocked normally.
+        //
+        // Only the restore flows reach here with a PIN of
+        // their own; a Vault installed inside an already-open
+        // Cube inherits that Cube's live session.
+        // Fork installs always return to the PIN screen.
+        // An async metadata save must never reopen their
+        // session after logout or account replacement.
+        if !chain.is_blake2b() {
+            if let Some(seed) = restore_seed {
+                app::session::open(cube.id.clone(), seed.pin.clone());
+            }
+        }
+    }
+
+    async fn record_restored_password_kit(
+        network_dir: &NetworkDirectory,
+        cube: &app::settings::CubeSettings,
+        from_password_kit: bool,
+    ) {
+        // Getting here through a kit *is* proof the Cube has
+        // one: we just fetched and decrypted it. But
+        // `has_recovery_kit()` reads three local flags, all
+        // written only when a backup is made *from this
+        // device* — so a Cube restored from a kit made
+        // elsewhere had none of them set and the Home card
+        // announced "Registered to Connect — no recovery
+        // kit" about the very kit it had just been built
+        // from. Recording it here is what makes the card
+        // agree with what the user just did; Settings would
+        // otherwise only correct it once its status loaded.
+        if from_password_kit {
+            if let Err(e) = app::settings::update_settings_file(network_dir, |settings| {
+                Some(marked_kit_backed_up(settings, &cube.id))
+            })
+            .await
+            {
+                tracing::warn!(
+                    "Could not record that this Cube was restored from a \
+                     Recovery Kit: {}. The Home card may show it as having \
+                     no kit until Settings reconciles with the server.",
+                    e
+                );
+            }
+        }
+    }
+
+    fn resolve_installer_restore_signer(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube: &app::settings::CubeSettings,
+        restore_seed: Option<&RestoreCubeSeed>,
+    ) -> Result<Option<app::cube_signer::CubeSigner>, String> {
+        let cube_signer = if let Some(seed) = restore_seed {
+            match app::cube_signer::CubeSigner::resolve(
+                datadir.path(),
+                network,
+                &app::seed_source::SeedSource::encrypted_file(
+                    seed.master_signer_fingerprint,
+                    seed.pin.as_str(),
+                ),
+                &cube.id,
+            ) {
+                Ok(Some(signer)) => Some(signer),
+                Ok(None) => {
+                    // A restore just wrote this seed,
+                    // so a missing signer means the
+                    // file is absent or mislabelled
+                    // (`CubeSigner::resolve` maps both
+                    // to `None` for seed-less Cubes).
+                    // Without the signer the Cube
+                    // would open with no P2P identity
+                    // or Connect key, so fail loudly
+                    // instead.
+                    return Err(format!(
+                        "Failed to load the restored seed: no master \
+                         signer found for {}",
+                        seed.master_signer_fingerprint
+                    ));
+                }
+                Err(e) => {
+                    // The mnemonic is on disk but we
+                    // can't decrypt it. Roll the whole
+                    // post-install into an error so
+                    // the user sees something
+                    // actionable rather than silently
+                    // landing on a broken Loader.
+                    return Err(format!("Failed to load the restored Cube's signer: {}", e));
+                }
+            }
+        } else {
+            None
+        };
+        Ok(cube_signer)
+    }
+
+    async fn load_installer_restore_spark(
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube: &app::settings::CubeSettings,
+        restore_seed: Option<&RestoreCubeSeed>,
+    ) -> Option<Arc<app::wallets::SparkBackend>> {
+        if let Some(seed) = restore_seed {
+            match app::breez_spark::load_spark_client(
+                datadir.path(),
+                network,
+                app::seed_source::SeedSource::encrypted_file(
+                    seed.master_signer_fingerprint,
+                    seed.pin.as_str(),
+                ),
+                &cube.id,
+            )
+            .await
+            {
+                Ok(client) => Some(Arc::new(app::wallets::SparkBackend::new(client))),
+                Err(e) => {
+                    tracing::warn!(
+                        "Spark bridge unavailable after restore, \
+                         continuing without Spark: {}",
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
@@ -3502,288 +3833,7 @@ impl Tab {
                     return task.map(Message::Launch);
                 }
                 if let installer::Message::Exit(settings_opt, internal_bitcoind) = msg {
-                    // Associate wallet with cube, and — for the Recovery
-                    // Kit restore flow specifically — resolve the Cube
-                    // signer and the Spark backend in the same async task,
-                    // so the restored Cube opens with them.
-                    let chain = i.context.bitcoin_config.chain;
-                    let network_dir = i.datadir.network_directory(chain);
-                    let datadir = i.datadir.clone();
-                    // The Vault's identity, both halves. The installer context
-                    // is the only place the descriptor is in hand at exit —
-                    // `WalletSettings` carries the checksum but not the
-                    // descriptor. Persisting the fingerprint
-                    // now is what lets the home cube list render a vault id
-                    // without parsing a descriptor per row
-                    // (`plans/PLAN-vault-identity-unification.md` D1).
-                    let vault = settings_opt.as_ref().map(|s| {
-                        app::settings::VaultIdentity::new(
-                            s.wallet_id(),
-                            i.context.descriptor.as_ref(),
-                        )
-                    });
-                    let wallet_alias = settings_opt.as_ref().and_then(|s| s.alias.clone());
-                    let network = i.network;
-                    let originating_cube_id = i.cube_settings.as_ref().map(|c| c.id.clone());
-
-                    // Recovery-Kit *seed* restore: the deleted Cube's original
-                    // UUID + name, threaded through the context by
-                    // `RecoveryKitRestoreStep` from the decrypted kit.
-                    // `find_or_create_cube` re-mints the Cube with this UUID so
-                    // Connect re-registration reactivates the deleted Cube
-                    // instead of creating a duplicate. Gated on
-                    // `cube_settings.is_none()`: that's the wiped-install
-                    // recovery flow (launched from Home with no local Cube to
-                    // attach to). When a Cube shell already exists locally
-                    // (`cube_settings.is_some()`, e.g. AddWallet inside a Cube)
-                    // the `originating_cube_id` path owns that association, and
-                    // `context.cube_id` there is that existing Cube's identity —
-                    // not a restore target — so we deliberately skip it.
-                    let restored_cube = installer_exit_identity(i);
-
-                    // Capture restore-flow state up-front. Cloning the
-                    // `Zeroizing<String>` here means the PIN copy
-                    // carried into the Task is its own heap-zeroing
-                    // value — it's dropped (and zeroed) once the task
-                    // completes.
-                    // Only a *password* Recovery Kit evidences the flag the
-                    // Home badge reads. The keychain seal keeps its own record
-                    // and an heir has no kit of their own, yet both reach the
-                    // same commit seam — so this asks which restore it was, not
-                    // merely whether one happened.
-                    let from_password_kit = matches!(
-                        i.context.restore_source,
-                        Some(installer::RestoreSource::PasswordKit)
-                    );
-                    let restore_seed = installer_exit_seed(i);
-                    let imported_restore = i.context.restored_imported_wallet.clone();
-                    let imported_kit_source = match i.context.restore_source {
-                        Some(installer::RestoreSource::PasswordKit) => {
-                            Some(crate::services::bitcoin_import::RestoredKitSource::Password)
-                        }
-                        Some(installer::RestoreSource::KeychainSeal) => {
-                            Some(crate::services::bitcoin_import::RestoredKitSource::OwnerKeychain)
-                        }
-                        _ => None,
-                    };
-                    // Kit restore uses the authenticated Connect Esplora proxy;
-                    // imported wallets never enter the remote Vault backend.
-                    let imported_backend = i
-                        .context
-                        .connect_jwt
-                        .as_ref()
-                        .map(|jwt| {
-                            coincubed::config::BitcoinBackend::Esplora(
-                                installer::connect_esplora_config(chain, jwt.as_str()),
-                            )
-                        })
-                        .or_else(|| i.context.bitcoin_backend.clone());
-
-                    let generation = self.fork_session_generation;
-                    let task = Task::perform(
-                        async move {
-                            let mut cube = if let Some(blob) = imported_restore.as_ref() {
-                                find_or_create_cube_for_imported_restore(
-                                    &network_dir,
-                                    vault.as_ref(),
-                                    &wallet_alias,
-                                    chain,
-                                    originating_cube_id,
-                                    restored_cube,
-                                    restore_seed.as_ref(),
-                                    blob,
-                                )
-                                .await?
-                            } else {
-                                find_or_create_cube(
-                                    &network_dir,
-                                    vault.as_ref(),
-                                    &wallet_alias,
-                                    chain,
-                                    originating_cube_id,
-                                    restored_cube,
-                                    restore_seed.as_ref(),
-                                )
-                                .await?
-                            };
-                            if let Some(blob) = &imported_restore {
-                                let backend = imported_backend.ok_or_else(||
-                                    "Sign in to Connect to restore this imported Bitcoin wallet.".to_string())?;
-                                cube = crate::services::bitcoin_import::restore_from_kit(
-                                    &network_dir,
-                                    &cube.id,
-                                    blob,
-                                    backend,
-                                    imported_kit_source.ok_or_else(|| {
-                                        "Imported wallets require owner recovery.".to_string()
-                                    })?,
-                                )
-                                .await?;
-                            }
-
-                            // Hand the freshly minted Cube's PIN to the session.
-                            //
-                            // `session::open` is otherwise called from exactly
-                            // one place — the PIN-entry unlock screen — and a
-                            // restore never passes through it: it goes installer
-                            // → app directly. So the session held no PIN for the
-                            // Cube that had just been created, `pin_for` answered
-                            // `None`, and `Wallet::load_hotsigners` fell to its
-                            // no-credential branch. The Vault then could not open
-                            // the hot signer whose seed the installer had written
-                            // moments earlier, under this very PIN, and the
-                            // signing picker reported the key as unreachable
-                            // until the app was restarted and unlocked normally.
-                            //
-                            // Only the restore flows reach here with a PIN of
-                            // their own; a Vault installed inside an already-open
-                            // Cube inherits that Cube's live session.
-                            // Fork installs always return to the PIN screen.
-                            // An async metadata save must never reopen their
-                            // session after logout or account replacement.
-                            if !chain.is_blake2b() {
-                                if let Some(seed) = &restore_seed {
-                                    app::session::open(cube.id.clone(), seed.pin.clone());
-                                }
-                            }
-
-                            // Getting here through a kit *is* proof the Cube has
-                            // one: we just fetched and decrypted it. But
-                            // `has_recovery_kit()` reads three local flags, all
-                            // written only when a backup is made *from this
-                            // device* — so a Cube restored from a kit made
-                            // elsewhere had none of them set and the Home card
-                            // announced "Registered to Connect — no recovery
-                            // kit" about the very kit it had just been built
-                            // from. Recording it here is what makes the card
-                            // agree with what the user just did; Settings would
-                            // otherwise only correct it once its status loaded.
-                            if from_password_kit {
-                                if let Err(e) =
-                                    app::settings::update_settings_file(&network_dir, |settings| {
-                                        Some(marked_kit_backed_up(settings, &cube.id))
-                                    })
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        "Could not record that this Cube was restored from a \
-                                         Recovery Kit: {}. The Home card may show it as having \
-                                         no kit until Settings reconciles with the server.",
-                                        e
-                                    );
-                                }
-                            }
-
-                            // Only the restore path needs to resolve the
-                            // Cube signer up-front — the fresh-install flow
-                            // does it at PIN entry.
-                            if chain.is_blake2b() {
-                                return Ok((cube, None, None));
-                            }
-                            let cube_signer = if let Some(seed) = &restore_seed {
-                                match app::cube_signer::CubeSigner::resolve(
-                                    datadir.path(),
-                                    network,
-                                    &app::seed_source::SeedSource::encrypted_file(
-                                        seed.master_signer_fingerprint,
-                                        seed.pin.as_str(),
-                                    ),
-                                    &cube.id,
-                                ) {
-                                    Ok(Some(signer)) => Some(signer),
-                                    Ok(None) => {
-                                        // A restore just wrote this seed,
-                                        // so a missing signer means the
-                                        // file is absent or mislabelled
-                                        // (`CubeSigner::resolve` maps both
-                                        // to `None` for seed-less Cubes).
-                                        // Without the signer the Cube
-                                        // would open with no P2P identity
-                                        // or Connect key, so fail loudly
-                                        // instead.
-                                        return Err(format!(
-                                            "Failed to load the restored seed: no master \
-                                             signer found for {}",
-                                            seed.master_signer_fingerprint
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        // The mnemonic is on disk but we
-                                        // can't decrypt it. Roll the whole
-                                        // post-install into an error so
-                                        // the user sees something
-                                        // actionable rather than silently
-                                        // landing on a broken Loader.
-                                        return Err(format!(
-                                            "Failed to load the restored Cube's signer: {}",
-                                            e
-                                        ));
-                                    }
-                                }
-                            } else {
-                                None
-                            };
-
-                            // Mirror the PIN-entry path (tab.rs Spark
-                            // load near line 781): spawn the bridge
-                            // subprocess against the just-encrypted
-                            // mnemonic so the Loader can hand a live
-                            // SparkBackend to App. Failures here are
-                            // non-fatal — without this, the first
-                            // boot after restore landed in the app
-                            // with `spark_backend = None` and the
-                            // Spark panels only populated after the
-                            // user closed + re-opened the Cube.
-                            let spark_backend = if let Some(seed) = &restore_seed {
-                                match app::breez_spark::load_spark_client(
-                                    datadir.path(),
-                                    network,
-                                    app::seed_source::SeedSource::encrypted_file(
-                                        seed.master_signer_fingerprint,
-                                        seed.pin.as_str(),
-                                    ),
-                                    &cube.id,
-                                )
-                                .await
-                                {
-                                    Ok(client) => {
-                                        Some(Arc::new(app::wallets::SparkBackend::new(client)))
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            "Spark bridge unavailable after restore, \
-                                             continuing without Spark: {}",
-                                            e
-                                        );
-                                        None
-                                    }
-                                }
-                            } else {
-                                None
-                            };
-
-                            Ok((cube, cube_signer, spark_backend))
-                        },
-                        move |result| {
-                            let msg = installer::Message::CubeSaved(
-                                result,
-                                settings_opt.clone(),
-                                internal_bitcoind.clone(),
-                            );
-                            if chain.is_blake2b() {
-                                Message::ForkInstallCompleted(generation, msg)
-                            } else {
-                                Message::Install(msg)
-                            }
-                        },
-                    );
-                    if chain.is_blake2b() {
-                        let (task, handle) = task.abortable();
-                        self.fork_save_task = Some(handle.abort_on_drop());
-                        task
-                    } else {
-                        task
-                    }
+                    self.persist_installer_exit(settings_opt, internal_bitcoind)
                 } else if let installer::Message::CubeSaved(
                     result,
                     settings_opt,
