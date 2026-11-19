@@ -80,9 +80,15 @@ impl App {
             self.local_switch_hold = None;
         }
         // An imported wallet's panel holds the runtime for its scan and
-        // signing work; hand it the one now running.
+        // signing work; hand it the one now running. When the switch left no
+        // daemon at all, the panel must let go of the stopped one too, or a
+        // later refresh would hand it back to the App.
         let imported_task = match (self.daemon.clone(), self.panels.imported_bitcoin.as_mut()) {
             (Some(daemon), Some(panel)) => panel.replace_runtime(daemon),
+            (None, Some(panel)) => {
+                panel.detach_runtime();
+                Task::none()
+            }
             _ => Task::none(),
         };
         let cfg_task = self.update_dispatch(Message::DaemonConfigLoaded(result));

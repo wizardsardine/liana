@@ -5,7 +5,9 @@ mod cube_name;
 mod daemon_cache;
 mod daemon_lifecycle;
 mod fiat_updates;
+mod node_sync;
 mod recovery_settings;
+mod settings_refresh;
 
 pub mod breez_liquid;
 pub mod breez_spark;
@@ -959,8 +961,9 @@ pub struct App {
     /// not start a second one. Cleared when it reports back; a failed write
     /// leaves the obligation to be retried on a later refresh.
     rescan_obligation_retire_in_flight: bool,
-    /// An imported Vault's Bitcoin Blake2b copy is being created.
-    imported_copy_in_flight: bool,
+    /// An imported Vault's Bitcoin Blake2b copy is being created: the
+    /// attempt's id, unique across every `App`, which its result carries.
+    imported_copy_in_flight: Option<crate::app::cache::AppGeneration>,
     /// Set when an auto-promotion to the pending local node fails and the
     /// previous daemon is recovered. The recovered daemon still carries
     /// `auto_switch_to_pending = true` + `pending_bitcoind`, so without this the
@@ -3937,7 +3940,7 @@ impl App {
             background_node_attempt: None,
             rescan_obligation_retired_by_scan: false,
             rescan_obligation_retire_in_flight: false,
-            imported_copy_in_flight: false,
+            imported_copy_in_flight: None,
             auto_switch_suppressed: false,
             local_switch_hold: None,
             entangled_in_flight: HashSet::new(),
@@ -4224,7 +4227,7 @@ impl App {
                 background_node_attempt: None,
                 rescan_obligation_retired_by_scan: false,
                 rescan_obligation_retire_in_flight: false,
-                imported_copy_in_flight: false,
+                imported_copy_in_flight: None,
                 auto_switch_suppressed: false,
                 local_switch_hold: None,
                 entangled_in_flight: HashSet::new(),
@@ -5154,7 +5157,7 @@ impl App {
                 coincube_ui::locale::copy(message).to_string(),
             )))
         };
-        if self.imported_copy_in_flight
+        if self.imported_copy_in_flight.is_some()
             || self.cube_settings.network != crate::chain::ChainId::Bitcoin
         {
             return Task::none();
@@ -5171,9 +5174,12 @@ impl App {
         {
             return error(reason);
         }
+        // Only a current, unheld Connect session: a sign-out in another tab
+        // can leave this App's old client in memory, and its token must not
+        // install a paired Cube for the signed-out account.
         let Some(token) = self
-            .authenticated_coincube_client()
-            .and_then(|client| client.token().map(str::to_owned))
+            .claim_connect_session()
+            .and_then(|session| session.client.token().map(str::to_owned))
         else {
             return error("Sign in to COINCUBE | Connect to create the Bitcoin Blake2b copy.");
         };
@@ -5198,7 +5204,8 @@ impl App {
             crate::installer::connect_esplora_config(crate::chain::ChainId::BitcoinBlake2b, &token),
         );
         let root = self.datadir.clone();
-        self.imported_copy_in_flight = true;
+        let attempt = crate::app::cache::AppGeneration::next();
+        self.imported_copy_in_flight = Some(attempt);
         Task::perform(
             async move {
                 let copy = crate::services::bitcoin_import::pairing::install_pair(
@@ -5211,7 +5218,7 @@ impl App {
                 .await?;
                 Ok(copy_stored_words(&root, &source, &copy).err())
             },
-            Message::ImportedCopyCreated,
+            move |result| Message::ImportedCopyCreated(attempt, result),
         )
     }
 
@@ -6042,6 +6049,11 @@ impl App {
                 let daemon = daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
+                let imported_generation = self
+                    .panels
+                    .imported_bitcoin
+                    .as_ref()
+                    .map(|panel| panel.runtime_generation());
                 tasks.push(Task::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
@@ -6060,7 +6072,12 @@ impl App {
                             last_tick: tick,
                         })
                     },
-                    Message::UpdateDaemonCache,
+                    move |result| match imported_generation {
+                        Some(generation) => {
+                            Message::UpdateImportedDaemonCache { generation, result }
+                        }
+                        None => Message::UpdateDaemonCache(result),
+                    },
                 ));
             }
 
@@ -6137,7 +6154,11 @@ impl App {
 
     /// Recomputes the Vault's alert from its sync result (C8).
     fn refresh_vault_alert(&mut self) {
-        let alert = if self.cache.has_vault {
+        // `has_vault` is the inheritance capability and stays false for an
+        // imported Vault. A ready import is served by the same poll and must
+        // warn the same way when it goes stale; an unfinished one keeps its
+        // scan status instead.
+        let alert = if self.cache.has_vault || self.imported_vault_ready() {
             let backend = self.daemon_backend();
             let via_connect =
                 backend == DaemonBackend::EmbeddedCoincubed(Some(crate::node::NodeType::Esplora));
@@ -6533,6 +6554,28 @@ impl App {
                     Some(wallet.clone()),
                 ));
             }
+            // While the scan ran, Vault Settings › Node was the import
+            // panel's, so the Node section was never installed. Install it as
+            // the route passes back, once: a normal poll must not reset an
+            // edit in progress.
+            if !was_ready
+                && matches!(
+                    self.panels.current,
+                    Menu::Vault(menu::VaultSubMenu::Settings(Some(
+                        menu::SettingsOption::Node
+                    )))
+                )
+            {
+                if let Some(settings) = self.panels.vault_settings.as_mut() {
+                    tasks.push(settings.update(
+                        Some(daemon.clone()),
+                        &self.cache,
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::EditBitcoindSettings,
+                        )),
+                    ));
+                }
+            }
             if first_load || !was_ready || runtime_changed {
                 if let Some(overview) = self.panels.vault_overview.as_mut() {
                     tasks.push(overview.reload(Some(daemon.clone()), Some(wallet.clone())));
@@ -6566,6 +6609,32 @@ impl App {
                     .into(),
             )));
         }
+        // The shared Vault Receive screen reserves an imported wallet's
+        // address outside the import panel: the panel stops vouching for its
+        // allocation indexes (the Recovery Kit fingerprint input) before the
+        // reservation starts, and reads them back once it answers.
+        // The answer may arrive after the user left Receive.
+        let receive_route = matches!(
+            self.panels.current,
+            Menu::Vault(menu::VaultSubMenu::Receive)
+        ) && !self.panels.imported_holds_route();
+        if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
+            match &message {
+                Message::View(view::Message::NextReceiveAddress) if receive_route => {
+                    panel.reservation_started_elsewhere();
+                }
+                Message::ReceiveAddress(_) => {
+                    let reread = panel.reread_after_reservation();
+                    let route = self.route_dispatch(message);
+                    return Task::batch([route, reread]);
+                }
+                _ => {}
+            }
+        }
+        self.route_dispatch(message)
+    }
+
+    fn route_dispatch(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::ImportedBitcoin(event) => {
                 if self.panels.imported_bitcoin.is_none() {
@@ -7057,72 +7126,7 @@ impl App {
                 ]);
             }
             Message::PollBitcoindSync => {
-                if !self.bitcoind_sync_probe_in_progress {
-                    if let Some(pending_cfg) = self
-                        .daemon
-                        .as_ref()
-                        .and_then(|d| d.config())
-                        .and_then(local_node_sync_config)
-                        .cloned()
-                    {
-                        self.bitcoind_sync_probe_in_progress = true;
-                        let app = self.cache.app_generation;
-                        let history_epoch = self.node_history_epoch;
-                        let wallet = self.wallet.as_ref().map(|w| w.id());
-                        // Only a *pending* node is a switch target, so only then
-                        // is the Vault's history worth reading.
-                        let history_probe = match (&self.daemon, &self.wallet) {
-                            (Some(daemon), Some(wallet))
-                                if daemon
-                                    .config()
-                                    .is_some_and(|c| c.pending_bitcoind.is_some()) =>
-                            {
-                                Some(VaultHistoryProbe {
-                                    daemon: daemon.clone(),
-                                    data_dir: self.cache.datadir_path.clone(),
-                                    chain: self.cache.chain(),
-                                    wallet: wallet.clone(),
-                                })
-                            }
-                            _ => None,
-                        };
-                        return Task::perform(
-                            async move {
-                                let result =
-                                    check_bitcoind_sync_progress(pending_cfg.clone()).await;
-                                // Only a synced, pruned node needs it; an
-                                // unpruned one serves any history.
-                                let needs_history = result.as_ref().is_ok_and(|s| {
-                                    !s.ibd
-                                        && matches!(
-                                            s.pruning,
-                                            Some(local_switch::NodePruning::Pruned { .. })
-                                        )
-                                });
-                                let vault_history = match history_probe {
-                                    Some(probe) if needs_history => {
-                                        let pruning = result
-                                            .as_ref()
-                                            .ok()
-                                            .and_then(|s| s.pruning)
-                                            .expect("needs_history requires known pruning");
-                                        probe.read(&pending_cfg, pruning).await
-                                    }
-                                    _ => None,
-                                };
-                                Message::BitcoindSyncProgress {
-                                    app,
-                                    history_epoch,
-                                    wallet,
-                                    config: pending_cfg,
-                                    result,
-                                    vault_history,
-                                }
-                            },
-                            |message| message,
-                        );
-                    }
-                }
+                return self.poll_bitcoind_sync();
             }
             Message::UnsweptNotice {
                 app,
@@ -7513,226 +7517,30 @@ impl App {
                 result,
                 vault_history,
             } => {
-                // Wallet-history permission belongs to the App that asked.
-                // A delayed result must not authorize another Vault using the
-                // same managed node, or release its in-flight probe guard.
-                if app != self.cache.app_generation
-                    || wallet != self.wallet.as_ref().map(|w| w.id())
-                {
-                    return Task::none();
-                }
-                // A result from the previous node must not update or promote a new one.
-                if self
-                    .daemon
-                    .as_ref()
-                    .and_then(|d| d.config())
-                    .and_then(local_node_sync_config)
-                    != Some(&config)
-                {
-                    return Task::none();
-                }
-                self.bitcoind_sync_probe_in_progress = false;
-                match result {
-                    Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
-                    Ok(LocalNodeSync {
-                        progress,
-                        ibd,
-                        blocks,
-                        headers,
-                        subversion,
-                        pruning,
-                    }) => {
-                        self.cache.node_bitcoind_sync_progress = Some(progress);
-                        self.cache.node_bitcoind_pruning = pruning;
-                        self.cache.local_switch_history = if history_epoch
-                            == self.node_history_epoch
-                            && !self.node_history_in_progress
-                        {
-                            vault_history
-                        } else {
-                            None
-                        };
-                        self.cache.node_bitcoind_sync_heights = Some((blocks, headers));
-                        self.cache.node_bitcoind_ibd = Some(ibd);
-                        // Keep the last good answer if this poll couldn't read it.
-                        if subversion.is_some() {
-                            self.cache.node_bitcoind_subversion = subversion;
-                        }
-                        // Auto-switch to the pending node once it's synced, but
-                        // only if the user *adopted* it (`auto_switch_to_pending`).
-                        // This fires even for a node that reused an existing
-                        // chainstate and was therefore never observed in IBD —
-                        // while never reverting a node merely parked by a
-                        // switch-to-Connect or a Bitcoind-failure fallback (those
-                        // clear the flag). Skip while a switch is already in
-                        // flight, so we don't spawn overlapping switches every
-                        // tick (which raced to load — and corrupted — the wallet).
-                        if !ibd
-                            && !self.daemon_switch_in_progress
-                            && !self.auto_switch_suppressed
-                            && (!self.cache.node_history_switch_requested
-                                || self.cache.node_history.reconciled)
-                            && !self.node_history_in_progress
-                            && !self.cache.node_history.job.as_ref().is_some_and(|job| {
-                                !matches!(
-                                    job.phase,
-                                    crate::node::history::Phase::Complete
-                                        | crate::node::history::Phase::Cancelled
-                                )
-                            })
-                        {
-                            let switch =
-                                self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
-                                    // Promote unless the node was explicitly parked
-                                    // (`Some(false)`). An absent flag (`None`) is a
-                                    // legacy adopted node — the old build promoted it
-                                    // on sync with no flag — so it must promote too.
-                                    if c.auto_switch_to_pending == Some(false)
-                                        && !self.cache.node_history_switch_requested
-                                    {
-                                        return None;
-                                    }
-                                    let pending = c.pending_bitcoind.clone()?;
-                                    // Preserve the current Connect config as the new fallback.
-                                    let old_esplora = match &c.bitcoin_backend {
-                                        Some(coincubed::config::BitcoinBackend::Esplora(e)) => {
-                                            Some(e.clone())
-                                        }
-                                        _ => None,
-                                    };
-                                    let mut new_cfg = c.clone();
-                                    new_cfg.bitcoin_backend =
-                                        Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
-                                    new_cfg.pending_bitcoind = None;
-                                    new_cfg.auto_switch_to_pending = Some(false);
-                                    new_cfg.fallback_esplora = old_esplora;
-                                    if new_cfg.bitcoin_config.chain.is_blake2b() {
-                                        new_cfg.bitcoin_config.poll_interval_secs =
-                                            Duration::from_secs(
-                                                coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
-                                            );
-                                    }
-                                    Some(new_cfg)
-                                });
-                            if let Some(new_cfg) = switch {
-                                // Not while the Vault is scanning (the switch
-                                // would throw the scan away), and never to a
-                                // local wallet missing history it cannot rescan.
-                                // Deferred, not dropped: every probe re-asks.
-                                let hold = local_switch::auto_switch_hold(
-                                    self.running_vault_scan(),
-                                    pruning,
-                                    self.cache.local_switch_history,
-                                );
-                                if hold != self.local_switch_hold {
-                                    log_local_switch_hold(hold);
-                                }
-                                self.local_switch_hold = hold;
-                                if hold.is_none() {
-                                    info!("Switching to local Bitcoind — node synced");
-                                    return self.spawn_daemon_switch(new_cfg);
-                                }
-                            }
-                        }
-                    }
-                }
+                return self.handle_bitcoind_sync_progress(
+                    app,
+                    history_epoch,
+                    wallet,
+                    config,
+                    result,
+                    vault_history,
+                );
             }
-            Message::SettingsSaved => {
-                // Settings saved - reload unit preference and fiat_price from cube settings
-                let network_dir = self
-                    .cache
-                    .datadir_path
-                    .network_directory(self.cube_settings.network);
-                if let Ok(settings) = settings::Settings::from_file(&network_dir) {
-                    self.imported_kit_metadata.replace(
-                        &self.datadir,
-                        &self.cube_settings,
-                        &settings,
-                    );
-                    if let Some(cube) = settings
-                        .cubes
-                        .iter()
-                        .find(|c| c.id == self.cube_settings.id)
-                    {
-                        self.cache.bitcoin_unit = cube.unit_setting.display_unit;
-                        self.cube_settings.fiat_price = cube.fiat_price.clone();
-                        if self.cube_settings.network.is_blake2b()
-                            && self.cache.fiat_price.as_ref().is_some_and(|price| {
-                                !cube.fiat_price.as_ref().is_some_and(|setting| {
-                                    setting.is_enabled && setting.currency == price.currency()
-                                })
-                            })
-                        {
-                            self.cache.clear_btcb2_fiat();
-                            self.cache.btcb2_price_request = None;
-                        }
-                        // The backup attention row follows persisted state.
-                        self.cache.current_cube_backed_up = cube.backed_up;
-                        self.cube_settings.backed_up = cube.backed_up;
-                        // Mirror the drift fingerprint cache (W12). Refreshing
-                        // on every SettingsSaved keeps the Recovery-Kit card
-                        // in sync after a successful upload or remove.
-                        self.cache
-                            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
-                            .recovery_kit_last_backed_up_descriptor_fingerprint
-                            .clone();
-                        self.cube_settings
-                            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
-                            .recovery_kit_last_backed_up_descriptor_fingerprint
-                            .clone();
-                        // Same for the keychain (phone) drift slot (per-method
-                        // drift, PR 3).
-                        self.cache
-                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
-                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
-                            .clone();
-                        self.cube_settings
-                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
-                            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
-                            .clone();
-                        // And the password kit's *presence* flag — the signal
-                        // `has_recovery_kit()` reads for that method, which a
-                        // Vault-less (seed-only) kit has no fingerprint to carry.
-                        self.cache.recovery_kit_password_backed_up =
-                            cube.recovery_kit_password_backed_up;
-                        self.cube_settings.recovery_kit_password_backed_up =
-                            cube.recovery_kit_password_backed_up;
-
-                        // Clear cached fiat display price if disabled.
-                        // Note: btc_usd_price is NOT cleared — it's needed for
-                        // USDt→sats conversion regardless of fiat display setting.
-                        if !cube.fiat_price.as_ref().is_some_and(|p| p.is_enabled) {
-                            self.cache.fiat_price = None;
-                            if self.cube_settings.network.is_blake2b() {
-                                self.cache.clear_btcb2_fiat();
-                                self.cache.btcb2_price_request = None;
-                            }
-                        }
-                    }
-                }
-
-                // Reload global settings into cache
-                {
-                    use settings::global::GlobalSettings;
-                    let global_path = GlobalSettings::path(&self.cache.datadir_path);
-                    self.cache.show_direction_badges =
-                        GlobalSettings::load_show_direction_badges(&global_path);
-                }
-
-                // Forward to state panels so they can reload their internal state
-                if let Some(panel) = self.panels.current_mut() {
-                    return Task::batch(vec![
-                        panel.update(self.daemon.clone(), &self.cache, message),
-                        Task::done(Message::CacheUpdated),
-                    ]);
-                }
-
-                return Task::done(Message::CacheUpdated);
-            }
+            Message::SettingsSaved => return self.handle_settings_saved(),
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
                 return self.handle_fiat_price(fiat_price);
             }
             Message::UpdateDaemonCache(res) => return self.handle_daemon_cache(res),
+            Message::UpdateImportedDaemonCache { generation, result } => {
+                if self
+                    .panels
+                    .imported_bitcoin
+                    .as_ref()
+                    .is_some_and(|panel| panel.runtime_generation() == generation)
+                {
+                    return self.handle_daemon_cache(result);
+                }
+            }
             Message::CompleteDuressEnrollment(payload) => {
                 // Drop a completion that outlived its Connect session: a logout
                 // or session reset bumps `session_generation`, and persisting
@@ -7792,8 +7600,13 @@ impl App {
                 }
                 return Task::none();
             }
-            Message::ImportedCopyCreated(result) => {
-                self.imported_copy_in_flight = false;
+            Message::ImportedCopyCreated(attempt, result) => {
+                // Another App's attempt (a predecessor in this tab): its
+                // result must not release this App's guard or speak for it.
+                if self.imported_copy_in_flight != Some(attempt) {
+                    return Task::none();
+                }
+                self.imported_copy_in_flight = None;
                 self.refresh_copy_exists();
                 return match result {
                     Ok(words_not_copied) => {
@@ -9679,15 +9492,35 @@ impl App {
             }
             // A send prepared or a PSBT signed on the Vault's screens
             // completes on them, even if the import panel took the route back
-            // while it ran (its wallet went back to syncing). Each handler
-            // checks its own generation, so a stale result is ignored there.
+            // while it ran. During a wider scan the old daemon can already
+            // be stopped, and these Vault panels require a live daemon.
             msg @ (Message::VaultSpendPrepared { .. }
             | Message::Signed(..)
             | Message::CubeKeys(_))
                 if self.panels.imported_holds_route() =>
             {
-                if let Some(panel) = self.panels.route_panel_mut() {
-                    return panel.update(self.daemon.clone(), &self.cache, msg);
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.route_panel_mut())
+                {
+                    // `Updated` carries no origin: tag the save result the
+                    // forwarded work produces so it returns to this panel
+                    // (closing its signing picker, or reporting a failed
+                    // save) instead of reaching the import panel.
+                    return panel.update(Some(daemon), &self.cache, msg).map(
+                        |message| match message {
+                            Message::Updated(result) => {
+                                Message::RoutePanelResult(Box::new(Message::Updated(result)))
+                            }
+                            other => other,
+                        },
+                    );
+                }
+            }
+            Message::RoutePanelResult(msg) => {
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.route_panel_mut())
+                {
+                    return panel.update(Some(daemon), &self.cache, *msg);
                 }
             }
             msg => {
@@ -11104,14 +10937,46 @@ pub(crate) mod tests {
             error_of(&messages)
         );
         assert!(!starts_wizard(&messages));
-        assert!(!app.imported_copy_in_flight, "nothing was started");
+        assert!(app.imported_copy_in_flight.is_none(), "nothing was started");
+
+        // A result from another App's attempt changes nothing here.
+        let attempt = crate::app::cache::AppGeneration::next();
+        app.imported_copy_in_flight = Some(attempt);
+        let stale = crate::app::cache::AppGeneration::next();
+        let messages = outputs(app.update(Message::ImportedCopyCreated(stale, Err("old".into()))));
+        assert!(error_of(&messages).is_none(), "{:?}", error_of(&messages));
+        assert_eq!(app.imported_copy_in_flight, Some(attempt));
 
         // A failed creation clears the in-flight flag and shows the reason.
-        app.imported_copy_in_flight = true;
-        let messages = outputs(app.update(Message::ImportedCopyCreated(Err("boom".into()))));
+        let messages =
+            outputs(app.update(Message::ImportedCopyCreated(attempt, Err("boom".into()))));
         assert_eq!(error_of(&messages).as_deref(), Some("boom"));
-        assert!(!app.imported_copy_in_flight);
+        assert!(app.imported_copy_in_flight.is_none());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn late_vault_results_are_ignored_while_import_discovery_has_no_daemon() {
+        let _guard = crate::app::session::test_guard();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _, _) = imported_vault_app(root.path());
+        app.daemon = None;
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        assert!(app.panels.imported_holds_route());
+        assert!(app.panels.route_panel_mut().is_some());
+        assert_eq!(
+            app.update(Message::VaultSpendPrepared {
+                generation: 1,
+                result: Err(Error::Unexpected("late prepare".into())),
+                identities: vec![],
+            })
+            .units(),
+            0
+        );
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::PSBTs(None));
+        assert!(app.panels.imported_holds_route());
+        assert!(app.panels.route_panel_mut().is_some());
+        assert_eq!(app.update(Message::CubeKeys(Ok(vec![]))).units(), 0);
     }
 
     #[test]
@@ -11187,6 +11052,27 @@ pub(crate) mod tests {
         assert!(app.authenticated_coincube_client().is_some());
         assert!(app.panels.connect.account.bitcoin_blake2b_enabled());
         assert!(app.claim_connect_session().is_none());
+        // The held session's retained token never creates a paired copy:
+        // it is refused as signed out, before any credential is read.
+        app.cache.btcb2_server_enabled = true;
+        let task = app.update(Message::View(view::Message::CreateBlake2bCopy));
+        assert!(app.imported_copy_in_flight.is_none());
+        let shown = iced_runtime::task::into_stream(task)
+            .map(|stream| {
+                use iced::futures::StreamExt;
+                iced::futures::executor::block_on(stream.collect::<Vec<_>>())
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .find_map(|action| match action {
+                iced_runtime::Action::Output(Message::View(view::Message::ShowError(e))) => Some(e),
+                _ => None,
+            });
+        assert!(
+            shown.as_deref().is_some_and(|e| e.contains("Sign in")),
+            "{:?}",
+            shown
+        );
     }
 
     /// An open Import or restore takes the whole window: none of the Cube's
@@ -11261,12 +11147,21 @@ pub(crate) mod tests {
                 .complete_scan_for_tests(block_height, Vec::new());
             drop(app.adopt_imported_runtime());
         };
-        let poll = |app: &mut App, block_height: i32| {
+        let generation = app
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .unwrap()
+            .runtime_generation();
+        let poll = |app: &mut App, block_height: i32, generation: u64| {
             let polled = cache::DaemonCache {
                 blockheight: block_height,
                 ..app.cache.daemon_cache.clone()
             };
-            drop(app.update(Message::UpdateDaemonCache(Ok(polled))));
+            drop(app.update(Message::UpdateImportedDaemonCache {
+                generation,
+                result: Ok(polled),
+            }));
         };
         settle(&mut app);
 
@@ -11275,17 +11170,24 @@ pub(crate) mod tests {
             !app.panels.activity.vault_loading,
             "the scan is still running"
         );
-        poll(&mut app, 99);
+        poll(&mut app, 99, generation);
         assert_ne!(app.cache.blockheight(), 99, "a scanning poll is ignored");
 
         scanned(&mut app, 100);
         assert!(app.panels.activity.vault_loading, "the history is in");
         settle(&mut app);
 
-        poll(&mut app, 100);
+        poll(&mut app, 99, generation.wrapping_sub(1));
+        assert_eq!(
+            app.cache.blockheight(),
+            100,
+            "a replaced daemon's poll is ignored"
+        );
+
+        poll(&mut app, 100, generation);
         assert!(!app.panels.activity.vault_loading, "nothing changed");
 
-        poll(&mut app, 101);
+        poll(&mut app, 101, generation);
         assert_eq!(app.cache.blockheight(), 101);
         assert!(app.panels.activity.vault_loading, "a block arrived");
         settle(&mut app);
@@ -11301,7 +11203,7 @@ pub(crate) mod tests {
         app.panels.current = Menu::Cube(menu::CubeSubMenu::Settings(
             menu::CubeSettingsOption::General,
         ));
-        poll(&mut app, 102);
+        poll(&mut app, 102, generation);
         assert!(!app.panels.activity.vault_loading, "another page");
         let _ = std::fs::remove_dir_all(&root);
     }

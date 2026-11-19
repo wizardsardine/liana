@@ -1733,6 +1733,37 @@ pub enum RetryAction {
     UserProfile,
     /// Reload the billing history list.
     BillingHistory,
+    /// Re-read whether the account has a deletion request.
+    DeletionStatus,
+}
+
+/// Why an account-deletion call failed.
+#[derive(Debug, Clone)]
+pub enum DeletionFailure {
+    /// 401: the session ended; handled like any other ended session.
+    SessionEnded,
+    Other(UserError),
+}
+
+/// Connect sheet › Account › Delete account. Results carry the request token
+/// from `DeleteAccountState`; stale ones are dropped.
+#[derive(Debug, Clone)]
+pub enum DeleteAccountMessage {
+    Open,
+    Close,
+    /// Show (`true`) or hide the confirm step.
+    Review(bool),
+    /// The confirm step's button: send the request.
+    Confirm,
+    OpenPolicy,
+    StatusLoaded(
+        Result<Option<crate::services::coincube::AccountDeletionRequest>, DeletionFailure>,
+        u64,
+    ),
+    Requested(
+        Result<crate::services::coincube::AccountDeletionRequest, DeletionFailure>,
+        u64,
+    ),
 }
 
 /// Text a user typed that is a secret (an authenticator or backup code). Its
@@ -1941,6 +1972,7 @@ pub enum ConnectAccountMessage {
     SecurityDataFailed(UserError, u64),
     /// The error card's "Try again" was pressed.
     Retry(RetryAction),
+    DeleteAccount(DeleteAccountMessage),
     // --- Plan & Billing ---
     /// Focus a Tenshu control (segmented choice, plan row, Copy button)
     /// after pointer activation, as `Action` requires.

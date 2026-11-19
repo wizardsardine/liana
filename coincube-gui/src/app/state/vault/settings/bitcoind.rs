@@ -1664,7 +1664,13 @@ impl State for BitcoindSettingsState {
             // Panels below join the disclosure when there is one.
             let mut node_panels = Vec::new();
 
-            if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
+            // An imported wallet syncs only from the server chosen at import,
+            // shown by its own server and history section above. The daemon's
+            // Bitcoind/Electrum controls would edit a config it does not use
+            // (or, on Bitcoin Blake2b, do nothing), so they are not offered.
+            if !cache.has_imported_bitcoin
+                && (self.bitcoind_settings.is_some() || self.electrum_settings.is_some())
+            {
                 if let Some(settings) = self.bitcoind_settings.as_ref() {
                     node_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
                         move |msg| {
@@ -3390,7 +3396,7 @@ mod tests {
     /// no local node or date rescan.
     #[tokio::test]
     async fn an_imported_vaults_node_page_shows_its_history_not_local_nodes() {
-        use crate::app::state::imported_bitcoin::ImportedNodeSummary;
+        use crate::app::state::imported_bitcoin::{ImportedNodeSummary, ImportedSyncStatus};
         use crate::home::restore_frame::rendered_labels;
         let summary = ImportedNodeSummary {
             server: "My Electrum server",
@@ -3405,11 +3411,19 @@ mod tests {
                 change_scanned: 200,
                 history_complete: true,
             }),
+            sync_status: ImportedSyncStatus::Synced,
             ready: true,
             busy: false,
             can_expand: true,
             notice: None,
         };
+        let failed = ImportedNodeSummary {
+            sync_status: ImportedSyncStatus::Failed,
+            ..summary.clone()
+        };
+        let shown = rendered_labels(view::vault::settings::imported_history_section(&failed)).await;
+        assert!(shown.iter().any(|label| label == "Sync failed"));
+        assert!(!shown.iter().any(|label| label == "Synced"));
         let state = BitcoindSettingsState::new(
             Some(config_with_backend(Some(BitcoinBackend::Electrum(
                 electrum_config(),
@@ -3445,6 +3459,11 @@ mod tests {
             "no date rescan: {:?}",
             shown
         );
+        assert!(
+            !shown.iter().any(|l| l == "Electrum"),
+            "no daemon Electrum controls for an import: {:?}",
+            shown
+        );
 
         // The same on Bitcoin Blake2b: no Knots/Connect switch for an import.
         let blake2b = Cache {
@@ -3474,10 +3493,16 @@ mod tests {
             shown
         );
 
-        // A Vault keeps its date rescan and has no imported history.
+        // A Vault keeps its date rescan and its Electrum controls, and has
+        // no imported history.
         let vault = Cache::default();
         let shown = rendered_labels(State::view(&state, &menu, &vault)).await;
         assert!(!shown.iter().any(|l| l == "Wallet history"));
+        assert!(
+            shown.iter().any(|l| l == "Electrum"),
+            "a Vault keeps its Electrum controls: {:?}",
+            shown
+        );
     }
 
     #[test]

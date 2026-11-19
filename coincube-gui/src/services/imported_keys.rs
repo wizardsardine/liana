@@ -1940,10 +1940,32 @@ impl<'a> LocalKeyRepository<'a> {
         current: &Psbt,
         is_current: impl Fn() -> bool,
     ) -> Result<Psbt, String> {
-        self.with_key(record_id, expected_revision, None, is_current, |key| {
-            key.sign(&self.attachment.descriptor, original, current)
-                .map_err(|_| "Imported signing failed verification.".into())
-        })
+        self.sign_contribution(record_id, expected_revision, original, current, is_current)?
+            .ok_or_else(|| "Imported signing failed verification.".into())
+    }
+
+    /// [`Self::sign`], telling a verified key that had nothing to add (every
+    /// input it signs for already carries its signature) apart from a
+    /// failure: `Ok(None)` for no contribution, an error for anything else.
+    pub fn sign_contribution(
+        &self,
+        record_id: Uuid,
+        expected_revision: Uuid,
+        original: &Psbt,
+        current: &Psbt,
+        is_current: impl Fn() -> bool,
+    ) -> Result<Option<Psbt>, String> {
+        self.with_key(
+            record_id,
+            expected_revision,
+            None,
+            is_current,
+            |key| match key.sign(&self.attachment.descriptor, original, current) {
+                Ok(signed) => Ok(Some(signed)),
+                Err(coincube_core::imported_keys::ImportedKeyError::NoSignatureAdded) => Ok(None),
+                Err(_) => Err("Imported signing failed verification.".into()),
+            },
+        )
     }
 
     pub fn records(&self) -> Result<Vec<LocalKeyRecord>, String> {
