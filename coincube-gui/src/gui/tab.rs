@@ -3728,6 +3728,327 @@ impl Tab {
         }
     }
 
+    fn admit_saved_installer_cube(&mut self, msg: installer::Message) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::Installer(i) = &mut self.state else {
+            unreachable!();
+        };
+        let installer::Message::CubeSaved(result, settings_opt, internal_bitcoind) = msg else {
+            unreachable!();
+        };
+        // Handle cube save failure
+        let (cube, restored_cube_signer, restored_spark_backend) = match result {
+            Ok(saved) => saved,
+            Err(err) => {
+                error!("Aborting loader transition due to cube save failure");
+                #[cfg(feature = "mcp-proposals")]
+                i.finish_proposal_failure("The wallet/Cube setup could not be saved completely. Partial local data is retained. Return to the launcher and inspect the outcome before retrying.");
+                return Break(
+                    i.update(installer::Message::CubeSaveFailed(err))
+                        .map(Message::Install),
+                );
+            }
+        };
+
+        // An imported Recovery Kit attaches its wallet inside the
+        // durable import journal after the installer handed us a
+        // seed-only `settings_opt`. Resolve the newly persisted
+        // wallet row now so this first open takes the same Loader
+        // route as every later open.
+        let settings_opt = if cube
+            .bitcoin_import
+            .as_deref()
+            .and_then(app::settings::BitcoinImport::active_attachment)
+            .is_some()
+        {
+            match bitcoin_wallet_settings_for_cube(&i.datadir, cube.network, &cube) {
+                Some(wallet) => Some(Box::new(wallet)),
+                None => {
+                    return Break(i
+                        .update(installer::Message::CubeSaveFailed(
+                            "Imported wallet registration is missing or inconsistent after recovery. Retry this Recovery Kit before opening the Cube.".into(),
+                        ))
+                        .map(Message::Install));
+                }
+            }
+        } else {
+            settings_opt
+        };
+
+        #[cfg(feature = "mcp-proposals")]
+        if i.context.mcp_proposal.is_some() {
+            // Complete association, then drop all installer/client
+            // handles. Even a still-open original session must unlock
+            // afresh; old tokens/proposal IDs never become read grants.
+            let root = i.datadir.clone();
+            i.stop();
+            let (mut home, task) = Home::new_for_chain(root, Some(cube.network));
+            home.set_error("Vault created. Reopen this Cube to verify keys/backups and approve fresh read access.");
+            self.state = State::Home(home);
+            return Break(task.map(Message::Launch));
+        }
+
+        if cube.network.is_blake2b() {
+            return Break(self.open_saved_fork_cube(cube, settings_opt));
+        }
+
+        if let Some(settings) = settings_opt {
+            return Continue(self.load_saved_wallet_cube(
+                cube,
+                *settings,
+                internal_bitcoind,
+                restored_cube_signer,
+                restored_spark_backend,
+            ));
+        }
+        self.open_saved_seed_only_cube(
+            cube,
+            internal_bitcoind,
+            restored_cube_signer,
+            restored_spark_backend,
+        )
+    }
+
+    fn open_saved_fork_cube(
+        &mut self,
+        cube: app::settings::CubeSettings,
+        settings_opt: Option<Box<WalletSettings>>,
+    ) -> Task<Message> {
+        let State::Installer(i) = &mut self.state else {
+            unreachable!();
+        };
+        // A copy (Tools › Split coins → Create copy) is
+        // finished once saved. Its source App is still open in
+        // the tab that launched it, so hand control back
+        // there; the copy opens later from the Launcher like
+        // any other Cube, which keeps one public Cube session.
+        if i.source_cube.is_some() {
+            i.claim_target_saved = true;
+            if let Some(owner) = self.copy_owner.take() {
+                return Task::done(Message::CopyInstallFinished {
+                    owner,
+                    created: true,
+                });
+            }
+        }
+        let config = match app::Config::from_file(
+            &i.datadir
+                .network_directory(cube.network)
+                .path()
+                .join(app::config::DEFAULT_FILE_NAME),
+        ) {
+            Ok(config) => config,
+            Err(e) => {
+                return i
+                    .update(installer::Message::CubeSaveFailed(e.to_string()))
+                    .map(Message::Install);
+            }
+        };
+        // A Vault created inside an open Cube reopens it from
+        // that Cube's session, as on Bitcoin.
+        if i.launched_from_app && i.source_cube.is_none() {
+            let datadir = i.datadir.clone();
+            let client = i.context.coincube_client.clone();
+            let wallet_settings = settings_opt.as_deref().cloned();
+            if let Some(task) = self.open_fork_vault_in_session(
+                datadir,
+                config.clone(),
+                cube.clone(),
+                wallet_settings,
+                client,
+            ) {
+                return task;
+            }
+            // The Cube's own unlock screen opens a fresh
+            // session; the one this installer ran under ends.
+            app::session::close_cube(&cube.id);
+            let State::Installer(i) = &mut self.state else {
+                return Task::none();
+            };
+            let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+                datadir: i.datadir.clone(),
+                config,
+                network: cube.network.bitcoin_network(),
+                internal_bitcoind: None,
+                backup: None,
+                wallet_settings: settings_opt.map(|s| *s),
+                connect_client: i.context.coincube_client.clone(),
+            };
+            self.state = unlock_state(cube, i.datadir.path().to_path_buf(), on_success, None);
+            return Task::none();
+        }
+        let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+            datadir: i.datadir.clone(),
+            config,
+            network: cube.network.bitcoin_network(),
+            internal_bitcoind: None,
+            backup: None,
+            wallet_settings: settings_opt.map(|s| *s),
+            connect_client: i.context.coincube_client.clone(),
+        };
+        // A Cube this installer minted (a claim target or a
+        // restore) opens its own PIN screen.
+        self.state = unlock_state(cube, i.datadir.path().to_path_buf(), on_success, None);
+        Task::none()
+    }
+
+    fn load_saved_wallet_cube(
+        &mut self,
+        cube: app::settings::CubeSettings,
+        settings: WalletSettings,
+        internal_bitcoind: Option<crate::node::bitcoind::Bitcoind>,
+        restored_cube_signer: Option<app::cube_signer::CubeSigner>,
+        restored_spark_backend: Option<Arc<app::wallets::SparkBackend>>,
+    ) -> Task<Message> {
+        let State::Installer(i) = &mut self.state else {
+            unreachable!();
+        };
+        let cfg = app::Config::from_file(
+            &i.datadir
+                .network_directory(i.network)
+                .path()
+                .join(app::config::DEFAULT_FILE_NAME),
+        )
+        .expect("A gui configuration file must be present");
+
+        let imported = cube
+            .bitcoin_import
+            .as_ref()
+            .is_some_and(|i| i.active_attachment().is_some());
+        let (loader, command) = if imported {
+            Loader::new_imported(
+                i.datadir.clone(),
+                cfg,
+                i.network,
+                internal_bitcoind,
+                i.context.backup.clone(),
+                settings,
+                cube.clone(),
+                restored_cube_signer.or_else(|| i.cube_signer.clone()),
+                restored_spark_backend.or_else(|| i.spark_backend.clone()),
+                i.context.coincube_client.clone(),
+            )
+        } else {
+            Loader::new(
+                i.datadir.clone(),
+                cfg,
+                i.network,
+                internal_bitcoind,
+                i.context.backup.clone(),
+                Some(settings),
+                cube.clone(),
+                // The restored Cube signer (resolved against
+                // the user's new PIN) wins over the
+                // installer-launched one.
+                restored_cube_signer.or_else(|| i.cube_signer.clone()),
+                // Spark backend built against the user's
+                // new PIN during the restore async block.
+                // Falling back to the installer's existing
+                // handle covers the non-restore flows that
+                // already had Spark wired in before this
+                // Message arm widened.
+                restored_spark_backend.or_else(|| i.spark_backend.clone()),
+            )
+        };
+        self.state = State::Loader(loader);
+        command.map(Message::Load)
+    }
+
+    fn open_saved_seed_only_cube(
+        &mut self,
+        cube: app::settings::CubeSettings,
+        internal_bitcoind: Option<crate::node::bitcoind::Bitcoind>,
+        restored_cube_signer: Option<app::cube_signer::CubeSigner>,
+        restored_spark_backend: Option<Arc<app::wallets::SparkBackend>>,
+    ) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::Installer(i) = &mut self.state else {
+            unreachable!();
+        };
+        if let Some(bitcoind) = internal_bitcoind {
+            tracing::info!("Stopping internal bitcoind as it is not needed for Seed-Only cubes");
+            bitcoind.stop();
+        }
+
+        // Seed-only restore: the installer now writes
+        // `gui.toml` (see `ensure_gui_config`), but this is the
+        // one load site that historically ran with no config on
+        // disk and panicked. A missing-or-corrupt config here
+        // must degrade to defaults, not abort a restore that
+        // already persisted the seed. The wallet-path load sites
+        // keep `.expect(...)` — their installers guarantee the
+        // file.
+        let cfg = app::Config::from_file(
+            &i.datadir
+                .network_directory(i.network)
+                .path()
+                .join(app::config::DEFAULT_FILE_NAME),
+        )
+        .unwrap_or_else(|_| app::Config::new(false));
+
+        let cube_signer = restored_cube_signer.or_else(|| i.cube_signer.clone());
+        let spark = restored_spark_backend.or_else(|| i.spark_backend.clone());
+
+        // The same fail-closed gate as the Loader's admission:
+        // an installer that saved into a locked seed-backed
+        // Cube it holds no signer for opens that Cube's unlock
+        // screen rather than the App.
+        if loader_admission_needs_unlock(&cube, cube_signer.as_ref(), i.datadir.path()) {
+            tracing::warn!(
+                "Installer saved into a Cube this session has not unlocked; \
+                 routing to its unlock screen"
+            );
+            let datadir = i.datadir.clone();
+            let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+                datadir: datadir.clone(),
+                config: cfg,
+                network: i.network,
+                internal_bitcoind: None,
+                backup: None,
+                wallet_settings: None,
+                connect_client: i.context.coincube_client.clone(),
+            };
+            let duress_account_id = crate::services::duress::DuressLocalState::load(datadir.path())
+                .map(|st| st.account_id)
+                .unwrap_or(None);
+            i.stop();
+            self.state = unlock_state(
+                cube,
+                datadir.path().to_path_buf(),
+                on_success,
+                duress_account_id,
+            );
+            return Break(match &self.state {
+                State::PinEntry(_) => {
+                    iced::widget::operation::focus(crate::pin_input::first_digit_id())
+                }
+                _ => Task::none(),
+            });
+        }
+
+        let (app, command) = match app::App::new_without_wallet(
+            cube_signer,
+            spark,
+            cfg,
+            i.datadir.clone(),
+            i.network,
+            cube.clone(),
+        ) {
+            Ok(app) => app,
+            Err(error) => {
+                let error = match error {
+                    app::error::Error::Daemon(error) => loader::Error::Daemon(error),
+                    error => loader::Error::Unexpected(crate::user_error::report(&error)),
+                };
+                return Break(Task::done(Message::Load(loader::Message::App(Err(error)))));
+            }
+        };
+        self.state = State::App(app);
+        Continue(command.map(Message::Run))
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
@@ -3834,285 +4155,10 @@ impl Tab {
                 }
                 if let installer::Message::Exit(settings_opt, internal_bitcoind) = msg {
                     self.persist_installer_exit(settings_opt, internal_bitcoind)
-                } else if let installer::Message::CubeSaved(
-                    result,
-                    settings_opt,
-                    internal_bitcoind,
-                ) = msg
-                {
-                    // Handle cube save failure
-                    let (cube, restored_cube_signer, restored_spark_backend) = match result {
-                        Ok(saved) => saved,
-                        Err(err) => {
-                            error!("Aborting loader transition due to cube save failure");
-                            #[cfg(feature = "mcp-proposals")]
-                            i.finish_proposal_failure("The wallet/Cube setup could not be saved completely. Partial local data is retained. Return to the launcher and inspect the outcome before retrying.");
-                            return i
-                                .update(installer::Message::CubeSaveFailed(err))
-                                .map(Message::Install);
-                        }
-                    };
-
-                    // An imported Recovery Kit attaches its wallet inside the
-                    // durable import journal after the installer handed us a
-                    // seed-only `settings_opt`. Resolve the newly persisted
-                    // wallet row now so this first open takes the same Loader
-                    // route as every later open.
-                    let settings_opt = if cube
-                        .bitcoin_import
-                        .as_deref()
-                        .and_then(app::settings::BitcoinImport::active_attachment)
-                        .is_some()
-                    {
-                        match bitcoin_wallet_settings_for_cube(&i.datadir, cube.network, &cube) {
-                            Some(wallet) => Some(Box::new(wallet)),
-                            None => {
-                                return i
-                                    .update(installer::Message::CubeSaveFailed(
-                                        "Imported wallet registration is missing or inconsistent after recovery. Retry this Recovery Kit before opening the Cube.".into(),
-                                    ))
-                                    .map(Message::Install);
-                            }
-                        }
-                    } else {
-                        settings_opt
-                    };
-
-                    #[cfg(feature = "mcp-proposals")]
-                    if i.context.mcp_proposal.is_some() {
-                        // Complete association, then drop all installer/client
-                        // handles. Even a still-open original session must unlock
-                        // afresh; old tokens/proposal IDs never become read grants.
-                        let root = i.datadir.clone();
-                        i.stop();
-                        let (mut home, task) = Home::new_for_chain(root, Some(cube.network));
-                        home.set_error("Vault created. Reopen this Cube to verify keys/backups and approve fresh read access.");
-                        self.state = State::Home(home);
-                        return task.map(Message::Launch);
-                    }
-
-                    if cube.network.is_blake2b() {
-                        // A copy (Tools › Split coins → Create copy) is
-                        // finished once saved. Its source App is still open in
-                        // the tab that launched it, so hand control back
-                        // there; the copy opens later from the Launcher like
-                        // any other Cube, which keeps one public Cube session.
-                        if i.source_cube.is_some() {
-                            i.claim_target_saved = true;
-                            if let Some(owner) = self.copy_owner.take() {
-                                return Task::done(Message::CopyInstallFinished {
-                                    owner,
-                                    created: true,
-                                });
-                            }
-                        }
-                        let config = match app::Config::from_file(
-                            &i.datadir
-                                .network_directory(cube.network)
-                                .path()
-                                .join(app::config::DEFAULT_FILE_NAME),
-                        ) {
-                            Ok(config) => config,
-                            Err(e) => {
-                                return i
-                                    .update(installer::Message::CubeSaveFailed(e.to_string()))
-                                    .map(Message::Install);
-                            }
-                        };
-                        // A Vault created inside an open Cube reopens it from
-                        // that Cube's session, as on Bitcoin.
-                        if i.launched_from_app && i.source_cube.is_none() {
-                            let datadir = i.datadir.clone();
-                            let client = i.context.coincube_client.clone();
-                            let wallet_settings = settings_opt.as_deref().cloned();
-                            if let Some(task) = self.open_fork_vault_in_session(
-                                datadir,
-                                config.clone(),
-                                cube.clone(),
-                                wallet_settings,
-                                client,
-                            ) {
-                                return task;
-                            }
-                            // The Cube's own unlock screen opens a fresh
-                            // session; the one this installer ran under ends.
-                            app::session::close_cube(&cube.id);
-                            let State::Installer(i) = &mut self.state else {
-                                return Task::none();
-                            };
-                            let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
-                                datadir: i.datadir.clone(),
-                                config,
-                                network: cube.network.bitcoin_network(),
-                                internal_bitcoind: None,
-                                backup: None,
-                                wallet_settings: settings_opt.map(|s| *s),
-                                connect_client: i.context.coincube_client.clone(),
-                            };
-                            self.state = unlock_state(
-                                cube,
-                                i.datadir.path().to_path_buf(),
-                                on_success,
-                                None,
-                            );
-                            return Task::none();
-                        }
-                        let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
-                            datadir: i.datadir.clone(),
-                            config,
-                            network: cube.network.bitcoin_network(),
-                            internal_bitcoind: None,
-                            backup: None,
-                            wallet_settings: settings_opt.map(|s| *s),
-                            connect_client: i.context.coincube_client.clone(),
-                        };
-                        // A Cube this installer minted (a claim target or a
-                        // restore) opens its own PIN screen.
-                        self.state =
-                            unlock_state(cube, i.datadir.path().to_path_buf(), on_success, None);
-                        return Task::none();
-                    }
-
-                    if let Some(settings) = settings_opt {
-                        let cfg = app::Config::from_file(
-                            &i.datadir
-                                .network_directory(i.network)
-                                .path()
-                                .join(app::config::DEFAULT_FILE_NAME),
-                        )
-                        .expect("A gui configuration file must be present");
-
-                        let imported = cube
-                            .bitcoin_import
-                            .as_ref()
-                            .is_some_and(|i| i.active_attachment().is_some());
-                        let (loader, command) = if imported {
-                            Loader::new_imported(
-                                i.datadir.clone(),
-                                cfg,
-                                i.network,
-                                internal_bitcoind,
-                                i.context.backup.clone(),
-                                *settings,
-                                cube.clone(),
-                                restored_cube_signer.or_else(|| i.cube_signer.clone()),
-                                restored_spark_backend.or_else(|| i.spark_backend.clone()),
-                                i.context.coincube_client.clone(),
-                            )
-                        } else {
-                            Loader::new(
-                                i.datadir.clone(),
-                                cfg,
-                                i.network,
-                                internal_bitcoind,
-                                i.context.backup.clone(),
-                                Some(*settings),
-                                cube.clone(),
-                                // The restored Cube signer (resolved against
-                                // the user's new PIN) wins over the
-                                // installer-launched one.
-                                restored_cube_signer.or_else(|| i.cube_signer.clone()),
-                                // Spark backend built against the user's
-                                // new PIN during the restore async block.
-                                // Falling back to the installer's existing
-                                // handle covers the non-restore flows that
-                                // already had Spark wired in before this
-                                // Message arm widened.
-                                restored_spark_backend.or_else(|| i.spark_backend.clone()),
-                            )
-                        };
-                        self.state = State::Loader(loader);
-                        command.map(Message::Load)
-                    } else {
-                        if let Some(bitcoind) = internal_bitcoind {
-                            tracing::info!("Stopping internal bitcoind as it is not needed for Seed-Only cubes");
-                            bitcoind.stop();
-                        }
-
-                        // Seed-only restore: the installer now writes
-                        // `gui.toml` (see `ensure_gui_config`), but this is the
-                        // one load site that historically ran with no config on
-                        // disk and panicked. A missing-or-corrupt config here
-                        // must degrade to defaults, not abort a restore that
-                        // already persisted the seed. The wallet-path load sites
-                        // keep `.expect(...)` — their installers guarantee the
-                        // file.
-                        let cfg = app::Config::from_file(
-                            &i.datadir
-                                .network_directory(i.network)
-                                .path()
-                                .join(app::config::DEFAULT_FILE_NAME),
-                        )
-                        .unwrap_or_else(|_| app::Config::new(false));
-
-                        let cube_signer = restored_cube_signer.or_else(|| i.cube_signer.clone());
-                        let spark = restored_spark_backend.or_else(|| i.spark_backend.clone());
-
-                        // The same fail-closed gate as the Loader's admission:
-                        // an installer that saved into a locked seed-backed
-                        // Cube it holds no signer for opens that Cube's unlock
-                        // screen rather than the App.
-                        if loader_admission_needs_unlock(
-                            &cube,
-                            cube_signer.as_ref(),
-                            i.datadir.path(),
-                        ) {
-                            tracing::warn!(
-                                "Installer saved into a Cube this session has not unlocked; \
-                                 routing to its unlock screen"
-                            );
-                            let datadir = i.datadir.clone();
-                            let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
-                                datadir: datadir.clone(),
-                                config: cfg,
-                                network: i.network,
-                                internal_bitcoind: None,
-                                backup: None,
-                                wallet_settings: None,
-                                connect_client: i.context.coincube_client.clone(),
-                            };
-                            let duress_account_id =
-                                crate::services::duress::DuressLocalState::load(datadir.path())
-                                    .map(|st| st.account_id)
-                                    .unwrap_or(None);
-                            i.stop();
-                            self.state = unlock_state(
-                                cube,
-                                datadir.path().to_path_buf(),
-                                on_success,
-                                duress_account_id,
-                            );
-                            return match &self.state {
-                                State::PinEntry(_) => iced::widget::operation::focus(
-                                    crate::pin_input::first_digit_id(),
-                                ),
-                                _ => Task::none(),
-                            };
-                        }
-
-                        let (app, command) = match app::App::new_without_wallet(
-                            cube_signer,
-                            spark,
-                            cfg,
-                            i.datadir.clone(),
-                            i.network,
-                            cube.clone(),
-                        ) {
-                            Ok(app) => app,
-                            Err(error) => {
-                                let error = match error {
-                                    app::error::Error::Daemon(error) => {
-                                        loader::Error::Daemon(error)
-                                    }
-                                    error => {
-                                        loader::Error::Unexpected(crate::user_error::report(&error))
-                                    }
-                                };
-                                return Task::done(Message::Load(loader::Message::App(Err(error))));
-                            }
-                        };
-                        self.state = State::App(app);
-                        command.map(Message::Run)
+                } else if matches!(&msg, installer::Message::CubeSaved(..)) {
+                    match self.admit_saved_installer_cube(msg) {
+                        std::ops::ControlFlow::Continue(task) => task,
+                        std::ops::ControlFlow::Break(task) => return task,
                     }
                 } else if let installer::Message::BackToApp(network) = msg {
                     if let Some(owner) = self.copy_owner.take() {
