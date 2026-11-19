@@ -1588,31 +1588,60 @@ fn matches_query(name: &str, query: &str) -> bool {
     query.is_empty() || name.to_lowercase().contains(&query.to_lowercase())
 }
 
-pub(super) fn project(home: &Home) -> Projection<'_> {
-    let network = home.network;
+struct LocalProjection<'a> {
+    locals: Vec<LocalRow<'a>>,
+    network_counts: Vec<(ChainId, usize)>,
+    local_total: usize,
+    filtered_total: usize,
+    hidden: usize,
+}
+
+fn project_locals<'a>(home: &'a Home, query: &str, filter: NetworkFilter) -> LocalProjection<'a> {
     let signed_in = home.connect_account.authenticated_client().is_some();
-    let query = home.catalog.query.clone();
     let checked: Option<(&[CubeSettings], ChainId)> = match &home.state {
         State::Cubes { cubes, source, .. } => Some((cubes.as_slice(), *source)),
         _ => None,
     };
     let open_cube = crate::app::session::current_cube_id();
-    let filter = home.effective_filter();
     // Every listed network, in the canvas's order. The current network's
     // rows come from the checked list; the others from read-only copies,
     // which act by first making their network current.
-    let mut network_counts = Vec::new();
-    let mut local_total = 0;
-    let mut filtered_total = 0;
-    let mut hidden = 0;
-    let mut locals: Vec<LocalRow<'_>> = Vec::new();
+    let mut projection = LocalProjection {
+        locals: Vec::new(),
+        network_counts: Vec::new(),
+        local_total: 0,
+        filtered_total: 0,
+        hidden: 0,
+    };
     for chain in home.ordered_networks() {
         let (cubes, current) = match checked {
             Some((cubes, source)) if source == chain => (cubes, true),
             _ => (home.network_catalog(chain), false),
         };
-        network_counts.push((chain, cubes.len()));
-        local_total += cubes.len();
+        projection.add_network(
+            home,
+            chain,
+            (cubes, current),
+            query,
+            filter,
+            (signed_in, open_cube.as_deref()),
+        );
+    }
+    projection
+}
+
+impl<'a> LocalProjection<'a> {
+    fn add_network(
+        &mut self,
+        home: &Home,
+        chain: ChainId,
+        (cubes, current): (&'a [CubeSettings], bool),
+        query: &str,
+        filter: NetworkFilter,
+        (signed_in, open_cube): (bool, Option<&str>),
+    ) {
+        self.network_counts.push((chain, cubes.len()));
+        self.local_total += cubes.len();
         for (index, cube) in cubes.iter().enumerate() {
             let key = CubeCatalogKey {
                 chain: cube.network,
@@ -1620,19 +1649,19 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
             };
             let name = catalog_display_name(&cube.name);
             if filter.matches(chain) {
-                filtered_total += 1;
+                self.filtered_total += 1;
             }
-            if !matches_query(&name, &query) {
+            if !matches_query(&name, query) {
                 continue;
             }
             if !filter.matches(chain) {
-                hidden += 1;
+                self.hidden += 1;
                 continue;
             }
             let connect = recovery_kit_caption(cube, signed_in, home.cube_sync_hint(cube));
             let sync_warning = (signed_in && connect.0 == Tone::Warn)
                 .then(|| connect.1.lines().next().unwrap_or_default().to_string());
-            locals.push(LocalRow {
+            self.locals.push(LocalRow {
                 // `catalog_index` also requires key chain == source == network.
                 // Another network's row is acted on by switching to it.
                 actionable: !key.cube_id.is_empty()
@@ -1644,7 +1673,7 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
                 index: if current { index } else { usize::MAX },
                 connect,
                 sync_warning,
-                open: open_cube.as_deref() == Some(cube.id.as_str()),
+                open: open_cube == Some(cube.id.as_str()),
                 wallets: super::launcher_presenter::local_wallets(cube),
                 vault: vault_subtitle(cube),
                 connect_off: home
@@ -1657,6 +1686,9 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
             });
         }
     }
+}
+
+fn project_network_usage(home: &Home, network: ChainId) -> Vec<NetworkUsage> {
     // Every network with a Cube, local or only in Connect, whatever the
     // filter shows and whether or not the network is listed here (Developer
     // mode off lists Bitcoin alone, yet Connect may hold a Testnet4 Cube).
@@ -1678,6 +1710,21 @@ pub(super) fn project(home: &Home) -> Projection<'_> {
         }
     }
     usage.sort_by_key(|u| network_rank(u.chain));
+    usage
+}
+
+pub(super) fn project(home: &Home) -> Projection<'_> {
+    let network = home.network;
+    let query = home.catalog.query.clone();
+    let filter = home.effective_filter();
+    let LocalProjection {
+        locals,
+        network_counts,
+        local_total,
+        filtered_total,
+        hidden,
+    } = project_locals(home, &query, filter);
+    let usage = project_network_usage(home, network);
     let network_str = settings::network_to_api_string(network);
     let all_remotes: Vec<&RemoteCube> = home
         .remote_cubes
