@@ -3871,6 +3871,159 @@ impl GUI {
         }
     }
 
+    fn handle_tick(&mut self) -> Task<Message> {
+        if self
+            .zoom
+            .notice_until
+            .is_some_and(|until| Instant::now() >= until)
+        {
+            self.zoom.notice_until = None;
+        }
+        let system_reduces_motion = crate::app::settings::system_accessibility::reduces_motion();
+        self.system_reduces_motion = system_reduces_motion;
+        for (_, pane) in self.panes.iter_mut() {
+            for tab in &mut pane.tabs {
+                tab.set_system_reduces_motion(system_reduces_motion);
+            }
+        }
+        let privacy_refresh = self
+            .preferences
+            .begin_refresh_if_due()
+            .map(|request| self.run_preferences(request));
+        if privacy_refresh.is_some() {
+            self.publish_balance_privacy();
+        }
+        let mut tasks = vec![];
+        tasks.extend(privacy_refresh);
+
+        // These are the required (source, currency) pairs for which the global price is stale.
+        let mut stale_pairs = HashSet::<(PriceSource, Currency)>::new();
+        // These are the tabs that need the cached global price.
+        let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
+        // Tabs that need a fresh USD price for USDt→sats conversion.
+        let mut need_usd_cached: Vec<(pane_grid::Pane, usize, FiatPrice)> = Vec::new();
+        for (&pane_id, pane) in self.panes.iter() {
+            for tab in pane.tabs.iter() {
+                self.collect_tab_fiat_prices(
+                    pane_id,
+                    tab,
+                    &mut stale_pairs,
+                    &mut need_cached,
+                    &mut need_usd_cached,
+                );
+            }
+        }
+        for (source, currency) in stale_pairs {
+            let request = FiatPriceRequest::new(source, currency);
+            // Store request immediately to avoid multiple requests for the same pair.
+            self.global_cache.insert_fiat_price_request(request);
+            tasks.push(Task::perform(request.send_default(), |res| {
+                FiatMessage::GetPriceResult(res).into()
+            }));
+        }
+        for ((pane_id, tab_id), global_price) in need_cached {
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                // Return the cached global price to the tab.
+                tracing::debug!(
+                    "Updating tab {} in pane {:?} with cached fiat price {:?}",
+                    tab_id,
+                    pane_id,
+                    global_price
+                );
+                tasks.push(
+                    pane.update_tab_with_app_msg(
+                        tab_id,
+                        AppFiatMessage::GetPriceResult(global_price),
+                        &self.config,
+                    )
+                    .map(move |msg| Message::Pane(pane_id, msg)),
+                );
+            }
+        }
+        // Distribute fresh USD prices for USDt→sats conversion.
+        for (pane_id, tab_id, usd_price) in need_usd_cached {
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                tasks.push(
+                    pane.update_tab_with_app_msg(
+                        tab_id,
+                        AppFiatMessage::GetPriceResult(usd_price),
+                        &self.config,
+                    )
+                    .map(move |msg| Message::Pane(pane_id, msg)),
+                );
+            }
+        }
+        tasks.extend(
+            self.panes
+                .iter_mut()
+                .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
+        );
+
+        Task::batch(tasks)
+    }
+
+    fn collect_tab_fiat_prices(
+        &self,
+        pane_id: pane_grid::Pane,
+        tab: &tab::Tab,
+        stale_pairs: &mut HashSet<(PriceSource, Currency)>,
+        need_cached: &mut HashMap<(pane_grid::Pane, usize), FiatPrice>,
+        need_usd_cached: &mut Vec<(pane_grid::Pane, usize, FiatPrice)>,
+    ) {
+        // BTCB2 has an authenticated, generation-bound poll in App.
+        // Never insert its requests into the shared Bitcoin cache.
+        if tab
+            .cube_settings()
+            .is_some_and(|cube| cube.network.is_blake2b())
+        {
+            return;
+        }
+        let fiat_sett = tab.cube_settings().and_then(|cs| cs.fiat_price.as_ref());
+
+        // When fiat display is enabled, fetch the user's selected currency.
+        if let Some(sett) = fiat_sett.filter(|s| s.is_enabled) {
+            if let Some(fresh_price) = self
+                .global_cache
+                .fresh_fiat_price(sett.source, sett.currency)
+            {
+                if !tab
+                    .cache()
+                    .and_then(|c| c.fiat_price.as_ref())
+                    .is_some_and(|tab_price| tab_price.request == fresh_price.request)
+                {
+                    need_cached.insert((pane_id, tab.id), fresh_price.clone());
+                }
+            } else if self
+                .global_cache
+                .pending_fiat_price_request(sett.source, sett.currency)
+                .is_none()
+            {
+                stale_pairs.insert((sett.source, sett.currency));
+            }
+        }
+
+        // Always fetch BTC/USD for USDt→sats conversion, even when
+        // fiat display is disabled. Use the configured source if
+        // available, otherwise fall back to the default source.
+        let usd_source = fiat_sett
+            .map(|s| s.source)
+            .unwrap_or(PriceSource::default());
+        if let Some(fresh_usd) = self
+            .global_cache
+            .fresh_fiat_price(usd_source, Currency::USD)
+        {
+            if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
+                need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
+            }
+        } else if self
+            .global_cache
+            .pending_fiat_price_request(usd_source, Currency::USD)
+            .is_none()
+        {
+            stale_pairs.insert((usd_source, Currency::USD));
+        }
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -4212,142 +4365,7 @@ impl GUI {
                 Task::none()
             }
             Message::ConnectSheet(message) => self.connect_sheet_message(message),
-            Message::Tick => {
-                if self
-                    .zoom
-                    .notice_until
-                    .is_some_and(|until| Instant::now() >= until)
-                {
-                    self.zoom.notice_until = None;
-                }
-                let system_reduces_motion =
-                    crate::app::settings::system_accessibility::reduces_motion();
-                self.system_reduces_motion = system_reduces_motion;
-                for (_, pane) in self.panes.iter_mut() {
-                    for tab in &mut pane.tabs {
-                        tab.set_system_reduces_motion(system_reduces_motion);
-                    }
-                }
-                let privacy_refresh = self
-                    .preferences
-                    .begin_refresh_if_due()
-                    .map(|request| self.run_preferences(request));
-                if privacy_refresh.is_some() {
-                    self.publish_balance_privacy();
-                }
-                let mut tasks = vec![];
-                if let Some(refresh) = privacy_refresh {
-                    tasks.push(refresh);
-                }
-
-                // These are the required (source, currency) pairs for which the global price is stale.
-                let mut stale_pairs = HashSet::<(PriceSource, Currency)>::new();
-                // These are the tabs that need the cached global price.
-                let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
-                // Tabs that need a fresh USD price for USDt→sats conversion.
-                let mut need_usd_cached: Vec<(pane_grid::Pane, usize, FiatPrice)> = Vec::new();
-                for (&pane_id, pane) in self.panes.iter() {
-                    for tab in pane.tabs.iter() {
-                        // BTCB2 has an authenticated, generation-bound poll in App.
-                        // Never insert its requests into the shared Bitcoin cache.
-                        if tab
-                            .cube_settings()
-                            .is_some_and(|cube| cube.network.is_blake2b())
-                        {
-                            continue;
-                        }
-                        let fiat_sett = tab.cube_settings().and_then(|cs| cs.fiat_price.as_ref());
-
-                        // When fiat display is enabled, fetch the user's selected currency.
-                        if let Some(sett) = fiat_sett.filter(|s| s.is_enabled) {
-                            if let Some(fresh_price) = self
-                                .global_cache
-                                .fresh_fiat_price(sett.source, sett.currency)
-                            {
-                                if !tab.cache().and_then(|c| c.fiat_price.as_ref()).is_some_and(
-                                    |tab_price| tab_price.request == fresh_price.request,
-                                ) {
-                                    need_cached.insert((pane_id, tab.id), fresh_price.clone());
-                                }
-                            } else if self
-                                .global_cache
-                                .pending_fiat_price_request(sett.source, sett.currency)
-                                .is_none()
-                            {
-                                stale_pairs.insert((sett.source, sett.currency));
-                            }
-                        }
-
-                        // Always fetch BTC/USD for USDt→sats conversion, even when
-                        // fiat display is disabled. Use the configured source if
-                        // available, otherwise fall back to the default source.
-                        let usd_source = fiat_sett
-                            .map(|s| s.source)
-                            .unwrap_or(PriceSource::default());
-                        if let Some(fresh_usd) = self
-                            .global_cache
-                            .fresh_fiat_price(usd_source, Currency::USD)
-                        {
-                            if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
-                                need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
-                            }
-                        } else if self
-                            .global_cache
-                            .pending_fiat_price_request(usd_source, Currency::USD)
-                            .is_none()
-                        {
-                            stale_pairs.insert((usd_source, Currency::USD));
-                        }
-                    }
-                }
-                for (source, currency) in stale_pairs {
-                    let request = FiatPriceRequest::new(source, currency);
-                    // Store request immediately to avoid multiple requests for the same pair.
-                    self.global_cache.insert_fiat_price_request(request);
-                    tasks.push(Task::perform(request.send_default(), |res| {
-                        FiatMessage::GetPriceResult(res).into()
-                    }));
-                }
-                for ((pane_id, tab_id), global_price) in need_cached {
-                    if let Some(pane) = self.panes.get_mut(pane_id) {
-                        // Return the cached global price to the tab.
-                        tracing::debug!(
-                            "Updating tab {} in pane {:?} with cached fiat price {:?}",
-                            tab_id,
-                            pane_id,
-                            global_price
-                        );
-                        tasks.push(
-                            pane.update_tab_with_app_msg(
-                                tab_id,
-                                AppFiatMessage::GetPriceResult(global_price),
-                                &self.config,
-                            )
-                            .map(move |msg| Message::Pane(pane_id, msg)),
-                        );
-                    }
-                }
-                // Distribute fresh USD prices for USDt→sats conversion.
-                for (pane_id, tab_id, usd_price) in need_usd_cached {
-                    if let Some(pane) = self.panes.get_mut(pane_id) {
-                        tasks.push(
-                            pane.update_tab_with_app_msg(
-                                tab_id,
-                                AppFiatMessage::GetPriceResult(usd_price),
-                                &self.config,
-                            )
-                            .map(move |msg| Message::Pane(pane_id, msg)),
-                        );
-                    }
-                }
-                tasks.extend(
-                    self.panes
-                        .iter_mut()
-                        .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
-                );
-
-                Task::batch(tasks)
-            }
+            Message::Tick => self.handle_tick(),
             _ => Task::none(),
         }
     }
