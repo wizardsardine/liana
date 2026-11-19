@@ -2384,6 +2384,87 @@ impl GUI {
         }
     }
 
+    // Validate session-tagged App callbacks before inspecting global auth
+    // actions. A queued event from an old App cannot affect a reopened one.
+    fn route_tab_callback(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+        match message {
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
+                if matches!(tab_message.as_ref(), tab::Message::AppAsync(..)) =>
+            {
+                let tab::Message::AppAsync(generation, message) = *tab_message else {
+                    unreachable!();
+                };
+                self.route_session_callback(
+                    pane_id,
+                    tab_id,
+                    generation,
+                    message,
+                    tab::Tab::accepts_app_generation,
+                )
+            }
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
+                if matches!(tab_message.as_ref(), tab::Message::ForkAsync(..)) =>
+            {
+                let tab::Message::ForkAsync(generation, message) = *tab_message else {
+                    unreachable!();
+                };
+                self.route_session_callback(
+                    pane_id,
+                    tab_id,
+                    generation,
+                    message,
+                    tab::Tab::accepts_fork_generation,
+                )
+            }
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
+                if !self
+                    .panes
+                    .get(pane_id)
+                    .is_some_and(|pane| pane.tabs.iter().any(|tab| tab.id == tab_id)) =>
+            {
+                tab::discard_closed_loader_result(*tab_message);
+                Break(Task::none())
+            }
+            message => Continue(message),
+        }
+    }
+
+    fn route_session_callback(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        generation: u64,
+        message: Box<tab::Message>,
+        accepts_generation: fn(&tab::Tab, u64) -> bool,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+        if let tab::Message::Run(AppMessage::View(
+            crate::app::view::Message::DuressActivateLocal(_),
+        )) = message.as_ref()
+        {
+            let tab::Message::Run(AppMessage::View(
+                crate::app::view::Message::DuressActivateLocal(proof),
+            )) = *message
+            else {
+                unreachable!()
+            };
+            return Break(self.route_verified_seed_export_duress(pane_id, tab_id, proof));
+        }
+        let current = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .is_some_and(|tab| accepts_generation(tab, generation));
+        if !current {
+            return Break(self.discard_stale_tab_callback(pane_id, tab_id, *message));
+        }
+        Continue(route_guarded_tab_result(pane_id, tab_id, *message))
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         if self
             .preferences_sheet
@@ -2443,75 +2524,9 @@ impl GUI {
         if let Some(task) = self.intercept_device_preference(&message) {
             return task;
         }
-        // Validate session-tagged App callbacks before inspecting global auth
-        // actions. A queued event from an old App cannot affect a reopened one.
-        let message = match message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
-                if matches!(tab_message.as_ref(), tab::Message::AppAsync(..)) =>
-            {
-                let tab::Message::AppAsync(generation, message) = *tab_message else {
-                    unreachable!();
-                };
-                if let tab::Message::Run(AppMessage::View(
-                    crate::app::view::Message::DuressActivateLocal(_),
-                )) = message.as_ref()
-                {
-                    let tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::DuressActivateLocal(proof),
-                    )) = *message
-                    else {
-                        unreachable!()
-                    };
-                    return self.route_verified_seed_export_duress(pane_id, tab_id, proof);
-                }
-                let current = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .is_some_and(|tab| tab.accepts_app_generation(generation));
-                if !current {
-                    return self.discard_stale_tab_callback(pane_id, tab_id, *message);
-                }
-                route_guarded_tab_result(pane_id, tab_id, *message)
-            }
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
-                if matches!(tab_message.as_ref(), tab::Message::ForkAsync(..)) =>
-            {
-                let tab::Message::ForkAsync(generation, message) = *tab_message else {
-                    unreachable!();
-                };
-                if let tab::Message::Run(AppMessage::View(
-                    crate::app::view::Message::DuressActivateLocal(_),
-                )) = message.as_ref()
-                {
-                    let tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::DuressActivateLocal(proof),
-                    )) = *message
-                    else {
-                        unreachable!()
-                    };
-                    return self.route_verified_seed_export_duress(pane_id, tab_id, proof);
-                }
-                let current = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .is_some_and(|tab| tab.accepts_fork_generation(generation));
-                if !current {
-                    return self.discard_stale_tab_callback(pane_id, tab_id, *message);
-                }
-                route_guarded_tab_result(pane_id, tab_id, *message)
-            }
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
-                if !self
-                    .panes
-                    .get(pane_id)
-                    .is_some_and(|pane| pane.tabs.iter().any(|tab| tab.id == tab_id)) =>
-            {
-                tab::discard_closed_loader_result(*tab_message);
-                return Task::none();
-            }
-            message => message,
+        let message = match self.route_tab_callback(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
         };
         // Every hosted fork PIN starts with a completed, scoped account
         // candidate. A cold Home can borrow one unambiguous verified sibling;
