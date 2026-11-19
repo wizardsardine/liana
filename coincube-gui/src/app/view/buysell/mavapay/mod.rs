@@ -915,53 +915,50 @@ impl MavapayState {
         None
     }
 
-    fn update_sell_fulfilled(&mut self, msg: MavapayMessage) -> Option<iced::Task<view::Message>> {
+    fn update_sell_fulfilled(
+        &mut self,
+        payment: &coincube_spark_protocol::SendPaymentOk,
+    ) -> Option<iced::Task<view::Message>> {
         let MavapayFlowStep::Checkout { quote, sell, .. } = self.steps.last_mut()? else {
             return None;
         };
-        match msg {
-            MavapayMessage::SellInvoiceFulfilled { payment, .. } => {
-                // Only the send this checkout is waiting for can settle it.
-                if sell.fulfilment != SellFulfilment::Sending {
-                    log::warn!("[MAVAPAY] Ignoring a sell payment result nobody is waiting for");
-                    return None;
-                }
-                // Accepted is not paid: a pending payment may still fail.
-                // Keep the key and the intent and check its state until
-                // it settles one way or the other.
-                if !payment.is_completed() {
-                    log::info!(
-                        "[MAVAPAY] Sell payment accepted but not settled ({:?})",
-                        payment.status
-                    );
-                    let guard = sell
-                        .pending
-                        .as_ref()
-                        .map(|p| p.guard)
-                        .unwrap_or(RetryGuard::None);
-                    sell.fulfilment = SellFulfilment::OutcomeUnknown {
-                        checking: true,
-                        outcome: None,
-                        guard,
-                    };
-                    return Some(reconcile_sell_task(
-                        self.spark.clone(),
-                        quote.id.clone(),
-                        sell.pending.clone(),
-                    ));
-                }
-                sell.fulfilment = SellFulfilment::Paid;
-                sell.idempotency_key = None;
-                sell.pending = None;
-                // Generic success toasts stay mounted when privacy changes.
-                // Keep this asynchronous notification amount-free.
-                return Some(iced::Task::done(view::Message::ShowSuccess(
-                    "Invoice paid from your Spark wallet".to_owned(),
-                )));
-            }
-            _ => {}
+        // Only the send this checkout is waiting for can settle it.
+        if sell.fulfilment != SellFulfilment::Sending {
+            log::warn!("[MAVAPAY] Ignoring a sell payment result nobody is waiting for");
+            return None;
         }
-        None
+        // Accepted is not paid: a pending payment may still fail.
+        // Keep the key and the intent and check its state until
+        // it settles one way or the other.
+        if !payment.is_completed() {
+            log::info!(
+                "[MAVAPAY] Sell payment accepted but not settled ({:?})",
+                payment.status
+            );
+            let guard = sell
+                .pending
+                .as_ref()
+                .map(|p| p.guard)
+                .unwrap_or(RetryGuard::None);
+            sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                checking: true,
+                outcome: None,
+                guard,
+            };
+            return Some(reconcile_sell_task(
+                self.spark.clone(),
+                quote.id.clone(),
+                sell.pending.clone(),
+            ));
+        }
+        sell.fulfilment = SellFulfilment::Paid;
+        sell.idempotency_key = None;
+        sell.pending = None;
+        // Generic success toasts stay mounted when privacy changes.
+        // Keep this asynchronous notification amount-free.
+        Some(iced::Task::done(view::Message::ShowSuccess(
+            "Invoice paid from your Spark wallet".to_owned(),
+        )))
     }
 
     fn update_sell_send(&mut self, msg: MavapayMessage) -> Option<iced::Task<view::Message>> {
@@ -1054,8 +1051,8 @@ impl MavapayState {
                     view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
                 )));
             }
-            msg @ MavapayMessage::SellInvoiceFulfilled { .. } => {
-                return self.update_sell_fulfilled(msg)
+            MavapayMessage::SellInvoiceFulfilled { payment, .. } => {
+                return self.update_sell_fulfilled(&payment);
             }
             MavapayMessage::SellSendFailed { error: err, .. } => {
                 // The bridge answered "no": nothing was paid, so the
