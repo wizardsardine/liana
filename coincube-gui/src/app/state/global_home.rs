@@ -1037,126 +1037,15 @@ impl State for GlobalHome {
                         prepare_handle,
                         fee_sat,
                     ),
-                    HomeMessage::ConfirmSparkSend => {
-                        let Some(direction) = self.transfer_direction else {
-                            return Task::none();
-                        };
-                        if self.is_sending || !self.destination_is_ready() {
-                            return Task::none();
-                        }
-                        if direction == TransferDirection::SparkToVault
-                            && !self.vault_available(cache)
-                        {
-                            return Task::none();
-                        }
-                        if direction.is_other_cube() {
-                            if let Err(refusal) = self.check_other_review_address(cache) {
-                                return self.restart_other_cube_unlock(refusal);
-                            }
-                        }
-                        // Spark-sourced confirm: broadcast the prepared send. The
-                        // destination address + prepare handle were populated at
-                        // step 1→2 (see `SparkPrepareSendReady`).
-                        let Some(spark) = self.spark_backend.clone() else {
-                            // Not an expired preparation — the wallet itself is
-                            // gone, and "go back and re-enter the amount" would
-                            // send the user in a circle.
-                            return Task::done(Message::View(view::Message::Home(
-                                HomeMessage::Error(TransferError::WalletUnavailable(
-                                    WalletKind::Spark,
-                                )),
-                            )));
-                        };
-                        // Single-use handle: take it out of state before
-                        // spawning the task so a retry click after a failed
-                        // `send_payment` can't re-submit a handle the Spark
-                        // backend has already consumed. Forces re-prepare from
-                        // the amount step on failure; on success
-                        // `TransferBroadcast` is the path that would have
-                        // otherwise cleared it.
-                        let Some(handle) = self.spark_send_handle.take() else {
-                            return Task::done(Message::View(view::Message::Home(
-                                HomeMessage::Error(TransferError::PreparationExpired),
-                            )));
-                        };
-                        let Ok(transfer_amount) = Amount::from_str_in(
-                            &self.entered_amount.value,
-                            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
-                                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                            } else {
-                                coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                            },
-                        ) else {
-                            return Task::none();
-                        };
-                        self.is_sending = true;
-                        let generation = self.transfer_request_generation;
-                        Task::perform(
-                            async move { spark.send_payment(handle, None).await },
-                            move |result| {
-                                let result = result.map(|_| ()).map_err(|error| match error {
-                                    SparkClientError::OutcomeUnknown { .. }
-                                    | SparkClientError::Protocol(_) => {
-                                        TransferError::BroadcastOutcomeUnknown {
-                                            detail: error.to_string(),
-                                        }
-                                    }
-                                    _ => TransferError::BroadcastFailed {
-                                        from: WalletKind::Spark,
-                                        detail: error.to_string(),
-                                    },
-                                });
-                                Message::View(view::Message::Home(
-                                    HomeMessage::SparkTransferFinished {
-                                        generation,
-                                        direction,
-                                        amount_sat: transfer_amount.to_sat(),
-                                        result,
-                                    },
-                                ))
-                            },
-                        )
-                    }
+                    HomeMessage::ConfirmSparkSend => self.confirm_spark_send(cache),
                     HomeMessage::SparkTransferFinished {
                         generation,
                         direction,
                         amount_sat,
                         result,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction) {
-                            return Task::none();
-                        }
-                        let message = match result {
-                            Ok(()) => HomeMessage::TransferBroadcast {
-                                amount_sat,
-                                destination_kind: direction.to_kind(),
-                            },
-                            Err(error) => {
-                                if direction.is_other_cube()
-                                    && matches!(
-                                        error,
-                                        TransferError::BroadcastOutcomeUnknown { .. }
-                                    )
-                                {
-                                    let reset = self.update(
-                                        None,
-                                        cache,
-                                        Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                                    );
-                                    let show_error = self.update(
-                                        None,
-                                        cache,
-                                        Message::View(view::Message::Home(HomeMessage::Error(
-                                            error,
-                                        ))),
-                                    );
-                                    return Task::batch([reset, show_error]);
-                                }
-                                HomeMessage::Error(error)
-                            }
-                        };
-                        self.update(daemon, cache, Message::View(view::Message::Home(message)))
-                    }
+                    } => self.on_spark_transfer_finished(
+                        daemon, cache, generation, direction, amount_sat, result,
+                    ),
                     HomeMessage::TransferBroadcast {
                         amount_sat,
                         destination_kind,
@@ -2236,6 +2125,119 @@ impl State for GlobalHome {
 }
 
 impl GlobalHome {
+    fn confirm_spark_send(&mut self, cache: &Cache) -> Task<Message> {
+        let Some(direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        if self.is_sending || !self.destination_is_ready() {
+            return Task::none();
+        }
+        if direction == TransferDirection::SparkToVault && !self.vault_available(cache) {
+            return Task::none();
+        }
+        if direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        // Spark-sourced confirm: broadcast the prepared send. The
+        // destination address + prepare handle were populated at
+        // step 1→2 (see `SparkPrepareSendReady`).
+        let Some(spark) = self.spark_backend.clone() else {
+            // Not an expired preparation — the wallet itself is
+            // gone, and "go back and re-enter the amount" would
+            // send the user in a circle.
+            return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::WalletUnavailable(WalletKind::Spark),
+            ))));
+        };
+        // Single-use handle: take it out of state before
+        // spawning the task so a retry click after a failed
+        // `send_payment` can't re-submit a handle the Spark
+        // backend has already consumed. Forces re-prepare from
+        // the amount step on failure; on success
+        // `TransferBroadcast` is the path that would have
+        // otherwise cleared it.
+        let Some(handle) = self.spark_send_handle.take() else {
+            return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::PreparationExpired,
+            ))));
+        };
+        let Ok(transfer_amount) = Amount::from_str_in(
+            &self.entered_amount.value,
+            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
+                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+            } else {
+                coincube_core::miniscript::bitcoin::Denomination::Satoshi
+            },
+        ) else {
+            return Task::none();
+        };
+        self.is_sending = true;
+        let generation = self.transfer_request_generation;
+        Task::perform(
+            async move { spark.send_payment(handle, None).await },
+            move |result| {
+                let result = result.map(|_| ()).map_err(|error| match error {
+                    SparkClientError::OutcomeUnknown { .. } | SparkClientError::Protocol(_) => {
+                        TransferError::BroadcastOutcomeUnknown {
+                            detail: error.to_string(),
+                        }
+                    }
+                    _ => TransferError::BroadcastFailed {
+                        from: WalletKind::Spark,
+                        detail: error.to_string(),
+                    },
+                });
+                Message::View(view::Message::Home(HomeMessage::SparkTransferFinished {
+                    generation,
+                    direction,
+                    amount_sat: transfer_amount.to_sat(),
+                    result,
+                }))
+            },
+        )
+    }
+
+    fn on_spark_transfer_finished(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+        amount_sat: u64,
+        result: Result<(), TransferError>,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction) {
+            return Task::none();
+        }
+        let message = match result {
+            Ok(()) => HomeMessage::TransferBroadcast {
+                amount_sat,
+                destination_kind: direction.to_kind(),
+            },
+            Err(error) => {
+                if direction.is_other_cube()
+                    && matches!(error, TransferError::BroadcastOutcomeUnknown { .. })
+                {
+                    let reset = self.update(
+                        None,
+                        cache,
+                        Message::View(view::Message::Home(HomeMessage::BackToHome)),
+                    );
+                    let show_error = self.update(
+                        None,
+                        cache,
+                        Message::View(view::Message::Home(HomeMessage::Error(error))),
+                    );
+                    return Task::batch([reset, show_error]);
+                }
+                HomeMessage::Error(error)
+            }
+        };
+        self.update(daemon, cache, Message::View(view::Message::Home(message)))
+    }
+
     fn advance_transfer_step(
         &mut self,
         daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
