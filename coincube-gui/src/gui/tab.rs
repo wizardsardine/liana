@@ -1635,42 +1635,7 @@ impl Tab {
                         return Err("This Cube changed while opening. Select it again to use the current details.".into());
                     }
                 }
-                if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
-                    return Err("The selected Cube belongs to another data directory.".into());
-                }
-                if cube.network != *chain {
-                    return Err(format!(
-                        "This Cube's settings say it lives on {}, but it was found in the {} folder. COINCUBE Desktop won't open it until the two agree.",
-                        cube.network.label(),
-                        chain.label(),
-                    ));
-                }
-                if let Some(reason) = home.chain_availability(cube.network).reason() {
-                    return Err(reason.to_string());
-                }
-                if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
-                    crate::services::unlock::creation_gate::evaluate_for_cube(cube, None)
-                {
-                    return Err(format!(
-                        "{reason}\n\n{}",
-                        crate::services::unlock::creation_gate::not_a_backup_copy(
-                            cube.is_passkey_cube()
-                        )
-                    ));
-                }
-                if cube.is_passkey_cube() && !crate::feature_flags::PASSKEY_ENABLED {
-                    return Err("This Cube is unlocked with a passkey, and passkey unlock is turned off in this build. Restore it from your Recovery Kit and its recovery password, or use a build with COINCUBE_ENABLE_PASSKEY set.".into());
-                }
-                if cube
-                    .bitcoin_import
-                    .as_deref()
-                    .and_then(app::settings::BitcoinImport::active_attachment)
-                    .is_some()
-                    && bitcoin_wallet_settings_for_cube(root, *chain, cube).is_none()
-                {
-                    return Err("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.".into());
-                }
-                Ok(())
+                Self::validate_launcher_cube(home, root, *chain, cube)
             }
             home::Message::Install(root, chain, flow, _) => {
                 if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
@@ -1687,6 +1652,48 @@ impl Tab {
             }
             _ => Err("This is not a Cube admission.".into()),
         }
+    }
+
+    fn validate_launcher_cube(
+        home: &Home,
+        root: &CoincubeDirectory,
+        chain: crate::chain::ChainId,
+        cube: &app::settings::CubeSettings,
+    ) -> Result<(), String> {
+        if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
+            return Err("The selected Cube belongs to another data directory.".into());
+        }
+        if cube.network != chain {
+            return Err(format!(
+                "This Cube's settings say it lives on {}, but it was found in the {} folder. COINCUBE Desktop won't open it until the two agree.",
+                cube.network.label(),
+                chain.label(),
+            ));
+        }
+        if let Some(reason) = home.chain_availability(cube.network).reason() {
+            return Err(reason.to_string());
+        }
+        if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
+            crate::services::unlock::creation_gate::evaluate_for_cube(cube, None)
+        {
+            return Err(format!(
+                "{reason}\n\n{}",
+                crate::services::unlock::creation_gate::not_a_backup_copy(cube.is_passkey_cube())
+            ));
+        }
+        if cube.is_passkey_cube() && !crate::feature_flags::PASSKEY_ENABLED {
+            return Err("This Cube is unlocked with a passkey, and passkey unlock is turned off in this build. Restore it from your Recovery Kit and its recovery password, or use a build with COINCUBE_ENABLE_PASSKEY set.".into());
+        }
+        if cube
+            .bitcoin_import
+            .as_deref()
+            .and_then(app::settings::BitcoinImport::active_attachment)
+            .is_some()
+            && bitcoin_wallet_settings_for_cube(root, chain, cube).is_none()
+        {
+            return Err("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.".into());
+        }
+        Ok(())
     }
 
     fn guard_fork_task(&mut self, task: Task<Message>) -> Task<Message> {
