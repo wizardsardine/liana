@@ -4744,76 +4744,16 @@ impl ConnectAccountPanel {
     }
 
     fn update_two_factor(&mut self, msg: TwoFactorSettingsMessage) -> iced::Task<Message> {
-        let wrap = |m: TwoFactorSettingsMessage| {
-            Message::View(view::Message::ConnectAccount(
-                ConnectAccountMessage::TwoFactorSettings(m),
-            ))
-        };
         let tf = &mut self.two_factor;
         match msg {
             TwoFactorSettingsMessage::StatusLoaded(result, seq) => {
-                if seq != tf.status_seq {
-                    return iced::Task::none();
-                }
-                // A failed refresh keeps a status already known: replacing it
-                // would hide an open panel, including codes shown only once.
-                let known = matches!(tf.status, TwoFactorStatusView::Loaded(_));
-                match result {
-                    TwoFactorStatusResult::Loaded(status) => {
-                        tf.status = TwoFactorStatusView::Loaded(status);
-                    }
-                    TwoFactorStatusResult::Unsupported => {
-                        if !known {
-                            tf.status = TwoFactorStatusView::Unsupported;
-                        }
-                    }
-                    TwoFactorStatusResult::Failed(error) => {
-                        log::warn!(
-                            "[CONNECT] authenticator status unavailable: {}",
-                            error.title
-                        );
-                        if !known {
-                            tf.status = TwoFactorStatusView::Failed;
-                        }
-                    }
-                }
+                return self.apply_two_factor_status(result, seq)
             }
 
-            TwoFactorSettingsMessage::StartSetup => {
-                // Only offered once the status says it is off.
-                let off = matches!(&tf.status, TwoFactorStatusView::Loaded(s) if !s.enabled);
-                if tf.busy || !off || !matches!(tf.panel, TwoFactorPanel::Closed) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.note = None;
-                tf.panel = TwoFactorPanel::LoadingSetup;
-                let op = tf.begin();
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.generate_totp().await.map_err(|e| (&e).into()) },
-                    move |res| wrap(TwoFactorSettingsMessage::SetupLoaded(res, op)),
-                );
-            }
+            TwoFactorSettingsMessage::StartSetup => return self.start_two_factor_setup(),
 
             TwoFactorSettingsMessage::SetupLoaded(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::LoadingSetup) {
-                    return iced::Task::none();
-                }
-                tf.busy = false;
-                match res {
-                    Ok(setup) => {
-                        let qr = qr_code::Data::new(setup.otp_auth_url.as_bytes()).ok();
-                        tf.panel = TwoFactorPanel::Setup { setup, qr };
-                        return iced::widget::operation::focus(
-                            view::connect::TWO_FACTOR_SETTINGS_INPUT_ID,
-                        );
-                    }
-                    Err(error) => {
-                        tf.panel = TwoFactorPanel::Closed;
-                        return self.update_message(ConnectAccountMessage::Error(error));
-                    }
-                }
+                return self.apply_two_factor_setup(res, g)
             }
 
             TwoFactorSettingsMessage::CodeChanged(input) => {
@@ -4826,50 +4766,10 @@ impl ConnectAccountPanel {
                 tf.wrong = false;
             }
 
-            TwoFactorSettingsMessage::ConfirmSetup => {
-                if tf.busy
-                    || !matches!(tf.panel, TwoFactorPanel::Setup { .. })
-                    || !second_factor_code_complete(&tf.code.0, false)
-                {
-                    return iced::Task::none();
-                }
-                let op = tf.begin();
-                let code = zeroize::Zeroizing::new(tf.code.0.clone());
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .enable_totp(&code)
-                            .await
-                            .map_err(|e| CodeFailure::classify(&e))
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::Enabled(res, op)),
-                );
-            }
+            TwoFactorSettingsMessage::ConfirmSetup => return self.confirm_two_factor_setup(),
 
             TwoFactorSettingsMessage::Enabled(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Setup { .. }) {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(codes) => {
-                        tf.clear_entry();
-                        tf.supersede_status_loads();
-                        let total = codes.codes.len() as u32;
-                        tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
-                            enabled: true,
-                            remaining: total,
-                            total,
-                            generated_at: Some(chrono::Utc::now().to_rfc3339()),
-                        });
-                        tf.saved_to_file = None;
-                        tf.panel = TwoFactorPanel::Codes {
-                            codes,
-                            regenerated: false,
-                        };
-                    }
-                    Err(why) => return self.two_factor_failed(why),
-                }
+                return self.apply_two_factor_enabled(res, g)
             }
 
             TwoFactorSettingsMessage::CopySetupKey => {
@@ -4885,48 +4785,11 @@ impl ConnectAccountPanel {
             }
 
             TwoFactorSettingsMessage::SaveBackupCodes => {
-                let TwoFactorPanel::Codes { codes, .. } = &tf.panel else {
-                    return iced::Task::none();
-                };
-                let email = self
-                    .user
-                    .as_ref()
-                    .map(|u| u.email.clone())
-                    .unwrap_or_default();
-                let contents = backup_codes_file(&email, codes);
-                let op = tf.op;
-                return iced::Task::perform(
-                    async move {
-                        let Some(handle) = rfd::AsyncFileDialog::new()
-                            .set_title("Save backup codes")
-                            .set_file_name("coincube-connect-backup-codes.txt")
-                            .add_filter("Text", &["txt"])
-                            .save_file()
-                            .await
-                        else {
-                            return Ok(false);
-                        };
-                        write_private_file(handle.path(), contents.as_bytes())
-                            .await
-                            .map(|()| true)
-                            .map_err(|e| e.to_string())
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::BackupCodesSaved(res, op)),
-                );
+                return self.save_two_factor_backup_codes()
             }
 
             TwoFactorSettingsMessage::BackupCodesSaved(res, op) => {
-                // Only for the set it saved: a later set is not in that file.
-                if op == tf.op && matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
-                    match res {
-                        Ok(true) => tf.saved_to_file = Some(Ok(())),
-                        Ok(false) => {}
-                        Err(e) => {
-                            log::warn!("[CONNECT] saving backup codes failed: {e}");
-                            tf.saved_to_file = Some(Err(e));
-                        }
-                    }
-                }
+                return self.apply_two_factor_backup_code_save(res, op)
             }
 
             TwoFactorSettingsMessage::FinishBackupCodes => {
@@ -4937,71 +4800,17 @@ impl ConnectAccountPanel {
                 }
             }
 
-            TwoFactorSettingsMessage::AskRegenerate => {
-                if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.note = None;
-                tf.panel = TwoFactorPanel::Regenerate;
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
-            }
+            TwoFactorSettingsMessage::AskRegenerate => return self.open_two_factor_regeneration(),
 
             TwoFactorSettingsMessage::ConfirmRegenerate => {
-                if tf.busy
-                    || !matches!(tf.panel, TwoFactorPanel::Regenerate)
-                    || !second_factor_code_complete(&tf.code.0, false)
-                {
-                    return iced::Task::none();
-                }
-                let op = tf.begin();
-                let code = zeroize::Zeroizing::new(tf.code.0.clone());
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .regenerate_backup_codes(&code)
-                            .await
-                            .map_err(|e| CodeFailure::classify(&e))
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::Regenerated(res, op)),
-                );
+                return self.regenerate_two_factor_backup_codes()
             }
 
             TwoFactorSettingsMessage::Regenerated(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Regenerate) {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(codes) => {
-                        tf.clear_entry();
-                        tf.supersede_status_loads();
-                        let total = codes.codes.len() as u32;
-                        if let TwoFactorStatusView::Loaded(status) = &mut tf.status {
-                            status.remaining = total;
-                            status.total = total;
-                            status.generated_at = Some(chrono::Utc::now().to_rfc3339());
-                        }
-                        tf.saved_to_file = None;
-                        tf.panel = TwoFactorPanel::Codes {
-                            codes,
-                            regenerated: true,
-                        };
-                        self.backup_codes_notice = None;
-                    }
-                    Err(why) => return self.two_factor_failed(why),
-                }
+                return self.apply_two_factor_regeneration(res, g)
             }
 
-            TwoFactorSettingsMessage::AskDisable => {
-                if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.note = None;
-                tf.panel = TwoFactorPanel::Disable { backup: false };
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
-            }
+            TwoFactorSettingsMessage::AskDisable => return self.open_two_factor_disable(),
 
             TwoFactorSettingsMessage::ToggleDisableBackup => {
                 if let (TwoFactorPanel::Disable { backup }, false) = (&mut tf.panel, tf.busy) {
@@ -5014,63 +4823,355 @@ impl ConnectAccountPanel {
                 }
             }
 
-            TwoFactorSettingsMessage::ConfirmDisable => {
-                let TwoFactorPanel::Disable { backup } = tf.panel else {
-                    return iced::Task::none();
-                };
-                if tf.busy || !second_factor_code_complete(&tf.code.0, backup) {
-                    return iced::Task::none();
-                }
-                let op = tf.begin();
-                let code = zeroize::Zeroizing::new(tf.code.0.clone());
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        let code = if backup {
-                            SecondFactorCode::Backup(&code)
-                        } else {
-                            SecondFactorCode::App(&code)
-                        };
-                        client
-                            .disable_totp(code)
-                            .await
-                            .map_err(|e| CodeFailure::classify(&e))
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::Disabled(res, op)),
-                );
-            }
+            TwoFactorSettingsMessage::ConfirmDisable => return self.confirm_two_factor_disable(),
 
             TwoFactorSettingsMessage::Disabled(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Disable { .. }) {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(()) => {
-                        tf.clear_entry();
-                        tf.supersede_status_loads();
-                        tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
-                            enabled: false,
-                            remaining: 0,
-                            total: 0,
-                            generated_at: None,
-                        });
-                        tf.panel = TwoFactorPanel::Closed;
-                        tf.note = Some(TwoFactorNote::TurnedOff);
-                        self.backup_codes_notice = None;
-                    }
-                    Err(why) => return self.two_factor_failed(why),
-                }
+                return self.apply_two_factor_disabled(res, g)
             }
 
-            TwoFactorSettingsMessage::Cancel => {
-                // The codes panel has no Cancel: the codes are shown once, so
-                // only "I've saved them" closes it.
-                if tf.busy || matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.panel = TwoFactorPanel::Closed;
+            TwoFactorSettingsMessage::Cancel => return self.cancel_two_factor_settings(),
+        }
+        iced::Task::none()
+    }
+
+    fn open_two_factor_regeneration(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.note = None;
+        tf.panel = TwoFactorPanel::Regenerate;
+        return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
+        iced::Task::none()
+    }
+
+    fn open_two_factor_disable(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.note = None;
+        tf.panel = TwoFactorPanel::Disable { backup: false };
+        return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
+        iced::Task::none()
+    }
+
+    fn cancel_two_factor_settings(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        // The codes panel has no Cancel: the codes are shown once, so
+        // only "I've saved them" closes it.
+        if tf.busy || matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.panel = TwoFactorPanel::Closed;
+        iced::Task::none()
+    }
+
+    fn two_factor_settings_message(message: TwoFactorSettingsMessage) -> Message {
+        Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::TwoFactorSettings(message),
+        ))
+    }
+
+    fn apply_two_factor_status(
+        &mut self,
+        result: TwoFactorStatusResult,
+        seq: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if seq != tf.status_seq {
+            return iced::Task::none();
+        }
+        // A failed refresh keeps a status already known: replacing it
+        // would hide an open panel, including codes shown only once.
+        let known = matches!(tf.status, TwoFactorStatusView::Loaded(_));
+        match result {
+            TwoFactorStatusResult::Loaded(status) => {
+                tf.status = TwoFactorStatusView::Loaded(status);
             }
+            TwoFactorStatusResult::Unsupported => {
+                if !known {
+                    tf.status = TwoFactorStatusView::Unsupported;
+                }
+            }
+            TwoFactorStatusResult::Failed(error) => {
+                log::warn!(
+                    "[CONNECT] authenticator status unavailable: {}",
+                    error.title
+                );
+                if !known {
+                    tf.status = TwoFactorStatusView::Failed;
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn start_two_factor_setup(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        // Only offered once the status says it is off.
+        let off = matches!(&tf.status, TwoFactorStatusView::Loaded(s) if !s.enabled);
+        if tf.busy || !off || !matches!(tf.panel, TwoFactorPanel::Closed) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.note = None;
+        tf.panel = TwoFactorPanel::LoadingSetup;
+        let op = tf.begin();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.generate_totp().await.map_err(|e| (&e).into()) },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::SetupLoaded(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_setup(
+        &mut self,
+        res: Result<crate::services::coincube::TotpSetup, UserError>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::LoadingSetup) {
+            return iced::Task::none();
+        }
+        tf.busy = false;
+        match res {
+            Ok(setup) => {
+                let qr = qr_code::Data::new(setup.otp_auth_url.as_bytes()).ok();
+                tf.panel = TwoFactorPanel::Setup { setup, qr };
+                iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID)
+            }
+            Err(error) => {
+                tf.panel = TwoFactorPanel::Closed;
+                self.update_message(ConnectAccountMessage::Error(error))
+            }
+        }
+    }
+
+    fn confirm_two_factor_setup(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy
+            || !matches!(tf.panel, TwoFactorPanel::Setup { .. })
+            || !second_factor_code_complete(&tf.code.0, false)
+        {
+            return iced::Task::none();
+        }
+        let op = tf.begin();
+        let code = zeroize::Zeroizing::new(tf.code.0.clone());
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .enable_totp(&code)
+                    .await
+                    .map_err(|e| CodeFailure::classify(&e))
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::Enabled(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_enabled(
+        &mut self,
+        res: Result<crate::services::coincube::BackupCodes, CodeFailure>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Setup { .. }) {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(codes) => {
+                tf.clear_entry();
+                tf.supersede_status_loads();
+                let total = codes.codes.len() as u32;
+                tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
+                    enabled: true,
+                    remaining: total,
+                    total,
+                    generated_at: Some(chrono::Utc::now().to_rfc3339()),
+                });
+                tf.saved_to_file = None;
+                tf.panel = TwoFactorPanel::Codes {
+                    codes,
+                    regenerated: false,
+                };
+            }
+            Err(why) => return self.two_factor_failed(why),
+        }
+        iced::Task::none()
+    }
+
+    fn save_two_factor_backup_codes(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        let TwoFactorPanel::Codes { codes, .. } = &tf.panel else {
+            return iced::Task::none();
+        };
+        let email = self
+            .user
+            .as_ref()
+            .map(|u| u.email.clone())
+            .unwrap_or_default();
+        let contents = backup_codes_file(&email, codes);
+        let op = tf.op;
+        iced::Task::perform(
+            async move {
+                let Some(handle) = rfd::AsyncFileDialog::new()
+                    .set_title("Save backup codes")
+                    .set_file_name("coincube-connect-backup-codes.txt")
+                    .add_filter("Text", &["txt"])
+                    .save_file()
+                    .await
+                else {
+                    return Ok(false);
+                };
+                write_private_file(handle.path(), contents.as_bytes())
+                    .await
+                    .map(|()| true)
+                    .map_err(|e| e.to_string())
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::BackupCodesSaved(
+                    res, op,
+                ))
+            },
+        )
+    }
+
+    fn apply_two_factor_backup_code_save(
+        &mut self,
+        res: Result<bool, String>,
+        op: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        // Only for the set it saved: a later set is not in that file.
+        if op == tf.op && matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
+            match res {
+                Ok(true) => tf.saved_to_file = Some(Ok(())),
+                Ok(false) => {}
+                Err(e) => {
+                    log::warn!("[CONNECT] saving backup codes failed: {e}");
+                    tf.saved_to_file = Some(Err(e));
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn regenerate_two_factor_backup_codes(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy
+            || !matches!(tf.panel, TwoFactorPanel::Regenerate)
+            || !second_factor_code_complete(&tf.code.0, false)
+        {
+            return iced::Task::none();
+        }
+        let op = tf.begin();
+        let code = zeroize::Zeroizing::new(tf.code.0.clone());
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .regenerate_backup_codes(&code)
+                    .await
+                    .map_err(|e| CodeFailure::classify(&e))
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::Regenerated(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_regeneration(
+        &mut self,
+        res: Result<crate::services::coincube::BackupCodes, CodeFailure>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Regenerate) {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(codes) => {
+                tf.clear_entry();
+                tf.supersede_status_loads();
+                let total = codes.codes.len() as u32;
+                if let TwoFactorStatusView::Loaded(status) = &mut tf.status {
+                    status.remaining = total;
+                    status.total = total;
+                    status.generated_at = Some(chrono::Utc::now().to_rfc3339());
+                }
+                tf.saved_to_file = None;
+                tf.panel = TwoFactorPanel::Codes {
+                    codes,
+                    regenerated: true,
+                };
+                self.backup_codes_notice = None;
+            }
+            Err(why) => return self.two_factor_failed(why),
+        }
+        iced::Task::none()
+    }
+
+    fn confirm_two_factor_disable(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        let TwoFactorPanel::Disable { backup } = tf.panel else {
+            return iced::Task::none();
+        };
+        if tf.busy || !second_factor_code_complete(&tf.code.0, backup) {
+            return iced::Task::none();
+        }
+        let op = tf.begin();
+        let code = zeroize::Zeroizing::new(tf.code.0.clone());
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                let code = if backup {
+                    SecondFactorCode::Backup(&code)
+                } else {
+                    SecondFactorCode::App(&code)
+                };
+                client
+                    .disable_totp(code)
+                    .await
+                    .map_err(|e| CodeFailure::classify(&e))
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::Disabled(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_disabled(
+        &mut self,
+        res: Result<(), CodeFailure>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Disable { .. }) {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(()) => {
+                tf.clear_entry();
+                tf.supersede_status_loads();
+                tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
+                    enabled: false,
+                    remaining: 0,
+                    total: 0,
+                    generated_at: None,
+                });
+                tf.panel = TwoFactorPanel::Closed;
+                tf.note = Some(TwoFactorNote::TurnedOff);
+                self.backup_codes_notice = None;
+            }
+            Err(why) => return self.two_factor_failed(why),
         }
         iced::Task::none()
     }
