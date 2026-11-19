@@ -446,176 +446,283 @@ impl MavapayState {
                 None => log::warn!("Unable to update BTC amount, BTC price is unknown"),
             },
             (_, MavapayMessage::SendQuote(request)) => {
-                let coincube_client = coincube_client.clone();
+                return Some(Self::send_quote(request, coincube_client));
+            }
+
+            (MavapayFlowStep::BuyInputFrom { .. }, msg) => {
+                return self.update_buy_input(msg, coincube_client);
+            }
+            (MavapayFlowStep::SellInputForm { .. }, msg) => {
+                return self.update_sell_input(msg, coincube_client);
+            }
+            (MavapayFlowStep::Checkout { .. }, msg) => {
+                return self.update_checkout(msg, coincube_client);
+            }
+            (MavapayFlowStep::History { .. }, msg) => {
+                return self.update_history(msg, coincube_client);
+            }
+            (MavapayFlowStep::OrderDetail { order, loading, .. }, msg) => match msg {
+                MavapayMessage::OrderReceived(received_order) => {
+                    *order = Some(received_order);
+                    *loading = false;
+                }
+                msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
+            },
+        }
+
+        None
+    }
+    fn send_quote(
+        request: GetQuoteRequest,
+        coincube_client: &CoincubeClient,
+    ) -> iced::Task<view::Message> {
+        let coincube_client = coincube_client.clone();
+
+        let task = iced::Task::perform(
+            async move {
+                // Step 1: Create quote with Mavapay
+                let quote = match MavapayClient(&coincube_client).create_quote(request).await {
+                    MavapayApiResult::Success { data } => data,
+                    MavapayApiResult::Error { message } => return Err(message),
+                };
+
+                // Step 2: Save quote to coincube-api (fallible)
+                match coincube_client.save_quote(&quote.id, &quote).await {
+                    Ok(_) => {
+                        log::trace!("[COINCUBE] Successfully saved quote: {}", quote.id)
+                    }
+                    Err(err) => {
+                        log::error!("[COINCUBE] Unable to save quote: {:?}", err)
+                    }
+                }
+
+                Ok(quote)
+            },
+            move |result| match result {
+                Ok(quote) => MavapayMessage::QuoteCreated(quote).into(),
+                Err(e) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                    "Unable to create quote",
+                    e,
+                )),
+            },
+        );
+
+        task
+    }
+
+    fn update_buy_input(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::BuyInputFrom {
+            getting_invoice,
+            ln_invoice,
+            sending_quote,
+        } = self.steps.last_mut()?
+        else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::GenerateLightningInvoice => {
+                *getting_invoice = true;
+
+                let spark = self.spark.clone();
+                let sat_amount = self.sat_amount;
 
                 let task = iced::Task::perform(
-                    async move {
-                        // Step 1: Create quote with Mavapay
-                        let quote =
-                            match MavapayClient(&coincube_client).create_quote(request).await {
-                                MavapayApiResult::Success { data } => data,
-                                MavapayApiResult::Error { message } => return Err(message),
-                            };
-
-                        // Step 2: Save quote to coincube-api (fallible)
-                        match coincube_client.save_quote(&quote.id, &quote).await {
-                            Ok(_) => {
-                                log::trace!("[COINCUBE] Successfully saved quote: {}", quote.id)
-                            }
-                            Err(err) => {
-                                log::error!("[COINCUBE] Unable to save quote: {:?}", err)
-                            }
+                    async move { create_buy_invoice(&spark, sat_amount).await },
+                    |res| match res {
+                        Ok(ln_invoice) => {
+                            MavapayMessage::LightningInvoiceReceived(ln_invoice).into()
                         }
-
-                        Ok(quote)
-                    },
-                    move |result| match result {
-                        Ok(quote) => MavapayMessage::QuoteCreated(quote).into(),
                         Err(e) => view::Message::BuySell(view::BuySellMessage::SessionError(
-                            "Unable to create quote",
-                            e,
+                            "Unable to acquire new invoice",
+                            e.to_string(),
                         )),
                     },
-                );
+                )
+                .chain(iced::Task::done(MavapayMessage::CreateQuote.into()));
 
                 return Some(task);
             }
+            MavapayMessage::LightningInvoiceReceived(invoice) => {
+                *getting_invoice = false;
+                *ln_invoice = Some(invoice);
+            }
+            MavapayMessage::WriteInvoiceToClipboard => {
+                return ln_invoice.as_ref().map(|invoice| {
+                    iced::Task::batch([
+                        iced::Task::done(view::Message::Clipboard(invoice.clone())),
+                        iced::Task::done(view::Message::ShowError(
+                            "Invoice Copied to Clipboard".to_string(),
+                        )),
+                    ])
+                })
+            }
+            MavapayMessage::CreateQuote => {
+                let Some(invoice) = ln_invoice else {
+                    unreachable!()
+                };
 
-            // state specific updates
-            (
-                MavapayFlowStep::BuyInputFrom {
-                    getting_invoice,
-                    ln_invoice,
-                    sending_quote,
-                },
-                msg,
-            ) => {
-                match msg {
-                    MavapayMessage::GenerateLightningInvoice => {
-                        *getting_invoice = true;
+                let beneficiary = Beneficiary::Lightning {
+                    ln_invoice: invoice.clone(),
+                };
+                let local_currency = match self.country.code {
+                    "KE" => MavapayUnitCurrency::KenyanShillingCent,
+                    "NG" => MavapayUnitCurrency::NigerianNairaKobo,
+                    "ZA" => MavapayUnitCurrency::SouthAfricanRandCent,
+                    iso => unreachable!("Country ({}) is unsupported by Mavapay", iso),
+                };
 
-                        let spark = self.spark.clone();
-                        let sat_amount = self.sat_amount;
+                let request = GetQuoteRequest {
+                    amount: self.sat_amount,
+                    source_currency: local_currency,
+                    target_currency: MavapayUnitCurrency::BitcoinSatoshi,
+                    // the currency denomination of the `amount` field
+                    payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
+                    speed: OnchainTransferSpeed::Fast,
+                    autopayout: true,
+                    customer_internal_fee: None,
+                    payment_method: MavapayPaymentMethod::BankTransfer,
+                    beneficiary_format: beneficiary.format(),
+                    beneficiary,
+                };
 
-                        let task = iced::Task::perform(
-                            async move { create_buy_invoice(&spark, sat_amount).await },
-                            |res| match res {
-                                Ok(ln_invoice) => {
-                                    MavapayMessage::LightningInvoiceReceived(ln_invoice).into()
-                                }
-                                Err(e) => {
-                                    view::Message::BuySell(view::BuySellMessage::SessionError(
-                                        "Unable to acquire new invoice",
-                                        e.to_string(),
-                                    ))
-                                }
-                            },
-                        )
-                        .chain(iced::Task::done(MavapayMessage::CreateQuote.into()));
+                *sending_quote = true;
+                return Some(iced::Task::done(MavapayMessage::SendQuote(request).into()));
+            }
+            MavapayMessage::QuoteCreated(quote) => {
+                // Set up SSE stream for transaction status updates
+                if let Some(order_id) = quote.order_id.clone() {
+                    *sending_quote = false;
 
-                        return Some(task);
-                    }
-                    MavapayMessage::LightningInvoiceReceived(invoice) => {
-                        *getting_invoice = false;
-                        *ln_invoice = Some(invoice);
-                    }
-                    MavapayMessage::WriteInvoiceToClipboard => {
-                        return ln_invoice.as_ref().map(|invoice| {
-                            iced::Task::batch([
-                                iced::Task::done(view::Message::Clipboard(invoice.clone())),
-                                iced::Task::done(view::Message::ShowError(
-                                    "Invoice Copied to Clipboard".to_string(),
-                                )),
-                            ])
-                        })
-                    }
-                    MavapayMessage::CreateQuote => {
-                        let Some(invoice) = ln_invoice else {
-                            unreachable!()
-                        };
-
-                        let beneficiary = Beneficiary::Lightning {
-                            ln_invoice: invoice.clone(),
-                        };
-                        let local_currency = match self.country.code {
-                            "KE" => MavapayUnitCurrency::KenyanShillingCent,
-                            "NG" => MavapayUnitCurrency::NigerianNairaKobo,
-                            "ZA" => MavapayUnitCurrency::SouthAfricanRandCent,
-                            iso => unreachable!("Country ({}) is unsupported by Mavapay", iso),
-                        };
-
-                        let request = GetQuoteRequest {
-                            amount: self.sat_amount,
-                            source_currency: local_currency,
-                            target_currency: MavapayUnitCurrency::BitcoinSatoshi,
-                            // the currency denomination of the `amount` field
-                            payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
-                            speed: OnchainTransferSpeed::Fast,
-                            autopayout: true,
-                            customer_internal_fee: None,
-                            payment_method: MavapayPaymentMethod::BankTransfer,
-                            beneficiary_format: beneficiary.format(),
-                            beneficiary,
-                        };
-
-                        *sending_quote = true;
-                        return Some(iced::Task::done(MavapayMessage::SendQuote(request).into()));
-                    }
-                    MavapayMessage::QuoteCreated(quote) => {
-                        // Set up SSE stream for transaction status updates
-                        if let Some(order_id) = quote.order_id.clone() {
-                            *sending_quote = false;
-
-                            // proceed to checkout
-                            self.steps.push(MavapayFlowStep::Checkout {
-                                quote,
-                                invoice_qr_code_data: None,
-                                fulfilled_order: None,
-                                stream_order_id: Some(order_id),
-                                spark_balance: None,
-                                sell: SellPayment::default(),
-                            });
-                        } else {
-                            return Some(iced::Task::done(view::Message::BuySell(
-                                view::BuySellMessage::SessionError(
-                                    "Unable to process payment",
-                                    "Mavapay Quote created without `order-id`".to_string(),
-                                ),
-                            )));
-                        }
-                    }
-
-                    msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
+                    // proceed to checkout
+                    self.steps.push(MavapayFlowStep::Checkout {
+                        quote,
+                        invoice_qr_code_data: None,
+                        fulfilled_order: None,
+                        stream_order_id: Some(order_id),
+                        spark_balance: None,
+                        sell: SellPayment::default(),
+                    });
+                } else {
+                    return Some(iced::Task::done(view::Message::BuySell(
+                        view::BuySellMessage::SessionError(
+                            "Unable to process payment",
+                            "Mavapay Quote created without `order-id`".to_string(),
+                        ),
+                    )));
                 }
             }
 
+            msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
+        }
+        None
+    }
+
+    fn edit_sell_beneficiary(
+        field: &'static str,
+        data: String,
+        beneficiary: &mut Beneficiary,
+        banks: &Option<MavapayBanks>,
+    ) {
+        match (field, beneficiary) {
+            // NG
             (
-                MavapayFlowStep::SellInputForm {
-                    sending_quote,
-                    beneficiary,
-                    banks,
-                    spark_balance,
+                "NGN.bank_account_number",
+                Beneficiary::NGN {
+                    bank_account_number,
+                    bank_account_name,
+                    ..
                 },
-                msg,
-            ) => match msg {
-                MavapayMessage::GetBanks => {
-                    let code = self.country.code;
+            ) => {
+                *bank_account_number = data;
+                *bank_account_name = None;
+            }
+            (
+                "NGN.bank_code",
+                Beneficiary::NGN {
+                    bank_code,
+                    bank_name,
+                    bank_account_name,
+                    ..
+                },
+            ) => {
+                if let Some(MavapayBanks::Nigerian(ngn_banks)) = banks {
+                    if let Some(bank) = ngn_banks.iter().find(|b| b.nip_bank_code == data) {
+                        *bank_code = bank.nip_bank_code.clone();
+                        *bank_name = bank.bank_name.clone();
 
-                    if code == "KE" {
-                        // Kenyan customers use mobile money, not bank transfers
-                        return None;
+                        *bank_account_name = None;
                     }
+                }
+            }
+            // ZA
+            (
+                "ZAR.bank_account_number",
+                Beneficiary::ZAR {
+                    bank_account_number,
+                    ..
+                },
+            ) => *bank_account_number = data,
+            ("ZAR.name", Beneficiary::ZAR { name, .. }) => *name = data,
+            ("ZAR.bank_name", Beneficiary::ZAR { bank_name, .. }) => *bank_name = data,
+            // KE
+            (
+                "KES.account_name",
+                Beneficiary::KES(KenyanBeneficiary::PayToPhone { account_name, .. }),
+            ) => *account_name = data,
+            (
+                "KES.phone_number",
+                Beneficiary::KES(KenyanBeneficiary::PayToPhone { phone_number, .. }),
+            ) => *phone_number = data,
 
+            (field, ..) => {
+                log::warn!("Field Edit: `{}` ignored for Beneficiary", field)
+            }
+        }
+    }
+
+    fn update_sell_beneficiary(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::SellInputForm {
+            beneficiary, banks, ..
+        } = self.steps.last_mut()?
+        else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::BeneficiaryFieldUpdate(field, data) => {
+                Self::edit_sell_beneficiary(field, data, beneficiary, banks);
+            }
+            MavapayMessage::VerifyNgnBankDetails => {
+                if let Beneficiary::NGN {
+                    bank_account_number,
+                    bank_code,
+                    ..
+                } = beneficiary
+                {
                     let client = coincube_client.clone();
+                    let ban = bank_account_number.clone();
+                    let bac = bank_code.clone();
+
                     let task = iced::Task::perform(
-                        async move { MavapayClient(&client).get_banks(code).await },
-                        |result| match result {
+                        async move {
+                            MavapayClient(&client)
+                                .ngn_customer_inquiry(&ban, &bac)
+                                .await
+                        },
+                        |res| match res {
                             MavapayApiResult::Success { data } => {
-                                MavapayMessage::BanksReceived(data).into()
+                                MavapayMessage::VerifiedNgnBankDetails(data).into()
                             }
                             MavapayApiResult::Error { message } => {
                                 view::Message::BuySell(view::BuySellMessage::SessionError(
-                                    "Unable to fetch supported banks for your country",
+                                    "Unable to verify Bank Details",
                                     message,
                                 ))
                             }
@@ -624,388 +731,216 @@ impl MavapayState {
 
                     return Some(task);
                 }
-                MavapayMessage::BanksReceived(mut b) => {
-                    if cfg!(debug_assertions) {
-                        match b {
-                            MavapayBanks::Nigerian(ref mut banks) => {
-                                banks.sort_by(|a, b| a.nip_bank_code.cmp(&b.nip_bank_code))
-                            }
-                            MavapayBanks::SouthAfrican(ref mut banks) => banks.sort(),
+            }
+            MavapayMessage::VerifiedNgnBankDetails(details) => {
+                if let Beneficiary::NGN {
+                    bank_account_name, ..
+                } = beneficiary
+                {
+                    *bank_account_name = Some(details.account_name);
+                }
+            }
+
+            _ => {}
+        }
+        None
+    }
+
+    fn sort_debug_banks(banks: &mut MavapayBanks) {
+        if cfg!(debug_assertions) {
+            match banks {
+                MavapayBanks::Nigerian(banks) => {
+                    banks.sort_by(|a, b| a.nip_bank_code.cmp(&b.nip_bank_code))
+                }
+                MavapayBanks::SouthAfrican(banks) => banks.sort(),
+            }
+        }
+    }
+
+    fn update_sell_banks(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::SellInputForm { banks, .. } = self.steps.last_mut()? else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::GetBanks => {
+                let code = self.country.code;
+
+                if code == "KE" {
+                    // Kenyan customers use mobile money, not bank transfers
+                    return None;
+                }
+
+                let client = coincube_client.clone();
+                let task = iced::Task::perform(
+                    async move { MavapayClient(&client).get_banks(code).await },
+                    |result| match result {
+                        MavapayApiResult::Success { data } => {
+                            MavapayMessage::BanksReceived(data).into()
                         }
-                    }
-
-                    let b = banks.insert(b);
-
-                    if match b {
-                        MavapayBanks::Nigerian(banks) => banks.is_empty(),
-                        MavapayBanks::SouthAfrican(banks) => banks.is_empty(),
-                    } {
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::SessionError(
-                                "Can't proceed with flow",
-                                "Unable to fetch banks from API".to_string(),
-                            ),
-                        )));
-                    }
-                }
-                MavapayMessage::GetSparkBalance => {
-                    let spark = self.spark.clone();
-                    let task = iced::Task::perform(
-                        async move { spark.get_info().await.map(|info| info.balance_sats) },
-                        |result| result,
-                    )
-                    .then(|result| match result {
-                        Ok(balance) => {
-                            iced::Task::done(MavapayMessage::ReceivedSparkBalance(balance).into())
+                        MavapayApiResult::Error { message } => {
+                            view::Message::BuySell(view::BuySellMessage::SessionError(
+                                "Unable to fetch supported banks for your country",
+                                message,
+                            ))
                         }
-                        // Without a balance the checkout simply offers the
-                        // deposit QR, which works from any wallet, so this
-                        // isn't worth interrupting the flow over.
-                        Err(e) => {
-                            log::warn!("[MAVAPAY] Unable to fetch Spark balance: {}", e);
-                            iced::Task::none()
-                        }
-                    });
+                    },
+                );
 
-                    return Some(task);
-                }
-                MavapayMessage::ReceivedSparkBalance(sats) => *spark_balance = Some(sats),
+                return Some(task);
+            }
+            MavapayMessage::BanksReceived(mut b) => {
+                Self::sort_debug_banks(&mut b);
 
-                MavapayMessage::BeneficiaryFieldUpdate(field, data) => match (field, beneficiary) {
-                    // NG
-                    (
-                        "NGN.bank_account_number",
-                        Beneficiary::NGN {
-                            bank_account_number,
-                            bank_account_name,
-                            ..
-                        },
-                    ) => {
-                        *bank_account_number = data;
-                        *bank_account_name = None;
-                    }
-                    (
-                        "NGN.bank_code",
-                        Beneficiary::NGN {
-                            bank_code,
-                            bank_name,
-                            bank_account_name,
-                            ..
-                        },
-                    ) => {
-                        if let Some(MavapayBanks::Nigerian(ngn_banks)) = banks {
-                            if let Some(bank) = ngn_banks.iter().find(|b| b.nip_bank_code == data) {
-                                *bank_code = bank.nip_bank_code.clone();
-                                *bank_name = bank.bank_name.clone();
+                let b = banks.insert(b);
 
-                                *bank_account_name = None;
-                            }
-                        }
-                    }
-                    // ZA
-                    (
-                        "ZAR.bank_account_number",
-                        Beneficiary::ZAR {
-                            bank_account_number,
-                            ..
-                        },
-                    ) => *bank_account_number = data,
-                    ("ZAR.name", Beneficiary::ZAR { name, .. }) => *name = data,
-                    ("ZAR.bank_name", Beneficiary::ZAR { bank_name, .. }) => *bank_name = data,
-                    // KE
-                    (
-                        "KES.account_name",
-                        Beneficiary::KES(KenyanBeneficiary::PayToPhone { account_name, .. }),
-                    ) => *account_name = data,
-                    (
-                        "KES.phone_number",
-                        Beneficiary::KES(KenyanBeneficiary::PayToPhone { phone_number, .. }),
-                    ) => *phone_number = data,
-
-                    (field, ..) => {
-                        log::warn!("Field Edit: `{}` ignored for Beneficiary", field)
-                    }
-                },
-                MavapayMessage::VerifyNgnBankDetails => {
-                    if let Beneficiary::NGN {
-                        bank_account_number,
-                        bank_code,
-                        ..
-                    } = beneficiary
-                    {
-                        let client = coincube_client.clone();
-                        let ban = bank_account_number.clone();
-                        let bac = bank_code.clone();
-
-                        let task = iced::Task::perform(
-                            async move {
-                                MavapayClient(&client)
-                                    .ngn_customer_inquiry(&ban, &bac)
-                                    .await
-                            },
-                            |res| match res {
-                                MavapayApiResult::Success { data } => {
-                                    MavapayMessage::VerifiedNgnBankDetails(data).into()
-                                }
-                                MavapayApiResult::Error { message } => {
-                                    view::Message::BuySell(view::BuySellMessage::SessionError(
-                                        "Unable to verify Bank Details",
-                                        message,
-                                    ))
-                                }
-                            },
-                        );
-
-                        return Some(task);
-                    }
-                }
-                MavapayMessage::VerifiedNgnBankDetails(details) => {
-                    if let Beneficiary::NGN {
-                        bank_account_name, ..
-                    } = beneficiary
-                    {
-                        *bank_account_name = Some(details.account_name);
-                    }
-                }
-
-                MavapayMessage::CreateQuote => {
-                    *sending_quote = true;
-
-                    let local_currency = match self.country.code {
-                        "KE" => MavapayUnitCurrency::KenyanShillingCent,
-                        "NG" => MavapayUnitCurrency::NigerianNairaKobo,
-                        "ZA" => MavapayUnitCurrency::SouthAfricanRandCent,
-                        iso => unreachable!("Country ({}) is unsupported by Mavapay", iso),
-                    };
-
-                    let request = GetQuoteRequest {
-                        amount: self.sat_amount,
-                        source_currency: MavapayUnitCurrency::BitcoinSatoshi,
-                        target_currency: local_currency,
-                        // the currency denomination of the `amount` field
-                        payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
-                        speed: OnchainTransferSpeed::Fast,
-                        autopayout: true,
-                        customer_internal_fee: None,
-                        payment_method: MavapayPaymentMethod::Lightning,
-                        beneficiary_format: beneficiary.format(),
-                        beneficiary: beneficiary.clone(),
-                    };
-
-                    return Some(iced::Task::done(MavapayMessage::SendQuote(request).into()));
-                }
-                MavapayMessage::QuoteCreated(quote) => {
-                    if let Some(order_id) = quote.order_id.clone() {
-                        *sending_quote = false;
-
-                        let spark_balance = *spark_balance;
-                        let invoice_qr_code_data =
-                            iced::widget::qr_code::Data::new(quote.invoice.as_bytes()).ok();
-
-                        // proceed to checkout
-                        self.steps.push(MavapayFlowStep::Checkout {
-                            quote,
-                            invoice_qr_code_data,
-                            fulfilled_order: None,
-                            stream_order_id: Some(order_id),
-                            spark_balance,
-                            sell: SellPayment::default(),
-                        });
-                    } else {
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::SessionError(
-                                "Unable to process payment",
-                                "Mavapay Quote created without `order-id`".to_string(),
-                            ),
-                        )));
-                    }
-                }
-                _ => {}
-            },
-
-            (
-                MavapayFlowStep::Checkout {
-                    quote,
-                    fulfilled_order,
-                    stream_order_id,
-                    sell,
-                    ..
-                },
-                msg,
-            ) => match msg {
-                // An answer for another order's payment (one this checkout
-                // replaced, or a panel rebuilt mid-send) is not this order's.
-                msg if sell_answer_quote(&msg).is_some_and(|id| id != quote.id) => {
-                    log::warn!(
-                        "[MAVAPAY] Ignoring a sell payment answer for another order: {:?}",
-                        msg
-                    );
-                }
-                MavapayMessage::FulfillSellInvoice => {
-                    // Only from rest: a click while a payment is with the
-                    // bridge, or after one whose outcome is unknown, must not
-                    // start another.
-                    if matches!(self.buy_or_sell, panel::BuyOrSell::Sell)
-                        && sell.fulfilment == SellFulfilment::Idle
-                    {
-                        sell.fulfilment = SellFulfilment::Preparing;
-                        return Some(prepare_sell_task(self.spark.clone(), quote));
-                    }
-                }
-                MavapayMessage::SellInvoicePrepared { prepare, .. } => {
-                    if sell.fulfilment != SellFulfilment::Preparing {
-                        log::warn!(
-                            "[MAVAPAY] Ignoring a sell payment preview nobody is waiting for"
-                        );
-                        return None;
-                    }
-                    let guard = retry_guard_for(&prepare);
-                    // A key is only ever held between a dispatch whose outcome
-                    // is unknown and its settlement, so holding one means this
-                    // repeats that attempt. A repeat is only safe while the key
-                    // guards it; if this preview would have the bridge drop the
-                    // key (a token leg), stop and leave the user to check.
-                    if sell.idempotency_key.is_some() && guard != RetryGuard::IdempotencyKey {
-                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
-                            checking: false,
-                            outcome: Some(ReconcileOutcome::Inconclusive(
-                                "this payment can no longer be repeated safely".to_string(),
-                            )),
-                            guard: RetryGuard::None,
-                        };
-                        return None;
-                    }
-                    // Reused, not re-minted, when this repeats an attempt
-                    // whose outcome was unknown: the key is what stops the
-                    // SDK paying the invoice twice.
-                    let key = sell
-                        .idempotency_key
-                        .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
-                        .clone();
-                    // Recorded before dispatch: if no answer comes, this is
-                    // all the state check has to go on.
-                    sell.pending = Some(PendingSend {
-                        request_id: None,
-                        dispatched_at: chrono::Utc::now().timestamp(),
-                        amount_sat: prepare.amount_sat,
-                        token_amount: None,
-                        // A state check may only settle the order on a
-                        // payment of *this* invoice.
-                        invoice: Some(quote.invoice.clone()),
-                        guard,
-                    });
-                    sell.fulfilment = SellFulfilment::Sending;
-
-                    let spark = self.spark.clone();
-                    let handle = prepare.handle;
-                    let quote_id = quote.id.clone();
-                    return Some(iced::Task::perform(
-                        async move { send_sell_payment(&spark, quote_id, handle, key).await },
-                        view::Message::from,
-                    ));
-                }
-                MavapayMessage::SellPrepareFailed { error: err, .. } => {
-                    if sell.fulfilment != SellFulfilment::Preparing {
-                        return None;
-                    }
-                    // A preview failing says nothing about an earlier attempt
-                    // it may be repeating. If one was dispatched, its outcome
-                    // is still unknown: keep the key and the intent, and
-                    // offer the check again rather than the manual invoice.
-                    if let Some(pending) = sell.pending.as_ref() {
-                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
-                            checking: false,
-                            outcome: Some(ReconcileOutcome::Inconclusive(format!(
-                                "the repeat couldn't be prepared: {err}"
-                            ))),
-                            guard: pending.guard,
-                        };
-                        return None;
-                    }
-                    // Nothing was ever sent, so paying is offered again.
-                    sell.fulfilment = SellFulfilment::Idle;
+                if match b {
+                    MavapayBanks::Nigerian(banks) => banks.is_empty(),
+                    MavapayBanks::SouthAfrican(banks) => banks.is_empty(),
+                } {
                     return Some(iced::Task::done(view::Message::BuySell(
-                        view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
+                        view::BuySellMessage::SessionError(
+                            "Can't proceed with flow",
+                            "Unable to fetch banks from API".to_string(),
+                        ),
                     )));
                 }
-                MavapayMessage::SellInvoiceFulfilled { payment, .. } => {
-                    // Only the send this checkout is waiting for can settle it.
-                    if sell.fulfilment != SellFulfilment::Sending {
-                        log::warn!(
-                            "[MAVAPAY] Ignoring a sell payment result nobody is waiting for"
-                        );
-                        return None;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn update_sell_input(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::SellInputForm {
+            sending_quote,
+            beneficiary,
+            spark_balance,
+            ..
+        } = self.steps.last_mut()?
+        else {
+            return None;
+        };
+        match msg {
+            msg @ (MavapayMessage::GetBanks | MavapayMessage::BanksReceived(..)) => {
+                return self.update_sell_banks(msg, coincube_client)
+            }
+            MavapayMessage::GetSparkBalance => {
+                let spark = self.spark.clone();
+                let task = iced::Task::perform(
+                    async move { spark.get_info().await.map(|info| info.balance_sats) },
+                    |result| result,
+                )
+                .then(|result| match result {
+                    Ok(balance) => {
+                        iced::Task::done(MavapayMessage::ReceivedSparkBalance(balance).into())
                     }
-                    // Accepted is not paid: a pending payment may still fail.
-                    // Keep the key and the intent and check its state until
-                    // it settles one way or the other.
-                    if !payment.is_completed() {
-                        log::info!(
-                            "[MAVAPAY] Sell payment accepted but not settled ({:?})",
-                            payment.status
-                        );
-                        let guard = sell
-                            .pending
-                            .as_ref()
-                            .map(|p| p.guard)
-                            .unwrap_or(RetryGuard::None);
-                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
-                            checking: true,
-                            outcome: None,
-                            guard,
-                        };
-                        return Some(reconcile_sell_task(
-                            self.spark.clone(),
-                            quote.id.clone(),
-                            sell.pending.clone(),
-                        ));
+                    // Without a balance the checkout simply offers the
+                    // deposit QR, which works from any wallet, so this
+                    // isn't worth interrupting the flow over.
+                    Err(e) => {
+                        log::warn!("[MAVAPAY] Unable to fetch Spark balance: {}", e);
+                        iced::Task::none()
                     }
-                    sell.fulfilment = SellFulfilment::Paid;
-                    sell.idempotency_key = None;
-                    sell.pending = None;
-                    // Generic success toasts stay mounted when privacy changes.
-                    // Keep this asynchronous notification amount-free.
-                    return Some(iced::Task::done(view::Message::ShowSuccess(
-                        "Invoice paid from your Spark wallet".to_owned(),
-                    )));
-                }
-                MavapayMessage::SellSendFailed { error: err, .. } => {
-                    // The bridge answered "no": nothing was paid, so the
-                    // ordinary retry applies, under a fresh key as the Send
-                    // panel does after a definite rejection.
-                    if sell.fulfilment == SellFulfilment::Sending {
-                        sell.fulfilment = SellFulfilment::Idle;
-                        sell.idempotency_key = None;
-                        sell.pending = None;
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
-                        )));
-                    }
-                }
-                MavapayMessage::SellInvoiceOutcomeUnknown {
-                    request_id,
-                    message,
-                    ..
-                } => {
-                    if sell.fulfilment != SellFulfilment::Sending {
-                        log::warn!(
-                            "[MAVAPAY] Ignoring a sell payment result nobody is waiting for"
-                        );
-                        return None;
-                    }
-                    log::warn!("[MAVAPAY] Sell payment outcome unknown: {}", message);
-                    // Keep the key and the intent; add the request id so the
-                    // bridge's late answer can still be claimed.
-                    let pending = sell.pending.get_or_insert_with(|| PendingSend {
-                        request_id: None,
-                        dispatched_at: chrono::Utc::now().timestamp(),
-                        amount_sat: 0,
-                        token_amount: None,
-                        invoice: None,
-                        guard: RetryGuard::None,
+                });
+
+                return Some(task);
+            }
+            MavapayMessage::ReceivedSparkBalance(sats) => *spark_balance = Some(sats),
+
+            msg @ (MavapayMessage::BeneficiaryFieldUpdate(..)
+            | MavapayMessage::VerifyNgnBankDetails
+            | MavapayMessage::VerifiedNgnBankDetails(..)) => {
+                return self.update_sell_beneficiary(msg, coincube_client)
+            }
+            MavapayMessage::CreateQuote => {
+                *sending_quote = true;
+
+                let local_currency = match self.country.code {
+                    "KE" => MavapayUnitCurrency::KenyanShillingCent,
+                    "NG" => MavapayUnitCurrency::NigerianNairaKobo,
+                    "ZA" => MavapayUnitCurrency::SouthAfricanRandCent,
+                    iso => unreachable!("Country ({}) is unsupported by Mavapay", iso),
+                };
+
+                let request = GetQuoteRequest {
+                    amount: self.sat_amount,
+                    source_currency: MavapayUnitCurrency::BitcoinSatoshi,
+                    target_currency: local_currency,
+                    // the currency denomination of the `amount` field
+                    payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
+                    speed: OnchainTransferSpeed::Fast,
+                    autopayout: true,
+                    customer_internal_fee: None,
+                    payment_method: MavapayPaymentMethod::Lightning,
+                    beneficiary_format: beneficiary.format(),
+                    beneficiary: beneficiary.clone(),
+                };
+
+                return Some(iced::Task::done(MavapayMessage::SendQuote(request).into()));
+            }
+            MavapayMessage::QuoteCreated(quote) => {
+                if let Some(order_id) = quote.order_id.clone() {
+                    *sending_quote = false;
+
+                    let spark_balance = *spark_balance;
+                    let invoice_qr_code_data =
+                        iced::widget::qr_code::Data::new(quote.invoice.as_bytes()).ok();
+
+                    // proceed to checkout
+                    self.steps.push(MavapayFlowStep::Checkout {
+                        quote,
+                        invoice_qr_code_data,
+                        fulfilled_order: None,
+                        stream_order_id: Some(order_id),
+                        spark_balance,
+                        sell: SellPayment::default(),
                     });
-                    pending.request_id = Some(request_id);
-                    let guard = pending.guard;
+                } else {
+                    return Some(iced::Task::done(view::Message::BuySell(
+                        view::BuySellMessage::SessionError(
+                            "Unable to process payment",
+                            "Mavapay Quote created without `order-id`".to_string(),
+                        ),
+                    )));
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn update_sell_fulfilled(&mut self, msg: MavapayMessage) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::Checkout { quote, sell, .. } = self.steps.last_mut()? else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::SellInvoiceFulfilled { payment, .. } => {
+                // Only the send this checkout is waiting for can settle it.
+                if sell.fulfilment != SellFulfilment::Sending {
+                    log::warn!("[MAVAPAY] Ignoring a sell payment result nobody is waiting for");
+                    return None;
+                }
+                // Accepted is not paid: a pending payment may still fail.
+                // Keep the key and the intent and check its state until
+                // it settles one way or the other.
+                if !payment.is_completed() {
+                    log::info!(
+                        "[MAVAPAY] Sell payment accepted but not settled ({:?})",
+                        payment.status
+                    );
+                    let guard = sell
+                        .pending
+                        .as_ref()
+                        .map(|p| p.guard)
+                        .unwrap_or(RetryGuard::None);
                     sell.fulfilment = SellFulfilment::OutcomeUnknown {
                         checking: true,
                         outcome: None,
@@ -1017,319 +952,540 @@ impl MavapayState {
                         sell.pending.clone(),
                     ));
                 }
-                MavapayMessage::CheckSellPayment => {
-                    if let SellFulfilment::OutcomeUnknown {
+                sell.fulfilment = SellFulfilment::Paid;
+                sell.idempotency_key = None;
+                sell.pending = None;
+                // Generic success toasts stay mounted when privacy changes.
+                // Keep this asynchronous notification amount-free.
+                return Some(iced::Task::done(view::Message::ShowSuccess(
+                    "Invoice paid from your Spark wallet".to_owned(),
+                )));
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn update_sell_send(&mut self, msg: MavapayMessage) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::Checkout { quote, sell, .. } = self.steps.last_mut()? else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::FulfillSellInvoice => {
+                // Only from rest: a click while a payment is with the
+                // bridge, or after one whose outcome is unknown, must not
+                // start another.
+                if matches!(self.buy_or_sell, panel::BuyOrSell::Sell)
+                    && sell.fulfilment == SellFulfilment::Idle
+                {
+                    sell.fulfilment = SellFulfilment::Preparing;
+                    return Some(prepare_sell_task(self.spark.clone(), quote));
+                }
+            }
+            MavapayMessage::SellInvoicePrepared { prepare, .. } => {
+                if sell.fulfilment != SellFulfilment::Preparing {
+                    log::warn!("[MAVAPAY] Ignoring a sell payment preview nobody is waiting for");
+                    return None;
+                }
+                let guard = retry_guard_for(&prepare);
+                // A key is only ever held between a dispatch whose outcome
+                // is unknown and its settlement, so holding one means this
+                // repeats that attempt. A repeat is only safe while the key
+                // guards it; if this preview would have the bridge drop the
+                // key (a token leg), stop and leave the user to check.
+                if sell.idempotency_key.is_some() && guard != RetryGuard::IdempotencyKey {
+                    sell.fulfilment = SellFulfilment::OutcomeUnknown {
                         checking: false,
-                        guard,
-                        ..
-                    } = sell.fulfilment
-                    {
-                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
-                            checking: true,
-                            outcome: None,
-                            guard,
-                        };
-                        return Some(reconcile_sell_task(
-                            self.spark.clone(),
-                            quote.id.clone(),
-                            sell.pending.clone(),
-                        ));
-                    }
-                }
-                MavapayMessage::SellPaymentChecked { outcome, .. } => {
-                    // Only a check this checkout started and is waiting for.
-                    let SellFulfilment::OutcomeUnknown {
-                        checking: true,
-                        guard,
-                        ..
-                    } = sell.fulfilment
-                    else {
-                        return None;
-                    };
-                    match outcome {
-                        ReconcileOutcome::Landed => {
-                            sell.fulfilment = SellFulfilment::Paid;
-                            sell.idempotency_key = None;
-                            sell.pending = None;
-                            return Some(iced::Task::done(view::Message::ShowSuccess(
-                                "Invoice paid from your Spark wallet".to_owned(),
-                            )));
-                        }
-                        // The bridge's own late answer was "rejected": a
-                        // definite failure, so the ordinary retry applies.
-                        ReconcileOutcome::DefinitelyFailed(reason) => {
-                            sell.fulfilment = SellFulfilment::Idle;
-                            sell.idempotency_key = None;
-                            sell.pending = None;
-                            return Some(iced::Task::done(view::Message::BuySell(
-                                view::BuySellMessage::SessionError(
-                                    "Unable to fulfil invoice",
-                                    reason,
-                                ),
-                            )));
-                        }
-                        outcome => {
-                            sell.fulfilment = SellFulfilment::OutcomeUnknown {
-                                checking: false,
-                                outcome: Some(outcome),
-                                guard,
-                            };
-                        }
-                    }
-                }
-                MavapayMessage::RetrySellPayment => {
-                    // Only after a check found no trace, on a rail where the
-                    // key guards a repeat. Re-prepares the same invoice and
-                    // sends it under the same key.
-                    if sell.fulfilment.may_resend() {
-                        debug_assert!(
-                            sell.idempotency_key.is_some(),
-                            "a repeat must reuse the original key"
-                        );
-                        sell.fulfilment = SellFulfilment::Preparing;
-                        return Some(prepare_sell_task(self.spark.clone(), quote));
-                    }
-                }
-
-                MavapayMessage::WriteInvoiceToClipboard => {
-                    return Some(iced::Task::batch([
-                        iced::Task::done(view::Message::Clipboard(quote.invoice.clone())),
-                        iced::Task::done(view::Message::ShowError(
-                            "Invoice Copied to Clipboard".to_string(),
+                        outcome: Some(ReconcileOutcome::Inconclusive(
+                            "this payment can no longer be repeated safely".to_string(),
                         )),
-                    ]));
+                        guard: RetryGuard::None,
+                    };
+                    return None;
                 }
+                // Reused, not re-minted, when this repeats an attempt
+                // whose outcome was unknown: the key is what stops the
+                // SDK paying the invoice twice.
+                let key = sell
+                    .idempotency_key
+                    .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
+                    .clone();
+                // Recorded before dispatch: if no answer comes, this is
+                // all the state check has to go on.
+                sell.pending = Some(PendingSend {
+                    request_id: None,
+                    dispatched_at: chrono::Utc::now().timestamp(),
+                    amount_sat: prepare.amount_sat,
+                    token_amount: None,
+                    // A state check may only settle the order on a
+                    // payment of *this* invoice.
+                    invoice: Some(quote.invoice.clone()),
+                    guard,
+                });
+                sell.fulfilment = SellFulfilment::Sending;
 
-                MavapayMessage::StreamConnected => {
-                    log::info!("[MAVAPAY SSE] Connected to transaction stream");
+                let spark = self.spark.clone();
+                let handle = prepare.handle;
+                let quote_id = quote.id.clone();
+                return Some(iced::Task::perform(
+                    async move { send_sell_payment(&spark, quote_id, handle, key).await },
+                    view::Message::from,
+                ));
+            }
+            MavapayMessage::SellPrepareFailed { error: err, .. } => {
+                if sell.fulfilment != SellFulfilment::Preparing {
+                    return None;
                 }
-                MavapayMessage::EventSourceDisconnected(msg) => {
-                    log::info!("[MAVAPAY SSE] Stream disconnected: {}", msg);
+                // A preview failing says nothing about an earlier attempt
+                // it may be repeating. If one was dispatched, its outcome
+                // is still unknown: keep the key and the intent, and
+                // offer the check again rather than the manual invoice.
+                if let Some(pending) = sell.pending.as_ref() {
+                    sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                        checking: false,
+                        outcome: Some(ReconcileOutcome::Inconclusive(format!(
+                            "the repeat couldn't be prepared: {err}"
+                        ))),
+                        guard: pending.guard,
+                    };
+                    return None;
                 }
-                MavapayMessage::StreamError(err) => {
-                    log::error!("[MAVAPAY SSE] Stream error: {}", err);
+                // Nothing was ever sent, so paying is offered again.
+                sell.fulfilment = SellFulfilment::Idle;
+                return Some(iced::Task::done(view::Message::BuySell(
+                    view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
+                )));
+            }
+            msg @ (MavapayMessage::SellInvoiceFulfilled { .. }) => {
+                return self.update_sell_fulfilled(msg)
+            }
+            MavapayMessage::SellSendFailed { error: err, .. } => {
+                // The bridge answered "no": nothing was paid, so the
+                // ordinary retry applies, under a fresh key as the Send
+                // panel does after a definite rejection.
+                if sell.fulfilment == SellFulfilment::Sending {
+                    sell.fulfilment = SellFulfilment::Idle;
+                    sell.idempotency_key = None;
+                    sell.pending = None;
+                    return Some(iced::Task::done(view::Message::BuySell(
+                        view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
+                    )));
                 }
+            }
+            _ => {}
+        }
+        None
+    }
 
-                MavapayMessage::TransactionUpdated(update) => {
-                    log::info!(
-                        "[MAVAPAY-SSE] Order({}): event={} status={:?}",
-                        update.order_id,
-                        update.event_type,
-                        update.status
-                    );
-
-                    // A stream left over from an earlier checkout can still
-                    // deliver: only this checkout's own order may move it.
-                    if quote.order_id.as_deref() != Some(update.order_id.as_str()) {
-                        log::warn!(
-                            "[MAVAPAY-SSE] Ignoring an update for Order({}): this checkout is for {:?}",
-                            update.order_id,
-                            quote.order_id
-                        );
-                        return None;
-                    }
-
-                    if matches!(
-                        update.status,
-                        TransactionStatus::Paid | TransactionStatus::Success
-                    ) {
-                        let client = coincube_client.clone();
-                        let order_id = update.order_id.clone();
-
-                        let task = iced::Task::perform(
-                            async move {
-                                let mut res = MavapayClient(&client).get_order(&order_id).await;
-
-                                for attempt in 0..10 {
-                                    match res.as_ref() {
-                                        Ok(..) => break,
-                                        Err(err) => {
-                                            log::error!(
-                                                "[MAVAPAY] Unable to get order information: {:?}, Attempts: {}",
-                                                err, 5 - attempt
-                                            );
-
-                                            tokio::time::sleep(std::time::Duration::from_secs(5))
-                                                .await
-                                        }
-                                    }
-
-                                    res = MavapayClient(&client).get_order(&order_id).await;
-                                }
-
-                                res
-                            },
-                            |result| match result {
-                                Ok(order) => MavapayMessage::QuoteFulfilled(order).into(),
-                                Err(err) => {
-                                    view::Message::BuySell(view::BuySellMessage::SessionError(
-                                        "Failed to fetch order details",
-                                        err.to_string(),
-                                    ))
-                                }
-                            },
-                        );
-
-                        return Some(task);
-                    }
+    fn update_sell_reconciliation(
+        &mut self,
+        msg: MavapayMessage,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::Checkout { quote, sell, .. } = self.steps.last_mut()? else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::SellInvoiceOutcomeUnknown {
+                request_id,
+                message,
+                ..
+            } => {
+                if sell.fulfilment != SellFulfilment::Sending {
+                    log::warn!("[MAVAPAY] Ignoring a sell payment result nobody is waiting for");
+                    return None;
                 }
-
-                MavapayMessage::QuoteFulfilled(order) => {
-                    // Only this checkout's own order may change it: a fetch
-                    // started for an earlier order can outlive that checkout
-                    // and land here. Showing it would put another order's
-                    // receipt on this screen and stop this order's stream.
-                    let this_order = quote.order_id.as_deref() == Some(order.order_id.as_str())
-                        || order.quote_id.as_deref() == Some(quote.id.as_str());
-                    if !this_order {
-                        log::warn!(
-                            "[MAVAPAY] Ignoring Order({}) fulfilment: this checkout is Quote({})",
-                            order.order_id,
-                            quote.id
-                        );
-                        return None;
-                    }
-                    log::info!(
-                        "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
-                        quote.id,
-                        order
-                    );
-                    *fulfilled_order = Some(order);
-                    *stream_order_id = None;
-                    // Mavapay says this order is paid, so its invoice is: a
-                    // sell payment whose outcome was unknown landed, and there
-                    // is nothing left to repeat. One still awaiting an answer
-                    // settles when that answer comes.
-                    if matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. }) {
-                        log::info!("[MAVAPAY] Mavapay confirmed the order: sell payment settled");
+                log::warn!("[MAVAPAY] Sell payment outcome unknown: {}", message);
+                // Keep the key and the intent; add the request id so the
+                // bridge's late answer can still be claimed.
+                let pending = sell.pending.get_or_insert_with(|| PendingSend {
+                    request_id: None,
+                    dispatched_at: chrono::Utc::now().timestamp(),
+                    amount_sat: 0,
+                    token_amount: None,
+                    invoice: None,
+                    guard: RetryGuard::None,
+                });
+                pending.request_id = Some(request_id);
+                let guard = pending.guard;
+                sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                    checking: true,
+                    outcome: None,
+                    guard,
+                };
+                return Some(reconcile_sell_task(
+                    self.spark.clone(),
+                    quote.id.clone(),
+                    sell.pending.clone(),
+                ));
+            }
+            MavapayMessage::CheckSellPayment => {
+                if let SellFulfilment::OutcomeUnknown {
+                    checking: false,
+                    guard,
+                    ..
+                } = sell.fulfilment
+                {
+                    sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                        checking: true,
+                        outcome: None,
+                        guard,
+                    };
+                    return Some(reconcile_sell_task(
+                        self.spark.clone(),
+                        quote.id.clone(),
+                        sell.pending.clone(),
+                    ));
+                }
+            }
+            MavapayMessage::SellPaymentChecked { outcome, .. } => {
+                // Only a check this checkout started and is waiting for.
+                let SellFulfilment::OutcomeUnknown {
+                    checking: true,
+                    guard,
+                    ..
+                } = sell.fulfilment
+                else {
+                    return None;
+                };
+                match outcome {
+                    ReconcileOutcome::Landed => {
                         sell.fulfilment = SellFulfilment::Paid;
                         sell.idempotency_key = None;
                         sell.pending = None;
+                        return Some(iced::Task::done(view::Message::ShowSuccess(
+                            "Invoice paid from your Spark wallet".to_owned(),
+                        )));
+                    }
+                    // The bridge's own late answer was "rejected": a
+                    // definite failure, so the ordinary retry applies.
+                    ReconcileOutcome::DefinitelyFailed(reason) => {
+                        sell.fulfilment = SellFulfilment::Idle;
+                        sell.idempotency_key = None;
+                        sell.pending = None;
+                        return Some(iced::Task::done(view::Message::BuySell(
+                            view::BuySellMessage::SessionError("Unable to fulfil invoice", reason),
+                        )));
+                    }
+                    outcome => {
+                        sell.fulfilment = SellFulfilment::OutcomeUnknown {
+                            checking: false,
+                            outcome: Some(outcome),
+                            guard,
+                        };
                     }
                 }
-
-                #[cfg(debug_assertions)]
-                MavapayMessage::SimulatePayIn => {
-                    let Some(order_id) = quote.order_id.clone() else {
-                        log::error!("[MAVAPAY] Cannot simulate Pay-In: Quote has no order_id");
-                        return None;
-                    };
-
-                    log::info!(
-                        "[MAVAPAY] Simulating Pay-In for Quote({}), Order ID({})",
-                        quote.id,
-                        order_id
+            }
+            MavapayMessage::RetrySellPayment => {
+                // Only after a check found no trace, on a rail where the
+                // key guards a repeat. Re-prepares the same invoice and
+                // sends it under the same key.
+                if sell.fulfilment.may_resend() {
+                    debug_assert!(
+                        sell.idempotency_key.is_some(),
+                        "a repeat must reuse the original key"
                     );
-
-                    let client = coincube_client.clone();
-                    let request = SimulatePayInRequest {
-                        order_id,
-                        amount: matches!(self.buy_or_sell, panel::BuyOrSell::Buy)
-                            .then_some(quote.amount_in_source_currency),
-                        currency: (&quote.source_currency).into(),
-                    };
-
-                    let task = iced::Task::perform(
-                        async move { MavapayClient(&client).simulate_pay_in(&request).await },
-                        |s| match s {
-                            MavapayApiResult::Success { data } => {
-                                log::info!("[MAVAPAY] {}", data)
-                            }
-                            MavapayApiResult::Error { message } => {
-                                log::error!("[MAVAPAY] Unable to simulate Pay-In: {}", message)
-                            }
-                        },
-                    );
-
-                    return Some(task.then(|_| iced::Task::none()));
+                    sell.fulfilment = SellFulfilment::Preparing;
+                    return Some(prepare_sell_task(self.spark.clone(), quote));
                 }
+            }
 
-                #[cfg(not(debug_assertions))]
-                MavapayMessage::SimulatePayIn => {
-                    log::warn!(
-                                "[MAVAPAY] Unable to simulate pay-in for Quote({}), app built in release mode",
-                                quote.id,
-                            );
-                }
-
-                msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
-            },
-
-            (
-                MavapayFlowStep::History {
-                    transactions,
-                    loading,
-                },
-                msg,
-            ) => match msg {
-                MavapayMessage::FetchTransactions => {
-                    *loading = true;
-
-                    let client = coincube_client.clone();
-                    let task = iced::Task::perform(
-                        async move { MavapayClient(&client).get_transactions().await },
-                        |result| match result {
-                            Ok(data) => {
-                                MavapayMessage::TransactionsReceived(data.transactions).into()
-                            }
-                            Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
-                                "Failed to fetch transactions",
-                                err.to_string(),
-                            )),
-                        },
-                    );
-
-                    return Some(task);
-                }
-                MavapayMessage::TransactionsReceived(received_transactions) => {
-                    log::info!(
-                        "[MAVAPAY] Received {} transactions",
-                        received_transactions.len()
-                    );
-                    *transactions = Some(received_transactions);
-                    *loading = false;
-                }
-                MavapayMessage::SelectTransaction(idx) => {
-                    let Some(transaction) = transactions.as_mut().and_then(|t| t.get(idx)) else {
-                        log::warn!("[MAVAPAY] Selected transaction index is out of bounds");
-                        return None;
-                    };
-
-                    let order_id = transaction.order_id.clone();
-                    let client = coincube_client.clone();
-
-                    let task = iced::Task::perform(
-                        async move { MavapayClient(&client).get_order(&order_id).await },
-                        |result| match result {
-                            Ok(data) => MavapayMessage::OrderReceived(data).into(),
-                            Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
-                                "Failed to fetch order details",
-                                err.to_string(),
-                            )),
-                        },
-                    );
-
-                    let transaction = transaction.clone();
-                    self.steps.push(MavapayFlowStep::OrderDetail {
-                        transaction,
-                        order: None,
-                        loading: true,
-                    });
-
-                    return Some(task);
-                }
-                msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
-            },
-
-            (MavapayFlowStep::OrderDetail { order, loading, .. }, msg) => match msg {
-                MavapayMessage::OrderReceived(received_order) => {
-                    *order = Some(received_order);
-                    *loading = false;
-                }
-                msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
-            },
+            _ => {}
         }
+        None
+    }
 
+    fn fetch_checkout_order(
+        coincube_client: &CoincubeClient,
+        order_id: String,
+    ) -> iced::Task<view::Message> {
+        let client = coincube_client.clone();
+
+        let task = iced::Task::perform(
+            async move {
+                let mut res = MavapayClient(&client).get_order(&order_id).await;
+
+                for attempt in 0..10 {
+                    match res.as_ref() {
+                        Ok(..) => break,
+                        Err(err) => {
+                            log::error!(
+                                "[MAVAPAY] Unable to get order information: {:?}, Attempts: {}",
+                                err,
+                                5 - attempt
+                            );
+
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await
+                        }
+                    }
+
+                    res = MavapayClient(&client).get_order(&order_id).await;
+                }
+
+                res
+            },
+            |result| match result {
+                Ok(order) => MavapayMessage::QuoteFulfilled(order).into(),
+                Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                    "Failed to fetch order details",
+                    err.to_string(),
+                )),
+            },
+        );
+
+        task
+    }
+
+    fn update_checkout_order(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::Checkout {
+            quote,
+            fulfilled_order,
+            stream_order_id,
+            sell,
+            ..
+        } = self.steps.last_mut()?
+        else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::TransactionUpdated(update) => {
+                log::info!(
+                    "[MAVAPAY-SSE] Order({}): event={} status={:?}",
+                    update.order_id,
+                    update.event_type,
+                    update.status
+                );
+
+                // A stream left over from an earlier checkout can still
+                // deliver: only this checkout's own order may move it.
+                if quote.order_id.as_deref() != Some(update.order_id.as_str()) {
+                    log::warn!(
+                        "[MAVAPAY-SSE] Ignoring an update for Order({}): this checkout is for {:?}",
+                        update.order_id,
+                        quote.order_id
+                    );
+                    return None;
+                }
+
+                if matches!(
+                    update.status,
+                    TransactionStatus::Paid | TransactionStatus::Success
+                ) {
+                    return Some(Self::fetch_checkout_order(
+                        coincube_client,
+                        update.order_id.clone(),
+                    ));
+                }
+            }
+
+            MavapayMessage::QuoteFulfilled(order) => {
+                // Only this checkout's own order may change it: a fetch
+                // started for an earlier order can outlive that checkout
+                // and land here. Showing it would put another order's
+                // receipt on this screen and stop this order's stream.
+                let this_order = quote.order_id.as_deref() == Some(order.order_id.as_str())
+                    || order.quote_id.as_deref() == Some(quote.id.as_str());
+                if !this_order {
+                    log::warn!(
+                        "[MAVAPAY] Ignoring Order({}) fulfilment: this checkout is Quote({})",
+                        order.order_id,
+                        quote.id
+                    );
+                    return None;
+                }
+                log::info!(
+                    "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
+                    quote.id,
+                    order
+                );
+                *fulfilled_order = Some(order);
+                *stream_order_id = None;
+                // Mavapay says this order is paid, so its invoice is: a
+                // sell payment whose outcome was unknown landed, and there
+                // is nothing left to repeat. One still awaiting an answer
+                // settles when that answer comes.
+                if matches!(sell.fulfilment, SellFulfilment::OutcomeUnknown { .. }) {
+                    log::info!("[MAVAPAY] Mavapay confirmed the order: sell payment settled");
+                    sell.fulfilment = SellFulfilment::Paid;
+                    sell.idempotency_key = None;
+                    sell.pending = None;
+                }
+            }
+
+            _ => {}
+        }
+        None
+    }
+
+    fn update_checkout(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::Checkout { quote, .. } = self.steps.last_mut()? else {
+            return None;
+        };
+        match msg {
+            // An answer for another order's payment (one this checkout
+            // replaced, or a panel rebuilt mid-send) is not this order's.
+            msg if sell_answer_quote(&msg).is_some_and(|id| id != quote.id) => {
+                log::warn!(
+                    "[MAVAPAY] Ignoring a sell payment answer for another order: {:?}",
+                    msg
+                );
+            }
+            msg @ (MavapayMessage::FulfillSellInvoice
+            | MavapayMessage::SellInvoicePrepared { .. }
+            | MavapayMessage::SellPrepareFailed { .. }
+            | MavapayMessage::SellInvoiceFulfilled { .. }
+            | MavapayMessage::SellSendFailed { .. }) => return self.update_sell_send(msg),
+            msg @ (MavapayMessage::SellInvoiceOutcomeUnknown { .. }
+            | MavapayMessage::CheckSellPayment
+            | MavapayMessage::SellPaymentChecked { .. }
+            | MavapayMessage::RetrySellPayment) => return self.update_sell_reconciliation(msg),
+            MavapayMessage::WriteInvoiceToClipboard => {
+                return Some(iced::Task::batch([
+                    iced::Task::done(view::Message::Clipboard(quote.invoice.clone())),
+                    iced::Task::done(view::Message::ShowError(
+                        "Invoice Copied to Clipboard".to_string(),
+                    )),
+                ]));
+            }
+
+            MavapayMessage::StreamConnected => {
+                log::info!("[MAVAPAY SSE] Connected to transaction stream");
+            }
+            MavapayMessage::EventSourceDisconnected(msg) => {
+                log::info!("[MAVAPAY SSE] Stream disconnected: {}", msg);
+            }
+            MavapayMessage::StreamError(err) => {
+                log::error!("[MAVAPAY SSE] Stream error: {}", err);
+            }
+
+            msg @ (MavapayMessage::TransactionUpdated(..) | MavapayMessage::QuoteFulfilled(..)) => {
+                return self.update_checkout_order(msg, coincube_client)
+            }
+            #[cfg(debug_assertions)]
+            MavapayMessage::SimulatePayIn => {
+                let Some(order_id) = quote.order_id.clone() else {
+                    log::error!("[MAVAPAY] Cannot simulate Pay-In: Quote has no order_id");
+                    return None;
+                };
+
+                log::info!(
+                    "[MAVAPAY] Simulating Pay-In for Quote({}), Order ID({})",
+                    quote.id,
+                    order_id
+                );
+
+                let client = coincube_client.clone();
+                let request = SimulatePayInRequest {
+                    order_id,
+                    amount: matches!(self.buy_or_sell, panel::BuyOrSell::Buy)
+                        .then_some(quote.amount_in_source_currency),
+                    currency: (&quote.source_currency).into(),
+                };
+
+                let task = iced::Task::perform(
+                    async move { MavapayClient(&client).simulate_pay_in(&request).await },
+                    |s| match s {
+                        MavapayApiResult::Success { data } => {
+                            log::info!("[MAVAPAY] {}", data)
+                        }
+                        MavapayApiResult::Error { message } => {
+                            log::error!("[MAVAPAY] Unable to simulate Pay-In: {}", message)
+                        }
+                    },
+                );
+
+                return Some(task.then(|_| iced::Task::none()));
+            }
+
+            #[cfg(not(debug_assertions))]
+            MavapayMessage::SimulatePayIn => {
+                log::warn!(
+                    "[MAVAPAY] Unable to simulate pay-in for Quote({}), app built in release mode",
+                    quote.id,
+                );
+            }
+
+            msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
+        }
+        None
+    }
+
+    fn update_history(
+        &mut self,
+        msg: MavapayMessage,
+        coincube_client: &CoincubeClient,
+    ) -> Option<iced::Task<view::Message>> {
+        let MavapayFlowStep::History {
+            transactions,
+            loading,
+        } = self.steps.last_mut()?
+        else {
+            return None;
+        };
+        match msg {
+            MavapayMessage::FetchTransactions => {
+                *loading = true;
+
+                let client = coincube_client.clone();
+                let task = iced::Task::perform(
+                    async move { MavapayClient(&client).get_transactions().await },
+                    |result| match result {
+                        Ok(data) => MavapayMessage::TransactionsReceived(data.transactions).into(),
+                        Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                            "Failed to fetch transactions",
+                            err.to_string(),
+                        )),
+                    },
+                );
+
+                return Some(task);
+            }
+            MavapayMessage::TransactionsReceived(received_transactions) => {
+                log::info!(
+                    "[MAVAPAY] Received {} transactions",
+                    received_transactions.len()
+                );
+                *transactions = Some(received_transactions);
+                *loading = false;
+            }
+            MavapayMessage::SelectTransaction(idx) => {
+                let Some(transaction) = transactions.as_mut().and_then(|t| t.get(idx)) else {
+                    log::warn!("[MAVAPAY] Selected transaction index is out of bounds");
+                    return None;
+                };
+
+                let order_id = transaction.order_id.clone();
+                let client = coincube_client.clone();
+
+                let task = iced::Task::perform(
+                    async move { MavapayClient(&client).get_order(&order_id).await },
+                    |result| match result {
+                        Ok(data) => MavapayMessage::OrderReceived(data).into(),
+                        Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                            "Failed to fetch order details",
+                            err.to_string(),
+                        )),
+                    },
+                );
+
+                let transaction = transaction.clone();
+                self.steps.push(MavapayFlowStep::OrderDetail {
+                    transaction,
+                    order: None,
+                    loading: true,
+                });
+
+                return Some(task);
+            }
+            msg => log::warn!("[MAVAPAY] Message Ignored {:?}", msg),
+        }
         None
     }
 }
