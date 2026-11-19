@@ -1,18 +1,12 @@
 //! Spark-specific backend adapter.
 //!
-//! [`SparkBackend`] wraps an [`Arc<SparkClient>`] and exposes the same
-//! panel-facing read surface as [`LiquidBackend`] (`list_payments`,
-//! `get_info`, …), plus a method-forwarding `client()` accessor so
-//! write-path callers can reach the subprocess client directly without
-//! the wallet abstraction getting in the way.
-//!
-//! Structurally this is the Spark counterpart to
-//! [`crate::app::wallets::liquid::LiquidBackend`]. The two types
-//! deliberately don't share a `WalletBackend` trait yet — the Liquid
-//! backend's methods are sync/local, Spark's are async/IPC with a real
-//! subprocess cost model, and sharing a trait would paper over that
-//! difference without earning much. Registry routing (Phase 5 Lightning
-//! Address handoff) will use an enum dispatch instead.
+//! [`SparkBackend`] wraps an [`Arc<SparkClient>`] and exposes the
+//! panel-facing read surface (`list_payments`, `get_info`, …), plus a
+//! method-forwarding `client()` accessor so write-path callers can reach
+//! the subprocess client directly without the wallet abstraction getting
+//! in the way. Its methods are async IPC calls with a real subprocess cost
+//! model; registry routing ([`crate::app::wallets::WalletRegistry`]) hands
+//! out the backend handle itself.
 
 use std::sync::Arc;
 

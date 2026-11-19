@@ -4,7 +4,7 @@
     <img src="coincube-ui/static/logos/coincube-logo.svg" width="440px" />
   </a>
 
-_Secure Bitcoin wallet with Vault multi-sig, Liquid spending, Buy/Sell and inheritance_.
+_Secure Bitcoin wallet with Vault multi-sig, Lightning spending, Buy/Sell and inheritance_.
 
 </div>
 
@@ -25,9 +25,9 @@ Example VAULT configuration:
 - Any 2 keys from trusted parties (after 1 year)
 - Emergency recovery key (after 1 year and 3 months)
 
-**SPARK WALLET** - Second Lightning-enabled wallet powered by the Breez Spark SDK, running alongside the Liquid wallet. Both wallets derive from the same master seed, so one mnemonic and one PIN cover everything. Spark support is currently limited to Bitcoin mainnet and Regtest.
+**SPARK WALLET** - Lightning-enabled wallet powered by the Breez Spark SDK, alongside the Vault. Both derive from the same master seed, so one mnemonic and one PIN cover everything. Spark support is currently limited to Bitcoin mainnet and Regtest.
 
-COINCUBE Desktop is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
+COINCUBE Desktop is designed for **trustless inheritance**, **loss protection**, **everyday Lightning spending**, and
 **user-friendly Bitcoin custody**.
 
 ## Usage
@@ -60,7 +60,7 @@ The code for the GUI can be found in the [`coincube-gui`](coincube-gui) folder.
 
 #### Spark Wallet
 
-A second Lightning-enabled wallet via the Breez Spark SDK. The SDK runs in a sibling subprocess — [`coincube-spark-bridge`](coincube-spark-bridge) — that the gui spawns on startup and communicates with over stdin/stdout JSON-RPC. The bridge lives in its own Cargo workspace because `breez-sdk-spark` and `breez-sdk-liquid` cannot share a dependency graph; see the `exclude = ["coincube-spark-bridge"]` entry in the root [`Cargo.toml`](Cargo.toml) for the paired side of this setup.
+A Lightning-enabled wallet via the Breez Spark SDK. The SDK runs in a sibling subprocess — [`coincube-spark-bridge`](coincube-spark-bridge) — that the gui spawns on startup and communicates with over stdin/stdout JSON-RPC. The bridge lives in its own Cargo workspace because `breez-sdk-spark` cannot share a dependency graph with `coincubed`'s rusqlite 0.38 fork; see the `exclude = ["coincube-spark-bridge"]` entry in the root [`Cargo.toml`](Cargo.toml) for the paired side of this setup.
 
 The practical consequence is that `cargo run -p coincube-gui` on its own does NOT build the bridge, and without the bridge binary the gui renders "Spark is not configured for this cube" even on a freshly-created Cube. Build both halves together via the [`Makefile`](Makefile):
 

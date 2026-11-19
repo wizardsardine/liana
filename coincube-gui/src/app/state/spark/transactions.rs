@@ -1,8 +1,7 @@
 //! Spark Transactions panel.
 //!
-//! Mirrors [`crate::app::state::liquid::transactions::LiquidTransactions`]
-//! minus the asset-filter tabs (Spark only holds BTC) and the
-//! refundable-swap section (Spark has no boltz-style swap refunds).
+//! No asset-filter tabs (Spark only holds BTC) and no refundable-swap
+//! section (Spark has no boltz-style swap refunds).
 //!
 //! On reload the panel asks the bridge for up to 100 recent payments
 //! via `list_payments`, maps each [`PaymentSummary`] into the shared

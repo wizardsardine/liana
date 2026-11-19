@@ -27,7 +27,7 @@ use breez_sdk_spark::{
     EventListener, GetInfoRequest, GetInfoResponse, InputType,
     LightningAddressInfo as SdkLightningAddressInfo, ListPaymentsRequest,
     ListUnclaimedDepositsRequest, LnurlPayRequest, MaxFee, MaxOnchainFee, OnchainConfirmationSpeed,
-    PaymentDetails, PaymentRequest, PrepareLnurlPayRequest, PrepareLnurlPayResponse,
+    PaymentDetails, PaymentRequest, PaymentStatus, PrepareLnurlPayRequest, PrepareLnurlPayResponse,
     PrepareSendPaymentRequest, PrepareSendPaymentResponse, ReceivePaymentMethod,
     ReceivePaymentRequest, RegisterLightningAddressRequest, SdkEvent, SendOnchainFeeQuote,
     SendPaymentMethod, SendPaymentOptions, SendPaymentRequest, SparkAsset, TokenBalance,
@@ -1936,10 +1936,33 @@ fn send_options_for(
         SendPaymentMethod::BitcoinAddress { .. } => Some(SendPaymentOptions::BitcoinAddress {
             confirmation_speed: speed.clone(),
         }),
-        SendPaymentMethod::Bolt11Invoice { .. }
-        | SendPaymentMethod::SparkAddress { .. }
+        SendPaymentMethod::Bolt11Invoice { .. } => Some(bolt11_send_options()),
+        SendPaymentMethod::SparkAddress { .. }
         | SendPaymentMethod::SparkInvoice { .. }
         | SendPaymentMethod::CrossChainAddress { .. } => None,
+    }
+}
+
+/// How long a Lightning send waits for the payment to settle before the SDK
+/// hands it back still `Pending`.
+///
+/// With no options the pinned SDK waits zero seconds, so nearly every
+/// Lightning send came back `Pending` and the gui (rightly) could not call it
+/// sent. Waiting lets the usual payment come back `Completed`. A slower one
+/// still returns `Pending`, and the gui then checks the history for it. Kept
+/// well inside the gui's send deadline (120 s), and the bridge serves each
+/// request on its own task, so the wait holds up nothing else.
+const BOLT11_COMPLETION_WAIT_SECS: u32 = 30;
+
+/// The options a Bolt11 send executes with.
+///
+/// `prefer_spark` must stay what passing no options meant: the SDK's
+/// `prefer_spark_over_lightning`, which `sdk_adapter` leaves at the
+/// `default_config` value, `false`. Only the completion wait changes.
+fn bolt11_send_options() -> SendPaymentOptions {
+    SendPaymentOptions::Bolt11Invoice {
+        prefer_spark: false,
+        completion_timeout_secs: Some(BOLT11_COMPLETION_WAIT_SECS),
     }
 }
 
@@ -2493,16 +2516,53 @@ async fn execute_regular_send(
     };
 
     match sdk.sdk.send_payment(request).await {
-        Ok(resp) => Response::ok(
+        Ok(resp) => sent_payment_response(
             id,
-            OkPayload::SendPayment(SendPaymentOk {
-                payment_id: resp.payment.id,
-                amount_sat,
-                fee_sat,
-            }),
+            "send_payment",
+            resp.payment.id,
+            &resp.payment.status,
+            amount_sat,
+            fee_sat,
         ),
         Err(e) => Response::err(id, ErrorKind::Sdk, format!("send_payment failed: {e}")),
     }
+}
+
+/// Answer a send the SDK returned `Ok` for.
+///
+/// `Ok` is not "paid". On a reused idempotency key the SDK hands back the
+/// payment it already stored under that key **whatever its status**, so a
+/// retry of a payment that ended `Failed` comes back `Ok` with a failed
+/// payment. Reporting that as `SendPaymentOk` told the gui a payment went
+/// through when nothing was paid. A failed payment is answered as an error
+/// instead — the same definite rejection as any other send failure, which
+/// the gui treats as "nothing was sent" and retires the key for. Pending
+/// stays a success, but carries its status, so the gui can tell a payment
+/// that settled from one that was only accepted.
+fn sent_payment_response(
+    id: u64,
+    operation: &str,
+    payment_id: String,
+    status: &PaymentStatus,
+    amount_sat: u64,
+    fee_sat: u64,
+) -> Response {
+    if *status == PaymentStatus::Failed {
+        return Response::err(
+            id,
+            ErrorKind::Sdk,
+            format!("{operation} failed: the payment {payment_id} failed"),
+        );
+    }
+    Response::ok(
+        id,
+        OkPayload::SendPayment(SendPaymentOk {
+            payment_id,
+            amount_sat,
+            fee_sat,
+            status: Some(format!("{:?}", status)),
+        }),
+    )
 }
 
 async fn execute_lnurl_send(
@@ -2527,13 +2587,13 @@ async fn execute_lnurl_send(
     };
 
     match sdk.sdk.lnurl_pay(request).await {
-        Ok(resp) => Response::ok(
+        Ok(resp) => sent_payment_response(
             id,
-            OkPayload::SendPayment(SendPaymentOk {
-                payment_id: resp.payment.id,
-                amount_sat,
-                fee_sat,
-            }),
+            "lnurl_pay",
+            resp.payment.id,
+            &resp.payment.status,
+            amount_sat,
+            fee_sat,
         ),
         Err(e) => Response::err(id, ErrorKind::Sdk, format!("lnurl_pay failed: {e}")),
     }
@@ -3707,8 +3767,30 @@ mod fee_tier_tests {
         );
     }
 
-    /// Every other payment method keeps the options it has always been executed
-    /// with — `None`. The SDK rejects a Bitcoin-address option elsewhere with
+    /// A Bolt11 send waits for the payment to settle, so the usual one comes
+    /// back `Completed` rather than `Pending`, and keeps the routing it had
+    /// with no options (Lightning, not Spark).
+    #[test]
+    fn a_bolt11_send_waits_for_completion_and_keeps_its_routing() {
+        match bolt11_send_options() {
+            SendPaymentOptions::Bolt11Invoice {
+                prefer_spark,
+                completion_timeout_secs,
+            } => {
+                assert!(!prefer_spark);
+                let wait = completion_timeout_secs.expect("a completion wait");
+                assert!(wait > 0);
+                assert!(
+                    u64::from(wait) < 120,
+                    "the wait must end well before the gui's send deadline"
+                );
+            }
+            _ => panic!("expected Bolt11 options"),
+        }
+    }
+
+    /// Spark and cross-chain sends keep the options they have always been
+    /// executed with — `None`. The SDK rejects a Bitcoin-address option elsewhere with
     /// `InvalidInput`, so applying one would break Bolt11 and Spark sends
     /// outright.
     #[test]
@@ -5898,5 +5980,52 @@ mod usdb_balance_tests {
         let json = serde_json::to_value(&ok).expect("get_info serializes");
         assert!(json.get("usdb_balance").is_none(), "{json}");
         assert_eq!(json["balance_sats"], 25_053);
+    }
+}
+
+#[cfg(test)]
+mod sent_payment_tests {
+    use super::*;
+    use coincube_spark_protocol::ResponseResult;
+
+    /// The SDK answers a reused idempotency key with the stored payment,
+    /// whatever its status. A stored *failed* payment must reach the gui as a
+    /// send failure, never as `SendPaymentOk`; completed and pending stay a
+    /// success, as before.
+    #[test]
+    fn a_send_that_resolves_to_a_failed_payment_is_an_error() {
+        let failed = sent_payment_response(
+            7,
+            "send_payment",
+            "pay-1".to_string(),
+            &PaymentStatus::Failed,
+            1_000,
+            3,
+        );
+        assert_eq!(failed.id, 7);
+        match failed.result {
+            ResponseResult::Err(err) => {
+                assert_eq!(err.kind, ErrorKind::Sdk);
+                assert!(err.message.contains("failed"), "{}", err.message);
+            }
+            other => panic!("a failed payment must be an error, got {:?}", other),
+        }
+
+        for status in [PaymentStatus::Completed, PaymentStatus::Pending] {
+            let ok = sent_payment_response(8, "lnurl_pay", "pay-2".to_string(), &status, 1_000, 3);
+            match ok.result {
+                ResponseResult::Ok(OkPayload::SendPayment(sent)) => {
+                    assert_eq!(sent.payment_id, "pay-2");
+                    assert_eq!((sent.amount_sat, sent.fee_sat), (1_000, 3));
+                    // The gui reads only `Completed` as settled.
+                    assert_eq!(
+                        sent.status.as_deref(),
+                        Some(format!("{:?}", status).as_str())
+                    );
+                    assert_eq!(sent.is_completed(), status == PaymentStatus::Completed);
+                }
+                other => panic!("{:?} must stay a success, got {:?}", status, other),
+            }
+        }
     }
 }

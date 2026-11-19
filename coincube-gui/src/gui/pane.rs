@@ -331,7 +331,7 @@ impl Pane {
                         },
                         true,
                         None,
-                        app.breez_client(),
+                        app.cube_signer(),
                         app.spark_backend(),
                         crate::app::settings::global::GlobalSettings::load_developer_mode(
                             &crate::app::settings::global::GlobalSettings::path(app.datadir()),

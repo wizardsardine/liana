@@ -125,7 +125,6 @@ fn notice_value(english: &str) -> Cow<'_, str> {
         ("Open the ", " wallet from the dashboard, then start the transfer again.", "Abre la cartera {value} desde el resumen y vuelve a iniciar la transferencia."),
         ("Couldn't get a deposit address from your ", " wallet", "No se pudo obtener una dirección de depósito de tu cartera {value}"),
         ("Check your internet connection and your ", " wallet, then try again.", "Revisa tu conexión a internet y tu cartera {value}. Después, inténtalo de nuevo."),
-        ("Your wallet is on ", ", which the Liquid wallet doesn't support. Switch to a supported network to use it.", "Tu cartera está en {value}, una red que la cartera Liquid no admite. Cambia a una red compatible para usarla."),
         ("", " Check the descriptor you entered and try again.", "Revisa el descriptor que ingresaste e inténtalo de nuevo. Detalle: {value}"),
         ("", " Check the amount and fee rate, then try again.", "Revisa el importe y la tasa de comisión e inténtalo de nuevo. Detalle: {value}"),
         ("", ". Check that the backup file is complete and matches this wallet.", "Comprueba que el archivo de copia esté completo y corresponda a esta cartera. Detalle: {value}"),

@@ -1,9 +1,8 @@
 /// Minimum amount (in sats) for transfers that settle on-chain.
 ///
-/// Composed with Breez's protocol minimums for swap-involving legs (see
-/// `effective_min_sats` in this module for the per-direction rule). Spark and
-/// Vault have no SDK-level minimums we need to respect, so for Vault↔Spark
-/// this constant *is* the minimum.
+/// Spark and Vault have no SDK-level minimums we need to respect, so for
+/// on-chain transfers this constant *is* the minimum (see
+/// [`effective_transfer_min_sat`]).
 pub const MIN_TRANSFER_SATS: u64 = 25_000;
 
 /// Default feerate (sats/vbyte) shown in the Vault-sourced Transfer confirm
@@ -100,34 +99,15 @@ fn transfer_signing_completion_message(
     }
 }
 
-/// Extract the Breez peg-out swap id from a successful `pay_onchain` response.
-/// Mirrors `swap_id_for_bitcoin_send` in `app/mod.rs` for the SdkEvent path —
-/// here we consume the `Payment` by value since the caller owns the response.
-fn bitcoin_send_swap_id(payment: &breez_sdk_liquid::prelude::Payment) -> Option<String> {
-    if matches!(payment.payment_type, PaymentType::Send) {
-        match &payment.details {
-            PaymentDetails::Bitcoin { swap_id, .. } => Some(swap_id.clone()),
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use breez_sdk_liquid::model::{
-    PayOnchainRequest, PaymentDetails, PaymentType, PreparePayOnchainRequest,
-    PreparePayOnchainResponse,
-};
 use coincube_core::miniscript::bitcoin::{
     bip32::ChildNumber, Address, Amount, OutPoint, Psbt, ScriptBuf,
 };
 
-use crate::app::wallets::{DomainPaymentDetails, DomainPaymentStatus};
 use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::component::form;
 use coincube_ui::widget::Element;
@@ -153,9 +133,6 @@ use crate::app::view::global_home::{
 struct BalanceReadiness {
     has_spark: bool,
     spark_loaded: bool,
-    has_liquid: bool,
-    liquid_loaded: bool,
-    usdt_loaded: bool,
     vault_pending: bool,
 }
 
@@ -186,15 +163,11 @@ fn vault_balance_pending(
 /// aggregate only while it is *present and still outstanding*.
 ///
 /// "Outstanding" is not "successful". A fetch that failed has to mark itself
-/// loaded — see `HomeMessage::LiquidBalanceFetchFailed` — or one wallet's
-/// network blip freezes the total for every wallet, including the ones that
-/// answered. A gated-off Liquid wallet never loads at all, which is the same
-/// trap from the other direction.
+/// loaded, or one wallet's network blip freezes the total for every wallet,
+/// including the ones that answered.
 fn total_balance_pending(r: BalanceReadiness) -> bool {
     let spark_pending = r.has_spark && !r.spark_loaded;
-    let liquid_pending = r.has_liquid && !r.liquid_loaded;
-    let usdt_pending = r.has_liquid && !r.usdt_loaded;
-    spark_pending || liquid_pending || usdt_pending || r.vault_pending
+    spark_pending || r.vault_pending
 }
 
 /// A deposit address for a transfer into this Cube's Vault, under the
@@ -213,16 +186,14 @@ async fn vault_deposit_address(
     }
 }
 
-/// Prefer an available local pair in Liquid, Vault, Spark order. A mainnet
-/// Cube with only Spark or Vault starts with Another Cube selected.
+/// Prefer an available local pair in Vault, Spark order. A mainnet Cube with
+/// only Spark or Vault starts with Another Cube selected.
 pub(crate) fn default_transfer_direction(
-    has_liquid: bool,
     has_vault: bool,
     has_spark: bool,
     chain: crate::chain::ChainId,
 ) -> Option<TransferDirection> {
     let available: Vec<WalletKind> = [
-        has_liquid.then_some(WalletKind::Liquid),
         has_vault.then_some(WalletKind::Vault),
         has_spark.then_some(WalletKind::Spark),
     ]
@@ -240,14 +211,12 @@ pub(crate) fn default_transfer_direction(
 /// The wallet page a transfer opened from returns to, and keeps selected in
 /// the side menu meanwhile.
 pub(crate) fn transfer_origin_menu(wallet: WalletKind) -> &'static Menu {
-    use crate::app::menu::{LiquidSubMenu, SparkSubMenu, VaultSubMenu};
+    use crate::app::menu::{SparkSubMenu, VaultSubMenu};
     static SPARK: Menu = Menu::Spark(SparkSubMenu::Overview);
     static VAULT: Menu = Menu::Vault(VaultSubMenu::Overview);
-    static LIQUID: Menu = Menu::Liquid(LiquidSubMenu::Overview);
     match wallet {
         WalletKind::Spark => &SPARK,
         WalletKind::Vault => &VAULT,
-        WalletKind::Liquid => &LIQUID,
     }
 }
 
@@ -264,31 +233,28 @@ impl OtherCubeReceivers {
         match wallet {
             WalletKind::Spark => self.spark,
             WalletKind::Vault => self.vault,
-            WalletKind::Liquid => false,
         }
     }
 }
 
 /// The direction a wallet page's Transfer opens with, `from` fixed: another
-/// wallet in this Cube in Liquid, Vault, Spark order, else another Cube when
+/// wallet in this Cube in Vault, Spark order, else another Cube when
 /// one can receive. `None` leaves the wallet page's Transfer disabled.
 pub(crate) fn transfer_direction_from(
     from: WalletKind,
-    has_liquid: bool,
     has_vault: bool,
     has_spark: bool,
     chain: crate::chain::ChainId,
     other_cube_receives: bool,
 ) -> Option<TransferDirection> {
     let has = |wallet| match wallet {
-        WalletKind::Liquid => has_liquid,
         WalletKind::Vault => has_vault,
         WalletKind::Spark => has_spark,
     };
     if !has(from) {
         return None;
     }
-    [WalletKind::Liquid, WalletKind::Vault, WalletKind::Spark]
+    [WalletKind::Vault, WalletKind::Spark]
         .iter()
         .copied()
         .filter(|to| *to != from && has(*to))
@@ -300,31 +266,10 @@ pub(crate) fn transfer_direction_from(
         })
 }
 
-/// Returns `(effective_min_sat, max_sat_opt)` for a given direction.
-///
-/// Swap-involving legs compose the Transfer-flow floor with Breez's own
-/// minimums; pure on-chain legs (Vault↔Spark) use the floor alone and have no
-/// upper bound beyond the source wallet's balance (checked elsewhere).
-///
-/// If the caller's limits argument is `None` on a swap-involving direction,
-/// `effective_min_sat` returns `None` — the amount screen uses this as a
-/// "limits still loading" signal.
-pub(crate) fn effective_transfer_min_sat(
-    direction: TransferDirection,
-    onchain_send_limit: Option<(u64, u64)>,
-    onchain_receive_limit: Option<(u64, u64)>,
-) -> Option<u64> {
+/// The smallest amount a transfer in `direction` may move, in sats.
+pub(crate) fn effective_transfer_min_sat(direction: TransferDirection) -> Option<u64> {
     match direction {
-        // Liquid source → Breez peg-out. Min composes with Breez's send limit.
-        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-            onchain_send_limit.map(|(min, _)| MIN_TRANSFER_SATS.max(min))
-        }
-        // Liquid destination → Breez peg-in. Min composes with Breez's receive limit.
-        TransferDirection::VaultToLiquid | TransferDirection::SparkToLiquid => {
-            onchain_receive_limit.map(|(min, _)| MIN_TRANSFER_SATS.max(min))
-        }
-        // Pure on-chain: Vault↔Spark, or Vault to another Cube's Vault. No
-        // swap limits apply.
+        // Pure on-chain: Vault↔Spark, or to another Cube's Vault or Spark.
         TransferDirection::VaultToSpark
         | TransferDirection::SparkToVault
         | TransferDirection::SparkToOtherCube
@@ -334,19 +279,10 @@ pub(crate) fn effective_transfer_min_sat(
     }
 }
 
-pub(crate) fn effective_transfer_max_sat(
-    direction: TransferDirection,
-    onchain_send_limit: Option<(u64, u64)>,
-    onchain_receive_limit: Option<(u64, u64)>,
-) -> Option<u64> {
+/// The largest amount a transfer in `direction` may move, in sats. Every
+/// direction is capped only by the source balance, which the caller enforces.
+pub(crate) fn effective_transfer_max_sat(direction: TransferDirection) -> Option<u64> {
     match direction {
-        TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark => {
-            onchain_send_limit.map(|(_, max)| max)
-        }
-        TransferDirection::VaultToLiquid | TransferDirection::SparkToLiquid => {
-            onchain_receive_limit.map(|(_, max)| max)
-        }
-        // Pure on-chain: cap is the source balance — the caller enforces it.
         TransferDirection::VaultToSpark
         | TransferDirection::SparkToVault
         | TransferDirection::SparkToOtherCube
@@ -357,7 +293,7 @@ pub(crate) fn effective_transfer_max_sat(
 }
 use crate::app::view::shared::feerate_picker::FeeratePreset;
 use crate::app::view::HomeMessage;
-use crate::app::wallets::{LiquidBackend, SparkBackend};
+use crate::app::wallets::SparkBackend;
 use crate::app::{message::Message, settings, view, wallet::Wallet};
 use crate::daemon::model::{CreateSpendResult, LabelItem, Labelled, SpendTx};
 use crate::daemon::Daemon;
@@ -404,17 +340,11 @@ pub struct GlobalHome {
     /// Only populated after the imported wallet's full discovery is verified.
     pub(crate) imported_balance: Option<Amount>,
     pub(crate) imported_installed: bool,
-    breez_client: Option<Arc<LiquidBackend>>,
     /// Optional Spark backend handle. `None` when the cube has no
     /// Spark signer or the bridge subprocess failed to spawn — the
     /// Home page simply hides the Spark card in that case.
     spark_backend: Option<Arc<SparkBackend>>,
     spark_identity: Option<String>,
-    liquid_balance: Amount,
-    liquid_balance_loaded: bool,
-    /// Set when a balance fetch failed, so the row can say so instead of
-    /// rendering the untouched zero. Mirrors `usdt_balance_error`.
-    liquid_balance_error: bool,
     /// Spark wallet balance in sats, refreshed by
     /// [`load_balance`]. `Amount::ZERO` while the first
     /// `get_info` RPC is in flight, or forever when no Spark
@@ -459,9 +389,6 @@ pub struct GlobalHome {
     /// as the authoritative balance, which `validate_entered_amount`
     /// would then use as the Spark source cap for transfers.
     spark_balance_received: bool,
-    usdt_balance: u64,
-    usdt_balance_error: bool,
-    usdt_balance_loaded: bool,
     wallet: Option<Arc<Wallet>>,
     /// Retained only for the legacy Cube settings constructor; device privacy owns display.
     _legacy_balance_masked: bool,
@@ -495,9 +422,6 @@ pub struct GlobalHome {
     address_expanded: bool,
     modal: Modal,
     empty_labels: HashMap<String, String>,
-    onchain_send_limit: Option<(u64, u64)>,
-    onchain_receive_limit: Option<(u64, u64)>,
-    prepare_onchain_send_response: Option<PreparePayOnchainResponse>,
     is_sending: bool,
     transfer_spend_tx: Option<SpendTx>,
     transfer_signed: bool,
@@ -530,17 +454,8 @@ pub struct GlobalHome {
     /// The other Vault's receive address, re-derived from its descriptor.
     other_address: Option<OtherReceiveAddress>,
     other_locked_again: bool,
-    pending_vault_incoming: Option<PendingTransfer>,
-    pending_vault_incoming_swap_id: Option<String>,
-    /// Whether the Liquid wallet is shown ([`LiquidGate::show`]), kept in
-    /// step by the App because `reload` has no cache. While it is off, a
-    /// Liquid → Vault transfer persisted by an earlier session is neither
-    /// restored nor shown; its settings entry stays as it is.
-    ///
-    /// [`LiquidGate::show`]: crate::app::features::LiquidGate::show
-    liquid_shown: bool,
-    /// Session-level counter for non-swap inbound Vault transfers (SparkToVault).
-    /// Mirrors `pending_liquid_receive_sats` but for the Vault card. Bumped on
+    /// Session-level counter for inbound Vault transfers (SparkToVault).
+    /// Bumped on
     /// `TransferBroadcast` with a Vault destination and decremented on `Tick`
     /// as the vault daemon observes the incoming on-chain tx (so we don't
     /// double-count what `vault_pending_receive_sats` already surfaces from
@@ -550,26 +465,20 @@ pub struct GlobalHome {
     /// we bumped `pending_vault_receive_sats`. Growth above this baseline is
     /// how we recognise our broadcast tx landing in the daemon's view.
     pending_vault_receive_baseline_sats: u64,
-    /// Mirror of `pending_vault_incoming` for the Spark card. Set when a
+    /// The Spark card's pending indicator. Set when a
     /// transfer into Spark has broadcast on-chain and the destination deposit
     /// is awaiting maturity + claim. Cleared by `SparkDepositsChanged` when a
-    /// matching deposit matures and is claimed — or by `LiquidToVaultFailed`
-    /// when the peg-out swap fails before a deposit ever arrives.
+    /// matching deposit matures and is claimed.
     pending_spark_incoming: Option<PendingTransfer>,
-    /// Peg-out swap id for an in-flight LiquidToSpark transfer. Lets us
-    /// match Breez's async `PaymentFailed` event back to the Spark pending
-    /// indicator so a failed swap doesn't leave the badge stuck (no Spark
-    /// deposit arrives in that case, so `SparkDepositsChanged` never fires).
-    pending_spark_incoming_swap_id: Option<String>,
     /// Set once `SparkDepositsLoaded` has observed a non-empty deposit list
-    /// while our LiquidToSpark transfer is pending. Required before we
+    /// while our transfer into Spark is pending. Required before we
     /// accept an empty-list signal as "our deposit was claimed" — otherwise
     /// an unrelated `SparkDepositsChanged` firing while our Bitcoin tx is
     /// still in-flight would clear the badge prematurely. Reset alongside
     /// `pending_spark_incoming` so each new transfer starts fresh.
     pending_spark_deposit_seen: bool,
     /// True when the pending incoming Spark deposit came from a SideShift swap
-    /// rather than a Vault/Liquid→Spark transfer. Swaps reuse the very same
+    /// rather than a Vault→Spark transfer. Swaps reuse the very same
     /// auto-claim watcher; this flag is what makes the successful claim
     /// additionally fire the global "bitcoin received" celebration. Set only by
     /// `SwapSettledAwaitingArrival`, and reset wherever `pending_spark_incoming`
@@ -580,7 +489,7 @@ pub struct GlobalHome {
     /// that the panel holds the shift and keeps the record current.
     spark_shift_restore_requested: bool,
     /// Prepared Spark send handle, populated on step 1→2 for Spark-sourced
-    /// transfers (SparkToVault, SparkToLiquid). Consumed by `ConfirmSparkSend`.
+    /// transfers (SparkToVault and to another Cube). Consumed by `ConfirmSparkSend`.
     spark_send_handle: Option<String>,
     /// Spark-quoted on-chain fee for the prepared send. Rendered in the Fees
     /// row on the Transfer confirm screen (Spark-sourced directions only).
@@ -594,10 +503,6 @@ pub struct GlobalHome {
     /// until the bridge's `PaymentSucceeded` reports it, so Completed and
     /// the "received" splash wait for `SparkPaymentSucceeded`.
     spark_claim_awaiting_settlement: bool,
-    pending_liquid_send_sats: u64,
-    pending_usdt_send_sats: u64,
-    pending_liquid_receive_sats: u64,
-    pending_usdt_receive_sats: u64,
     datadir_path: CoincubeDirectory,
     network: crate::chain::ChainId,
     cube_id: String,
@@ -610,7 +515,7 @@ impl GlobalHome {
         self.spark_backend.is_none() || self.spark_balance_loaded
     }
 
-    /// A loaded Spark or Liquid balance is not zero. A balance still
+    /// A loaded Spark balance is not zero. A balance still
     /// loading, or one whose fetch failed, does not count.
     pub(crate) fn holds_loaded_funds(&self) -> bool {
         let spark = self.spark_balance_loaded
@@ -620,9 +525,7 @@ impl GlobalHome {
                     .spark_usdb_balance
                     .as_ref()
                     .is_some_and(|usdb| usdb.balance > 0));
-        let liquid = self.liquid_balance_loaded && self.liquid_balance > Amount::ZERO;
-        let usdt = self.usdt_balance_loaded && self.usdt_balance > 0;
-        spark || liquid || usdt
+        spark
     }
 
     #[cfg(test)]
@@ -654,16 +557,9 @@ impl GlobalHome {
             })
     }
 
-    /// Follow the Liquid gate. Hiding Liquid also hides a restored
-    /// Liquid → Vault transfer at once (the view reads this flag).
-    pub fn set_liquid_shown(&mut self, shown: bool) {
-        self.liquid_shown = shown;
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         wallet: Arc<Wallet>,
-        breez_client: impl Into<Option<Arc<LiquidBackend>>>,
         spark_backend: Option<Arc<SparkBackend>>,
         datadir_path: CoincubeDirectory,
         network: impl Into<crate::chain::ChainId>,
@@ -674,9 +570,6 @@ impl GlobalHome {
             imported_balance: None,
             imported_installed: false,
             wallet: Some(wallet),
-            liquid_balance: Amount::ZERO,
-            liquid_balance_loaded: false,
-            liquid_balance_error: false,
             spark_balance: Amount::ZERO,
             spark_btc_balance: Amount::ZERO,
             spark_usdb_balance: None,
@@ -687,10 +580,6 @@ impl GlobalHome {
             spark_balance_loading: false,
             spark_pending_resync: false,
             spark_balance_received: false,
-            usdt_balance: 0,
-            usdt_balance_error: false,
-            usdt_balance_loaded: false,
-            breez_client: breez_client.into(),
             spark_backend,
             spark_identity: None,
             _legacy_balance_masked: balance_masked,
@@ -714,9 +603,6 @@ impl GlobalHome {
             address_expanded: false,
             modal: Modal::default(),
             empty_labels: HashMap::default(),
-            onchain_send_limit: None,
-            onchain_receive_limit: None,
-            prepare_onchain_send_response: None,
             is_sending: false,
             transfer_spend_tx: None,
             transfer_signed: false,
@@ -734,13 +620,9 @@ impl GlobalHome {
             other_error: None,
             other_address: None,
             other_locked_again: false,
-            pending_vault_incoming: None,
-            liquid_shown: false,
-            pending_vault_incoming_swap_id: None,
             pending_vault_receive_sats: 0,
             pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
-            pending_spark_incoming_swap_id: None,
             pending_spark_deposit_seen: false,
             pending_spark_incoming_is_swap: false,
             spark_shift_restore_requested: false,
@@ -748,10 +630,6 @@ impl GlobalHome {
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
             spark_claim_awaiting_settlement: false,
-            pending_liquid_send_sats: 0,
-            pending_usdt_send_sats: 0,
-            pending_liquid_receive_sats: 0,
-            pending_usdt_receive_sats: 0,
             datadir_path,
             network: network.into(),
             cube_id,
@@ -759,7 +637,6 @@ impl GlobalHome {
     }
 
     pub fn new_without_wallet(
-        breez_client: impl Into<Option<Arc<LiquidBackend>>>,
         spark_backend: Option<Arc<SparkBackend>>,
         datadir_path: CoincubeDirectory,
         network: impl Into<crate::chain::ChainId>,
@@ -770,9 +647,6 @@ impl GlobalHome {
             imported_balance: None,
             imported_installed: false,
             wallet: None,
-            liquid_balance: Amount::from_sat(0),
-            liquid_balance_loaded: false,
-            liquid_balance_error: false,
             spark_balance: Amount::ZERO,
             spark_btc_balance: Amount::ZERO,
             spark_usdb_balance: None,
@@ -783,10 +657,6 @@ impl GlobalHome {
             spark_balance_loading: false,
             spark_pending_resync: false,
             spark_balance_received: false,
-            usdt_balance: 0,
-            usdt_balance_error: false,
-            usdt_balance_loaded: false,
-            breez_client: breez_client.into(),
             spark_backend,
             spark_identity: None,
             _legacy_balance_masked: balance_masked,
@@ -810,9 +680,6 @@ impl GlobalHome {
             address_expanded: false,
             modal: Modal::default(),
             empty_labels: HashMap::default(),
-            onchain_send_limit: None,
-            onchain_receive_limit: None,
-            prepare_onchain_send_response: None,
             is_sending: false,
             transfer_spend_tx: None,
             transfer_signed: false,
@@ -830,13 +697,9 @@ impl GlobalHome {
             other_error: None,
             other_address: None,
             other_locked_again: false,
-            pending_vault_incoming: None,
-            liquid_shown: false,
-            pending_vault_incoming_swap_id: None,
             pending_vault_receive_sats: 0,
             pending_vault_receive_baseline_sats: 0,
             pending_spark_incoming: None,
-            pending_spark_incoming_swap_id: None,
             pending_spark_deposit_seen: false,
             pending_spark_incoming_is_swap: false,
             spark_shift_restore_requested: false,
@@ -844,10 +707,6 @@ impl GlobalHome {
             spark_send_fee_sat: None,
             auto_claiming_spark_deposit: None,
             spark_claim_awaiting_settlement: false,
-            pending_liquid_send_sats: 0,
-            pending_usdt_send_sats: 0,
-            pending_liquid_receive_sats: 0,
-            pending_usdt_receive_sats: 0,
             datadir_path,
             network: network.into(),
             cube_id,
@@ -894,10 +753,6 @@ impl GlobalHome {
             .fold(Amount::ZERO, |acc, coin| acc + coin.amount)
             .to_sat();
 
-        let liquid_balance = self.liquid_balance;
-        let usdt_balance = self.usdt_balance;
-        let usdt_balance_error = self.usdt_balance_error;
-
         // Fiat price is cube-level, not wallet-level, so get it directly from cache
         let fiat_converter: Option<view::FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
@@ -913,24 +768,16 @@ impl GlobalHome {
         // with coins on every `UpdateDaemonCache`, so any non-zero
         // value is a reliable "daemon has spoken" signal.
         let has_spark = self.spark_backend.is_some();
-        // Sunset gate AND a Liquid backend on this network: on a testnet cube
-        // the SDK never connects, so a card with live Send/Receive buttons
-        // would be a wallet the user can't actually use.
-        let has_liquid =
-            crate::app::features::liquid_wallet_usable(cache.chain(), cache.liquid_gate);
         let vault_pending = cache.has_vault
             && vault_balance_pending(cache.blockheight(), cache.history_sync(), vault_balance);
         let total_balance_loading = self.total_balance_loading(cache);
 
         let config = GlobalViewConfig {
             cube_id: &self.cube_id,
-            liquid_balance,
             spark_balance: self.spark_balance,
             spark_btc_balance: self.spark_btc_balance,
             spark_usdb_balance: self.spark_usdb_balance.as_ref(),
             spark_balance_error: self.spark_balance_error,
-            usdt_balance,
-            usdt_balance_error,
             vault_balance,
             imported_balance: self.imported_balance,
             imported_installed: self.imported_installed,
@@ -940,9 +787,6 @@ impl GlobalHome {
             overview_wallets_hidden: self.overview_wallets_hidden,
             total_balance_loading,
             spark_balance_loaded: self.spark_balance_loaded,
-            liquid_balance_loaded: self.liquid_balance_loaded,
-            liquid_balance_error: self.liquid_balance_error,
-            usdt_balance_loaded: self.usdt_balance_loaded,
             vault_loaded: !vault_pending,
             recovery_available: !vault_pending
                 && self
@@ -968,7 +812,6 @@ impl GlobalHome {
             has_vault: cache.has_vault,
             has_imported_bitcoin: cache.has_imported_bitcoin,
             has_spark,
-            has_liquid,
             current_view: self.current_view,
             transfer_direction: self.transfer_direction,
             transfer_from: self.transfer_from,
@@ -986,23 +829,15 @@ impl GlobalHome {
             labels_editing: self.labels_edited.cache(),
             address_expanded: self.address_expanded,
             bitcoin_unit: cache.bitcoin_unit,
-            onchain_send_limit: self.onchain_send_limit,
-            onchain_receive_limit: self.onchain_receive_limit,
             is_sending: self.is_sending,
             is_tx_signed: self.transfer_signed,
-            prepare_onchain_send_response: self.prepare_onchain_send_response.as_ref(),
             spend_tx_fees: self.spend_tx_fees,
             transfer_feerate: &self.transfer_feerate,
             transfer_feerate_loading: self.transfer_feerate_loading,
             spark_send_fee_sat: self.spark_send_fee_sat,
             pending_spark_incoming: self.pending_spark_incoming,
-            pending_liquid_send_sats: self.pending_liquid_send_sats,
-            pending_usdt_send_sats: self.pending_usdt_send_sats,
-            pending_liquid_receive_sats: self.pending_liquid_receive_sats,
-            pending_usdt_receive_sats: self.pending_usdt_receive_sats,
             vault_pending_send_sats,
             vault_pending_receive_sats,
-            pending_vault_incoming: self.pending_vault_incoming.filter(|_| self.liquid_shown),
             btc_usd_price: cache.btc_usd_price,
             cube_name: &cache.cube_name,
             vault_alias: self
@@ -1159,24 +994,6 @@ impl State for GlobalHome {
                         self.overview_wallets_hidden = !self.overview_wallets_hidden;
                         Task::none()
                     }
-                    HomeMessage::SendAsset(asset) => {
-                        use crate::app::menu::LiquidSubMenu;
-                        Task::batch(vec![
-                            crate::app::state::redirect(Menu::Liquid(LiquidSubMenu::Send)),
-                            Task::done(Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::PresetAsset(asset),
-                            ))),
-                        ])
-                    }
-                    HomeMessage::ReceiveAsset(asset) => {
-                        use crate::app::menu::LiquidSubMenu;
-                        Task::batch(vec![
-                            crate::app::state::redirect(Menu::Liquid(LiquidSubMenu::Receive)),
-                            Task::done(Message::View(view::Message::LiquidReceive(
-                                view::LiquidReceiveMessage::SetReceiveAsset(asset),
-                            ))),
-                        ])
-                    }
                     HomeMessage::SendSparkBtc => {
                         use crate::app::menu::SparkSubMenu;
                         crate::app::state::redirect(Menu::Spark(SparkSubMenu::Send))
@@ -1247,18 +1064,11 @@ impl State for GlobalHome {
                     }
                     HomeMessage::NextStep => {
                         // Step 0 → 1 (overview → amount entry): this is the
-                        // Transfer button press. Default the direction and
-                        // prefetch Breez's on-chain swap limits. Only
-                        // `breez_client` is needed here — Vault daemon is
-                        // required only by the LiquidToVault / SparkToVault
+                        // Transfer button press. Default the direction. The
+                        // Vault daemon is required only by the Vault-sourced
                         // branches of step 1 → 2, which unwrap inline.
                         if self.current_view.step == 0 {
-                            let has_liquid = crate::app::features::liquid_wallet_usable(
-                                cache.network,
-                                cache.liquid_gate,
-                            );
                             let Some(direction) = default_transfer_direction(
-                                has_liquid,
                                 cache.has_vault,
                                 self.spark_backend.is_some(),
                                 cache.chain(),
@@ -1268,9 +1078,8 @@ impl State for GlobalHome {
                             return self.begin_transfer(cache, direction);
                         }
                         // Step 1 → 2 (amount → confirm): fetch the destination
-                        // receive address and, for the Liquid-source leg, ask
-                        // Breez to prepare a pay_onchain so fees can render on
-                        // the confirm screen.
+                        // receive address (and, for a Spark source, prepare
+                        // the send so fees can render on the confirm screen).
                         if self.current_view.step == 1 {
                             // Prepare lives on the Amount page only.
                             if self.transfer_page != TransferPage::Amount {
@@ -1314,131 +1123,12 @@ impl State for GlobalHome {
                             let mut tasks = Vec::new();
                             if matches!(
                                 self.transfer_direction,
-                                Some(TransferDirection::LiquidToVault)
-                            ) {
-                                let Some(daemon) = daemon.clone() else {
-                                    return Task::done(Message::View(view::Message::Home(
-                                        HomeMessage::Error(TransferError::WalletUnavailable(
-                                            WalletKind::Vault,
-                                        )),
-                                    )));
-                                };
-                                self.current_view.next();
-                                let (data_dir, wallet) =
-                                    (cache.datadir_path.clone(), self.wallet.clone());
-                                tasks.push(Task::perform(
-                                    async move {
-                                        match vault_deposit_address(data_dir, wallet, daemon).await
-                                        {
-                                            Ok(res) => {
-                                                Ok((res.address.to_string(), res.derivation_index))
-                                            }
-                                            Err(e) => Err(TransferError::NoDepositAddress {
-                                                to: WalletKind::Vault,
-                                                detail: e.to_string(),
-                                            }),
-                                        }
-                                    },
-                                    move |result| {
-                                        Message::View(view::Message::Home(
-                                            HomeMessage::TransferDestinationReady {
-                                                generation,
-                                                direction,
-                                                result,
-                                            },
-                                        ))
-                                    },
-                                ));
-                                if let Ok(amount) = Amount::from_str_in(
-                                    &self.entered_amount.value,
-                                    if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
-                                        breez_sdk_liquid::bitcoin::Denomination::Bitcoin
-                                    } else {
-                                        breez_sdk_liquid::bitcoin::Denomination::Satoshi
-                                    },
-                                ) {
-                                    let Some(breez_client) = self.breez_client.clone() else {
-                                        return Task::none();
-                                    };
-                                    let pay_amount = if self.sends_max() {
-                                        breez_sdk_liquid::model::PayAmount::Drain
-                                    } else {
-                                        breez_sdk_liquid::model::PayAmount::Bitcoin {
-                                            receiver_amount_sat: amount.to_sat(),
-                                        }
-                                    };
-                                    tasks.push(Task::perform(
-                                        async move {
-                                            breez_client
-                                                .prepare_pay_onchain(&PreparePayOnchainRequest {
-                                                    fee_rate_sat_per_vbyte: None,
-                                                    amount: pay_amount,
-                                                })
-                                                .await
-                                        },
-                                        move |result| match result {
-                                            Ok(response) => Message::View(view::Message::Home(
-                                                HomeMessage::PrepareOnChainResponseReceived {
-                                                    generation,
-                                                    direction,
-                                                    response,
-                                                },
-                                            )),
-                                            Err(error) => Message::View(view::Message::Home(
-                                                HomeMessage::TransferDestinationFailed {
-                                                    generation,
-                                                    direction,
-                                                    error: TransferError::FeeEstimateFailed {
-                                                        detail: error.to_string(),
-                                                    },
-                                                },
-                                            )),
-                                        },
-                                    ))
-                                }
-                            } else if matches!(
-                                self.transfer_direction,
-                                Some(TransferDirection::VaultToLiquid)
-                            ) {
-                                self.current_view.next();
-                                let Some(breez_client) = self.breez_client.clone() else {
-                                    return Task::none();
-                                };
-                                tasks.push(Task::perform(
-                                    async move {
-                                        let result = breez_client.receive_onchain(None).await;
-                                        result
-                                    },
-                                    move |result| {
-                                        Message::View(view::Message::Home(
-                                            HomeMessage::TransferDestinationReady {
-                                                generation,
-                                                direction,
-                                                result: result
-                                                    .map(|response| {
-                                                        (
-                                                            response.destination,
-                                                            ChildNumber::Normal { index: 1 },
-                                                        )
-                                                    })
-                                                    .map_err(|error| {
-                                                        TransferError::NoDepositAddress {
-                                                            to: WalletKind::Liquid,
-                                                            detail: error.to_string(),
-                                                        }
-                                                    }),
-                                            },
-                                        ))
-                                    },
-                                ));
-                            } else if matches!(
-                                self.transfer_direction,
                                 Some(TransferDirection::VaultToSpark)
                             ) {
                                 // VaultToSpark: Spark issues a BTC deposit address;
                                 // the Vault signs a standard on-chain tx to that
                                 // address. The sign/broadcast path reuses the
-                                // existing `SignVaultToLiquidTx` handler (widened
+                                // existing `SignVaultTransferTx` handler (widened
                                 // below to accept this direction).
                                 if let Some(spark) = self.spark_backend.clone() {
                                     self.current_view.next();
@@ -1478,174 +1168,6 @@ impl State for GlobalHome {
                                         )),
                                     )));
                                 }
-                            } else if matches!(
-                                self.transfer_direction,
-                                Some(TransferDirection::LiquidToSpark)
-                            ) {
-                                // LiquidToSpark: structurally identical to
-                                // LiquidToVault. Breez runs a peg-out swap to
-                                // the Spark-issued BTC deposit address.
-                                let Some(spark) = self.spark_backend.clone() else {
-                                    return Task::done(Message::View(view::Message::Home(
-                                        HomeMessage::Error(TransferError::WalletUnavailable(
-                                            WalletKind::Spark,
-                                        )),
-                                    )));
-                                };
-                                self.current_view.next();
-                                tasks.push(Task::perform(
-                                    async move { spark.receive_onchain(None).await },
-                                    move |result| {
-                                        Message::View(view::Message::Home(
-                                            HomeMessage::TransferDestinationReady {
-                                                generation,
-                                                direction,
-                                                result: result
-                                                    .map(|response| {
-                                                        (
-                                                            response.payment_request,
-                                                            ChildNumber::Normal { index: 1 },
-                                                        )
-                                                    })
-                                                    .map_err(|error| {
-                                                        TransferError::NoDepositAddress {
-                                                            to: WalletKind::Spark,
-                                                            detail: error.to_string(),
-                                                        }
-                                                    }),
-                                            },
-                                        ))
-                                    },
-                                ));
-                                if let Ok(amount) = Amount::from_str_in(
-                                    &self.entered_amount.value,
-                                    if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
-                                        breez_sdk_liquid::bitcoin::Denomination::Bitcoin
-                                    } else {
-                                        breez_sdk_liquid::bitcoin::Denomination::Satoshi
-                                    },
-                                ) {
-                                    let Some(breez_client) = self.breez_client.clone() else {
-                                        return Task::none();
-                                    };
-                                    let pay_amount = if self.sends_max() {
-                                        breez_sdk_liquid::model::PayAmount::Drain
-                                    } else {
-                                        breez_sdk_liquid::model::PayAmount::Bitcoin {
-                                            receiver_amount_sat: amount.to_sat(),
-                                        }
-                                    };
-                                    tasks.push(Task::perform(
-                                        async move {
-                                            breez_client
-                                                .prepare_pay_onchain(&PreparePayOnchainRequest {
-                                                    fee_rate_sat_per_vbyte: None,
-                                                    amount: pay_amount,
-                                                })
-                                                .await
-                                        },
-                                        move |result| match result {
-                                            Ok(response) => Message::View(view::Message::Home(
-                                                HomeMessage::PrepareOnChainResponseReceived {
-                                                    generation,
-                                                    direction,
-                                                    response,
-                                                },
-                                            )),
-                                            Err(error) => Message::View(view::Message::Home(
-                                                HomeMessage::TransferDestinationFailed {
-                                                    generation,
-                                                    direction,
-                                                    error: TransferError::FeeEstimateFailed {
-                                                        detail: error.to_string(),
-                                                    },
-                                                },
-                                            )),
-                                        },
-                                    ));
-                                }
-                            } else if matches!(
-                                self.transfer_direction,
-                                Some(TransferDirection::SparkToLiquid)
-                            ) {
-                                // SparkToLiquid: fetch a Breez peg-in BTC address
-                                // and prepare a Spark send against it. Breez will
-                                // credit L-BTC once the on-chain tx confirms.
-                                let Ok(amount) = Amount::from_str_in(
-                                    &self.entered_amount.value,
-                                    if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
-                                        coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                    } else {
-                                        coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                    },
-                                ) else {
-                                    return Task::none();
-                                };
-                                let Some(spark) = self.spark_backend.clone() else {
-                                    return Task::done(Message::View(view::Message::Home(
-                                        HomeMessage::Error(TransferError::WalletUnavailable(
-                                            WalletKind::Spark,
-                                        )),
-                                    )));
-                                };
-                                self.current_view.next();
-                                let Some(breez_client) = self.breez_client.clone() else {
-                                    return Task::none();
-                                };
-                                let amount_sat = amount.to_sat();
-                                let fees_included = self.sends_max();
-                                tasks.push(Task::perform(
-                                    async move {
-                                        let addr_res = breez_client
-                                            .receive_onchain(None)
-                                            .await
-                                            .map_err(|e| TransferError::NoDepositAddress {
-                                                to: WalletKind::Liquid,
-                                                detail: e.to_string(),
-                                            })?;
-                                        let destination = addr_res.destination;
-                                        let prep = if fees_included {
-                                            spark
-                                                .prepare_send_fees_included(
-                                                    destination.clone(),
-                                                    amount_sat,
-                                                )
-                                                .await
-                                        } else {
-                                            spark
-                                                .prepare_send(destination.clone(), Some(amount_sat))
-                                                .await
-                                        }
-                                        .map_err(|e| TransferError::FeeEstimateFailed {
-                                            detail: e.to_string(),
-                                        })?;
-                                        Ok::<_, TransferError>((
-                                            destination,
-                                            prep.handle,
-                                            prep.fee_sat,
-                                        ))
-                                    },
-                                    move |result| match result {
-                                        Ok((destination, prepare_handle, fee_sat)) => {
-                                            Message::View(view::Message::Home(
-                                                HomeMessage::SparkPrepareSendReady {
-                                                    generation,
-                                                    direction,
-                                                    destination,
-                                                    prepare_handle,
-                                                    fee_sat,
-                                                },
-                                            ))
-                                        }
-                                        Err(error) => Message::View(view::Message::Home(
-                                            HomeMessage::TransferDestinationFailed {
-                                                generation,
-                                                direction,
-                                                error,
-                                            },
-                                        )),
-                                    },
-                                ));
                             } else if matches!(
                                 direction,
                                 TransferDirection::SparkToVault
@@ -2008,7 +1530,6 @@ impl State for GlobalHome {
                             Ok(()) => HomeMessage::TransferBroadcast {
                                 amount_sat,
                                 destination_kind: direction.to_kind(),
-                                swap_id: None,
                             },
                             Err(error) => {
                                 if direction.is_other_cube()
@@ -2039,7 +1560,6 @@ impl State for GlobalHome {
                     HomeMessage::TransferBroadcast {
                         amount_sat,
                         destination_kind,
-                        swap_id,
                     } => {
                         self.is_sending = false;
                         // Another Cube's Vault receives this one: nothing is
@@ -2048,7 +1568,6 @@ impl State for GlobalHome {
                             .transfer_direction
                             .is_some_and(|direction| direction.is_other_cube())
                         {
-                            let _ = (amount_sat, destination_kind, swap_id);
                             self.current_view.next();
                             self.finish_other_cube();
                             return Task::none();
@@ -2061,9 +1580,8 @@ impl State for GlobalHome {
                             WalletKind::Vault => {
                                 // SparkToVault: there's no swap lifecycle to
                                 // drive stage transitions on the
-                                // `pending_vault_incoming` indicator, so use
-                                // the session-level counter (mirrors
-                                // `pending_liquid_receive_sats`). Baseline
+                                // Vault card's indicator, so use the
+                                // session-level counter. Baseline
                                 // snapshots the daemon's current view so the
                                 // Tick reconciler can tell "our tx landed"
                                 // from growth relative to this moment — but
@@ -2082,14 +1600,6 @@ impl State for GlobalHome {
                                 self.pending_vault_receive_sats =
                                     self.pending_vault_receive_sats.saturating_add(amount_sat);
                             }
-                            WalletKind::Liquid => {
-                                // Liquid peg-in is pending — bump the existing
-                                // "incoming peg-in" counter so the Liquid card
-                                // reflects it (Phase 6b wires this through
-                                // Breez's swap-completed event for clearing).
-                                self.pending_liquid_receive_sats =
-                                    self.pending_liquid_receive_sats.saturating_add(amount_sat);
-                            }
                             WalletKind::Spark => {
                                 // Spark destinations also land here on Spark-sourced
                                 // flows only when the bridge routes internally — the
@@ -2097,11 +1607,6 @@ impl State for GlobalHome {
                                 // and destination. Treat defensively: still mark the
                                 // Spark card as pending.
                                 self.pending_spark_incoming = Some(pending);
-                                // Only set for LiquidToSpark (Breez peg-out) — the
-                                // Vault→Spark and Spark-internal paths don't produce
-                                // a Breez swap_id, so we leave the tracker cleared
-                                // and rely on `SparkDepositsChanged` for them.
-                                self.pending_spark_incoming_swap_id = swap_id;
                                 // Fresh transfer — we haven't observed the new
                                 // deposit in Spark's unclaimed list yet.
                                 self.pending_spark_deposit_seen = false;
@@ -2239,13 +1744,7 @@ impl State for GlobalHome {
                     }
                     selection @ (HomeMessage::SelectWalletInPicker(kind)
                     | HomeMessage::SelectTransferWallet(_, kind)) => {
-                        if (kind == WalletKind::Spark && self.spark_backend.is_none())
-                            || (kind == WalletKind::Liquid
-                                && !crate::app::features::liquid_wallet_usable(
-                                    cache.network,
-                                    cache.liquid_gate,
-                                ))
-                        {
+                        if kind == WalletKind::Spark && self.spark_backend.is_none() {
                             return Task::none();
                         }
                         if !self.vault_available(cache)
@@ -2311,7 +1810,7 @@ impl State for GlobalHome {
                             // Re-validate the entered amount against the new
                             // source wallet's balance and the new direction's
                             // min/max limits. Without this, switching from
-                            // (e.g.) Liquid to Spark as the source could leave
+                            // (e.g.) Spark to Vault as the source could leave
                             // a now-too-large amount marked valid.
                             self.validate_entered_amount(cache);
                         }
@@ -2771,7 +2270,7 @@ impl State for GlobalHome {
                         self.validate_entered_amount(cache);
                         Task::none()
                     }
-                    HomeMessage::SignVaultToLiquidTx => {
+                    HomeMessage::SignVaultTransferTx => {
                         if !self.vault_available(cache) {
                             return Task::none();
                         }
@@ -2780,14 +2279,12 @@ impl State for GlobalHome {
                         }
                         let generation = self.transfer_request_generation;
                         if let Some(transfer_direction) = self.transfer_direction {
-                            // Shared signer path for both Vault-sourced directions —
-                            // `receive_address_info` is the only thing that differs
-                            // between them (populated from Breez for VaultToLiquid,
-                            // from Spark's `receive_onchain` for VaultToSpark).
+                            // Shared signer path for every Vault-sourced
+                            // direction — `receive_address_info` is the only
+                            // thing that differs between them.
                             if matches!(
                                 transfer_direction,
-                                TransferDirection::VaultToLiquid
-                                    | TransferDirection::VaultToSpark
+                                TransferDirection::VaultToSpark
                                     | TransferDirection::VaultToOtherSpark
                                     | TransferDirection::VaultToOtherCube
                             ) {
@@ -2958,105 +2455,7 @@ impl State for GlobalHome {
                         if let Some(transfer_direction) = self.transfer_direction {
                             if matches!(
                                 transfer_direction,
-                                TransferDirection::LiquidToVault | TransferDirection::LiquidToSpark
-                            ) {
-                                // Liquid-sourced: direct Breez pay_onchain broadcast.
-                                // Destination address was populated at step 1→2 (Vault
-                                // BIP-32 for LiquidToVault, Spark BTC deposit for
-                                // LiquidToSpark).
-                                if let Some(address_info) = self.receive_address_info.clone() {
-                                    if let Some(prepare_onchain_send_response) =
-                                        self.prepare_onchain_send_response.clone()
-                                    {
-                                        let Ok(transfer_amount) = Amount::from_str_in(
-                                            &self.entered_amount.value,
-                                            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC)
-                                            {
-                                                breez_sdk_liquid::bitcoin::Denomination::Bitcoin
-                                            } else {
-                                                breez_sdk_liquid::bitcoin::Denomination::Satoshi
-                                            },
-                                        ) else {
-                                            self.entered_amount.valid = false;
-                                            return Task::none();
-                                        };
-                                        let Some(breez_client) = self.breez_client.clone() else {
-                                            return Task::none();
-                                        };
-                                        self.is_sending = true;
-                                        let destination_kind = transfer_direction.to_kind();
-                                        return Task::perform(
-                                            async move {
-                                                breez_client
-                                                    .pay_onchain(&PayOnchainRequest {
-                                                        address: address_info.address.to_string(),
-                                                        prepare_response:
-                                                            prepare_onchain_send_response,
-                                                    })
-                                                    .await
-                                            },
-                                            move |result| match result {
-                                                Ok(response) => {
-                                                    // Both LiquidToVault and LiquidToSpark
-                                                    // care about the Breez peg-out swap_id
-                                                    // (for resume/persistence and for
-                                                    // matching the async PaymentFailed back
-                                                    // to the right pending indicator).
-                                                    let swap_id =
-                                                        bitcoin_send_swap_id(&response.payment);
-                                                    match destination_kind {
-                                                        // LiquidToVault keeps the richer path
-                                                        // (swap_id persistence so we can
-                                                        // resume a pending peg-out across
-                                                        // restarts).
-                                                        WalletKind::Vault => Message::View(
-                                                            view::Message::Home(
-                                                                HomeMessage::LiquidToVaultSubmitted {
-                                                                    amount: transfer_amount,
-                                                                    swap_id,
-                                                                },
-                                                            ),
-                                                        ),
-                                                        // LiquidToSpark: route through the
-                                                        // generic success handler, but
-                                                        // forward the swap_id so an async
-                                                        // PaymentFailed can clear the Spark
-                                                        // pending indicator (see
-                                                        // `pending_spark_incoming_swap_id`).
-                                                        WalletKind::Spark => Message::View(
-                                                            view::Message::Home(
-                                                                HomeMessage::TransferBroadcast {
-                                                                    amount_sat: transfer_amount
-                                                                        .to_sat(),
-                                                                    destination_kind,
-                                                                    swap_id,
-                                                                },
-                                                            ),
-                                                        ),
-                                                        // Liquid can't be its own destination.
-                                                        WalletKind::Liquid => Message::View(
-                                                            view::Message::Home(
-                                                                HomeMessage::TransferSuccessful,
-                                                            ),
-                                                        ),
-                                                    }
-                                                }
-                                                Err(error) => Message::View(view::Message::Home(
-                                                    HomeMessage::Error(
-                                                        TransferError::BroadcastFailed {
-                                                            from: WalletKind::Liquid,
-                                                            detail: error.to_string(),
-                                                        },
-                                                    ),
-                                                )),
-                                            },
-                                        );
-                                    }
-                                }
-                            } else if matches!(
-                                transfer_direction,
-                                TransferDirection::VaultToLiquid
-                                    | TransferDirection::VaultToSpark
+                                TransferDirection::VaultToSpark
                                     | TransferDirection::VaultToOtherSpark
                                     | TransferDirection::VaultToOtherCube
                             ) {
@@ -3070,7 +2469,7 @@ impl State for GlobalHome {
                                 }
                                 // Post-sign broadcast path for both Vault-sourced
                                 // directions. The PSBT was built earlier in the same
-                                // shared `SignVaultToLiquidTx` handler against the
+                                // shared `SignVaultTransferTx` handler against the
                                 // destination address stored in `receive_address_info`.
                                 if self.transfer_psbt_ready_for
                                     != Some((
@@ -3123,38 +2522,14 @@ impl State for GlobalHome {
                                                 },
                                                 move |result| match result {
                                                     Ok(()) => match to_kind {
-                                                        // Vault→Liquid: route through
-                                                        // `TransferBroadcast` so the Liquid
-                                                        // card's pending-receive counter
-                                                        // gets bumped at broadcast time.
-                                                        // `LiquidPeginCompleted` decrements
-                                                        // it once Breez finishes the
-                                                        // peg-in swap. The PSBT is paying
-                                                        // a Breez peg-in deposit address;
-                                                        // we don't track a swap_id here
-                                                        // because Breez correlates by
-                                                        // tx-output, not by GUI state.
-                                                        WalletKind::Liquid => {
-                                                            Message::View(view::Message::Home(
-                                                                HomeMessage::TransferBroadcast {
-                                                                    amount_sat,
-                                                                    destination_kind: to_kind,
-                                                                    swap_id: None,
-                                                                },
-                                                            ))
-                                                        }
                                                         // Vault→Spark: reuse the Spark-send
                                                         // success handler so both legs land
                                                         // in the same `PendingDeposit` state.
-                                                        // No Breez swap is involved — this is
-                                                        // a direct Vault PSBT broadcast — so
-                                                        // there's no swap_id to track.
                                                         WalletKind::Spark => {
                                                             Message::View(view::Message::Home(
                                                                 HomeMessage::TransferBroadcast {
                                                                     amount_sat,
                                                                     destination_kind: to_kind,
-                                                                    swap_id: None,
                                                                 },
                                                             ))
                                                         }
@@ -3197,18 +2572,6 @@ impl State for GlobalHome {
                             crate::user_error::report_transfer(&err),
                         )))
                     }
-                    HomeMessage::PendingAmountsUpdated {
-                        liquid_send_sats,
-                        usdt_send_sats,
-                        liquid_receive_sats,
-                        usdt_receive_sats,
-                    } => {
-                        self.pending_liquid_send_sats = liquid_send_sats;
-                        self.pending_usdt_send_sats = usdt_send_sats;
-                        self.pending_liquid_receive_sats = liquid_receive_sats;
-                        self.pending_usdt_receive_sats = usdt_receive_sats;
-                        Task::none()
-                    }
                     HomeMessage::StoreSparkShift(record) => {
                         self.store_pending_spark_shift(record.as_deref().cloned())
                     }
@@ -3236,9 +2599,6 @@ impl State for GlobalHome {
                             amount: Amount::from_sat(amount_sat),
                             stage: TransferStage::PendingDeposit,
                         });
-                        // No Breez swap id — swaps use the generic deposit-based
-                        // path (same as Vault→Spark), not the peg-out correlation.
-                        self.pending_spark_incoming_swap_id = None;
                         // A restored shift saw its deposit unclaimed just now; if
                         // the SDK claims it before the list below is read, an
                         // empty list must still read as claimed.
@@ -3254,7 +2614,7 @@ impl State for GlobalHome {
                     }
                     HomeMessage::SwapClaimObserved { amount_sat } => {
                         // Only a swap's tracker is ours to retire: a
-                        // Vault/Liquid→Spark transfer's tracker belongs to
+                        // Vault→Spark transfer's tracker belongs to
                         // that transfer. Already completed by our own claim
                         // (`complete_spark_auto_claim` clears `is_swap`), it
                         // has celebrated, so this is a no-op then.
@@ -3262,7 +2622,6 @@ impl State for GlobalHome {
                             return Task::none();
                         }
                         self.pending_spark_incoming = None;
-                        self.pending_spark_incoming_swap_id = None;
                         self.pending_spark_deposit_seen = false;
                         self.pending_spark_incoming_is_swap = false;
                         self.auto_claiming_spark_deposit = None;
@@ -3309,9 +2668,8 @@ impl State for GlobalHome {
                         // Empty list → whatever was pending got claimed (either by
                         // us or by the user from the Spark Receive panel). Only
                         // interpret it that way once we've previously observed
-                        // our deposit in the list: the inbound tx (Breez peg-out
-                        // for LiquidToSpark, Bitcoin broadcast for VaultToSpark)
-                        // doesn't appear until it lands on-chain, so an unrelated
+                        // our deposit in the list: the inbound tx (the Bitcoin
+                        // broadcast for VaultToSpark) doesn't appear until it lands on-chain, so an unrelated
                         // `SparkDepositsChanged` firing during that window (e.g.
                         // a prior deposit being claimed from the Receive panel)
                         // would otherwise clear the badge while our transfer is
@@ -3330,7 +2688,7 @@ impl State for GlobalHome {
                             // SDK-silent claim; it's idempotent (the flow transitions
                             // once and ignores it otherwise), so it can't double up
                             // with a claim path that already fired. Non-swap
-                            // transfers (Vault/Liquid→Spark) don't touch it.
+                            // transfers (Vault→Spark) don't touch it.
                             let was_swap = self.pending_spark_incoming_is_swap;
                             let amount_sat = self
                                 .pending_spark_incoming
@@ -3338,7 +2696,6 @@ impl State for GlobalHome {
                                 .map(|p| p.amount.to_sat())
                                 .unwrap_or(0);
                             self.pending_spark_incoming = None;
-                            self.pending_spark_incoming_swap_id = None;
                             self.pending_spark_deposit_seen = false;
                             self.pending_spark_incoming_is_swap = false;
                             self.auto_claiming_spark_deposit = None;
@@ -3425,8 +2782,7 @@ impl State for GlobalHome {
                             return Task::none();
                         }
                         // Success: mark the indicator Completed so the view hides
-                        // it immediately and `BackToHome` can reap it symmetric to
-                        // `pending_vault_incoming`. The bridge's follow-up
+                        // it immediately and `BackToHome` can reap it. The bridge's follow-up
                         // `DepositsChanged` will still re-enter the watcher and
                         // clear the field outright. Failure: log and surface so
                         // the user can retry from the Receive panel.
@@ -3455,113 +2811,6 @@ impl State for GlobalHome {
                         self.complete_spark_auto_claim(amount_sat)
                     }
 
-                    HomeMessage::LiquidPeginCompleted { amount_sat } => {
-                        // Decrement the pending-receive counter instantly so the
-                        // Liquid card drops its "pending" badge without waiting for
-                        // the next `load_pending_sends` sync. Then re-run the sync
-                        // for full self-healing — if the counter was already too
-                        // low (e.g. multiple peg-ins) the SDK-derived refresh
-                        // corrects it.
-                        self.pending_liquid_receive_sats =
-                            self.pending_liquid_receive_sats.saturating_sub(amount_sat);
-                        self.load_pending_sends()
-                    }
-                    HomeMessage::LiquidBalanceUpdated(liquid_balance) => {
-                        self.liquid_balance = liquid_balance;
-                        self.liquid_balance_error = false;
-                        self.liquid_balance_loaded = true;
-                        Task::none()
-                    }
-                    HomeMessage::UsdtBalanceUpdated(usdt_balance) => {
-                        self.usdt_balance = usdt_balance;
-                        self.usdt_balance_error = false;
-                        self.usdt_balance_loaded = true;
-                        Task::none()
-                    }
-                    HomeMessage::LiquidBalanceFetchFailed(detail) => {
-                        // `loaded` means "we are no longer waiting on this", not
-                        // "we have a number". Without it `liquid_pending` stays
-                        // true and the *aggregate* Total Balance spins forever —
-                        // taking the Vault and Spark rows down with it, neither
-                        // of which failed. `UsdtBalanceFetchFailed` below makes
-                        // the same bargain.
-                        //
-                        // `loaded` is never reset to false once set, so reading
-                        // it *before* we set it answers the only question that
-                        // matters here: have we ever had a real number?
-                        let had_a_balance = self.liquid_balance_loaded;
-                        self.liquid_balance_loaded = true;
-                        // First load: there is nothing behind the failure but
-                        // the untouched `Amount::ZERO`, and rendering that as a
-                        // balance would not be stale, it would be wrong.
-                        //
-                        // Later refresh: `liquid_balance` still holds the last
-                        // good value and the Total still counts it, so blanking
-                        // the row to "Balance unavailable" would both lose
-                        // information the user had and disagree with the total
-                        // right above it. A transient blip keeps the number.
-                        self.liquid_balance_error = !had_a_balance;
-                        // A fetch started before Liquid was hidden can still
-                        // fail late. Its wallet isn't on screen, so neither is
-                        // the error.
-                        if !self.liquid_shown {
-                            return Task::none();
-                        }
-                        let (title, guidance) = if had_a_balance {
-                            (
-                                "Couldn't refresh your Liquid balance",
-                                "The amount shown may be out of date. Check your internet connection.",
-                            )
-                        } else {
-                            (
-                                "Couldn't load your Liquid balance",
-                                "Check your internet connection and try again.",
-                            )
-                        };
-                        Task::done(Message::View(view::Message::ShowError(
-                            crate::user_error::UserError::logged(
-                                title,
-                                guidance,
-                                crate::user_error::CC_LQD_CONN,
-                                true,
-                                detail,
-                            )
-                            .toast(),
-                        )))
-                    }
-                    HomeMessage::UsdtBalanceFetchFailed => {
-                        // Same rule as its L-BTC twin above: only blank the row
-                        // when there is no successful value behind the failure.
-                        self.usdt_balance_error = !self.usdt_balance_loaded;
-                        self.usdt_balance_loaded = true;
-                        Task::none()
-                    }
-                    HomeMessage::OnChainLimitsFetched { send, receive } => {
-                        self.onchain_send_limit = Some(send);
-                        self.onchain_receive_limit = Some(receive);
-                        // Re-validate: if the user entered an amount before limits
-                        // resolved, `validate_entered_amount` parked it with
-                        // "Loading limits…" / valid=false. Now that the min/max
-                        // are available, re-check so the Next button unlocks
-                        // without requiring the user to retype.
-                        self.validate_entered_amount(cache);
-                        Task::none()
-                    }
-                    HomeMessage::PrepareOnChainResponseReceived {
-                        generation,
-                        direction,
-                        response,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction) {
-                            return Task::none();
-                        }
-                        // A drain prepares the whole balance; show what arrives.
-                        if self.sends_max() {
-                            self.set_entered_amount(Amount::from_sat(response.receiver_amount_sat));
-                        }
-                        self.prepare_onchain_send_response = Some(response);
-                        Task::none()
-                    }
                     HomeMessage::TransferSuccessful => {
                         self.current_view.next();
                         self.is_sending = false;
@@ -3573,102 +2822,6 @@ impl State for GlobalHome {
                         {
                             self.finish_other_cube();
                         }
-                        Task::none()
-                    }
-                    HomeMessage::LiquidToVaultSubmitted { amount, swap_id } => {
-                        self.current_view.next();
-                        self.is_sending = false;
-                        self.pending_vault_incoming = Some(PendingTransfer {
-                            amount,
-                            stage: TransferStage::Initiated,
-                        });
-                        self.pending_vault_incoming_swap_id = swap_id.clone();
-                        if let Some(swap_id) = swap_id {
-                            return self.persist_pending_liquid_to_vault_transfer(
-                                swap_id,
-                                amount.to_sat(),
-                            );
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::LiquidToVaultPending(swap_id) => {
-                        if self.is_matching_pending_swap(swap_id.as_deref()) {
-                            if let Some(mut pending) = self.pending_vault_incoming {
-                                pending.stage = TransferStage::SwappingLbtcToBtc;
-                                self.pending_vault_incoming = Some(pending);
-                            }
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::LiquidToVaultWaitingConfirmation(swap_id) => {
-                        if self.is_matching_pending_swap(swap_id.as_deref()) {
-                            if let Some(mut pending) = self.pending_vault_incoming {
-                                pending.stage = TransferStage::SendingToVault;
-                                self.pending_vault_incoming = Some(pending);
-                            }
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::LiquidToVaultSucceeded(swap_id) => {
-                        if self.is_matching_pending_swap(swap_id.as_deref()) {
-                            if let Some(mut pending) = self.pending_vault_incoming {
-                                pending.stage = TransferStage::Completed;
-                                self.pending_vault_incoming = Some(pending);
-                            }
-                            self.pending_vault_incoming_swap_id = None;
-                            return self.clear_pending_liquid_to_vault_transfer();
-                        }
-                        if self.is_matching_pending_spark_swap(swap_id.as_deref()) {
-                            // Peg-out landed on-chain — leave the Spark pending
-                            // badge in place (`SparkDepositsChanged` clears it
-                            // once the deposit matures), but release the swap_id
-                            // tracker so a future unrelated `PaymentFailed`
-                            // can't accidentally match and clear it.
-                            self.pending_spark_incoming_swap_id = None;
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::LiquidToVaultFailed(swap_id) => {
-                        // Dispatched from Breez `PaymentFailed` for any Liquid
-                        // peg-out, so it covers both LiquidToVault and
-                        // LiquidToSpark. Route to whichever pending indicator
-                        // owns this swap_id — for LiquidToSpark there's no
-                        // deposit to ever arrive, so `SparkDepositsChanged`
-                        // won't clear the badge on our behalf.
-                        if self.is_matching_pending_swap(swap_id.as_deref()) {
-                            self.pending_vault_incoming = None;
-                            self.pending_vault_incoming_swap_id = None;
-                            return Task::batch(vec![
-                                self.clear_pending_liquid_to_vault_transfer(),
-                                Task::done(Message::View(view::Message::ShowError(
-                                    "Liquid to Vault transfer failed. Please retry.".to_string(),
-                                ))),
-                            ]);
-                        }
-                        if self.is_matching_pending_spark_swap(swap_id.as_deref()) {
-                            self.pending_spark_incoming = None;
-                            self.pending_spark_incoming_swap_id = None;
-                            self.pending_spark_deposit_seen = false;
-                            self.pending_spark_incoming_is_swap = false;
-                            return Task::done(Message::View(view::Message::ShowError(
-                                "Liquid to Spark transfer failed. Please retry.".to_string(),
-                            )));
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::PendingTransferRestored { .. } if !self.liquid_shown => {
-                        Task::none()
-                    }
-                    HomeMessage::PendingTransferRestored {
-                        amount_sat,
-                        stage,
-                        swap_id,
-                    } => {
-                        self.pending_vault_incoming = Some(PendingTransfer {
-                            amount: Amount::from_sat(amount_sat),
-                            stage,
-                        });
-                        self.pending_vault_incoming_swap_id = Some(swap_id);
                         Task::none()
                     }
                     HomeMessage::BackToHome => {
@@ -3683,9 +2836,6 @@ impl State for GlobalHome {
                         self.entered_amount = form::Value::default();
                         self.transfer_max = None;
                         self.invalidate_transfer_destination();
-                        self.onchain_send_limit = None;
-                        self.onchain_receive_limit = None;
-                        self.prepare_onchain_send_response = None;
                         self.is_sending = false;
                         self.transfer_spend_tx = None;
                         self.transfer_signed = false;
@@ -3695,21 +2845,11 @@ impl State for GlobalHome {
                         self.transfer_feerate = default_transfer_feerate();
                         self.transfer_feerate_loading = None;
                         if self
-                            .pending_vault_incoming
-                            .map(|pending| pending.stage == TransferStage::Completed)
-                            .unwrap_or(false)
-                        {
-                            self.pending_vault_incoming = None;
-                            self.pending_vault_incoming_swap_id = None;
-                            return self.clear_pending_liquid_to_vault_transfer();
-                        }
-                        if self
                             .pending_spark_incoming
                             .map(|pending| pending.stage == TransferStage::Completed)
                             .unwrap_or(false)
                         {
                             self.pending_spark_incoming = None;
-                            self.pending_spark_incoming_swap_id = None;
                             self.pending_spark_deposit_seen = false;
                             self.pending_spark_incoming_is_swap = false;
                         }
@@ -3765,7 +2905,10 @@ impl State for GlobalHome {
                                 }
                             }
                         } else {
-                            log::error!("Failed to parse Breez on-chain address: {}", addr_str);
+                            log::error!(
+                                "Failed to parse the transfer's on-chain address: {}",
+                                addr_str
+                            );
                         }
                         Task::none()
                     }
@@ -3781,7 +2924,6 @@ impl State for GlobalHome {
                             error,
                         ))))
                     }
-                    HomeMessage::RefreshLiquidBalance => self.load_liquid_balance(),
                     HomeMessage::RefreshSparkBalance => {
                         self.load_spark_balance().unwrap_or_else(Task::none)
                     }
@@ -4058,7 +3200,7 @@ impl State for GlobalHome {
                             }
                             Err(e) => {
                                 // Quiet failure: the user sees blank Fees/Total,
-                                // and the real `SignVaultToLiquidTx` path will
+                                // and the real `SignVaultTransferTx` path will
                                 // surface any error (insufficient funds etc.)
                                 // if they click through. Logging only.
                                 log::debug!(
@@ -4206,32 +3348,6 @@ impl State for GlobalHome {
     ) -> Task<Message> {
         self.wallet = wallet;
         let mut tasks = Vec::new();
-        // Hidden Liquid settles as a network with no Liquid backend does:
-        // nothing is fetched, so a late failure can't raise an error.
-        if self.liquid_shown
-            && matches!(
-                self.network,
-                crate::chain::ChainId::Bitcoin | crate::chain::ChainId::Regtest
-            )
-        {
-            tasks.extend([
-                self.load_liquid_balance(),
-                self.load_usdt_balance(),
-                self.load_pending_sends(),
-                self.restore_pending_liquid_to_vault_transfer(),
-            ]);
-        } else {
-            self.liquid_balance = Amount::ZERO;
-            self.usdt_balance = 0;
-            self.liquid_balance_loaded = true;
-            self.liquid_balance_error = false;
-            self.usdt_balance_loaded = true;
-            self.usdt_balance_error = false;
-            self.pending_liquid_send_sats = 0;
-            self.pending_liquid_receive_sats = 0;
-            self.pending_usdt_send_sats = 0;
-            self.pending_usdt_receive_sats = 0;
-        }
         if let Some(spark) = self.load_spark_balance() {
             tasks.push(spark);
         }
@@ -4243,10 +3359,8 @@ impl State for GlobalHome {
 impl GlobalHome {
     /// Open the transfer's Details step with `direction`, fresh: the Overview's
     /// Transfer, a wallet page's Transfer and Done's New transfer all start
-    /// here. Prefetches Breez's on-chain swap limits for the Liquid legs.
+    /// here.
     fn begin_transfer(&mut self, cache: &Cache, direction: TransferDirection) -> Task<Message> {
-        let has_liquid =
-            crate::app::features::liquid_wallet_usable(cache.network, cache.liquid_gate);
         self.transfer_from = Some(direction.from_kind());
         self.transfer_to = (!direction.is_other_cube()).then(|| direction.to_kind());
         self.transfer_direction = Some(direction);
@@ -4268,32 +3382,7 @@ impl GlobalHome {
         self.transfer_unit = cache.bitcoin_unit;
         self.reset_other_cube();
         self.current_view.next();
-        // Breez's swap limits bound only the Liquid legs (see
-        // `effective_transfer_min_sat`). Without a usable Liquid wallet the
-        // SDK isn't connected, so the fetch would do nothing but raise an
-        // error.
-        if !has_liquid {
-            return Task::none();
-        }
-        let Some(breez_client) = self.breez_client.clone() else {
-            return Task::none();
-        };
-        Task::perform(
-            async move { breez_client.fetch_onchain_limits().await },
-            |limit| match limit {
-                Ok(limits) => {
-                    Message::View(view::Message::Home(HomeMessage::OnChainLimitsFetched {
-                        send: (limits.send.min_sat, limits.send.max_sat),
-                        receive: (limits.receive.min_sat, limits.receive.max_sat),
-                    }))
-                }
-                Err(error) => Message::View(view::Message::Home(HomeMessage::Error(
-                    TransferError::FeeEstimateFailed {
-                        detail: error.to_string(),
-                    },
-                ))),
-            },
-        )
+        Task::none()
     }
 
     /// Whether the Total Balance is still waiting on a wallet (see
@@ -4310,12 +3399,6 @@ impl GlobalHome {
             || total_balance_pending(BalanceReadiness {
                 has_spark: self.spark_backend.is_some(),
                 spark_loaded: self.spark_balance_loaded || self.spark_balance_error,
-                has_liquid: crate::app::features::liquid_wallet_usable(
-                    cache.chain(),
-                    cache.liquid_gate,
-                ),
-                liquid_loaded: self.liquid_balance_loaded,
-                usdt_loaded: self.usdt_balance_loaded,
                 vault_pending,
             })
     }
@@ -4356,7 +3439,6 @@ impl GlobalHome {
     ) -> Option<TransferDirection> {
         transfer_direction_from(
             from,
-            crate::app::features::liquid_wallet_usable(cache.chain(), cache.liquid_gate),
             cache.has_vault,
             self.spark_backend.is_some(),
             cache.chain(),
@@ -4615,7 +3697,6 @@ impl GlobalHome {
                 .is_some_and(|direction| match direction.from_kind() {
                     // Max shows what arrives only once the sweep is priced.
                     WalletKind::Vault => !self.sends_max() || self.spend_tx_fees.is_some(),
-                    WalletKind::Liquid => self.prepare_onchain_send_response.is_some(),
                     WalletKind::Spark => self.spark_send_handle.is_some(),
                 })
     }
@@ -4629,7 +3710,6 @@ impl GlobalHome {
     /// What Max fills in for `source`, before fees.
     fn max_transfer_amount(&self, source: WalletKind, cache: &Cache) -> Amount {
         match source {
-            WalletKind::Liquid => self.liquid_balance,
             WalletKind::Spark => self.spark_balance,
             WalletKind::Vault => vault_sweep_coins(cache).1,
         }
@@ -4670,7 +3750,6 @@ impl GlobalHome {
         self.transfer_request_generation = self.transfer_request_generation.wrapping_add(1);
         self.destination_ready = None;
         self.receive_address_info = None;
-        self.prepare_onchain_send_response = None;
         self.transfer_spend_tx = None;
         self.transfer_psbt_ready_for = None;
         self.active_psbt_request = None;
@@ -4752,28 +3831,18 @@ impl GlobalHome {
 
         if let Some(direction) = self.transfer_direction {
             let source_cap = match direction.from_kind() {
-                WalletKind::Liquid => self.liquid_balance,
                 WalletKind::Spark => self.spark_balance,
                 WalletKind::Vault => vault_balance,
             };
             if entered_amt > source_cap {
                 valid = false;
                 warning = Some(match direction.from_kind() {
-                    WalletKind::Liquid => "Amount exceeds Liquid balance",
                     WalletKind::Spark => "Amount exceeds Spark balance",
                     WalletKind::Vault => "Amount exceeds Vault balance",
                 });
             } else {
-                let effective_min = effective_transfer_min_sat(
-                    direction,
-                    self.onchain_send_limit,
-                    self.onchain_receive_limit,
-                );
-                let effective_max = effective_transfer_max_sat(
-                    direction,
-                    self.onchain_send_limit,
-                    self.onchain_receive_limit,
-                );
+                let effective_min = effective_transfer_min_sat(direction);
+                let effective_max = effective_transfer_max_sat(direction);
                 if let Some(min_sat) = effective_min {
                     if entered_sat < min_sat {
                         valid = false;
@@ -4784,30 +3853,12 @@ impl GlobalHome {
                             warning = Some("Amount above maximum limits");
                         }
                     }
-                } else {
-                    // Swap-involving direction and Breez limits haven't resolved
-                    // yet; keep the input invalid until they do (Next disabled).
-                    valid = false;
-                    warning = Some("Loading limits…");
                 }
             }
         }
 
         self.entered_amount.valid = valid;
         self.entered_amount.warning = warning;
-    }
-
-    fn is_matching_pending_swap(&self, incoming_swap_id: Option<&str>) -> bool {
-        match (
-            &self.pending_vault_incoming,
-            &self.pending_vault_incoming_swap_id,
-        ) {
-            (Some(_), Some(expected_swap_id)) => incoming_swap_id
-                .map(|swap_id| swap_id == expected_swap_id)
-                .unwrap_or(false),
-            (Some(_), None) => false,
-            _ => false,
-        }
     }
 
     /// The auto-claimed deposit has landed for `amount_sat`: mark the
@@ -4835,24 +3886,11 @@ impl GlobalHome {
         Task::none()
     }
 
-    fn is_matching_pending_spark_swap(&self, incoming_swap_id: Option<&str>) -> bool {
-        match (
-            &self.pending_spark_incoming,
-            &self.pending_spark_incoming_swap_id,
-        ) {
-            (Some(_), Some(expected_swap_id)) => incoming_swap_id
-                .map(|swap_id| swap_id == expected_swap_id)
-                .unwrap_or(false),
-            _ => false,
-        }
-    }
-
     /// Build a dry-run PSBT for Vault-sourced transfers to populate the
-    /// Fees/Total rows on the confirm screen pre-sign. Liquid-sourced
-    /// directions get this via `prepare_pay_onchain`; Vault-sourced needs a
+    /// Fees/Total rows on the confirm screen pre-sign. Vault-sourced needs a
     /// real `create_spend_tx` because the fee depends on coin selection
-    /// + the user-picked feerate. Skipped unless direction is VaultToLiquid
-    ///   or VaultToSpark AND all required inputs (address, feerate, amount)
+    /// + the user-picked feerate. Skipped unless the direction is
+    ///   Vault-sourced AND all required inputs (address, feerate, amount)
     ///   are populated and valid. The result carries its source feerate so
     ///   the handler can discard late-arriving results whose feerate has
     ///   since been edited (prevents keystroke-race flicker).
@@ -4869,8 +3907,7 @@ impl GlobalHome {
         };
         if !matches!(
             direction,
-            TransferDirection::VaultToLiquid
-                | TransferDirection::VaultToSpark
+            TransferDirection::VaultToSpark
                 | TransferDirection::VaultToOtherSpark
                 | TransferDirection::VaultToOtherCube
         ) {
@@ -4903,7 +3940,7 @@ impl GlobalHome {
         // daemon reserve a change index durably on every valid keystroke of
         // the feerate field; the wallet's fixed preview address sizes the
         // change output identically and reserves nothing. The real transfer in
-        // `SignVaultToLiquidTx` still passes `None`.
+        // `SignVaultTransferTx` still passes `None`.
         let (outpoints, destinations, change) = if self.sends_max() {
             (vault_sweep_coins(cache).0, HashMap::new(), destination)
         } else {
@@ -4988,217 +4025,6 @@ impl GlobalHome {
         ))
     }
 
-    fn load_liquid_balance(&self) -> Task<Message> {
-        // Networks without a Breez backend (Signet/Testnet) only ever return
-        // `NetworkNotSupported` here — skip the RPC entirely to keep logs clean.
-        // Hidden Liquid fetches nothing either (`RefreshLiquidBalance` still
-        // arrives from the SDK's events).
-        if !self.liquid_shown
-            || !self
-                .breez_client
-                .as_ref()
-                .is_some_and(|client| client.is_supported())
-        {
-            return Task::none();
-        }
-        let Some(breez_client) = self.breez_client.clone() else {
-            return Task::none();
-        };
-        Task::perform(async move { breez_client.info().await }, |info| {
-            if let Ok(info) = info {
-                let balance = Amount::from_sat(
-                    info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
-                );
-                Message::View(view::Message::Home(HomeMessage::LiquidBalanceUpdated(
-                    balance,
-                )))
-            } else {
-                Message::View(view::Message::Home(HomeMessage::LiquidBalanceFetchFailed(
-                    info.err().map(|e| e.to_string()).unwrap_or_default(),
-                )))
-            }
-        })
-    }
-
-    fn load_pending_sends(&self) -> Task<Message> {
-        use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
-        if !self.liquid_shown
-            || !self
-                .breez_client
-                .as_ref()
-                .is_some_and(|client| client.is_supported())
-        {
-            return Task::none();
-        }
-        let Some(breez_client) = self.breez_client.clone() else {
-            return Task::none();
-        };
-        let network = self.network.bitcoin_network();
-        Task::perform(
-            async move {
-                match breez_client.list_payments(Some(20), None, None).await {
-                    Ok(payments) => {
-                        let mut liquid_send_sats: u64 = 0;
-                        let mut usdt_send_sats: u64 = 0;
-                        let mut liquid_receive_sats: u64 = 0;
-                        let mut usdt_receive_sats: u64 = 0;
-                        for payment in &payments {
-                            if !matches!(payment.status, DomainPaymentStatus::Pending) {
-                                continue;
-                            }
-                            let is_send = !payment.is_incoming();
-                            match &payment.details {
-                                DomainPaymentDetails::LiquidAsset {
-                                    asset_id,
-                                    asset_info,
-                                    ..
-                                } => {
-                                    if asset_kind_for_id(asset_id, network) == Some(AssetKind::Usdt)
-                                    {
-                                        let minor = asset_info
-                                            .as_ref()
-                                            .map(|ai| ai.amount_minor)
-                                            .unwrap_or(payment.amount_sat);
-                                        if is_send {
-                                            usdt_send_sats = usdt_send_sats.saturating_add(minor);
-                                        } else {
-                                            usdt_receive_sats =
-                                                usdt_receive_sats.saturating_add(minor);
-                                        }
-                                    } else if is_send {
-                                        liquid_send_sats = liquid_send_sats
-                                            .saturating_add(payment.amount_sat + payment.fees_sat);
-                                    } else {
-                                        liquid_receive_sats =
-                                            liquid_receive_sats.saturating_add(payment.amount_sat);
-                                    }
-                                }
-                                _ => {
-                                    if is_send {
-                                        liquid_send_sats = liquid_send_sats
-                                            .saturating_add(payment.amount_sat + payment.fees_sat);
-                                    } else {
-                                        liquid_receive_sats =
-                                            liquid_receive_sats.saturating_add(payment.amount_sat);
-                                    }
-                                }
-                            }
-                        }
-                        (
-                            liquid_send_sats,
-                            usdt_send_sats,
-                            liquid_receive_sats,
-                            usdt_receive_sats,
-                        )
-                    }
-                    Err(_) => (0, 0, 0, 0),
-                }
-            },
-            |(liquid_send_sats, usdt_send_sats, liquid_receive_sats, usdt_receive_sats)| {
-                Message::View(view::Message::Home(HomeMessage::PendingAmountsUpdated {
-                    liquid_send_sats,
-                    usdt_send_sats,
-                    liquid_receive_sats,
-                    usdt_receive_sats,
-                }))
-            },
-        )
-    }
-
-    fn load_usdt_balance(&self) -> Task<Message> {
-        use crate::app::breez_liquid::assets::{asset_kind_for_id, AssetKind};
-        if !self.liquid_shown
-            || !self
-                .breez_client
-                .as_ref()
-                .is_some_and(|client| client.is_supported())
-        {
-            return Task::none();
-        }
-        let Some(breez_client) = self.breez_client.clone() else {
-            return Task::none();
-        };
-        let network = self.network.bitcoin_network();
-        Task::perform(
-            async move {
-                breez_client.info().await.map(|info| {
-                    info.wallet_info
-                        .asset_balances
-                        .iter()
-                        .find_map(|ab| {
-                            if asset_kind_for_id(&ab.asset_id, network) == Some(AssetKind::Usdt) {
-                                Some(ab.balance_sat)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0)
-                })
-            },
-            |result| match result {
-                Ok(usdt_balance) => Message::View(view::Message::Home(
-                    HomeMessage::UsdtBalanceUpdated(usdt_balance),
-                )),
-                Err(e) => {
-                    tracing::error!("USDt balance fetch failed: {:?}", e);
-                    Message::View(view::Message::Home(HomeMessage::UsdtBalanceFetchFailed))
-                }
-            },
-        )
-    }
-
-    fn persist_pending_liquid_to_vault_transfer(
-        &self,
-        swap_id: String,
-        amount_sat: u64,
-    ) -> Task<Message> {
-        let network_dir = self.datadir_path.network_directory(self.network);
-        let cube_id = self.cube_id.clone();
-        Task::perform(
-            async move {
-                settings::update_settings_file(&network_dir, move |mut current| {
-                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
-                        cube.pending_liquid_to_vault_transfer =
-                            Some(settings::PendingLiquidToVaultTransfer {
-                                swap_id,
-                                amount_sat,
-                            });
-                    }
-                    Some(current)
-                })
-                .await
-            },
-            |res| {
-                if let Err(e) = res {
-                    log::warn!("Failed to persist pending liquid->vault transfer: {}", e);
-                }
-                Message::Tick
-            },
-        )
-    }
-
-    fn clear_pending_liquid_to_vault_transfer(&self) -> Task<Message> {
-        let network_dir = self.datadir_path.network_directory(self.network);
-        let cube_id = self.cube_id.clone();
-        Task::perform(
-            async move {
-                settings::update_settings_file(&network_dir, move |mut current| {
-                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
-                        cube.pending_liquid_to_vault_transfer = None;
-                    }
-                    Some(current)
-                })
-                .await
-            },
-            |res| {
-                if let Err(e) = res {
-                    log::warn!("Failed to clear pending liquid->vault transfer: {}", e);
-                }
-                Message::Tick
-            },
-        )
-    }
-
     /// Store or clear the Cube's live Spark cross-network receive
     /// ([`settings::CubeSettings::pending_spark_shift`]).
     fn store_pending_spark_shift(
@@ -5254,114 +4080,6 @@ impl GlobalHome {
             },
         )
     }
-
-    fn restore_pending_liquid_to_vault_transfer(&self) -> Task<Message> {
-        // Hidden Liquid restores nothing: no banner, and the persisted entry
-        // is left for a build that shows Liquid again.
-        if !self.liquid_shown {
-            return Task::none();
-        }
-        // Same guard as the balance/pending loaders above: without a connected
-        // SDK (`features::liquid` is mainnet-only, so testnet/signet/regtest all
-        // get a disconnected client) `list_payments` can only fail. The failure
-        // is silent — `.ok()` swallows it and the swap falls through as
-        // `Initiated` — so an unguarded restore would resurrect a stale settings
-        // entry as a pending-transfer banner that can never progress.
-        if !self
-            .breez_client
-            .as_ref()
-            .is_some_and(|client| client.is_supported())
-        {
-            return Task::none();
-        }
-        let network_dir = self.datadir_path.network_directory(self.network);
-        let cube_id = self.cube_id.clone();
-        let Some(breez_client) = self.breez_client.clone() else {
-            return Task::none();
-        };
-        Task::perform(
-            async move {
-                let settings = settings::Settings::from_file(&network_dir).ok();
-                let pending = settings
-                    .as_ref()
-                    .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
-                    .and_then(|cube| cube.pending_liquid_to_vault_transfer.clone())?;
-
-                let mut stage = TransferStage::Initiated;
-                let payments = breez_client.list_payments(None, None, None).await.ok();
-
-                if let Some(payment) = payments.and_then(|ps| {
-                    ps.into_iter().find(|payment| {
-                        if payment.is_incoming() {
-                            return false;
-                        }
-                        match &payment.details {
-                            DomainPaymentDetails::OnChainBitcoin {
-                                swap_id: Some(id), ..
-                            } => id == &pending.swap_id,
-                            _ => false,
-                        }
-                    })
-                }) {
-                    stage = match payment.status {
-                        DomainPaymentStatus::Complete => {
-                            let cube_id_for_clear = cube_id.clone();
-                            let _ =
-                                settings::update_settings_file(&network_dir, move |mut current| {
-                                    if let Some(cube) =
-                                        current.cubes.iter_mut().find(|c| c.id == cube_id_for_clear)
-                                    {
-                                        cube.pending_liquid_to_vault_transfer = None;
-                                    }
-                                    Some(current)
-                                })
-                                .await;
-                            return None;
-                        }
-                        DomainPaymentStatus::Pending
-                        | DomainPaymentStatus::WaitingFeeAcceptance => match payment.details {
-                            DomainPaymentDetails::OnChainBitcoin {
-                                claim_tx_id: Some(_),
-                                ..
-                            } => TransferStage::SendingToVault,
-                            _ => TransferStage::SwappingLbtcToBtc,
-                        },
-                        DomainPaymentStatus::Created => TransferStage::Initiated,
-                        DomainPaymentStatus::Failed
-                        | DomainPaymentStatus::TimedOut
-                        | DomainPaymentStatus::Refundable
-                        | DomainPaymentStatus::RefundPending => {
-                            let cube_id_for_clear = cube_id.clone();
-                            let _ =
-                                settings::update_settings_file(&network_dir, move |mut current| {
-                                    if let Some(cube) =
-                                        current.cubes.iter_mut().find(|c| c.id == cube_id_for_clear)
-                                    {
-                                        cube.pending_liquid_to_vault_transfer = None;
-                                    }
-                                    Some(current)
-                                })
-                                .await;
-                            return None;
-                        }
-                    };
-                }
-
-                Some((pending.amount_sat, pending.swap_id, stage))
-            },
-            |restored| {
-                if let Some((amount_sat, swap_id, stage)) = restored {
-                    Message::View(view::Message::Home(HomeMessage::PendingTransferRestored {
-                        amount_sat,
-                        stage,
-                        swap_id,
-                    }))
-                } else {
-                    Message::Tick
-                }
-            },
-        )
-    }
 }
 
 /// Inert adapter output used to exercise the real Hub Transfer presenter.
@@ -5382,7 +4100,6 @@ impl GlobalHome {
     pub(crate) fn r06a_transfer_snapshots() -> Vec<R06ATransferSnapshot> {
         fn inert_home() -> GlobalHome {
             GlobalHome::new_without_wallet(
-                None::<Arc<LiquidBackend>>,
                 None,
                 CoincubeDirectory::new(
                     std::env::temp_dir().join(format!("r06a-transfer-{}", std::process::id())),
@@ -5411,9 +4128,6 @@ impl GlobalHome {
                 has_spark,
                 // The real aggregate intentionally settles after a first error.
                 spark_loaded: home.spark_balance_loaded || home.spark_balance_error,
-                has_liquid: false,
-                liquid_loaded: false,
-                usdt_loaded: false,
                 vault_pending: false,
             });
             R06ATransferSnapshot {
@@ -5491,14 +4205,11 @@ mod tests {
         ));
     }
 
-    /// A `GlobalHome` with no wallet and a disconnected Liquid backend — enough
-    /// to drive the balance-message handlers, which touch nothing else.
+    /// A `GlobalHome` with no wallet and no Spark backend — enough to drive
+    /// the balance-message handlers, which touch nothing else.
     fn panel() -> GlobalHome {
         let network = coincube_core::miniscript::bitcoin::Network::Bitcoin;
         GlobalHome::new_without_wallet(
-            Arc::new(LiquidBackend::new(Arc::new(
-                crate::app::breez_liquid::BreezClient::disconnected(network),
-            ))),
             None,
             CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
             network,
@@ -5512,32 +4223,32 @@ mod tests {
     #[test]
     fn a_wallet_page_transfer_picks_a_destination_for_its_source() {
         use crate::chain::ChainId::{Bitcoin, Regtest};
-        use WalletKind::{Liquid, Spark, Vault};
-        let from = |wallet, (liquid, vault, spark), chain, other| {
-            transfer_direction_from(wallet, liquid, vault, spark, chain, other)
+        use WalletKind::{Spark, Vault};
+        let from = |wallet, (vault, spark), chain, other| {
+            transfer_direction_from(wallet, vault, spark, chain, other)
         };
         assert_eq!(
-            from(Spark, (false, true, true), Bitcoin, false),
+            from(Spark, (true, true), Bitcoin, false),
             Some(TransferDirection::SparkToVault)
         );
         assert_eq!(
-            from(Vault, (true, true, true), Bitcoin, false),
-            Some(TransferDirection::VaultToLiquid)
+            from(Vault, (true, true), Bitcoin, false),
+            Some(TransferDirection::VaultToSpark)
         );
         // Alone in its Cube: another Cube, when one can receive.
-        assert_eq!(from(Spark, (false, false, true), Bitcoin, false), None);
+        assert_eq!(from(Spark, (false, true), Bitcoin, false), None);
         assert_eq!(
-            from(Spark, (false, false, true), Bitcoin, true),
+            from(Spark, (false, true), Bitcoin, true),
             Some(TransferDirection::SparkToOtherCube)
         );
         assert_eq!(
-            from(Vault, (false, true, false), Bitcoin, true),
+            from(Vault, (true, false), Bitcoin, true),
             Some(TransferDirection::VaultToOtherCube)
         );
         // Other Cubes receive on mainnet only.
-        assert_eq!(from(Vault, (false, true, false), Regtest, true), None);
+        assert_eq!(from(Vault, (true, false), Regtest, true), None);
         // A wallet the Cube doesn't have has no Transfer.
-        assert_eq!(from(Liquid, (false, true, true), Bitcoin, true), None);
+        assert_eq!(from(Spark, (true, false), Bitcoin, true), None);
     }
 
     #[test]
@@ -5547,15 +4258,11 @@ mod tests {
 
         // Still loading: an unconfirmed reading is not counted.
         home.spark_balance = Amount::from_sat(5_000);
-        home.liquid_balance = Amount::from_sat(5_000);
-        home.usdt_balance = 5_000;
         assert!(!home.holds_loaded_funds());
 
         // Loaded at zero.
         let mut home = panel();
         home.spark_balance_loaded = true;
-        home.liquid_balance_loaded = true;
-        home.usdt_balance_loaded = true;
         assert!(!home.holds_loaded_funds());
 
         let mut spark = panel();
@@ -5571,16 +4278,6 @@ mod tests {
             ticker: "USDB".into(),
         });
         assert!(usdb.holds_loaded_funds());
-
-        let mut liquid = panel();
-        liquid.liquid_balance_loaded = true;
-        liquid.liquid_balance = Amount::from_sat(1);
-        assert!(liquid.holds_loaded_funds());
-
-        let mut usdt = panel();
-        usdt.usdt_balance_loaded = true;
-        usdt.usdt_balance = 1;
-        assert!(usdt.holds_loaded_funds());
     }
 
     /// Drive one home message through the real `State::update`.
@@ -5594,14 +4291,13 @@ mod tests {
 
     #[test]
     fn r06a_presync_spark_holding_stays_untrusted_until_postsync_response() {
-        // This is only the inert state adapter: no wallet, Liquid client,
+        // This is only the inert state adapter: no wallet,
         // Spark bridge, seed, session, or configured data directory exists.
         // `send` drops returned Tasks without running them.
         let directory = CoincubeDirectory::new(
             std::env::temp_dir().join(format!("r06a-synthetic-state-{}", std::process::id())),
         );
         let mut home = GlobalHome::new_without_wallet(
-            None::<Arc<LiquidBackend>>,
             None,
             directory,
             coincube_core::miniscript::bitcoin::Network::Bitcoin,
@@ -5702,77 +4398,6 @@ mod tests {
         assert!(home.spark_load_poll().is_none());
     }
 
-    /// A refresh blip must not throw away a balance the user already has.
-    ///
-    /// The two cases pull in opposite directions and the flag has to tell them
-    /// apart:
-    ///
-    /// - **First load fails.** Nothing sits behind it but the untouched
-    ///   `Amount::ZERO`. Rendering that is not stale, it is wrong — so the row
-    ///   says "Balance unavailable".
-    /// - **A later refresh fails.** `liquid_balance` still holds the last good
-    ///   value and the Total Balance above still counts it. Blanking the row
-    ///   would lose information the user had *and* contradict the total sitting
-    ///   on the same screen.
-    #[test]
-    fn a_refresh_failure_keeps_a_balance_we_already_have() {
-        // First load fails: nothing behind it, so the row must not show a zero.
-        let mut home = panel();
-        send(
-            &mut home,
-            HomeMessage::LiquidBalanceFetchFailed("blip".into()),
-        );
-        assert!(
-            home.liquid_balance_error,
-            "a first-load failure has only the untouched zero behind it"
-        );
-        assert!(
-            home.liquid_balance_loaded,
-            "the aggregate must still be allowed to settle"
-        );
-
-        // A good value arrives.
-        send(
-            &mut home,
-            HomeMessage::LiquidBalanceUpdated(Amount::from_sat(12_345)),
-        );
-        assert!(!home.liquid_balance_error);
-
-        // A later refresh fails: keep the number we have.
-        send(
-            &mut home,
-            HomeMessage::LiquidBalanceFetchFailed("blip".into()),
-        );
-        assert!(
-            !home.liquid_balance_error,
-            "a transient blip must not blank a balance the user already had"
-        );
-        assert_eq!(
-            home.liquid_balance,
-            Amount::from_sat(12_345),
-            "the last good value must survive the failure"
-        );
-    }
-
-    /// The USDt row follows the same rule — it is the twin this was mirrored
-    /// from, and had the same defect.
-    #[test]
-    fn a_usdt_refresh_failure_keeps_a_balance_we_already_have() {
-        let mut home = panel();
-        send(&mut home, HomeMessage::UsdtBalanceFetchFailed);
-        assert!(home.usdt_balance_error, "nothing behind a first failure");
-
-        send(&mut home, HomeMessage::UsdtBalanceUpdated(42));
-        assert!(!home.usdt_balance_error);
-
-        send(&mut home, HomeMessage::UsdtBalanceFetchFailed);
-        assert!(
-            !home.usdt_balance_error,
-            "a blip must not blank a USDt balance the user already had"
-        );
-        assert_eq!(home.usdt_balance, 42);
-    }
-
     /// A wallet whose balance fetch *failed* must stop gating the aggregate.
     ///
     /// The failure path has to mark itself loaded — otherwise one wallet's
@@ -5783,37 +4408,9 @@ mod tests {
         let all_present = BalanceReadiness {
             has_spark: true,
             spark_loaded: true,
-            has_liquid: true,
-            liquid_loaded: true,
-            usdt_loaded: true,
             vault_pending: false,
         };
         assert!(!total_balance_pending(all_present));
-
-        // Still in flight: the spinner is correct here.
-        assert!(total_balance_pending(BalanceReadiness {
-            liquid_loaded: false,
-            ..all_present
-        }));
-
-        // Failed, and marked loaded by the failure handler: the aggregate must
-        // settle rather than punish the wallets that answered.
-        assert!(!total_balance_pending(BalanceReadiness {
-            liquid_loaded: true,
-            ..all_present
-        }));
-        assert!(!total_balance_pending(BalanceReadiness {
-            usdt_loaded: true,
-            ..all_present
-        }));
-
-        // A gated-off Liquid wallet never loads and must not gate anything.
-        assert!(!total_balance_pending(BalanceReadiness {
-            has_liquid: false,
-            liquid_loaded: false,
-            usdt_loaded: false,
-            ..all_present
-        }));
 
         // A wallet that is present and genuinely outstanding still gates.
         assert!(total_balance_pending(BalanceReadiness {
@@ -5822,6 +4419,12 @@ mod tests {
         }));
         assert!(total_balance_pending(BalanceReadiness {
             vault_pending: true,
+            ..all_present
+        }));
+        // An absent Spark wallet never loads and must not gate anything.
+        assert!(!total_balance_pending(BalanceReadiness {
+            has_spark: false,
+            spark_loaded: false,
             ..all_present
         }));
     }
@@ -5912,89 +4515,6 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    /// #968 review finding 1: Tenshu v175 hides Liquid (master §3 decision
-    /// 2), so `reload` takes the no-Liquid-backend path: it starts no Liquid
-    /// fetch and settles both balances so nothing waits on them. The loaders'
-    /// own `liquid_shown` checks (`RefreshLiquidBalance`,
-    /// `LiquidPeginCompleted`) can't be driven here: the test client is
-    /// disconnected, so it fetches nothing either way.
-    #[test]
-    fn reload_settles_hidden_liquid_without_fetching() {
-        let mut hidden = panel();
-        hidden.set_liquid_shown(false);
-        let _ = hidden.reload(None, None);
-        assert!(hidden.liquid_balance_loaded && hidden.usdt_balance_loaded);
-
-        // Control: shown Liquid on the same network still waits for its
-        // balances, so the settling above is the gate's doing.
-        let mut shown = panel();
-        shown.set_liquid_shown(true);
-        let _ = shown.reload(None, None);
-        assert!(!shown.liquid_balance_loaded && !shown.usdt_balance_loaded);
-    }
-
-    /// A fetch that started before Liquid was hidden can fail late. While
-    /// hidden it raises no error, and still stops anything waiting on it.
-    #[test]
-    fn a_late_liquid_fetch_failure_shows_no_error_while_hidden() {
-        let fail = |home: &mut GlobalHome, msg| {
-            outputs(home.update(
-                None,
-                &Cache::default(),
-                Message::View(view::Message::Home(msg)),
-            ))
-        };
-        let mut hidden = panel();
-        hidden.set_liquid_shown(false);
-        let produced = fail(
-            &mut hidden,
-            HomeMessage::LiquidBalanceFetchFailed("blip".into()),
-        );
-        assert!(produced.is_empty());
-        assert!(fail(&mut hidden, HomeMessage::UsdtBalanceFetchFailed).is_empty());
-        assert!(hidden.liquid_balance_loaded && hidden.usdt_balance_loaded);
-
-        // Control: the same failure with Liquid shown raises the toast.
-        let mut shown = panel();
-        shown.set_liquid_shown(true);
-        let produced = fail(
-            &mut shown,
-            HomeMessage::LiquidBalanceFetchFailed("blip".into()),
-        );
-        assert!(matches!(
-            &produced[..],
-            [Message::View(view::Message::ShowError(_))]
-        ));
-    }
-
-    /// The Total Balance doesn't wait on hidden Liquid, even for an account
-    /// with the grant and a Liquid wallet on disk.
-    #[test]
-    fn the_total_does_not_wait_on_hidden_liquid() {
-        let gate = crate::app::features::LiquidGate {
-            server_enabled: true,
-            local_state_exists: true,
-        };
-        let readiness = BalanceReadiness {
-            has_spark: false,
-            spark_loaded: false,
-            has_liquid: crate::app::features::liquid_wallet_usable(
-                crate::chain::ChainId::Bitcoin,
-                gate,
-            ),
-            liquid_loaded: false,
-            usdt_loaded: false,
-            vault_pending: false,
-        };
-        assert!(!total_balance_pending(readiness));
-
-        // Control: a shown Liquid wallet that hasn't loaded holds the Total.
-        assert!(total_balance_pending(BalanceReadiness {
-            has_liquid: true,
-            ..readiness
-        }));
-    }
-
     /// A restored Vault mid-scan has a tip but no history yet: its empty balance is
     /// still loading, and must not enter the Total Balance as zero.
     #[test]
@@ -6050,27 +4570,21 @@ mod tests {
     #[test]
     fn transfer_defaults_to_an_available_wallet_or_another_cube() {
         use crate::chain::ChainId;
-        use TransferDirection::{
-            LiquidToSpark, LiquidToVault, SparkToOtherCube, VaultToOtherCube, VaultToSpark,
-        };
+        use TransferDirection::{SparkToOtherCube, VaultToOtherCube, VaultToSpark};
 
-        for (liquid, vault, spark, direction) in [
-            (true, true, true, Some(LiquidToVault)),
-            (true, false, true, Some(LiquidToSpark)),
-            (true, true, false, Some(LiquidToVault)),
-            (false, true, true, Some(VaultToSpark)),
-            (false, true, false, Some(VaultToOtherCube)),
-            (false, false, true, Some(SparkToOtherCube)),
-            (true, false, false, None),
-            (false, false, false, None),
+        for (vault, spark, direction) in [
+            (true, true, Some(VaultToSpark)),
+            (true, false, Some(VaultToOtherCube)),
+            (false, true, Some(SparkToOtherCube)),
+            (false, false, None),
         ] {
             assert_eq!(
-                default_transfer_direction(liquid, vault, spark, ChainId::Bitcoin),
+                default_transfer_direction(vault, spark, ChainId::Bitcoin),
                 direction
             );
         }
         assert_eq!(
-            default_transfer_direction(false, false, true, ChainId::Regtest),
+            default_transfer_direction(false, true, ChainId::Regtest),
             None
         );
     }
@@ -6103,32 +4617,6 @@ mod tests {
             is_immature: false,
             is_change: false,
             is_from_self,
-        }
-    }
-
-    fn liquid_bitcoin_payment(payment_type: PaymentType) -> breez_sdk_liquid::prelude::Payment {
-        breez_sdk_liquid::prelude::Payment {
-            destination: Some("destination".to_string()),
-            tx_id: Some("txid".to_string()),
-            unblinding_data: Some("unblind".to_string()),
-            timestamp: 1_722_000_000,
-            amount_sat: 25_000,
-            fees_sat: 125,
-            swapper_fees_sat: Some(50),
-            payment_type,
-            status: breez_sdk_liquid::model::PaymentState::Pending,
-            details: PaymentDetails::Bitcoin {
-                swap_id: "swap-id".to_string(),
-                bitcoin_address: MAINNET_ADDR.to_string(),
-                description: "chain swap".to_string(),
-                auto_accepted_fees: true,
-                liquid_expiration_blockheight: 123,
-                bitcoin_expiration_blockheight: 456,
-                lockup_tx_id: Some("lockup".to_string()),
-                claim_tx_id: Some("claim".to_string()),
-                refund_tx_id: Some("refund".to_string()),
-                refund_tx_amount_sat: Some(900),
-            },
         }
     }
 
@@ -6179,128 +4667,29 @@ mod tests {
     }
 
     #[test]
-    fn bitcoin_send_swap_id_only_returns_ids_for_sent_bitcoin_payments() {
-        let send = liquid_bitcoin_payment(PaymentType::Send);
-        let receive = liquid_bitcoin_payment(PaymentType::Receive);
-
-        assert_eq!(bitcoin_send_swap_id(&send).as_deref(), Some("swap-id"));
-        assert_eq!(bitcoin_send_swap_id(&receive), None);
-    }
-
-    #[test]
     fn modal_default_debug_is_stable() {
         assert_eq!(format!("{:?}", Modal::default()), "None");
-    }
-
-    /// Breez-involving legs compose `MIN_TRANSFER_SATS` with the SDK's own
-    /// minimum. Whichever is larger wins.
-    #[test]
-    fn liquid_sourced_min_composes_with_send_limit() {
-        // Breez send-min below floor → floor wins.
-        assert_eq!(
-            effective_transfer_min_sat(
-                TransferDirection::LiquidToVault,
-                Some((1_000, 10_000_000)),
-                None,
-            ),
-            Some(MIN_TRANSFER_SATS),
-        );
-        // Breez send-min above floor → Breez min wins.
-        assert_eq!(
-            effective_transfer_min_sat(
-                TransferDirection::LiquidToSpark,
-                Some((50_000, 10_000_000)),
-                None,
-            ),
-            Some(50_000),
-        );
-    }
-
-    #[test]
-    fn liquid_destination_min_uses_receive_limit() {
-        assert_eq!(
-            effective_transfer_min_sat(
-                TransferDirection::VaultToLiquid,
-                None,
-                Some((1_000, 5_000_000)),
-            ),
-            Some(MIN_TRANSFER_SATS),
-        );
-        assert_eq!(
-            effective_transfer_min_sat(
-                TransferDirection::SparkToLiquid,
-                None,
-                Some((75_000, 5_000_000)),
-            ),
-            Some(75_000),
-        );
     }
 
     /// Pure on-chain legs (Vault↔Spark) don't involve Breez, so the floor
     /// is always the effective minimum and max is unconstrained (source
     /// balance is enforced elsewhere).
     #[test]
-    fn pure_onchain_legs_ignore_breez_limits() {
+    fn on_chain_legs_have_the_transfer_floor_and_no_cap() {
         for direction in [
             TransferDirection::VaultToSpark,
             TransferDirection::SparkToVault,
             TransferDirection::SparkToOtherCube,
         ] {
             assert_eq!(
-                effective_transfer_min_sat(direction, None, None),
-                Some(MIN_TRANSFER_SATS),
+                effective_transfer_min_sat(direction),
+                Some(MIN_TRANSFER_SATS)
             );
-            assert_eq!(
-                effective_transfer_min_sat(
-                    direction,
-                    Some((9_999, 1_000_000)),
-                    Some((9_999, 1_000_000)),
-                ),
-                Some(MIN_TRANSFER_SATS),
-                "Breez limits should be ignored for pure on-chain legs"
-            );
-            assert_eq!(effective_transfer_max_sat(direction, None, None), None,);
+            assert_eq!(effective_transfer_max_sat(direction), None);
         }
     }
 
-    /// When the relevant Breez limit hasn't resolved yet, the helper
-    /// returns `None` — the amount screen uses this as the
-    /// "Loading limits…" signal.
-    #[test]
-    fn swap_legs_return_none_while_limits_load() {
-        assert_eq!(
-            effective_transfer_min_sat(TransferDirection::LiquidToVault, None, None),
-            None,
-        );
-        assert_eq!(
-            effective_transfer_max_sat(TransferDirection::VaultToLiquid, None, None),
-            None,
-        );
-    }
-
-    #[test]
-    fn max_sat_tracks_breez_source_side() {
-        // Liquid-sourced legs use `onchain_send_limit` for max.
-        assert_eq!(
-            effective_transfer_max_sat(
-                TransferDirection::LiquidToVault,
-                Some((25_000, 42_000_000)),
-                Some((25_000, 999)),
-            ),
-            Some(42_000_000),
-        );
-        // Liquid-destination legs use `onchain_receive_limit` for max.
-        assert_eq!(
-            effective_transfer_max_sat(
-                TransferDirection::SparkToLiquid,
-                Some((25_000, 999)),
-                Some((25_000, 42_000_000)),
-            ),
-            Some(42_000_000),
-        );
-    }
-
-    /// The Vault→Liquid/Spark transfer preview exists only to read `psbt.fee()`,
+    /// The Vault→Spark transfer preview exists only to read `psbt.fee()`,
     /// and it re-runs on every valid keystroke of the feerate field with no
     /// debounce. `createspend` reserves a change index durably whenever it is
     /// asked for a fresh change address (`None`), so every one of those
@@ -6513,33 +4902,29 @@ mod tests {
             rt.block_on(async move { stream.for_each(|_| async {}).await });
         }
 
-        /// A wallet-backed home sitting on the Vault→Liquid confirm screen with a
+        /// A wallet-backed home sitting on the Vault→Spark confirm screen with a
         /// valid amount and destination, the state in which the feerate field
         /// previews on every keystroke.
         fn home_on_transfer_screen() -> (GlobalHome, Arc<Wallet>) {
             let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
-            let network = coincube_core::miniscript::bitcoin::Network::Bitcoin;
             let mut home = GlobalHome::new(
                 wallet.clone(),
-                Arc::new(LiquidBackend::new(Arc::new(
-                    crate::app::breez_liquid::BreezClient::disconnected(network),
-                ))),
                 None,
                 CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
                 crate::chain::ChainId::Bitcoin,
                 "cube".to_string(),
                 false,
             );
-            home.transfer_direction = Some(TransferDirection::VaultToLiquid);
+            home.transfer_direction = Some(TransferDirection::VaultToSpark);
             home.transfer_from = Some(WalletKind::Vault);
-            home.transfer_to = Some(WalletKind::Liquid);
+            home.transfer_to = Some(WalletKind::Spark);
             home.current_view.step = 2;
             home.receive_address_info = Some(ReceiveAddressInfo {
                 address: Address::from_str(MAINNET_ADDR).unwrap().assume_checked(),
                 index: ChildNumber::from(0),
                 labels: HashMap::new(),
             });
-            home.destination_ready = Some((0, TransferDirection::VaultToLiquid));
+            home.destination_ready = Some((0, TransferDirection::VaultToSpark));
             home.entered_amount = form::Value {
                 value: "100000".to_string(),
                 warning: None,
@@ -6629,7 +5014,7 @@ mod tests {
 
             for message in [
                 HomeMessage::SetTransferFeerate("25".to_string()),
-                HomeMessage::SignVaultToLiquidTx,
+                HomeMessage::SignVaultTransferTx,
                 HomeMessage::ConfirmTransfer,
             ] {
                 drain(home.update(
@@ -6699,7 +5084,7 @@ mod tests {
                 ..Cache::default()
             };
 
-            // The fixture already pairs Vault -> Liquid; the refused choice
+            // The fixture already pairs Vault -> Spark; the refused choice
             // must leave the picker open and the pair untouched.
             let pair_before = (home.transfer_from, home.transfer_to);
             home.wallet_picker = Some(PickerSide::From);
@@ -6723,7 +5108,7 @@ mod tests {
             drain(home.update(
                 Some(as_daemon.clone()),
                 &cache,
-                Message::View(view::Message::Home(HomeMessage::SignVaultToLiquidTx)),
+                Message::View(view::Message::Home(HomeMessage::SignVaultTransferTx)),
             ));
             assert!(daemon.calls.lock().unwrap().is_empty());
             assert!(!home.is_sending);
@@ -6742,6 +5127,11 @@ mod tests {
         #[test]
         fn back_and_destination_switch_reject_old_address_until_new_request_completes() {
             let (mut home, wallet) = home_on_transfer_screen();
+            // Attempt A pays another Cube's Spark wallet; attempt B, below,
+            // switches to this Cube's Spark wallet.
+            home.transfer_direction = Some(TransferDirection::VaultToOtherSpark);
+            home.transfer_to = None;
+            home.destination_ready = Some((0, TransferDirection::VaultToOtherSpark));
             let daemon = Arc::new(RecordingDaemon::default());
             let as_daemon: Arc<dyn Daemon + Sync + Send> = daemon.clone();
             let cache = Cache {
@@ -6772,8 +5162,8 @@ mod tests {
             let generation = home.invalidate_transfer_destination();
             home.current_view.step = 2;
             for (callback_generation, callback_direction) in [
-                (old_generation, TransferDirection::VaultToLiquid),
-                (generation, TransferDirection::VaultToLiquid),
+                (old_generation, TransferDirection::VaultToOtherSpark),
+                (generation, TransferDirection::VaultToOtherSpark),
             ] {
                 drain(home.update(
                     Some(as_daemon.clone()),
@@ -6792,7 +5182,7 @@ mod tests {
                 &cache,
                 Message::View(view::Message::Home(HomeMessage::TransferPsbtPreviewReady {
                     generation: old_generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToOtherSpark,
                     feerate_vb: 2,
                     result: Ok((Amount::from_sat(500), Amount::from_sat(100_000))),
                 })),
@@ -6801,11 +5191,11 @@ mod tests {
             drain(home.update(
                 Some(as_daemon.clone()),
                 &cache,
-                Message::View(view::Message::Home(HomeMessage::SignVaultToLiquidTx)),
+                Message::View(view::Message::Home(HomeMessage::SignVaultTransferTx)),
             ));
             assert!(daemon.calls.lock().unwrap().is_empty());
 
-            // A prior Vault→Liquid PSBT may finish after the new Vault→Spark
+            // A prior Vault→other-Cube PSBT may finish after the new Vault→Spark
             // attempt has started. It must not clear B's pending state or
             // reopen a signer for A's old destination.
             let stale_psbt =
@@ -6823,7 +5213,7 @@ mod tests {
                 Message::View(view::Message::Home(HomeMessage::TransferPsbtReady {
                     request_id: 1,
                     generation: old_generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToOtherSpark,
                     destination: MAINNET_ADDR.to_string(),
                     amount_sat: 100_000,
                     feerate_vb: 2,
@@ -6843,7 +5233,7 @@ mod tests {
                 Message::View(view::Message::Home(HomeMessage::TransferSigningComplete {
                     request_id: 1,
                     generation: old_generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToOtherSpark,
                 })),
             ));
             assert!(!home.transfer_signed);
@@ -6875,7 +5265,7 @@ mod tests {
                 &cache,
                 Message::View(view::Message::Home(HomeMessage::TransferDestinationReady {
                     generation: old_generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToOtherSpark,
                     result: Ok((MAINNET_ADDR.to_string(), ChildNumber::from(1))),
                 })),
             ));
@@ -6914,7 +5304,7 @@ mod tests {
                 Message::View(view::Message::Home(HomeMessage::TransferPsbtReady {
                     request_id: 9,
                     generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToSpark,
                     destination: MAINNET_ADDR.to_string(),
                     amount_sat: 100_000,
                     feerate_vb: 2,
@@ -6933,7 +5323,7 @@ mod tests {
                 Message::View(view::Message::Home(HomeMessage::TransferPsbtReady {
                     request_id: 10,
                     generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToSpark,
                     destination: MAINNET_ADDR.to_string(),
                     amount_sat: 100_000,
                     feerate_vb: 5,
@@ -6949,39 +5339,10 @@ mod tests {
             let (mut home, _) = home_on_transfer_screen();
             let cache = Cache::default();
             let old_generation = home.transfer_request_generation;
-            home.transfer_direction = Some(TransferDirection::LiquidToSpark);
+            // An intermediate attempt, itself superseded below.
             let generation = home.invalidate_transfer_destination();
-            let response = PreparePayOnchainResponse {
-                receiver_amount_sat: 100_000,
-                claim_fees_sat: 100,
-                total_fees_sat: 1_000,
-            };
-            drain(home.update(
-                None,
-                &cache,
-                Message::View(view::Message::Home(
-                    HomeMessage::PrepareOnChainResponseReceived {
-                        generation: old_generation,
-                        direction: TransferDirection::LiquidToSpark,
-                        response: response.clone(),
-                    },
-                )),
-            ));
-            assert!(home.prepare_onchain_send_response.is_none());
-            drain(home.update(
-                None,
-                &cache,
-                Message::View(view::Message::Home(
-                    HomeMessage::PrepareOnChainResponseReceived {
-                        generation,
-                        direction: TransferDirection::LiquidToSpark,
-                        response,
-                    },
-                )),
-            ));
-            assert!(home.prepare_onchain_send_response.is_some());
 
-            home.transfer_direction = Some(TransferDirection::SparkToLiquid);
+            home.transfer_direction = Some(TransferDirection::SparkToVault);
             let spark_generation = home.invalidate_transfer_destination();
             for callback_generation in [generation, old_generation] {
                 drain(home.update(
@@ -6989,7 +5350,7 @@ mod tests {
                     &cache,
                     Message::View(view::Message::Home(HomeMessage::SparkPrepareSendReady {
                         generation: callback_generation,
-                        direction: TransferDirection::SparkToLiquid,
+                        direction: TransferDirection::SparkToVault,
                         destination: MAINNET_ADDR.to_string(),
                         prepare_handle: "stale".to_string(),
                         fee_sat: 123,
@@ -7003,7 +5364,7 @@ mod tests {
                 &cache,
                 Message::View(view::Message::Home(HomeMessage::SparkPrepareSendReady {
                     generation: spark_generation,
-                    direction: TransferDirection::SparkToLiquid,
+                    direction: TransferDirection::SparkToVault,
                     destination: MAINNET_ADDR.to_string(),
                     prepare_handle: "current".to_string(),
                     fee_sat: 123,
@@ -7011,48 +5372,6 @@ mod tests {
             ));
             assert_eq!(home.spark_send_handle.as_deref(), Some("current"));
             assert!(home.destination_is_ready());
-        }
-
-        /// Tenshu v175 hides Liquid, so neither transfer side accepts it, even
-        /// with the grant and a Liquid wallet on disk: the pair, its destination
-        /// and the request generation stay as they were. (The From choice that
-        /// swaps an existing pair is now reachable only with Spark, whose
-        /// bridge has no test double here; that code is unchanged.)
-        #[test]
-        fn inline_selection_refuses_hidden_liquid() {
-            let (mut home, _) = home_on_transfer_screen();
-            home.transfer_from = Some(WalletKind::Vault);
-            home.transfer_to = Some(WalletKind::Liquid);
-            let generation = home.transfer_request_generation;
-            assert!(home.destination_is_ready());
-            let cache = Cache {
-                has_vault: true,
-                liquid_gate: crate::app::features::LiquidGate {
-                    server_enabled: true,
-                    local_state_exists: true,
-                },
-                ..Cache::default()
-            };
-            for side in [PickerSide::From, PickerSide::To] {
-                drain(home.update(
-                    None,
-                    &cache,
-                    Message::View(view::Message::Home(HomeMessage::SelectTransferWallet(
-                        side,
-                        WalletKind::Liquid,
-                    ))),
-                ));
-                assert_eq!(home.transfer_from, Some(WalletKind::Vault));
-                assert_eq!(home.transfer_to, Some(WalletKind::Liquid));
-                assert_eq!(
-                    home.transfer_direction,
-                    Some(TransferDirection::VaultToLiquid)
-                );
-                assert_eq!(home.transfer_request_generation, generation);
-                assert!(home.destination_is_ready());
-                assert_eq!(home.entered_amount.value, "100000");
-                assert!(home.entered_amount.valid);
-            }
         }
 
         #[test]
@@ -7187,7 +5506,6 @@ mod tests {
                 ..Cache::default()
             };
             let mut home = GlobalHome::new_without_wallet(
-                None,
                 Some(Arc::new(SparkBackend::new(Arc::new(client)))),
                 root.clone(),
                 ChainId::Bitcoin,
@@ -7284,7 +5602,7 @@ mod tests {
             let task = home.update(
                 None,
                 &cache,
-                Message::View(view::Message::Home(HomeMessage::SignVaultToLiquidTx)),
+                Message::View(view::Message::Home(HomeMessage::SignVaultTransferTx)),
             );
             drain(task);
             assert_eq!(home.current_view.step, 1, "back to Details to unlock again");
@@ -7306,7 +5624,6 @@ mod tests {
                 ..Cache::default()
             };
             let mut home = GlobalHome::new_without_wallet(
-                None,
                 Some(Arc::new(SparkBackend::new(Arc::new(client)))),
                 root.clone(),
                 ChainId::Bitcoin,
@@ -7339,7 +5656,6 @@ mod tests {
                 HomeMessage::TransferBroadcast {
                     amount_sat: 50_000,
                     destination_kind: WalletKind::Vault,
-                    swap_id: None,
                 },
             );
             assert!(!home.is_sending);
@@ -7402,7 +5718,6 @@ mod tests {
                 TransferDirection::VaultToOtherSpark => HomeMessage::TransferBroadcast {
                     amount_sat: 100_000,
                     destination_kind: WalletKind::Spark,
-                    swap_id: None,
                 },
                 _ => HomeMessage::TransferSuccessful,
             }
@@ -7432,7 +5747,7 @@ mod tests {
                     let _in_flight = home.update(
                         Some(as_daemon.clone()),
                         &cache,
-                        Message::View(view::Message::Home(HomeMessage::SignVaultToLiquidTx)),
+                        Message::View(view::Message::Home(HomeMessage::SignVaultTransferTx)),
                     );
                 };
                 // Review with a PSBT being built under the held unlock.
@@ -7662,7 +5977,6 @@ mod tests {
             };
             for sending in [false, true] {
                 let mut home = GlobalHome::new_without_wallet(
-                    None,
                     Some(Arc::new(SparkBackend::new(Arc::new(client.clone())))),
                     root.clone(),
                     ChainId::Bitcoin,
@@ -7734,7 +6048,6 @@ mod tests {
                 ..Cache::default()
             };
             let mut home = GlobalHome::new_without_wallet(
-                None,
                 Some(Arc::new(SparkBackend::new(client.clone()))),
                 root.clone(),
                 ChainId::Bitcoin,
@@ -7865,6 +6178,7 @@ mod tests {
                     payment_id: "archive-payment".into(),
                     amount_sat: 100_000,
                     fee_sat: 800,
+                    status: Some("Completed".to_string()),
                 }),
             );
             assert!(
@@ -7959,7 +6273,6 @@ mod tests {
                 HomeMessage::TransferBroadcast {
                     amount_sat: 100_000,
                     destination_kind: WalletKind::Spark,
-                    swap_id: None,
                 },
             );
             assert_eq!(home.current_view.step, 3);
@@ -7973,7 +6286,7 @@ mod tests {
             let cache = transfer_cache();
             home.current_view.step = 1;
             home.transfer_page = TransferPage::Amount;
-            home.transfer_direction = Some(TransferDirection::SparkToLiquid);
+            home.transfer_direction = Some(TransferDirection::SparkToVault);
             home.transfer_unit = BitcoinDisplayUnit::Sats;
             home.spark_balance = Amount::from_sat(50_000);
 
@@ -7990,7 +6303,7 @@ mod tests {
                     &cache,
                     HomeMessage::SparkPrepareSendReady {
                         generation,
-                        direction: TransferDirection::SparkToLiquid,
+                        direction: TransferDirection::SparkToVault,
                         destination: MAINNET_ADDR.to_string(),
                         prepare_handle: "max".to_string(),
                         fee_sat: 1_200,
@@ -8008,36 +6321,6 @@ mod tests {
         }
 
         #[test]
-        fn max_drains_liquid_to_the_quoted_receiver_amount() {
-            let (mut home, _wallet) = home_on_transfer_screen();
-            let cache = transfer_cache();
-            home.current_view.step = 1;
-            home.transfer_page = TransferPage::Amount;
-            home.transfer_direction = Some(TransferDirection::LiquidToSpark);
-            home.transfer_unit = BitcoinDisplayUnit::Sats;
-            home.liquid_balance = Amount::from_sat(60_000);
-
-            send(&mut home, &cache, HomeMessage::TransferMax);
-            assert_eq!(home.entered_amount.value, "60000");
-            let generation = home.invalidate_transfer_destination();
-            home.current_view.step = 2;
-            send(
-                &mut home,
-                &cache,
-                HomeMessage::PrepareOnChainResponseReceived {
-                    generation,
-                    direction: TransferDirection::LiquidToSpark,
-                    response: PreparePayOnchainResponse {
-                        receiver_amount_sat: 58_500,
-                        claim_fees_sat: 100,
-                        total_fees_sat: 1_500,
-                    },
-                },
-            );
-            assert_eq!(home.entered_amount.value, "58500");
-        }
-
-        #[test]
         fn max_vault_sweep_waits_for_its_price_and_shows_what_arrives() {
             let (mut home, _wallet) = home_on_transfer_screen();
             let cache = transfer_cache();
@@ -8052,7 +6335,7 @@ mod tests {
                 &cache,
                 HomeMessage::TransferPsbtPreviewReady {
                     generation,
-                    direction: TransferDirection::VaultToLiquid,
+                    direction: TransferDirection::VaultToSpark,
                     feerate_vb,
                     result: Ok((Amount::from_sat(500), Amount::from_sat(99_500))),
                 },
@@ -8426,16 +6709,6 @@ mod tests {
             assert_eq!(home.current_view.step, 1);
             assert_eq!(home.transfer_request_generation, generation);
 
-            // Liquid cannot send to another Cube from this dialog.
-            home.transfer_from = Some(WalletKind::Liquid);
-            home.transfer_to = Some(WalletKind::Vault);
-            home.transfer_direction = Some(TransferDirection::LiquidToVault);
-            send(&mut home, &cache, HomeMessage::SelectAnotherCube);
-            assert_eq!(
-                home.transfer_direction,
-                Some(TransferDirection::LiquidToVault)
-            );
-
             // The other Vault's checked address becomes the destination at
             // Prepare, under the request generation it started.
             home.transfer_from = Some(WalletKind::Vault);
@@ -8479,7 +6752,7 @@ mod tests {
             let (mut home, _wallet) = home_on_transfer_screen();
             let cache = transfer_cache();
             home.transfer_signed = true;
-            home.transfer_psbt_ready_for = Some((1, 0, TransferDirection::VaultToLiquid));
+            home.transfer_psbt_ready_for = Some((1, 0, TransferDirection::VaultToSpark));
             home.modal = Modal::ShowQrCode(
                 ShowQrCodeModal::new(
                     &Address::from_str(MAINNET_ADDR).unwrap().assume_checked(),
@@ -8491,72 +6764,6 @@ mod tests {
             assert!(matches!(home.modal, Modal::None));
             assert!(home.transfer_signed, "Confirm & Broadcast stays available");
             assert!(home.transfer_psbt_ready_for.is_some());
-        }
-
-        /// Tenshu v175 hides Liquid, so a Liquid → Vault transfer persisted by
-        /// an earlier session shows no "Pending deposit" on Overview, even for
-        /// an account with the grant and a Liquid wallet on disk.
-        #[test]
-        fn a_restored_liquid_transfer_stays_off_overview_while_liquid_is_hidden() {
-            use crate::app::view::shared::landing::capture;
-            let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
-            let network = coincube_core::miniscript::bitcoin::Network::Bitcoin;
-            let home = || {
-                GlobalHome::new(
-                    wallet.clone(),
-                    Arc::new(LiquidBackend::new(Arc::new(
-                        crate::app::breez_liquid::BreezClient::disconnected(network),
-                    ))),
-                    None,
-                    CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
-                    crate::chain::ChainId::Bitcoin,
-                    "cube".to_string(),
-                    false,
-                )
-            };
-            let gate = crate::app::features::LiquidGate {
-                server_enabled: true,
-                local_state_exists: true,
-            };
-            let cache = Cache {
-                has_vault: true,
-                liquid_gate: gate,
-                daemon_cache: crate::app::cache::DaemonCache {
-                    blockheight: 900_000,
-                    ..Default::default()
-                },
-                ..Cache::default()
-            };
-            let menu = Menu::Cube(crate::app::menu::CubeSubMenu::Overview);
-            let restored = || {
-                Message::View(view::Message::Home(HomeMessage::PendingTransferRestored {
-                    amount_sat: 250_000,
-                    stage: TransferStage::SwappingLbtcToBtc,
-                    swap_id: "synthetic-swap".to_string(),
-                }))
-            };
-            let overview = |home: &GlobalHome| {
-                capture::inspect(
-                    "overview-restored-liquid-transfer",
-                    home.view(&menu, &cache),
-                    (1440, 900),
-                    "dark",
-                    coincube_ui::theme::Theme::dark(),
-                )
-            };
-
-            let mut hidden = home();
-            hidden.set_liquid_shown(gate.show());
-            let _ = hidden.update(None, &cache, restored());
-            assert!(hidden.pending_vault_incoming.is_none());
-            assert!(!overview(&hidden).contains("Pending deposit"));
-
-            // The same restore with Liquid shown puts the card on the Vault,
-            // so its absence above is the gate's doing.
-            let mut shown = home();
-            shown.set_liquid_shown(true);
-            let _ = shown.update(None, &cache, restored());
-            assert!(overview(&shown).contains("Pending deposit"));
         }
     }
 }

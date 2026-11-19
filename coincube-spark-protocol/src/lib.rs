@@ -2,10 +2,11 @@
 //!
 //! Both sides link this crate; the bridge binary depends on
 //! `breez-sdk-spark`, `coincube-gui` does not. The separation exists because
-//! the Liquid SDK's dependency graph (`rusqlite`/`libsqlite3-sys`,
-//! `tokio_with_wasm`, `reqwest`) is incompatible with the Spark SDK's graph
-//! at the `links = "sqlite3"` level, so the two SDKs can't live in the same
-//! binary. Running Spark in a sibling process isolates them permanently.
+//! the Spark SDK's `rusqlite`/`libsqlite3-sys` requirement is incompatible
+//! with the gui's own graph (`coincubed` links a rusqlite 0.38 fork) at the
+//! `links = "sqlite3"` level, so the two can't live in the same binary.
+//! (The conflict was first with the since-removed Breez Liquid SDK.) Running
+//! Spark in a sibling process isolates them permanently.
 //!
 //! The wire format is one JSON object per line (newline-delimited JSON):
 //!
@@ -1178,8 +1179,7 @@ pub struct TokenPayment {
 
 /// Snapshot of the wallet's USDB (Stable Balance) holding. Mirrors the
 /// fields the gui needs to fold the holding into the unified portfolio
-/// total, the same way the Liquid panel folds USDt into the L-BTC
-/// total.
+/// total at the BTC/USD price.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StableBalanceSnapshot {
     /// USDB amount in token base units (`balance / 10^decimals` is
@@ -1465,6 +1465,24 @@ pub struct SendPaymentOk {
     pub amount_sat: u64,
     /// Final fee paid (sats).
     pub fee_sat: u64,
+    /// The SDK's `PaymentStatus` for the payment, by its `Debug` name
+    /// (`Completed` or `Pending`; a `Failed` payment is answered as an error).
+    /// A send can be accepted and still be pending, so only `Completed` means
+    /// the payment has settled. `None` from a bridge older than this field:
+    /// callers must read that as "not known to have settled".
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+impl SendPaymentOk {
+    /// Whether the bridge reported this payment as settled. Fail-closed: a
+    /// pending payment, an unknown status, and an older bridge's missing one
+    /// are all "not settled".
+    pub fn is_completed(&self) -> bool {
+        self.status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("completed"))
+    }
 }
 
 /// Result of a successful [`Method::ReceiveBolt11`] or

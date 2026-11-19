@@ -7090,7 +7090,6 @@ mod shared_adoption_generation_tests {
     use super::*;
     use crate::{app, loader};
     use iced::futures::StreamExt;
-    use std::sync::Arc;
 
     async fn first_output(task: Task<Message>) -> Message {
         let mut stream =
@@ -7244,9 +7243,6 @@ mod shared_adoption_generation_tests {
                 gui.panes.get(pane_id).unwrap().tabs[0].state,
                 tab::State::Home(_)
             ));
-            let breez = Arc::new(app::breez_liquid::BreezClient::disconnected(
-                settings.network.bitcoin_network(),
-            ));
             let (loader, startup) = loader::Loader::new(
                 root.clone(),
                 app::Config::new(false),
@@ -7255,7 +7251,7 @@ mod shared_adoption_generation_tests {
                 None,
                 None,
                 settings.clone(),
-                Some(breez.clone()),
+                None,
                 None,
             );
             drop(startup);
@@ -7272,8 +7268,8 @@ mod shared_adoption_generation_tests {
                 pane_id,
                 pane::Message::tab(
                     1,
-                    tab::Message::Load(loader::Message::BreezLoaded {
-                        breez,
+                    tab::Message::Load(loader::Message::WalletsLoaded {
+                        cube_signer: None,
                         spark_backend: None,
                         cache,
                         wallet,
@@ -8195,11 +8191,11 @@ mod single_open_lifecycle_tests {
                     pane_id,
                     pane::Message::tab(
                         2,
-                        tab::Message::BreezClientLoadedAfterPin {
+                        tab::Message::WalletsLoadedAfterUnlock {
                             connect_client: None,
                             migration_error: None,
                             enc_key_error: None,
-                            breez_client: Err(app::breez_liquid::BreezError::SignerError(
+                            cube_signer: Err(app::cube_signer::CubeSignerError::Signer(
                                 "fixture".into(),
                             )),
                             spark_backend: None,

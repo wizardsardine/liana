@@ -283,7 +283,7 @@ pub struct Cache {
     pub cube_owned_by_other_account: bool,
     /// Whether the user has completed the master seed backup flow for this
     /// Cube. Drives the soft "not backed up" warning banners on the Vault
-    /// and Liquid home screens. Mirrors `CubeSettings::backed_up`.
+    /// home screens. Mirrors `CubeSettings::backed_up`.
     pub current_cube_backed_up: bool,
     /// A Spark Stable Balance condition the user should know about,
     /// rendered as a banner at the top of every page by the `dashboard`
@@ -310,16 +310,6 @@ pub struct Cache {
     /// features load, so a launch build hides the untested money feature while
     /// the API stance is unknown.
     pub marketplace_flags: crate::app::features::MarketplaceServerFlags,
-    /// Whether the Liquid wallet is shown at all (sunset gate). Two inputs:
-    /// the account-scoped `liquidEnabled` grant, mirrored from the Connect
-    /// account panel alongside `marketplace_flags`; and whether a Liquid wallet
-    /// already exists on disk, resolved once at cube-open.
-    ///
-    /// Starts [`LiquidGate::HIDDEN`](crate::app::features::LiquidGate::HIDDEN).
-    /// Since Tenshu v175 the gate hides Liquid whatever these inputs say; they
-    /// are still recorded so Liquid can be reopened. See
-    /// [`crate::app::features::LiquidGate`].
-    pub liquid_gate: crate::app::features::LiquidGate,
     /// Whether this Cube can start a Bitcoin Blake2b **claim** — mirrored
     /// from the Connect account alongside [`Self::marketplace_flags`].
     ///
@@ -332,9 +322,8 @@ pub struct Cache {
     /// Whether a Bitcoin Blake2b Cube on this device already reuses this
     /// Cube's Vault descriptor — i.e. this Cube has already been claimed.
     ///
-    /// Resolved once at cube-open by [`crate::app::claim_target_exists`], the
-    /// same way the Liquid gate's local half is: it is a fact about the disk,
-    /// not about the session, and a Connect outage must not make an existing
+    /// Resolved once at cube-open by [`crate::app::claim_target_exists`]: it
+    /// is a fact about the disk, not about the session, and a Connect outage must not make an existing
     /// claim target look absent.
     pub btcb2_already_claimed: bool,
     /// Other-chain transaction presence for either side of the fork,
@@ -423,7 +412,7 @@ pub struct Cache {
     /// envelopes, and none of them has a PIN in hand. Deriving it once here
     /// from the already-in-memory master signer avoids re-prompting and adds no
     /// new secret lifetime: the seed it comes from is resident anyway (it backs
-    /// the Liquid/Spark signers). The private scalar is zeroized when the Arc
+    /// the Spark signer). The private scalar is zeroized when the Arc
     /// drops and is never written to disk.
     ///
     /// `None` on a Cube with no on-disk seed (watch-only / descriptor-only
@@ -561,7 +550,6 @@ impl std::default::Default for Cache {
             marketplace_flags: crate::app::features::MarketplaceServerFlags::OFF,
             btcb2_server_enabled: false,
             btcb2_already_claimed: false,
-            liquid_gate: crate::app::features::LiquidGate::HIDDEN,
             entangled: std::collections::HashMap::new(),
             chain_proofs: std::collections::HashMap::new(),
             split_records: Vec::new(),

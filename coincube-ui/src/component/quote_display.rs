@@ -80,9 +80,6 @@ const IMG_KAGE_NOTE_RECEIVE: &[u8] =
 const IMG_KAGE_SPARK_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-spark-send.png");
 const IMG_KAGE_SPARK_RECEIVE: &[u8] =
     include_bytes!("../../static/images/kage/kage-spark-receive.png");
-const IMG_KAGE_LIQUID_SEND: &[u8] = include_bytes!("../../static/images/kage/kage-liquid-send.png");
-const IMG_KAGE_LIQUID_RECEIVE: &[u8] =
-    include_bytes!("../../static/images/kage/kage-liquid-receive.png");
 const IMG_KAGE_BITCOIN_SEND: &[u8] =
     include_bytes!("../../static/images/kage/kage-bitcoin-send.png");
 const IMG_KAGE_BITCOIN_RECEIVE: &[u8] =
@@ -108,8 +105,6 @@ pub fn default_image_for_context(context: &str) -> (&'static [u8], u16) {
         "note-receive" => (IMG_KAGE_NOTE_RECEIVE, 240),
         "spark-send" => (IMG_KAGE_SPARK_SEND, 240),
         "spark-receive" => (IMG_KAGE_SPARK_RECEIVE, 240),
-        "liquid-send" => (IMG_KAGE_LIQUID_SEND, 240),
-        "liquid-receive" => (IMG_KAGE_LIQUID_RECEIVE, 240),
         "bitcoin-send" => (IMG_KAGE_BITCOIN_SEND, 240),
         "bitcoin-receive" => (IMG_KAGE_BITCOIN_RECEIVE, 240),
         _ => (IMG_KAGE_SEATED, 240),
@@ -157,8 +152,6 @@ impl QuoteProvider {
                 | "note-receive"
                 | "spark-send"
                 | "spark-receive"
-                | "liquid-send"
-                | "liquid-receive"
                 | "bitcoin-send"
                 | "bitcoin-receive"
         );
@@ -293,7 +286,7 @@ impl<'a> QuoteDisplayProps<'a> {
                 _ => None,
             },
             payment: crate::illustration::PaymentArt::from_context(context),
-            existing_only: matches!(context, "liquid-send" | "liquid-receive"),
+            existing_only: false,
             quote,
             image_handle,
             image_size: default_size,
@@ -304,13 +297,6 @@ impl<'a> QuoteDisplayProps<'a> {
 
     pub(crate) fn illustration_slot(mut self, slot: crate::illustration::Slot) -> Self {
         self.slot = Some(slot);
-        self
-    }
-
-    /// Use the existing set on deprecated Liquid-only screens.
-    pub fn existing_artwork(mut self) -> Self {
-        self.existing_only = true;
-        self.payment = None;
         self
     }
 

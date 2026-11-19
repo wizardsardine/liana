@@ -155,7 +155,6 @@ impl CubeChoice {
             && match wallet {
                 WalletKind::Vault => self.vault_wallet_id.is_some(),
                 WalletKind::Spark => self.has_spark,
-                WalletKind::Liquid => false,
             }
     }
 }

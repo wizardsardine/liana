@@ -87,7 +87,6 @@ fn set_duress_gate(gui: &mut GUI, pane_id: pane_grid::Pane, entitled: bool, enab
         pricing_schema_version: None,
         purchasing_enabled: None,
         marketplace_enabled: None,
-        liquid_enabled: None,
         buy_sell_enabled: None,
         p2p_enabled: None,
         duress_enabled: Some(enabled),

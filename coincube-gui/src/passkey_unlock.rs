@@ -10,8 +10,8 @@
 //!    against it — one Touch ID prompt;
 //! 3. HKDF-SHA256 the 32-byte PRF output under `coincube-tenshu/v1/master-seed`
 //!    and feed the result to BIP39 ([`MasterSigner::from_prf_output`]);
-//! 4. hand the signer to [`crate::app::session`], where the Liquid and Spark
-//!    loaders pick it up as `SeedSource::InMemory`.
+//! 4. hand the signer to [`crate::app::session`], where the Cube signer and
+//!    the Spark loader pick it up as `SeedSource::InMemory`.
 //!
 //! # Key material never enters a message
 //!
@@ -623,10 +623,9 @@ mod tests {
     /// must return the user to the prompt, not drop them inside a Cube that is
     /// supposed to be locked.
     ///
-    /// The old relock path returned `Err(BreezError::SignerError(..))` through
-    /// `BreezClientLoadedAfterPin`, whose error arm substitutes a *disconnected*
-    /// client and carries on — so the user landed in the Cube with no Liquid, no
-    /// Spark and no P2P, and the one sentence telling them what to do went to
+    /// The old relock path returned a signer error through
+    /// `WalletsLoadedAfterUnlock`, whose error arm carries on without the
+    /// signer — so the user landed in the Cube with no Spark and no P2P, and the one sentence telling them what to do went to
     /// `tracing::warn!` instead of to them.
     #[test]
     fn a_relock_returns_to_the_prompt_with_a_usable_button() {

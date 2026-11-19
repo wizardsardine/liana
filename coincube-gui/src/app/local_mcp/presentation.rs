@@ -150,7 +150,7 @@ const SETUP_INTRO: &str =
 const ENABLE_ON: &str = "Clients work while this Cube is unlocked.";
 const ENABLE_SUSPENDED: &str = "Clients are suspended after a storage error.";
 const ENABLE_OFF: &str = "Clients are paused. Turning on grants no new access.";
-const UNSUPPORTED: &str = "Needs a Vault run by COINCUBE Desktop on Bitcoin (mainnet, Testnet4 or Regtest) or Bitcoin Blake2b (mainnet or Testnet4). Spark, Liquid, imported wallets and external daemons aren't supported.";
+const UNSUPPORTED: &str = "Needs a Vault run by COINCUBE Desktop on Bitcoin (mainnet, Testnet4 or Regtest) or Bitcoin Blake2b (mainnet or Testnet4). Spark, imported wallets and external daemons aren't supported.";
 const PAIR_HINT: &str = "Access lasts until you revoke it.";
 pub(super) const CAUTION: &str =
     "Local isn't private. What a client reads can reach its AI provider.";
@@ -1653,7 +1653,7 @@ mod ai_access_tests {
             "Unavailable for this Cube",
             "Bitcoin (mainnet, Testnet4 or Regtest)",
             "Bitcoin Blake2b (mainnet or Testnet4)",
-            "Spark, Liquid",
+            "Spark, imported wallets",
         ] {
             assert!(probe.contains(label), "{}", label);
         }

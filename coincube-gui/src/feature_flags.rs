@@ -31,7 +31,7 @@
 /// Every item on that list is now closed:
 ///
 /// - **Unlock works.** `crate::passkey_unlock` runs the assertion, derives the
-///   seed through HKDF + BIP39, and hands it to the Liquid and Spark loaders as
+///   seed through HKDF + BIP39, and hands it to the Cube signer and the Spark loader as
 ///   `SeedSource::InMemory` — a passkey Cube has no seed file, and the loaders
 ///   no longer assume one.
 /// - **The Recovery Kit carries the seed** (**I11**). A re-authentication

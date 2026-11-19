@@ -1,20 +1,12 @@
 //! View renderer for [`crate::app::state::spark::transactions::SparkTransactions`].
 //!
-//! Mirrors [`crate::app::view::liquid::transactions::liquid_transactions_view`]
-//! almost exactly:
 //! - Header row with the "Transactions" title.
-//! - Transaction list using the shared `TransactionListItem` widget so
-//!   rows look identical to the Liquid panel.
+//! - Transaction list using the shared `TransactionListItem` widget.
 //! - Empty state with a Kage quote card and Send/Receive shortcut
 //!   buttons.
-//!
-//! Differences from Liquid:
 //! - No asset filter tabs (Spark holds only BTC; there's nothing to
-//!   toggle between).
-//! - No "Refundable Transactions" section (Spark has no boltz-style
-//!   swap refunds).
-//! - No "Export" button in the header yet — CSV export is currently
-//!   Liquid-specific and a Spark export path is a future follow-up.
+//!   toggle between), and no "Refundable Transactions" section (Spark
+//!   has no boltz-style swap refunds).
 
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_spark_protocol::PaymentSummary;

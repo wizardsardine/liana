@@ -14,10 +14,7 @@ aes v0.8.4  —  MIT OR Apache-2.0
 aes v0.9.2  —  MIT OR Apache-2.0
 aes-gcm v0.10.3  —  Apache-2.0 OR MIT
 aes-gcm v0.11.1  —  Apache-2.0 OR MIT
-aes-gcm-siv v0.11.1  —  MIT OR Apache-2.0
 aes-kw v0.2.1  —  MIT OR Apache-2.0
-age v0.11.2  —  MIT OR Apache-2.0
-age-core v0.11.0  —  MIT OR Apache-2.0
 ahash v0.8.12  —  MIT OR Apache-2.0
 aho-corasick v1.1.4  —  Unlicense OR MIT
 aliasable v0.1.3  —  MIT
@@ -31,16 +28,13 @@ anstyle-parse v1.0.0  —  MIT OR Apache-2.0
 anstyle-query v1.1.5  —  MIT OR Apache-2.0
 anstyle-wincon v3.0.11  —  MIT OR Apache-2.0
 anyhow v1.0.102  —  MIT OR Apache-2.0
-arc-swap v1.9.0  —  MIT OR Apache-2.0
 argon2 v0.5.3  —  MIT OR Apache-2.0
 arrayref v0.3.9  —  BSD-2-Clause
 arrayvec v0.7.6  —  MIT OR Apache-2.0
 as-raw-xcb-connection v1.0.1  —  MIT OR Apache-2.0
 ash v0.38.0+1.3.281  —  MIT OR Apache-2.0
 ashpd v0.11.1  —  MIT
-asn1-rs v0.6.2  —  MIT OR Apache-2.0
 asn1-rs v0.7.2  —  MIT OR Apache-2.0
-asn1-rs-derive v0.5.1  —  MIT OR Apache-2.0
 asn1-rs-derive v0.6.0  —  MIT OR Apache-2.0
 asn1-rs-impl v0.2.0  —  MIT/Apache-2.0
 async-broadcast v0.7.2  —  MIT OR Apache-2.0
@@ -67,12 +61,9 @@ atk-sys v0.18.2  —  MIT
 atomic-destructor v0.3.0  —  MIT
 atomic-polyfill v1.0.3  —  MIT OR Apache-2.0
 atomic-waker v1.1.2  —  Apache-2.0 OR MIT
-atty v0.2.14  —  MIT
 autocfg v1.5.0  —  Apache-2.0 OR MIT
-axum v0.6.20  —  MIT
 axum v0.7.9  —  MIT
 axum v0.8.9  —  MIT
-axum-core v0.3.4  —  MIT
 axum-core v0.4.5  —  MIT
 axum-core v0.5.6  —  MIT
 backtrace v0.3.76  —  MIT OR Apache-2.0
@@ -85,15 +76,12 @@ base64 v0.21.7  —  MIT OR Apache-2.0
 base64 v0.22.1  —  MIT OR Apache-2.0
 base64 v0.23.1  —  MIT OR Apache-2.0
 base64ct v1.8.3  —  Apache-2.0 OR MIT
-basic-toml v0.1.10  —  MIT OR Apache-2.0
 bdk_chain v0.16.0  —  MIT OR Apache-2.0
 bdk_coin_select v0.4.1  —  MIT OR Apache-2.0
 bdk_electrum v0.15.0  —  MIT OR Apache-2.0
 bdk_esplora v0.15.0  —  MIT OR Apache-2.0
 bech32 v0.11.1  —  MIT
-bech32 v0.9.1  —  MIT
 beef v0.5.2  —  MIT OR Apache-2.0
-bip21 v0.2.0  —  MITNFA
 bip329 v0.4.0  —  Apache-2.0
 bip39 v2.2.2  —  CC0-1.0
 bit-set v0.5.3  —  MIT/Apache-2.0
@@ -101,20 +89,15 @@ bit-set v0.8.0  —  Apache-2.0 OR MIT
 bit-vec v0.6.3  —  MIT/Apache-2.0
 bit-vec v0.8.0  —  Apache-2.0 OR MIT
 bitbox-api v0.11.0  —  Apache-2.0
-bitcoin v0.29.2  —  CC0-1.0
 bitcoin v0.32.8  —  CC0-1.0
 bitcoin-encrypted-backup v0.0.2  —  licence not declared in its manifest
 bitcoin-internals v0.2.0  —  CC0-1.0
 bitcoin-internals v0.3.0  —  CC0-1.0
 bitcoin-io v0.1.4  —  CC0-1.0
-bitcoin-private v0.1.0  —  CC0-1.0
 bitcoin-units v0.1.2  —  CC0-1.0
-bitcoin_hashes v0.11.0  —  CC0-1.0
 bitcoin_hashes v0.13.0  —  CC0-1.0
 bitcoin_hashes v0.14.1  —  CC0-1.0
 bitcoin_hashes v0.16.0  —  CC0-1.0
-bitcoincore-rpc v0.19.0  —  CC0-1.0
-bitcoincore-rpc-json v0.19.0  —  CC0-1.0
 bitfields v0.12.4  —  MIT
 bitfields-impl v0.9.4  —  MIT
 bitflags v1.3.2  —  MIT/Apache-2.0
@@ -132,11 +115,8 @@ block2 v0.5.1  —  MIT
 block2 v0.6.2  —  MIT
 blocking v1.6.2  —  Apache-2.0 OR MIT
 blowfish v0.9.1  —  MIT OR Apache-2.0
-bmp-monochrome v1.1.0  —  MIT
-boltz-client v0.3.0  —  MIT
 branta v4.0.0  —  MIT
 breez-sdk-common v0.1.0  —  licence not declared in its manifest
-breez-sdk-liquid v0.12.2  —  licence not declared in its manifest
 breez-sdk-spark v0.1.0  —  licence not declared in its manifest
 buffer-redux v1.1.0  —  MIT OR Apache-2.0
 bumpalo v3.20.2  —  MIT OR Apache-2.0
@@ -191,7 +171,6 @@ color_quant v1.1.0  —  MIT
 colorchoice v1.0.5  —  MIT OR Apache-2.0
 combine v4.6.7  —  MIT
 concurrent-queue v2.5.0  —  Apache-2.0 OR MIT
-console_log v1.0.0  —  MIT/Apache-2.0
 const-crc32-nostd v1.3.1  —  MIT
 const-oid v0.10.2  —  Apache-2.0 OR MIT
 const-oid v0.9.6  —  Apache-2.0 OR MIT
@@ -200,7 +179,6 @@ const-random-macro v0.1.16  —  MIT OR Apache-2.0
 constant_time_eq v0.4.2  —  CC0-1.0 OR MIT-0 OR Apache-2.0
 convert_case v0.10.0  —  MIT
 cookie v0.18.1  —  MIT OR Apache-2.0
-cookie-factory v0.3.3  —  MIT
 core-foundation v0.10.1  —  MIT OR Apache-2.0
 core-foundation v0.9.4  —  MIT OR Apache-2.0
 core-foundation-sys v0.8.7  —  MIT OR Apache-2.0
@@ -237,13 +215,10 @@ cursor-icon v1.2.0  —  MIT OR Apache-2.0 OR Zlib
 curve25519-dalek v4.1.3  —  BSD-3-Clause
 curve25519-dalek-derive v0.1.1  —  MIT/Apache-2.0
 cx448 v0.1.1  —  BSD-3-Clause
-darling v0.13.4  —  MIT
 darling v0.20.11  —  MIT
 darling v0.23.0  —  MIT
-darling_core v0.13.4  —  MIT
 darling_core v0.20.11  —  MIT
 darling_core v0.23.0  —  MIT
-darling_macro v0.13.4  —  MIT
 darling_macro v0.20.11  —  MIT
 darling_macro v0.23.0  —  MIT
 data-encoding v2.10.0  —  MIT
@@ -254,10 +229,8 @@ dbus-secret-service v4.1.0  —  MIT OR Apache-2.0
 debugless-unwrap v0.0.4  —  MIT OR Apache-2.0
 der v0.7.10  —  Apache-2.0 OR MIT
 der-parser v10.0.0  —  MIT OR Apache-2.0
-der-parser v9.0.0  —  MIT/Apache-2.0
 der_derive v0.7.3  —  Apache-2.0 OR MIT
 deranged v0.5.8  —  MIT OR Apache-2.0
-derivative v2.2.0  —  MIT/Apache-2.0
 derive-getters v0.5.0  —  MIT
 derive_builder v0.20.2  —  MIT OR Apache-2.0
 derive_builder_core v0.20.2  —  MIT OR Apache-2.0
@@ -267,7 +240,6 @@ derive_more-impl v2.1.1  —  MIT
 des v0.8.1  —  MIT OR Apache-2.0
 digest v0.10.7  —  MIT OR Apache-2.0
 digest v0.11.2  —  MIT OR Apache-2.0
-digest v0.9.0  —  MIT OR Apache-2.0
 dirs v6.0.0  —  MIT OR Apache-2.0
 dirs-sys v0.5.0  —  MIT OR Apache-2.0
 dispatch v0.2.0  —  MIT
@@ -275,13 +247,11 @@ dispatch2 v0.3.1  —  Zlib OR Apache-2.0 OR MIT
 displaydoc v0.2.5  —  MIT OR Apache-2.0
 dlib v0.5.3  —  MIT
 dlv-list v0.5.2  —  MIT OR Apache-2.0
-dns-parser v0.8.0  —  MIT/Apache-2.0
 dnssec-prover v0.6.8  —  MIT OR Apache-2.0
 doc-comment v0.3.4  —  MIT
 document-features v0.2.12  —  MIT OR Apache-2.0
 dom_query v0.27.0  —  MIT
 dotenvy v0.15.7  —  MIT
-downcast v0.11.0  —  MIT
 downcast-rs v1.2.1  —  MIT/Apache-2.0
 dpi v0.1.2  —  Apache-2.0 AND MIT
 dsa v0.6.3  —  Apache-2.0 OR MIT
@@ -291,28 +261,19 @@ dunce v1.0.5  —  CC0-1.0 OR MIT-0 OR Apache-2.0
 dyn-clone v1.0.20  —  MIT OR Apache-2.0
 eax v0.5.0  —  Apache-2.0 OR MIT
 ecdsa v0.16.9  —  Apache-2.0 OR MIT
-ecies v0.2.9  —  MIT
 ed25519 v2.2.3  —  Apache-2.0 OR MIT
 ed25519-dalek v2.2.0  —  BSD-3-Clause
 either v1.15.0  —  MIT OR Apache-2.0
-electrum-client v0.21.0  —  MIT
 electrum-client v0.23.1  —  MIT
-elements v0.25.2  —  CC0-1.0
-elements-miniscript v0.4.0  —  CC0-1.0
 elliptic-curve v0.13.8  —  Apache-2.0 OR MIT
 email_address v0.2.9  —  MIT
 encoding_rs v0.8.35  —  (Apache-2.0 OR MIT) AND BSD-3-Clause
 endi v1.1.1  —  MIT
-enum-as-inner v0.6.1  —  MIT/Apache-2.0
 enumflags2 v0.7.12  —  MIT OR Apache-2.0
 enumflags2_derive v0.7.12  —  MIT OR Apache-2.0
-env_filter v1.0.1  —  MIT OR Apache-2.0
-env_logger v0.11.10  —  MIT OR Apache-2.0
-env_logger v0.7.1  —  MIT/Apache-2.0
 equivalent v1.0.2  —  Apache-2.0 OR MIT
 errno v0.3.14  —  MIT OR Apache-2.0
 error-code v3.3.2  —  BSL-1.0
-esplora-client v0.12.0  —  MIT
 esplora-client v0.8.0  —  MIT
 etagere v0.2.15  —  MIT/Apache-2.0
 euclid v0.22.14  —  MIT OR Apache-2.0
@@ -329,7 +290,6 @@ ff v0.13.1  —  MIT/Apache-2.0
 fiat-crypto v0.2.9  —  MIT OR Apache-2.0 OR BSD-1-Clause
 field-offset v0.3.6  —  MIT OR Apache-2.0
 filetime v0.2.27  —  MIT/Apache-2.0
-find-crate v0.6.3  —  Apache-2.0 OR MIT
 find-msvc-tools v0.1.9  —  MIT OR Apache-2.0
 fixedbitset v0.4.2  —  MIT/Apache-2.0
 fixedbitset v0.5.7  —  MIT OR Apache-2.0
@@ -338,10 +298,6 @@ flashnet v0.1.0  —  licence not declared in its manifest
 flate2 v1.1.9  —  MIT OR Apache-2.0
 float-cmp v0.9.0  —  MIT
 float_next_after v1.0.0  —  MIT
-fluent v0.16.1  —  Apache-2.0 OR MIT
-fluent-bundle v0.15.3  —  Apache-2.0 OR MIT
-fluent-langneg v0.13.1  —  Apache-2.0 OR MIT
-fluent-syntax v0.11.1  —  Apache-2.0 OR MIT
 flume v0.11.1  —  Apache-2.0/MIT
 fnv v1.0.7  —  Apache-2.0 / MIT
 foldhash v0.1.5  —  Zlib
@@ -355,7 +311,6 @@ foreign-types-macros v0.2.3  —  MIT/Apache-2.0
 foreign-types-shared v0.1.1  —  MIT/Apache-2.0
 foreign-types-shared v0.3.1  —  MIT/Apache-2.0
 form_urlencoded v1.2.2  —  MIT OR Apache-2.0
-fragile v2.0.1  —  Apache-2.0
 frost-core v2.1.0  —  MIT OR Apache-2.0
 frost-rerandomized v2.1.0  —  MIT OR Apache-2.0
 frost-secp256k1-tr v2.1.0  —  MIT OR Apache-2.0
@@ -371,7 +326,6 @@ futures-macro v0.3.32  —  MIT OR Apache-2.0
 futures-sink v0.3.32  —  MIT OR Apache-2.0
 futures-task v0.3.32  —  MIT OR Apache-2.0
 futures-util v0.3.32  —  MIT OR Apache-2.0
-fxhash v0.2.1  —  Apache-2.0/MIT
 gdk v0.18.2  —  MIT
 gdk-pixbuf v0.18.5  —  MIT
 gdk-pixbuf-sys v0.18.0  —  MIT
@@ -394,7 +348,6 @@ glam v0.25.0  —  MIT OR Apache-2.0
 glib v0.18.5  —  MIT
 glib-macros v0.18.5  —  MIT
 glib-sys v0.18.1  —  MIT
-glob v0.3.3  —  MIT OR Apache-2.0
 gloo-timers v0.3.0  —  MIT OR Apache-2.0
 glow v0.16.0  —  MIT OR Apache-2.0 OR Zlib
 glutin_wgl_sys v0.6.1  —  Apache-2.0
@@ -431,7 +384,6 @@ hashlink v0.9.1  —  MIT OR Apache-2.0
 heapless v0.7.17  —  MIT OR Apache-2.0
 heck v0.4.1  —  MIT OR Apache-2.0
 heck v0.5.0  —  MIT OR Apache-2.0
-hermit-abi v0.1.19  —  MIT/Apache-2.0
 hermit-abi v0.5.2  —  MIT OR Apache-2.0
 hex v0.4.3  —  MIT OR Apache-2.0
 hex-conservative v0.1.2  —  CC0-1.0
@@ -439,8 +391,6 @@ hex-conservative v0.2.2  —  CC0-1.0
 hex-conservative v0.3.2  —  CC0-1.0
 hex_lit v0.1.1  —  MITNFA
 hexf-parse v0.2.1  —  CC0-1.0
-hickory-proto v0.24.4  —  MIT OR Apache-2.0
-hickory-resolver v0.24.4  —  MIT OR Apache-2.0
 hidapi v2.6.5  —  MIT
 hkdf v0.12.4  —  MIT OR Apache-2.0
 hmac v0.12.1  —  MIT OR Apache-2.0
@@ -455,7 +405,6 @@ http-body v1.0.1  —  MIT
 http-body-util v0.1.3  —  MIT
 httparse v1.10.1  —  MIT OR Apache-2.0
 httpdate v1.0.3  —  MIT OR Apache-2.0
-humantime v1.3.0  —  MIT/Apache-2.0
 hybrid-array v0.4.9  —  MIT OR Apache-2.0
 hyper v0.14.32  —  MIT
 hyper v1.8.1  —  MIT
@@ -463,14 +412,9 @@ hyper v1.9.0  —  MIT
 hyper-rustls v0.24.2  —  Apache-2.0 OR ISC OR MIT
 hyper-rustls v0.27.7  —  Apache-2.0 OR ISC OR MIT
 hyper-rustls v0.27.9  —  Apache-2.0 OR ISC OR MIT
-hyper-timeout v0.4.1  —  MIT/Apache-2.0
 hyper-timeout v0.5.2  —  MIT OR Apache-2.0
 hyper-tls v0.6.0  —  MIT/Apache-2.0
 hyper-util v0.1.20  —  MIT
-i18n-config v0.4.8  —  MIT
-i18n-embed v0.15.4  —  MIT
-i18n-embed-fl v0.9.4  —  MIT
-i18n-embed-impl v0.8.4  —  MIT
 iana-time-zone v0.1.65  —  MIT OR Apache-2.0
 iana-time-zone-haiku v0.1.2  —  MIT OR Apache-2.0
 iced v0.14.0  —  MIT
@@ -518,11 +462,7 @@ indexmap v2.14.0  —  Apache-2.0 OR MIT
 inout v0.1.4  —  MIT OR Apache-2.0
 inout v0.2.2  —  MIT OR Apache-2.0
 instant v0.1.13  —  BSD-3-Clause
-intl-memoizer v0.5.3  —  Apache-2.0 OR MIT
-intl_pluralrules v7.0.2  —  Apache-2.0/MIT
 io-kit-sys v0.4.1  —  MIT / Apache-2.0
-io_tee v0.1.1  —  MIT OR Apache-2.0
-ipconfig v0.3.4  —  MIT/Apache-2.0
 ipnet v2.12.0  —  MIT OR Apache-2.0
 iri-string v0.7.11  —  MIT OR Apache-2.0
 iri-string v0.7.12  —  MIT OR Apache-2.0
@@ -535,8 +475,6 @@ itertools v0.14.0  —  MIT OR Apache-2.0
 itoa v1.0.18  —  MIT OR Apache-2.0
 javascriptcore-rs v1.1.2  —  MIT
 javascriptcore-rs-sys v1.1.1  —  MIT
-jiff v0.2.23  —  Unlicense OR MIT
-jiff-static v0.2.23  —  Unlicense OR MIT
 jni v0.21.1  —  MIT/Apache-2.0
 jni v0.22.4  —  MIT OR Apache-2.0
 jni-macros v0.22.4  —  MIT OR Apache-2.0
@@ -567,24 +505,15 @@ libdbus-sys v0.2.7  —  Apache-2.0/MIT
 libloading v0.8.9  —  ISC
 libm v0.2.16  —  MIT
 libredox v0.1.15  —  MIT
-libsecp256k1 v0.7.2  —  Apache-2.0
-libsecp256k1-core v0.3.0  —  Apache-2.0
-libsecp256k1-gen-ecmult v0.3.0  —  Apache-2.0
-libsecp256k1-gen-genmult v0.3.0  —  Apache-2.0
 libsqlite3-sys v0.30.1  —  MIT
 libsqlite3-sys v0.36.0  —  MIT
 libudev v0.3.0  —  MIT
 libudev-sys v0.1.4  —  MIT
-lightning v0.0.118  —  MIT OR Apache-2.0
 lightning v0.1.8  —  MIT OR Apache-2.0
-lightning-invoice v0.26.0  —  MIT OR Apache-2.0
-lightning-invoice v0.32.0  —  MIT OR Apache-2.0
 lightning-invoice v0.33.2  —  MIT OR Apache-2.0
-lightning-types v0.1.0  —  MIT OR Apache-2.0
 lightning-types v0.2.0  —  MIT OR Apache-2.0
 lilt v0.8.1  —  MIT
 linebender_resource_handle v0.1.1  —  Apache-2.0 OR MIT
-linked-hash-map v0.5.6  —  MIT/Apache-2.0
 linux-raw-sys v0.12.1  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 linux-raw-sys v0.4.15  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 litemap v0.8.1  —  Unicode-3.0
@@ -597,17 +526,12 @@ logos v0.14.4  —  MIT OR Apache-2.0
 logos-codegen v0.14.4  —  MIT OR Apache-2.0
 logos-derive v0.14.4  —  MIT OR Apache-2.0
 lru v0.16.3  —  MIT
-lru-cache v0.1.2  —  MIT/Apache-2.0
-lwk_common v0.9.0  —  MIT OR BSD-2-Clause
-lwk_signer v0.9.0  —  MIT OR BSD-2-Clause
-lwk_wollet v0.9.0  —  MIT OR BSD-2-Clause
 lyon v1.0.19  —  MIT OR Apache-2.0
 lyon_algorithms v1.0.19  —  MIT OR Apache-2.0
 lyon_geom v1.0.19  —  MIT OR Apache-2.0
 lyon_path v1.0.19  —  MIT OR Apache-2.0
 lyon_tessellation v1.0.20  —  MIT OR Apache-2.0
 mach2 v0.4.3  —  BSD-2-Clause OR MIT OR Apache-2.0
-macros v0.0.0  —  licence not declared in its manifest
 macros v0.1.0  —  licence not declared in its manifest
 malloc_buf v0.0.6  —  MIT
 markup5ever v0.38.0  —  MIT OR Apache-2.0
@@ -628,8 +552,6 @@ minreq v2.14.1  —  ISC
 mio v1.2.0  —  MIT
 mio v1.2.3  —  MIT
 mio-serial v5.0.6  —  MIT
-mockall v0.13.1  —  MIT OR Apache-2.0
-mockall_derive v0.13.1  —  MIT OR Apache-2.0
 mostro-core v0.7.1  —  MIT
 moxcms v0.8.1  —  BSD-3-Clause OR Apache-2.0
 multimap v0.10.1  —  MIT OR Apache-2.0
@@ -650,14 +572,9 @@ noise-protocol v0.2.1  —  Unlicense
 noise-rust-crypto v0.6.2  —  Unlicense
 nom v7.1.3  —  MIT
 nostr v0.43.1  —  MIT
-nostr v0.44.2  —  MIT
 nostr-database v0.43.0  —  MIT
-nostr-database v0.44.0  —  MIT
-nostr-gossip v0.44.0  —  MIT
 nostr-relay-pool v0.43.1  —  MIT
-nostr-relay-pool v0.44.0  —  MIT
 nostr-sdk v0.43.0  —  MIT
-nostr-sdk v0.44.1  —  MIT
 nu-ansi-term v0.50.3  —  MIT
 num v0.4.3  —  MIT OR Apache-2.0
 num-bigint v0.4.6  —  MIT OR Apache-2.0
@@ -696,7 +613,6 @@ objc2-ui-kit v0.3.2  —  Zlib OR Apache-2.0 OR MIT
 objc2-web-kit v0.3.2  —  Zlib OR Apache-2.0 OR MIT
 object v0.37.3  —  Apache-2.0 OR MIT
 ocb3 v0.1.0  —  Apache-2.0 OR MIT
-oid-registry v0.7.1  —  MIT OR Apache-2.0
 oid-registry v0.8.1  —  MIT OR Apache-2.0
 once_cell v1.21.4  —  MIT OR Apache-2.0
 once_cell_polyfill v1.70.2  —  MIT OR Apache-2.0
@@ -728,11 +644,9 @@ parking_lot_core v0.9.12  —  MIT OR Apache-2.0
 password-hash v0.5.0  —  MIT OR Apache-2.0
 paste v1.0.15  —  MIT OR Apache-2.0
 pathdiff v0.2.3  —  MIT/Apache-2.0
-pbkdf2 v0.12.2  —  MIT OR Apache-2.0
 pem v3.0.6  —  MIT
 pem-rfc7468 v0.7.0  —  Apache-2.0 OR MIT
 percent-encoding v2.3.2  —  MIT OR Apache-2.0
-percent-encoding-rfc3986 v0.1.3  —  MIT/Apache-2.0
 petgraph v0.6.5  —  MIT OR Apache-2.0
 petgraph v0.7.1  —  MIT OR Apache-2.0
 pgp v0.16.0  —  MIT OR Apache-2.0
@@ -769,9 +683,6 @@ potential_utf v0.1.5  —  Unicode-3.0
 powerfmt v0.2.0  —  MIT OR Apache-2.0
 ppv-lite86 v0.2.21  —  MIT OR Apache-2.0
 precomputed-hash v0.1.1  —  MIT
-predicates v3.1.4  —  MIT OR Apache-2.0
-predicates-core v1.0.10  —  MIT OR Apache-2.0
-predicates-tree v1.0.13  —  MIT OR Apache-2.0
 presser v0.3.1  —  MIT OR Apache-2.0
 prettyplease v0.1.25  —  MIT OR Apache-2.0
 prettyplease v0.2.37  —  MIT OR Apache-2.0
@@ -781,8 +692,6 @@ proc-macro-crate v2.0.2  —  MIT OR Apache-2.0
 proc-macro-crate v3.5.0  —  MIT OR Apache-2.0
 proc-macro-error v1.0.4  —  MIT OR Apache-2.0
 proc-macro-error-attr v1.0.4  —  MIT OR Apache-2.0
-proc-macro-error-attr2 v2.0.0  —  MIT OR Apache-2.0
-proc-macro-error2 v2.0.1  —  MIT OR Apache-2.0
 proc-macro2 v1.0.106  —  MIT OR Apache-2.0
 proc-macro2-diagnostics v0.10.1  —  MIT/Apache-2.0
 profiling v1.0.17  —  MIT OR Apache-2.0
@@ -798,10 +707,7 @@ prost-reflect-derive v0.14.0  —  MIT OR Apache-2.0
 prost-types v0.11.9  —  Apache-2.0
 prost-types v0.13.5  —  Apache-2.0
 pxfm v0.1.28  —  BSD-3-Clause OR Apache-2.0
-qr_code v2.0.0  —  MIT OR Apache-2.0
 qrcode v0.13.0  —  MIT OR Apache-2.0
-querystring v1.1.0  —  MIT
-quick-error v1.2.3  —  MIT/Apache-2.0
 quick-error v2.0.1  —  MIT/Apache-2.0
 quick-xml v0.39.2  —  MIT
 quote v1.0.45  —  MIT OR Apache-2.0
@@ -833,16 +739,13 @@ regex-lite v0.1.9  —  MIT OR Apache-2.0
 regex-syntax v0.8.10  —  MIT OR Apache-2.0
 renderdoc-sys v1.1.0  —  MIT OR Apache-2.0
 reqwest v0.11.27  —  MIT OR Apache-2.0
-reqwest v0.12.12  —  MIT OR Apache-2.0
 reqwest v0.12.18  —  MIT OR Apache-2.0
 reqwest v0.12.28  —  MIT OR Apache-2.0
 reqwest-sse v0.1.0  —  MIT
-resolv-conf v0.7.6  —  MIT OR Apache-2.0
 resvg v0.45.1  —  Apache-2.0 OR MIT
 rfc6979 v0.4.0  —  Apache-2.0 OR MIT
 rfd v0.15.4  —  MIT
 rgb v0.8.53  —  MIT
-ring v0.16.20  —  licence not declared in its manifest
 ring v0.17.14  —  Apache-2.0 AND ISC
 ripemd v0.1.3  —  MIT OR Apache-2.0
 roxmltree v0.20.0  —  MIT OR Apache-2.0
@@ -851,10 +754,6 @@ rsqlite-vfs v0.1.0  —  MIT
 rusqlite v0.32.1  —  MIT
 rusqlite v0.38.0  —  MIT
 rusqlite_migration v1.3.1  —  Apache-2.0
-rusqlite_migration v2.3.0  —  Apache-2.0
-rust-embed v8.11.0  —  MIT
-rust-embed-impl v8.11.0  —  MIT
-rust-embed-utils v8.11.0  —  MIT
 rust-ini v0.21.3  —  MIT
 rustc-demangle v0.1.27  —  MIT/Apache-2.0
 rustc-hash v1.1.0  —  Apache-2.0/MIT
@@ -863,11 +762,9 @@ rustc_version v0.4.1  —  MIT OR Apache-2.0
 rusticata-macros v4.1.0  —  MIT/Apache-2.0
 rustix v0.38.44  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
 rustix v1.1.4  —  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
-rustls v0.20.9  —  Apache-2.0/ISC/MIT
 rustls v0.21.12  —  Apache-2.0 OR ISC OR MIT
 rustls v0.23.37  —  Apache-2.0 OR ISC OR MIT
 rustls v0.23.46  —  Apache-2.0 OR ISC OR MIT
-rustls-native-certs v0.6.3  —  Apache-2.0 OR ISC OR MIT
 rustls-native-certs v0.8.0  —  Apache-2.0 OR ISC OR MIT
 rustls-native-certs v0.8.3  —  Apache-2.0 OR ISC OR MIT
 rustls-pemfile v1.0.4  —  Apache-2.0 OR ISC OR MIT
@@ -879,32 +776,23 @@ rustls-webpki v0.103.16  —  ISC
 rustversion v1.0.22  —  MIT OR Apache-2.0
 rustybuzz v0.20.1  —  MIT
 ryu v1.0.23  —  Apache-2.0 OR BSL-1.0
-salsa20 v0.10.2  —  MIT OR Apache-2.0
 same-file v1.0.6  —  Unlicense/MIT
 schannel v0.1.29  —  MIT
 schemars v1.2.3  —  MIT
 schemars_derive v1.2.3  —  MIT
 scoped-tls v1.0.1  —  MIT/Apache-2.0
 scopeguard v1.2.0  —  MIT OR Apache-2.0
-scrypt v0.11.0  —  MIT OR Apache-2.0
 sct v0.7.1  —  Apache-2.0 OR ISC OR MIT
 sctk-adwaita v0.10.1  —  MIT
-sdk-common v0.7.1  —  licence not declared in its manifest
-sdk-macros v0.7.1  —  licence not declared in its manifest
 sec1 v0.7.3  —  Apache-2.0 OR MIT
-secp256k1 v0.24.3  —  CC0-1.0
 secp256k1 v0.29.1  —  CC0-1.0
 secp256k1-sys v0.10.1  —  CC0-1.0
-secp256k1-sys v0.6.1  —  CC0-1.0
-secp256k1-zkp v0.11.0  —  CC0-1.0
-secp256k1-zkp-sys v0.10.1  —  CC0-1.0
 secrecy v0.10.3  —  Apache-2.0 OR MIT
 security-framework v2.10.0  —  MIT OR Apache-2.0
 security-framework v3.7.0  —  MIT OR Apache-2.0
 security-framework-sys v2.10.0  —  MIT OR Apache-2.0
 security-framework-sys v2.17.0  —  MIT OR Apache-2.0
 selectors v0.36.1  —  MPL-2.0
-self_cell v0.10.3  —  Apache-2.0
 self_cell v1.2.2  —  Apache-2.0 OR GPL-2.0-only
 semver v1.0.27  —  MIT OR Apache-2.0
 semver v1.0.28  —  MIT OR Apache-2.0
@@ -923,9 +811,7 @@ serde_repr v0.1.20  —  MIT OR Apache-2.0
 serde_spanned v0.6.9  —  MIT OR Apache-2.0
 serde_spanned v1.1.0  —  MIT OR Apache-2.0
 serde_urlencoded v0.7.1  —  MIT/Apache-2.0
-serde_with v1.14.0  —  MIT OR Apache-2.0
 serde_with v3.18.0  —  MIT OR Apache-2.0
-serde_with_macros v1.5.2  —  MIT OR Apache-2.0
 serde_with_macros v3.18.0  —  MIT OR Apache-2.0
 serdect v0.2.0  —  Apache-2.0 OR MIT
 serdect v0.3.0  —  Apache-2.0 OR MIT
@@ -939,8 +825,6 @@ sha2 v0.11.0  —  MIT OR Apache-2.0
 sha3 v0.10.9  —  MIT OR Apache-2.0
 sharded-slab v0.1.7  —  MIT
 shlex v1.3.0  —  MIT OR Apache-2.0
-sideswap_api v0.1.2  —  licence not declared in its manifest
-sideswap_types v0.1.2  —  licence not declared in its manifest
 signal-hook-registry v1.4.8  —  MIT OR Apache-2.0
 signature v2.2.0  —  Apache-2.0 OR MIT
 simd-adler32 v0.3.8  —  MIT
@@ -970,7 +854,6 @@ spark v0.1.0  —  licence not declared in its manifest
 spark-primitives v0.2.0  —  Apache-2.0
 spark-sqlite v0.1.0  —  licence not declared in its manifest
 spark-wallet v0.1.0  —  licence not declared in its manifest
-spin v0.5.2  —  MIT
 spin v0.9.8  —  MIT
 spirv v0.3.0+sdk-1.3.268.0  —  Apache-2.0
 spki v0.7.3  —  Apache-2.0 OR MIT
@@ -980,11 +863,8 @@ static_assertions v1.1.0  —  MIT OR Apache-2.0
 strict-num v0.1.1  —  MIT
 string_cache v0.9.0  —  MIT OR Apache-2.0
 string_cache_codegen v0.6.1  —  MIT OR Apache-2.0
-strsim v0.10.0  —  MIT
 strsim v0.11.1  —  MIT
-strum v0.25.0  —  MIT
 strum v0.28.0  —  MIT
-strum_macros v0.25.3  —  MIT
 strum_macros v0.28.0  —  MIT
 subtle v2.6.1  —  BSD-3-Clause
 svg_fmt v0.4.5  —  MIT/Apache-2.0
@@ -998,7 +878,6 @@ sync_wrapper v1.0.2  —  Apache-2.0
 synstructure v0.13.2  —  MIT
 sys-locale v0.3.2  —  MIT OR Apache-2.0
 system-configuration v0.5.1  —  MIT OR Apache-2.0
-system-configuration v0.6.1  —  MIT OR Apache-2.0
 system-configuration v0.7.0  —  MIT OR Apache-2.0
 system-configuration-sys v0.5.0  —  MIT OR Apache-2.0
 system-configuration-sys v0.6.0  —  MIT OR Apache-2.0
@@ -1009,8 +888,6 @@ tar v0.4.45  —  MIT OR Apache-2.0
 target-lexicon v0.12.16  —  Apache-2.0 WITH LLVM-exception
 tempfile v3.27.0  —  MIT OR Apache-2.0
 tendril v0.5.0  —  MIT OR Apache-2.0
-termcolor v1.4.1  —  Unlicense OR MIT
-termtree v0.5.1  —  MIT
 thiserror v1.0.69  —  MIT OR Apache-2.0
 thiserror v2.0.18  —  MIT OR Apache-2.0
 thiserror v2.0.20  —  MIT OR Apache-2.0
@@ -1033,11 +910,9 @@ tinyvec v1.11.0  —  Zlib OR Apache-2.0 OR MIT
 tinyvec_macros v0.1.1  —  MIT OR Apache-2.0 OR Zlib
 tokio v1.52.0  —  MIT
 tokio v1.53.1  —  MIT
-tokio-io-timeout v1.2.1  —  MIT/Apache-2.0
 tokio-macros v2.7.0  —  MIT
 tokio-macros v2.7.2  —  MIT
 tokio-native-tls v0.3.1  —  MIT
-tokio-rustls v0.23.4  —  MIT/Apache-2.0
 tokio-rustls v0.24.1  —  MIT/Apache-2.0
 tokio-rustls v0.26.4  —  MIT OR Apache-2.0
 tokio-serial v5.4.5  —  MIT
@@ -1045,12 +920,9 @@ tokio-socks v0.5.2  —  MIT
 tokio-socks v0.5.3  —  MIT
 tokio-stream v0.1.18  —  MIT
 tokio-tungstenite v0.26.2  —  MIT
-tokio-tungstenite-wasm v0.6.1  —  licence not declared in its manifest
 tokio-util v0.7.18  —  MIT
-tokio_with_wasm v0.8.2  —  MIT
 tokio_with_wasm v0.8.8  —  MIT
 tokio_with_wasm_proc v0.8.8  —  MIT
-toml v0.5.11  —  MIT/Apache-2.0
 toml v0.8.2  —  MIT OR Apache-2.0
 toml v0.9.12+spec-1.1.0  —  MIT OR Apache-2.0
 toml v1.1.0+spec-1.1.0  —  MIT OR Apache-2.0
@@ -1064,10 +936,8 @@ toml_parser v1.1.0+spec-1.1.0  —  MIT OR Apache-2.0
 toml_writer v1.1.0+spec-1.1.0  —  MIT OR Apache-2.0
 tonic v0.12.3  —  MIT
 tonic v0.13.1  —  MIT
-tonic v0.8.3  —  MIT
 tonic-build v0.12.3  —  MIT
 tonic-build v0.13.1  —  MIT
-tonic-build v0.8.4  —  MIT
 tonic-types v0.12.3  —  MIT
 tonic-web-wasm-client v0.6.2  —  MIT/Apache-2.0
 tower v0.4.13  —  MIT
@@ -1078,19 +948,15 @@ tower-service v0.3.3  —  MIT
 tracing v0.1.44  —  MIT
 tracing-attributes v0.1.31  —  MIT
 tracing-core v0.1.36  —  MIT
-tracing-futures v0.2.5  —  MIT
 tracing-log v0.2.0  —  MIT
 tracing-subscriber v0.3.23  —  MIT
 try-lock v0.2.5  —  MIT
 ttf-parser v0.25.1  —  MIT OR Apache-2.0
 tungstenite v0.26.2  —  MIT OR Apache-2.0
 twofish v0.7.1  —  MIT OR Apache-2.0
-type-map v0.5.1  —  MIT/Apache-2.0
 typenum v1.19.0  —  MIT OR Apache-2.0
 uds_windows v1.2.1  —  MIT
 unescaper v0.1.8  —  GPL-3.0/MIT
-unic-langid v0.9.6  —  MIT OR Apache-2.0
-unic-langid-impl v0.9.6  —  MIT OR Apache-2.0
 unicode-bidi v0.3.18  —  MIT OR Apache-2.0
 unicode-bidi-mirroring v0.4.0  —  MIT/Apache-2.0
 unicode-ccc v0.4.0  —  MIT/Apache-2.0
@@ -1106,7 +972,6 @@ unicode-width v0.2.2  —  MIT OR Apache-2.0
 unicode-xid v0.2.6  —  MIT OR Apache-2.0
 universal-hash v0.5.1  —  MIT OR Apache-2.0
 universal-hash v0.6.1  —  MIT OR Apache-2.0
-untrusted v0.7.1  —  ISC
 untrusted v0.9.0  —  ISC
 url v2.5.8  —  MIT OR Apache-2.0
 urlencoding v2.1.3  —  MIT
@@ -1156,8 +1021,6 @@ web-time v1.1.0  —  MIT OR Apache-2.0
 web_atoms v0.2.3  —  MIT OR Apache-2.0
 webkit2gtk v2.0.2  —  MIT
 webkit2gtk-sys v2.0.2  —  MIT
-webpki v0.22.4  —  licence not declared in its manifest
-webpki-roots v0.22.6  —  MPL-2.0
 webpki-roots v0.25.4  —  MPL-2.0
 webpki-roots v0.26.11  —  CDLA-Permissive-2.0
 webpki-roots v1.0.12  —  CDLA-Permissive-2.0
@@ -1174,7 +1037,6 @@ wgpu-core-deps-windows-linux-android v27.0.0  —  MIT OR Apache-2.0
 wgpu-hal v27.0.4  —  MIT OR Apache-2.0
 wgpu-types v27.0.1  —  MIT OR Apache-2.0
 which v4.4.2  —  MIT
-widestring v1.2.1  —  MIT OR Apache-2.0
 winapi v0.3.9  —  MIT/Apache-2.0
 winapi-i686-pc-windows-gnu v0.4.0  —  MIT/Apache-2.0
 winapi-util v0.1.11  —  Unlicense OR MIT
@@ -1198,13 +1060,11 @@ windows-link v0.1.3  —  MIT OR Apache-2.0
 windows-link v0.2.1  —  MIT OR Apache-2.0
 windows-numerics v0.2.0  —  MIT OR Apache-2.0
 windows-numerics v0.3.1  —  MIT OR Apache-2.0
-windows-registry v0.4.0  —  MIT OR Apache-2.0
 windows-registry v0.6.1  —  MIT OR Apache-2.0
 windows-result v0.2.0  —  MIT OR Apache-2.0
 windows-result v0.3.4  —  MIT OR Apache-2.0
 windows-result v0.4.1  —  MIT OR Apache-2.0
 windows-strings v0.1.0  —  MIT OR Apache-2.0
-windows-strings v0.3.1  —  MIT OR Apache-2.0
 windows-strings v0.4.2  —  MIT OR Apache-2.0
 windows-strings v0.5.1  —  MIT OR Apache-2.0
 windows-sys v0.45.0  —  MIT OR Apache-2.0
@@ -1215,40 +1075,31 @@ windows-sys v0.61.2  —  MIT OR Apache-2.0
 windows-targets v0.42.2  —  MIT OR Apache-2.0
 windows-targets v0.48.5  —  MIT OR Apache-2.0
 windows-targets v0.52.6  —  MIT OR Apache-2.0
-windows-targets v0.53.5  —  MIT OR Apache-2.0
 windows-threading v0.1.0  —  MIT OR Apache-2.0
 windows-threading v0.2.1  —  MIT OR Apache-2.0
 windows-version v0.1.7  —  MIT OR Apache-2.0
 windows_aarch64_gnullvm v0.42.2  —  MIT OR Apache-2.0
 windows_aarch64_gnullvm v0.48.5  —  MIT OR Apache-2.0
 windows_aarch64_gnullvm v0.52.6  —  MIT OR Apache-2.0
-windows_aarch64_gnullvm v0.53.1  —  MIT OR Apache-2.0
 windows_aarch64_msvc v0.42.2  —  MIT OR Apache-2.0
 windows_aarch64_msvc v0.48.5  —  MIT OR Apache-2.0
 windows_aarch64_msvc v0.52.6  —  MIT OR Apache-2.0
-windows_aarch64_msvc v0.53.1  —  MIT OR Apache-2.0
 windows_i686_gnu v0.42.2  —  MIT OR Apache-2.0
 windows_i686_gnu v0.48.5  —  MIT OR Apache-2.0
 windows_i686_gnu v0.52.6  —  MIT OR Apache-2.0
-windows_i686_gnu v0.53.1  —  MIT OR Apache-2.0
 windows_i686_gnullvm v0.52.6  —  MIT OR Apache-2.0
-windows_i686_gnullvm v0.53.1  —  MIT OR Apache-2.0
 windows_i686_msvc v0.42.2  —  MIT OR Apache-2.0
 windows_i686_msvc v0.48.5  —  MIT OR Apache-2.0
 windows_i686_msvc v0.52.6  —  MIT OR Apache-2.0
-windows_i686_msvc v0.53.1  —  MIT OR Apache-2.0
 windows_x86_64_gnu v0.42.2  —  MIT OR Apache-2.0
 windows_x86_64_gnu v0.48.5  —  MIT OR Apache-2.0
 windows_x86_64_gnu v0.52.6  —  MIT OR Apache-2.0
-windows_x86_64_gnu v0.53.1  —  MIT OR Apache-2.0
 windows_x86_64_gnullvm v0.42.2  —  MIT OR Apache-2.0
 windows_x86_64_gnullvm v0.48.5  —  MIT OR Apache-2.0
 windows_x86_64_gnullvm v0.52.6  —  MIT OR Apache-2.0
-windows_x86_64_gnullvm v0.53.1  —  MIT OR Apache-2.0
 windows_x86_64_msvc v0.42.2  —  MIT OR Apache-2.0
 windows_x86_64_msvc v0.48.5  —  MIT OR Apache-2.0
 windows_x86_64_msvc v0.52.6  —  MIT OR Apache-2.0
-windows_x86_64_msvc v0.53.1  —  MIT OR Apache-2.0
 winit v0.30.13  —  Apache-2.0
 winnow v0.5.40  —  MIT
 winnow v0.7.15  —  MIT
@@ -1266,7 +1117,6 @@ x11rb v0.13.2  —  MIT OR Apache-2.0
 x11rb-protocol v0.13.2  —  MIT OR Apache-2.0
 x25519-dalek v2.0.1  —  BSD-3-Clause
 x509-cert v0.2.5  —  Apache-2.0 OR MIT
-x509-parser v0.16.0  —  MIT OR Apache-2.0
 x509-parser v0.18.1  —  MIT OR Apache-2.0
 xcursor v0.3.10  —  MIT
 xkbcommon-dl v0.4.2  —  MIT
@@ -1280,7 +1130,6 @@ yoke v0.8.1  —  Unicode-3.0
 yoke v0.8.2  —  Unicode-3.0
 yoke-derive v0.8.1  —  Unicode-3.0
 yoke-derive v0.8.2  —  Unicode-3.0
-zbase32 v0.1.2  —  LGPL-3.0+
 zbus v5.14.0  —  MIT
 zbus_macros v5.14.0  —  MIT
 zbus_names v4.3.1  —  MIT

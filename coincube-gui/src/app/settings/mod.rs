@@ -674,7 +674,7 @@ pub fn derive_connect_encryption_pubkey(
             CubeEncryptionKey::derive(&signer, chain.bitcoin_network()).public_key_hex(),
         ),
         // No seed file for this fingerprint: nothing to derive, and nothing
-        // wrong. Mapped the same way `load_breez_client` maps an absent signer.
+        // wrong. Mapped the same way `CubeSigner::resolve` maps an absent signer.
         Err(SignerError::SignerNotFound(_)) => ConnectEncryptionKey::NoSeed,
         Err(SignerError::MnemonicStorage(ref e)) if e.kind() == std::io::ErrorKind::NotFound => {
             ConnectEncryptionKey::NoSeed
@@ -785,9 +785,11 @@ pub struct CubeSettings {
     // still deserializes — the values are simply ignored, and dropped on the
     // next settings write. That is the whole migration.
     /// Fingerprint of this Cube's master seed MasterSigner.
-    /// Cube-owned wallets (Vault, Liquid, Spark) derive from this seed.
+    /// Cube-owned wallets (Vault, Spark) derive from this seed.
     /// Imported Bitcoin wallets retain their original external signers.
-    /// The serde aliases keep existing settings.json files readable without migration.
+    /// The serde aliases keep existing settings.json files readable without
+    /// migration: alpha builds wrote this field under the Liquid wallet's
+    /// names, and the Liquid wallet's removal does not change that.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -798,8 +800,7 @@ pub struct CubeSettings {
     /// This Cube's Connect-blinding encryption **public** key — 33-byte
     /// compressed secp256k1, lowercase hex (`SPEC-cube-xpub-envelope-v1` §3).
     ///
-    /// Cached here for the same ordering reason as [`Self::liquid_granted`],
-    /// mirrored: the private half is derived from the master seed and so is
+    /// Cached here because the private half is derived from the master seed and so is
     /// only computable while the Cube is unlocked (PIN in hand), but the
     /// *registration* that publishes it to Connect happens later — after
     /// Connect sign-in, on a code path with no PIN. So the public half is
@@ -818,9 +819,6 @@ pub struct CubeSettings {
     /// Fiat price display preference for this cube
     #[serde(default, deserialize_with = "ok_or_none")]
     pub fiat_price: Option<fiat::PriceSetting>,
-    /// Persisted pending Liquid -> Vault transfer, used to restore UX state across app restarts
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pending_liquid_to_vault_transfer: Option<PendingLiquidToVaultTransfer>,
     /// The Spark cross-network receive (SideShift → bitcoin) still in
     /// progress, so its page survives a lock or restart. Without it, the Shift
     /// ID (which a refund or SideShift support needs) was gone the moment the
@@ -831,17 +829,6 @@ pub struct CubeSettings {
     /// Holds no keys: a shift id, the two addresses and the chosen asset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_spark_shift: Option<PendingSparkShift>,
-    /// Last-seen value of the account's `liquidEnabled` grant (Liquid sunset).
-    ///
-    /// The account's last-seen `liquidEnabled` grant, written whenever
-    /// `/connect/features` reports it. It used to decide, at cube open,
-    /// whether a fresh Liquid wallet was kept; since Liquid removal PR 1 the
-    /// Liquid SDK never connects and this is only fed to the constant-false
-    /// [`crate::app::features::LiquidGate`]. Kept so existing settings files
-    /// round-trip; removed (with a serde-compatible load) in Liquid removal
-    /// PR 5.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub liquid_granted: Option<bool>,
     /// Passkey metadata for passkey-derived master keys (None for random-generated keys)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passkey_metadata: Option<PasskeyMetadata>,
@@ -1028,12 +1015,6 @@ impl ConnectOwner {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PendingLiquidToVaultTransfer {
-    pub swap_id: String,
-    pub amount_sat: u64,
-}
-
 /// A Spark cross-network receive that has a live shift: everything needed to
 /// put its page back and resume polling SideShift. See
 /// [`CubeSettings::pending_spark_shift`].
@@ -1069,10 +1050,6 @@ impl CubeSettings {
             bitcoin_import: None,
             imported_claim_source: None,
             vault_fingerprint: None,
-            // Unknown until `/connect/features` answers for this account. A new
-            // cube is not granted Liquid; if the account is, the flag lands on
-            // the next features fetch and takes effect at the next cube open.
-            liquid_granted: None,
             master_signer_fingerprint: None,
             // Derived at the first unlock (the PIN is needed to reach the
             // seed), then persisted — see the field docs.
@@ -1082,7 +1059,6 @@ impl CubeSettings {
             remote_synced: false,
             unit_setting: unit::UnitSetting::default(),
             fiat_price: Some(fiat::PriceSetting::default()), // Initialize with default (enabled: true)
-            pending_liquid_to_vault_transfer: None,
             pending_spark_shift: None,
             passkey_metadata: None,
             allow_random_grid_phrase: false,
@@ -6719,5 +6695,88 @@ mod pending_spark_shift_tests {
         let json = serde_json::to_string(&cube).unwrap();
         let back: CubeSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.pending_spark_shift, Some(PendingSparkShift::sample()));
+    }
+}
+
+#[cfg(test)]
+mod alpha_settings_compat_tests {
+    //! Liquid removal, master invariant I4: a `settings.json` written by an
+    //! alpha build — Liquid grant, a persisted Liquid → Vault transfer, the
+    //! signer fingerprint under its Liquid-era name, and a live USDt-on-Liquid
+    //! Spark conversion — still loads. The retired keys are ignored, never
+    //! refused.
+
+    use super::*;
+
+    const ALPHA_SETTINGS: &str = r#"{
+        "cubes": [{
+            "id": "00000000-0000-0000-0000-0000000000a1",
+            "name": "Alpha Cube",
+            "network": "bitcoin",
+            "created_at": 1760000000,
+            "backed_up": true,
+            "mfa_done": false,
+            "liquid_wallet_signer_fingerprint": "aabbccdd",
+            "liquid_granted": true,
+            "pending_liquid_to_vault_transfer": {
+                "swap_id": "synthetic-peg-out",
+                "amount_sat": 50000
+            },
+            "pending_spark_shift": {
+                "shift": {
+                    "id": "d97d3994cd95e54364b6",
+                    "depositAddress": "VJL6BYGXdepositaddressVDVL",
+                    "depositCoin": "USDT",
+                    "depositNetwork": "liquid",
+                    "settleAddress": "bc1qvrl2849aggm6qry9ea7xqp2kk39j8vaa8r3cwg",
+                    "settleCoin": "BTC",
+                    "settleNetwork": "bitcoin",
+                    "depositMin": "10",
+                    "depositMax": "20000",
+                    "status": "waiting"
+                },
+                "deposit_option": "usdt:liquid",
+                "refund_address": "VJL6BYGXrefundaddressVDVL"
+            }
+        }]
+    }"#;
+
+    #[test]
+    fn an_alpha_settings_file_with_liquid_keys_still_loads() {
+        let root = std::env::temp_dir().join(format!("alpha-settings-{}", uuid::Uuid::new_v4()));
+        let directory = NetworkDirectory::new(root.join("bitcoin"));
+        std::fs::create_dir_all(directory.path()).unwrap();
+        std::fs::write(directory.path().join(SETTINGS_FILE_NAME), ALPHA_SETTINGS).unwrap();
+
+        let settings = Settings::from_file(&directory).expect("an alpha settings file loads");
+        assert_eq!(settings.cubes.len(), 1);
+        let cube = &settings.cubes[0];
+        assert_eq!(cube.name, "Alpha Cube");
+        // The Liquid-era alias still names the Cube master signer.
+        assert_eq!(
+            cube.master_signer_fingerprint.map(|f| f.to_string()),
+            Some("aabbccdd".to_string())
+        );
+        // The USDt-on-Liquid conversion into Spark is still offered and resumes.
+        let shift = cube
+            .pending_spark_shift
+            .as_ref()
+            .expect("the live Spark conversion survives");
+        assert_eq!(shift.deposit_option, "usdt:liquid");
+        assert_eq!(shift.shift.deposit_network.as_deref(), Some("liquid"));
+        assert!(crate::services::sideshift::deposit_option_by_key(&shift.deposit_option).is_some());
+
+        // Writing the Cube back is a plain serialization of what was read: the
+        // retired Liquid keys are simply not part of it.
+        let written = serde_json::to_value(cube).unwrap();
+        assert!(written.get("liquid_granted").is_none());
+        assert!(written.get("pending_liquid_to_vault_transfer").is_none());
+        let reread: CubeSettings = serde_json::from_value(written).unwrap();
+        assert_eq!(
+            reread.master_signer_fingerprint,
+            cube.master_signer_fingerprint
+        );
+        assert_eq!(reread.pending_spark_shift, cube.pending_spark_shift);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

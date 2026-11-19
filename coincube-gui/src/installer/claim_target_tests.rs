@@ -246,22 +246,36 @@ fn the_target_master_seed_file_is_the_source_cube_mnemonic_on_the_fork_chain() {
     let _ = std::fs::remove_dir_all(root.path());
 }
 
+/// The handles a running Bitcoin Cube holds: its master signer and a Spark
+/// backend (a disconnected test client, so no bridge subprocess).
+fn running_cube_handles() -> (
+    crate::app::cube_signer::CubeSigner,
+    Arc<crate::app::wallets::SparkBackend>,
+) {
+    (
+        crate::app::cube_signer::CubeSigner::new(
+            coincube_core::signer::MasterSigner::generate(Network::Bitcoin).unwrap(),
+        ),
+        Arc::new(crate::app::wallets::SparkBackend::new(Arc::new(
+            crate::app::breez_spark::SparkClient::disconnected_for_test(),
+        ))),
+    )
+}
+
 /// Item 6, at the construction boundary rather than through an extracted
-/// predicate: a caller that holds live Breez and Spark handles — which every
-/// running Bitcoin Cube does — must not have them reach the Cube being built
-/// on the fork chain. Deleting the narrowing in `try_new_for_chain` fails this
+/// predicate: a caller that holds the Cube signer and a Spark handle — which
+/// every running Bitcoin Cube does — must not have them reach the Cube being
+/// built on the fork chain. Deleting the narrowing in `try_new_for_chain` fails this
 /// test. What the installer *may* hold is the source Cube's own handles,
 /// parked for the return trip; that is asserted here too, because the two are
 /// easy to conflate and one of them is an invariant.
 #[tokio::test]
-async fn a_fork_installer_is_never_handed_the_callers_breez_or_spark_clients() {
+async fn a_fork_installer_is_never_handed_the_callers_signer_or_spark_clients() {
     // One process-global session slot: serialise with every other test that
     // opens one, or a sibling's `open` replaces this source's PIN.
     let _guard = crate::app::session::test_guard();
     let server = MockServer::start_async().await;
-    let breez = Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-        Network::Bitcoin,
-    ));
+    let (signer, spark) = running_cube_handles();
     let (source, _) = source("Savings");
 
     let (installer, _) = Installer::try_new_for_chain(
@@ -272,21 +286,21 @@ async fn a_fork_installer_is_never_handed_the_callers_breez_or_spark_clients() {
         },
         true,
         None,
-        Some(breez.clone()),
-        None,
+        Some(signer),
+        Some(spark.clone()),
         false,
         Some(authenticated_client(&server)),
     )
-    .expect("holding a Liquid client is what a running Bitcoin Cube looks like");
+    .expect("holding a signer and Spark is what a running Bitcoin Cube looks like");
 
     assert!(
-        installer.breez_client.is_none(),
-        "a Bitcoin Blake2b Cube must never be given a Liquid client"
+        installer.cube_signer.is_none(),
+        "a Bitcoin Blake2b Cube must never be given the source Cube's signer"
     );
     assert!(installer.spark_backend.is_none());
     assert!(
         installer.context.cube_encryption_key.is_none(),
-        "nor anything derived from the source Cube's Liquid signer"
+        "nor anything derived from the source Cube's signer"
     );
     // Parked, not handed in — and the distinction is the whole point. The
     // installer holds the source Cube's handle so backing out can rebuild that
@@ -294,14 +308,16 @@ async fn a_fork_installer_is_never_handed_the_callers_breez_or_spark_clients() {
     // success path returns these handles to the original Bitcoin Cube for
     // the split transaction; they never enter the fork Cube.
     assert_eq!(
-        Arc::strong_count(&breez),
+        Arc::strong_count(&spark),
         2,
         "the caller's handle and the parked one"
     );
-    assert!(installer
-        .source_cube
-        .as_ref()
-        .is_some_and(|s| s.breez_client.is_some()));
+    let parked = installer.source_cube.as_ref().expect("the parked source");
+    assert!(
+        parked.cube_signer.is_some(),
+        "the source Cube keeps its signer for the return trip"
+    );
+    assert!(parked.spark_backend.is_some());
 }
 
 /// The account gate is re-checked at admission. A card press, or a rail item
@@ -385,9 +401,9 @@ async fn the_fork_chain_refuses_every_flow_but_creation_claim_and_cube_restore()
             Some(authenticated_client(&server)),
         )
         .unwrap_or_else(|e| panic!("{:?} restores on the fork: {}", flow, e));
-        // A restored Cube is never handed a Breez or Spark client, and
+        // A restored Cube is never handed a Cube signer or Spark client, and
         // building it touches nothing on disk.
-        assert!(installer.breez_client.is_none());
+        assert!(installer.cube_signer.is_none());
         assert!(installer.spark_backend.is_none());
         assert!(!root.path().exists());
     }
@@ -790,9 +806,7 @@ async fn backing_out_of_a_claim_returns_to_the_source_cube_not_to_home() {
         },
         true,
         None,
-        Some(Arc::new(
-            crate::app::breez_liquid::BreezClient::disconnected(Network::Bitcoin),
-        )),
+        Some(running_cube_handles().0),
         None,
         false,
         Some(authenticated_client(&server)),
@@ -800,15 +814,15 @@ async fn backing_out_of_a_claim_returns_to_the_source_cube_not_to_home() {
     .unwrap();
 
     // The fork build still sees nothing: parking is not handing in.
-    assert!(installer.breez_client.is_none());
+    assert!(installer.cube_signer.is_none());
     assert!(installer.spark_backend.is_none());
     assert!(installer.context.cube_encryption_key.is_none());
     assert!(
         installer
             .source_cube
             .as_ref()
-            .is_some_and(|s| s.breez_client.is_some()),
-        "the source Cube's handle is parked for the return trip"
+            .is_some_and(|s| s.cube_signer.is_some()),
+        "the source Cube's signer is parked for the return trip"
     );
 
     let mut tab =
@@ -939,9 +953,7 @@ async fn the_real_install_writes_a_target_the_exit_seams_credential_opens() {
 async fn every_exit_from_a_claim_releases_the_parked_source_handle() {
     let _guard = crate::app::session::test_guard();
     let server = MockServer::start_async().await;
-    let breez = Arc::new(crate::app::breez_liquid::BreezClient::disconnected(
-        Network::Bitcoin,
-    ));
+    let (signer, spark) = running_cube_handles();
 
     let build = |source: ClaimSource, root: CoincubeDirectory| {
         Installer::try_new_for_chain(
@@ -952,8 +964,8 @@ async fn every_exit_from_a_claim_releases_the_parked_source_handle() {
             },
             true,
             None,
-            Some(breez.clone()),
-            None,
+            Some(signer.clone()),
+            Some(spark.clone()),
             false,
             Some(authenticated_client(&server)),
         )
@@ -965,15 +977,15 @@ async fn every_exit_from_a_claim_releases_the_parked_source_handle() {
     let (first, _) = source("Savings");
     let (installer, _) = build(first, temp_root("release-success"));
     assert_eq!(
-        Arc::strong_count(&breez),
+        Arc::strong_count(&spark),
         2,
         "parked while the flow is live"
     );
     drop(installer);
     assert_eq!(
-        Arc::strong_count(&breez),
+        Arc::strong_count(&spark),
         1,
-        "a dropped installer must not keep the source Cube's SDK client alive"
+        "a dropped installer must not keep the source Cube's Spark client alive"
     );
 
     // 2. Cancel: ownership moves to the Loader that rebuilds the source Cube —
@@ -996,13 +1008,13 @@ async fn every_exit_from_a_claim_releases_the_parked_source_handle() {
         Network::Bitcoin,
     )));
     assert_eq!(
-        Arc::strong_count(&breez),
+        Arc::strong_count(&spark),
         2,
         "the Loader rebuilding the source Cube owns it now"
     );
     drop(tab);
     assert_eq!(
-        Arc::strong_count(&breez),
+        Arc::strong_count(&spark),
         1,
         "and closing that screen releases it"
     );
@@ -1445,9 +1457,7 @@ async fn cancelling_a_claim_from_a_legacy_liana_connect_source_returns_to_the_la
         },
         true,
         None,
-        Some(Arc::new(
-            crate::app::breez_liquid::BreezClient::disconnected(Network::Bitcoin),
-        )),
+        None,
         None,
         false,
         Some(authenticated_client(&server)),
@@ -1533,9 +1543,7 @@ async fn cancelling_a_claim_restores_the_vault_the_source_cube_points_at() {
         },
         true,
         None,
-        Some(Arc::new(
-            crate::app::breez_liquid::BreezClient::disconnected(Network::Bitcoin),
-        )),
+        None,
         None,
         false,
         Some(authenticated_client(&server)),

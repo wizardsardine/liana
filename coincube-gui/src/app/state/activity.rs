@@ -20,7 +20,7 @@ use crate::{
             activity::{ActivityMessage, RecentScope, WalletFilter},
         },
         wallet::Wallet,
-        wallets::{DomainPayment, DomainRefundableSwap, LiquidBackend, SparkBackend},
+        wallets::SparkBackend,
     },
     daemon::{
         model::{HistoryTransaction, SpendStatus, SpendTx},
@@ -40,24 +40,13 @@ pub enum ActivityTarget {
     Vault(HistoryTransaction),
     Psbt(SpendTx),
     Spark(PaymentSummary),
-    Liquid(DomainPayment),
-    Refundable(DomainRefundableSwap),
 }
 
 pub struct Activity {
-    liquid_backend: Option<Arc<LiquidBackend>>,
-    /// Whether the Liquid wallet is shown ([`LiquidGate::show`]). The App
-    /// keeps it in step with the gate, since `reload` has no cache. While it
-    /// is off, Activity loads no Liquid history or refundable swaps.
-    ///
-    /// [`LiquidGate::show`]: crate::app::features::LiquidGate::show
-    liquid_shown: bool,
     spark_backend: Option<Arc<SparkBackend>>,
     vault: Vec<HistoryTransaction>,
     psbts: Vec<SpendTx>,
     spark: Vec<PaymentSummary>,
-    liquid: Vec<DomainPayment>,
-    refundables: Vec<DomainRefundableSwap>,
     pub filters: view::activity::Filters,
     pub selected_id: Option<String>,
     /// The row an Overview row opened ([`ActivityMessage::Open`]), as the
@@ -70,13 +59,9 @@ pub struct Activity {
     pub vault_loading: bool,
     pub psbt_loading: bool,
     pub spark_loading: bool,
-    pub liquid_loading: bool,
-    pub refundables_loading: bool,
     pub vault_error: Option<String>,
     pub psbt_error: Option<String>,
     pub spark_error: Option<String>,
-    pub liquid_error: Option<String>,
-    pub refundables_error: Option<String>,
     wallet: Option<Arc<Wallet>>,
     pub vault_has_more: bool,
     pub spark_has_more: bool,
@@ -88,7 +73,6 @@ pub struct Activity {
     /// Spark refreshes asked for (Spark's bridge has no test double).
     #[cfg(test)]
     pub spark_refresh_requests: u64,
-    pub liquid_has_more: bool,
     vault_limit: u64,
     generation: u64,
     /// The selected row's unsaved label: its entry id and text.
@@ -106,36 +90,24 @@ pub struct Activity {
 }
 
 impl Activity {
-    pub fn new(
-        liquid_backend: Option<Arc<LiquidBackend>>,
-        spark_backend: Option<Arc<SparkBackend>>,
-    ) -> Self {
+    pub fn new(spark_backend: Option<Arc<SparkBackend>>) -> Self {
         Self {
-            liquid_backend,
-            liquid_shown: false,
             spark_backend,
             vault: Vec::new(),
             psbts: Vec::new(),
             spark: Vec::new(),
-            liquid: Vec::new(),
-            refundables: Vec::new(),
             filters: Default::default(),
             selected_id: None,
             opened: None,
             vault_loading: false,
             psbt_loading: false,
             spark_loading: false,
-            liquid_loading: false,
-            refundables_loading: false,
             vault_error: None,
             psbt_error: None,
             spark_error: None,
-            liquid_error: None,
-            refundables_error: None,
             wallet: None,
             vault_has_more: false,
             spark_has_more: false,
-            liquid_has_more: false,
             vault_stale: false,
             spark_stale: false,
             #[cfg(test)]
@@ -148,40 +120,6 @@ impl Activity {
             label_errors: HashMap::new(),
             details_open: None,
         }
-    }
-
-    /// Follow the Liquid gate. Hiding Liquid drops its rows, refundable swaps,
-    /// errors and pages at once; showing it again loads them on the next
-    /// reload.
-    pub fn set_liquid_shown(&mut self, shown: bool) {
-        if self.liquid_shown == shown {
-            return;
-        }
-        self.liquid_shown = shown;
-        if !shown {
-            // A page still in flight answers a generation that no longer
-            // matches, so it can't bring the rows back.
-            self.generation = self.generation.wrapping_add(1);
-            self.liquid.clear();
-            self.refundables.clear();
-            self.liquid_has_more = false;
-            self.liquid_loading = false;
-            self.refundables_loading = false;
-            self.liquid_error = None;
-            self.refundables_error = None;
-            if self.filters.wallet == WalletFilter::Liquid {
-                self.filters.wallet = WalletFilter::All;
-            }
-        }
-    }
-
-    pub fn liquid_shown(&self) -> bool {
-        self.liquid_shown
-    }
-
-    /// The Liquid backend, while Liquid is shown.
-    fn liquid(&self) -> Option<Arc<LiquidBackend>> {
-        self.liquid_backend.clone().filter(|_| self.liquid_shown)
     }
 
     /// Whether the Vault screen offers Bump fee and Cancel for this wallet
@@ -296,7 +234,7 @@ impl Activity {
                     }));
                 }
             }
-            WalletFilter::All | WalletFilter::Liquid => {}
+            WalletFilter::All => {}
         }
         Task::batch(tasks)
     }
@@ -472,7 +410,7 @@ impl Activity {
 
     pub fn entries(&self) -> Vec<view::activity::Entry> {
         let mut entries =
-            Vec::with_capacity(self.vault.len() + self.spark.len() + self.liquid.len());
+            Vec::with_capacity(self.vault.len() + self.psbts.len() + self.spark.len());
         entries.extend(self.vault.iter().cloned().map(view::activity::Entry::vault));
         entries.extend(
             self.psbts
@@ -482,18 +420,6 @@ impl Activity {
                 .map(view::activity::Entry::psbt),
         );
         entries.extend(self.spark.iter().cloned().map(view::activity::Entry::spark));
-        entries.extend(
-            self.liquid
-                .iter()
-                .cloned()
-                .map(view::activity::Entry::liquid),
-        );
-        entries.extend(
-            self.refundables
-                .iter()
-                .cloned()
-                .map(view::activity::Entry::refundable),
-        );
         entries.sort_by(|a, b| {
             let priority = |timestamp: u64| if timestamp == 0 { u64::MAX } else { timestamp };
             priority(b.timestamp)
@@ -541,19 +467,6 @@ impl Activity {
                     .min()
                     .unwrap_or(u64::MAX)
             }),
-            (self.liquid_has_more
-                && matches!(
-                    self.filters.wallet,
-                    view::activity::WalletFilter::All | view::activity::WalletFilter::Liquid
-                ))
-            .then(|| {
-                self.liquid
-                    .iter()
-                    .map(|row| row.timestamp as u64)
-                    .filter(|time| *time > 0)
-                    .min()
-                    .unwrap_or(u64::MAX)
-            }),
         ]
         .iter()
         .flatten()
@@ -580,26 +493,6 @@ impl Activity {
                 tasks.push(spark_payments(spark, offset, move |result| {
                     Message::ActivitySparkLoaded(generation, result)
                 }));
-            }
-        }
-        if self.liquid_has_more && !self.liquid_loading {
-            if let Some(liquid) = self.liquid() {
-                self.liquid_loading = true;
-                let offset = self.liquid.len() as u32;
-                tasks.push(Task::perform(
-                    async move {
-                        liquid
-                            .list_payments(Some(HISTORY_LIMIT as u32 + 1), Some(offset), None)
-                            .await
-                            .map(|mut rows| {
-                                let more = rows.len() as u64 > HISTORY_LIMIT;
-                                rows.truncate(HISTORY_LIMIT as usize);
-                                (rows, more)
-                            })
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| Message::ActivityLiquidLoaded(generation, result),
-                ));
             }
         }
         Task::batch(tasks)
@@ -747,35 +640,6 @@ impl State for Activity {
                     return self.refresh_wallet(WalletFilter::Spark, None, None);
                 }
             }
-            Message::ActivityLiquidLoaded(generation, result)
-                if generation == self.generation && self.liquid_shown =>
-            {
-                self.liquid_loading = false;
-                match result {
-                    Ok((rows, more)) => {
-                        if self.liquid.is_empty() {
-                            self.liquid = rows;
-                        } else {
-                            self.liquid.extend(rows);
-                        }
-                        self.liquid_has_more = more;
-                        self.liquid_error = None;
-                    }
-                    Err(error) => self.liquid_error = Some(error),
-                }
-            }
-            Message::ActivityRefundablesLoaded(generation, result)
-                if generation == self.generation && self.liquid_shown =>
-            {
-                self.refundables_loading = false;
-                match result {
-                    Ok(rows) => {
-                        self.refundables = rows;
-                        self.refundables_error = None;
-                    }
-                    Err(error) => self.refundables_error = Some(error),
-                }
-            }
             Message::ActivityLabelSaved(request, result) => {
                 // Only this request's own answer ends its "Saving…"; an
                 // answer from before a reload still updates the rows.
@@ -904,26 +768,18 @@ impl State for Activity {
         self.vault_limit = HISTORY_LIMIT;
         self.vault_has_more = false;
         self.spark_has_more = false;
-        self.liquid_has_more = false;
         self.vault_stale = false;
         self.spark_stale = false;
         self.vault.clear();
         self.psbts.clear();
         self.spark.clear();
-        self.liquid.clear();
-        self.refundables.clear();
         let generation = self.generation;
         self.vault_loading = daemon.is_some();
         self.psbt_loading = daemon.is_some() && wallet.is_some();
         self.spark_loading = self.spark_backend.is_some();
-        let liquid = self.liquid();
-        self.liquid_loading = liquid.is_some();
-        self.refundables_loading = liquid.is_some();
         self.vault_error = None;
         self.psbt_error = None;
         self.spark_error = None;
-        self.liquid_error = None;
-        self.refundables_error = None;
         let mut tasks = Vec::new();
         if let Some(daemon) = daemon {
             if self.psbt_loading {
@@ -939,34 +795,6 @@ impl State for Activity {
             }));
         } else {
             self.spark.clear();
-        }
-        if let Some(liquid) = liquid {
-            let refund_client = liquid.clone();
-            tasks.push(Task::perform(
-                async move {
-                    refund_client
-                        .list_refundables()
-                        .await
-                        .map_err(|e| e.to_string())
-                },
-                move |result| Message::ActivityRefundablesLoaded(generation, result),
-            ));
-            tasks.push(Task::perform(
-                async move {
-                    liquid
-                        .list_payments(Some(HISTORY_LIMIT as u32 + 1), Some(0), None)
-                        .await
-                        .map(|mut rows| {
-                            let more = rows.len() as u64 > HISTORY_LIMIT;
-                            rows.truncate(HISTORY_LIMIT as usize);
-                            (rows, more)
-                        })
-                        .map_err(|e| e.to_string())
-                },
-                move |result| Message::ActivityLiquidLoaded(generation, result),
-            ));
-        } else {
-            self.liquid.clear();
         }
         Task::batch(tasks)
     }
@@ -993,109 +821,9 @@ mod tests {
         }
     }
 
-    fn liquid_payment(timestamp: u32) -> DomainPayment {
-        use crate::app::wallets::{
-            DomainPaymentDetails, DomainPaymentDirection, DomainPaymentStatus,
-        };
-        DomainPayment {
-            tx_id: Some(format!("liquid-{timestamp}")),
-            destination: None,
-            timestamp,
-            amount_sat: 1_000,
-            fees_sat: 0,
-            direction: DomainPaymentDirection::Receive,
-            status: DomainPaymentStatus::Complete,
-            details: DomainPaymentDetails::LiquidAsset {
-                asset_id: crate::app::breez_liquid::assets::USDT_ASSET_ID_MAINNET.into(),
-                asset_info: None,
-                description: String::new(),
-                payer_note: None,
-            },
-        }
-    }
-
-    fn liquid_activity() -> Activity {
-        let backend = Arc::new(LiquidBackend::new(Arc::new(
-            crate::app::breez_liquid::BreezClient::disconnected(
-                coincube_core::miniscript::bitcoin::Network::Bitcoin,
-            ),
-        )));
-        Activity::new(Some(backend), None)
-    }
-
-    /// Tenshu v175 hides Liquid, even for an account with the grant and a
-    /// Liquid wallet on disk: Activity asks for no Liquid history or
-    /// refundable swaps, and a page that answers anyway lists nothing.
-    #[test]
-    fn hidden_liquid_loads_and_lists_nothing() {
-        let gate = crate::app::features::LiquidGate {
-            server_enabled: true,
-            local_state_exists: true,
-        };
-        let mut activity = liquid_activity();
-        activity.set_liquid_shown(gate.show());
-        drop(activity.reload(None, None));
-        assert!(!activity.liquid_loading && !activity.refundables_loading);
-
-        let generation = activity.generation;
-        let cache = Cache::default();
-        drop(activity.update(
-            None,
-            &cache,
-            Message::ActivityLiquidLoaded(generation, Ok((vec![liquid_payment(300)], true))),
-        ));
-        drop(activity.update(
-            None,
-            &cache,
-            Message::ActivityRefundablesLoaded(
-                generation,
-                Ok(vec![DomainRefundableSwap {
-                    swap_address: "synthetic-swap".into(),
-                    timestamp: 200,
-                    amount_sat: 5_000,
-                }]),
-            ),
-        ));
-        assert!(activity.entries().is_empty());
-        assert!(!activity.liquid_has_more);
-        assert_eq!(activity.complete_through(), None);
-    }
-
-    /// Hiding Liquid while its rows are listed drops them, its errors and its
-    /// filter at once, and a page already in flight can't bring them back.
-    #[test]
-    fn hiding_liquid_drops_its_rows_errors_and_filter() {
-        let mut activity = liquid_activity();
-        activity.set_liquid_shown(true);
-        drop(activity.reload(None, None));
-        assert!(activity.liquid_loading, "a shown Liquid loads");
-        let generation = activity.generation;
-        let cache = Cache::default();
-        drop(activity.update(
-            None,
-            &cache,
-            Message::ActivityLiquidLoaded(generation, Ok((vec![liquid_payment(300)], true))),
-        ));
-        assert_eq!(activity.entries().len(), 1);
-        activity.refundables_error = Some("synthetic".into());
-        activity.filters.wallet = WalletFilter::Liquid;
-
-        activity.set_liquid_shown(false);
-        assert!(activity.entries().is_empty());
-        assert!(!activity.liquid_has_more && !activity.liquid_loading);
-        assert_eq!(activity.refundables_error, None);
-        assert_eq!(activity.filters.wallet, WalletFilter::All);
-        drop(activity.update(
-            None,
-            &cache,
-            Message::ActivityLiquidLoaded(generation, Ok((vec![liquid_payment(100)], false))),
-        ));
-        assert!(activity.entries().is_empty(), "a late page stays out");
-    }
-
     #[test]
     fn incomplete_source_hides_older_cross_wallet_days() {
-        let mut activity = Activity::new(None, None);
+        let mut activity = Activity::new(None);
         activity.spark = vec![payment("new", 300), payment("oldest-loaded", 200)];
         activity.spark_has_more = true;
         assert_eq!(activity.complete_through(), Some(200));

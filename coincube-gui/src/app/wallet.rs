@@ -787,7 +787,7 @@ impl Wallet {
         keys: &HashSet<Fingerprint>,
     ) -> Result<Self, WalletError> {
         let chain = chain.into();
-        // Load only Vault mnemonics, skip Liquid wallet mnemonics (managed by Breez SDK)
+        // Load only Vault mnemonics: skip master-seed and legacy `-liquid_` files
         let master_signers = match MasterSigner::from_datadir_with_password_filtered_for_chain(
             datadir_path.path(),
             chain,

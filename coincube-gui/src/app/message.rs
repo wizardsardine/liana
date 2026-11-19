@@ -13,7 +13,6 @@ use coincubed::config::Config as DaemonConfig;
 
 use crate::{
     app::{
-        breez_liquid::BreezError,
         cache::{DaemonCache, FiatPrice},
         error::Error,
         view,
@@ -67,14 +66,6 @@ pub enum Message {
     ActivitySparkRefreshed(
         u64,
         Result<(Vec<coincube_spark_protocol::PaymentSummary>, bool), String>,
-    ),
-    ActivityLiquidLoaded(
-        u64,
-        Result<(Vec<crate::app::wallets::DomainPayment>, bool), String>,
-    ),
-    ActivityRefundablesLoaded(
-        u64,
-        Result<Vec<crate::app::wallets::DomainRefundableSwap>, String>,
     ),
     ActivityOpenDetail(super::state::activity::ActivityTarget),
     /// A label save from Activity, by its request number: the entry id, the
@@ -234,33 +225,6 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
-    /// Liquid transactions page fetch result. The `u64` is the
-    /// fetch-generation token: the panel discards any response whose token
-    /// is not the latest dispatched, so a stale pagination response can't
-    /// overwrite data fetched by a subsequent reload / filter change.
-    PaymentsLoaded(
-        u64,
-        Result<Vec<crate::app::wallets::DomainPayment>, BreezError>,
-    ),
-    RefundablesLoaded(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
-    /// Result of a debounced background poll started by
-    /// `App::refresh_refundables_task`. Distinct from `RefundablesLoaded`
-    /// (which is produced by manual panel reloads) so that only poll
-    /// responses touch the App's debounce/in-flight tracking. A reload
-    /// response racing ahead of a poll must not clear the in-flight flag,
-    /// or a second concurrent `list_refundables()` could be launched.
-    RefundablesPolled(Result<Vec<crate::app::wallets::DomainRefundableSwap>, BreezError>),
-    /// Result of a user-initiated `refund_onchain_tx` call. The `swap_address`
-    /// is carried alongside the response so the handler can look up the exact
-    /// `in_flight_refunds` entry that originated this refund — necessary when
-    /// more than one refund is in flight, since the SDK response itself does
-    /// not identify the originating swap.
-    RefundCompleted {
-        swap_address: String,
-        result: Result<breez_sdk_liquid::model::RefundResponse, BreezError>,
-    },
-    BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
-    BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     /// Forwarded from the [`coincube-spark-bridge`] subprocess via
     /// `SparkBackend::event_subscription`. Wrapped in the
     /// [`crate::app::breez_spark::SparkClientEvent`] newtype so the

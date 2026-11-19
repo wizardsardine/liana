@@ -8,7 +8,7 @@ use super::{marketplace, NavContext, SubItem};
 use crate::{
     app::{
         features,
-        menu::{CubeSettingsOption, CubeSubMenu, LiquidSubMenu, Menu, SparkSubMenu, VaultSubMenu},
+        menu::{CubeSettingsOption, CubeSubMenu, Menu, SparkSubMenu, VaultSubMenu},
         settings::preferences::PreferenceChange,
         state::preferences::{BalancePrivacy, BalancePrivacyChrome},
         view::{settings::page, shared::glyph, Message},
@@ -42,7 +42,6 @@ pub fn is_settings(menu: &Menu) -> bool {
         Menu::Cube(CubeSubMenu::Settings(_))
             | Menu::Vault(VaultSubMenu::Settings(_))
             | Menu::Spark(SparkSubMenu::Settings(_))
-            | Menu::Liquid(LiquidSubMenu::Settings(_))
     )
 }
 
@@ -998,19 +997,6 @@ pub fn sidebar<'a>(menu: &Menu, ctx: &NavContext<'a>, state: ShellState) -> Elem
             Some(Message::SetupVault),
             false,
             None,
-        ));
-    }
-    if !ctx.network.is_blake2b() && ctx.liquid_gate.show() {
-        let liquid_reason = features::liquid(ctx.network).reason().map(str::to_owned);
-        middle = middle.push(nav_row(
-            "Liquid",
-            Some(NavIcon::Glyph(glyph::DROPLET)),
-            matches!(menu, Menu::Liquid(_)) && !settings_active,
-            liquid_reason
-                .is_none()
-                .then_some(Message::Menu(Menu::Liquid(LiquidSubMenu::Overview))),
-            false,
-            liquid_reason,
         ));
     }
     let show_marketplace = (ctx.has_p2p && ctx.marketplace_flags.p2p_on())

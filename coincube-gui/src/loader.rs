@@ -30,7 +30,6 @@ use coincubed::{
 };
 
 use crate::app;
-use crate::app::breez_liquid::BreezClient;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{CubeSettings, WalletSettings};
 use crate::backup::Backup;
@@ -92,15 +91,18 @@ pub struct Loader {
     pub backup: Option<Backup>,
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
-    pub breez_client: Option<std::sync::Arc<BreezClient>>,
+    /// The Cube master signer resolved at unlock, carried to [`app::App::new`]
+    /// for the seed-derived features. Never set on Bitcoin Blake2b, which
+    /// carries [`Self::cube_encryption_key`] instead.
+    pub cube_signer: Option<app::cube_signer::CubeSigner>,
     pub connect_client: Option<crate::services::coincube::CoincubeClient>,
     pub cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
-    /// Optional Spark backend loaded alongside `breez_client` in the PIN
+    /// Optional Spark backend loaded alongside `cube_signer` in the PIN
     /// flow. `None` when the cube has no Spark signer or when the bridge
     /// subprocess failed to spawn — panels that depend on Spark surface a
     /// "Spark unavailable" placeholder in that case. Propagated unchanged
-    /// from [`Message::BreezClientLoadedAfterPin`] through
-    /// [`Message::BreezLoaded`] into [`app::App::new`].
+    /// from [`crate::gui::tab::Message::WalletsLoadedAfterUnlock`] through
+    /// [`Message::WalletsLoaded`] into [`app::App::new`].
     pub spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     fork_session_revoked: bool,
     fork_task: Option<iced::task::Handle>,
@@ -158,8 +160,8 @@ pub enum Message {
             Error,
         >,
     ),
-    BreezLoaded {
-        breez: std::sync::Arc<BreezClient>,
+    WalletsLoaded {
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
         cache: Cache,
         wallet: Arc<Wallet>,
@@ -187,7 +189,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
-        breez_client: Option<std::sync::Arc<BreezClient>>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     ) -> (Self, Task<Message>) {
         Self::build(
@@ -198,7 +200,7 @@ impl Loader {
             backup,
             wallet_settings,
             cube_settings,
-            breez_client,
+            cube_signer,
             spark_backend,
             None,
             None,
@@ -217,7 +219,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: WalletSettings,
         cube_settings: CubeSettings,
-        breez_client: Option<std::sync::Arc<BreezClient>>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
         connect_client: Option<crate::services::coincube::CoincubeClient>,
     ) -> (Self, Task<Message>) {
@@ -229,7 +231,7 @@ impl Loader {
             backup,
             Some(wallet_settings),
             cube_settings,
-            breez_client,
+            cube_signer,
             spark_backend,
             connect_client,
             None,
@@ -306,7 +308,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
-        breez_client: Option<Arc<BreezClient>>,
+        cube_signer: Option<app::cube_signer::CubeSigner>,
         spark_backend: Option<Arc<app::wallets::SparkBackend>>,
         connect_client: Option<crate::services::coincube::CoincubeClient>,
         cube_encryption_key: Option<Arc<crate::services::connect::crypto::CubeEncryptionKey>>,
@@ -358,7 +360,7 @@ impl Loader {
                                     )
                         })
                         || cube_encryption_key.is_none()
-                        || breez_client.is_some()
+                        || cube_signer.is_some()
                         || spark_backend.is_some()
                         || backup.is_some()
                         || wallet_settings
@@ -441,7 +443,7 @@ impl Loader {
                 wallet_settings,
                 cube_settings,
                 backup,
-                breez_client,
+                cube_signer,
                 spark_backend,
                 connect_client,
                 cube_encryption_key,
@@ -802,7 +804,7 @@ impl Loader {
                     self.backup.clone(),
                     self.wallet_settings.clone(),
                     self.cube_settings.clone(),
-                    self.breez_client.clone(),
+                    self.cube_signer.clone(),
                     self.spark_backend.clone(),
                     self.connect_client.clone(),
                     self.cube_encryption_key.clone(),
@@ -1005,7 +1007,7 @@ pub async fn load_application(
                 "The running Bitcoin wallet does not match this Cube's imported descriptors".into(),
             ));
         }
-        // The Cube's seed secures its Liquid/Spark account and Recovery Kit.
+        // The Cube's seed secures its Spark account and Recovery Kit.
         // It is never an implicit signer for the imported Bitcoin descriptors.
         Wallet::from_imported_cube(&config.cube_settings)
             .map_err(Error::Unexpected)?
@@ -1071,10 +1073,6 @@ pub async fn load_application(
         btcb2_server_enabled: false,
         // Resolved from disk in `App::new_inner`.
         btcb2_already_claimed: false,
-        // Liquid sunset gate. Both halves are filled in later: the local half
-        // in `App::new` (from whether the Liquid SDK actually connected), the
-        // server half when `/connect/features` loads.
-        liquid_gate: crate::app::features::LiquidGate::HIDDEN,
         entangled: std::collections::HashMap::new(),
         chain_proofs: std::collections::HashMap::new(),
         split_records: Vec::new(),
@@ -3515,10 +3513,9 @@ mod bootstrap_backend_selection_tests {
     /// task, and leave the datadir exactly as it found it.
     ///
     /// Bounded coverage, stated rather than implied: the same `||` predicate
-    /// also refuses a Breez client and a Spark backend. Neither is constructed
-    /// here — `BreezClient` needs a Liquid SDK instance and `SparkBackend`
-    /// spawns the bridge subprocess, so both would make this a live-SDK test.
-    /// Those two arms are untested.
+    /// also refuses a Cube signer and a Spark backend. Neither is constructed
+    /// here — `SparkBackend` spawns the bridge subprocess, which would make
+    /// this a live-SDK test. Those arms are untested.
     #[test]
     fn an_authenticated_fork_start_refuses_each_wrong_companion() {
         let chain = ChainId::BitcoinBlake2b;

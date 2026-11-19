@@ -31,7 +31,7 @@
 //! # References
 //!
 //! `CC-<DOMAIN>-<REASON>`, with domains `NET`, `API`, `AUTH`, `DMN` (daemon),
-//! `LQD` (Liquid), `SPK` (Spark), `HW` (hardware wallet).
+//! `SPK` (Spark), `HW` (hardware wallet).
 //!
 //! When the server already sent one of its ~70 taxonomy codes
 //! (`coincube-api/services/keychain/responses/responses.go`), use that verbatim
@@ -92,11 +92,7 @@ pub const CC_DMN_UNSUPPORTED: &str = "CC-DMN-UNSUPPORTED";
 pub const CC_DMN_BROADCAST: &str = "CC-DMN-BROADCAST";
 pub const CC_DMN_RBF_FEE: &str = "CC-DMN-RBF-FEE";
 
-// ── Liquid / Spark wallets ──────────────────────────────────────────────────
-pub const CC_LQD_SDK: &str = "CC-LQD-SDK";
-pub const CC_LQD_CONN: &str = "CC-LQD-CONN";
-pub const CC_LQD_SIGNER: &str = "CC-LQD-SIGNER";
-pub const CC_LQD_UNSUPPORTED: &str = "CC-LQD-UNSUPPORTED";
+// ── Spark wallet ────────────────────────────────────────────────────────────
 pub const CC_SPK: &str = "CC-SPK";
 
 // ── Wallet-to-wallet transfers ──────────────────────────────────────────────
@@ -529,61 +525,6 @@ impl Display for UserError {
     }
 }
 
-/// Maps a Liquid (Breez SDK) failure onto copy a person can act on.
-///
-/// `BreezError`'s own `Display` is written for a log — "SDK request failed:
-/// …" wraps whatever string the SDK produced, which is frequently a GraphQL
-/// envelope or a swap-service trace. That string reached the Liquid panels'
-/// toasts verbatim.
-///
-/// The SDK's own message is never surfaced. Unlike the `coincube-api`
-/// envelope, it is not authored for users and carries no stable code to key
-/// copy off, so there is nothing here to prefer over hand-written guidance.
-impl From<&crate::app::breez_liquid::BreezError> for UserError {
-    fn from(e: &crate::app::breez_liquid::BreezError) -> UserError {
-        use crate::app::breez_liquid::BreezError as B;
-
-        match e {
-            B::NetworkNotSupported(network) => UserError::new(
-                "Liquid isn't available on this network",
-                format!("Your wallet is on {network}, which the Liquid wallet doesn't support. Switch to a supported network to use it."),
-                CC_LQD_UNSUPPORTED,
-                false,
-            ),
-
-            B::Connection(detail) => UserError::logged(
-                "Can't reach the Liquid network",
-                "Check your internet connection and try again.",
-                CC_LQD_CONN,
-                true,
-                detail,
-            ),
-
-            B::Sdk(detail) => UserError::logged(
-                "The Liquid wallet couldn't complete that",
-                "Try again. If it keeps failing, contact support and quote the reference below.",
-                CC_LQD_SDK,
-                true,
-                detail,
-            ),
-
-            B::SignerNotFound(_) | B::SignerError(_) => UserError::logged(
-                "Couldn't unlock your Liquid wallet",
-                "Restart COINCUBE Desktop and unlock your Cube again. If it keeps failing, contact support and quote the reference below.",
-                CC_LQD_SIGNER,
-                false,
-                e,
-            ),
-        }
-    }
-}
-
-/// As [`report`], for a Liquid failure.
-pub fn report_liquid(error: &crate::app::breez_liquid::BreezError) -> String {
-    let user: UserError = error.into();
-    user.toast()
-}
-
 /// Maps a Spark (bridge subprocess) failure onto copy a person can act on.
 ///
 /// `SparkClientError`'s `Display` names the bridge and its error kinds —
@@ -712,9 +653,9 @@ impl From<&TransferError> for UserError {
             ),
 
             // The receiving side couldn't issue an address. Naming which wallet
-            // is the point: on a Liquid → Spark transfer it is Spark that is
-            // unwell, and the user has a Liquid wallet working perfectly well
-            // in front of them.
+            // is the point: on a Vault → Spark transfer it is Spark that is
+            // unwell, and the user has a Vault working perfectly well in front
+            // of them.
             TransferError::NoDepositAddress { to, .. } => (
                 format!("Couldn't get a deposit address from your {} wallet", to.label()),
                 and_then("Check your internet connection and try again."),
@@ -1073,36 +1014,6 @@ mod tests {
         assert!(!u.guidance.contains("Reqwest"), "{}", u.guidance);
     }
 
-    /// The Liquid SDK's own strings are GraphQL/swap-service traces. None of
-    /// them may reach the screen.
-    #[test]
-    fn the_liquid_sdk_string_never_reaches_the_user() {
-        use crate::app::breez_liquid::BreezError;
-
-        let leaky = BreezError::Sdk(
-            "graphql error: Unable to reach https://swap.example/api: connection reset".to_string(),
-        );
-        let u: UserError = (&leaky).into();
-        for field in [&u.title, &u.guidance, &u.reference] {
-            for forbidden in ["graphql", "swap.example", "connection reset"] {
-                assert!(
-                    !field.contains(forbidden),
-                    "{} leaked in {}",
-                    forbidden,
-                    field
-                );
-            }
-        }
-        assert_eq!(u.reference, CC_LQD_SDK);
-        assert!(u.retryable);
-
-        // A connection failure and an SDK refusal are different situations and
-        // must not collapse into one reference.
-        let offline: UserError = (&BreezError::Connection("dns failure".to_string())).into();
-        assert_eq!(offline.reference, CC_LQD_CONN);
-        assert!(!offline.guidance.contains("dns"));
-    }
-
     /// `export::Error`'s `Display` is a developer log line, and one arm still
     /// names the upstream vendor this app was forked from.
     #[test]
@@ -1144,7 +1055,7 @@ mod tests {
     fn every_transfer_error() -> Vec<TransferError> {
         use crate::app::view::global_home::{TransferError as T, WalletKind};
 
-        let wallets = [WalletKind::Vault, WalletKind::Liquid, WalletKind::Spark];
+        let wallets = [WalletKind::Vault, WalletKind::Spark];
         let mut all = vec![
             T::FeeEstimateFailed {
                 detail: "detail".into(),
@@ -1192,9 +1103,9 @@ mod tests {
         );
     }
 
-    /// Which wallet is unwell is the actionable part: on a Liquid → Spark
-    /// transfer it is Spark that failed, and the user has a working Liquid
-    /// wallet in front of them.
+    /// Which wallet is unwell is the actionable part: on a Vault → Spark
+    /// transfer it is Spark that failed, and the user has a working Vault in
+    /// front of them.
     #[test]
     fn transfer_copy_names_the_wallet_that_failed() {
         use crate::app::view::global_home::{TransferError as T, WalletKind};
@@ -1205,7 +1116,7 @@ mod tests {
         })
             .into();
         assert!(u.title.contains("Spark"), "got {:?}", u.title);
-        assert!(!u.title.contains("Liquid"), "got {:?}", u.title);
+        assert!(!u.title.contains("Vault"), "got {:?}", u.title);
 
         let u: UserError = (&T::WalletUnavailable(WalletKind::Vault)).into();
         assert!(u.title.contains("Vault"), "got {:?}", u.title);
@@ -1262,7 +1173,7 @@ mod tests {
         for e in [
             T::FeeEstimateFailed { detail: "x".into() },
             T::NoDepositAddress {
-                to: WalletKind::Liquid,
+                to: WalletKind::Spark,
                 detail: "x".into(),
             },
             T::BroadcastFailed {
@@ -1301,7 +1212,7 @@ mod tests {
                 detail: leaky.into(),
             },
             T::BroadcastFailed {
-                from: WalletKind::Liquid,
+                from: WalletKind::Vault,
                 detail: leaky.into(),
             },
             T::DestinationRejected {

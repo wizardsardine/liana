@@ -564,7 +564,7 @@ fn vault_stepper(
 /// bridge that outlives the flow.
 pub struct SourceCube {
     pub settings: crate::app::settings::CubeSettings,
-    pub breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+    pub cube_signer: Option<crate::app::cube_signer::CubeSigner>,
     pub spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
 }
 
@@ -609,7 +609,7 @@ pub struct Installer {
     /// The Cube this installer was launched *from*, when that is a different
     /// Cube from the one being built — today only a Bitcoin Blake2b claim.
     ///
-    /// Two jobs, and they are deliberately separate from [`Self::breez_client`]
+    /// Two jobs, and they are deliberately separate from [`Self::cube_signer`]
     /// / [`Self::spark_backend`]: those are inputs to the Cube being *built*
     /// and must stay `None` on the fork chain, while this is what the source
     /// Cube is rebuilt from if the user backs out. Parking the handles here
@@ -617,8 +617,9 @@ pub struct Installer {
     /// at a time, so the source `App` is dropped at the transition, and the
     /// last `Arc` release is what shuts the Spark bridge subprocess down.
     pub source_cube: Option<SourceCube>,
-    /// Pre-loaded BreezClient when launched from app (avoids re-entering PIN)
-    pub breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+    /// The open Cube's master signer when launched from app: the Vault
+    /// builder's encryption-key fallback, and handed back to the App.
+    pub cube_signer: Option<crate::app::cube_signer::CubeSigner>,
 
     /// Pre-loaded SparkBackend when launched from app — preserved
     /// across the vault-setup round-trip so the Spark bridge
@@ -681,7 +682,7 @@ impl Installer {
         user_flow: UserFlow,
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
-        breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        cube_signer: Option<crate::app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
         developer_mode: bool,
         coincube_client: Option<crate::services::coincube::CoincubeClient>,
@@ -739,18 +740,18 @@ impl Installer {
                     .to_string(),
             ));
         }
-        let (parked_breez, parked_spark) = (breez_client.clone(), spark_backend.clone());
-        // The invariant is that a Bitcoin Blake2b Cube is never *given* a Breez
-        // or Spark client, not that the caller may not hold one. Refusing on
+        let (parked_signer, parked_spark) = (cube_signer.clone(), spark_backend.clone());
+        // The invariant is that a Bitcoin Blake2b Cube is never *given* the
+        // Cube signer or a Spark client, not that the caller may not hold one. Refusing on
         // the caller's handles made the claim flow unanswerable — it launches
         // from a running Bitcoin Cube, which holds both — so the refusal moves
         // to what is handed into the fork construction path. The source Cube
         // keeps its live handles, which is also what stops the Spark bridge
         // subprocess being killed and re-spawned across the round trip.
-        let (breez_client, spark_backend) = if chain.is_blake2b() {
+        let (cube_signer, spark_backend) = if chain.is_blake2b() {
             (None, None)
         } else {
-            (breez_client, spark_backend)
+            (cube_signer, spark_backend)
         };
         if let UserFlow::ClaimBlake2b { from_cube } = &user_flow {
             // Parked, not handed in: the source Cube's own settings and SDK
@@ -758,7 +759,7 @@ impl Installer {
             // than to Home, and so the handles outlive the state transition.
             let source = SourceCube {
                 settings: from_cube.cube.clone(),
-                breez_client: parked_breez,
+                cube_signer: parked_signer,
                 spark_backend: parked_spark,
             };
             let (mut installer, task) = Self::build_for_chain(
@@ -781,7 +782,7 @@ impl Installer {
             user_flow,
             launched_from_app,
             cube_settings,
-            breez_client,
+            cube_signer,
             spark_backend,
             developer_mode,
             coincube_client,
@@ -799,7 +800,7 @@ impl Installer {
         user_flow: UserFlow,
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
-        breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        cube_signer: Option<crate::app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
         developer_mode: bool,
         coincube_client: Option<crate::services::coincube::CoincubeClient>,
@@ -810,7 +811,7 @@ impl Installer {
             user_flow,
             launched_from_app,
             cube_settings,
-            breez_client,
+            cube_signer,
             spark_backend,
             developer_mode,
             coincube_client,
@@ -824,7 +825,7 @@ impl Installer {
         user_flow: UserFlow,
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
-        breez_client: Option<std::sync::Arc<crate::app::breez_liquid::BreezClient>>,
+        cube_signer: Option<crate::app::cube_signer::CubeSigner>,
         spark_backend: Option<std::sync::Arc<crate::app::wallets::SparkBackend>>,
         developer_mode: bool,
         coincube_client: Option<crate::services::coincube::CoincubeClient>,
@@ -921,20 +922,11 @@ impl Installer {
         // Connect blinding (PR D3): the Vault builder opens Contacts' xpub
         // envelopes with the Cube's seed-derived encryption key. The master
         // source for a new Vault is the same verified Cube master as the hot
-        // signer. Import/restore flows retain their existing SDK fallback.
+        // signer. Import/restore flows fall back to the open Cube's signer.
         context.cube_encryption_key = cube_encryption_key.or_else(|| {
-            breez_client
+            cube_signer
                 .as_ref()
-                .and_then(|bc| bc.liquid_signer())
-                .and_then(|arc| {
-                    arc.lock().ok().map(|s| {
-                        std::sync::Arc::new(
-                            crate::services::connect::crypto::CubeEncryptionKey::derive(
-                                &s, network,
-                            ),
-                        )
-                    })
-                })
+                .and_then(|signer| signer.encryption_key(network))
         });
         context.connect_signed_in_at_launch = context
             .coincube_client
@@ -974,7 +966,7 @@ impl Installer {
             hws: HardwareWallets::new(destination_path.clone(), network),
             launched_from_app,
             cube_settings,
-            breez_client,
+            cube_signer,
             spark_backend,
             steps: {
                 // Network string used as a filter by the restore step's
@@ -1072,8 +1064,8 @@ impl Installer {
                         // `install_local_wallet` and seeding
                         // `CubeSettings.security_pin_hash` in the
                         // tab-level `CubeSaved` handler, matching the
-                        // fresh-install Cube layout so BreezClient
-                        // decrypt-on-open works.
+                        // fresh-install Cube layout so the Cube signer
+                        // decrypts on open.
                         RestorePinSetupStep::new().into(),
                         CoincubeConnectStep::new().into(),
                         SelectBitcoindTypeStep::new().into(),
@@ -1464,8 +1456,8 @@ impl Installer {
                     let ctx = self.context.clone();
                     Task::perform(
                         async move {
-                            // We must persist the recovered signer so Breez Liquid/Spark
-                            // can load it from the datadir on next startup.
+                            // We must persist the recovered signer so the Cube signer and
+                            // Spark can load it from the datadir on next startup.
                             // Even though there is no vault descriptor, the seed is needed.
                             if ctx.restored_imported_wallet.is_some()
                                 && ctx.recovered_signer.is_none()
@@ -2804,7 +2796,7 @@ mod restore_stepper_tests {
 #[cfg(test)]
 mod cube_signer_tests {
     use super::*;
-    use crate::app::{breez_liquid::BreezClient, settings::CubeSettings};
+    use crate::app::{cube_signer::CubeSigner, settings::CubeSettings};
     use coincube_core::signer::MasterSigner;
 
     #[test]
@@ -2942,12 +2934,9 @@ mod cube_signer_tests {
                     }
                     let root =
                         std::env::temp_dir().join(format!("signer-761-{}", uuid::Uuid::new_v4()));
-                    // An SDK handle, even carrying the expected key, cannot supply
-                    // principal/session binding for a locked or different Cube.
-                    let client = Arc::new(BreezClient::disconnected_with_signer(
-                        chain.bitcoin_network(),
-                        Arc::new(Mutex::new(master.try_clone().unwrap())),
-                    ));
+                    // A Cube signer handle, even carrying the expected key, cannot
+                    // supply principal/session binding for a locked or different Cube.
+                    let signer = CubeSigner::new(master.try_clone().unwrap());
                     let mut connect = crate::services::coincube::CoincubeClient::new();
                     connect.set_token("synthetic-installer-token");
                     let result = Installer::try_new_for_chain(
@@ -2956,7 +2945,7 @@ mod cube_signer_tests {
                         UserFlow::CreateWallet,
                         true,
                         Some(cube),
-                        Some(client),
+                        Some(signer),
                         None,
                         developer_mode,
                         Some(connect),
@@ -3013,6 +3002,77 @@ mod cube_signer_tests {
                 assert_eq!(installer.developer_mode, developer_mode);
             }
         }
+    }
+
+    /// Golden vector (Liquid removal PR 2, master I2): a Vault flow that does
+    /// not mint its own key (here restoring a Vault descriptor into the open
+    /// Cube) gives the Vault builder the encryption key of the signer the
+    /// unlock loaded, byte-identical for the PIN and passkey fixtures.
+    #[test]
+    fn the_vault_builder_key_matches_the_golden_vectors() {
+        use crate::app::cube_signer::golden;
+        let _guard = crate::app::session::test_guard();
+        crate::app::session::close();
+        for network in golden::NETWORKS {
+            for (signer, expected) in [
+                (golden::pin_signer(network), golden::pin_enc_key(network)),
+                (
+                    golden::passkey_signer(network),
+                    golden::passkey_enc_key(network),
+                ),
+            ] {
+                let fp = signer.fingerprint(&bitcoin::secp256k1::Secp256k1::new());
+                let cube = CubeSettings::new("golden".into(), network).with_master_signer(fp);
+                let signer = CubeSigner::new(signer);
+                let (installer, _) = Installer::new(
+                    CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
+                    network,
+                    UserFlow::RestoreVaultFromRecoveryKit,
+                    true,
+                    Some(cube),
+                    Some(signer),
+                    None,
+                    false,
+                    None,
+                )
+                .unwrap();
+                assert_eq!(
+                    installer
+                        .context
+                        .cube_encryption_key
+                        .as_ref()
+                        .expect("the Vault builder has the Cube's key")
+                        .public_key_hex(),
+                    expected,
+                    "{network}"
+                );
+            }
+        }
+    }
+
+    /// The Vault builder takes its key from the Cube signer only: without
+    /// one, an import/restore flow has no Connect key.
+    #[test]
+    fn the_vault_builder_has_no_key_without_a_cube_signer() {
+        let _guard = crate::app::session::test_guard();
+        crate::app::session::close();
+        let network = Network::Bitcoin;
+        let signer = MasterSigner::generate(network).unwrap();
+        let fp = signer.fingerprint(&bitcoin::secp256k1::Secp256k1::new());
+        let cube = CubeSettings::new("no-signer".into(), network).with_master_signer(fp);
+        let (installer, _) = Installer::new(
+            CoincubeDirectory::new(std::path::PathBuf::from("/nonexistent")),
+            network,
+            UserFlow::RestoreVaultFromRecoveryKit,
+            true,
+            Some(cube),
+            None,
+            None,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(installer.context.cube_encryption_key.is_none());
     }
 
     #[test]

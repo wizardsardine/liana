@@ -101,7 +101,7 @@ Another process tests an actual wrong-PIN outcome before correct cold loading,
 reads the saved Cube/wallet ID and actual persisted daemon descriptor/chain,
 and opens Vault hot signers using the real chain-aware loader. The ordinary
 Bitcoin Testnet4 cache-miss SeedSource regression is additionally mandatory;
-SeedSource is a Spark/Liquid Network-only API, not a Blake2b chain loader.
+SeedSource serves the Cube signer and Spark on Bitcoin networks only, not a Blake2b chain loader.
 
 Product signing retains both known descriptor signatures (primary `[0,0]` and
 recovery `[2,0]` from the same disposable root). Independent Python reference

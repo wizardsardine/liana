@@ -100,8 +100,7 @@ pub fn format_time_ago(timestamp: i64) -> String {
 /// 3 accounts for the ellipsis + sentinel overhead) are returned unchanged.
 ///
 /// This is the single shared implementation used by both UI rendering
-/// (`view::liquid::transactions`) and privacy-preserving logging
-/// (`app::breez::client`). Keeping one threshold here prevents a 15-char
+/// and privacy-preserving logging. Keeping one threshold here prevents a 15-char
 /// string from being rendered differently in the two call sites.
 pub fn truncate_middle(s: &str, prefix_len: usize, suffix_len: usize) -> String {
     if s.len() <= prefix_len + suffix_len + 3 {
