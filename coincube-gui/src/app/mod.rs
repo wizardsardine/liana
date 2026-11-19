@@ -9384,13 +9384,13 @@ impl App {
             .map(move |(id, _, level, content)| (*id, *level, content.display(unit, masked)))
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    fn active_panel_view(&self) -> Element<'_, view::Message> {
         let journey = self
             .panels
             .imported_bitcoin
             .as_ref()
             .filter(|panel| panel.journey_open());
-        let view = if let Some(panel) = journey {
+        if let Some(panel) = journey {
             // Import or restore holds the window from the imported wallet's
             // Source step until the user leaves Done.
             panel.journey_view(&self.cache, self.cube_settings.passkey_metadata.is_some())
@@ -9559,8 +9559,11 @@ impl App {
                 .current()
                 .unwrap_or(&self.panels.global_home)
                 .view(&self.panels.current, &self.cache)
-        };
+        }
+    }
 
+    pub fn view(&self) -> Element<'_, Message> {
+        let view = self.active_panel_view();
         let view: Element<'_, view::Message> = if self.cache.network != bitcoin::Network::Bitcoin {
             iced::widget::column![network_banner(self.cache.network), view].into()
         } else {
