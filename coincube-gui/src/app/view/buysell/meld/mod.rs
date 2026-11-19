@@ -612,6 +612,8 @@ impl MeldState {
         }
     }
 
+    /// The Vault's next receive address, reserved the way its Receive
+    /// screen reserves one (an imported Vault takes its source lock).
     fn create_new_address(
         cache: &Cache,
         daemon: Option<std::sync::Arc<dyn crate::daemon::Daemon + Sync + Send>>,
