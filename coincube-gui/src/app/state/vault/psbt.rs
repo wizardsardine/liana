@@ -2449,6 +2449,33 @@ impl SignModal {
     /// is derived dynamically — a connected hardware wallet, the master signer,
     /// a border wallet, or a Connect-resolved Keychain signer — so an
     /// unidentified key is shown disabled rather than guessed as Keychain.
+    fn connected_signing_key_state(
+        &self,
+        fp: Fingerprint,
+    ) -> Option<view::vault::psbt::SigningKeyState> {
+        use view::vault::psbt::{SigningKeyAction as Act, SigningKeyState as St};
+
+        let i = self
+            .hws
+            .list
+            .iter()
+            .position(|hw| hw.fingerprint() == Some(fp) && !hw.is_lan_phone())?;
+        match &self.hws.list[i] {
+            // Imported signing sessions register their own device policy on demand.
+            HardwareWallet::Supported {
+                registered: Some(false),
+                ..
+            } if !self.wallet.is_imported() => Some(St::Disabled(
+                "Register the wallet on this device to sign.".to_string(),
+            )),
+            HardwareWallet::Supported { .. } => Some(St::Available(Act::Hardware(i))),
+            HardwareWallet::Locked { .. } => {
+                Some(St::Disabled("Unlock this device to sign.".to_string()))
+            }
+            _ => None,
+        }
+    }
+
     fn classify_signing_key(
         &self,
         fp: Fingerprint,
@@ -2457,7 +2484,6 @@ impl SignModal {
         view::vault::psbt::SigningKeyKind,
         view::vault::psbt::SigningKeyState,
     ) {
-        use super::keychain_sign::PendingSessionStatus;
         use view::vault::psbt::{
             SigningKeyAction as Act, SigningKeyKind as Kind, SigningKeyState as St,
         };
@@ -2507,36 +2533,26 @@ impl SignModal {
         if self.wallet.border_wallet_fingerprints.contains(&fp) {
             return (kind, St::Available(Act::BorderWallet));
         }
-        // A currently-connected hardware wallet matching this key.
-        if let Some(i) = self
-            .hws
-            .list
-            .iter()
-            .position(|hw| hw.fingerprint() == Some(fp) && !hw.is_lan_phone())
-        {
-            match &self.hws.list[i] {
-                // Imported signing sessions register their own device policy on demand.
-                HardwareWallet::Supported {
-                    registered: Some(false),
-                    ..
-                } if !self.wallet.is_imported() => {
-                    return (
-                        Kind::Hardware,
-                        St::Disabled("Register the wallet on this device to sign.".to_string()),
-                    );
-                }
-                HardwareWallet::Supported { .. } => {
-                    return (Kind::Hardware, St::Available(Act::Hardware(i)));
-                }
-                HardwareWallet::Locked { .. } => {
-                    return (
-                        Kind::Hardware,
-                        St::Disabled("Unlock this device to sign.".to_string()),
-                    );
-                }
-                _ => {}
-            }
+        if let Some(state) = self.connected_signing_key_state(fp) {
+            return (Kind::Hardware, state);
         }
+        self.keychain_signing_key_state(fp, kc)
+            .unwrap_or_else(|| (Kind::Unknown, self.unidentified_signing_key_state(fp)))
+    }
+
+    fn keychain_signing_key_state(
+        &self,
+        fp: Fingerprint,
+        kc: Option<(usize, super::keychain_sign::PendingSessionStatus)>,
+    ) -> Option<(
+        view::vault::psbt::SigningKeyKind,
+        view::vault::psbt::SigningKeyState,
+    )> {
+        use super::keychain_sign::PendingSessionStatus;
+        use view::vault::psbt::{
+            SigningKeyAction as Act, SigningKeyKind as Kind, SigningKeyState as St,
+        };
+
         // A Keychain phone reachable over the local network. That road is the
         // default, unless a Connect session for this key is already under way
         // or finished — then the Connect branch below owns the row, so the
@@ -2558,19 +2574,28 @@ impl SignModal {
                         connect: connect_idle,
                     },
                 };
-                return (Kind::LanKeychain, state);
+                return Some((Kind::LanKeychain, state));
             }
         }
         // A Connect-resolved Keychain signer.
         if let Some((idx, status)) = kc {
-            return match status {
+            return Some(match status {
                 PendingSessionStatus::Idle => (Kind::Keychain, St::Available(Act::Keychain)),
                 PendingSessionStatus::Rejected
                 | PendingSessionStatus::Expired
                 | PendingSessionStatus::Failed => (Kind::Keychain, St::Retry(idx)),
                 other => (Kind::Keychain, St::InProgress(other.label().to_string())),
-            };
+            });
         }
+        None
+    }
+
+    fn unidentified_signing_key_state(
+        &self,
+        fp: Fingerprint,
+    ) -> view::vault::psbt::SigningKeyState {
+        use view::vault::psbt::SigningKeyState as St;
+
         // A hot key whose seed IS on this machine but which this Cube's
         // credential would not open — the restore wrote it under a credential
         // that no longer opens it, or the Cube's PIN changed underneath it.
@@ -2580,13 +2605,10 @@ impl SignModal {
         // signing device", which sends the user looking for a device that was
         // never involved — the key is right here, just unreachable.
         if self.wallet.unopenable_seed_keys.contains(&fp) {
-            return (
-                Kind::Unknown,
-                St::Disabled(
-                    "This key's seed is on this computer, but this Cube's credential didn't \
+            return St::Disabled(
+                "This key's seed is on this computer, but this Cube's credential didn't \
                      unlock it."
-                        .to_string(),
-                ),
+                    .to_string(),
             );
         }
         // The same seed, but nothing was tried against it — this load had no
@@ -2595,23 +2617,17 @@ impl SignModal {
         // credential that was never tested instead of to the one thing that
         // fixes it.
         if self.wallet.locked_seed_keys.contains(&fp) {
-            return (
-                Kind::Unknown,
-                St::Disabled(
-                    "This key's seed is on this computer. Reopen this Cube with its PIN to sign \
+            return St::Disabled(
+                "This key's seed is on this computer. Reopen this Cube with its PIN to sign \
                      with it."
-                        .to_string(),
-                ),
+                    .to_string(),
             );
         }
         // Keychain flow launched but still resolving — we don't yet know which
         // unidentified keys are Keychain signers, so show a neutral hint rather
         // than a misleading "connect a device" message.
         if self.keychain.as_ref().is_some_and(|k| k.is_loading()) {
-            return (
-                Kind::Unknown,
-                St::Disabled("Looking up Mobile signers…".to_string()),
-            );
+            return St::Disabled("Looking up Mobile signers…".to_string());
         }
         // Unidentified: an external key whose device isn't connected and which
         // Connect hasn't resolved. Shown disabled — never guessed as Keychain.
@@ -2625,40 +2641,28 @@ impl SignModal {
                 // to sign in or refreshes the session in place (the tab-level
                 // `OpenConnectSignIn` handler decides which).
                 ConnectAccountStatus::SignedOut | ConnectAccountStatus::Owner => {
-                    return (
-                        Kind::Unknown,
-                        St::NeedsSignIn("Connect a device to sign with this key.".to_string()),
-                    );
+                    return St::NeedsSignIn("Connect a device to sign with this key.".to_string());
                 }
                 ConnectAccountStatus::OtherAccount => {
-                    return (
-                        Kind::Unknown,
-                        St::NeedsAccountSwitch(
-                            "This Cube belongs to a different Connect account. Switch \
+                    return St::NeedsAccountSwitch(
+                        "This Cube belongs to a different Connect account. Switch \
                              accounts to sign with this key."
-                                .to_string(),
-                        ),
+                            .to_string(),
                     );
                 }
                 // Owner unrecorded (a Cube registered before owners were
                 // tracked): signed in, yet Keychain never came up — most
                 // likely the wrong account, but we can't name the right one.
                 ConnectAccountStatus::SignedInUnknownOwner => {
-                    return (
-                        Kind::Unknown,
-                        St::NeedsAccountSwitch(
-                            "You may be signed in under a different account than the one that \
+                    return St::NeedsAccountSwitch(
+                        "You may be signed in under a different account than the one that \
                              created this Cube. Switch accounts to sign with this key."
-                                .to_string(),
-                        ),
+                            .to_string(),
                     );
                 }
             }
         }
-        (
-            Kind::Unknown,
-            St::Disabled("Connect this signing device to sign.".to_string()),
-        )
+        St::Disabled("Connect this signing device to sign.".to_string())
     }
 
     /// Icon kind for a descriptor key: master / border / connected-hardware /
