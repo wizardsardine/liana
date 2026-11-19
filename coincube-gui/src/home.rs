@@ -2669,190 +2669,8 @@ impl Home {
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseModal)) => {
                 self.close_delete_modal()
             }
-            Message::Checked { for_chain, res } => match res {
-                // The probe was started for a network the user has since
-                // switched away from: its result describes another
-                // directory. Dropping it keeps `State::Cubes::source` — and
-                // the list it labels — in step with `self.network`.
-                _ if for_chain != self.network => {
-                    tracing::debug!(
-                        "Ignoring stale datadir probe for {} (now on {})",
-                        for_chain,
-                        self.network
-                    );
-                    Task::none()
-                }
-                Err(e) => {
-                    self.catalog.pending_select = None;
-                    self.create_network_selection_pending = false;
-                    self.delete_after_check = None;
-                    self.error = Some(e.to_string());
-                    Task::none()
-                }
-                Ok(mut state) if matches!(self.state, State::CreationBackup(_)) => {
-                    // The backup step owns the screen and an unwritten Cube's
-                    // seed. A reload that lands now (the catch-up sync after
-                    // signing in from the hub, say) must not replace it; it
-                    // only refreshes the list a Cancel returns to.
-                    if let State::Cubes { cubes, .. } = &mut state {
-                        self.creation_backup_cubes = std::mem::take(cubes);
-                    }
-                    Task::none()
-                }
-                Ok(mut state) => {
-                    if self.create_network_selection_pending || self.showing_create_form() {
-                        if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } =
-                            &mut state
-                        {
-                            *create_cube = true;
-                        }
-                        self.create_network_selection_pending = false;
-                    }
-                    if self.showing_import_or_restore() {
-                        match &mut state {
-                            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
-                                *create_cube = true
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Prune remote cubes that now exist locally
-                    if let State::Cubes { cubes, .. } = &state {
-                        let local_ids: std::collections::HashSet<&str> =
-                            cubes.iter().map(|c| c.id.as_str()).collect();
-                        self.remote_cubes
-                            .retain(|rc| !local_ids.contains(rc.uuid.as_str()));
-                    }
-                    // The list this replaces keeps showing as another
-                    // network's, so the floor does not lose those Cubes while
-                    // they are read again from disk.
-                    if let State::Cubes { cubes, source, .. } = &self.state {
-                        if *source != self.network {
-                            let (source, cubes) = (*source, cubes.clone());
-                            match self.network_catalog.iter_mut().find(|(c, _)| *c == source) {
-                                Some((_, list)) => *list = cubes,
-                                None => self.network_catalog.push((source, cubes)),
-                            }
-                        }
-                    }
-                    self.state = state;
-                    // Taken before the import's own Open returns early, so
-                    // a pending pick never outlives this checked list.
-                    let pending = self.catalog.pending_select.take();
-                    // One checked list answers the request: a Cube missing
-                    // from it is not asked about by a later reload.
-                    if let Some(id) = self.delete_after_check.take() {
-                        if let State::Cubes { cubes, .. } = &self.state {
-                            if let Some(index) = cubes.iter().position(|cube| cube.id == id) {
-                                return self.update_inner(Message::View(ViewMessage::DeleteCube(
-                                    DeleteCubeMessage::ShowModal(index),
-                                )));
-                            }
-                        }
-                    }
-                    if let (Some(id), State::Cubes { cubes, .. }) =
-                        (&self.open_created_cube, &self.state)
-                    {
-                        if let Some(index) = cubes.iter().position(|cube| &cube.id == id) {
-                            self.open_created_cube = None;
-                            return self.update_inner(Message::View(ViewMessage::Run(index)));
-                        }
-                    }
-                    // A Cube picked on another network made that network
-                    // current; now that its list is checked, select it.
-                    // Open replays as `RunCatalog`, which resolves the Cube
-                    // through `catalog_index` on this checked list again.
-                    let select = match pending {
-                        Some((key, intent)) if key.chain == self.network => {
-                            Task::done(Message::View(match intent {
-                                launcher_catalog::PendingIntent::Select => ViewMessage::Catalog(
-                                    launcher_catalog::CatalogMessage::SelectFloor(key),
-                                ),
-                                launcher_catalog::PendingIntent::Open => {
-                                    ViewMessage::RunCatalog(key)
-                                }
-                            }))
-                        }
-                        _ => Task::none(),
-                    };
-                    match self.refresh_network_catalog(true) {
-                        Some(load) => Task::batch([select, load]),
-                        None => select,
-                    }
-                }
-            },
-            Message::View(ViewMessage::Run(index)) => {
-                if let State::Cubes { cubes, source, .. } = &self.state {
-                    if let Some(cube) = cubes.get(index) {
-                        let source = *source;
-                        // The record was read from `source`'s directory. Its
-                        // own `network` must say the same, and this build must
-                        // be able to run that chain — both decided here, before
-                        // any file the *record* would point at is read. A
-                        // record that disagrees is a copied or hand-edited
-                        // settings.json; trusting it would open the wrong
-                        // chain's config, seed folder and provider.
-                        if cube.network != source {
-                            self.error = Some(coincube_ui::localized_format!(
-                                "This Cube's settings say it lives on {}, but it was found in \
-                                 the {} folder. COINCUBE Desktop won't open it until the two agree.",
-                                "Los ajustes de este Cube indican que está en {}, pero se encontró \
-                                 en la carpeta {}. COINCUBE Desktop no lo abrirá hasta que coincidan.",
-                                cube.network.label(),
-                                source.label(),
-                            ));
-                            return Task::none();
-                        }
-                        if let Some(reason) = self.chain_availability(cube.network).reason() {
-                            self.error = Some(reason.to_string());
-                            return Task::none();
-                        }
-                        // The GUI config of the directory the record came from —
-                        // never the one a record's claim would select.
-                        let datadir_path = self.datadir_path.clone();
-                        let mut path = self
-                            .datadir_path
-                            .network_directory(source)
-                            .path()
-                            .to_path_buf();
-                        path.push(app::config::DEFAULT_FILE_NAME);
-                        // `check_network_datadir` created this file if it was
-                        // missing, but the disk is not frozen between that probe
-                        // and this click: surface a read failure, don't panic.
-                        let cfg = match app::Config::from_file(&path) {
-                            Ok(cfg) => cfg,
-                            Err(e) => {
-                                self.error = Some(coincube_ui::localized_format!(
-                                    "Couldn't read the {} folder's configuration ({}): {}",
-                                    "No se pudo leer la configuración de la carpeta {} ({}): {}",
-                                    source.label(),
-                                    path.display(),
-                                    e
-                                ));
-                                return Task::none();
-                            }
-                        };
-                        let cube = cube.clone();
-                        let floor_generation = self
-                            .catalog
-                            .open_from_floor
-                            .then_some(self.catalog.floor_open_generation);
-                        Task::perform(
-                            async move { (datadir_path, cfg, source, cube, floor_generation) },
-                            |(root, cfg, chain, cube, generation)| match generation {
-                                Some(generation) => {
-                                    Message::RunFromFloor(root, cfg, chain, cube, generation)
-                                }
-                                None => Message::Run(root, cfg, chain, cube),
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                }
-            }
+            Message::Checked { for_chain, res } => self.checked_result(for_chain, res),
+            Message::View(ViewMessage::Run(index)) => self.run_cube(index),
             Message::View(ViewMessage::ToggleRecoveryCheckBox) => Task::none(),
             Message::View(ViewMessage::RecoveryWordInput { index, word }) => {
                 if index < 12 {
@@ -3752,6 +3570,208 @@ impl Home {
 
             _ => self.update_delete_modal(message),
         }
+    }
+
+    fn checked_result(&mut self, for_chain: ChainId, res: Result<State, String>) -> Task<Message> {
+        match res {
+            // The probe was started for a network the user has since
+            // switched away from: its result describes another
+            // directory. Dropping it keeps `State::Cubes::source` — and
+            // the list it labels — in step with `self.network`.
+            _ if for_chain != self.network => {
+                tracing::debug!(
+                    "Ignoring stale datadir probe for {} (now on {})",
+                    for_chain,
+                    self.network
+                );
+                Task::none()
+            }
+            Err(e) => {
+                self.catalog.pending_select = None;
+                self.create_network_selection_pending = false;
+                self.delete_after_check = None;
+                self.error = Some(e.to_string());
+                Task::none()
+            }
+            Ok(mut state) if matches!(self.state, State::CreationBackup(_)) => {
+                // The backup step owns the screen and an unwritten Cube's
+                // seed. A reload that lands now (the catch-up sync after
+                // signing in from the hub, say) must not replace it; it
+                // only refreshes the list a Cancel returns to.
+                if let State::Cubes { cubes, .. } = &mut state {
+                    self.creation_backup_cubes = std::mem::take(cubes);
+                }
+                Task::none()
+            }
+            Ok(state) => self.apply_checked_state(state),
+        }
+    }
+
+    fn apply_checked_state(&mut self, mut state: State) -> Task<Message> {
+        self.preserve_checked_view(&mut state);
+        self.reconcile_checked_catalog(&state);
+        self.state = state;
+        // Taken before the import's own Open returns early, so
+        // a pending pick never outlives this checked list.
+        let pending = self.catalog.pending_select.take();
+        if let Some(task) = self.checked_delete_task() {
+            return task;
+        }
+        if let Some(task) = self.checked_created_cube_task() {
+            return task;
+        }
+        // A Cube picked on another network made that network
+        // current; now that its list is checked, select it.
+        // Open replays as `RunCatalog`, which resolves the Cube
+        // through `catalog_index` on this checked list again.
+        let select = match pending {
+            Some((key, intent)) if key.chain == self.network => {
+                Task::done(Message::View(match intent {
+                    launcher_catalog::PendingIntent::Select => {
+                        ViewMessage::Catalog(launcher_catalog::CatalogMessage::SelectFloor(key))
+                    }
+                    launcher_catalog::PendingIntent::Open => ViewMessage::RunCatalog(key),
+                }))
+            }
+            _ => Task::none(),
+        };
+        match self.refresh_network_catalog(true) {
+            Some(load) => Task::batch([select, load]),
+            None => select,
+        }
+    }
+
+    fn preserve_checked_view(&mut self, state: &mut State) {
+        if self.create_network_selection_pending || self.showing_create_form() {
+            if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } = &mut *state {
+                *create_cube = true;
+            }
+            self.create_network_selection_pending = false;
+        }
+        if self.showing_import_or_restore() {
+            match &mut *state {
+                State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                    *create_cube = true
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn reconcile_checked_catalog(&mut self, state: &State) {
+        // Prune remote cubes that now exist locally
+        if let State::Cubes { cubes, .. } = state {
+            let local_ids: std::collections::HashSet<&str> =
+                cubes.iter().map(|c| c.id.as_str()).collect();
+            self.remote_cubes
+                .retain(|rc| !local_ids.contains(rc.uuid.as_str()));
+        }
+        // The list this replaces keeps showing as another
+        // network's, so the floor does not lose those Cubes while
+        // they are read again from disk.
+        if let State::Cubes { cubes, source, .. } = &self.state {
+            if *source != self.network {
+                let (source, cubes) = (*source, cubes.clone());
+                match self.network_catalog.iter_mut().find(|(c, _)| *c == source) {
+                    Some((_, list)) => *list = cubes,
+                    None => self.network_catalog.push((source, cubes)),
+                }
+            }
+        }
+    }
+
+    fn checked_delete_task(&mut self) -> Option<Task<Message>> {
+        // One checked list answers the request: a Cube missing
+        // from it is not asked about by a later reload.
+        if let Some(id) = self.delete_after_check.take() {
+            if let State::Cubes { cubes, .. } = &self.state {
+                if let Some(index) = cubes.iter().position(|cube| cube.id == id) {
+                    return Some(self.update_inner(Message::View(ViewMessage::DeleteCube(
+                        DeleteCubeMessage::ShowModal(index),
+                    ))));
+                }
+            }
+        }
+        None
+    }
+
+    fn checked_created_cube_task(&mut self) -> Option<Task<Message>> {
+        if let (Some(id), State::Cubes { cubes, .. }) = (&self.open_created_cube, &self.state) {
+            if let Some(index) = cubes.iter().position(|cube| &cube.id == id) {
+                self.open_created_cube = None;
+                return Some(self.update_inner(Message::View(ViewMessage::Run(index))));
+            }
+        }
+        None
+    }
+
+    fn run_cube(&mut self, index: usize) -> Task<Message> {
+        let State::Cubes { cubes, source, .. } = &self.state else {
+            return Task::none();
+        };
+        let Some(cube) = cubes.get(index) else {
+            return Task::none();
+        };
+        let source = *source;
+        // The record was read from `source`'s directory. Its
+        // own `network` must say the same, and this build must
+        // be able to run that chain — both decided here, before
+        // any file the *record* would point at is read. A
+        // record that disagrees is a copied or hand-edited
+        // settings.json; trusting it would open the wrong
+        // chain's config, seed folder and provider.
+        if cube.network != source {
+            self.error = Some(coincube_ui::localized_format!(
+                "This Cube's settings say it lives on {}, but it was found in \
+                 the {} folder. COINCUBE Desktop won't open it until the two agree.",
+                "Los ajustes de este Cube indican que está en {}, pero se encontró \
+                 en la carpeta {}. COINCUBE Desktop no lo abrirá hasta que coincidan.",
+                cube.network.label(),
+                source.label(),
+            ));
+            return Task::none();
+        }
+        if let Some(reason) = self.chain_availability(cube.network).reason() {
+            self.error = Some(reason.to_string());
+            return Task::none();
+        }
+        // The GUI config of the directory the record came from —
+        // never the one a record's claim would select.
+        let datadir_path = self.datadir_path.clone();
+        let mut path = self
+            .datadir_path
+            .network_directory(source)
+            .path()
+            .to_path_buf();
+        path.push(app::config::DEFAULT_FILE_NAME);
+        // `check_network_datadir` created this file if it was
+        // missing, but the disk is not frozen between that probe
+        // and this click: surface a read failure, don't panic.
+        let cfg = match app::Config::from_file(&path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                self.error = Some(coincube_ui::localized_format!(
+                    "Couldn't read the {} folder's configuration ({}): {}",
+                    "No se pudo leer la configuración de la carpeta {} ({}): {}",
+                    source.label(),
+                    path.display(),
+                    e
+                ));
+                return Task::none();
+            }
+        };
+        let cube = cube.clone();
+        let floor_generation = self
+            .catalog
+            .open_from_floor
+            .then_some(self.catalog.floor_open_generation);
+        Task::perform(
+            async move { (datadir_path, cfg, source, cube, floor_generation) },
+            |(root, cfg, chain, cube, generation)| match generation {
+                Some(generation) => Message::RunFromFloor(root, cfg, chain, cube, generation),
+                None => Message::Run(root, cfg, chain, cube),
+            },
+        )
     }
 
     fn restore_from_kit(&mut self, cube_uuid: String) -> Task<Message> {
