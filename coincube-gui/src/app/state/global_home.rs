@@ -1014,729 +1014,53 @@ impl State for GlobalHome {
                         btc,
                         usdb_balance,
                         identity_pubkey,
-                    } => {
-                        self.spark_balance_loading = false;
-                        // The in-flight fetch was issued before
-                        // `Synced` arrived — its value reflects the
-                        // SDK's pre-sync state. Discard it and fire a
-                        // fresh post-sync fetch; the next response
-                        // will flip the gate.
-                        if self.spark_pending_resync {
-                            self.spark_pending_resync = false;
-                            return self.load_spark_balance().unwrap_or_else(Task::none);
-                        }
-                        self.spark_btc_balance = btc;
-                        self.spark_identity = Some(identity_pubkey);
-                        self.spark_usdb_balance = usdb_balance.clone();
-                        self.spark_balance_error = false;
-                        // Fold any Stable Balance (USDB) holding into the shown
-                        // Spark balance — auto-sweep means a BTC-only reading
-                        // would understate a funded wallet. Shared with the
-                        // Send/Receive cards via `unified_spark_balance_sats`.
-                        self.spark_balance =
-                            Amount::from_sat(crate::app::state::spark::unified_spark_balance_sats(
-                                btc.to_sat(),
-                                usdb_balance.as_ref(),
-                                cache,
-                            ));
-                        self.spark_balance_received = true;
-                        // Trust the response once the bridge has
-                        // confirmed at least one `Synced` event — until
-                        // then this could be the SDK's pre-sync persisted
-                        // value (e.g. zero before this session's incoming
-                        // interest payments landed). Until corroborated,
-                        // the card renders a `…` placeholder.
-                        //
-                        // Also release the gate when the fallback poll
-                        // has already exhausted its budget: the
-                        // subscription stops firing once
-                        // `spark_load_retry_count` reaches the cap, so
-                        // any response that lands after that point has
-                        // no other path to release the loading UI.
-                        // Best-effort — better to show the last
-                        // received value than stay stuck on `…`.
-                        if self.spark_synced_seen
-                            || self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
-                        {
-                            self.spark_balance_loaded = true;
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::NextStep => {
-                        // Step 0 → 1 (overview → amount entry): this is the
-                        // Transfer button press. Default the direction. The
-                        // Vault daemon is required only by the Vault-sourced
-                        // branches of step 1 → 2, which unwrap inline.
-                        if self.current_view.step == 0 {
-                            let Some(direction) = default_transfer_direction(
-                                cache.has_vault,
-                                self.spark_backend.is_some(),
-                                cache.chain(),
-                            ) else {
-                                return Task::none();
-                            };
-                            return self.begin_transfer(cache, direction);
-                        }
-                        // Step 1 → 2 (amount → confirm): fetch the destination
-                        // receive address (and, for a Spark source, prepare
-                        // the send so fees can render on the confirm screen).
-                        if self.current_view.step == 1 {
-                            // Prepare lives on the Amount page only.
-                            if self.transfer_page != TransferPage::Amount {
-                                return Task::none();
-                            }
-                            if self
-                                .transfer_direction
-                                .is_some_and(Self::direction_uses_vault)
-                                && !self.vault_available(cache)
-                            {
-                                return Task::none();
-                            }
-                            let Some(direction) = self.transfer_direction else {
-                                return Task::none();
-                            };
-                            let generation = self.invalidate_transfer_destination();
-                            // Another Cube: its Vault's address was fetched and
-                            // re-derived from its descriptor during Unlock.
-                            if direction.is_other_cube()
-                                && direction.from_kind() == WalletKind::Vault
-                            {
-                                if direction == TransferDirection::VaultToOtherSpark {
-                                    if let Err(refusal) = self.other_receive_address(cache) {
-                                        return self.restart_other_cube_unlock(refusal);
-                                    }
-                                }
-                                let Some(OtherReceiveAddress::Bitcoin(address)) =
-                                    self.other_address.clone()
-                                else {
-                                    return Task::none();
-                                };
-                                self.current_view.next();
-                                return Task::done(Message::View(view::Message::Home(
-                                    HomeMessage::TransferDestinationReady {
-                                        generation,
-                                        direction,
-                                        result: Ok((address.address.to_string(), address.index)),
-                                    },
-                                )));
-                            }
-                            let mut tasks = Vec::new();
-                            if matches!(
-                                self.transfer_direction,
-                                Some(TransferDirection::VaultToSpark)
-                            ) {
-                                // VaultToSpark: Spark issues a BTC deposit address;
-                                // the Vault signs a standard on-chain tx to that
-                                // address. The sign/broadcast path reuses the
-                                // existing `SignVaultTransferTx` handler (widened
-                                // below to accept this direction).
-                                if let Some(spark) = self.spark_backend.clone() {
-                                    self.current_view.next();
-                                    tasks.push(Task::perform(
-                                        async move { spark.receive_onchain(None).await },
-                                        move |result| match result {
-                                            // `payment_request` is a plain Bitcoin address for
-                                            // on-chain receives (possibly wrapped in a BIP21
-                                            // URI — the `TransferDestinationReady` handler
-                                            // already strips "bitcoin:" prefixes).
-                                            Ok(response) => Message::View(view::Message::Home(
-                                                HomeMessage::TransferDestinationReady {
-                                                    generation,
-                                                    direction,
-                                                    result: Ok((
-                                                        response.payment_request,
-                                                        ChildNumber::Normal { index: 1 },
-                                                    )),
-                                                },
-                                            )),
-                                            Err(error) => Message::View(view::Message::Home(
-                                                HomeMessage::TransferDestinationReady {
-                                                    generation,
-                                                    direction,
-                                                    result: Err(TransferError::NoDepositAddress {
-                                                        to: WalletKind::Spark,
-                                                        detail: error.to_string(),
-                                                    }),
-                                                },
-                                            )),
-                                        },
-                                    ));
-                                } else {
-                                    return Task::done(Message::View(view::Message::Home(
-                                        HomeMessage::Error(TransferError::WalletUnavailable(
-                                            WalletKind::Spark,
-                                        )),
-                                    )));
-                                }
-                            } else if matches!(
-                                direction,
-                                TransferDirection::SparkToVault
-                                    | TransferDirection::SparkToOtherCube
-                                    | TransferDirection::SparkToOtherSpark
-                            ) {
-                                // SparkToVault: fetch a fresh Vault address, then
-                                // ask Spark to `prepare_send` to it — that call
-                                // yields a handle we broadcast at confirm time via
-                                // `ConfirmSparkSend`.
-                                let Ok(amount) = Amount::from_str_in(
-                                    &self.entered_amount.value,
-                                    if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
-                                        coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                    } else {
-                                        coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                    },
-                                ) else {
-                                    return Task::none();
-                                };
-                                let Some(spark) = self.spark_backend.clone() else {
-                                    return Task::done(Message::View(view::Message::Home(
-                                        HomeMessage::Error(TransferError::WalletUnavailable(
-                                            WalletKind::Spark,
-                                        )),
-                                    )));
-                                };
-                                let other_address = if direction.is_other_cube() {
-                                    self.validate_entered_amount(cache);
-                                    if !self.entered_amount.valid {
-                                        return Task::none();
-                                    }
-                                    match self.other_receive_address(cache) {
-                                        Ok(OtherReceiveAddress::Bitcoin(address)) => {
-                                            Some(address.address.to_string())
-                                        }
-                                        Ok(OtherReceiveAddress::Spark(address)) => {
-                                            Some(address.clone())
-                                        }
-                                        Err(refusal) => {
-                                            return self.restart_other_cube_unlock(refusal)
-                                        }
-                                    }
-                                } else {
-                                    None
-                                };
-                                let daemon = daemon.clone();
-                                let (data_dir, wallet) =
-                                    (cache.datadir_path.clone(), self.wallet.clone());
-                                self.current_view.next();
-                                let amount_sat = amount.to_sat();
-                                let fees_included = self.sends_max();
-                                tasks.push(Task::perform(
-                                    async move {
-                                        let addr_str = match other_address {
-                                            Some(address) => address,
-                                            None => vault_deposit_address(
-                                                data_dir,
-                                                wallet,
-                                                daemon.ok_or(TransferError::WalletUnavailable(
-                                                    WalletKind::Vault,
-                                                ))?,
-                                            )
-                                            .await
-                                            .map_err(|e| TransferError::NoDepositAddress {
-                                                to: WalletKind::Vault,
-                                                detail: e.to_string(),
-                                            })?
-                                            .address
-                                            .to_string(),
-                                        };
-                                        let prep = if fees_included {
-                                            spark
-                                                .prepare_send_fees_included(
-                                                    addr_str.clone(),
-                                                    amount_sat,
-                                                )
-                                                .await
-                                        } else {
-                                            spark
-                                                .prepare_send(addr_str.clone(), Some(amount_sat))
-                                                .await
-                                        }
-                                        .map_err(|e| TransferError::FeeEstimateFailed {
-                                            detail: e.to_string(),
-                                        })?;
-                                        let method =
-                                            if direction == TransferDirection::SparkToOtherSpark {
-                                                "SparkAddress"
-                                            } else {
-                                                "BitcoinAddress"
-                                            };
-                                        if direction.is_other_cube()
-                                            && (prep.method != method
-                                                || prep.amount_sat != amount_sat)
-                                        {
-                                            return Err(TransferError::DestinationRejected {
-                                                detail: coincube_ui::locale::copy(
-                                                    "Spark quoted a different rail or amount",
-                                                )
-                                                .into(),
-                                            });
-                                        }
-                                        Ok::<_, TransferError>((
-                                            addr_str,
-                                            prep.handle,
-                                            prep.fee_sat,
-                                        ))
-                                    },
-                                    move |result| match result {
-                                        Ok((destination, prepare_handle, fee_sat)) => {
-                                            Message::View(view::Message::Home(
-                                                HomeMessage::SparkPrepareSendReady {
-                                                    generation,
-                                                    direction,
-                                                    destination,
-                                                    prepare_handle,
-                                                    fee_sat,
-                                                },
-                                            ))
-                                        }
-                                        Err(error) => Message::View(view::Message::Home(
-                                            HomeMessage::TransferDestinationFailed {
-                                                generation,
-                                                direction,
-                                                error,
-                                            },
-                                        )),
-                                    },
-                                ));
-                            }
-                            return Task::batch(tasks);
-                        }
-                        Task::none()
-                    }
+                    } => self.on_spark_balance_updated(cache, btc, usdb_balance, identity_pubkey),
+                    HomeMessage::NextStep => self.advance_transfer_step(&daemon, cache),
                     HomeMessage::PreviousStep
                         if self.current_view.step == 1
                             && self.transfer_page != TransferPage::Wallets =>
                     {
-                        let other = self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube());
-                        self.transfer_page = match self.transfer_page {
-                            TransferPage::OtherCube => {
-                                self.reset_other_cube();
-                                TransferPage::Wallets
-                            }
-                            TransferPage::Unlock => {
-                                self.lock_other_cube();
-                                TransferPage::OtherCube
-                            }
-                            TransferPage::Amount if other => TransferPage::Unlock,
-                            _ => TransferPage::Wallets,
-                        };
-                        Task::none()
+                        self.previous_transfer_substep()
                     }
-                    HomeMessage::PreviousStep => {
-                        if self.is_sending
-                            && self
-                                .transfer_direction
-                                .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            return Task::none();
-                        }
-                        // Any prepared/signed artifact from the confirm screen
-                        // is bound to the amount + destination that were in
-                        // effect when it was built. Stepping back allows the
-                        // user to edit those, so invalidate here — otherwise a
-                        // returning user would land on the confirm screen with
-                        // a stale "Confirm & Broadcast" button and broadcast
-                        // the previous PSBT against a changed amount.
-                        self.invalidate_transfer_destination();
-                        // Mirror `BackToHome`'s reset: if we left the confirm
-                        // screen with a stuck `is_sending` (e.g. an error path
-                        // that didn't clear it), leaving it set would disable
-                        // all confirm buttons on re-entry. The Previous button
-                        // is also view-level gated on `!is_sending` so a
-                        // successful in-flight broadcast can't race this
-                        // handler into advancing the step machine.
-                        self.is_sending = false;
-                        self.current_view.previous();
-                        // Back on Amount, Max shows the whole balance again.
-                        if let Some(source) = self.transfer_max.filter(|_| self.sends_max()) {
-                            self.set_entered_amount(self.max_transfer_amount(source, cache));
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::PreviousStep => self.previous_transfer_step(cache),
                     HomeMessage::SparkPrepareSendReady {
                         generation,
                         direction,
                         destination,
                         prepare_handle,
                         fee_sat,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction) {
-                            return Task::none();
-                        }
-                        if direction == TransferDirection::SparkToOtherSpark {
-                            match self.other_receive_address(cache) {
-                                Ok(OtherReceiveAddress::Spark(address))
-                                    if *address == destination => {}
-                                Ok(_) => {
-                                    return self
-                                        .restart_other_cube_unlock(ScopeRefusal::IdentityChanged)
-                                }
-                                Err(refusal) => return self.restart_other_cube_unlock(refusal),
-                            }
-                            self.destination_ready = Some((generation, direction));
-                            self.spark_send_handle = Some(prepare_handle);
-                            self.show_max_after_fee(fee_sat);
-                            return Task::none();
-                        }
-                        // Parse the destination as a checked Bitcoin address — if
-                        // the string is a BIP21 URI (rare here but cheap to
-                        // handle) strip the prefix first. Mirrors the logic in
-                        // `TransferDestinationReady`. Destination is sourced from our
-                        // own trusted components (Breez peg-in / Vault daemon)
-                        // and Spark has already prepared against it, so failure
-                        // here indicates an upstream bug — refuse to proceed
-                        // rather than leave the confirm view without a displayable
-                        // destination.
-                        let addr_str = destination
-                            .strip_prefix("bitcoin:")
-                            .unwrap_or(&destination)
-                            .split('?')
-                            .next()
-                            .unwrap_or(&destination);
-                        let checked = match Address::from_str(addr_str)
-                            .ok()
-                            .and_then(|p| p.require_network(cache.network).ok())
-                        {
-                            Some(a) => a,
-                            None => {
-                                return Task::done(Message::View(view::Message::Home(
-                                    HomeMessage::Error(TransferError::DestinationRejected {
-                                        detail: format!(
-                                            "Spark destination {addr_str} is not valid for network {:?}",
-                                            cache.network
-                                        ),
-                                    }),
-                                )));
-                            }
-                        };
-                        let index = if direction.is_other_cube() {
-                            match self.other_receive_address(cache) {
-                                Ok(OtherReceiveAddress::Bitcoin(address))
-                                    if address.address == checked =>
-                                {
-                                    address.index
-                                }
-                                Ok(_) => {
-                                    return self
-                                        .restart_other_cube_unlock(ScopeRefusal::IdentityChanged)
-                                }
-                                Err(refusal) => return self.restart_other_cube_unlock(refusal),
-                            }
-                        } else {
-                            ChildNumber::Normal { index: 0 }
-                        };
-                        self.receive_address_info = Some(ReceiveAddressInfo {
-                            address: checked,
-                            index,
-                            labels: HashMap::new(),
-                        });
-                        self.destination_ready = Some((generation, direction));
-                        self.spark_send_handle = Some(prepare_handle);
-                        self.show_max_after_fee(fee_sat);
-                        Task::none()
-                    }
-                    HomeMessage::ConfirmSparkSend => {
-                        let Some(direction) = self.transfer_direction else {
-                            return Task::none();
-                        };
-                        if self.is_sending || !self.destination_is_ready() {
-                            return Task::none();
-                        }
-                        if direction == TransferDirection::SparkToVault
-                            && !self.vault_available(cache)
-                        {
-                            return Task::none();
-                        }
-                        if direction.is_other_cube() {
-                            if let Err(refusal) = self.check_other_review_address(cache) {
-                                return self.restart_other_cube_unlock(refusal);
-                            }
-                        }
-                        // Spark-sourced confirm: broadcast the prepared send. The
-                        // destination address + prepare handle were populated at
-                        // step 1→2 (see `SparkPrepareSendReady`).
-                        let Some(spark) = self.spark_backend.clone() else {
-                            // Not an expired preparation — the wallet itself is
-                            // gone, and "go back and re-enter the amount" would
-                            // send the user in a circle.
-                            return Task::done(Message::View(view::Message::Home(
-                                HomeMessage::Error(TransferError::WalletUnavailable(
-                                    WalletKind::Spark,
-                                )),
-                            )));
-                        };
-                        // Single-use handle: take it out of state before
-                        // spawning the task so a retry click after a failed
-                        // `send_payment` can't re-submit a handle the Spark
-                        // backend has already consumed. Forces re-prepare from
-                        // the amount step on failure; on success
-                        // `TransferBroadcast` is the path that would have
-                        // otherwise cleared it.
-                        let Some(handle) = self.spark_send_handle.take() else {
-                            return Task::done(Message::View(view::Message::Home(
-                                HomeMessage::Error(TransferError::PreparationExpired),
-                            )));
-                        };
-                        let Ok(transfer_amount) = Amount::from_str_in(
-                            &self.entered_amount.value,
-                            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
-                                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                            } else {
-                                coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                            },
-                        ) else {
-                            return Task::none();
-                        };
-                        self.is_sending = true;
-                        let generation = self.transfer_request_generation;
-                        Task::perform(
-                            async move { spark.send_payment(handle, None).await },
-                            move |result| {
-                                let result = result.map(|_| ()).map_err(|error| match error {
-                                    SparkClientError::OutcomeUnknown { .. }
-                                    | SparkClientError::Protocol(_) => {
-                                        TransferError::BroadcastOutcomeUnknown {
-                                            detail: error.to_string(),
-                                        }
-                                    }
-                                    _ => TransferError::BroadcastFailed {
-                                        from: WalletKind::Spark,
-                                        detail: error.to_string(),
-                                    },
-                                });
-                                Message::View(view::Message::Home(
-                                    HomeMessage::SparkTransferFinished {
-                                        generation,
-                                        direction,
-                                        amount_sat: transfer_amount.to_sat(),
-                                        result,
-                                    },
-                                ))
-                            },
-                        )
-                    }
+                    } => self.on_spark_prepare_send_ready(
+                        cache,
+                        generation,
+                        direction,
+                        destination,
+                        prepare_handle,
+                        fee_sat,
+                    ),
+                    HomeMessage::ConfirmSparkSend => self.confirm_spark_send(cache),
                     HomeMessage::SparkTransferFinished {
                         generation,
                         direction,
                         amount_sat,
                         result,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction) {
-                            return Task::none();
-                        }
-                        let message = match result {
-                            Ok(()) => HomeMessage::TransferBroadcast {
-                                amount_sat,
-                                destination_kind: direction.to_kind(),
-                            },
-                            Err(error) => {
-                                if direction.is_other_cube()
-                                    && matches!(
-                                        error,
-                                        TransferError::BroadcastOutcomeUnknown { .. }
-                                    )
-                                {
-                                    let reset = self.update(
-                                        None,
-                                        cache,
-                                        Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                                    );
-                                    let show_error = self.update(
-                                        None,
-                                        cache,
-                                        Message::View(view::Message::Home(HomeMessage::Error(
-                                            error,
-                                        ))),
-                                    );
-                                    return Task::batch([reset, show_error]);
-                                }
-                                HomeMessage::Error(error)
-                            }
-                        };
-                        self.update(daemon, cache, Message::View(view::Message::Home(message)))
-                    }
+                    } => self.on_spark_transfer_finished(
+                        daemon, cache, generation, direction, amount_sat, result,
+                    ),
                     HomeMessage::TransferBroadcast {
                         amount_sat,
                         destination_kind,
-                    } => {
-                        self.is_sending = false;
-                        // Another Cube's Vault receives this one: nothing is
-                        // pending in this Cube. Its unlock ends here.
-                        if self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            self.current_view.next();
-                            self.finish_other_cube();
-                            return Task::none();
-                        }
-                        let pending = PendingTransfer {
-                            amount: Amount::from_sat(amount_sat),
-                            stage: TransferStage::PendingDeposit,
-                        };
-                        match destination_kind {
-                            WalletKind::Vault => {
-                                // SparkToVault: there's no swap lifecycle to
-                                // drive stage transitions on the
-                                // Vault card's indicator, so use the
-                                // session-level counter. Baseline
-                                // snapshots the daemon's current view so the
-                                // Tick reconciler can tell "our tx landed"
-                                // from growth relative to this moment — but
-                                // only on a fresh batch. If a prior broadcast
-                                // is still unreconciled, its amount may
-                                // already sit in `cache_vault_pending_receive_sats`;
-                                // re-snapshotting here would fold it into the
-                                // baseline while `pending_vault_receive_sats`
-                                // still includes it, making the reconciliation
-                                // bar (`baseline + pending`) permanently
-                                // unreachable.
-                                if self.pending_vault_receive_sats == 0 {
-                                    self.pending_vault_receive_baseline_sats =
-                                        cache_vault_pending_receive_sats(cache);
-                                }
-                                self.pending_vault_receive_sats =
-                                    self.pending_vault_receive_sats.saturating_add(amount_sat);
-                            }
-                            WalletKind::Spark => {
-                                // Spark destinations also land here on Spark-sourced
-                                // flows only when the bridge routes internally — the
-                                // normal transfer flow never has Spark as both source
-                                // and destination. Treat defensively: still mark the
-                                // Spark card as pending.
-                                self.pending_spark_incoming = Some(pending);
-                                // Fresh transfer — we haven't observed the new
-                                // deposit in Spark's unclaimed list yet.
-                                self.pending_spark_deposit_seen = false;
-                                // A transfer, not a swap: clear any stale swap flag
-                                // so it can't fire a celebration on this claim.
-                                self.pending_spark_incoming_is_swap = false;
-                                // Drop any in-flight auto-claim tracker from a
-                                // prior transfer: its result would otherwise
-                                // land with the new pending set and stamp this
-                                // (unrelated) transfer as Completed. The
-                                // `AutoClaimSparkResult` handler also gates on
-                                // this field for defense in depth.
-                                self.auto_claiming_spark_deposit = None;
-                                self.spark_claim_awaiting_settlement = false;
-                            }
-                        }
-                        self.current_view.next();
-                        self.spark_send_handle = None;
-                        Task::none()
-                    }
+                    } => self.on_transfer_broadcast(cache, amount_sat, destination_kind),
                     HomeMessage::FetchTransferFeeratePreset(preset) => {
-                        if self.is_sending {
-                            return Task::none();
-                        }
-                        // Fire a mempool estimate for the requested target.
-                        // The corresponding button is gated non-pressable while
-                        // `transfer_feerate_loading == Some(preset)`.
-                        self.transfer_feerate_loading = Some(preset);
-                        Task::perform(
-                            async move {
-                                let estimator = FeeEstimator::new();
-                                match preset {
-                                    FeeratePreset::Fast => estimator.get_high_priority_rate().await,
-                                    FeeratePreset::Normal => {
-                                        estimator.get_mid_priority_rate().await
-                                    }
-                                    FeeratePreset::Slow => estimator.get_low_priority_rate().await,
-                                }
-                            },
-                            move |result| {
-                                Message::View(view::Message::Home(
-                                    HomeMessage::TransferFeerateEstimated {
-                                        preset,
-                                        result: result.map(|r| r as u32).map_err(|e| e.to_string()),
-                                    },
-                                ))
-                            },
-                        )
+                        self.fetch_transfer_feerate_preset(preset)
                     }
                     HomeMessage::TransferFeerateEstimated { preset, result } => {
-                        if self.is_sending {
-                            self.transfer_feerate_loading = None;
-                            return Task::none();
-                        }
-                        // If a different preset is now pending, ignore this stale
-                        // response so a late Fast result doesn't clobber a more
-                        // recent Slow click.
-                        if self.transfer_feerate_loading != Some(preset) {
-                            return Task::none();
-                        }
-                        self.transfer_feerate_loading = None;
-                        match result {
-                            Ok(sats_per_vb) => {
-                                let clamped = sats_per_vb.clamp(1, 1000);
-                                self.transfer_feerate = form::Value {
-                                    value: clamped.to_string(),
-                                    valid: true,
-                                    warning: None,
-                                };
-                                // Re-preview the Vault-source PSBT at the new
-                                // feerate (see `vault_transfer_preview_task`).
-                                self.spend_tx_fees = None;
-                                self.vault_transfer_preview_task(cache, &daemon)
-                            }
-                            Err(e) => {
-                                Task::done(Message::View(view::Message::ShowError(
-                                    crate::user_error::UserError::logged(
-                                        "Couldn't fetch the current fee rate",
-                                        "Check your internet connection and try again, or enter a fee rate yourself.",
-                                        crate::user_error::CC_NET_UNKNOWN,
-                                        true,
-                                        format!("fee estimator, preset {preset:?}: {e}"),
-                                    )
-                                    .toast(),
-                                )))
-                            }
-                        }
+                        self.on_transfer_feerate_estimated(&daemon, cache, preset, result)
                     }
                     HomeMessage::SetTransferFeerate(value) => {
-                        if self.is_sending {
-                            return Task::none();
-                        }
-                        let parsed = value.trim().parse::<u64>();
-                        let (valid, warning) = match parsed {
-                            Ok(v) if v > 0 && v <= 1000 => (true, None),
-                            Ok(_) => (false, Some("Feerate must be 1..=1000 sats/vbyte")),
-                            Err(_) if value.trim().is_empty() => {
-                                (false, Some("Feerate is required"))
-                            }
-                            Err(_) => (false, Some("Feerate must be an integer")),
-                        };
-                        self.transfer_feerate = form::Value {
-                            value,
-                            valid,
-                            warning,
-                        };
-                        // Feerate changed → any prior preview fee is now stale.
-                        // Clear it immediately so the confirm screen doesn't
-                        // show a number that no longer matches the input, then
-                        // re-run the preview. The result handler gates on the
-                        // feerate_vb it was dispatched with, so late results
-                        // from the old feerate get dropped.
-                        self.spend_tx_fees = None;
-                        self.vault_transfer_preview_task(cache, &daemon)
+                        self.set_transfer_feerate(&daemon, cache, value)
                     }
                     HomeMessage::OpenWalletPicker(side) => {
-                        if self.wallet_picker == Some(side) {
-                            self.wallet_picker = None;
-                            return Task::none();
-                        }
-                        self.wallet_picker = Some(side);
-                        // The To menu lists other local Cubes the source can
-                        // reach; read the catalog (names only, every Cube
-                        // locked) as it opens.
-                        if side == PickerSide::To && self.current_view.step == 1 {
-                            if let Some(source) = self.other_cube_source(cache) {
-                                self.other_cubes = other_cubes(&cache.datadir_path, &source);
-                            }
-                        }
-                        Task::none()
+                        self.open_transfer_wallet_picker(cache, side)
                     }
                     HomeMessage::CloseWalletPicker => {
                         self.wallet_picker = None;
@@ -1744,471 +1068,38 @@ impl State for GlobalHome {
                     }
                     selection @ (HomeMessage::SelectWalletInPicker(kind)
                     | HomeMessage::SelectTransferWallet(_, kind)) => {
-                        if kind == WalletKind::Spark && self.spark_backend.is_none() {
-                            return Task::none();
-                        }
-                        if !self.vault_available(cache)
-                            && (kind == WalletKind::Vault
-                                || self.transfer_from == Some(WalletKind::Vault)
-                                || self.transfer_to == Some(WalletKind::Vault))
-                        {
-                            return Task::none();
-                        }
-                        // Apply either the legacy popup or inline-row choice.
-                        // The To list excludes the current source. A From
-                        // choice matching To swaps the existing pair.
-                        let side = match selection {
-                            HomeMessage::SelectTransferWallet(side, _) => Some(side),
-                            _ => self.wallet_picker,
-                        };
-                        if let Some(side) = side {
-                            if side == PickerSide::To && self.transfer_from == Some(kind) {
-                                return Task::none();
-                            }
-                            if side == PickerSide::From && self.transfer_from == Some(kind) {
-                                self.wallet_picker = None;
-                                return Task::none();
-                            }
-                            let old_pair = (self.transfer_from, self.transfer_to);
-                            let was_other = self
-                                .transfer_direction
-                                .is_some_and(|direction| direction.is_other_cube());
-                            match side {
-                                // A new source keeps a same-Cube pair: the
-                                // old source becomes the destination when it
-                                // was the destination, or when another Cube
-                                // was (that Cube was bound to the old source).
-                                PickerSide::From => {
-                                    if self.transfer_to == Some(kind) || self.transfer_to.is_none()
-                                    {
-                                        self.transfer_to = self.transfer_from;
-                                    }
-                                    self.transfer_from = Some(kind);
-                                }
-                                PickerSide::To => self.transfer_to = Some(kind),
-                            }
-                            self.transfer_direction =
-                                self.transfer_from.and_then(|from| match self.transfer_to {
-                                    Some(to) => TransferDirection::try_from_pair(from, to),
-                                    None => TransferDirection::to_other_cube(from, cache.chain()),
-                                });
-                            if old_pair != (self.transfer_from, self.transfer_to) {
-                                self.invalidate_transfer_destination();
-                            }
-                            // Leaving another Cube locks it again; a same-Cube
-                            // pair takes its amount on the same card.
-                            if self
-                                .transfer_direction
-                                .is_some_and(|direction| !direction.is_other_cube())
-                            {
-                                if was_other {
-                                    self.reset_other_cube();
-                                }
-                                self.transfer_page = TransferPage::Amount;
-                            }
-                            self.wallet_picker = None;
-                            // Re-validate the entered amount against the new
-                            // source wallet's balance and the new direction's
-                            // min/max limits. Without this, switching from
-                            // (e.g.) Spark to Vault as the source could leave
-                            // a now-too-large amount marked valid.
-                            self.validate_entered_amount(cache);
-                        }
-                        Task::none()
+                        self.select_transfer_wallet(cache, selection, kind)
                     }
-                    HomeMessage::SelectAnotherCube => {
-                        if self.current_view.step != 1
-                            || self.transfer_page != TransferPage::Wallets
-                        {
-                            return Task::none();
-                        }
-                        let Some(direction) = self
-                            .transfer_from
-                            .and_then(|from| TransferDirection::to_other_cube(from, cache.chain()))
-                        else {
-                            return Task::none();
-                        };
-                        if self.transfer_source_wallet(direction, cache).is_none() {
-                            return Task::none();
-                        }
-                        if !self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            self.transfer_to = None;
-                            self.transfer_direction = Some(direction);
-                            self.invalidate_transfer_destination();
-                            self.validate_entered_amount(cache);
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::ContinueFromWallets => {
-                        if self.current_view.step != 1
-                            || self.transfer_page != TransferPage::Wallets
-                        {
-                            return Task::none();
-                        }
-                        let Some(direction) = self.transfer_direction else {
-                            return Task::none();
-                        };
-                        if direction.is_other_cube() {
-                            let Some(source) = self.transfer_source(cache) else {
-                                return Task::none();
-                            };
-                            self.reset_other_cube();
-                            self.other_cubes = other_cubes(&cache.datadir_path, &source);
-                            let selected = self
-                                .other_cubes
-                                .iter()
-                                .find(|choice| choice.refusal.is_none())
-                                .map(|choice| choice.cube_id.clone());
-                            self.transfer_page = TransferPage::OtherCube;
-                            if let Some(id) = selected {
-                                self.select_other_cube(id, cache);
-                            }
-                        } else {
-                            self.transfer_page = TransferPage::Amount;
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::SelectAnotherCube => self.select_another_transfer_cube(cache),
+                    HomeMessage::ContinueFromWallets => self.continue_from_transfer_wallets(cache),
                     HomeMessage::SelectOtherCube(cube_id) => {
-                        if self.transfer_page == TransferPage::OtherCube {
-                            self.select_other_cube(cube_id, cache);
-                        }
-                        Task::none()
+                        self.choose_other_transfer_cube(cache, cube_id)
                     }
                     HomeMessage::SelectOtherCubeWallet(kind) => {
-                        if self.transfer_page == TransferPage::OtherCube
-                            && self.other_cubes.iter().any(|choice| {
-                                Some(choice.cube_id.as_str()) == self.other_cube_selected.as_deref()
-                                    && choice.can_receive(kind)
-                            })
-                        {
-                            self.select_other_wallet(kind, cache);
-                        }
-                        Task::none()
+                        self.choose_other_transfer_wallet(cache, kind)
                     }
-                    HomeMessage::ContinueWithCube => {
-                        if self.transfer_page != TransferPage::OtherCube {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(kind) =
-                            self.transfer_direction.map(|direction| direction.to_kind())
-                        else {
-                            return Task::none();
-                        };
-                        let Some((cube_id, wallet_id)) = self
-                            .other_cube_selected
-                            .as_ref()
-                            .and_then(|id| {
-                                self.other_cubes.iter().find(|choice| {
-                                    &choice.cube_id == id && choice.can_receive(kind)
-                                })
-                            })
-                            .map(|choice| {
-                                let wallet = if kind == WalletKind::Vault {
-                                    choice.vault_wallet_id.clone()
-                                } else {
-                                    None
-                                };
-                                (choice.cube_id.clone(), wallet)
-                            })
-                        else {
-                            return Task::none();
-                        };
-                        self.lock_other_cube();
-                        match ScopedDestination::new(
-                            cache.datadir_path.clone(),
-                            source,
-                            &cube_id,
-                            wallet_id,
-                        ) {
-                            Ok(scope) => {
-                                self.other_scope = Some(scope);
-                                self.transfer_page = TransferPage::Unlock;
-                                return iced::widget::operation::focus(
-                                    crate::pin_input::first_digit_id(),
-                                );
-                            }
-                            Err(refusal) => self.other_error = Some(refusal.reason()),
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::ContinueWithCube => self.continue_to_other_cube_unlock(cache),
                     HomeMessage::PickOtherCubeWallet(cube_id, kind) => {
-                        self.wallet_picker = None;
-                        if self.current_view.step != 1 {
-                            return Task::none();
-                        }
-                        let Some(direction) = self.transfer_from.and_then(|from| {
-                            TransferDirection::to_other_wallet(from, kind, cache.chain())
-                        }) else {
-                            return Task::none();
-                        };
-                        // The same Cube and wallet again: keep its unlock.
-                        if self.other_cube_selected.as_deref() == Some(cube_id.as_str())
-                            && self.transfer_direction == Some(direction)
-                            && self.other_scope.is_some()
-                        {
-                            return Task::none();
-                        }
-                        let Some(wallet) = self.transfer_source_wallet(direction, cache) else {
-                            return Task::none();
-                        };
-                        let source = Source {
-                            cube_id: self.cube_id.clone(),
-                            chain: cache.chain(),
-                            wallet,
-                            app: cache.app_generation,
-                        };
-                        self.reset_other_cube();
-                        self.transfer_to = None;
-                        self.transfer_direction = Some(direction);
-                        self.invalidate_transfer_destination();
-                        self.validate_entered_amount(cache);
-                        self.other_cubes = other_cubes(&cache.datadir_path, &source);
-                        if !self
-                            .other_cubes
-                            .iter()
-                            .any(|choice| choice.cube_id == cube_id && choice.can_receive(kind))
-                        {
-                            self.transfer_page = TransferPage::Wallets;
-                            return Task::none();
-                        }
-                        self.transfer_page = TransferPage::OtherCube;
-                        self.other_cube_selected = Some(cube_id);
-                        self.select_other_wallet(kind, cache);
-                        self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::ContinueWithCube)),
-                        )
+                        self.pick_other_cube_wallet(cache, cube_id, kind)
                     }
-                    HomeMessage::OtherCubePin(message) => {
-                        if self.transfer_page != TransferPage::Unlock
-                            || self.other_phase != (UnlockPhase::Credential { busy: false })
-                        {
-                            return Task::none();
-                        }
-                        if matches!(message, crate::pin_input::Message::Submit) {
-                            return Task::done(Message::View(view::Message::Home(
-                                HomeMessage::UnlockOtherCube,
-                            )));
-                        }
-                        self.other_pin.update(message).map(|message| {
-                            Message::View(view::Message::Home(HomeMessage::OtherCubePin(message)))
-                        })
-                    }
-                    HomeMessage::UnlockOtherCube => {
-                        if self.transfer_page != TransferPage::Unlock
-                            || self.other_phase != (UnlockPhase::Credential { busy: false })
-                            || !self.other_pin.is_complete()
-                        {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let pin = self.other_pin.value();
-                        self.other_pin.clear();
-                        let Some(scope) = self.other_scope.as_mut() else {
-                            return Task::none();
-                        };
-                        match scope.begin_pin(&source, pin) {
-                            Ok(request) => {
-                                self.other_phase = UnlockPhase::Credential { busy: true };
-                                self.other_error = None;
-                                Task::perform(request.run_blocking(), |check| {
-                                    Message::View(view::Message::Home(
-                                        HomeMessage::OtherCubePinChecked(check),
-                                    ))
-                                })
-                            }
-                            Err(refusal) => {
-                                self.other_error = Some(refusal.reason());
-                                Task::none()
-                            }
-                        }
-                    }
+                    HomeMessage::OtherCubePin(message) => self.update_other_cube_pin(message),
+                    HomeMessage::UnlockOtherCube => self.begin_other_cube_pin(cache),
                     HomeMessage::OtherCubePinChecked(check) => {
-                        // A duress PIN is the same emergency here as at the
-                        // Launcher, whatever changed meanwhile: lock the other
-                        // Cube, leave the flow and hand the one-use proof to
-                        // the tab, which runs the existing duress activation.
-                        if let Some(proof) = check.duress_proof() {
-                            let reset = self.update(
-                                daemon.clone(),
-                                cache,
-                                Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                            );
-                            return Task::batch([
-                                reset,
-                                Task::done(Message::View(view::Message::DuressActivateLocal(
-                                    proof,
-                                ))),
-                            ]);
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_mut() else {
-                            return Task::none();
-                        };
-                        let result = scope.accept_pin(&source, check);
-                        self.after_other_credential(&source, result)
+                        self.on_other_cube_pin_checked(&daemon, cache, check)
                     }
-                    HomeMessage::UnlockOtherCubePasskey => {
-                        if self.transfer_page != TransferPage::Unlock
-                            || self.other_phase != (UnlockPhase::Credential { busy: false })
-                        {
-                            return Task::none();
-                        }
-                        #[cfg(target_os = "macos")]
-                        {
-                            let Some(source) = self.transfer_source(cache) else {
-                                return Task::none();
-                            };
-                            let Some(scope) = self.other_scope.as_mut() else {
-                                return Task::none();
-                            };
-                            match scope.begin_passkey(&source) {
-                                Ok(()) => {
-                                    self.other_phase = UnlockPhase::Credential { busy: true };
-                                    self.other_error = None;
-                                }
-                                Err(refusal) => self.other_error = Some(refusal.reason()),
-                            }
-                        }
-                        #[cfg(not(target_os = "macos"))]
-                        {
-                            self.other_error = Some(
-                                coincube_ui::locale::copy(
-                                    "Passkey unlock is available on macOS only.",
-                                )
-                                .into(),
-                            );
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::OtherCubePasskeyPoll => {
-                        #[cfg(target_os = "macos")]
-                        {
-                            if self.other_phase != (UnlockPhase::Credential { busy: true }) {
-                                return Task::none();
-                            }
-                            let Some(source) = self.transfer_source(cache) else {
-                                return Task::none();
-                            };
-                            let Some(scope) = self.other_scope.as_mut() else {
-                                return Task::none();
-                            };
-                            if let Some(result) = scope.poll_passkey(&source) {
-                                return self.after_other_credential(&source, result);
-                            }
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::UnlockOtherCubePasskey => self.begin_other_cube_passkey(cache),
+                    HomeMessage::OtherCubePasskeyPoll => self.poll_other_cube_passkey(cache),
                     HomeMessage::OtherCubeBackendBound(reply) => {
-                        if self.other_phase != UnlockPhase::Checks(1) {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_mut() else {
-                            return Task::none();
-                        };
-                        match scope
-                            .accept_backend_reply(&source, reply)
-                            .and_then(|()| scope.request_address(&source))
-                        {
-                            Ok(request) => {
-                                self.other_phase = UnlockPhase::Checks(2);
-                                Task::perform(request.run(), |reply| {
-                                    Message::View(view::Message::Home(
-                                        HomeMessage::OtherCubeAddress(reply),
-                                    ))
-                                })
-                            }
-                            Err(refusal) => {
-                                self.other_error = Some(refusal.reason());
-                                Task::none()
-                            }
-                        }
+                        self.on_other_cube_backend_bound(cache, reply)
                     }
                     HomeMessage::OtherCubeAddress(reply) => {
-                        if self.other_phase != UnlockPhase::Checks(2) {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_ref() else {
-                            return Task::none();
-                        };
-                        match scope.accept_address(&source, reply) {
-                            Ok(address) => {
-                                self.other_address = Some(OtherReceiveAddress::Bitcoin(address));
-                                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
-                                self.other_error = None;
-                                if self.transfer_page == TransferPage::Unlock {
-                                    self.transfer_page = TransferPage::Amount;
-                                }
-                            }
-                            Err(refusal) => self.other_error = Some(refusal.reason()),
-                        }
-                        Task::none()
+                        self.on_other_cube_address(cache, reply)
                     }
                     HomeMessage::OtherCubeSparkAddress(reply) => {
-                        if self.other_phase != UnlockPhase::Checks(1) {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_ref() else {
-                            return Task::none();
-                        };
-                        match scope.accept_spark_address(&source, reply) {
-                            Ok(address) => {
-                                self.other_address = Some(address);
-                                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
-                                self.other_error = None;
-                                if self.transfer_page == TransferPage::Unlock {
-                                    self.transfer_page = TransferPage::Amount;
-                                }
-                            }
-                            Err(ScopeRefusal::Stale) => {}
-                            Err(refusal) => self.other_error = Some(refusal.reason()),
-                        }
-                        Task::none()
+                        self.on_other_cube_spark_address(cache, reply)
                     }
-                    HomeMessage::ContinueFromUnlock => {
-                        if self.transfer_page == TransferPage::Unlock
-                            && self.other_phase == UnlockPhase::Checks(UNLOCK_CHECKS)
-                            && self.other_address.is_some()
-                        {
-                            self.transfer_page = TransferPage::Amount;
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::LeaveTransfer => {
-                        let origin = self.transfer_origin;
-                        let reset = self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                        );
-                        match origin {
-                            Some(wallet) => Task::batch([
-                                reset,
-                                crate::app::state::redirect(transfer_origin_menu(wallet).clone()),
-                            ]),
-                            None => reset,
-                        }
-                    }
+                    HomeMessage::ContinueFromUnlock => self.continue_after_other_cube_unlock(),
+                    HomeMessage::LeaveTransfer => self.leave_transfer(&daemon, cache),
                     // A wallet page's Transfer is routed by the App, which
                     // switches to the Overview first (`start_transfer_from`).
                     HomeMessage::TransferFromWallet(_) => Task::none(),
@@ -2225,344 +1116,11 @@ impl State for GlobalHome {
                             )))),
                         ])
                     }
-                    HomeMessage::RestartTransfer => {
-                        // Opened from a wallet page, the new transfer starts
-                        // from that wallet again and still returns there.
-                        if let Some(origin) = self.transfer_origin {
-                            return self.start_transfer_from(daemon.clone(), cache, origin);
-                        }
-                        let reset = self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                        );
-                        let open = self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::NextStep)),
-                        );
-                        Task::batch([reset, open])
-                    }
-                    HomeMessage::AmountEdited(amount) => {
-                        if self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                            && (self.current_view.step != 1
-                                || self.transfer_page != TransferPage::Amount)
-                        {
-                            return Task::none();
-                        }
-                        self.entered_amount.value = amount;
-                        self.transfer_max = None;
-                        self.validate_entered_amount(cache);
-                        Task::none()
-                    }
-                    HomeMessage::TransferMax => {
-                        if self.current_view.step != 1 || self.transfer_page != TransferPage::Amount
-                        {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_direction.map(|d| d.from_kind()) else {
-                            return Task::none();
-                        };
-                        self.set_entered_amount(self.max_transfer_amount(source, cache));
-                        self.transfer_max = Some(source);
-                        self.validate_entered_amount(cache);
-                        Task::none()
-                    }
-                    HomeMessage::SignVaultTransferTx => {
-                        if !self.vault_available(cache) {
-                            return Task::none();
-                        }
-                        if !self.destination_is_ready() {
-                            return Task::none();
-                        }
-                        let generation = self.transfer_request_generation;
-                        if let Some(transfer_direction) = self.transfer_direction {
-                            // Shared signer path for every Vault-sourced
-                            // direction — `receive_address_info` is the only
-                            // thing that differs between them.
-                            if matches!(
-                                transfer_direction,
-                                TransferDirection::VaultToSpark
-                                    | TransferDirection::VaultToOtherSpark
-                                    | TransferDirection::VaultToOtherCube
-                            ) {
-                                // Another Cube must still be unlocked for this
-                                // transfer (leaving the page locks it), whichever
-                                // of its wallets receives.
-                                if transfer_direction.is_other_cube() {
-                                    if let Err(refusal) = self.check_other_review_address(cache) {
-                                        return self.restart_other_cube_unlock(refusal);
-                                    }
-                                }
-                                if let Some(address_info) = self.receive_address_info.clone() {
-                                    if let Some(daemon) = daemon {
-                                        let denomination = if matches!(
-                                            self.transfer_unit,
-                                            crate::app::settings::unit::BitcoinDisplayUnit::BTC
-                                        ) {
-                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                        } else {
-                                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                        };
-                                        if let Ok(amount) = Amount::from_str_in(
-                                            &self.entered_amount.value,
-                                            denomination,
-                                        ) {
-                                            let amount_sat = amount.to_sat();
-                                            let destination = address_info.address.to_string();
-                                            let mut destinations = std::collections::HashMap::new();
-                                            destinations.insert(
-                                                address_info.address.as_unchecked().clone(),
-                                                amount_sat,
-                                            );
-
-                                            // Max sweeps every owned coin to the
-                                            // destination, as the preview priced it.
-                                            let sweep = self
-                                                .sends_max()
-                                                .then(|| vault_sweep_coins(cache).0);
-                                            let script = address_info.address.script_pubkey();
-                                            let daemon_clone = daemon.clone();
-                                            let wallet = self.wallet.clone();
-                                            let cache_clone =
-                                                (cache.datadir_path.clone(), cache.network);
-                                            // User-picked feerate from the confirm-screen feerate
-                                            // input (§Design section 9). Parsing is already gated
-                                            // on `transfer_feerate.valid`, so a `parse` failure
-                                            // here indicates a bypass — short-circuit instead of
-                                            // silently falling back to an estimator.
-                                            let feerate_vb = match self
-                                                .transfer_feerate
-                                                .value
-                                                .trim()
-                                                .parse::<u64>()
-                                            {
-                                                Ok(v) if v > 0 => v,
-                                                _ => {
-                                                    return Task::done(Message::View(
-                                                        view::Message::Home(HomeMessage::Error(
-                                                            TransferError::InvalidFeerate,
-                                                        )),
-                                                    ));
-                                                }
-                                            };
-                                            self.is_sending = true;
-                                            self.transfer_feerate_loading = None;
-                                            self.next_psbt_request_id =
-                                                self.next_psbt_request_id.wrapping_add(1);
-                                            let request_id = self.next_psbt_request_id;
-                                            self.active_psbt_request = Some(request_id);
-                                            self.transfer_spend_tx = None;
-                                            self.transfer_psbt_ready_for = None;
-                                            self.transfer_signed = false;
-                                            return Task::perform(
-                                                async move {
-                                                    let built = match &sweep {
-                                                        Some(coins) => {
-                                                            daemon_clone
-                                                                .create_spend_tx(
-                                                                    coins,
-                                                                    &HashMap::new(),
-                                                                    feerate_vb,
-                                                                    destinations
-                                                                        .keys()
-                                                                        .next()
-                                                                        .cloned(),
-                                                                )
-                                                                .await
-                                                        }
-                                                        None => {
-                                                            daemon_clone
-                                                                .create_spend_tx(
-                                                                    &[],
-                                                                    &destinations,
-                                                                    feerate_vb,
-                                                                    None,
-                                                                )
-                                                                .await
-                                                        }
-                                                    };
-                                                    let psbt = match built {
-                                                        Ok(CreateSpendResult::Success {
-                                                            psbt,
-                                                            ..
-                                                        }) => psbt,
-                                                        Ok(
-                                                            CreateSpendResult::InsufficientFunds {
-                                                                missing,
-                                                            },
-                                                        ) => {
-                                                            return Err(format!("Insufficient funds: {} sats missing", missing));
-                                                        }
-                                                        Err(e) => {
-                                                            return Err(format!(
-                                                                "Failed to create transaction: {}",
-                                                                e
-                                                            ));
-                                                        }
-                                                    };
-
-                                                    if sweep.is_some()
-                                                        && paid_to(&psbt, &script).to_sat()
-                                                            != amount_sat
-                                                    {
-                                                        return Err(coincube_ui::locale::copy("The Vault balance changed. Go back and choose Max again.").to_string());
-                                                    }
-
-                                                    daemon_clone
-                                                        .update_spend_tx(&psbt)
-                                                        .await
-                                                        .map_err(|e| {
-                                                            format!("Failed to save PSBT: {}", e)
-                                                        })?;
-
-                                                    Ok((psbt, wallet, cache_clone))
-                                                },
-                                                move |result| {
-                                                    Message::View(view::Message::Home(
-                                                        HomeMessage::TransferPsbtReady {
-                                                            request_id,
-                                                            generation,
-                                                            direction: transfer_direction,
-                                                            destination,
-                                                            amount_sat,
-                                                            feerate_vb,
-                                                            result,
-                                                        },
-                                                    ))
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::ConfirmTransfer => {
-                        if !self.destination_is_ready() {
-                            return Task::none();
-                        }
-                        if self
-                            .transfer_direction
-                            .is_some_and(Self::direction_uses_vault)
-                            && !self.vault_available(cache)
-                        {
-                            return Task::none();
-                        }
-                        if let Some(transfer_direction) = self.transfer_direction {
-                            if matches!(
-                                transfer_direction,
-                                TransferDirection::VaultToSpark
-                                    | TransferDirection::VaultToOtherSpark
-                                    | TransferDirection::VaultToOtherCube
-                            ) {
-                                // Another Cube must still be unlocked for this
-                                // transfer (leaving the page locks it), whichever
-                                // of its wallets receives.
-                                if transfer_direction.is_other_cube() {
-                                    if let Err(refusal) = self.check_other_review_address(cache) {
-                                        return self.restart_other_cube_unlock(refusal);
-                                    }
-                                }
-                                // Post-sign broadcast path for both Vault-sourced
-                                // directions. The PSBT was built earlier in the same
-                                // shared `SignVaultTransferTx` handler against the
-                                // destination address stored in `receive_address_info`.
-                                if self.transfer_psbt_ready_for
-                                    != Some((
-                                        self.next_psbt_request_id,
-                                        self.transfer_request_generation,
-                                        transfer_direction,
-                                    ))
-                                {
-                                    return Task::none();
-                                }
-                                if self.transfer_signed {
-                                    if let Some(spend_tx) = &self.transfer_spend_tx {
-                                        if let Some(daemon) = daemon {
-                                            let txid = spend_tx.psbt.unsigned_tx.compute_txid();
-                                            let daemon_clone = daemon.clone();
-                                            let to_kind = transfer_direction.to_kind();
-                                            let Ok(amount_sat) = Amount::from_str_in(
-                                                &self.entered_amount.value,
-                                                if matches!(
-                                                    self.transfer_unit,
-                                                    BitcoinDisplayUnit::BTC
-                                                ) {
-                                                    coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                                } else {
-                                                    coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                                },
-                                            )
-                                            .map(|a| a.to_sat()) else {
-                                                // Signed PSBT exists but the amount
-                                                // field no longer parses — refuse to
-                                                // broadcast rather than emit a
-                                                // misleading zero-amount pending card.
-                                                self.entered_amount.valid = false;
-                                                return Task::done(Message::View(
-                                                    view::Message::ShowError(
-                                                        "Invalid amount; please re-enter before broadcasting.".to_string(),
-                                                    ),
-                                                ));
-                                            };
-                                            self.is_sending = true;
-
-                                            return Task::perform(
-                                                async move {
-                                                    daemon_clone
-                                                        .broadcast_spend_tx(&txid)
-                                                        .await
-                                                        .map_err(|e| {
-                                                            format!("Failed to broadcast: {}", e)
-                                                        })
-                                                },
-                                                move |result| match result {
-                                                    Ok(()) => match to_kind {
-                                                        // Vault→Spark: reuse the Spark-send
-                                                        // success handler so both legs land
-                                                        // in the same `PendingDeposit` state.
-                                                        WalletKind::Spark => {
-                                                            Message::View(view::Message::Home(
-                                                                HomeMessage::TransferBroadcast {
-                                                                    amount_sat,
-                                                                    destination_kind: to_kind,
-                                                                },
-                                                            ))
-                                                        }
-                                                        // Vault to Vault is only ever
-                                                        // another Cube's Vault: nothing is
-                                                        // pending in this Cube.
-                                                        WalletKind::Vault => {
-                                                            Message::View(view::Message::Home(
-                                                                HomeMessage::TransferSuccessful,
-                                                            ))
-                                                        }
-                                                    },
-                                                    Err(e) => Message::View(view::Message::Home(
-                                                        HomeMessage::Error(
-                                                            TransferError::BroadcastFailed {
-                                                                from: WalletKind::Vault,
-                                                                detail: e,
-                                                            },
-                                                        ),
-                                                    )),
-                                                },
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    return Task::done(Message::View(view::Message::ShowError(
-                                        "Please sign the transaction first".to_string(),
-                                    )));
-                                }
-                            }
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::RestartTransfer => self.restart_transfer(&daemon, cache),
+                    HomeMessage::AmountEdited(amount) => self.edit_transfer_amount(cache, amount),
+                    HomeMessage::TransferMax => self.use_transfer_max(cache),
+                    HomeMessage::SignVaultTransferTx => self.sign_vault_transfer_tx(daemon, cache),
+                    HomeMessage::ConfirmTransfer => self.confirm_vault_transfer(daemon, cache),
                     HomeMessage::Error(err) => {
                         // `TransferError` already knows which wallet is unwell
                         // and whether anything was sent; `report_transfer` turns
@@ -2578,435 +1136,41 @@ impl State for GlobalHome {
                     HomeMessage::SwapSettledAwaitingArrival {
                         amount_sat,
                         deposit_seen,
-                    } => {
-                        // A SideShift swap just settled: bitcoin is en route to the
-                        // Spark wallet's static on-chain deposit address.
-                        // Structurally that's identical to a Vault→Spark transfer
-                        // arrival — an on-chain deposit that matures and must be
-                        // claimed — so register it exactly like one and let the
-                        // watcher below auto-claim it. `is_swap` makes the eventual
-                        // claim additionally fire the "bitcoin received" celebration.
-                        //
-                        // Don't clobber an in-flight transfer: if we're already
-                        // tracking a pending incoming deposit, skip global tracking
-                        // (the swap stays claimable from the Receive panel's
-                        // pending-deposits card) rather than corrupting the
-                        // transfer's reconciliation.
-                        if self.pending_spark_incoming.is_some() {
-                            return Task::none();
-                        }
-                        self.pending_spark_incoming = Some(PendingTransfer {
-                            amount: Amount::from_sat(amount_sat),
-                            stage: TransferStage::PendingDeposit,
-                        });
-                        // A restored shift saw its deposit unclaimed just now; if
-                        // the SDK claims it before the list below is read, an
-                        // empty list must still read as claimed.
-                        self.pending_spark_deposit_seen = deposit_seen;
-                        self.pending_spark_incoming_is_swap = true;
-                        self.auto_claiming_spark_deposit = None;
-                        // Reconcile immediately — the deposit may already be in the
-                        // unclaimed list (it can land before we register here), and
-                        // otherwise we'd wait for the next bridge event.
-                        Task::done(Message::View(view::Message::Home(
-                            HomeMessage::SparkDepositsChanged,
-                        )))
-                    }
+                    } => self.on_swap_settled_awaiting_arrival(amount_sat, deposit_seen),
                     HomeMessage::SwapClaimObserved { amount_sat } => {
-                        // Only a swap's tracker is ours to retire: a
-                        // Vault→Spark transfer's tracker belongs to
-                        // that transfer. Already completed by our own claim
-                        // (`complete_spark_auto_claim` clears `is_swap`), it
-                        // has celebrated, so this is a no-op then.
-                        if !self.pending_spark_incoming_is_swap {
-                            return Task::none();
-                        }
-                        self.pending_spark_incoming = None;
-                        self.pending_spark_deposit_seen = false;
-                        self.pending_spark_incoming_is_swap = false;
-                        self.auto_claiming_spark_deposit = None;
-                        self.spark_claim_awaiting_settlement = false;
-                        Task::done(Message::ShowReceivedCelebration {
-                            context: "spark-receive".to_string(),
-                            amount_sat,
-                            payment_id: None,
-                        })
+                        self.on_swap_claim_observed(amount_sat)
                     }
-                    HomeMessage::SparkDepositsChanged => {
-                        // The Spark bridge signalled a change to the unclaimed-deposit
-                        // list — could be a new deposit appearing, one maturing, or one
-                        // being claimed. Re-query the list; the `SparkDepositsLoaded`
-                        // handler decides what to do with it.
-                        let Some(spark) = self.spark_backend.clone() else {
-                            return Task::none();
-                        };
-                        // Only act if we have a pending inbound Spark transfer to
-                        // correlate against. Without one there's nothing for us to
-                        // auto-claim or clear — the Spark Receive panel handles the
-                        // user-facing pending-deposit card independently.
-                        if self.pending_spark_incoming.is_none() {
-                            return Task::none();
-                        }
-                        Task::perform(
-                            async move { spark.list_unclaimed_deposits().await },
-                            |result| match result {
-                                Ok(ok) => Message::View(view::Message::Home(
-                                    HomeMessage::SparkDepositsLoaded(ok.deposits),
-                                )),
-                                Err(e) => {
-                                    log::warn!("list_unclaimed_deposits failed: {e:?}");
-                                    Message::CacheUpdated
-                                }
-                            },
-                        )
-                    }
+                    HomeMessage::SparkDepositsChanged => self.on_spark_deposits_changed(),
                     HomeMessage::SparkDepositsLoaded(deposits) => {
-                        // No pending transfer → nothing to reconcile.
-                        if self.pending_spark_incoming.is_none() {
-                            return Task::none();
-                        }
-                        // Empty list → whatever was pending got claimed (either by
-                        // us or by the user from the Spark Receive panel). Only
-                        // interpret it that way once we've previously observed
-                        // our deposit in the list: the inbound tx (the Bitcoin
-                        // broadcast for VaultToSpark) doesn't appear until it lands on-chain, so an unrelated
-                        // `SparkDepositsChanged` firing during that window (e.g.
-                        // a prior deposit being claimed from the Receive panel)
-                        // would otherwise clear the badge while our transfer is
-                        // still in flight.
-                        if deposits.is_empty() {
-                            if !self.pending_spark_deposit_seen {
-                                return Task::none();
-                            }
-                            // The deposit was claimed by someone other than our own
-                            // auto-claim below — the Spark SDK auto-claims static
-                            // deposits, and the user can claim from the Receive
-                            // panel — so `AutoClaimSparkResult` (which advances the
-                            // cross-network Receive flow off "Bitcoin arriving")
-                            // never ran. Nudge the flow to its arrived state here so
-                            // it doesn't hang. This is the *only* signal for an
-                            // SDK-silent claim; it's idempotent (the flow transitions
-                            // once and ignores it otherwise), so it can't double up
-                            // with a claim path that already fired. Non-swap
-                            // transfers (Vault→Spark) don't touch it.
-                            let was_swap = self.pending_spark_incoming_is_swap;
-                            let amount_sat = self
-                                .pending_spark_incoming
-                                .as_ref()
-                                .map(|p| p.amount.to_sat())
-                                .unwrap_or(0);
-                            self.pending_spark_incoming = None;
-                            self.pending_spark_deposit_seen = false;
-                            self.pending_spark_incoming_is_swap = false;
-                            self.auto_claiming_spark_deposit = None;
-                            self.spark_claim_awaiting_settlement = false;
-                            if was_swap {
-                                return Task::done(Message::View(
-                                    view::Message::SparkSideshiftReceive(
-                                        view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
-                                    ),
-                                ));
-                            }
-                            return Task::none();
-                        }
-                        // We've now observed at least one deposit in the list
-                        // while our transfer is pending — remember this so a
-                        // later empty list can be interpreted as "claimed"
-                        // rather than "never arrived" (see above).
-                        self.pending_spark_deposit_seen = true;
-                        // One auto-claim at a time: if a claim is in flight,
-                        // wait for its `DepositsChanged` follow-up before
-                        // picking the next candidate. This covers both the
-                        // "same deposit re-firing" and "different mature
-                        // deposit arrived" cases in one check.
-                        if self.auto_claiming_spark_deposit.is_some() {
-                            return Task::none();
-                        }
-                        // Pick the first mature, error-free deposit and
-                        // auto-claim it. The bridge fires `DepositsChanged`
-                        // again on success, which re-enters this handler and
-                        // clears the indicator.
-                        let Some(candidate) = deposits
-                            .iter()
-                            .find(|d| d.is_mature && d.claim_error.is_none())
-                        else {
-                            return Task::none();
-                        };
-                        let Some(spark) = self.spark_backend.clone() else {
-                            return Task::none();
-                        };
-                        let txid = candidate.txid.clone();
-                        let vout = candidate.vout;
-                        self.auto_claiming_spark_deposit = Some((txid.clone(), vout));
-                        let txid_for_msg = txid.clone();
-                        Task::perform(
-                            async move { spark.claim_deposit(txid, vout).await },
-                            move |result| {
-                                Message::View(view::Message::Home(
-                                    HomeMessage::AutoClaimSparkResult {
-                                        txid: txid_for_msg.clone(),
-                                        vout,
-                                        // `amount_sat` is `None` for a pre-maturity
-                                        // claim (SDK 0.25.0+): the transfer settles
-                                        // asynchronously and only `PaymentSucceeded`
-                                        // knows what actually landed. Keep it unknown
-                                        // rather than showing the pre-fee deposit.
-                                        // A deferral (SDK 0.28.0+) claimed nothing:
-                                        // logged like a failure, and the indicator
-                                        // stays pending until the SDK's own claim
-                                        // fires `DepositsChanged`.
-                                        result: match result {
-                                            Ok(ok) => match &ok.deferred {
-                                                Some(deferral) => Err(
-                                                    crate::app::state::spark::receive::claim_deferral_notice(
-                                                        deferral,
-                                                    ),
-                                                ),
-                                                None => Ok(ok.amount_sat),
-                                            },
-                                            Err(e) => Err(e.to_string()),
-                                        },
-                                    },
-                                ))
-                            },
-                        )
+                        self.on_spark_deposits_loaded(deposits)
                     }
                     HomeMessage::AutoClaimSparkResult { txid, vout, result } => {
-                        // Stale result guard: if the tracker no longer matches
-                        // this (txid, vout) it belongs to a previous transfer —
-                        // e.g. a second Spark-destined transfer broadcast while
-                        // this claim was in flight. Stamping Completed on the
-                        // now-current `pending_spark_incoming` would prematurely
-                        // hide the new badge.
-                        if self.auto_claiming_spark_deposit.as_ref() != Some(&(txid, vout)) {
-                            return Task::none();
-                        }
-                        // Success: mark the indicator Completed so the view hides
-                        // it immediately and `BackToHome` can reap it. The bridge's follow-up
-                        // `DepositsChanged` will still re-enter the watcher and
-                        // clear the field outright. Failure: log and surface so
-                        // the user can retry from the Receive panel.
-                        self.auto_claiming_spark_deposit = None;
-                        match result {
-                            Ok(None) => {
-                                // Accepted before maturity: nothing has landed
-                                // yet and the settled amount is unknown. Leave
-                                // the indicator pending and let
-                                // `SparkPaymentSucceeded` finish the job.
-                                self.spark_claim_awaiting_settlement = true;
-                                Task::none()
-                            }
-                            Ok(Some(amount)) => self.complete_spark_auto_claim(amount),
-                            Err(e) => {
-                                log::warn!("Auto-claim of Spark deposit failed: {e}");
-                                Task::none()
-                            }
-                        }
+                        self.on_auto_claim_spark_result(txid, vout, result)
                     }
                     HomeMessage::SparkPaymentSucceeded { amount_sat } => {
-                        if !self.spark_claim_awaiting_settlement {
-                            return Task::none();
-                        }
-                        self.spark_claim_awaiting_settlement = false;
-                        self.complete_spark_auto_claim(amount_sat)
+                        self.on_spark_payment_succeeded(amount_sat)
                     }
 
-                    HomeMessage::TransferSuccessful => {
-                        self.current_view.next();
-                        self.is_sending = false;
-                        // A Vault-to-Vault transfer goes to another Cube; it
-                        // locks again now that the transaction is broadcast.
-                        if self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            self.finish_other_cube();
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::BackToHome => {
-                        self.current_view.reset();
-                        self.transfer_origin = None;
-                        self.transfer_page = TransferPage::Wallets;
-                        self.reset_other_cube();
-                        self.transfer_direction = None;
-                        self.transfer_from = None;
-                        self.transfer_to = None;
-                        self.wallet_picker = None;
-                        self.entered_amount = form::Value::default();
-                        self.transfer_max = None;
-                        self.invalidate_transfer_destination();
-                        self.is_sending = false;
-                        self.transfer_spend_tx = None;
-                        self.transfer_signed = false;
-                        self.spark_send_handle = None;
-                        self.spark_send_fee_sat = None;
-                        self.spend_tx_fees = None;
-                        self.transfer_feerate = default_transfer_feerate();
-                        self.transfer_feerate_loading = None;
-                        if self
-                            .pending_spark_incoming
-                            .map(|pending| pending.stage == TransferStage::Completed)
-                            .unwrap_or(false)
-                        {
-                            self.pending_spark_incoming = None;
-                            self.pending_spark_deposit_seen = false;
-                            self.pending_spark_incoming_is_swap = false;
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::TransferSuccessful => self.on_transfer_successful(),
+                    HomeMessage::BackToHome => self.back_to_home(),
                     HomeMessage::TransferDestinationReady {
                         generation,
                         direction,
                         result,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction) {
-                            return Task::none();
-                        }
-                        let (address, index) = match result {
-                            Ok(address) => address,
-                            Err(error) => {
-                                return Task::done(Message::View(view::Message::Home(
-                                    HomeMessage::Error(error),
-                                )));
-                            }
-                        };
-                        // Parse BIP-21 URI format: bitcoin:address?params or plain address
-                        let addr_str = address
-                            .strip_prefix("bitcoin:")
-                            .unwrap_or(&address)
-                            .split('?')
-                            .next()
-                            .unwrap_or(&address);
-
-                        if let Ok(parsed) = Address::from_str(addr_str) {
-                            let network = cache.network;
-                            match parsed.require_network(network) {
-                                Ok(checked_address) => {
-                                    self.receive_address_info = Some(ReceiveAddressInfo {
-                                        address: checked_address,
-                                        index,
-                                        labels: HashMap::new(),
-                                    });
-                                    self.destination_ready = Some((generation, direction));
-                                    // For Vault-sourced directions the Fees/Total
-                                    // rows can't be populated until we can call
-                                    // `create_spend_tx` — which needs this address.
-                                    // Kick off the dry-run preview now that it's in
-                                    // place. No-op for other directions.
-                                    return self.vault_transfer_preview_task(cache, &daemon);
-                                }
-                                Err(_) => {
-                                    log::error!(
-                                        "Address {} is not valid for network {:?}",
-                                        addr_str,
-                                        network
-                                    );
-                                }
-                            }
-                        } else {
-                            log::error!(
-                                "Failed to parse the transfer's on-chain address: {}",
-                                addr_str
-                            );
-                        }
-                        Task::none()
-                    }
+                    } => self.on_transfer_destination_ready(
+                        &daemon, cache, generation, direction, result,
+                    ),
                     HomeMessage::TransferDestinationFailed {
                         generation,
                         direction,
                         error,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction) {
-                            return Task::none();
-                        }
-                        Task::done(Message::View(view::Message::Home(HomeMessage::Error(
-                            error,
-                        ))))
-                    }
+                    } => self.on_transfer_destination_failed(generation, direction, error),
                     HomeMessage::RefreshSparkBalance => {
                         self.load_spark_balance().unwrap_or_else(Task::none)
                     }
-                    HomeMessage::SparkLoadRetry => {
-                        // Only the fallback poll bumps the retry
-                        // counter — SDK-event-driven refreshes
-                        // (`RefreshSparkBalance`) must not, or a burst
-                        // of payment / deposit events on cold start
-                        // could blow through the cap before `Synced`
-                        // lands and prematurely flip the gate.
-                        //
-                        // The counter advances on every tick (wall-
-                        // clock semantics) so a single slow get_info
-                        // can't postpone the cap indefinitely. The
-                        // single-flight guard lives inside
-                        // `load_spark_balance`, which returns `None`
-                        // when a previous RPC is still in flight — so
-                        // we don't start an overlapping fetch even
-                        // though the tick still counts.
-                        self.spark_load_retry_count = self.spark_load_retry_count.saturating_add(1);
-                        // Final-attempt graceful exit: if the fallback
-                        // poll has hit its cap without ever seeing a
-                        // `Synced`, release the loading UI rather than
-                        // leave the user staring at `…` indefinitely.
-                        // Shows whatever the last `get_info` returned —
-                        // best-effort fallback when the event path is
-                        // genuinely broken. Skipped when no response
-                        // ever landed (`spark_balance` is still the
-                        // `Amount::ZERO` default): publishing that zero
-                        // would mislead the user and become a false
-                        // source cap in `validate_entered_amount`. In
-                        // that scenario we deliberately stay in the
-                        // loading state — Transfer remains disabled
-                        // and the placeholder honestly reflects that
-                        // we don't know the balance.
-                        if self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
-                            && !self.spark_balance_loaded
-                            && self.spark_balance_received
-                        {
-                            self.spark_balance_loaded = true;
-                        }
-                        self.load_spark_balance().unwrap_or_else(Task::none)
-                    }
-                    HomeMessage::SparkSyncedObserved => {
-                        // Flip the synced gate, but do NOT flip
-                        // `spark_balance_loaded` here — the value
-                        // currently in `spark_balance` may still be
-                        // the SDK's pre-sync persisted snapshot.
-                        // `mod.rs` dispatches `RefreshSparkBalance`
-                        // alongside this message on every `Synced`;
-                        // the fresh `SparkBalanceUpdated` it triggers
-                        // is what flips the gate (its handler checks
-                        // `spark_synced_seen`), so the placeholder
-                        // only goes away once the post-sync value
-                        // has actually landed.
-                        self.spark_synced_seen = true;
-                        // If a get_info is already in flight, the
-                        // companion `RefreshSparkBalance` will be
-                        // skipped by the in-flight guard. Mark the
-                        // pending response as stale-on-arrival so
-                        // `SparkBalanceUpdated` discards it instead
-                        // of flipping the gate on a pre-Synced value.
-                        if self.spark_balance_loading {
-                            self.spark_pending_resync = true;
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::SparkLoadFailed => {
-                        // Soft-fail terminal: release the in-flight
-                        // guard so the next poll tick or SparkEvent
-                        // can fire a fresh `get_info`. If a `Synced`
-                        // arrived during the failed fetch, the
-                        // companion `RefreshSparkBalance` was skipped
-                        // by the in-flight guard — fire a fresh one
-                        // now so the placeholder can converge.
-                        self.spark_balance_loading = false;
-                        self.spark_balance_error = true;
-                        if self.spark_pending_resync {
-                            self.spark_pending_resync = false;
-                            return self.load_spark_balance().unwrap_or_else(Task::none);
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::SparkLoadRetry => self.retry_spark_balance(),
+                    HomeMessage::SparkSyncedObserved => self.on_spark_synced(),
+                    HomeMessage::SparkLoadFailed => self.on_spark_balance_failed(),
                     HomeMessage::TransferPsbtReady {
                         request_id,
                         generation,
@@ -3015,202 +1179,27 @@ impl State for GlobalHome {
                         amount_sat,
                         feerate_vb,
                         result,
-                    } => {
-                        if self.active_psbt_request != Some(request_id) {
-                            return Task::none();
-                        }
-                        // This result owns the busy state. Release it even if
-                        // the fee or amount changed while the PSBT was built;
-                        // otherwise a rejected result strands Back and Sign.
-                        self.active_psbt_request = None;
-                        self.is_sending = false;
-                        let denomination = if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC)
-                        {
-                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                        } else {
-                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                        };
-                        if !self.vault_available(cache)
-                            || !self.destination_response_is_current(generation, direction)
-                            || !self.destination_is_ready()
-                            || self
-                                .receive_address_info
-                                .as_ref()
-                                .map(|info| info.address.to_string())
-                                != Some(destination)
-                            || Amount::from_str_in(&self.entered_amount.value, denomination)
-                                .ok()
-                                .map(|amount| amount.to_sat())
-                                != Some(amount_sat)
-                            || self.transfer_feerate.value.trim().parse::<u64>().ok()
-                                != Some(feerate_vb)
-                        {
-                            return Task::none();
-                        }
-                        // Leaving the page while this PSBT was built locked the
-                        // other Cube: open no signer; its unlock starts over.
-                        if direction.is_other_cube() {
-                            if let Err(refusal) = self.check_other_review_address(cache) {
-                                return self.restart_other_cube_unlock(refusal);
-                            }
-                        }
-                        match result {
-                            Ok((psbt, wallet, (datadir_path, network))) => {
-                                if let Some(wallet) = wallet {
-                                    use coincube_core::wallet_descriptor::SpendAnalysis;
-                                    let descriptor = &wallet.main_descriptor;
-                                    let sigs = match descriptor.spend_info(&psbt) {
-                                        Ok(info) => info,
-                                        Err(e) => {
-                                            let err_msg =
-                                                format!("Failed to get signature info: {}", e);
-                                            return Task::done(Message::View(
-                                                view::Message::ShowError(err_msg),
-                                            ));
-                                        }
-                                    };
-
-                                    let spend_amount =
-                                        psbt.unsigned_tx.output.iter().map(|out| out.value).sum();
-
-                                    // Use primary path if no inputs are using a relative locktime
-                                    let use_primary_path = !psbt
-                                        .unsigned_tx
-                                        .input
-                                        .iter()
-                                        .map(|txin| txin.sequence)
-                                        .any(|seq| seq.is_relative_lock_time());
-                                    let max_vbytes = descriptor
-                                        .spend_max_vbytes(&psbt.unsigned_tx, use_primary_path);
-                                    let fees = psbt.fee().expect("Fees should be present");
-                                    self.spend_tx_fees = Some(fees);
-
-                                    // Create minimal SpendTx
-                                    let spend_tx = SpendTx {
-                                        network,
-                                        psbt: psbt.clone(),
-                                        coins: std::collections::HashMap::new(), // Empty for transfer
-                                        labels: HashMap::new(),
-                                        sigs,
-                                        change_indexes: vec![],
-                                        spend_amount,
-                                        fee_amount: None,
-                                        max_vbytes,
-                                        status: crate::daemon::model::SpendStatus::Pending,
-                                        updated_at: Some(
-                                            std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap()
-                                                .as_secs()
-                                                as u32,
-                                        ),
-                                        kind: crate::daemon::model::TransactionKind::SendToSelf,
-                                    };
-
-                                    self.transfer_spend_tx = Some(spend_tx);
-                                    self.transfer_psbt_ready_for =
-                                        Some((request_id, generation, direction));
-
-                                    // Create the SignModal. This send-to-self
-                                    // transfer signs locally only — no nested
-                                    // Keychain flow.
-                                    let sign_modal = SignModal::new(
-                                        std::collections::HashSet::new(),
-                                        wallet,
-                                        datadir_path,
-                                        network,
-                                        true,
-                                        None,
-                                        None,
-                                        false,
-                                    );
-
-                                    self.modal = Modal::Sign(Box::new(sign_modal));
-                                } else {
-                                    return Task::done(Message::View(view::Message::ShowError(
-                                        "Wallet not available".to_string(),
-                                    )));
-                                }
-                            }
-                            Err(e) => {
-                                return Task::done(Message::View(view::Message::ShowError(
-                                    crate::user_error::UserError::logged(
-                                        "Couldn't prepare that transfer for signing",
-                                        "Try again. If it keeps failing, contact support and quote the reference below.",
-                                        crate::user_error::CC_SPEND,
-                                        true,
-                                        e,
-                                    )
-                                    .toast(),
-                                )));
-                            }
-                        }
-                        Task::none()
-                    }
+                    } => self.on_transfer_psbt_ready(
+                        cache,
+                        (request_id, generation, direction),
+                        destination,
+                        amount_sat,
+                        feerate_vb,
+                        result,
+                    ),
                     HomeMessage::TransferSigningComplete {
                         request_id,
                         generation,
                         direction,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction)
-                            || !self.destination_is_ready()
-                            || self.transfer_psbt_ready_for
-                                != Some((request_id, generation, direction))
-                            || self.transfer_spend_tx.is_none()
-                            || !matches!(self.modal, Modal::Sign(_))
-                        {
-                            return Task::none();
-                        }
-                        self.transfer_signed = true;
-                        self.modal = Modal::None;
-                        self.is_sending = false;
-                        Task::none()
-                    }
+                    } => self.on_transfer_signing_complete(request_id, generation, direction),
                     HomeMessage::TransferPsbtPreviewReady {
                         generation,
                         direction,
                         feerate_vb,
                         result,
-                    } => {
-                        if !self.vault_available(cache) {
-                            return Task::none();
-                        }
-                        if !self.destination_response_is_current(generation, direction)
-                            || !self.destination_is_ready()
-                        {
-                            return Task::none();
-                        }
-                        // Drop late results: if the user has since edited the
-                        // feerate, `self.transfer_feerate.value` won't parse to
-                        // the feerate this preview was built against. Keeping
-                        // only the latest-feerate result prevents the Fees row
-                        // flickering to out-of-order values during fast typing.
-                        let current_feerate =
-                            self.transfer_feerate.value.trim().parse::<u64>().ok();
-                        if current_feerate != Some(feerate_vb) {
-                            return Task::none();
-                        }
-                        match result {
-                            Ok((fees, received)) => {
-                                self.spend_tx_fees = Some(fees);
-                                // A sweep's output is the balance less this fee.
-                                if self.sends_max() {
-                                    self.set_entered_amount(received);
-                                }
-                            }
-                            Err(e) => {
-                                // Quiet failure: the user sees blank Fees/Total,
-                                // and the real `SignVaultTransferTx` path will
-                                // surface any error (insufficient funds etc.)
-                                // if they click through. Logging only.
-                                log::debug!(
-                                    "Vault transfer PSBT preview failed at feerate {feerate_vb}: {e}"
-                                );
-                                self.spend_tx_fees = None;
-                            }
-                        }
-                        Task::none()
-                    }
+                    } => self.on_transfer_psbt_preview_ready(
+                        cache, generation, direction, feerate_vb, result,
+                    ),
                 }
             }
             // Transfer destination fetches use TransferDestinationReady with a
@@ -3222,121 +1211,18 @@ impl State for GlobalHome {
                 Task::none()
             }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
-                if let Some(daemon) = daemon {
-                    match self.labels_edited.update(
-                        daemon,
-                        message,
-                        self.receive_address_info
-                            .iter_mut()
-                            .map(|info| info as &mut dyn crate::daemon::model::LabelsLoader),
-                    ) {
-                        Ok(cmd) => cmd,
-                        Err(e) => {
-                            let err_msg = crate::user_error::report(&e);
-                            Task::done(Message::View(view::Message::ShowError(err_msg)))
-                        }
-                    }
-                } else {
-                    Task::none()
-                }
+                self.update_transfer_address_labels(daemon, message)
             }
-            Message::View(view::Message::ShowQrCode(_)) => {
-                if let Some(info) = &self.receive_address_info {
-                    if let Some(modal) = ShowQrCodeModal::new(&info.address, info.index) {
-                        self.modal = Modal::ShowQrCode(modal);
-                    }
-                }
-                Task::none()
-            }
-            Message::View(view::Message::Close) => {
-                // Only leaving the signer abandons the spend. Closing the
-                // QR card over Review keeps a signed transfer signed.
-                if matches!(self.modal, Modal::Sign(_)) {
-                    self.transfer_spend_tx = None;
-                    self.transfer_psbt_ready_for = None;
-                    self.transfer_signed = false;
-                }
-                self.modal = Modal::None;
-                Task::none()
-            }
-            Message::Updated(result) => {
-                let persisted = result.is_ok();
-                let signing_request = self.transfer_psbt_ready_for;
-                let wallet = self.wallet.clone();
-                if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
-                    if let Some(ref mut spend_tx) = self.transfer_spend_tx {
-                        use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                        let task = sign_modal.update(daemon, Message::Updated(result), spend_tx);
-                        let threshold_met = wallet
-                            .as_ref()
-                            .and_then(|wallet| {
-                                crate::app::state::vault::replay::spend_info_for_chain(
-                                    wallet.chain,
-                                    &wallet.main_descriptor,
-                                    &spend_tx.psbt,
-                                )
-                                .ok()
-                            })
-                            .is_some_and(|info| {
-                                let primary = info.primary_path();
-                                primary.sigs_count >= primary.threshold
-                                    || info
-                                        .recovery_paths()
-                                        .values()
-                                        .any(|path| path.sigs_count >= path.threshold)
-                            });
-                        if let Some(completion) = transfer_signing_completion_message(
-                            persisted,
-                            threshold_met,
-                            signing_request,
-                        ) {
-                            return Task::batch(vec![
-                                task,
-                                Task::done(Message::View(view::Message::Home(completion))),
-                            ]);
-                        }
-                        return task;
-                    }
-                }
-                Task::none()
-            }
+            Message::View(view::Message::ShowQrCode(_)) => self.show_transfer_address_qr(),
+            Message::View(view::Message::Close) => self.close_transfer_modal(),
+            Message::Updated(result) => self.on_transfer_signing_updated(daemon, result),
             Message::Signed(_, _)
             | Message::HardwareWallets(_)
             | Message::View(view::Message::SelectHardwareWallet(_))
             | Message::View(view::Message::Spend(_)) => {
-                if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
-                    if let Some(ref mut spend_tx) = self.transfer_spend_tx {
-                        use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                        return sign_modal.update(daemon, message, spend_tx);
-                    }
-                }
-                Task::none()
+                self.update_transfer_signer(daemon, message)
             }
-            Message::Tick => {
-                // Reconcile `pending_vault_receive_sats` against the daemon's
-                // view. Once cache-derived pending has grown by at least the
-                // broadcast amount relative to our baseline, the tx has landed
-                // and we latch the counter to zero so a later confirmation
-                // (which drops the coin out of the "external unconfirmed" set)
-                // doesn't resurrect the stale indicator.
-                if self.pending_vault_receive_sats > 0 {
-                    let current = cache_vault_pending_receive_sats(cache);
-                    if current
-                        >= self
-                            .pending_vault_receive_baseline_sats
-                            .saturating_add(self.pending_vault_receive_sats)
-                    {
-                        self.pending_vault_receive_sats = 0;
-                        self.pending_vault_receive_baseline_sats = 0;
-                    } else if current < self.pending_vault_receive_baseline_sats {
-                        // Cache shrunk below the snapshot (e.g. a prior external
-                        // unconfirmed coin confirmed). Rebase so growth is
-                        // measured from the new floor.
-                        self.pending_vault_receive_baseline_sats = current;
-                    }
-                }
-                Task::none()
-            }
+            Message::Tick => self.reconcile_pending_vault_receive(cache),
             _ => Task::none(),
         }
     }
@@ -3356,7 +1242,2360 @@ impl State for GlobalHome {
     }
 }
 
+type VaultTransferPsbtResult = Result<
+    (
+        Psbt,
+        Option<Arc<Wallet>>,
+        (
+            CoincubeDirectory,
+            coincube_core::miniscript::bitcoin::Network,
+        ),
+    ),
+    String,
+>;
+
 impl GlobalHome {
+    fn on_transfer_psbt_preview_ready(
+        &mut self,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+        feerate_vb: u64,
+        result: Result<(Amount, Amount), String>,
+    ) -> Task<Message> {
+        if !self.vault_available(cache) {
+            return Task::none();
+        }
+        if !self.destination_response_is_current(generation, direction)
+            || !self.destination_is_ready()
+        {
+            return Task::none();
+        }
+        // Drop late results: if the user has since edited the
+        // feerate, `self.transfer_feerate.value` won't parse to
+        // the feerate this preview was built against. Keeping
+        // only the latest-feerate result prevents the Fees row
+        // flickering to out-of-order values during fast typing.
+        let current_feerate = self.transfer_feerate.value.trim().parse::<u64>().ok();
+        if current_feerate != Some(feerate_vb) {
+            return Task::none();
+        }
+        match result {
+            Ok((fees, received)) => {
+                self.spend_tx_fees = Some(fees);
+                // A sweep's output is the balance less this fee.
+                if self.sends_max() {
+                    self.set_entered_amount(received);
+                }
+            }
+            Err(e) => {
+                // Quiet failure: the user sees blank Fees/Total,
+                // and the real `SignVaultTransferTx` path will
+                // surface any error (insufficient funds etc.)
+                // if they click through. Logging only.
+                log::debug!("Vault transfer PSBT preview failed at feerate {feerate_vb}: {e}");
+                self.spend_tx_fees = None;
+            }
+        }
+        Task::none()
+    }
+
+    fn on_transfer_broadcast(
+        &mut self,
+        cache: &Cache,
+        amount_sat: u64,
+        destination_kind: WalletKind,
+    ) -> Task<Message> {
+        self.is_sending = false;
+        // Another Cube's Vault receives this one: nothing is
+        // pending in this Cube. Its unlock ends here.
+        if self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+        {
+            self.current_view.next();
+            self.finish_other_cube();
+            return Task::none();
+        }
+        let pending = PendingTransfer {
+            amount: Amount::from_sat(amount_sat),
+            stage: TransferStage::PendingDeposit,
+        };
+        match destination_kind {
+            WalletKind::Vault => {
+                // SparkToVault: there's no swap lifecycle to
+                // drive stage transitions on the
+                // Vault card's indicator, so use the
+                // session-level counter. Baseline
+                // snapshots the daemon's current view so the
+                // Tick reconciler can tell "our tx landed"
+                // from growth relative to this moment — but
+                // only on a fresh batch. If a prior broadcast
+                // is still unreconciled, its amount may
+                // already sit in `cache_vault_pending_receive_sats`;
+                // re-snapshotting here would fold it into the
+                // baseline while `pending_vault_receive_sats`
+                // still includes it, making the reconciliation
+                // bar (`baseline + pending`) permanently
+                // unreachable.
+                if self.pending_vault_receive_sats == 0 {
+                    self.pending_vault_receive_baseline_sats =
+                        cache_vault_pending_receive_sats(cache);
+                }
+                self.pending_vault_receive_sats =
+                    self.pending_vault_receive_sats.saturating_add(amount_sat);
+            }
+            WalletKind::Spark => {
+                // Spark destinations also land here on Spark-sourced
+                // flows only when the bridge routes internally — the
+                // normal transfer flow never has Spark as both source
+                // and destination. Treat defensively: still mark the
+                // Spark card as pending.
+                self.pending_spark_incoming = Some(pending);
+                // Fresh transfer — we haven't observed the new
+                // deposit in Spark's unclaimed list yet.
+                self.pending_spark_deposit_seen = false;
+                // A transfer, not a swap: clear any stale swap flag
+                // so it can't fire a celebration on this claim.
+                self.pending_spark_incoming_is_swap = false;
+                // Drop any in-flight auto-claim tracker from a
+                // prior transfer: its result would otherwise
+                // land with the new pending set and stamp this
+                // (unrelated) transfer as Completed. The
+                // `AutoClaimSparkResult` handler also gates on
+                // this field for defense in depth.
+                self.auto_claiming_spark_deposit = None;
+                self.spark_claim_awaiting_settlement = false;
+            }
+        }
+        self.current_view.next();
+        self.spark_send_handle = None;
+        Task::none()
+    }
+
+    fn confirm_vault_transfer(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        if !self.destination_is_ready() {
+            return Task::none();
+        }
+        if self
+            .transfer_direction
+            .is_some_and(Self::direction_uses_vault)
+            && !self.vault_available(cache)
+        {
+            return Task::none();
+        }
+        let Some(transfer_direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        if !matches!(
+            transfer_direction,
+            TransferDirection::VaultToSpark
+                | TransferDirection::VaultToOtherSpark
+                | TransferDirection::VaultToOtherCube
+        ) {
+            return Task::none();
+        }
+        // Another Cube must still be unlocked for this
+        // transfer (leaving the page locks it), whichever
+        // of its wallets receives.
+        if transfer_direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        // Post-sign broadcast path for both Vault-sourced
+        // directions. The PSBT was built earlier in the same
+        // shared `SignVaultTransferTx` handler against the
+        // destination address stored in `receive_address_info`.
+        if self.transfer_psbt_ready_for
+            != Some((
+                self.next_psbt_request_id,
+                self.transfer_request_generation,
+                transfer_direction,
+            ))
+        {
+            return Task::none();
+        }
+        if !self.transfer_signed {
+            return Task::done(Message::View(view::Message::ShowError(
+                "Please sign the transaction first".to_string(),
+            )));
+        }
+        let Some(spend_tx) = &self.transfer_spend_tx else {
+            return Task::none();
+        };
+        let Some(daemon) = daemon else {
+            return Task::none();
+        };
+        let txid = spend_tx.psbt.unsigned_tx.compute_txid();
+        let daemon_clone = daemon.clone();
+        let to_kind = transfer_direction.to_kind();
+        let Ok(amount_sat) = Amount::from_str_in(
+            &self.entered_amount.value,
+            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
+                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+            } else {
+                coincube_core::miniscript::bitcoin::Denomination::Satoshi
+            },
+        )
+        .map(|a| a.to_sat()) else {
+            // Signed PSBT exists but the amount
+            // field no longer parses — refuse to
+            // broadcast rather than emit a
+            // misleading zero-amount pending card.
+            self.entered_amount.valid = false;
+            return Task::done(Message::View(view::Message::ShowError(
+                "Invalid amount; please re-enter before broadcasting.".to_string(),
+            )));
+        };
+        self.is_sending = true;
+
+        Task::perform(
+            async move {
+                daemon_clone
+                    .broadcast_spend_tx(&txid)
+                    .await
+                    .map_err(|e| format!("Failed to broadcast: {}", e))
+            },
+            move |result| Self::vault_broadcast_message(to_kind, amount_sat, result),
+        )
+    }
+
+    fn vault_broadcast_message(
+        to_kind: WalletKind,
+        amount_sat: u64,
+        result: Result<(), String>,
+    ) -> Message {
+        match result {
+            Ok(()) => match to_kind {
+                // Vault→Spark: reuse the Spark-send
+                // success handler so both legs land
+                // in the same `PendingDeposit` state.
+                WalletKind::Spark => {
+                    Message::View(view::Message::Home(HomeMessage::TransferBroadcast {
+                        amount_sat,
+                        destination_kind: to_kind,
+                    }))
+                }
+                // Vault to Vault is only ever
+                // another Cube's Vault: nothing is
+                // pending in this Cube.
+                WalletKind::Vault => {
+                    Message::View(view::Message::Home(HomeMessage::TransferSuccessful))
+                }
+            },
+            Err(e) => Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::BroadcastFailed {
+                    from: WalletKind::Vault,
+                    detail: e,
+                },
+            ))),
+        }
+    }
+
+    fn sign_vault_transfer_tx(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        if !self.vault_available(cache) {
+            return Task::none();
+        }
+        if !self.destination_is_ready() {
+            return Task::none();
+        }
+        let generation = self.transfer_request_generation;
+        let Some(transfer_direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        // Shared signer path for every Vault-sourced
+        // direction — `receive_address_info` is the only
+        // thing that differs between them.
+        if !matches!(
+            transfer_direction,
+            TransferDirection::VaultToSpark
+                | TransferDirection::VaultToOtherSpark
+                | TransferDirection::VaultToOtherCube
+        ) {
+            return Task::none();
+        }
+        // Another Cube must still be unlocked for this
+        // transfer (leaving the page locks it), whichever
+        // of its wallets receives.
+        if transfer_direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        let Some(address_info) = self.receive_address_info.clone() else {
+            return Task::none();
+        };
+        let Some(daemon) = daemon else {
+            return Task::none();
+        };
+        self.prepare_vault_signing_psbt(cache, daemon, generation, transfer_direction, address_info)
+    }
+
+    fn prepare_vault_signing_psbt(
+        &mut self,
+        cache: &Cache,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        generation: u64,
+        transfer_direction: TransferDirection,
+        address_info: ReceiveAddressInfo,
+    ) -> Task<Message> {
+        let denomination = if matches!(
+            self.transfer_unit,
+            crate::app::settings::unit::BitcoinDisplayUnit::BTC
+        ) {
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+        } else {
+            coincube_core::miniscript::bitcoin::Denomination::Satoshi
+        };
+        let Ok(amount) = Amount::from_str_in(&self.entered_amount.value, denomination) else {
+            return Task::none();
+        };
+        let amount_sat = amount.to_sat();
+        let destination = address_info.address.to_string();
+        let mut destinations = std::collections::HashMap::new();
+        destinations.insert(address_info.address.as_unchecked().clone(), amount_sat);
+
+        // Max sweeps every owned coin to the
+        // destination, as the preview priced it.
+        let sweep = self.sends_max().then(|| vault_sweep_coins(cache).0);
+        let script = address_info.address.script_pubkey();
+        let daemon_clone = daemon.clone();
+        let wallet = self.wallet.clone();
+        let cache_clone = (cache.datadir_path.clone(), cache.network);
+        // User-picked feerate from the confirm-screen feerate
+        // input (§Design section 9). Parsing is already gated
+        // on `transfer_feerate.valid`, so a `parse` failure
+        // here indicates a bypass — short-circuit instead of
+        // silently falling back to an estimator.
+        let feerate_vb = match self.transfer_feerate.value.trim().parse::<u64>() {
+            Ok(v) if v > 0 => v,
+            _ => {
+                return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                    TransferError::InvalidFeerate,
+                ))));
+            }
+        };
+        self.is_sending = true;
+        self.transfer_feerate_loading = None;
+        self.next_psbt_request_id = self.next_psbt_request_id.wrapping_add(1);
+        let request_id = self.next_psbt_request_id;
+        self.active_psbt_request = Some(request_id);
+        self.transfer_spend_tx = None;
+        self.transfer_psbt_ready_for = None;
+        self.transfer_signed = false;
+        Task::perform(
+            async move {
+                let built = match &sweep {
+                    Some(coins) => {
+                        daemon_clone
+                            .create_spend_tx(
+                                coins,
+                                &HashMap::new(),
+                                feerate_vb,
+                                destinations.keys().next().cloned(),
+                            )
+                            .await
+                    }
+                    None => {
+                        daemon_clone
+                            .create_spend_tx(&[], &destinations, feerate_vb, None)
+                            .await
+                    }
+                };
+                let psbt = match built {
+                    Ok(CreateSpendResult::Success { psbt, .. }) => psbt,
+                    Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                        return Err(format!("Insufficient funds: {} sats missing", missing));
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to create transaction: {}", e));
+                    }
+                };
+
+                if sweep.is_some() && paid_to(&psbt, &script).to_sat() != amount_sat {
+                    return Err(coincube_ui::locale::copy(
+                        "The Vault balance changed. Go back and choose Max again.",
+                    )
+                    .to_string());
+                }
+
+                daemon_clone
+                    .update_spend_tx(&psbt)
+                    .await
+                    .map_err(|e| format!("Failed to save PSBT: {}", e))?;
+
+                Ok((psbt, wallet, cache_clone))
+            },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::TransferPsbtReady {
+                    request_id,
+                    generation,
+                    direction: transfer_direction,
+                    destination,
+                    amount_sat,
+                    feerate_vb,
+                    result,
+                }))
+            },
+        )
+    }
+
+    fn on_transfer_psbt_ready(
+        &mut self,
+        cache: &Cache,
+        request: (u64, u64, TransferDirection),
+        destination: String,
+        amount_sat: u64,
+        feerate_vb: u64,
+        result: VaultTransferPsbtResult,
+    ) -> Task<Message> {
+        let (request_id, generation, direction) = request;
+        if self.active_psbt_request != Some(request_id) {
+            return Task::none();
+        }
+        // This result owns the busy state. Release it even if
+        // the fee or amount changed while the PSBT was built;
+        // otherwise a rejected result strands Back and Sign.
+        self.active_psbt_request = None;
+        self.is_sending = false;
+        let denomination = if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+        } else {
+            coincube_core::miniscript::bitcoin::Denomination::Satoshi
+        };
+        if !self.vault_available(cache)
+            || !self.destination_response_is_current(generation, direction)
+            || !self.destination_is_ready()
+            || self
+                .receive_address_info
+                .as_ref()
+                .map(|info| info.address.to_string())
+                != Some(destination)
+            || Amount::from_str_in(&self.entered_amount.value, denomination)
+                .ok()
+                .map(|amount| amount.to_sat())
+                != Some(amount_sat)
+            || self.transfer_feerate.value.trim().parse::<u64>().ok() != Some(feerate_vb)
+        {
+            return Task::none();
+        }
+        // Leaving the page while this PSBT was built locked the
+        // other Cube: open no signer; its unlock starts over.
+        if direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        match result {
+            Ok((psbt, wallet, (datadir_path, network))) => {
+                if let Some(wallet) = wallet {
+                    use coincube_core::wallet_descriptor::SpendAnalysis;
+                    let descriptor = &wallet.main_descriptor;
+                    let sigs = match descriptor.spend_info(&psbt) {
+                        Ok(info) => info,
+                        Err(e) => {
+                            let err_msg = format!("Failed to get signature info: {}", e);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                        }
+                    };
+
+                    let spend_amount = psbt.unsigned_tx.output.iter().map(|out| out.value).sum();
+
+                    // Use primary path if no inputs are using a relative locktime
+                    let use_primary_path = !psbt
+                        .unsigned_tx
+                        .input
+                        .iter()
+                        .map(|txin| txin.sequence)
+                        .any(|seq| seq.is_relative_lock_time());
+                    let max_vbytes =
+                        descriptor.spend_max_vbytes(&psbt.unsigned_tx, use_primary_path);
+                    let fees = psbt.fee().expect("Fees should be present");
+                    self.spend_tx_fees = Some(fees);
+
+                    // Create minimal SpendTx
+                    let spend_tx = SpendTx {
+                        network,
+                        psbt: psbt.clone(),
+                        coins: std::collections::HashMap::new(), // Empty for transfer
+                        labels: HashMap::new(),
+                        sigs,
+                        change_indexes: vec![],
+                        spend_amount,
+                        fee_amount: None,
+                        max_vbytes,
+                        status: crate::daemon::model::SpendStatus::Pending,
+                        updated_at: Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as u32,
+                        ),
+                        kind: crate::daemon::model::TransactionKind::SendToSelf,
+                    };
+
+                    self.transfer_spend_tx = Some(spend_tx);
+                    self.transfer_psbt_ready_for = Some((request_id, generation, direction));
+
+                    // Create the SignModal. This send-to-self
+                    // transfer signs locally only — no nested
+                    // Keychain flow.
+                    let sign_modal = SignModal::new(
+                        std::collections::HashSet::new(),
+                        wallet,
+                        datadir_path,
+                        network,
+                        true,
+                        None,
+                        None,
+                        false,
+                    );
+
+                    self.modal = Modal::Sign(Box::new(sign_modal));
+                } else {
+                    return Task::done(Message::View(view::Message::ShowError(
+                        "Wallet not available".to_string(),
+                    )));
+                }
+            }
+            Err(e) => {
+                return Task::done(Message::View(view::Message::ShowError(
+                    crate::user_error::UserError::logged(
+                        "Couldn't prepare that transfer for signing",
+                        "Try again. If it keeps failing, contact support and quote the reference below.",
+                        crate::user_error::CC_SPEND,
+                        true,
+                        e,
+                    )
+                    .toast(),
+                )));
+            }
+        }
+        Task::none()
+    }
+
+    fn on_transfer_signing_complete(
+        &mut self,
+        request_id: u64,
+        generation: u64,
+        direction: TransferDirection,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction)
+            || !self.destination_is_ready()
+            || self.transfer_psbt_ready_for != Some((request_id, generation, direction))
+            || self.transfer_spend_tx.is_none()
+            || !matches!(self.modal, Modal::Sign(_))
+        {
+            return Task::none();
+        }
+        self.transfer_signed = true;
+        self.modal = Modal::None;
+        self.is_sending = false;
+        Task::none()
+    }
+
+    fn fetch_transfer_feerate_preset(&mut self, preset: FeeratePreset) -> Task<Message> {
+        if self.is_sending {
+            return Task::none();
+        }
+        // Fire a mempool estimate for the requested target.
+        // The corresponding button is gated non-pressable while
+        // `transfer_feerate_loading == Some(preset)`.
+        self.transfer_feerate_loading = Some(preset);
+        Task::perform(
+            async move {
+                let estimator = FeeEstimator::new();
+                match preset {
+                    FeeratePreset::Fast => estimator.get_high_priority_rate().await,
+                    FeeratePreset::Normal => estimator.get_mid_priority_rate().await,
+                    FeeratePreset::Slow => estimator.get_low_priority_rate().await,
+                }
+            },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::TransferFeerateEstimated {
+                    preset,
+                    result: result.map(|r| r as u32).map_err(|e| e.to_string()),
+                }))
+            },
+        )
+    }
+
+    fn on_transfer_feerate_estimated(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        preset: FeeratePreset,
+        result: Result<u32, String>,
+    ) -> Task<Message> {
+        if self.is_sending {
+            self.transfer_feerate_loading = None;
+            return Task::none();
+        }
+        // If a different preset is now pending, ignore this stale
+        // response so a late Fast result doesn't clobber a more
+        // recent Slow click.
+        if self.transfer_feerate_loading != Some(preset) {
+            return Task::none();
+        }
+        self.transfer_feerate_loading = None;
+        match result {
+            Ok(sats_per_vb) => {
+                let clamped = sats_per_vb.clamp(1, 1000);
+                self.transfer_feerate = form::Value {
+                    value: clamped.to_string(),
+                    valid: true,
+                    warning: None,
+                };
+                // Re-preview the Vault-source PSBT at the new
+                // feerate (see `vault_transfer_preview_task`).
+                self.spend_tx_fees = None;
+                self.vault_transfer_preview_task(cache, daemon)
+            }
+            Err(e) => Task::done(Message::View(view::Message::ShowError(
+                crate::user_error::UserError::logged(
+                    "Couldn't fetch the current fee rate",
+                    "Check your internet connection and try again, or enter a fee rate yourself.",
+                    crate::user_error::CC_NET_UNKNOWN,
+                    true,
+                    format!("fee estimator, preset {preset:?}: {e}"),
+                )
+                .toast(),
+            ))),
+        }
+    }
+
+    fn set_transfer_feerate(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        value: String,
+    ) -> Task<Message> {
+        if self.is_sending {
+            return Task::none();
+        }
+        let parsed = value.trim().parse::<u64>();
+        let (valid, warning) = match parsed {
+            Ok(v) if v > 0 && v <= 1000 => (true, None),
+            Ok(_) => (false, Some("Feerate must be 1..=1000 sats/vbyte")),
+            Err(_) if value.trim().is_empty() => (false, Some("Feerate is required")),
+            Err(_) => (false, Some("Feerate must be an integer")),
+        };
+        self.transfer_feerate = form::Value {
+            value,
+            valid,
+            warning,
+        };
+        // Feerate changed → any prior preview fee is now stale.
+        // Clear it immediately so the confirm screen doesn't
+        // show a number that no longer matches the input, then
+        // re-run the preview. The result handler gates on the
+        // feerate_vb it was dispatched with, so late results
+        // from the old feerate get dropped.
+        self.spend_tx_fees = None;
+        self.vault_transfer_preview_task(cache, daemon)
+    }
+
+    fn on_transfer_signing_updated(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        result: Result<(), crate::app::error::Error>,
+    ) -> Task<Message> {
+        let persisted = result.is_ok();
+        let signing_request = self.transfer_psbt_ready_for;
+        let wallet = self.wallet.clone();
+        if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
+            if let Some(ref mut spend_tx) = self.transfer_spend_tx {
+                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                let task = sign_modal.update(daemon, Message::Updated(result), spend_tx);
+                let threshold_met = wallet
+                    .as_ref()
+                    .and_then(|wallet| {
+                        crate::app::state::vault::replay::spend_info_for_chain(
+                            wallet.chain,
+                            &wallet.main_descriptor,
+                            &spend_tx.psbt,
+                        )
+                        .ok()
+                    })
+                    .is_some_and(|info| {
+                        let primary = info.primary_path();
+                        primary.sigs_count >= primary.threshold
+                            || info
+                                .recovery_paths()
+                                .values()
+                                .any(|path| path.sigs_count >= path.threshold)
+                    });
+                if let Some(completion) =
+                    transfer_signing_completion_message(persisted, threshold_met, signing_request)
+                {
+                    return Task::batch(vec![
+                        task,
+                        Task::done(Message::View(view::Message::Home(completion))),
+                    ]);
+                }
+                return task;
+            }
+        }
+        Task::none()
+    }
+
+    fn update_transfer_signer(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        message: Message,
+    ) -> Task<Message> {
+        if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
+            if let Some(ref mut spend_tx) = self.transfer_spend_tx {
+                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                return sign_modal.update(daemon, message, spend_tx);
+            }
+        }
+        Task::none()
+    }
+
+    fn on_swap_settled_awaiting_arrival(
+        &mut self,
+        amount_sat: u64,
+        deposit_seen: bool,
+    ) -> Task<Message> {
+        // A SideShift swap just settled: bitcoin is en route to the
+        // Spark wallet's static on-chain deposit address.
+        // Structurally that's identical to a Vault→Spark transfer
+        // arrival — an on-chain deposit that matures and must be
+        // claimed — so register it exactly like one and let the
+        // watcher below auto-claim it. `is_swap` makes the eventual
+        // claim additionally fire the "bitcoin received" celebration.
+        //
+        // Don't clobber an in-flight transfer: if we're already
+        // tracking a pending incoming deposit, skip global tracking
+        // (the swap stays claimable from the Receive panel's
+        // pending-deposits card) rather than corrupting the
+        // transfer's reconciliation.
+        if self.pending_spark_incoming.is_some() {
+            return Task::none();
+        }
+        self.pending_spark_incoming = Some(PendingTransfer {
+            amount: Amount::from_sat(amount_sat),
+            stage: TransferStage::PendingDeposit,
+        });
+        // A restored shift saw its deposit unclaimed just now; if
+        // the SDK claims it before the list below is read, an
+        // empty list must still read as claimed.
+        self.pending_spark_deposit_seen = deposit_seen;
+        self.pending_spark_incoming_is_swap = true;
+        self.auto_claiming_spark_deposit = None;
+        // Reconcile immediately — the deposit may already be in the
+        // unclaimed list (it can land before we register here), and
+        // otherwise we'd wait for the next bridge event.
+        Task::done(Message::View(view::Message::Home(
+            HomeMessage::SparkDepositsChanged,
+        )))
+    }
+
+    fn on_swap_claim_observed(&mut self, amount_sat: u64) -> Task<Message> {
+        // Only a swap's tracker is ours to retire: a
+        // Vault→Spark transfer's tracker belongs to
+        // that transfer. Already completed by our own claim
+        // (`complete_spark_auto_claim` clears `is_swap`), it
+        // has celebrated, so this is a no-op then.
+        if !self.pending_spark_incoming_is_swap {
+            return Task::none();
+        }
+        self.pending_spark_incoming = None;
+        self.pending_spark_deposit_seen = false;
+        self.pending_spark_incoming_is_swap = false;
+        self.auto_claiming_spark_deposit = None;
+        self.spark_claim_awaiting_settlement = false;
+        Task::done(Message::ShowReceivedCelebration {
+            context: "spark-receive".to_string(),
+            amount_sat,
+            payment_id: None,
+        })
+    }
+
+    fn on_spark_deposits_changed(&mut self) -> Task<Message> {
+        // The Spark bridge signalled a change to the unclaimed-deposit
+        // list — could be a new deposit appearing, one maturing, or one
+        // being claimed. Re-query the list; the `SparkDepositsLoaded`
+        // handler decides what to do with it.
+        let Some(spark) = self.spark_backend.clone() else {
+            return Task::none();
+        };
+        // Only act if we have a pending inbound Spark transfer to
+        // correlate against. Without one there's nothing for us to
+        // auto-claim or clear — the Spark Receive panel handles the
+        // user-facing pending-deposit card independently.
+        if self.pending_spark_incoming.is_none() {
+            return Task::none();
+        }
+        Task::perform(
+            async move { spark.list_unclaimed_deposits().await },
+            |result| match result {
+                Ok(ok) => Message::View(view::Message::Home(HomeMessage::SparkDepositsLoaded(
+                    ok.deposits,
+                ))),
+                Err(e) => {
+                    log::warn!("list_unclaimed_deposits failed: {e:?}");
+                    Message::CacheUpdated
+                }
+            },
+        )
+    }
+
+    fn on_spark_deposits_loaded(
+        &mut self,
+        deposits: Vec<coincube_spark_protocol::DepositInfo>,
+    ) -> Task<Message> {
+        // No pending transfer → nothing to reconcile.
+        if self.pending_spark_incoming.is_none() {
+            return Task::none();
+        }
+        // Empty list → whatever was pending got claimed (either by
+        // us or by the user from the Spark Receive panel). Only
+        // interpret it that way once we've previously observed
+        // our deposit in the list: the inbound tx (the Bitcoin
+        // broadcast for VaultToSpark) doesn't appear until it lands on-chain, so an unrelated
+        // `SparkDepositsChanged` firing during that window (e.g.
+        // a prior deposit being claimed from the Receive panel)
+        // would otherwise clear the badge while our transfer is
+        // still in flight.
+        if deposits.is_empty() {
+            return self.reconcile_empty_spark_deposit_list();
+        }
+        // We've now observed at least one deposit in the list
+        // while our transfer is pending — remember this so a
+        // later empty list can be interpreted as "claimed"
+        // rather than "never arrived" (see above).
+        self.pending_spark_deposit_seen = true;
+        // One auto-claim at a time: if a claim is in flight,
+        // wait for its `DepositsChanged` follow-up before
+        // picking the next candidate. This covers both the
+        // "same deposit re-firing" and "different mature
+        // deposit arrived" cases in one check.
+        if self.auto_claiming_spark_deposit.is_some() {
+            return Task::none();
+        }
+        // Pick the first mature, error-free deposit and
+        // auto-claim it. The bridge fires `DepositsChanged`
+        // again on success, which re-enters this handler and
+        // clears the indicator.
+        let Some(candidate) = deposits
+            .iter()
+            .find(|d| d.is_mature && d.claim_error.is_none())
+        else {
+            return Task::none();
+        };
+        let Some(spark) = self.spark_backend.clone() else {
+            return Task::none();
+        };
+        let txid = candidate.txid.clone();
+        let vout = candidate.vout;
+        self.auto_claiming_spark_deposit = Some((txid.clone(), vout));
+        let txid_for_msg = txid.clone();
+        Task::perform(
+            async move { spark.claim_deposit(txid, vout).await },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::AutoClaimSparkResult {
+                    txid: txid_for_msg.clone(),
+                    vout,
+                    // `amount_sat` is `None` for a pre-maturity
+                    // claim (SDK 0.25.0+): the transfer settles
+                    // asynchronously and only `PaymentSucceeded`
+                    // knows what actually landed. Keep it unknown
+                    // rather than showing the pre-fee deposit.
+                    // A deferral (SDK 0.28.0+) claimed nothing:
+                    // logged like a failure, and the indicator
+                    // stays pending until the SDK's own claim
+                    // fires `DepositsChanged`.
+                    result: match result {
+                        Ok(ok) => match &ok.deferred {
+                            Some(deferral) => Err(
+                                crate::app::state::spark::receive::claim_deferral_notice(deferral),
+                            ),
+                            None => Ok(ok.amount_sat),
+                        },
+                        Err(e) => Err(e.to_string()),
+                    },
+                }))
+            },
+        )
+    }
+
+    fn reconcile_empty_spark_deposit_list(&mut self) -> Task<Message> {
+        if !self.pending_spark_deposit_seen {
+            return Task::none();
+        }
+        // The deposit was claimed by someone other than our own
+        // auto-claim below — the Spark SDK auto-claims static
+        // deposits, and the user can claim from the Receive
+        // panel — so `AutoClaimSparkResult` (which advances the
+        // cross-network Receive flow off "Bitcoin arriving")
+        // never ran. Nudge the flow to its arrived state here so
+        // it doesn't hang. This is the *only* signal for an
+        // SDK-silent claim; it's idempotent (the flow transitions
+        // once and ignores it otherwise), so it can't double up
+        // with a claim path that already fired. Non-swap
+        // transfers (Vault→Spark) don't touch it.
+        let was_swap = self.pending_spark_incoming_is_swap;
+        let amount_sat = self
+            .pending_spark_incoming
+            .as_ref()
+            .map(|p| p.amount.to_sat())
+            .unwrap_or(0);
+        self.pending_spark_incoming = None;
+        self.pending_spark_deposit_seen = false;
+        self.pending_spark_incoming_is_swap = false;
+        self.auto_claiming_spark_deposit = None;
+        self.spark_claim_awaiting_settlement = false;
+        if was_swap {
+            return Task::done(Message::View(view::Message::SparkSideshiftReceive(
+                view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
+            )));
+        }
+        Task::none()
+    }
+
+    fn on_auto_claim_spark_result(
+        &mut self,
+        txid: String,
+        vout: u32,
+        result: Result<Option<u64>, String>,
+    ) -> Task<Message> {
+        // Stale result guard: if the tracker no longer matches
+        // this (txid, vout) it belongs to a previous transfer —
+        // e.g. a second Spark-destined transfer broadcast while
+        // this claim was in flight. Stamping Completed on the
+        // now-current `pending_spark_incoming` would prematurely
+        // hide the new badge.
+        if self.auto_claiming_spark_deposit.as_ref() != Some(&(txid, vout)) {
+            return Task::none();
+        }
+        // Success: mark the indicator Completed so the view hides
+        // it immediately and `BackToHome` can reap it. The bridge's follow-up
+        // `DepositsChanged` will still re-enter the watcher and
+        // clear the field outright. Failure: log and surface so
+        // the user can retry from the Receive panel.
+        self.auto_claiming_spark_deposit = None;
+        match result {
+            Ok(None) => {
+                // Accepted before maturity: nothing has landed
+                // yet and the settled amount is unknown. Leave
+                // the indicator pending and let
+                // `SparkPaymentSucceeded` finish the job.
+                self.spark_claim_awaiting_settlement = true;
+                Task::none()
+            }
+            Ok(Some(amount)) => self.complete_spark_auto_claim(amount),
+            Err(e) => {
+                log::warn!("Auto-claim of Spark deposit failed: {e}");
+                Task::none()
+            }
+        }
+    }
+
+    fn on_spark_payment_succeeded(&mut self, amount_sat: u64) -> Task<Message> {
+        if !self.spark_claim_awaiting_settlement {
+            return Task::none();
+        }
+        self.spark_claim_awaiting_settlement = false;
+        self.complete_spark_auto_claim(amount_sat)
+    }
+
+    fn confirm_spark_send(&mut self, cache: &Cache) -> Task<Message> {
+        let Some(direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        if self.is_sending || !self.destination_is_ready() {
+            return Task::none();
+        }
+        if direction == TransferDirection::SparkToVault && !self.vault_available(cache) {
+            return Task::none();
+        }
+        if direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        // Spark-sourced confirm: broadcast the prepared send. The
+        // destination address + prepare handle were populated at
+        // step 1→2 (see `SparkPrepareSendReady`).
+        let Some(spark) = self.spark_backend.clone() else {
+            // Not an expired preparation — the wallet itself is
+            // gone, and "go back and re-enter the amount" would
+            // send the user in a circle.
+            return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::WalletUnavailable(WalletKind::Spark),
+            ))));
+        };
+        // Single-use handle: take it out of state before
+        // spawning the task so a retry click after a failed
+        // `send_payment` can't re-submit a handle the Spark
+        // backend has already consumed. Forces re-prepare from
+        // the amount step on failure; on success
+        // `TransferBroadcast` is the path that would have
+        // otherwise cleared it.
+        let Some(handle) = self.spark_send_handle.take() else {
+            return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::PreparationExpired,
+            ))));
+        };
+        let Ok(transfer_amount) = Amount::from_str_in(
+            &self.entered_amount.value,
+            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
+                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+            } else {
+                coincube_core::miniscript::bitcoin::Denomination::Satoshi
+            },
+        ) else {
+            return Task::none();
+        };
+        self.is_sending = true;
+        let generation = self.transfer_request_generation;
+        Task::perform(
+            async move { spark.send_payment(handle, None).await },
+            move |result| {
+                let result = result.map(|_| ()).map_err(|error| match error {
+                    SparkClientError::OutcomeUnknown { .. } | SparkClientError::Protocol(_) => {
+                        TransferError::BroadcastOutcomeUnknown {
+                            detail: error.to_string(),
+                        }
+                    }
+                    _ => TransferError::BroadcastFailed {
+                        from: WalletKind::Spark,
+                        detail: error.to_string(),
+                    },
+                });
+                Message::View(view::Message::Home(HomeMessage::SparkTransferFinished {
+                    generation,
+                    direction,
+                    amount_sat: transfer_amount.to_sat(),
+                    result,
+                }))
+            },
+        )
+    }
+
+    fn on_spark_transfer_finished(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+        amount_sat: u64,
+        result: Result<(), TransferError>,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction) {
+            return Task::none();
+        }
+        let message = match result {
+            Ok(()) => HomeMessage::TransferBroadcast {
+                amount_sat,
+                destination_kind: direction.to_kind(),
+            },
+            Err(error) => {
+                if direction.is_other_cube()
+                    && matches!(error, TransferError::BroadcastOutcomeUnknown { .. })
+                {
+                    let reset = self.update(
+                        None,
+                        cache,
+                        Message::View(view::Message::Home(HomeMessage::BackToHome)),
+                    );
+                    let show_error = self.update(
+                        None,
+                        cache,
+                        Message::View(view::Message::Home(HomeMessage::Error(error))),
+                    );
+                    return Task::batch([reset, show_error]);
+                }
+                HomeMessage::Error(error)
+            }
+        };
+        self.update(daemon, cache, Message::View(view::Message::Home(message)))
+    }
+
+    fn advance_transfer_step(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        // Step 0 → 1 (overview → amount entry): this is the
+        // Transfer button press. Default the direction. The
+        // Vault daemon is required only by the Vault-sourced
+        // branches of step 1 → 2, which unwrap inline.
+        if self.current_view.step == 0 {
+            let Some(direction) = default_transfer_direction(
+                cache.has_vault,
+                self.spark_backend.is_some(),
+                cache.chain(),
+            ) else {
+                return Task::none();
+            };
+            return self.begin_transfer(cache, direction);
+        }
+        // Step 1 → 2 (amount → confirm): fetch the destination
+        // receive address (and, for a Spark source, prepare
+        // the send so fees can render on the confirm screen).
+        if self.current_view.step == 1 {
+            return self.prepare_transfer_destination(daemon, cache);
+        }
+        Task::none()
+    }
+
+    fn prepare_transfer_destination(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        // Prepare lives on the Amount page only.
+        if self.transfer_page != TransferPage::Amount {
+            return Task::none();
+        }
+        if self
+            .transfer_direction
+            .is_some_and(Self::direction_uses_vault)
+            && !self.vault_available(cache)
+        {
+            return Task::none();
+        }
+        let Some(direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        let generation = self.invalidate_transfer_destination();
+        // Another Cube: its Vault's address was fetched and
+        // re-derived from its descriptor during Unlock.
+        if direction.is_other_cube() && direction.from_kind() == WalletKind::Vault {
+            return self.prepare_vault_transfer_to_other_cube(cache, generation, direction);
+        }
+        if matches!(
+            self.transfer_direction,
+            Some(TransferDirection::VaultToSpark)
+        ) {
+            return self.request_vault_to_spark_destination(generation, direction);
+        } else if matches!(
+            direction,
+            TransferDirection::SparkToVault
+                | TransferDirection::SparkToOtherCube
+                | TransferDirection::SparkToOtherSpark
+        ) {
+            return self.prepare_spark_transfer(daemon, cache, generation, direction);
+        }
+        Task::batch(Vec::new())
+    }
+
+    fn prepare_vault_transfer_to_other_cube(
+        &mut self,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+    ) -> Task<Message> {
+        if direction == TransferDirection::VaultToOtherSpark {
+            if let Err(refusal) = self.other_receive_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        let Some(OtherReceiveAddress::Bitcoin(address)) = self.other_address.clone() else {
+            return Task::none();
+        };
+        self.current_view.next();
+        Task::done(Message::View(view::Message::Home(
+            HomeMessage::TransferDestinationReady {
+                generation,
+                direction,
+                result: Ok((address.address.to_string(), address.index)),
+            },
+        )))
+    }
+
+    fn request_vault_to_spark_destination(
+        &mut self,
+        generation: u64,
+        direction: TransferDirection,
+    ) -> Task<Message> {
+        // VaultToSpark: Spark issues a BTC deposit address;
+        // the Vault signs a standard on-chain tx to that
+        // address. The sign/broadcast path reuses the
+        // existing `SignVaultTransferTx` handler (widened
+        // below to accept this direction).
+        if let Some(spark) = self.spark_backend.clone() {
+            self.current_view.next();
+            Task::batch([Task::perform(
+                async move { spark.receive_onchain(None).await },
+                move |result| match result {
+                    // `payment_request` is a plain Bitcoin address for
+                    // on-chain receives (possibly wrapped in a BIP21
+                    // URI — the `TransferDestinationReady` handler
+                    // already strips "bitcoin:" prefixes).
+                    Ok(response) => {
+                        Message::View(view::Message::Home(HomeMessage::TransferDestinationReady {
+                            generation,
+                            direction,
+                            result: Ok((
+                                response.payment_request,
+                                ChildNumber::Normal { index: 1 },
+                            )),
+                        }))
+                    }
+                    Err(error) => {
+                        Message::View(view::Message::Home(HomeMessage::TransferDestinationReady {
+                            generation,
+                            direction,
+                            result: Err(TransferError::NoDepositAddress {
+                                to: WalletKind::Spark,
+                                detail: error.to_string(),
+                            }),
+                        }))
+                    }
+                },
+            )])
+        } else {
+            Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::WalletUnavailable(WalletKind::Spark),
+            ))))
+        }
+    }
+
+    fn prepare_spark_transfer(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+    ) -> Task<Message> {
+        // SparkToVault: fetch a fresh Vault address, then
+        // ask Spark to `prepare_send` to it — that call
+        // yields a handle we broadcast at confirm time via
+        // `ConfirmSparkSend`.
+        let Ok(amount) = Amount::from_str_in(
+            &self.entered_amount.value,
+            if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
+                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+            } else {
+                coincube_core::miniscript::bitcoin::Denomination::Satoshi
+            },
+        ) else {
+            return Task::none();
+        };
+        let Some(spark) = self.spark_backend.clone() else {
+            return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                TransferError::WalletUnavailable(WalletKind::Spark),
+            ))));
+        };
+        let other_address = if direction.is_other_cube() {
+            self.validate_entered_amount(cache);
+            if !self.entered_amount.valid {
+                return Task::none();
+            }
+            match self.other_receive_address(cache) {
+                Ok(OtherReceiveAddress::Bitcoin(address)) => Some(address.address.to_string()),
+                Ok(OtherReceiveAddress::Spark(address)) => Some(address.clone()),
+                Err(refusal) => return self.restart_other_cube_unlock(refusal),
+            }
+        } else {
+            None
+        };
+        let daemon = daemon.clone();
+        let (data_dir, wallet) = (cache.datadir_path.clone(), self.wallet.clone());
+        self.current_view.next();
+        let amount_sat = amount.to_sat();
+        let fees_included = self.sends_max();
+        Task::batch([Task::perform(
+            async move {
+                let addr_str = match other_address {
+                    Some(address) => address,
+                    None => vault_deposit_address(
+                        data_dir,
+                        wallet,
+                        daemon.ok_or(TransferError::WalletUnavailable(WalletKind::Vault))?,
+                    )
+                    .await
+                    .map_err(|e| TransferError::NoDepositAddress {
+                        to: WalletKind::Vault,
+                        detail: e.to_string(),
+                    })?
+                    .address
+                    .to_string(),
+                };
+                let prep = if fees_included {
+                    spark
+                        .prepare_send_fees_included(addr_str.clone(), amount_sat)
+                        .await
+                } else {
+                    spark.prepare_send(addr_str.clone(), Some(amount_sat)).await
+                }
+                .map_err(|e| TransferError::FeeEstimateFailed {
+                    detail: e.to_string(),
+                })?;
+                Self::accept_spark_transfer_quote(direction, amount_sat, addr_str, prep)
+            },
+            move |result| match result {
+                Ok((destination, prepare_handle, fee_sat)) => {
+                    Message::View(view::Message::Home(HomeMessage::SparkPrepareSendReady {
+                        generation,
+                        direction,
+                        destination,
+                        prepare_handle,
+                        fee_sat,
+                    }))
+                }
+                Err(error) => Message::View(view::Message::Home(
+                    HomeMessage::TransferDestinationFailed {
+                        generation,
+                        direction,
+                        error,
+                    },
+                )),
+            },
+        )])
+    }
+
+    fn accept_spark_transfer_quote(
+        direction: TransferDirection,
+        amount_sat: u64,
+        addr_str: String,
+        prep: coincube_spark_protocol::PrepareSendOk,
+    ) -> Result<(String, String, u64), TransferError> {
+        let method = if direction == TransferDirection::SparkToOtherSpark {
+            "SparkAddress"
+        } else {
+            "BitcoinAddress"
+        };
+        if direction.is_other_cube() && (prep.method != method || prep.amount_sat != amount_sat) {
+            return Err(TransferError::DestinationRejected {
+                detail: coincube_ui::locale::copy("Spark quoted a different rail or amount").into(),
+            });
+        }
+        Ok::<_, TransferError>((addr_str, prep.handle, prep.fee_sat))
+    }
+
+    fn on_spark_prepare_send_ready(
+        &mut self,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+        destination: String,
+        prepare_handle: String,
+        fee_sat: u64,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction) {
+            return Task::none();
+        }
+        if direction == TransferDirection::SparkToOtherSpark {
+            match self.other_receive_address(cache) {
+                Ok(OtherReceiveAddress::Spark(address)) if *address == destination => {}
+                Ok(_) => return self.restart_other_cube_unlock(ScopeRefusal::IdentityChanged),
+                Err(refusal) => return self.restart_other_cube_unlock(refusal),
+            }
+            self.destination_ready = Some((generation, direction));
+            self.spark_send_handle = Some(prepare_handle);
+            self.show_max_after_fee(fee_sat);
+            return Task::none();
+        }
+        // Parse the destination as a checked Bitcoin address — if
+        // the string is a BIP21 URI (rare here but cheap to
+        // handle) strip the prefix first. Mirrors the logic in
+        // `TransferDestinationReady`. Destination is sourced from our
+        // own trusted components (Breez peg-in / Vault daemon)
+        // and Spark has already prepared against it, so failure
+        // here indicates an upstream bug — refuse to proceed
+        // rather than leave the confirm view without a displayable
+        // destination.
+        let addr_str = destination
+            .strip_prefix("bitcoin:")
+            .unwrap_or(&destination)
+            .split('?')
+            .next()
+            .unwrap_or(&destination);
+        let checked = match Address::from_str(addr_str)
+            .ok()
+            .and_then(|p| p.require_network(cache.network).ok())
+        {
+            Some(a) => a,
+            None => {
+                return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                    TransferError::DestinationRejected {
+                        detail: format!(
+                            "Spark destination {addr_str} is not valid for network {:?}",
+                            cache.network
+                        ),
+                    },
+                ))));
+            }
+        };
+        let index = if direction.is_other_cube() {
+            match self.other_receive_address(cache) {
+                Ok(OtherReceiveAddress::Bitcoin(address)) if address.address == checked => {
+                    address.index
+                }
+                Ok(_) => return self.restart_other_cube_unlock(ScopeRefusal::IdentityChanged),
+                Err(refusal) => return self.restart_other_cube_unlock(refusal),
+            }
+        } else {
+            ChildNumber::Normal { index: 0 }
+        };
+        self.receive_address_info = Some(ReceiveAddressInfo {
+            address: checked,
+            index,
+            labels: HashMap::new(),
+        });
+        self.destination_ready = Some((generation, direction));
+        self.spark_send_handle = Some(prepare_handle);
+        self.show_max_after_fee(fee_sat);
+        Task::none()
+    }
+
+    fn on_transfer_destination_ready(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+        result: Result<(String, ChildNumber), TransferError>,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction) {
+            return Task::none();
+        }
+        let (address, index) = match result {
+            Ok(address) => address,
+            Err(error) => {
+                return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                    error,
+                ))));
+            }
+        };
+        // Parse BIP-21 URI format: bitcoin:address?params or plain address
+        let addr_str = address
+            .strip_prefix("bitcoin:")
+            .unwrap_or(&address)
+            .split('?')
+            .next()
+            .unwrap_or(&address);
+
+        if let Ok(parsed) = Address::from_str(addr_str) {
+            let network = cache.network;
+            match parsed.require_network(network) {
+                Ok(checked_address) => {
+                    self.receive_address_info = Some(ReceiveAddressInfo {
+                        address: checked_address,
+                        index,
+                        labels: HashMap::new(),
+                    });
+                    self.destination_ready = Some((generation, direction));
+                    // For Vault-sourced directions the Fees/Total
+                    // rows can't be populated until we can call
+                    // `create_spend_tx` — which needs this address.
+                    // Kick off the dry-run preview now that it's in
+                    // place. No-op for other directions.
+                    return self.vault_transfer_preview_task(cache, daemon);
+                }
+                Err(_) => {
+                    log::error!(
+                        "Address {} is not valid for network {:?}",
+                        addr_str,
+                        network
+                    );
+                }
+            }
+        } else {
+            log::error!(
+                "Failed to parse the transfer's on-chain address: {}",
+                addr_str
+            );
+        }
+        Task::none()
+    }
+
+    fn on_transfer_destination_failed(
+        &mut self,
+        generation: u64,
+        direction: TransferDirection,
+        error: TransferError,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction) {
+            return Task::none();
+        }
+        Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+            error,
+        ))))
+    }
+
+    fn update_other_cube_pin(&mut self, message: crate::pin_input::Message) -> Task<Message> {
+        if self.transfer_page != TransferPage::Unlock
+            || self.other_phase != (UnlockPhase::Credential { busy: false })
+        {
+            return Task::none();
+        }
+        if matches!(message, crate::pin_input::Message::Submit) {
+            return Task::done(Message::View(view::Message::Home(
+                HomeMessage::UnlockOtherCube,
+            )));
+        }
+        self.other_pin
+            .update(message)
+            .map(|message| Message::View(view::Message::Home(HomeMessage::OtherCubePin(message))))
+    }
+
+    fn begin_other_cube_pin(&mut self, cache: &Cache) -> Task<Message> {
+        if self.transfer_page != TransferPage::Unlock
+            || self.other_phase != (UnlockPhase::Credential { busy: false })
+            || !self.other_pin.is_complete()
+        {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let pin = self.other_pin.value();
+        self.other_pin.clear();
+        let Some(scope) = self.other_scope.as_mut() else {
+            return Task::none();
+        };
+        match scope.begin_pin(&source, pin) {
+            Ok(request) => {
+                self.other_phase = UnlockPhase::Credential { busy: true };
+                self.other_error = None;
+                Task::perform(request.run_blocking(), |check| {
+                    Message::View(view::Message::Home(HomeMessage::OtherCubePinChecked(check)))
+                })
+            }
+            Err(refusal) => {
+                self.other_error = Some(refusal.reason());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_other_cube_pin_checked(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        check: crate::app::transfer_destination_loader::PinCheck,
+    ) -> Task<Message> {
+        // A duress PIN is the same emergency here as at the
+        // Launcher, whatever changed meanwhile: lock the other
+        // Cube, leave the flow and hand the one-use proof to
+        // the tab, which runs the existing duress activation.
+        if let Some(proof) = check.duress_proof() {
+            let reset = self.update(
+                daemon.clone(),
+                cache,
+                Message::View(view::Message::Home(HomeMessage::BackToHome)),
+            );
+            return Task::batch([
+                reset,
+                Task::done(Message::View(view::Message::DuressActivateLocal(proof))),
+            ]);
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_mut() else {
+            return Task::none();
+        };
+        let result = scope.accept_pin(&source, check);
+        self.after_other_credential(&source, result)
+    }
+
+    fn begin_other_cube_passkey(&mut self, _cache: &Cache) -> Task<Message> {
+        if self.transfer_page != TransferPage::Unlock
+            || self.other_phase != (UnlockPhase::Credential { busy: false })
+        {
+            return Task::none();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let Some(source) = self.transfer_source(_cache) else {
+                return Task::none();
+            };
+            let Some(scope) = self.other_scope.as_mut() else {
+                return Task::none();
+            };
+            match scope.begin_passkey(&source) {
+                Ok(()) => {
+                    self.other_phase = UnlockPhase::Credential { busy: true };
+                    self.other_error = None;
+                }
+                Err(refusal) => self.other_error = Some(refusal.reason()),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.other_error = Some(
+                coincube_ui::locale::copy("Passkey unlock is available on macOS only.").into(),
+            );
+        }
+        Task::none()
+    }
+
+    fn poll_other_cube_passkey(&mut self, _cache: &Cache) -> Task<Message> {
+        #[cfg(target_os = "macos")]
+        {
+            if self.other_phase != (UnlockPhase::Credential { busy: true }) {
+                return Task::none();
+            }
+            let Some(source) = self.transfer_source(_cache) else {
+                return Task::none();
+            };
+            let Some(scope) = self.other_scope.as_mut() else {
+                return Task::none();
+            };
+            if let Some(result) = scope.poll_passkey(&source) {
+                return self.after_other_credential(&source, result);
+            }
+        }
+        Task::none()
+    }
+
+    fn on_other_cube_backend_bound(
+        &mut self,
+        cache: &Cache,
+        reply: crate::app::transfer_destination_loader::BackendReply,
+    ) -> Task<Message> {
+        if self.other_phase != UnlockPhase::Checks(1) {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_mut() else {
+            return Task::none();
+        };
+        match scope
+            .accept_backend_reply(&source, reply)
+            .and_then(|()| scope.request_address(&source))
+        {
+            Ok(request) => {
+                self.other_phase = UnlockPhase::Checks(2);
+                Task::perform(request.run(), |reply| {
+                    Message::View(view::Message::Home(HomeMessage::OtherCubeAddress(reply)))
+                })
+            }
+            Err(refusal) => {
+                self.other_error = Some(refusal.reason());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_other_cube_address(
+        &mut self,
+        cache: &Cache,
+        reply: crate::app::transfer_destination_loader::AddressReply,
+    ) -> Task<Message> {
+        if self.other_phase != UnlockPhase::Checks(2) {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_ref() else {
+            return Task::none();
+        };
+        match scope.accept_address(&source, reply) {
+            Ok(address) => {
+                self.other_address = Some(OtherReceiveAddress::Bitcoin(address));
+                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
+                self.other_error = None;
+                if self.transfer_page == TransferPage::Unlock {
+                    self.transfer_page = TransferPage::Amount;
+                }
+            }
+            Err(refusal) => self.other_error = Some(refusal.reason()),
+        }
+        Task::none()
+    }
+
+    fn on_other_cube_spark_address(
+        &mut self,
+        cache: &Cache,
+        reply: crate::app::transfer_destination_loader::SparkAddressReply,
+    ) -> Task<Message> {
+        if self.other_phase != UnlockPhase::Checks(1) {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_ref() else {
+            return Task::none();
+        };
+        match scope.accept_spark_address(&source, reply) {
+            Ok(address) => {
+                self.other_address = Some(address);
+                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
+                self.other_error = None;
+                if self.transfer_page == TransferPage::Unlock {
+                    self.transfer_page = TransferPage::Amount;
+                }
+            }
+            Err(ScopeRefusal::Stale) => {}
+            Err(refusal) => self.other_error = Some(refusal.reason()),
+        }
+        Task::none()
+    }
+
+    fn continue_after_other_cube_unlock(&mut self) -> Task<Message> {
+        if self.transfer_page == TransferPage::Unlock
+            && self.other_phase == UnlockPhase::Checks(UNLOCK_CHECKS)
+            && self.other_address.is_some()
+        {
+            self.transfer_page = TransferPage::Amount;
+        }
+        Task::none()
+    }
+
+    fn previous_transfer_substep(&mut self) -> Task<Message> {
+        let other = self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube());
+        self.transfer_page = match self.transfer_page {
+            TransferPage::OtherCube => {
+                self.reset_other_cube();
+                TransferPage::Wallets
+            }
+            TransferPage::Unlock => {
+                self.lock_other_cube();
+                TransferPage::OtherCube
+            }
+            TransferPage::Amount if other => TransferPage::Unlock,
+            _ => TransferPage::Wallets,
+        };
+        Task::none()
+    }
+
+    fn previous_transfer_step(&mut self, cache: &Cache) -> Task<Message> {
+        if self.is_sending
+            && self
+                .transfer_direction
+                .is_some_and(|direction| direction.is_other_cube())
+        {
+            return Task::none();
+        }
+        // Any prepared/signed artifact from the confirm screen
+        // is bound to the amount + destination that were in
+        // effect when it was built. Stepping back allows the
+        // user to edit those, so invalidate here — otherwise a
+        // returning user would land on the confirm screen with
+        // a stale "Confirm & Broadcast" button and broadcast
+        // the previous PSBT against a changed amount.
+        self.invalidate_transfer_destination();
+        // Mirror `BackToHome`'s reset: if we left the confirm
+        // screen with a stuck `is_sending` (e.g. an error path
+        // that didn't clear it), leaving it set would disable
+        // all confirm buttons on re-entry. The Previous button
+        // is also view-level gated on `!is_sending` so a
+        // successful in-flight broadcast can't race this
+        // handler into advancing the step machine.
+        self.is_sending = false;
+        self.current_view.previous();
+        // Back on Amount, Max shows the whole balance again.
+        if let Some(source) = self.transfer_max.filter(|_| self.sends_max()) {
+            self.set_entered_amount(self.max_transfer_amount(source, cache));
+        }
+        Task::none()
+    }
+
+    fn open_transfer_wallet_picker(&mut self, cache: &Cache, side: PickerSide) -> Task<Message> {
+        if self.wallet_picker == Some(side) {
+            self.wallet_picker = None;
+            return Task::none();
+        }
+        self.wallet_picker = Some(side);
+        // The To menu lists other local Cubes the source can
+        // reach; read the catalog (names only, every Cube
+        // locked) as it opens.
+        if side == PickerSide::To && self.current_view.step == 1 {
+            if let Some(source) = self.other_cube_source(cache) {
+                self.other_cubes = other_cubes(&cache.datadir_path, &source);
+            }
+        }
+        Task::none()
+    }
+
+    fn select_transfer_wallet(
+        &mut self,
+        cache: &Cache,
+        selection: HomeMessage,
+        kind: WalletKind,
+    ) -> Task<Message> {
+        if kind == WalletKind::Spark && self.spark_backend.is_none() {
+            return Task::none();
+        }
+        if !self.vault_available(cache)
+            && (kind == WalletKind::Vault
+                || self.transfer_from == Some(WalletKind::Vault)
+                || self.transfer_to == Some(WalletKind::Vault))
+        {
+            return Task::none();
+        }
+        // Apply either the legacy popup or inline-row choice.
+        // The To list excludes the current source. A From
+        // choice matching To swaps the existing pair.
+        let side = match selection {
+            HomeMessage::SelectTransferWallet(side, _) => Some(side),
+            _ => self.wallet_picker,
+        };
+        if let Some(side) = side {
+            return self.apply_transfer_wallet_selection(cache, side, kind);
+        }
+        Task::none()
+    }
+
+    fn apply_transfer_wallet_selection(
+        &mut self,
+        cache: &Cache,
+        side: PickerSide,
+        kind: WalletKind,
+    ) -> Task<Message> {
+        if side == PickerSide::To && self.transfer_from == Some(kind) {
+            return Task::none();
+        }
+        if side == PickerSide::From && self.transfer_from == Some(kind) {
+            self.wallet_picker = None;
+            return Task::none();
+        }
+        let old_pair = (self.transfer_from, self.transfer_to);
+        let was_other = self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube());
+        match side {
+            // A new source keeps a same-Cube pair: the
+            // old source becomes the destination when it
+            // was the destination, or when another Cube
+            // was (that Cube was bound to the old source).
+            PickerSide::From => {
+                if self.transfer_to == Some(kind) || self.transfer_to.is_none() {
+                    self.transfer_to = self.transfer_from;
+                }
+                self.transfer_from = Some(kind);
+            }
+            PickerSide::To => self.transfer_to = Some(kind),
+        }
+        self.transfer_direction = self.transfer_from.and_then(|from| match self.transfer_to {
+            Some(to) => TransferDirection::try_from_pair(from, to),
+            None => TransferDirection::to_other_cube(from, cache.chain()),
+        });
+        if old_pair != (self.transfer_from, self.transfer_to) {
+            self.invalidate_transfer_destination();
+        }
+        // Leaving another Cube locks it again; a same-Cube
+        // pair takes its amount on the same card.
+        if self
+            .transfer_direction
+            .is_some_and(|direction| !direction.is_other_cube())
+        {
+            if was_other {
+                self.reset_other_cube();
+            }
+            self.transfer_page = TransferPage::Amount;
+        }
+        self.wallet_picker = None;
+        // Re-validate the entered amount against the new
+        // source wallet's balance and the new direction's
+        // min/max limits. Without this, switching from
+        // (e.g.) Spark to Vault as the source could leave
+        // a now-too-large amount marked valid.
+        self.validate_entered_amount(cache);
+        Task::none()
+    }
+
+    fn select_another_transfer_cube(&mut self, cache: &Cache) -> Task<Message> {
+        if self.current_view.step != 1 || self.transfer_page != TransferPage::Wallets {
+            return Task::none();
+        }
+        let Some(direction) = self
+            .transfer_from
+            .and_then(|from| TransferDirection::to_other_cube(from, cache.chain()))
+        else {
+            return Task::none();
+        };
+        if self.transfer_source_wallet(direction, cache).is_none() {
+            return Task::none();
+        }
+        if !self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+        {
+            self.transfer_to = None;
+            self.transfer_direction = Some(direction);
+            self.invalidate_transfer_destination();
+            self.validate_entered_amount(cache);
+        }
+        Task::none()
+    }
+
+    fn continue_from_transfer_wallets(&mut self, cache: &Cache) -> Task<Message> {
+        if self.current_view.step != 1 || self.transfer_page != TransferPage::Wallets {
+            return Task::none();
+        }
+        let Some(direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        if direction.is_other_cube() {
+            let Some(source) = self.transfer_source(cache) else {
+                return Task::none();
+            };
+            self.reset_other_cube();
+            self.other_cubes = other_cubes(&cache.datadir_path, &source);
+            let selected = self
+                .other_cubes
+                .iter()
+                .find(|choice| choice.refusal.is_none())
+                .map(|choice| choice.cube_id.clone());
+            self.transfer_page = TransferPage::OtherCube;
+            if let Some(id) = selected {
+                self.select_other_cube(id, cache);
+            }
+        } else {
+            self.transfer_page = TransferPage::Amount;
+        }
+        Task::none()
+    }
+
+    fn choose_other_transfer_cube(&mut self, cache: &Cache, cube_id: String) -> Task<Message> {
+        if self.transfer_page == TransferPage::OtherCube {
+            self.select_other_cube(cube_id, cache);
+        }
+        Task::none()
+    }
+
+    fn choose_other_transfer_wallet(&mut self, cache: &Cache, kind: WalletKind) -> Task<Message> {
+        if self.transfer_page == TransferPage::OtherCube
+            && self.other_cubes.iter().any(|choice| {
+                Some(choice.cube_id.as_str()) == self.other_cube_selected.as_deref()
+                    && choice.can_receive(kind)
+            })
+        {
+            self.select_other_wallet(kind, cache);
+        }
+        Task::none()
+    }
+
+    fn continue_to_other_cube_unlock(&mut self, cache: &Cache) -> Task<Message> {
+        if self.transfer_page != TransferPage::OtherCube {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(kind) = self.transfer_direction.map(|direction| direction.to_kind()) else {
+            return Task::none();
+        };
+        let Some((cube_id, wallet_id)) = self
+            .other_cube_selected
+            .as_ref()
+            .and_then(|id| {
+                self.other_cubes
+                    .iter()
+                    .find(|choice| &choice.cube_id == id && choice.can_receive(kind))
+            })
+            .map(|choice| {
+                let wallet = if kind == WalletKind::Vault {
+                    choice.vault_wallet_id.clone()
+                } else {
+                    None
+                };
+                (choice.cube_id.clone(), wallet)
+            })
+        else {
+            return Task::none();
+        };
+        self.lock_other_cube();
+        match ScopedDestination::new(cache.datadir_path.clone(), source, &cube_id, wallet_id) {
+            Ok(scope) => {
+                self.other_scope = Some(scope);
+                self.transfer_page = TransferPage::Unlock;
+                return iced::widget::operation::focus(crate::pin_input::first_digit_id());
+            }
+            Err(refusal) => self.other_error = Some(refusal.reason()),
+        }
+        Task::none()
+    }
+
+    fn pick_other_cube_wallet(
+        &mut self,
+        cache: &Cache,
+        cube_id: String,
+        kind: WalletKind,
+    ) -> Task<Message> {
+        self.wallet_picker = None;
+        if self.current_view.step != 1 {
+            return Task::none();
+        }
+        let Some(direction) = self
+            .transfer_from
+            .and_then(|from| TransferDirection::to_other_wallet(from, kind, cache.chain()))
+        else {
+            return Task::none();
+        };
+        // The same Cube and wallet again: keep its unlock.
+        if self.other_cube_selected.as_deref() == Some(cube_id.as_str())
+            && self.transfer_direction == Some(direction)
+            && self.other_scope.is_some()
+        {
+            return Task::none();
+        }
+        let Some(wallet) = self.transfer_source_wallet(direction, cache) else {
+            return Task::none();
+        };
+        let source = Source {
+            cube_id: self.cube_id.clone(),
+            chain: cache.chain(),
+            wallet,
+            app: cache.app_generation,
+        };
+        self.reset_other_cube();
+        self.transfer_to = None;
+        self.transfer_direction = Some(direction);
+        self.invalidate_transfer_destination();
+        self.validate_entered_amount(cache);
+        self.other_cubes = other_cubes(&cache.datadir_path, &source);
+        if !self
+            .other_cubes
+            .iter()
+            .any(|choice| choice.cube_id == cube_id && choice.can_receive(kind))
+        {
+            self.transfer_page = TransferPage::Wallets;
+            return Task::none();
+        }
+        self.transfer_page = TransferPage::OtherCube;
+        self.other_cube_selected = Some(cube_id);
+        self.select_other_wallet(kind, cache);
+        self.continue_to_other_cube_unlock(cache)
+    }
+
+    fn leave_transfer(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        let origin = self.transfer_origin;
+        let reset = self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::BackToHome)),
+        );
+        match origin {
+            Some(wallet) => Task::batch([
+                reset,
+                crate::app::state::redirect(transfer_origin_menu(wallet).clone()),
+            ]),
+            None => reset,
+        }
+    }
+
+    fn restart_transfer(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        // Opened from a wallet page, the new transfer starts
+        // from that wallet again and still returns there.
+        if let Some(origin) = self.transfer_origin {
+            return self.start_transfer_from(daemon.clone(), cache, origin);
+        }
+        let reset = self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::BackToHome)),
+        );
+        let open = self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::NextStep)),
+        );
+        Task::batch([reset, open])
+    }
+
+    fn edit_transfer_amount(&mut self, cache: &Cache, amount: String) -> Task<Message> {
+        if self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+            && (self.current_view.step != 1 || self.transfer_page != TransferPage::Amount)
+        {
+            return Task::none();
+        }
+        self.entered_amount.value = amount;
+        self.transfer_max = None;
+        self.validate_entered_amount(cache);
+        Task::none()
+    }
+
+    fn use_transfer_max(&mut self, cache: &Cache) -> Task<Message> {
+        if self.current_view.step != 1 || self.transfer_page != TransferPage::Amount {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_direction.map(|d| d.from_kind()) else {
+            return Task::none();
+        };
+        self.set_entered_amount(self.max_transfer_amount(source, cache));
+        self.transfer_max = Some(source);
+        self.validate_entered_amount(cache);
+        Task::none()
+    }
+
+    fn on_transfer_successful(&mut self) -> Task<Message> {
+        self.current_view.next();
+        self.is_sending = false;
+        // A Vault-to-Vault transfer goes to another Cube; it
+        // locks again now that the transaction is broadcast.
+        if self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+        {
+            self.finish_other_cube();
+        }
+        Task::none()
+    }
+
+    fn back_to_home(&mut self) -> Task<Message> {
+        self.current_view.reset();
+        self.transfer_origin = None;
+        self.transfer_page = TransferPage::Wallets;
+        self.reset_other_cube();
+        self.transfer_direction = None;
+        self.transfer_from = None;
+        self.transfer_to = None;
+        self.wallet_picker = None;
+        self.entered_amount = form::Value::default();
+        self.transfer_max = None;
+        self.invalidate_transfer_destination();
+        self.is_sending = false;
+        self.transfer_spend_tx = None;
+        self.transfer_signed = false;
+        self.spark_send_handle = None;
+        self.spark_send_fee_sat = None;
+        self.spend_tx_fees = None;
+        self.transfer_feerate = default_transfer_feerate();
+        self.transfer_feerate_loading = None;
+        if self
+            .pending_spark_incoming
+            .map(|pending| pending.stage == TransferStage::Completed)
+            .unwrap_or(false)
+        {
+            self.pending_spark_incoming = None;
+            self.pending_spark_deposit_seen = false;
+            self.pending_spark_incoming_is_swap = false;
+        }
+        Task::none()
+    }
+
+    fn on_spark_balance_updated(
+        &mut self,
+        cache: &Cache,
+        btc: Amount,
+        usdb_balance: Option<coincube_spark_protocol::UsdbBalanceSnapshot>,
+        identity_pubkey: String,
+    ) -> Task<Message> {
+        self.spark_balance_loading = false;
+        // The in-flight fetch was issued before
+        // `Synced` arrived — its value reflects the
+        // SDK's pre-sync state. Discard it and fire a
+        // fresh post-sync fetch; the next response
+        // will flip the gate.
+        if self.spark_pending_resync {
+            self.spark_pending_resync = false;
+            return self.load_spark_balance().unwrap_or_else(Task::none);
+        }
+        self.spark_btc_balance = btc;
+        self.spark_identity = Some(identity_pubkey);
+        self.spark_usdb_balance = usdb_balance.clone();
+        self.spark_balance_error = false;
+        // Fold any Stable Balance (USDB) holding into the shown
+        // Spark balance — auto-sweep means a BTC-only reading
+        // would understate a funded wallet. Shared with the
+        // Send/Receive cards via `unified_spark_balance_sats`.
+        self.spark_balance =
+            Amount::from_sat(crate::app::state::spark::unified_spark_balance_sats(
+                btc.to_sat(),
+                usdb_balance.as_ref(),
+                cache,
+            ));
+        self.spark_balance_received = true;
+        // Trust the response once the bridge has
+        // confirmed at least one `Synced` event — until
+        // then this could be the SDK's pre-sync persisted
+        // value (e.g. zero before this session's incoming
+        // interest payments landed). Until corroborated,
+        // the card renders a `…` placeholder.
+        //
+        // Also release the gate when the fallback poll
+        // has already exhausted its budget: the
+        // subscription stops firing once
+        // `spark_load_retry_count` reaches the cap, so
+        // any response that lands after that point has
+        // no other path to release the loading UI.
+        // Best-effort — better to show the last
+        // received value than stay stuck on `…`.
+        if self.spark_synced_seen || self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP {
+            self.spark_balance_loaded = true;
+        }
+        Task::none()
+    }
+
+    fn retry_spark_balance(&mut self) -> Task<Message> {
+        // Only the fallback poll bumps the retry
+        // counter — SDK-event-driven refreshes
+        // (`RefreshSparkBalance`) must not, or a burst
+        // of payment / deposit events on cold start
+        // could blow through the cap before `Synced`
+        // lands and prematurely flip the gate.
+        //
+        // The counter advances on every tick (wall-
+        // clock semantics) so a single slow get_info
+        // can't postpone the cap indefinitely. The
+        // single-flight guard lives inside
+        // `load_spark_balance`, which returns `None`
+        // when a previous RPC is still in flight — so
+        // we don't start an overlapping fetch even
+        // though the tick still counts.
+        self.spark_load_retry_count = self.spark_load_retry_count.saturating_add(1);
+        // Final-attempt graceful exit: if the fallback
+        // poll has hit its cap without ever seeing a
+        // `Synced`, release the loading UI rather than
+        // leave the user staring at `…` indefinitely.
+        // Shows whatever the last `get_info` returned —
+        // best-effort fallback when the event path is
+        // genuinely broken. Skipped when no response
+        // ever landed (`spark_balance` is still the
+        // `Amount::ZERO` default): publishing that zero
+        // would mislead the user and become a false
+        // source cap in `validate_entered_amount`. In
+        // that scenario we deliberately stay in the
+        // loading state — Transfer remains disabled
+        // and the placeholder honestly reflects that
+        // we don't know the balance.
+        if self.spark_load_retry_count >= SPARK_LOAD_RETRY_CAP
+            && !self.spark_balance_loaded
+            && self.spark_balance_received
+        {
+            self.spark_balance_loaded = true;
+        }
+        self.load_spark_balance().unwrap_or_else(Task::none)
+    }
+
+    fn on_spark_synced(&mut self) -> Task<Message> {
+        // Flip the synced gate, but do NOT flip
+        // `spark_balance_loaded` here — the value
+        // currently in `spark_balance` may still be
+        // the SDK's pre-sync persisted snapshot.
+        // `mod.rs` dispatches `RefreshSparkBalance`
+        // alongside this message on every `Synced`;
+        // the fresh `SparkBalanceUpdated` it triggers
+        // is what flips the gate (its handler checks
+        // `spark_synced_seen`), so the placeholder
+        // only goes away once the post-sync value
+        // has actually landed.
+        self.spark_synced_seen = true;
+        // If a get_info is already in flight, the
+        // companion `RefreshSparkBalance` will be
+        // skipped by the in-flight guard. Mark the
+        // pending response as stale-on-arrival so
+        // `SparkBalanceUpdated` discards it instead
+        // of flipping the gate on a pre-Synced value.
+        if self.spark_balance_loading {
+            self.spark_pending_resync = true;
+        }
+        Task::none()
+    }
+
+    fn on_spark_balance_failed(&mut self) -> Task<Message> {
+        // Soft-fail terminal: release the in-flight
+        // guard so the next poll tick or SparkEvent
+        // can fire a fresh `get_info`. If a `Synced`
+        // arrived during the failed fetch, the
+        // companion `RefreshSparkBalance` was skipped
+        // by the in-flight guard — fire a fresh one
+        // now so the placeholder can converge.
+        self.spark_balance_loading = false;
+        self.spark_balance_error = true;
+        if self.spark_pending_resync {
+            self.spark_pending_resync = false;
+            return self.load_spark_balance().unwrap_or_else(Task::none);
+        }
+        Task::none()
+    }
+
+    fn update_transfer_address_labels(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        message: Message,
+    ) -> Task<Message> {
+        if let Some(daemon) = daemon {
+            match self.labels_edited.update(
+                daemon,
+                message,
+                self.receive_address_info
+                    .iter_mut()
+                    .map(|info| info as &mut dyn crate::daemon::model::LabelsLoader),
+            ) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    let err_msg = crate::user_error::report(&e);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
+                }
+            }
+        } else {
+            Task::none()
+        }
+    }
+
+    fn show_transfer_address_qr(&mut self) -> Task<Message> {
+        if let Some(info) = &self.receive_address_info {
+            if let Some(modal) = ShowQrCodeModal::new(&info.address, info.index) {
+                self.modal = Modal::ShowQrCode(modal);
+            }
+        }
+        Task::none()
+    }
+
+    fn close_transfer_modal(&mut self) -> Task<Message> {
+        // Only leaving the signer abandons the spend. Closing the
+        // QR card over Review keeps a signed transfer signed.
+        if matches!(self.modal, Modal::Sign(_)) {
+            self.transfer_spend_tx = None;
+            self.transfer_psbt_ready_for = None;
+            self.transfer_signed = false;
+        }
+        self.modal = Modal::None;
+        Task::none()
+    }
+
+    fn reconcile_pending_vault_receive(&mut self, cache: &Cache) -> Task<Message> {
+        // Reconcile `pending_vault_receive_sats` against the daemon's
+        // view. Once cache-derived pending has grown by at least the
+        // broadcast amount relative to our baseline, the tx has landed
+        // and we latch the counter to zero so a later confirmation
+        // (which drops the coin out of the "external unconfirmed" set)
+        // doesn't resurrect the stale indicator.
+        if self.pending_vault_receive_sats > 0 {
+            let current = cache_vault_pending_receive_sats(cache);
+            if current
+                >= self
+                    .pending_vault_receive_baseline_sats
+                    .saturating_add(self.pending_vault_receive_sats)
+            {
+                self.pending_vault_receive_sats = 0;
+                self.pending_vault_receive_baseline_sats = 0;
+            } else if current < self.pending_vault_receive_baseline_sats {
+                // Cache shrunk below the snapshot (e.g. a prior external
+                // unconfirmed coin confirmed). Rebase so growth is
+                // measured from the new floor.
+                self.pending_vault_receive_baseline_sats = current;
+            }
+        }
+        Task::none()
+    }
+
     /// Open the transfer's Details step with `direction`, fresh: the Overview's
     /// Transfer, a wallet page's Transfer and Done's New transfer all start
     /// here.
@@ -3841,24 +4080,29 @@ impl GlobalHome {
                     WalletKind::Vault => "Amount exceeds Vault balance",
                 });
             } else {
-                let effective_min = effective_transfer_min_sat(direction);
-                let effective_max = effective_transfer_max_sat(direction);
-                if let Some(min_sat) = effective_min {
-                    if entered_sat < min_sat {
-                        valid = false;
-                        warning = Some("Amount below minimum limits");
-                    } else if let Some(max_sat) = effective_max {
-                        if entered_sat > max_sat {
-                            valid = false;
-                            warning = Some("Amount above maximum limits");
-                        }
-                    }
-                }
+                warning = Self::transfer_amount_limit_warning(direction, entered_sat);
+                valid = warning.is_none();
             }
         }
 
         self.entered_amount.valid = valid;
         self.entered_amount.warning = warning;
+    }
+
+    fn transfer_amount_limit_warning(
+        direction: TransferDirection,
+        entered_sat: u64,
+    ) -> Option<&'static str> {
+        let effective_min = effective_transfer_min_sat(direction);
+        let effective_max = effective_transfer_max_sat(direction);
+        let min_sat = effective_min?;
+        if entered_sat < min_sat {
+            Some("Amount below minimum limits")
+        } else if effective_max.is_some_and(|max_sat| entered_sat > max_sat) {
+            Some("Amount above maximum limits")
+        } else {
+            None
+        }
     }
 
     /// The auto-claimed deposit has landed for `amount_sat`: mark the
