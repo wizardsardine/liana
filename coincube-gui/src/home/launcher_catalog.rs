@@ -745,6 +745,127 @@ impl Home {
             && projection.ghosts.iter().any(|cube| ghost_key(cube) == *key)
     }
 
+    fn select_catalog_floor(&mut self, key: CubeCatalogKey) -> Task<Message> {
+        if let Some(task) = self.select_on_other_network(&key, PendingIntent::Select) {
+            return task;
+        }
+        let previous = self.catalog.selected.clone();
+        self.catalog.selected = self.catalog_selectable(&key).then_some(key.clone());
+        self.catalog.motion = None;
+        self.catalog.hover.clear();
+        self.catalog.open_from_floor = false;
+        if self.catalog.mode == LauncherMode::Cubes
+            && self.catalog.selected.as_ref() == Some(&key)
+            && previous.as_ref() != Some(&key)
+        {
+            self.catalog.motion = Some(super::launcher_scene::Motion::new(previous));
+        }
+        if let Some(index) = project(self).floor_position(&key) {
+            self.catalog.page = index / self.catalog.page_size();
+        }
+        if self.catalog.selected.as_ref() == Some(&key) {
+            iced::widget::operation::focus(select_id(&key))
+        } else {
+            Task::none()
+        }
+    }
+
+    fn apply_catalog_filter(&mut self, filter: NetworkFilter) -> Task<Message> {
+        let from_menu = std::mem::take(&mut self.catalog.network_menu);
+        // Create and Import act on the current network, so it must
+        // be one the filter shows: one network becomes current, and
+        // Live or Test move off a network they hide.
+        let target = self.filter_target(filter);
+        self.catalog.filter = filter;
+        self.catalog.page = 0;
+        // A selection the filter hides falls back to browsing.
+        if self
+            .catalog
+            .selected
+            .as_ref()
+            .is_some_and(|key| !self.effective_filter().matches(key.chain))
+        {
+            self.catalog.selected = None;
+            self.catalog.motion = None;
+            self.catalog.open_from_floor = false;
+        }
+        let switch = target.map_or_else(Task::none, |chain| {
+            Task::done(Message::View(super::ViewMessage::SelectNetwork(chain)))
+        });
+        // A menu choice closes the menu; keep keyboard focus on its chip.
+        if from_menu {
+            Task::batch([switch, iced::widget::operation::focus(network_id())])
+        } else {
+            switch
+        }
+    }
+
+    fn advance_catalog_motion(&mut self, now: Instant) -> Task<Message> {
+        // Settled floats, and Cubes paged or selected away, stop.
+        let browsing = self.catalog.selected.is_none();
+        let on_page: Vec<_> = if browsing && !self.catalog.hover.is_empty() {
+            let projection = project(self);
+            if projection.shows_create_placeholder(self.catalog.mode) {
+                vec![create_placeholder_key()]
+            } else {
+                projection
+                    .floor_keys()
+                    .into_iter()
+                    .skip(self.catalog.page * self.catalog.page_size())
+                    .take(self.catalog.page_size())
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
+        self.catalog
+            .hover
+            .retain(|hover| !hover.settled(now) && on_page.contains(&hover.key));
+        if self
+            .catalog
+            .motion
+            .as_ref()
+            .is_some_and(|motion| motion.done(now))
+        {
+            self.catalog.motion = None;
+            if let Some(key) = &self.catalog.selected {
+                return iced::widget::operation::focus(details_open_id(key));
+            }
+        }
+        Task::none()
+    }
+
+    fn set_catalog_page(&mut self, page: usize) -> Task<Message> {
+        let pages = floor_pages(project(self).floor_len(), self.catalog.page_size());
+        if page < pages {
+            self.catalog.page = page;
+            self.catalog.selected = None;
+            self.catalog.motion = None;
+            self.catalog.open_from_floor = false;
+            self.catalog.wheel_pixels = 0.0;
+            self.catalog.last_wheel_input = None;
+            self.catalog.last_wheel_page = None;
+            self.catalog.wheel_consumed = false;
+        }
+        Task::none()
+    }
+
+    fn resize_catalog_stage(&mut self, width: f32) -> Task<Message> {
+        let before = self.catalog.page_size();
+        self.catalog.stage_width = Some(width);
+        let after = self.catalog.page_size();
+        if after != before {
+            // Keep the selected Cube, else the page's first, on screen.
+            let projection = project(self);
+            let anchor = projection
+                .floor_selected()
+                .unwrap_or(self.catalog.page.saturating_mul(before));
+            let page = floor_page_keeping(anchor, after, projection.floor_len());
+            self.catalog.page = page;
+        }
+        Task::none()
+    }
+
     pub(super) fn update_catalog(&mut self, message: CatalogMessage) -> Task<Message> {
         match message {
             CatalogMessage::Activity(message) => self.update_activity(message),
@@ -760,30 +881,7 @@ impl Home {
                 }
                 Task::none()
             }
-            CatalogMessage::SelectFloor(key) => {
-                if let Some(task) = self.select_on_other_network(&key, PendingIntent::Select) {
-                    return task;
-                }
-                let previous = self.catalog.selected.clone();
-                self.catalog.selected = self.catalog_selectable(&key).then_some(key.clone());
-                self.catalog.motion = None;
-                self.catalog.hover.clear();
-                self.catalog.open_from_floor = false;
-                if self.catalog.mode == LauncherMode::Cubes
-                    && self.catalog.selected.as_ref() == Some(&key)
-                    && previous.as_ref() != Some(&key)
-                {
-                    self.catalog.motion = Some(super::launcher_scene::Motion::new(previous));
-                }
-                if let Some(index) = project(self).floor_position(&key) {
-                    self.catalog.page = index / self.catalog.page_size();
-                }
-                if self.catalog.selected.as_ref() == Some(&key) {
-                    iced::widget::operation::focus(select_id(&key))
-                } else {
-                    Task::none()
-                }
-            }
+            CatalogMessage::SelectFloor(key) => self.select_catalog_floor(key),
             CatalogMessage::KeyHover(part, over) => {
                 self.catalog.key.hover(part, over);
                 Task::none()
@@ -814,69 +912,8 @@ impl Home {
                 }
                 Task::none()
             }
-            CatalogMessage::Filter(filter) => {
-                let from_menu = std::mem::take(&mut self.catalog.network_menu);
-                // Create and Import act on the current network, so it must
-                // be one the filter shows: one network becomes current, and
-                // Live or Test move off a network they hide.
-                let target = self.filter_target(filter);
-                self.catalog.filter = filter;
-                self.catalog.page = 0;
-                // A selection the filter hides falls back to browsing.
-                if self
-                    .catalog
-                    .selected
-                    .as_ref()
-                    .is_some_and(|key| !self.effective_filter().matches(key.chain))
-                {
-                    self.catalog.selected = None;
-                    self.catalog.motion = None;
-                    self.catalog.open_from_floor = false;
-                }
-                let switch = target.map_or_else(Task::none, |chain| {
-                    Task::done(Message::View(super::ViewMessage::SelectNetwork(chain)))
-                });
-                // A menu choice closes the menu; keep keyboard focus on its chip.
-                if from_menu {
-                    Task::batch([switch, iced::widget::operation::focus(network_id())])
-                } else {
-                    switch
-                }
-            }
-            CatalogMessage::MotionTick(now) => {
-                // Settled floats, and Cubes paged or selected away, stop.
-                let browsing = self.catalog.selected.is_none();
-                let on_page: Vec<_> = if browsing && !self.catalog.hover.is_empty() {
-                    let projection = project(self);
-                    if projection.shows_create_placeholder(self.catalog.mode) {
-                        vec![create_placeholder_key()]
-                    } else {
-                        projection
-                            .floor_keys()
-                            .into_iter()
-                            .skip(self.catalog.page * self.catalog.page_size())
-                            .take(self.catalog.page_size())
-                            .collect()
-                    }
-                } else {
-                    Vec::new()
-                };
-                self.catalog
-                    .hover
-                    .retain(|hover| !hover.settled(now) && on_page.contains(&hover.key));
-                if self
-                    .catalog
-                    .motion
-                    .as_ref()
-                    .is_some_and(|motion| motion.done(now))
-                {
-                    self.catalog.motion = None;
-                    if let Some(key) = &self.catalog.selected {
-                        return iced::widget::operation::focus(details_open_id(key));
-                    }
-                }
-                Task::none()
-            }
+            CatalogMessage::Filter(filter) => self.apply_catalog_filter(filter),
+            CatalogMessage::MotionTick(now) => self.advance_catalog_motion(now),
             CatalogMessage::ClearSelection => {
                 // Back spins the Cube to rest and brightens its peers, as the
                 // prototype's `toBrowse` reverses the same transitions.
@@ -916,37 +953,10 @@ impl Home {
                 self.catalog.wheel_consumed = false;
                 Task::none()
             }
-            CatalogMessage::Page(page) => {
-                let pages = floor_pages(project(self).floor_len(), self.catalog.page_size());
-                if page < pages {
-                    self.catalog.page = page;
-                    self.catalog.selected = None;
-                    self.catalog.motion = None;
-                    self.catalog.open_from_floor = false;
-                    self.catalog.wheel_pixels = 0.0;
-                    self.catalog.last_wheel_input = None;
-                    self.catalog.last_wheel_page = None;
-                    self.catalog.wheel_consumed = false;
-                }
-                Task::none()
-            }
+            CatalogMessage::Page(page) => self.set_catalog_page(page),
             CatalogMessage::Step(direction) => self.step_floor_page(direction),
             CatalogMessage::Wheel(delta) => self.wheel_floor_page(delta, Instant::now()),
-            CatalogMessage::StageWidth(width) => {
-                let before = self.catalog.page_size();
-                self.catalog.stage_width = Some(width);
-                let after = self.catalog.page_size();
-                if after != before {
-                    // Keep the selected Cube, else the page's first, on screen.
-                    let projection = project(self);
-                    let anchor = projection
-                        .floor_selected()
-                        .unwrap_or(self.catalog.page.saturating_mul(before));
-                    let page = floor_page_keeping(anchor, after, projection.floor_len());
-                    self.catalog.page = page;
-                }
-                Task::none()
-            }
+            CatalogMessage::StageWidth(width) => self.resize_catalog_stage(width),
             CatalogMessage::CubeHover(key, over) => {
                 if over && self.catalog.selected.is_some() {
                     return Task::none();
