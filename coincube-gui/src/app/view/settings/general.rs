@@ -499,7 +499,7 @@ fn recovery_overview<'a>(
         page::rows(methods),
     ));
 
-    let path_row = if cache.has_vault {
+    let path_row = if cache.has_inheritance_vault() {
         page::row(localized_copy("Recovery path"))
             .description(localized_copy(
                 "Review the Vault's recovery spending path and timelocks in its tools.",
@@ -508,6 +508,13 @@ fn recovery_overview<'a>(
                 RECOVERY_TOOLS_ID,
                 localized_copy("Open recovery tools"),
                 Some(Message::Menu(Menu::Vault(VaultSubMenu::Recovery))),
+            ))
+    } else if cache.has_vault {
+        page::row(localized_copy("Recovery path"))
+            .description(localized_copy("An imported Vault has no recovery path."))
+            .control(page::status(
+                page::Status::Off,
+                localized_copy("Not applicable"),
             ))
     } else {
         page::row(localized_copy("Recovery path"))
@@ -520,8 +527,13 @@ fn recovery_overview<'a>(
     let mut path_rows = vec![path_row.into()];
     let mut alerts_controls = None;
     if let Some(ra) = recovery_alerts {
-        path_rows.push(recovery_alerts_row(ra, cache.has_vault));
-        if ra.managing && cache.has_vault && ra.entitled && !ra.no_vault && ra.status.is_some() {
+        path_rows.push(recovery_alerts_row(ra, cache.has_inheritance_vault()));
+        if ra.managing
+            && cache.has_inheritance_vault()
+            && ra.entitled
+            && !ra.no_vault
+            && ra.status.is_some()
+        {
             let spark = crate::app::features::spark(cache.chain()).is_available();
             alerts_controls = Some(recovery_alerts_card(ra, spark));
         }
