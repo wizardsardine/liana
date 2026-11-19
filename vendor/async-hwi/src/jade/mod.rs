@@ -300,6 +300,9 @@ impl<T: Transport + Sync + Send> HWI for Jade<T> {
     /// Searches every registered descriptor (`name` first), then the
     /// multisig registry. Jade signs a PSBT against whichever registration
     /// matches its inputs, so any match can sign without registering again.
+    /// Errors reading the list or `name` itself propagate, as the plain
+    /// name check's do; an entry under another name that cannot be read is
+    /// skipped, so it never hides a later match.
     async fn find_wallet_registration(
         &self,
         name: &str,
@@ -312,7 +315,11 @@ impl<T: Transport + Sync + Send> HWI for Jade<T> {
             .filter(|n| n.as_str() == name)
             .chain(descriptors.keys().filter(|n| n.as_str() != name));
         for registered_name in names {
-            let registered = self.get_registered_descriptor(registered_name).await?;
+            let registered = match self.get_registered_descriptor(registered_name).await {
+                Ok(registered) => registered,
+                Err(e) if registered_name == name => return Err(e),
+                Err(_) => continue,
+            };
             let same_keys = registered.datavalues.len() == keys.len()
                 && keys.iter().enumerate().all(|(i, key)| {
                     registered
@@ -791,6 +798,103 @@ mod registration_tests {
                 ]),
             ),
         ])
+    }
+
+    /// Answers each `(method, name parameter)` from `replies`; anything
+    /// else fails as a transport error.
+    #[derive(Debug)]
+    struct FakeTransport {
+        replies: Vec<((&'static str, Option<&'static str>), Value)>,
+    }
+
+    #[async_trait]
+    impl Transport for FakeTransport {
+        async fn request<S: Serialize + Send + Unpin, D: DeserializeOwned + Unpin + Send>(
+            &self,
+            method: &str,
+            params: Option<S>,
+        ) -> Result<api::Response<D>, JadeError> {
+            let params = params.map(|p| serde_cbor::value::to_value(p).unwrap());
+            let name = match &params {
+                Some(Value::Map(m)) => m.values().find_map(|v| match v {
+                    Value::Text(t) => Some(t.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            let reply = self
+                .replies
+                .iter()
+                .find(|((m, n), _)| *m == method && n.map(str::to_string) == name)
+                .map(|(_, reply)| reply.clone())
+                .ok_or(TransportError::NoErrorOrResult)?;
+            Ok(api::Response {
+                id: "0".to_string(),
+                seqlen: None,
+                seqnum: None,
+                result: Some(
+                    serde_cbor::value::from_value(reply)
+                        .map_err(|_| TransportError::NoErrorOrResult)?,
+                ),
+                error: None,
+            })
+        }
+    }
+
+    fn descriptor_info() -> Value {
+        map(vec![
+            ("descriptor_len", Value::Integer(1)),
+            ("num_datavalues", Value::Integer(1)),
+        ])
+    }
+
+    fn sortedmulti() -> String {
+        format!(
+            "wsh(sortedmulti(2,{}/<0;1>/*,{}/<0;1>/*,{}/<0;1>/*))",
+            KEYS[0], KEYS[1], KEYS[2]
+        )
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_descriptor_under_another_name_does_not_hide_the_multisig_registry() {
+        let jade = Jade::new(FakeTransport {
+            replies: vec![
+                (
+                    ("get_registered_descriptors", None),
+                    map(vec![("Broken", descriptor_info())]),
+                ),
+                (
+                    ("get_registered_multisigs", None),
+                    map(vec![("Specter", summary("wsh(multi(k))", true, 2, 3))]),
+                ),
+                (
+                    ("get_registered_multisig", Some("Specter")),
+                    detail(&KEYS, vec![]),
+                ),
+            ],
+        });
+        assert_eq!(
+            jade.find_wallet_registration("Import0000", &sortedmulti())
+                .await
+                .unwrap(),
+            Some(WalletRegistration {
+                name: Some("Specter".to_string())
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_descriptor_under_our_name_is_an_error() {
+        let jade = Jade::new(FakeTransport {
+            replies: vec![(
+                ("get_registered_descriptors", None),
+                map(vec![("Import0000", descriptor_info())]),
+            )],
+        });
+        assert!(jade
+            .find_wallet_registration("Import0000", &sortedmulti())
+            .await
+            .is_err());
     }
 
     #[test]

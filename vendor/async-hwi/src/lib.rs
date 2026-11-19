@@ -77,8 +77,7 @@ impl std::error::Error for Error {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletRegistration {
     /// The name the device keeps it under. `None` for a registration the
-    /// device does not address by name (a Coldcard multisig wallet, found by
-    /// its M, N and fingerprints).
+    /// device does not address by name.
     pub name: Option<String>,
 }
 

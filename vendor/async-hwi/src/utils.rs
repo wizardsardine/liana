@@ -169,7 +169,7 @@ pub enum MultisigWrapper {
 
 /// A plain `multi` / `sortedmulti` policy whose keys all derive on the
 /// standard receive/change branches (`/<0;1>/*` or `/**`): the shape a
-/// device's multisig registry (Jade, Coldcard) holds, as opposed to its
+/// device's multisig registry (Jade's, for one) holds, as opposed to its
 /// descriptor or miniscript registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultisigPolicy {

@@ -12,8 +12,7 @@ use coldcard::protocol::DescriptorName;
 use hidapi::DeviceInfo;
 
 use crate::{
-    parse_version, utils, AddressScript, DeviceKind, Error as HWIError, Version,
-    WalletRegistration, HWI,
+    parse_version, AddressScript, DeviceKind, Error as HWIError, Version, WalletRegistration, HWI,
 };
 pub use coldcard as api;
 
@@ -21,12 +20,10 @@ pub use coldcard as api;
 pub struct Coldcard {
     device: Arc<Mutex<coldcard::Coldcard>>,
     wallet_name: Option<String>,
-    /// The registration [`HWI::find_wallet_registration`] last found for
-    /// `wallet_name`'s policy, when it is not the one under `wallet_name`:
-    /// `Some(Some(name))` signs against that miniscript wallet,
-    /// `Some(None)` against the multisig registry (no name). The next
-    /// [`HWI::sign_tx`] consumes it.
-    found: Arc<Mutex<Option<Option<String>>>>,
+    /// The miniscript wallet [`HWI::find_wallet_registration`] last found
+    /// for `wallet_name`'s policy under another name. The next
+    /// [`HWI::sign_tx`] signs against it and consumes it.
+    found: Arc<Mutex<Option<String>>>,
 }
 
 impl Coldcard {
@@ -63,15 +60,10 @@ impl Coldcard {
                 return Ok(Some(WalletRegistration { name: Some(other) }));
             }
         }
-        if let Some((m, n, xfp_xor)) = multisig_check_args(policy) {
-            if self
-                .device()?
-                .multisig_check(m, n, xfp_xor)
-                .unwrap_or(false)
-            {
-                return Ok(Some(WalletRegistration { name: None }));
-            }
-        }
+        // The multisig registry is not searched: `multisig_check` matches
+        // only M, N and the XOR of the fingerprints, so another wallet on
+        // the same devices (another account, say) would pass for this one,
+        // and no silent command reads an entry's xpubs to tell them apart.
         Ok(None)
     }
 
@@ -161,9 +153,9 @@ impl HWI for Coldcard {
         Ok(desc.is_some_and(|desc| registered_descriptor_matches(&desc, policy)))
     }
 
-    /// Searches the named miniscript wallets (`name` first), then, for a
-    /// sortedmulti policy, the multisig registry. A match under another name
-    /// is remembered, so this handle's [`HWI::sign_tx`] signs against it.
+    /// Searches the named miniscript wallets, `name` first. A match under
+    /// another name is remembered, so this handle's [`HWI::sign_tx`] signs
+    /// against it.
     async fn find_wallet_registration(
         &self,
         name: &str,
@@ -174,9 +166,7 @@ impl HWI for Coldcard {
             .found
             .lock()
             .map_err(|_| HWIError::Unexpected("Failed to unlock"))? = match &found {
-            Some(registration) if registration.name.as_deref() != Some(name) => {
-                Some(registration.name.clone())
-            }
+            Some(WalletRegistration { name: Some(other) }) if other != name => Some(other.clone()),
             _ => None,
         };
         Ok(found)
@@ -192,22 +182,13 @@ impl HWI for Coldcard {
             .take();
         let mut cc = self.device()?;
 
-        let wallet_name = if let Some(found) = found {
-            match found {
-                Some(name) => Some(
-                    DescriptorName::new(name)
-                        .map_err(|_| HWIError::Unexpected("Coldcard: Invalid wallet name"))?,
-                ),
-                None => None,
-            }
-        } else if let Some(name) = self.wallet_name.clone() {
-            Some(
+        let wallet_name = found
+            .or_else(|| self.wallet_name.clone())
+            .map(|name| {
                 DescriptorName::new(name)
-                    .map_err(|_| HWIError::Unexpected("Coldcard: Invalid wallet name"))?,
-            )
-        } else {
-            None
-        };
+                    .map_err(|_| HWIError::Unexpected("Coldcard: Invalid wallet name"))
+            })
+            .transpose()?;
 
         let _ = cc.sign_psbt_miniscript(&psbt.serialize(), api::SignMode::Signed, wallet_name)?;
 
@@ -265,23 +246,6 @@ fn registered_descriptor_matches(registered: &str, policy: &str) -> bool {
     registered.contains(policy)
 }
 
-/// `M`, `N` and the XOR of the key fingerprints, for a sortedmulti policy
-/// whose keys all carry an origin: what the Coldcard multisig registry
-/// (sortedmulti only, BIP67) is looked up by. Coldcard reads each 4-byte
-/// fingerprint as a little-endian `u32`. The device checks the full xpubs
-/// again when it signs.
-fn multisig_check_args(policy: &str) -> Option<(u32, u32, u32)> {
-    let multisig = utils::MultisigPolicy::parse(policy)?;
-    if !multisig.sorted {
-        return None;
-    }
-    let mut xfp_xor = 0;
-    for (fingerprint, _) in &multisig.keys {
-        xfp_xor ^= u32::from_le_bytes(fingerprint.as_ref()?.to_bytes());
-    }
-    Some((multisig.threshold, multisig.keys.len() as u32, xfp_xor))
-}
-
 pub fn is_coldcard(device_info: &DeviceInfo) -> bool {
     device_info.vendor_id() == api::COINKITE_VID && device_info.product_id() == api::CKCC_PID
 }
@@ -295,23 +259,6 @@ mod tests {
         "[7fc39c07/48'/1'/0'/2']tpubDEvjgXtrUuH3Qtkapny9aE8gN847xiXsf9MDM5XueGf9nrvStqAuBSva3ajGyTvtp8Ti55FvVXsgYSXuS1tQkBeopFuodx2hRUDmQbvKxbZ",
         "[1a1ffd98/48'/1'/0'/2']tpubDFZqzTvGijYb13BC73CkS1er8DrP5YdzMhziN3kWCKUFaW51Yj6ggvf99YpdrkTJy4RT85mxQMHXDiFAKRxzf6BykQgT4pRRBNPshSJJcKo",
     ];
-
-    #[test]
-    fn multisig_check_uses_little_endian_fingerprint_xor() {
-        let policy = format!(
-            "wsh(sortedmulti(2,{}/<0;1>/*,{}/<0;1>/*,{}/<0;1>/*))",
-            KEYS[0], KEYS[1], KEYS[2]
-        );
-        let xor = u32::from_le_bytes([0xb0, 0x82, 0x29, 0x27])
-            ^ u32::from_le_bytes([0x7f, 0xc3, 0x9c, 0x07])
-            ^ u32::from_le_bytes([0x1a, 0x1f, 0xfd, 0x98]);
-        assert_eq!(multisig_check_args(&policy), Some((2, 3, xor)));
-        // Coldcard's multisig registry is sortedmulti only.
-        assert_eq!(
-            multisig_check_args(&policy.replace("sortedmulti", "multi")),
-            None
-        );
-    }
 
     #[test]
     fn registered_descriptor_match_ignores_marker_and_checksum() {
