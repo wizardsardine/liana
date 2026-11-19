@@ -2641,7 +2641,7 @@ impl GUI {
         }
     }
 
-    fn update_in_language(&mut self, message: Message) -> Task<Message> {
+    fn reconcile_overlay_origins(&mut self) {
         if self
             .preferences_sheet
             .as_ref()
@@ -2664,6 +2664,14 @@ impl GUI {
                 }
             }
         }
+    }
+
+    fn intercept_verified_unlock_duress(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+
         // A completed classifier is an emergency even if Back closed its
         // PinEntry or a different Cube reopened at the same tab id. The proof
         // was minted by the captured trial, and carries no seed into Iced.
@@ -2695,8 +2703,17 @@ impl GUI {
                 ) => proof,
                 _ => unreachable!(),
             };
-            return self.route_verified_unlock_duress(pane_id, tab_id, proof);
+            return Break(self.route_verified_unlock_duress(pane_id, tab_id, proof));
         }
+        Continue(message)
+    }
+
+    fn update_in_language(&mut self, message: Message) -> Task<Message> {
+        self.reconcile_overlay_origins();
+        let message = match self.intercept_verified_unlock_duress(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
+        };
         if let Some(task) = self.intercept_device_preference(&message) {
             return task;
         }
