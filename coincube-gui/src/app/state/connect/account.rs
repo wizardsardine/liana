@@ -1311,6 +1311,13 @@ pub enum DuressContactsStep {
     Form,
 }
 
+struct ValidatedDuressContact {
+    name: String,
+    phone: String,
+    email: String,
+    channels: Vec<String>,
+}
+
 /// State for the duress "Emergency contacts" section within
 /// `ConnectAccountPanel` (Estate Notifications — PR 1). Holds the loaded
 /// contacts and the transient add/edit form. Estate-gated: the data is
@@ -5233,7 +5240,6 @@ impl ConnectAccountPanel {
     /// for a downgraded account (it just shows the locked affordance), so
     /// reads aren't re-gated here beyond `reload_duress_contacts`.
     fn update_duress_contacts(&mut self, msg: DuressContactsMessage) -> iced::Task<Message> {
-        use crate::services::coincube::is_valid_e164;
         match msg {
             DuressContactsMessage::Loaded(res, gen) => {
                 if gen != self.session_generation {
@@ -5298,182 +5304,219 @@ impl ConnectAccountPanel {
             DuressContactsMessage::ToggleSms(b) => self.duress_contacts.form_ch_sms = b,
             DuressContactsMessage::ToggleWhatsapp(b) => self.duress_contacts.form_ch_whatsapp = b,
             DuressContactsMessage::ToggleEmailChannel(b) => self.duress_contacts.form_ch_email = b,
-            DuressContactsMessage::Submit => {
-                // A submit is already in flight — drop the duplicate before it
-                // spawns a second request. The button is view-disabled while
-                // `submitting`, but iced can enqueue two presses in one frame
-                // before the re-render lands, and create isn't idempotent (a
-                // double would make two contacts).
-                if self.duress_contacts.submitting {
-                    return iced::Task::none();
-                }
-                if !self.is_duress_alerts_entitled() {
-                    self.duress_contacts.error =
-                        Some("Emergency contacts require an Estate plan.".to_string());
-                    return iced::Task::none();
-                }
-                // Validate the form. `validate_duress_contact_form` returns
-                // the normalised (name, phone, email, channels) tuple or a
-                // user-facing error.
-                let dc = &mut self.duress_contacts;
-                let name = dc.form_name.trim().to_string();
-                let phone = dc.form_phone.trim().to_string();
-                let email = dc.form_email.trim().to_string();
-                if name.is_empty() {
-                    dc.error = Some("Add a name for this contact.".to_string());
-                    return iced::Task::none();
-                }
-                if phone.is_empty() && email.is_empty() {
-                    dc.error =
-                        Some("Add a phone number or an email so we can reach them.".to_string());
-                    return iced::Task::none();
-                }
-                if !phone.is_empty() && !is_valid_e164(&phone) {
-                    dc.error = Some(
-                        "Enter the phone in international format, e.g. +15551234567.".to_string(),
-                    );
-                    return iced::Task::none();
-                }
-                if !email.is_empty()
-                    && email_address::EmailAddress::parse_with_options(
-                        &email,
-                        email_address::Options::default().with_required_tld(),
-                    )
-                    .is_err()
-                {
-                    dc.error = Some("That email doesn't look right.".to_string());
-                    return iced::Task::none();
-                }
-                let mut channels = Vec::new();
-                if dc.form_ch_sms && !phone.is_empty() {
-                    channels.push(DURESS_CHANNEL_SMS.to_string());
-                }
-                if dc.form_ch_whatsapp && !phone.is_empty() {
-                    channels.push(DURESS_CHANNEL_WHATSAPP.to_string());
-                }
-                if dc.form_ch_email && !email.is_empty() {
-                    channels.push(DURESS_CHANNEL_EMAIL.to_string());
-                }
-                if channels.is_empty() {
-                    dc.error = Some(
-                        "Pick at least one way to reach them (SMS, WhatsApp, or email)."
-                            .to_string(),
-                    );
-                    return iced::Task::none();
-                }
-                let editing_id = dc.editing_id;
-                // Cap is only enforced on create — an edit of an existing
-                // contact is always allowed even at the cap.
-                if editing_id.is_none() && dc.at_cap() {
-                    dc.error = Some(coincube_ui::localized_format!(
-                        "You can configure up to {} emergency contacts.",
-                        "Puedes configurar hasta {} contactos de emergencia.",
-                        MAX_DURESS_ALERT_CONTACTS
-                    ));
-                    return iced::Task::none();
-                }
-                dc.submitting = true;
-                dc.error = None;
-                let phone_opt = (!phone.is_empty()).then_some(phone);
-                let email_opt = (!email.is_empty()).then_some(email);
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return match editing_id {
-                    None => {
-                        let req = CreateDuressAlertContactRequest {
-                            display_name: name,
-                            phone: phone_opt,
-                            email: email_opt,
-                            channels,
-                        };
-                        iced::Task::perform(
-                            async move { client.create_duress_alert_contact(req).await },
-                            move |res| {
-                                duress_contacts_msg(DuressContactsMessage::SubmitResult(
-                                    res.map(|_| ()).map_err(|e| e.to_string()),
-                                    gen,
-                                ))
-                            },
-                        )
-                    }
-                    Some(id) => {
-                        let req = UpdateDuressAlertContactRequest {
-                            display_name: Some(name),
-                            // Send explicit phone/email so clearing one in the
-                            // edit form persists. A `None` here would mean
-                            // "untouched"; we always send the current field
-                            // values (empty string maps to null server-side).
-                            phone: Some(phone_opt.unwrap_or_default()),
-                            email: Some(email_opt.unwrap_or_default()),
-                            channels: Some(channels),
-                        };
-                        iced::Task::perform(
-                            async move { client.update_duress_alert_contact(id, req).await },
-                            move |res| {
-                                duress_contacts_msg(DuressContactsMessage::SubmitResult(
-                                    res.map(|_| ()).map_err(|e| e.to_string()),
-                                    gen,
-                                ))
-                            },
-                        )
-                    }
-                };
-            }
+            DuressContactsMessage::Submit => return self.submit_duress_contact(),
             DuressContactsMessage::SubmitResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.duress_contacts.submitting = false;
-                match res {
-                    Ok(()) => {
-                        // Back to the list and refetch the authoritative set
-                        // (the create response's `intro_sent_at` may lag the
-                        // async send, so a refetch is the source of truth).
-                        return self.reload_duress_contacts();
-                    }
-                    Err(e) => self.duress_contacts.error = Some(e),
-                }
+                return self.apply_duress_contact_submit(res, gen)
             }
-            DuressContactsMessage::Delete(id) => {
-                if !self.is_duress_alerts_entitled() {
-                    return iced::Task::none();
-                }
-                // Same-row delete already in flight — drop the duplicate
-                // before issuing a second DELETE (see the Submit guard above).
-                if self.duress_contacts.deleting_ids.contains(&id) {
-                    return iced::Task::none();
-                }
-                self.duress_contacts.deleting_ids.insert(id);
-                self.duress_contacts.error = None;
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.delete_duress_alert_contact(id).await },
+            DuressContactsMessage::Delete(id) => return self.delete_duress_contact(id),
+            DuressContactsMessage::DeleteResult(id, res, gen) => {
+                return self.apply_duress_contact_delete(id, res, gen)
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_duress_contact_submit(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        self.duress_contacts.submitting = false;
+        match res {
+            Ok(()) => {
+                // Back to the list and refetch the authoritative set
+                // (the create response's `intro_sent_at` may lag the
+                // async send, so a refetch is the source of truth).
+                return self.reload_duress_contacts();
+            }
+            Err(e) => self.duress_contacts.error = Some(e),
+        }
+        iced::Task::none()
+    }
+
+    fn submit_duress_contact(&mut self) -> iced::Task<Message> {
+        // A submit is already in flight — drop the duplicate before it
+        // spawns a second request. The button is view-disabled while
+        // `submitting`, but iced can enqueue two presses in one frame
+        // before the re-render lands, and create isn't idempotent (a
+        // double would make two contacts).
+        if self.duress_contacts.submitting {
+            return iced::Task::none();
+        }
+        if !self.is_duress_alerts_entitled() {
+            self.duress_contacts.error =
+                Some("Emergency contacts require an Estate plan.".to_string());
+            return iced::Task::none();
+        }
+        let dc = &mut self.duress_contacts;
+        let Some(ValidatedDuressContact {
+            name,
+            phone,
+            email,
+            channels,
+        }) = Self::validate_duress_contact_form(dc)
+        else {
+            return iced::Task::none();
+        };
+        let editing_id = dc.editing_id;
+        // Cap is only enforced on create — an edit of an existing
+        // contact is always allowed even at the cap.
+        if editing_id.is_none() && dc.at_cap() {
+            dc.error = Some(coincube_ui::localized_format!(
+                "You can configure up to {} emergency contacts.",
+                "Puedes configurar hasta {} contactos de emergencia.",
+                MAX_DURESS_ALERT_CONTACTS
+            ));
+            return iced::Task::none();
+        }
+        dc.submitting = true;
+        dc.error = None;
+        let phone_opt = (!phone.is_empty()).then_some(phone);
+        let email_opt = (!email.is_empty()).then_some(email);
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        match editing_id {
+            None => {
+                let req = CreateDuressAlertContactRequest {
+                    display_name: name,
+                    phone: phone_opt,
+                    email: email_opt,
+                    channels,
+                };
+                iced::Task::perform(
+                    async move { client.create_duress_alert_contact(req).await },
                     move |res| {
-                        duress_contacts_msg(DuressContactsMessage::DeleteResult(
-                            id,
-                            res.map_err(|e| e.to_string()),
+                        duress_contacts_msg(DuressContactsMessage::SubmitResult(
+                            res.map(|_| ()).map_err(|e| e.to_string()),
                             gen,
                         ))
                     },
-                );
+                )
             }
-            DuressContactsMessage::DeleteResult(id, res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.duress_contacts.deleting_ids.remove(&id);
-                match res {
-                    Ok(()) => {
-                        // Optimistically drop the row, then refetch.
-                        if let Some(cs) = self.duress_contacts.contacts.as_mut() {
-                            cs.retain(|c| c.id != id);
-                        }
-                        return self.reload_duress_contacts();
-                    }
-                    Err(e) => self.duress_contacts.error = Some(e),
-                }
+            Some(id) => {
+                let req = UpdateDuressAlertContactRequest {
+                    display_name: Some(name),
+                    // Send explicit phone/email so clearing one in the
+                    // edit form persists. A `None` here would mean
+                    // "untouched"; we always send the current field
+                    // values (empty string maps to null server-side).
+                    phone: Some(phone_opt.unwrap_or_default()),
+                    email: Some(email_opt.unwrap_or_default()),
+                    channels: Some(channels),
+                };
+                iced::Task::perform(
+                    async move { client.update_duress_alert_contact(id, req).await },
+                    move |res| {
+                        duress_contacts_msg(DuressContactsMessage::SubmitResult(
+                            res.map(|_| ()).map_err(|e| e.to_string()),
+                            gen,
+                        ))
+                    },
+                )
             }
+        }
+    }
+
+    fn validate_duress_contact_form(
+        dc: &mut DuressContactsState,
+    ) -> Option<ValidatedDuressContact> {
+        use crate::services::coincube::is_valid_e164;
+        let name = dc.form_name.trim().to_string();
+        let phone = dc.form_phone.trim().to_string();
+        let email = dc.form_email.trim().to_string();
+        if name.is_empty() {
+            dc.error = Some("Add a name for this contact.".to_string());
+            return None;
+        }
+        if phone.is_empty() && email.is_empty() {
+            dc.error = Some("Add a phone number or an email so we can reach them.".to_string());
+            return None;
+        }
+        if !phone.is_empty() && !is_valid_e164(&phone) {
+            dc.error =
+                Some("Enter the phone in international format, e.g. +15551234567.".to_string());
+            return None;
+        }
+        if !email.is_empty()
+            && email_address::EmailAddress::parse_with_options(
+                &email,
+                email_address::Options::default().with_required_tld(),
+            )
+            .is_err()
+        {
+            dc.error = Some("That email doesn't look right.".to_string());
+            return None;
+        }
+        let mut channels = Vec::new();
+        if dc.form_ch_sms && !phone.is_empty() {
+            channels.push(DURESS_CHANNEL_SMS.to_string());
+        }
+        if dc.form_ch_whatsapp && !phone.is_empty() {
+            channels.push(DURESS_CHANNEL_WHATSAPP.to_string());
+        }
+        if dc.form_ch_email && !email.is_empty() {
+            channels.push(DURESS_CHANNEL_EMAIL.to_string());
+        }
+        if channels.is_empty() {
+            dc.error =
+                Some("Pick at least one way to reach them (SMS, WhatsApp, or email).".to_string());
+            return None;
+        }
+        Some(ValidatedDuressContact {
+            name,
+            phone,
+            email,
+            channels,
+        })
+    }
+
+    fn delete_duress_contact(&mut self, id: u64) -> iced::Task<Message> {
+        if !self.is_duress_alerts_entitled() {
+            return iced::Task::none();
+        }
+        // Same-row delete already in flight — drop the duplicate
+        // before issuing a second DELETE (see the Submit guard above).
+        if self.duress_contacts.deleting_ids.contains(&id) {
+            return iced::Task::none();
+        }
+        self.duress_contacts.deleting_ids.insert(id);
+        self.duress_contacts.error = None;
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move { client.delete_duress_alert_contact(id).await },
+            move |res| {
+                duress_contacts_msg(DuressContactsMessage::DeleteResult(
+                    id,
+                    res.map_err(|e| e.to_string()),
+                    gen,
+                ))
+            },
+        )
+    }
+
+    fn apply_duress_contact_delete(
+        &mut self,
+        id: u64,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        self.duress_contacts.deleting_ids.remove(&id);
+        match res {
+            Ok(()) => {
+                // Optimistically drop the row, then refetch.
+                if let Some(cs) = self.duress_contacts.contacts.as_mut() {
+                    cs.retain(|c| c.id != id);
+                }
+                return self.reload_duress_contacts();
+            }
+            Err(e) => self.duress_contacts.error = Some(e),
         }
         iced::Task::none()
     }
