@@ -45,12 +45,15 @@ impl App {
         });
 
         if is_relevant
-            // Keep the last good quote for this source and currency on errors.
+            // Prefer a successful quote; compare request time only between like results.
             && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
                 cached.source() == fiat_price.source()
                     && cached.currency() == fiat_price.currency()
-                    && (cached.requested_at() >= fiat_price.requested_at()
-                        || (cached.res.is_ok() && fiat_price.res.is_err()))
+                    && match (cached.res.is_ok(), fiat_price.res.is_ok()) {
+                        (true, false) => true,
+                        (false, true) => false,
+                        _ => cached.requested_at() >= fiat_price.requested_at(),
+                    }
             })
         {
             self.cache.fiat_price = Some(fiat_price);
@@ -71,7 +74,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn invalid_response_does_not_replace_last_good_display_quote() {
+    fn good_display_quotes_win_over_invalid_responses_regardless_of_arrival_order() {
         let _guard = session::test_guard();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -98,8 +101,9 @@ mod tests {
             }
         };
 
-        // An initial failure still reaches the display when no quote is available.
-        assert!(iced_runtime::task::into_stream(app.handle_fiat_price(quote(0, 0.0))).is_some());
+        // A later request fails first. It may display an initial error, then
+        // yield to a successful response from the earlier request.
+        assert!(iced_runtime::task::into_stream(app.handle_fiat_price(quote(2, 0.0))).is_some());
         assert!(app.cache.fiat_price.as_ref().unwrap().res.is_err());
         assert!(
             iced_runtime::task::into_stream(app.handle_fiat_price(quote(1, 60_000.0))).is_some()
