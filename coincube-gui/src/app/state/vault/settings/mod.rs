@@ -83,6 +83,15 @@ impl State for SettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // A device registration started in Wallet settings finishes there
+        // even if the daemon stopped while the device answered.
+        if matches!(message, Message::DeviceRegistered { .. }) {
+            return self
+                .setting
+                .as_mut()
+                .map(|s| s.update(daemon, cache, message))
+                .unwrap_or_else(Task::none);
+        }
         let Some(daemon) = daemon else {
             tracing::warn!("SettingsState::update called without daemon");
             return Task::none();

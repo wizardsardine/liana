@@ -8802,29 +8802,30 @@ impl App {
             // took the route back while it ran (its wallet went back to
             // syncing). Each handler checks its own generation or attempt,
             // so a stale result is ignored there. During a wider scan the
-            // old daemon can already be stopped, and these Vault panels
-            // require a live daemon.
+            // old daemon can already be stopped. A send or signature needs a
+            // live daemon; a registration result does not, and dropping it
+            // would leave the Register dialog stuck processing.
             msg @ (Message::VaultSpendPrepared { .. }
             | Message::Signed(..)
             | Message::CubeKeys(_)
             | Message::DeviceRegistered { .. })
                 if self.panels.imported_holds_route() =>
             {
-                if let (Some(daemon), Some(panel)) =
-                    (self.daemon.clone(), self.panels.route_panel_mut())
-                {
+                let daemon = self.daemon.clone();
+                let delivers = daemon.is_some() || matches!(msg, Message::DeviceRegistered { .. });
+                if let (true, Some(panel)) = (delivers, self.panels.route_panel_mut()) {
                     // `Updated` carries no origin: tag the save result the
                     // forwarded work produces so it returns to this panel
                     // (closing its signing picker, or reporting a failed
                     // save) instead of reaching the import panel.
-                    return panel.update(Some(daemon), &self.cache, msg).map(
-                        |message| match message {
+                    return panel
+                        .update(daemon, &self.cache, msg)
+                        .map(|message| match message {
                             Message::Updated(result) => {
                                 Message::RoutePanelResult(Box::new(Message::Updated(result)))
                             }
                             other => other,
-                        },
-                    );
+                        });
                 }
             }
             Message::RoutePanelResult(msg) => {

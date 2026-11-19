@@ -207,6 +207,14 @@ impl State for WalletSettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // A registration result goes to its dialog with or without a daemon
+        // (see `RegisterWalletModal::update`).
+        if matches!(message, Message::DeviceRegistered { .. }) {
+            return match &mut self.modal {
+                Modal::RegisterWallet(modal) => modal.update(daemon, cache, message),
+                _ => Task::none(),
+            };
+        }
         let Some(daemon) = daemon else {
             tracing::warn!("WalletSettingsState::update called without daemon");
             return Task::none();
@@ -481,6 +489,17 @@ impl RegisterWalletModal {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // A registration result needs no daemon. It can land while the
+        // daemon is down (a wider scan restarts it), and dropping it would
+        // leave the dialog processing with its attempt still claimed.
+        if let Message::DeviceRegistered {
+            attempt,
+            fingerprint,
+            result,
+        } = message
+        {
+            return self.finish_registration(attempt, fingerprint, result);
+        }
         if daemon.is_none() {
             tracing::warn!("RegisterWalletModal::update called without daemon");
             return Task::none();
@@ -521,30 +540,6 @@ impl RegisterWalletModal {
                 }
                 Task::none()
             }
-            Message::DeviceRegistered {
-                attempt,
-                fingerprint,
-                result,
-            } => {
-                if self.registration_attempt != Some(attempt) {
-                    return Task::none();
-                }
-                self.registration_attempt = None;
-                self.processing = false;
-                self.chosen_hw = None;
-                match result {
-                    Ok(()) => {
-                        self.registered.insert(fingerprint);
-                        Task::none()
-                    }
-                    Err(Error::HardwareWallet(async_hwi::Error::UserRefused)) => Task::none(),
-                    Err(e) => {
-                        let err_msg = crate::user_error::report(&e);
-                        self.warning = Some(e);
-                        Task::done(Message::View(view::Message::ShowError(err_msg)))
-                    }
-                }
-            }
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if self.wallet.is_imported() {
                     return self.register_imported(i);
@@ -576,6 +571,34 @@ impl RegisterWalletModal {
 }
 
 impl RegisterWalletModal {
+    /// Closes out the registration `attempt` started, unless the dialog has
+    /// since been closed or another attempt replaced it.
+    fn finish_registration(
+        &mut self,
+        attempt: uuid::Uuid,
+        fingerprint: Fingerprint,
+        result: Result<(), Error>,
+    ) -> Task<Message> {
+        if self.registration_attempt != Some(attempt) {
+            return Task::none();
+        }
+        self.registration_attempt = None;
+        self.processing = false;
+        self.chosen_hw = None;
+        match result {
+            Ok(()) => {
+                self.registered.insert(fingerprint);
+                Task::none()
+            }
+            Err(Error::HardwareWallet(async_hwi::Error::UserRefused)) => Task::none(),
+            Err(e) => {
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                Task::done(Message::View(view::Message::ShowError(err_msg)))
+            }
+        }
+    }
+
     /// An imported Vault registers the device policy its signing session
     /// uses (`split_hardware`), so a device registered here signs without
     /// asking again. Jade, Coldcard and BitBox02 keep the registration;
@@ -1320,6 +1343,107 @@ mod chain_tests {
         assert!(!modal.processing);
         assert_eq!(modal.chosen_hw, None);
         assert_eq!(modal.registered, HashSet::from([fingerprint]));
+    }
+
+    /// A registration result that lands after the daemon stopped (a wider
+    /// scan restarts it) still closes out the dialog, both on the Wallet
+    /// settings panel and through the Vault settings wrapper the app routes
+    /// it to. Dropping it left the dialog processing until it was reopened.
+    #[tokio::test]
+    async fn an_imported_registration_finishes_without_a_daemon() {
+        use crate::services::split_test_wallets::{imported_vault, master, Shape};
+
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+        let wallet = Arc::new(imported_vault(Shape::WshSortedMulti));
+        let dir =
+            CoincubeDirectory::new(std::env::temp_dir().join(uuid::Uuid::new_v4().to_string()));
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let cache = Cache::default();
+        // Opens Register on a fresh panel and starts a registration on a
+        // device with `fingerprint`, returning the panel and its result.
+        let start = async |fingerprint: Fingerprint| {
+            let mut state =
+                WalletSettingsState::new(dir.clone(), wallet.clone(), Arc::new(Config::new(false)));
+            drop(state.update(
+                Some(daemon.clone()),
+                &cache,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::RegisterWallet,
+                )),
+            ));
+            let Modal::RegisterWallet(modal) = &mut state.modal else {
+                panic!("registration dialog did not open");
+            };
+            modal.hws.list = vec![HardwareWallet::Supported {
+                id: fingerprint.to_string(),
+                device: Arc::new(StoringDevice {
+                    fingerprint,
+                    stored: Default::default(),
+                }),
+                kind: async_hwi::DeviceKind::Jade,
+                fingerprint,
+                version: None,
+                registered: None,
+                alias: None,
+            }];
+            let task = state.update(
+                Some(daemon.clone()),
+                &cache,
+                Message::View(view::Message::SelectHardwareWallet(0)),
+            );
+            let mut stream = iced_runtime::task::into_stream(task).expect("registration task");
+            let Some(iced_runtime::Action::Output(message)) = stream.next().await else {
+                panic!("expected registration completion");
+            };
+            (state, message)
+        };
+
+        let fingerprint = master(1).fingerprint(&secp);
+        let (mut state, completion) = start(fingerprint).await;
+        drop(state.update(None, &cache, completion));
+        let Modal::RegisterWallet(modal) = &state.modal else {
+            panic!("registration dialog closed");
+        };
+        assert!(!modal.processing);
+        assert_eq!(modal.registration_attempt, None);
+        assert_eq!(modal.registered, HashSet::from([fingerprint]));
+
+        // Through the Vault settings wrapper, a failed registration is
+        // reported rather than dropped.
+        let (state, completion) = start(master(2).fingerprint(&secp)).await;
+        let Message::DeviceRegistered {
+            attempt,
+            fingerprint,
+            ..
+        } = completion
+        else {
+            panic!("expected a registration result");
+        };
+        let mut settings = super::super::SettingsState::new(
+            dir.clone(),
+            wallet.clone(),
+            false,
+            Arc::new(Config::new(false)),
+        );
+        settings.setting = Some(state.into());
+        let task = settings.update(
+            None,
+            &cache,
+            Message::DeviceRegistered {
+                attempt,
+                fingerprint,
+                result: Err(Error::HardwareWallet(async_hwi::Error::UnimplementedMethod)),
+            },
+        );
+        let mut stream = iced_runtime::task::into_stream(task).expect("an error report");
+        assert!(matches!(
+            stream.next().await,
+            Some(iced_runtime::Action::Output(Message::View(
+                view::Message::ShowError(_)
+            )))
+        ));
     }
 
     /// Registering an imported multisig Vault from Settings sends the device
