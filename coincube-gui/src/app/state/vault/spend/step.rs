@@ -61,6 +61,9 @@ use crate::{
 /// (coin selection / `create_spend_tx`). Coalesces a burst of keystrokes
 /// into a single backend call instead of one per character.
 const REDRAFT_DEBOUNCE_MS: u64 = 350;
+/// Block target of the Normal (~1h) fee preset, the default for a new or
+/// cleared form.
+pub(crate) const NORMAL_FEE_TARGET: usize = 6;
 
 #[derive(Clone)]
 pub struct TransactionDraft {
@@ -229,6 +232,10 @@ pub struct DefineSpend {
     /// every time a redraft is scheduled so that stale debounce ticks and
     /// in-flight coin-selection results can be discarded.
     redraft_seq: u64,
+    /// A redraft is scheduled or running and its result has not landed yet:
+    /// the footer says it is calculating instead of asking for fields the
+    /// user has already filled in.
+    draft_pending: bool,
     preparation_id: u64,
     lookup_ticket: Option<LookupTicket>,
     recipient_identities: Option<psbt::RecipientIdentities>,
@@ -289,6 +296,7 @@ impl DefineSpend {
             sync_status,
             bitcoin_unit,
             redraft_seq: 0,
+            draft_pending: false,
             preparation_id: PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed),
             lookup_ticket: None,
             recipient_identities: None,
@@ -320,6 +328,10 @@ impl DefineSpend {
                 self.batch_label.value = label;
             }
             view::CreateSpendMessage::Clear => {
+                // Keep the redraft generation counting up, so a draft or
+                // debounce tick still in flight from before Clear can never
+                // match a generation of the cleared form.
+                let redraft_seq = self.redraft_seq.wrapping_add(1);
                 *self = Self::new(
                     self.network,
                     self.wallet.clone(),
@@ -336,7 +348,17 @@ impl DefineSpend {
                     self.sync_status.clone(),
                     self.bitcoin_unit,
                 );
-                return Task::none();
+                self.redraft_seq = redraft_seq;
+                // A cleared form starts on Normal, as a new one does.
+                return Task::done(Message::View(view::Message::CreateSpend(
+                    CreateSpendMessage::FetchFeeEstimate(NORMAL_FEE_TARGET),
+                )));
+            }
+            view::CreateSpendMessage::AutomaticCoins => {
+                // Hand the choice back to automatic selection: the redraft
+                // below picks the coins again.
+                self.coins_shown = false;
+                self.is_user_coin_selection = false;
             }
             view::CreateSpendMessage::AddRecipient => {
                 self.recipients.push(Recipient::default());
@@ -823,6 +845,7 @@ impl DefineSpend {
     /// only the final, settled edit actually runs coin selection.
     fn schedule_redraft(&mut self) -> Task<Message> {
         self.redraft_seq = self.redraft_seq.wrapping_add(1);
+        self.draft_pending = true;
         let seq = self.redraft_seq;
         Task::perform(
             async move {
@@ -843,6 +866,7 @@ impl DefineSpend {
     /// validation and "nothing to draft" early-returns are handled inline.
     fn run_redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>, seq: u64) -> Task<Message> {
         if !self.form_values_are_valid(true) || self.exists_duplicate() {
+            self.draft_pending = false;
             self.clear_invalid_redraft();
             return Task::none();
         }
@@ -877,8 +901,10 @@ impl DefineSpend {
         let Some(outpoints) = self.redraft_outpoints(is_self_transfer, recipient_with_max, || {
             destinations.values().sum()
         }) else {
+            self.draft_pending = false;
             return Task::none();
         };
+        self.draft_pending = true;
 
         // If sending the max to a recipient, use that recipient's address as the
         // change/recovery address.
@@ -1383,6 +1409,7 @@ impl Step for DefineSpend {
             }
                 // Ignore a stale result the user has already typed past.
                 if seq == self.redraft_seq && !self.generating => {
+                    self.draft_pending = false;
                     self.apply_redraft_result(
                         max_address,
                         recipient_with_max,
@@ -1497,6 +1524,7 @@ impl Step for DefineSpend {
             } else {
                 self.warning.as_ref().map(|e| e.to_string())
             },
+            self.drafting(),
             blocking_warning,
             &self.feerate,
             self.fee_amount.as_ref(),
@@ -1537,6 +1565,14 @@ impl DefineSpend {
     /// The coin list is open: Choose coins was pressed, the user already
     /// picked coins, or the spend has no automatic selection (a self-transfer
     /// or a recovery spends the coins chosen for it).
+    /// The form is complete and its draft has not landed yet.
+    fn drafting(&self) -> bool {
+        self.draft_pending
+            && self.warning.is_none()
+            && self.form_values_are_valid(true)
+            && !self.exists_duplicate()
+    }
+
     pub(crate) fn coin_list_shown(&self) -> bool {
         self.coins_shown
             || self.is_user_coin_selection
@@ -2960,10 +2996,77 @@ mod tests {
         assert!(state.coin_list_shown());
         assert_eq!(state.preparation_id, preparation, "the draft is untouched");
 
+        drop(send(&mut state, view::CreateSpendMessage::SelectCoin(0)));
+        assert!(state.is_user_coin_selection);
+        drop(send(&mut state, view::CreateSpendMessage::AutomaticCoins));
+        assert!(!state.coin_list_shown(), "Automatic closes the list");
+        assert!(
+            !state.is_user_coin_selection,
+            "the draft picks the coins again"
+        );
+
+        drop(send(&mut state, view::CreateSpendMessage::ChooseCoins));
         drop(send(&mut state, view::CreateSpendMessage::Clear));
         assert!(!state.coin_list_shown());
         drop(send(&mut state, view::CreateSpendMessage::SelectCoin(0)));
         assert!(state.coin_list_shown(), "a chosen coin keeps the list open");
+    }
+
+    /// Clear starts the fee on Normal again, as a new form does, never on an
+    /// empty Custom field; and it keeps the redraft generation counting up.
+    #[tokio::test]
+    async fn clear_resets_the_fee_to_normal() {
+        use iced_runtime::futures::futures::StreamExt;
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        let mut state = branta_form();
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::CustomFeerate,
+            )),
+        ));
+        let seq = state.redraft_seq;
+        let task = state.update(
+            daemon,
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Clear)),
+        );
+        assert!(state.redraft_seq > seq);
+        let messages: Vec<Message> = iced_runtime::task::into_stream(task)
+            .expect("a fee estimate request")
+            .filter_map(|action| async move {
+                match action {
+                    iced_runtime::Action::Output(message) => Some(message),
+                    _ => None,
+                }
+            })
+            .collect()
+            .await;
+        assert!(
+            matches!(
+                messages.as_slice(),
+                [Message::View(view::Message::CreateSpend(
+                    view::CreateSpendMessage::FetchFeeEstimate(NORMAL_FEE_TARGET)
+                ))]
+            ),
+            "{:?}",
+            messages
+        );
+    }
+
+    /// While a complete form's draft is pending the footer says it is
+    /// calculating; the draft landing (or the form going incomplete) ends it.
+    #[test]
+    fn a_pending_draft_reads_as_drafting_only_while_the_form_is_complete() {
+        let mut state = branta_form();
+        assert!(state.form_values_are_valid(true), "fixture is complete");
+        drop(state.schedule_redraft());
+        assert!(state.drafting());
+        state.feerate.value.clear();
+        assert!(!state.drafting(), "an incomplete form is not drafting");
     }
 
     /// Fee segments map to rates: a preset fetches its block target's

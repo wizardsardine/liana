@@ -312,6 +312,8 @@ pub enum CreateSpendMessage {
     },
     /// Choose coins: open the coin list instead of the automatic selection.
     ChooseCoins,
+    /// Automatic: close the coin list and let the draft pick the coins again.
+    AutomaticCoins,
     /// The Custom fee segment: reveal the feerate field, restoring the last
     /// rate typed into it.
     CustomFeerate,
