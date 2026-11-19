@@ -190,6 +190,34 @@ impl std::fmt::Display for CoincubeError {
 
 impl std::error::Error for CoincubeError {}
 
+fn network_user_error(err: &reqwest::Error) -> crate::user_error::UserError {
+    use crate::user_error::*;
+
+    // The URL is already stripped (see `From<reqwest::Error>`), but
+    // the *kind* survives — which is the part worth telling the
+    // user apart, because the remedy differs.
+    let (title, guidance, reference) = if err.is_timeout() {
+        (
+            "Can't reach COINCUBE | Connect",
+            "The server took too long to respond. Check your internet connection and try again.",
+            CC_NET_TIMEOUT,
+        )
+    } else if err.is_connect() {
+        (
+            "No connection",
+            "You appear to be offline. Reconnect to the internet and try again.",
+            CC_NET_OFFLINE,
+        )
+    } else {
+        (
+            "Can't reach COINCUBE | Connect",
+            RETRY_GUIDANCE,
+            CC_NET_UNKNOWN,
+        )
+    };
+    UserError::logged(title, guidance, reference, true, err)
+}
+
 impl From<&CoincubeError> for crate::user_error::UserError {
     /// Turns a transport/API failure into copy a person can act on.
     ///
@@ -214,27 +242,7 @@ impl From<&CoincubeError> for crate::user_error::UserError {
         use crate::user_error::*;
 
         match e {
-            CoincubeError::Network(err) => {
-                // The URL is already stripped (see `From<reqwest::Error>`), but
-                // the *kind* survives — which is the part worth telling the
-                // user apart, because the remedy differs.
-                let (title, guidance, reference) = if err.is_timeout() {
-                    (
-                        "Can't reach COINCUBE | Connect",
-                        "The server took too long to respond. Check your internet connection and try again.",
-                        CC_NET_TIMEOUT,
-                    )
-                } else if err.is_connect() {
-                    (
-                        "No connection",
-                        "You appear to be offline. Reconnect to the internet and try again.",
-                        CC_NET_OFFLINE,
-                    )
-                } else {
-                    ("Can't reach COINCUBE | Connect", RETRY_GUIDANCE, CC_NET_UNKNOWN)
-                };
-                UserError::logged(title, guidance, reference, true, err)
-            }
+            CoincubeError::Network(err) => network_user_error(err),
 
             CoincubeError::Unsuccessful(info) => {
                 let status = info.status_code;
