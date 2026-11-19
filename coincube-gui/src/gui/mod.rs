@@ -3499,6 +3499,93 @@ impl GUI {
         ])
     }
 
+    fn handle_duress_lock(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        inner: Box<tab::Message>,
+    ) -> Task<Message> {
+        let remote = matches!(
+            inner.as_ref(),
+            tab::Message::Run(AppMessage::View(
+                crate::app::view::Message::DuressLockRemote
+            ))
+        );
+        let result = {
+            let Some(pane) = self.panes.get_mut(pane_id) else {
+                return Task::none();
+            };
+            let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) else {
+                return Task::none();
+            };
+            if remote && !matches!(pane.tabs[index].state, tab::State::App(_)) {
+                return Task::none();
+            }
+            pane.tabs[index].stop();
+            pane.update(pane::Message::Tab(tab_id, inner), &self.config)
+        };
+        // The wipe is complete: do not leave a Launcher or another
+        // Cube surface visible above the cryptic duress state.
+        for (&other_id, other_pane) in self.panes.iter_mut() {
+            other_pane.close_tabs_matching(|tab| other_id != pane_id || tab.id != tab_id);
+        }
+        crate::app::session::close();
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            pane.focused_tab = pane
+                .tabs
+                .iter()
+                .position(|tab| tab.id == tab_id)
+                .unwrap_or(0);
+        }
+        self.focus = Some(pane_id);
+        result.map(move |message| Message::Pane(pane_id, message))
+    }
+
+    fn close_pane_tab(&mut self, pane_id: pane_grid::Pane, i: usize) -> Task<Message> {
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            if pane.tabs.get(i).is_some_and(|tab| tab.id == usize::MAX) {
+                return Task::none();
+            }
+            let pending_seed_trials = pane
+                .tabs
+                .get(i)
+                .map_or(0, tab::Tab::pending_seed_export_trials);
+            let closed_tab_id = pane.tabs.get(i).map(|tab| tab.id);
+            let _ = pane
+                .update(
+                    pane::Message::View(pane::ViewMessage::CloseTab(i)),
+                    &self.config,
+                )
+                .map(move |msg| Message::Pane(pane_id, msg));
+            if pane.tabs.is_empty() && pending_seed_trials > 0 {
+                // Closing the final tab must not close the Iced runtime
+                // before a submitted PIN can classify as Duress. Keep
+                // a neutral tab alive; a non-duress result closes it.
+                let (home, startup) =
+                    home::Home::new(self.config.coincube_directory.clone(), self.config.network);
+                drop(startup);
+                let mut placeholder = tab::Tab::new(usize::MAX, tab::State::Home(home));
+                placeholder.hold_closed_seed_export_trials(
+                    closed_tab_id.expect("closed tab existed"),
+                    pending_seed_trials,
+                );
+                pane.tabs.push(placeholder);
+                pane.focused_tab = 0;
+                self.focus = Some(pane_id);
+            }
+            if pane.tabs.is_empty() {
+                self.panes.close(pane_id);
+                if self.focus == Some(pane_id) {
+                    self.focus = None;
+                }
+            }
+        }
+        if !self.panes.iter().any(|(_, p)| !p.tabs.is_empty()) {
+            return iced::window::latest().and_then(iced::window::close);
+        }
+        Task::none()
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3737,87 +3824,11 @@ impl GUI {
                         ))
                     ) =>
             {
-                let remote = matches!(
-                    inner.as_ref(),
-                    tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::DuressLockRemote
-                    ))
-                );
-                let result = {
-                    let Some(pane) = self.panes.get_mut(pane_id) else {
-                        return Task::none();
-                    };
-                    let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) else {
-                        return Task::none();
-                    };
-                    if remote && !matches!(pane.tabs[index].state, tab::State::App(_)) {
-                        return Task::none();
-                    }
-                    pane.tabs[index].stop();
-                    pane.update(pane::Message::Tab(tab_id, inner), &self.config)
-                };
-                // The wipe is complete: do not leave a Launcher or another
-                // Cube surface visible above the cryptic duress state.
-                for (&other_id, other_pane) in self.panes.iter_mut() {
-                    other_pane.close_tabs_matching(|tab| other_id != pane_id || tab.id != tab_id);
-                }
-                crate::app::session::close();
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    pane.focused_tab = pane
-                        .tabs
-                        .iter()
-                        .position(|tab| tab.id == tab_id)
-                        .unwrap_or(0);
-                }
-                self.focus = Some(pane_id);
-                result.map(move |message| Message::Pane(pane_id, message))
+                self.handle_duress_lock(pane_id, tab_id, inner)
             }
             Message::Pane(_, pane::Message::View(pane::ViewMessage::SplitTab(_))) => Task::none(),
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::CloseTab(i))) => {
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    if pane.tabs.get(i).is_some_and(|tab| tab.id == usize::MAX) {
-                        return Task::none();
-                    }
-                    let pending_seed_trials = pane
-                        .tabs
-                        .get(i)
-                        .map_or(0, tab::Tab::pending_seed_export_trials);
-                    let closed_tab_id = pane.tabs.get(i).map(|tab| tab.id);
-                    let _ = pane
-                        .update(
-                            pane::Message::View(pane::ViewMessage::CloseTab(i)),
-                            &self.config,
-                        )
-                        .map(move |msg| Message::Pane(pane_id, msg));
-                    if pane.tabs.is_empty() && pending_seed_trials > 0 {
-                        // Closing the final tab must not close the Iced runtime
-                        // before a submitted PIN can classify as Duress. Keep
-                        // a neutral tab alive; a non-duress result closes it.
-                        let (home, startup) = home::Home::new(
-                            self.config.coincube_directory.clone(),
-                            self.config.network,
-                        );
-                        drop(startup);
-                        let mut placeholder = tab::Tab::new(usize::MAX, tab::State::Home(home));
-                        placeholder.hold_closed_seed_export_trials(
-                            closed_tab_id.expect("closed tab existed"),
-                            pending_seed_trials,
-                        );
-                        pane.tabs.push(placeholder);
-                        pane.focused_tab = 0;
-                        self.focus = Some(pane_id);
-                    }
-                    if pane.tabs.is_empty() {
-                        self.panes.close(pane_id);
-                        if self.focus == Some(pane_id) {
-                            self.focus = None;
-                        }
-                    }
-                }
-                if !self.panes.iter().any(|(_, p)| !p.tabs.is_empty()) {
-                    return iced::window::latest().and_then(iced::window::close);
-                }
-                Task::none()
+                self.close_pane_tab(pane_id, i)
             }
             // In case of cube deletion, remove any tab where the cube/wallet is currently running.
             Message::Pane(p, pane::Message::Tab(t, inner))
