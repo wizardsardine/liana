@@ -809,6 +809,15 @@ impl DefineSpend {
         self
     }
 
+    /// Start the form on Normal (~1h, 6-block target): its estimate is
+    /// fetched on the first message the step receives, i.e. once the step is
+    /// on screen. A recovery spend uses this because it opens on the
+    /// path-selection step, where the panel's `reload` default would be lost.
+    pub fn starting_on_normal_feerate(mut self) -> Self {
+        self.resume_fee_estimate = Some(NORMAL_FEE_TARGET);
+        self
+    }
+
     fn sort_coins(&mut self, blockheight: u32) {
         let timelock = self.timelock();
         self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
@@ -1318,6 +1327,9 @@ impl Step for DefineSpend {
             (Some(old_tl), Some(new_tl)) => {
                 if old_tl != new_tl {
                     // If the timelock has changed, reinitialise this step.
+                    // The fresh form starts on Normal, as a new recovery
+                    // does: the step is about to be shown, so the estimate
+                    // goes out with the message that brought it on screen.
                     let new = Self::new(
                         self.network,
                         self.wallet.clone(),
@@ -1329,7 +1341,8 @@ impl Step for DefineSpend {
                         self.unconfirmed_balance,
                         self.sync_status.clone(),
                         self.bitcoin_unit,
-                    );
+                    )
+                    .starting_on_normal_feerate();
                     *self = new;
                     return;
                 } else {
@@ -3565,6 +3578,70 @@ mod tests {
         assert!(!state.resume_redraft);
         assert!(state.draft_pending);
         assert_ne!(state.redraft_seq, seq);
+    }
+
+    /// A recovery's DefineSpend starts on Normal once shown, keeps the rate
+    /// the user set when Back/Next returns to the same path, and starts on
+    /// Normal again when another path (timelock) re-creates it.
+    #[tokio::test]
+    async fn recovery_form_starts_on_normal_again_after_a_path_change() {
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        let coins = [coin(1, 50_000, Some(50))];
+        let mut state = DefineSpend::new(
+            Network::Bitcoin,
+            wallet(),
+            &coins,
+            100,
+            Some(10),
+            false,
+            Amount::from_sat(50_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        )
+        .starting_on_normal_feerate();
+        // The panel's Next: load the step, then hand it the message.
+        let next = |state: &mut DefineSpend, timelock: u16| {
+            state.load(
+                &coins,
+                100,
+                &TransactionDraft::new(Network::Bitcoin, Some(timelock)),
+            );
+            state.update(
+                daemon.clone(),
+                &Cache::default(),
+                Message::View(view::Message::Next),
+            )
+        };
+
+        // First shown: Normal is fetched.
+        drop(next(&mut state, 10));
+        assert_eq!(state.loading_fee_estimate, Some(NORMAL_FEE_TARGET));
+
+        // The user types their own rate, goes Back and Next on the same path:
+        // the rate is kept, nothing is fetched.
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FeerateEdited("12".into()),
+            )),
+        ));
+        assert_eq!(state.loading_fee_estimate, None);
+        state.interrupt();
+        drop(next(&mut state, 10));
+        assert_eq!(state.feerate.value, "12");
+        assert_eq!(state.loading_fee_estimate, None);
+        assert_eq!(state.resume_fee_estimate, None);
+
+        // Back, another path, Next: the re-created form starts on Normal.
+        state.interrupt();
+        drop(next(&mut state, 20));
+        assert_eq!(state.timelock(), Some(20));
+        assert_eq!(state.loading_fee_estimate, Some(NORMAL_FEE_TARGET));
+        assert_eq!(state.resume_fee_estimate, None);
     }
 
     /// Fee segments map to rates: a preset fetches its block target's
