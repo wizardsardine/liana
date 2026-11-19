@@ -464,6 +464,9 @@ impl DefineSpend {
                         // Prepare through before that draft lands (and the
                         // draft clears it anyway).
                         self.selected_feerate_target = None;
+                        // As a landed estimate does (`set_feerate`), drop an
+                        // earlier warning too, so `drafting()` holds Prepare.
+                        self.warning = None;
                         let err: Error = SpendCreationError::FeeEstimationFailed.into();
                         let err_msg = crate::user_error::report(&err);
                         let redraft = self.schedule_redraft();
@@ -3282,6 +3285,9 @@ mod tests {
             view::CreateSpendMessage::FetchFeeEstimate(24),
         ));
         let slow = state.fee_estimate_request;
+        // A warning from elsewhere (e.g. a failed label load) must not let
+        // Prepare through before the fallback draft lands.
+        state.warning = Some(Error::Unexpected("synthetic labels failure".into()));
         let failed = send(
             &mut state,
             view::CreateSpendMessage::FeeEstimated {
