@@ -7,7 +7,11 @@ use iced::{
     Alignment, Length, Subscription, Task,
 };
 
-use coincube_core::{bip39, miniscript::bitcoin::Network};
+use coincube_core::{
+    bip39,
+    miniscript::bitcoin::{secp256k1, Network},
+    seed_crypt::DeviceSecret,
+};
 use coincube_ui::{
     component::{button, card, notification, spinner, text::*},
     icon, image, theme,
@@ -1167,26 +1171,15 @@ impl Home {
     pub fn subscription(&self, foreground: bool) -> Subscription<Message> {
         // The Connect light pulses while the session is checked or Connect
         // can't be reached, unless motion is reduced.
-        let pulse = if foreground
-            && !self.reduce_motion
-            && matches!(
-                launcher_chrome::launcher_connect_state(self).1,
-                Some(crate::app::ConnectLight::Connecting | crate::app::ConnectLight::Reconnecting)
-            ) {
-            iced::time::every(std::time::Duration::from_millis(800))
-                .map(|_| Message::ConnectLightTick)
-        } else {
-            Subscription::none()
-        };
+        let pulse = self
+            .connect_light_ticks(foreground)
+            .map(|_| Message::ConnectLightTick);
         // A stored session that couldn't be checked is checked again (L1).
-        let recheck = match self.connect_account.unverified.as_ref() {
-            Some(unverified) if foreground => unverified.recheck().map(|_| {
-                Message::View(ViewMessage::ConnectAccount(
-                    app::view::ConnectAccountMessage::RecheckSession,
-                ))
-            }),
-            _ => Subscription::none(),
-        };
+        let recheck = self.session_recheck_ticks(foreground).map(|_| {
+            Message::View(ViewMessage::ConnectAccount(
+                app::view::ConnectAccountMessage::RecheckSession,
+            ))
+        });
         let base = Subscription::batch([
             self.launcher_subscription(foreground),
             self.activity_subscription(foreground),
@@ -1224,6 +1217,27 @@ impl Home {
             return Subscription::batch([base, escape]);
         }
         base
+    }
+
+    fn connect_light_ticks(&self, foreground: bool) -> Subscription<std::time::Instant> {
+        if foreground
+            && !self.reduce_motion
+            && matches!(
+                launcher_chrome::launcher_connect_state(self).1,
+                Some(crate::app::ConnectLight::Connecting | crate::app::ConnectLight::Reconnecting)
+            )
+        {
+            iced::time::every(std::time::Duration::from_millis(800))
+        } else {
+            Subscription::none()
+        }
+    }
+
+    fn session_recheck_ticks(&self, foreground: bool) -> Subscription<std::time::Instant> {
+        match self.connect_account.unverified.as_ref() {
+            Some(unverified) if foreground => unverified.recheck(),
+            _ => Subscription::none(),
+        }
     }
 
     fn launcher_subscription(&self, foreground: bool) -> Subscription<Message> {
@@ -1492,6 +1506,15 @@ impl Home {
             message => self.update_lifecycle(message),
         };
         self.reconcile_catalog();
+        self.finish_launcher_update(task, checked, connect)
+    }
+
+    fn finish_launcher_update(
+        &mut self,
+        task: Task<Message>,
+        checked: bool,
+        connect: bool,
+    ) -> Task<Message> {
         // The path a restore left for opens through its own message, with
         // that path's guards, once the list it opens over is checked.
         if checked && matches!(self.state, State::Cubes { .. } | State::NoCube { .. }) {
@@ -1635,133 +1658,8 @@ impl Home {
             return Task::none();
         }
         self.refresh_displayed_networks();
-        if self.network.is_blake2b() {
-            // Explicitly supported launcher actions only: the Create Cube
-            // journey (name, PIN or passkey, backup), opening, renaming and
-            // deleting a Cube, and bringing a Connect Cube back from its
-            // recovery phrase, its Recovery Kit or a paired phone. Its Vault
-            // is created from inside the Cube. No Bitcoin wallet import or
-            // duress completion route.
-            let allowed = match &message {
-                // An unfinished import's Cube is never on this chain; its
-                // request switches the Launcher to the Cube's network.
-                Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModalFor {
-                    chain,
-                    ..
-                })) => !chain.is_blake2b(),
-                Message::View(view) => matches!(
-                    view,
-                    ViewMessage::CreateCube
-                        | ViewMessage::ShowCreateCube(_)
-                        | ViewMessage::CubeNameEdited(_)
-                        | ViewMessage::PinInput(_)
-                        | ViewMessage::PinConfirmInput(_)
-                        | ViewMessage::TogglePasskeyMode(_)
-                        | ViewMessage::CreationBackup(_)
-                        | ViewMessage::CreationBackupBypassRequested
-                        | ViewMessage::CreationBackupChoiceRequested
-                        | ViewMessage::CreationBackupContinue
-                        | ViewMessage::CreationBackupAcknowledgeBypass(_)
-                        | ViewMessage::CreationBackupBypassConfirmed
-                        | ViewMessage::CancelCreationBackup
-                        | ViewMessage::CreationKitRequested
-                        | ViewMessage::CreationKit(_)
-                        | ViewMessage::CreationKitUploaded(_)
-                        | ViewMessage::CreateNetworkMenu(_)
-                        | ViewMessage::ShowRestoreHub
-                        | ViewMessage::ShowRestorePhone
-                        | ViewMessage::ShowRestoreAllNetworks(_)
-                        | ViewMessage::SelectNetwork(_)
-                        | ViewMessage::Check
-                        | ViewMessage::Run(_)
-                        | ViewMessage::ConnectAccount(_)
-                        | ViewMessage::ConnectSheetAccount(_)
-                        | ViewMessage::ToggleConnect
-                        | ViewMessage::ToggleDeveloperMode(_)
-                        | ViewMessage::ToggleBitcoinBlake2bBeta(_)
-                        | ViewMessage::ToggleTheme
-                        | ViewMessage::OpenAppPreferences
-                        | ViewMessage::ChangeDevicePreference(_)
-                        | ViewMessage::GoToSection(
-                            HomeSection::Cubes | HomeSection::Settings | HomeSection::Connect(_),
-                        )
-                        | ViewMessage::OpenUrl(_)
-                        | ViewMessage::DismissAdvisoryNotice
-                        | ViewMessage::RenameCube(_)
-                        | ViewMessage::RenameCubeNameEdited(_)
-                        | ViewMessage::RenameCubeConfirm
-                        | ViewMessage::RenameCubeCancel
-                        | ViewMessage::ImportGhostWithPhrase(_)
-                        | ViewMessage::RecoveryWordInput { .. }
-                        | ViewMessage::SelectRecoverySuggestion { .. }
-                        | ViewMessage::SubmitRecovery
-                        | ViewMessage::CancelRecovery
-                        | ViewMessage::RestoreFromRecoveryKit(_)
-                        | ViewMessage::RestoreFromAnyRecoveryKit
-                        | ViewMessage::RestoreWithPhone { .. }
-                        | ViewMessage::RestoreWithPhoneOn { .. }
-                        | ViewMessage::ShowRecoveryMethodPicker(_)
-                        | ViewMessage::CloseRecoveryMethodPicker
-                        | ViewMessage::DeleteCube(
-                            DeleteCubeMessage::ShowModal(_)
-                                | DeleteCubeMessage::CloseModal
-                                | DeleteCubeMessage::Confirm(_)
-                                | DeleteCubeMessage::DeleteConnectBackup(_)
-                                | DeleteCubeMessage::Deleted
-                                | DeleteCubeMessage::DaemonStopped(_)
-                                | DeleteCubeMessage::PinInput(_)
-                                | DeleteCubeMessage::ShowRemoteModal(_)
-                                | DeleteCubeMessage::CloseRemoteModal
-                                | DeleteCubeMessage::RemoteNameInput(_)
-                                | DeleteCubeMessage::ConfirmRemoteDelete(_)
-                                | DeleteCubeMessage::RestoreInstead(_)
-                        )
-                ),
-                Message::StartRecovery
-                | Message::Checked { .. }
-                | Message::CubeLimitsLoaded(_)
-                | Message::RemoteCubesLoaded { .. }
-                | Message::NetworkCatalogLoaded { .. }
-                | Message::ConnectSignedInBubble
-                | Message::CatchUpSyncFinished(_)
-                | Message::CubeRemoteRegistered { .. }
-                | Message::CubeRemoteUpdated { .. }
-                | Message::CubeCreated(_)
-                | Message::CubeBackupDeleted(_)
-                | Message::RemoteCubeDeleted(_)
-                | Message::CubeRenamed(_)
-                | Message::PasskeyWindowId(_)
-                | Message::PasskeyWebviewUpdate(_)
-                | Message::PasskeyCeremonyResult(_)
-                | Message::CancelPasskeyCeremony
-                | Message::NativePasskeyTick => true,
-                _ => false,
-            };
-            if !allowed {
-                self.set_error("Bitcoin Blake2b Cubes can't be imported or restored here yet");
-                return Task::none();
-            }
-            // Nothing on the Create Cube journey runs while this chain is
-            // unavailable: no seed, keystore or passkey work starts.
-            if matches!(
-                &message,
-                Message::View(
-                    ViewMessage::CreateCube
-                        | ViewMessage::ShowCreateCube(true)
-                        | ViewMessage::Run(_)
-                        | ViewMessage::TogglePasskeyMode(_)
-                        | ViewMessage::CreationBackup(_)
-                        | ViewMessage::CreationBackupBypassConfirmed
-                        | ViewMessage::CreationBackupContinue
-                        | ViewMessage::CreationKitRequested
-                        | ViewMessage::CreationKit(_)
-                )
-            ) {
-                if let Some(reason) = self.chain_availability(self.network).reason() {
-                    self.set_error(reason.to_string());
-                    return Task::none();
-                }
-            }
+        if self.network.is_blake2b() && !self.permit_blake2b_launcher_message(&message) {
+            return Task::none();
         }
         match message {
             Message::View(ViewMessage::Check) => self.on_focus(),
@@ -1780,107 +1678,16 @@ impl Home {
                 })
             }
             Message::View(ViewMessage::RestoreFromRecoveryKit(cube_uuid)) => {
-                // Selecting a method closes the picker (a no-op when the
-                // launch came straight from a single-method row).
-                self.recovery_method_modal = None;
-                // W13 — same launch shape as CreateWallet; the
-                // installer picks the Recovery-Kit step sequence off
-                // the UserFlow. The clicked cube's `uuid` is threaded
-                // through so the step preselects it and skips the cube
-                // picker.
-                //
-                // Forward the home's already-authenticated Connect
-                // client so `RecoveryKitRestoreStep` can skip its own
-                // email + OTP form (the user already signed in to see
-                // the list of remote cubes on this very screen —
-                // re-prompting them for the same credentials right
-                // after they clicked "restore this one" is pure churn).
-                // Falls back to `None` when the session isn't active
-                // yet (developer-mode path, or stale cached home
-                // state), in which case the step's own auth form
-                // kicks in.
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                let client = self.connect_account.authenticated_client();
-                Task::perform(
-                    async move { (datadir_path, network, client) },
-                    move |(d, n, c)| {
-                        Message::Install(
-                            d,
-                            n,
-                            UserFlow::RestoreFromRecoveryKit {
-                                cube_uuid: Some(cube_uuid),
-                            },
-                            c,
-                        )
-                    },
-                )
+                self.restore_from_kit(cube_uuid)
             }
             Message::View(ViewMessage::ShowRecoveryMethodPicker(cube_uuid)) => {
-                // Open the picker for a cube that offers both methods. Snapshot
-                // the row so the modal stays valid even if the list reloads.
-                if let Some(cube) = self.remote_cubes.iter().find(|r| r.uuid == cube_uuid) {
-                    self.recovery_method_modal = Some(RecoveryMethodModal { cube: cube.clone() });
-                }
-                Task::none()
+                self.show_recovery_method(cube_uuid)
             }
             Message::View(ViewMessage::CloseRecoveryMethodPicker) => {
                 self.recovery_method_modal = None;
                 Task::none()
             }
-            Message::View(ViewMessage::ShowCreateCube(show)) => {
-                // A queued navigation event must not clear the name while a
-                // passkey ceremony or PIN creation task is using it.
-                if !show && self.creating_cube {
-                    return Task::none();
-                }
-                self.catalog.dismiss_popovers();
-                self.restore_hub = false;
-                self.restore_phone = false;
-                if show {
-                    self.pending_bitcoin_import = None;
-                    self.create_network_menu = false;
-                    self.create_network_selection_pending = false;
-                    // Opening the form picks the default afresh: whether the
-                    // passkey path can demonstrate a backup depends on the
-                    // Connect session, which can change between visits.
-                    self.passkey_mode = self.default_passkey_mode();
-                }
-                // Both list screens navigate to the same form, so both carry
-                // the flag, including an empty Launcher on a fresh device.
-                let toggled = match &mut self.state {
-                    State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
-                        *create_cube = show;
-                        true
-                    }
-                    _ => false,
-                };
-                if toggled && !show {
-                    self.create_network_menu = false;
-                    self.create_network_selection_pending = false;
-                    self.pending_bitcoin_import = None;
-                    self.create_cube_name = coincube_ui::component::form::Value::default();
-                    self.create_cube_pin = pin_input::PinInput::new();
-                    self.create_cube_pin_confirm = pin_input::PinInput::new();
-                    // Back to the default unlock method — dismissing the
-                    // form discards the custody choice along with the rest
-                    // of the inputs, so reopening it starts from the same
-                    // state a first-time user sees.
-                    self.passkey_mode = self.default_passkey_mode();
-                    // Clear recovery words when exiting create cube flow
-                    for word in &mut self.recovery_words {
-                        word.clear();
-                        word.shrink_to_fit();
-                    }
-                    self.recovery_active_index = None;
-                    // Show every Cube when returning from an empty filter.
-                    if !self.has_cube_list() {
-                        self.catalog.filter = launcher_catalog::NetworkFilter::All;
-                        self.catalog.page = 0;
-                    }
-                }
-                Task::none()
-            }
+            Message::View(ViewMessage::ShowCreateCube(show)) => self.show_create_cube(show),
             Message::View(ViewMessage::ShowRestoreAllNetworks(all)) => {
                 self.restore_all_networks = all;
                 Task::none()
@@ -1889,135 +1696,14 @@ impl Home {
                 chain,
                 cube_id,
                 full_cube,
-            }) => {
-                let switch = if chain == self.network {
-                    Task::none()
-                } else {
-                    self.update_inner(Message::View(ViewMessage::SelectNetwork(chain)))
-                };
-                if self.network != chain {
-                    // The switch was refused; its reason is on screen.
-                    return switch;
-                }
-                Task::batch([
-                    switch,
-                    self.update_inner(Message::View(ViewMessage::RestoreWithPhone {
-                        cube_id,
-                        full_cube,
-                    })),
-                ])
-            }
+            }) => self.restore_with_phone_on(chain, cube_id, full_cube),
             Message::View(ViewMessage::CreateNetworkMenu(open)) => {
-                self.create_network_menu = open && self.create_network_menu_editable();
-                if !open {
-                    return create_journey_focus_task(Id::new(restore_frame::NETWORK_CONTROL_ID));
-                }
-                Task::none()
+                self.set_create_network_menu(open)
             }
-            Message::View(ViewMessage::ShowRestoreHub) => {
-                // Leaving a path for the Overview drops that path's intent;
-                // the Cube name and PIN stay as entered.
-                if self.creating_cube
-                    || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
-                {
-                    return Task::none();
-                }
-                self.catalog.dismiss_popovers();
-                self.pending_bitcoin_import = None;
-                self.restore_hub = true;
-                self.restore_phone = false;
-                self.restore_all_networks = false;
-                if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } =
-                    &mut self.state
-                {
-                    *create_cube = true;
-                }
-                self.error = None;
-                Task::none()
-            }
-            Message::View(ViewMessage::ShowRestorePhone) => {
-                if self.creating_cube
-                    || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
-                    || !feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED
-                {
-                    return Task::none();
-                }
-                self.catalog.dismiss_popovers();
-                self.pending_bitcoin_import = None;
-                self.restore_hub = true;
-                self.restore_phone = true;
-                if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } =
-                    &mut self.state
-                {
-                    *create_cube = true;
-                }
-                self.error = None;
-                Task::none()
-            }
-            Message::View(ViewMessage::RestoreFromAnyRecoveryKit) => {
-                // The Recovery Kit path: the installer signs in to Connect
-                // (or reuses this session) and lists the account's Cubes.
-                self.recovery_method_modal = None;
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                let client = self.connect_account.authenticated_client();
-                Task::perform(
-                    async move { (datadir_path, network, client) },
-                    move |(d, n, c)| {
-                        Message::Install(
-                            d,
-                            n,
-                            UserFlow::RestoreFromRecoveryKit { cube_uuid: None },
-                            c,
-                        )
-                    },
-                )
-            }
-            Message::View(ViewMessage::ShowImportBitcoin) => {
-                self.catalog.dismiss_popovers();
-                if self.creating_cube
-                    || !matches!(
-                        self.state,
-                        State::Cubes { .. } | State::NoCube { .. } | State::Unchecked
-                    )
-                {
-                    return Task::none();
-                }
-                if self.network != ChainId::Bitcoin {
-                    self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
-                    return Task::none();
-                }
-                // Every entry is disabled at the limit; this refuses a queued
-                // or stale press before the user fills in a name and PIN.
-                if launcher_catalog::project(self).at_limit() {
-                    self.set_error(
-                        if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
-                            "Bitcoin mainnet has no free Cube slot on your plan. Delete a \
-                             Bitcoin mainnet Cube to import a wallet."
-                        } else {
-                            "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or \
-                             delete a Bitcoin mainnet Cube, to import a wallet."
-                        },
-                    );
-                    return Task::none();
-                }
-                if self.pending_bitcoin_import.is_none() {
-                    self.pending_bitcoin_import = Some(Box::new(BitcoinImport::pending()));
-                }
-                self.restore_hub = false;
-                self.restore_phone = false;
-                // A passkey can't hold an imported secret: import sets a PIN.
-                self.passkey_mode = false;
-                match &mut self.state {
-                    State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
-                        *create_cube = true;
-                    }
-                    State::Unchecked => {}
-                    _ => return Task::none(),
-                }
-                self.error = None;
-                Task::none()
-            }
+            Message::View(ViewMessage::ShowRestoreHub) => self.show_restore_hub(),
+            Message::View(ViewMessage::ShowRestorePhone) => self.show_restore_phone(),
+            Message::View(ViewMessage::RestoreFromAnyRecoveryKit) => self.restore_from_any_kit(),
+            Message::View(ViewMessage::ShowImportBitcoin) => self.show_import_bitcoin(),
             Message::View(ViewMessage::CubeNameEdited(name)) => {
                 self.create_cube_name.value = name;
                 self.create_cube_name.valid = !self.create_cube_name.value.trim().is_empty();
@@ -2043,149 +1729,7 @@ impl Home {
                 self.error = None;
                 Task::none()
             }
-            Message::View(ViewMessage::CreateCube) => {
-                if self.creating_cube {
-                    return Task::none();
-                }
-                if self.pending_bitcoin_import.is_some() && self.network != ChainId::Bitcoin {
-                    self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
-                    return Task::none();
-                }
-
-                if self.create_cube_name.value.trim().is_empty() {
-                    return Task::none();
-                }
-
-                // Enforce per-network Cube limit based on Connect account tier.
-                // Includes remote cubes (on server but not local) since the
-                // limit applies across all devices.
-                let cube_count = self.total_cube_count();
-                let limit = self.cube_limit();
-                if cube_count >= limit {
-                    self.error = Some(self.cube_limit_error());
-                    return Task::none();
-                }
-
-                // Defensive guard: even if `self.passkey_mode` somehow became
-                // true while the feature is disabled (stale state, manual
-                // toggle before a hot-reload, etc.), always fall through to
-                // the PIN flow when the compile-time flag is off.
-                let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_CREATION_AVAILABLE;
-
-                if !passkey_mode {
-                    // PIN-based flow: validate PIN
-                    if !self.create_cube_pin.is_complete() {
-                        self.error = Some("Please enter all 4 PIN digits".to_string());
-                        return Task::none();
-                    }
-                    if !self.create_cube_pin_confirm.is_complete() {
-                        self.error = Some("Please confirm all 4 PIN digits".to_string());
-                        return Task::none();
-                    }
-                    if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
-                        self.error = Some("PIN codes do not match".to_string());
-                        return Task::none();
-                    }
-                }
-
-                self.creating_cube = true;
-                let cube_name = self.create_cube_name.value.trim().to_string();
-
-                // Pre-generate the UUID before the async task so that retries
-                // reuse the same identifier (idempotent creation). The
-                // PIN-based path re-reads it in `finalize_cube_creation`, which
-                // is what actually persists the Cube.
-                let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-
-                let without_recovery = if passkey_mode {
-                    // Passkey-based Cube creation.
-                    // On macOS: use the native AuthenticationServices framework
-                    //   (WKWebView doesn't have the entitlement to call WebAuthn).
-                    // On other platforms: fall back to the embedded webview ceremony.
-                    #[cfg(target_os = "macos")]
-                    {
-                        let user_id_bytes = cube_id.as_bytes().to_vec();
-                        match crate::services::passkey::macos::NativePasskeyCeremony::register(
-                            passkey_svc::RP_ID,
-                            &user_id_bytes,
-                            &cube_name,
-                        ) {
-                            Ok(ceremony) => {
-                                self.native_passkey_ceremony = Some(ceremony);
-                                Task::none()
-                            }
-                            Err(e) => {
-                                self.creating_cube = false;
-                                self.error = Some(coincube_ui::localized_format!(
-                                    "Failed to start passkey ceremony: {}",
-                                    "No se pudo iniciar la verificación con llave de acceso: {}",
-                                    e
-                                ));
-                                Task::none()
-                            }
-                        }
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        let user_id = cube_id.to_string();
-                        let ceremony = PasskeyCeremony::new(CeremonyMode::Register {
-                            user_id,
-                            user_name: cube_name,
-                        });
-                        self.passkey_ceremony = Some(ceremony);
-                        // Extract the window ID so we can attach the webview
-                        iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
-                    }
-                } else {
-                    // PIN-based Cube creation, phase 1: generate the seed into
-                    // memory and hand it to the backup step.
-                    //
-                    // Nothing is written to disk here — not the seed file, not
-                    // the settings entry, not the OS-keystore device secret.
-                    // All of that is `finalize_cube_creation`, which runs only
-                    // once the user has demonstrated a backup or explicitly
-                    // bypassed. Abandoning the step therefore leaves no
-                    // half-created Cube and no orphaned keystore entry.
-                    //
-                    // Probe the keystore **here**, before a single word is
-                    // shown. `finalize_cube_creation` mints the real secret,
-                    // and if the keystore is unusable it refuses (I7) — but
-                    // refusing there means the user has already written down
-                    // twelve words and verified three of them, for a Cube that
-                    // will never exist. Probe early, mint late: `capability()`
-                    // writes and deletes a throwaway item, so it stakes no
-                    // claim on this Cube and leaves 3a's
-                    // no-writes-until-committed property intact.
-                    if let unlock::device_secret::Capability::Unavailable(why) =
-                        unlock::device_secret::capability()
-                    {
-                        self.creating_cube = false;
-                        self.error = Some(why);
-                        return Task::none();
-                    }
-                    match MasterSigner::generate(self.network.bitcoin_network()) {
-                        Ok(signer) => {
-                            self.creating_cube = false;
-                            self.error = None;
-                            self.enter_creation_backup(
-                                signer.words().iter().map(|w| w.to_string()).collect(),
-                            );
-                            Task::none()
-                        }
-                        Err(e) => {
-                            self.creating_cube = false;
-                            self.error = Some(coincube_ui::localized_format!(
-                                "Failed to generate master seed signer: {}",
-                                "No se pudo generar el firmante de la frase maestra: {}",
-                                e
-                            ));
-                            Task::none()
-                        }
-                    }
-                };
-
-                without_recovery
-            }
+            Message::View(ViewMessage::CreateCube) => self.begin_create_cube(),
             Message::StartRecovery => {
                 self.state = State::RecoveryInput;
                 self.recovery_active_index = None;
@@ -2218,341 +1762,36 @@ impl Home {
             }
             Message::View(ViewMessage::CreationBackup(msg)) => self.update_creation_backup(msg),
             Message::View(ViewMessage::CreationBackupBypassRequested) => {
-                // Not while a Kit upload is in flight: its result decides
-                // whether a Cube gets written, and taking the acknowledgement
-                // underneath it would race two finalizers.
-                if matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::KitUploading)
-                ) || self.creation_backup_hub().any()
-                {
-                    // A finished backup is written by Continue; the bypass
-                    // would record "no backup" over it.
-                    return Task::none();
-                }
-                if matches!(self.state, State::CreationBackup(_)) {
-                    self.state = State::CreationBackup(CreationBackupStep::Bypass {
-                        acknowledged: false,
-                    });
-                    self.error = None;
-                }
-                Task::none()
+                self.request_creation_backup_bypass()
             }
             Message::View(ViewMessage::CreationBackupAcknowledgeBypass(acknowledged)) => {
-                if let State::CreationBackup(CreationBackupStep::Bypass { .. }) = &self.state {
-                    self.state = State::CreationBackup(CreationBackupStep::Bypass { acknowledged });
-                }
-                Task::none()
+                self.acknowledge_creation_backup_bypass(acknowledged)
             }
             Message::View(ViewMessage::CreationBackupBypassConfirmed) => {
-                // Only an *acknowledged* bypass proceeds. Reaching this message
-                // with the box unticked means the view let a click through, and
-                // the safe answer is to do nothing rather than create an
-                // unbacked-up Cube the user never agreed to.
-                if !matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::Bypass { acknowledged: true })
-                ) || self.creation_backup_hub().any()
-                {
-                    return Task::none();
-                }
-                let bypass = creation_gate::CreationBackupBypass {
-                    at: chrono::Utc::now().timestamp(),
-                    // Verbatim, so a later support conversation is about the
-                    // same words the user actually agreed to.
-                    acknowledged: creation_gate::BYPASS_ACKNOWLEDGEMENT.to_string(),
-                };
-                // Same acknowledgement, same recorded evidence, either shape of
-                // Cube. Only the write differs: a passkey Cube has no seed file
-                // or device secret to mint.
-                if self.creating_passkey_cube() {
-                    self.finalize_passkey_cube_creation(false, Some(bypass), None)
-                } else {
-                    self.finalize_cube_creation(false, Some(bypass), None)
-                }
+                self.confirm_creation_backup_bypass()
             }
             Message::View(ViewMessage::CreationBackupChoiceRequested) => {
-                // Never mid-upload: that result decides whether a Cube gets
-                // written, and stepping away underneath it would race two
-                // finalizers.
-                if matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::KitUploading)
-                ) {
-                    return Task::none();
-                }
-                if matches!(self.state, State::CreationBackup(_)) {
-                    self.scrub_creation_kit();
-                    self.state = State::CreationBackup(CreationBackupStep::Choice);
-                    self.error = None;
-                }
-                Task::none()
+                self.choose_creation_backup()
             }
-            Message::View(ViewMessage::CreationKitRequested) => {
-                // From the choice screen, or back out of "I'll do this later" —
-                // the acknowledgement is a decision the user may reverse while
-                // the Cube is still unwritten. Never while a Kit is out of
-                // reach: a signed-out session has nowhere to upload one.
-                // Applies to both unlock methods.
-                if !matches!(
-                    self.state,
-                    State::CreationBackup(
-                        CreationBackupStep::Choice | CreationBackupStep::Bypass { .. }
-                    )
-                ) || !self.can_create_recovery_kit()
-                    || self.creation_kit_evidence.is_some()
-                {
-                    return Task::none();
-                }
-                self.scrub_creation_kit();
-                self.state = State::CreationBackup(CreationBackupStep::KitPassword);
-                Task::none()
-            }
+            Message::View(ViewMessage::CreationKitRequested) => self.request_creation_kit(),
             Message::View(ViewMessage::CreationKit(msg)) => self.update_creation_kit(msg),
             Message::View(ViewMessage::CreationKitUploaded(result)) => {
-                // Only the upload this step is waiting on counts.
-                if !matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::KitUploading)
-                ) {
-                    return Task::none();
-                }
-                match result {
-                    Ok(evidence) => {
-                        // The Kit is on Connect. Back to the hub, which shows
-                        // it as backed up; Continue there writes the Cube with
-                        // this evidence (and the phrase's, if confirmed too).
-                        self.scrub_creation_kit();
-                        self.creating_cube = false;
-                        self.creation_kit_evidence = Some(evidence);
-                        self.state = State::CreationBackup(CreationBackupStep::Choice);
-                        Task::none()
-                    }
-                    Err(e) => {
-                        // Nothing was written. Back to the password screen with
-                        // the reason: the user can retry, or take the
-                        // acknowledgement instead. Both exits still exist.
-                        tracing::warn!("recovery kit upload during creation failed: {}", e);
-                        self.creating_cube = false;
-                        self.creation_kit_error = Some(e);
-                        self.state = State::CreationBackup(CreationBackupStep::KitPassword);
-                        Task::none()
-                    }
-                }
+                self.creation_kit_uploaded(result)
             }
             Message::View(ViewMessage::CreationBackupContinue) => self.finish_creation_backup(),
             Message::View(ViewMessage::CancelCreationBackup) => {
                 self.abandon_creation_backup();
                 Task::none()
             }
-            Message::CubeCreated(res) => {
-                self.creating_cube = false;
-                match res {
-                    Ok(cube) => {
-                        // UUID was consumed successfully — reset it so the next
-                        // cube creation starts with a fresh identifier.
-                        self.pending_cube_id = None;
-                        self.ghost_import = None;
-                        let ghost_claim = self.ghost_claim.take();
-                        // The operation identity is now durable on this exact
-                        // Cube. A fresh creation must not reuse it.
-                        self.pending_bitcoin_import = None;
-                        self.open_created_cube = None;
-                        self.open_after_registration = None;
-                        // Clear any previous error state
-                        self.error = None;
-                        // Reset form fields
-                        self.create_cube_name = coincube_ui::component::form::Value::default();
-                        self.create_cube_pin = pin_input::PinInput::new();
-                        self.create_cube_pin_confirm = pin_input::PinInput::new();
-                        // The creation-time backup step's copy of the seed has
-                        // done its job — scrub it. The step itself is replaced
-                        // just below, and `reload()` refreshes that list.
-                        self.scrub_creation_seed();
-                        self.scrub_creation_kit();
-                        self.reset_creation_backup_progress();
-                        // The passkey registration has been consumed by the
-                        // write; holding it would let a second finalize insert
-                        // a duplicate.
-                        self.pending_passkey_cube = None;
-                        // Off the backup hub now, not when the reload lands:
-                        // in between, its Continue and "I'll do this later"
-                        // would act on a Cube that is already written.
-                        let parked = std::mem::take(&mut self.creation_backup_cubes);
-                        if matches!(self.state, State::CreationBackup(_)) {
-                            self.state = State::Cubes {
-                                cubes: parked,
-                                create_cube: false,
-                                source: self.network,
-                            };
-                        }
-                        // Explicitly clear recovery words to prevent mnemonic from lingering in memory
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
-                        let reload_task = self.reload();
-
-                        // If logged in, register the new cube with the Connect API.
-                        // A Cube whose Recovery Kit was made during creation is
-                        // already registered — the Kit could not have been
-                        // uploaded otherwise — and registering again would
-                        // create a duplicate server-side record.
-                        if cube.remote_synced {
-                            tracing::debug!(
-                                "Cube {} was registered by the creation Recovery Kit — \
-                                 skipping the post-creation registration",
-                                cube.id
-                            );
-                            self.open_created_cube = Some(cube.id.clone());
-                            reload_task
-                        } else if ghost_claim.as_ref().is_some_and(|(uuid, account)| {
-                            *uuid == cube.id && *account != self.connect_account_id()
-                        }) {
-                            // A ghost's Cube reclaims a registration in the
-                            // account that listed it. Signed out or switched
-                            // since, it stays local: the catch-up sync
-                            // registers it once that account is back.
-                            tracing::warn!(
-                                "Cube {} reclaimed a Connect registration from another session; \
-                                 not registering it with the current account",
-                                cube.id
-                            );
-                            self.open_created_cube = Some(cube.id.clone());
-                            reload_task
-                        } else if let Some(client) = self.connect_account.authenticated_client() {
-                            let cube_id = cube.id.clone();
-                            let cube_network = cube.network;
-                            let req = RegisterCubeRequest {
-                                uuid: cube.id.clone(),
-                                name: cube.name.clone(),
-                                network: cube.api_network_string(),
-                                // Monotonic upgrade-only report: a freshly-
-                                // created Cube has no Vault yet, so omit the
-                                // flag (server default `false`). It flips later
-                                // via the vault-creation re-report
-                                // (PLAN-duress-vault-gate PR 3).
-                                has_vault: cube.holds_vault().then_some(true),
-                                spark_stable_balance: cube.spark_stable_balance,
-                            };
-                            self.open_after_registration = Some(cube.id.clone());
-                            let register_task = Task::perform(
-                                async move {
-                                    client.register_cube(req).await.map_err(|e| e.to_string())
-                                },
-                                move |result| Message::CubeRemoteRegistered {
-                                    cube_id,
-                                    network: cube_network,
-                                    result,
-                                },
-                            );
-                            Task::batch([reload_task, register_task])
-                        } else {
-                            self.open_created_cube = Some(cube.id.clone());
-                            reload_task
-                        }
-                    }
-                    Err(e) => {
-                        self.ghost_claim = None;
-                        // Retain pending_cube_id so a retry reuses the same UUID,
-                        // unless a Kit was saved for it (`abandon_creation_backup`).
-                        // Clear recovery words on error too
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
-                        // A failed write means no Cube exists, so the seed the
-                        // user was just shown is worthless — scrub it and send
-                        // them back to the create form, where the error below
-                        // is visible and a retry generates a fresh seed.
-                        if matches!(self.state, State::CreationBackup(_)) {
-                            self.abandon_creation_backup();
-                        } else {
-                            self.scrub_creation_seed();
-                        }
-                        self.error = Some(coincube_ui::localized_format!(
-                            "Failed to create Cube: {}",
-                            "No se pudo crear el Cube: {}",
-                            e
-                        ));
-                        Task::none()
-                    }
-                }
-            }
+            Message::CubeCreated(res) => self.cube_created(res),
             // --- Passkey ceremony flow ---
-            Message::PasskeyWindowId(window_id) => {
-                if let Some(ceremony) = &mut self.passkey_ceremony {
-                    if !ceremony.create_webview(window_id) {
-                        self.creating_cube = false;
-                        self.passkey_ceremony = None;
-                        self.error = Some(
-                            "Failed to open passkey webview. Check your system's WebView support."
-                                .to_string(),
-                        );
-                    }
-                }
-                Task::none()
-            }
-            Message::PasskeyWebviewUpdate(msg) => {
-                if let Some(ceremony) = &mut self.passkey_ceremony {
-                    ceremony.webview_manager.update(msg);
-
-                    // Poll for IPC result
-                    if let Some(result) = ceremony.try_recv_result() {
-                        return Task::done(Message::PasskeyCeremonyResult(result));
-                    }
-                }
-                Task::none()
-            }
+            Message::PasskeyWindowId(window_id) => self.attach_passkey_webview(window_id),
+            Message::PasskeyWebviewUpdate(msg) => self.update_passkey_webview(msg),
             Message::CubeRemoteRegistered {
                 cube_id,
                 network,
                 result,
-            } => {
-                let open = self.open_after_registration.as_ref() == Some(&cube_id);
-                if open {
-                    self.open_after_registration = None;
-                    self.open_created_cube = Some(cube_id.clone());
-                }
-                match result {
-                    Ok(resp) => {
-                        log::info!(
-                            "[LAUNCHER] Cube {} registered remotely (server ID: {})",
-                            resp.uuid,
-                            resp.id
-                        );
-                        self.cube_sync_errors.remove(&cube_id);
-                        let network_dir = self.datadir_path.network_directory(network);
-                        let owner = self.connect_owner();
-                        Task::perform(
-                            async move {
-                                settings::mark_cube_synced(&network_dir, &cube_id, owner)
-                                    .await
-                                    .ok();
-                            },
-                            |_| Message::View(ViewMessage::Check),
-                        )
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[LAUNCHER] Failed to register cube {} remotely: {}",
-                            cube_id,
-                            e
-                        );
-                        // Keep the reason: this is the only signal the Cubes list
-                        // has that the Cube is not merely mid-sync.
-                        self.cube_sync_errors.insert(cube_id, e);
-                        // The Cube still opens; the catch-up sync registers it.
-                        if open {
-                            self.reload()
-                        } else {
-                            Task::none()
-                        }
-                    }
-                }
-            }
+            } => self.cube_remote_registered(cube_id, network, result),
             Message::CatchUpSyncFinished(Err(())) => {
                 // The round never ran, so it has no verdict to give. Keep the
                 // reasons already on record: wiping them here would drop a
@@ -2561,159 +1800,19 @@ impl Home {
                 // more than a flaky `list_cubes` during a sign-in.
                 Task::none()
             }
-            Message::CatchUpSyncFinished(Ok(outcomes)) => {
-                // Apply per Cube rather than replacing the map. A Cube the
-                // round synced loses its reason (a slot freed up, a rename went
-                // through); one it could not sync gains the current one. A Cube
-                // the round never examined — created after it snapshotted the
-                // unsynced set, and refused in the meantime — keeps what
-                // `CubeRemoteRegistered` recorded, which a blanket clear would
-                // have erased.
-                for (cube_id, outcome) in outcomes {
-                    match outcome {
-                        Some(reason) => {
-                            self.cube_sync_errors.insert(cube_id, reason);
-                        }
-                        None => {
-                            self.cube_sync_errors.remove(&cube_id);
-                        }
-                    }
-                }
-                // Successes wrote `remote_synced` to disk; reload so the list
-                // reflects them.
-                self.reload()
-            }
-            Message::CubeLimitsLoaded(result) => {
-                match result {
-                    Ok(limits) => {
-                        self.server_cube_limit = Some(limits.max_allowed);
-                    }
-                    Err(e) => {
-                        log::warn!("[LAUNCHER] Failed to fetch cube limits: {}", e);
-                    }
-                }
-                Task::none()
-            }
-            Message::PasskeyCeremonyResult(result) => {
-                // Close the ceremony webview
-                if let Some(mut ceremony) = self.passkey_ceremony.take() {
-                    ceremony.close();
-                }
-
-                match result {
-                    Ok(CeremonyOutcome::Registered(registration)) => {
-                        // Shared with the native macOS path: one place decides
-                        // what a successful registration does, so the two
-                        // ceremony backends cannot drift on whether the Cube is
-                        // gated (they did — this one persisted immediately).
-                        self.passkey_registration_succeeded(
-                            registration.credential_id.clone(),
-                            &registration.prf_output,
-                        )
-                    }
-                    Ok(CeremonyOutcome::Authenticated(_auth)) => {
-                        // Authentication during creation shouldn't happen,
-                        // but handle gracefully.
-                        self.creating_cube = false;
-                        self.error = Some(
-                            "Unexpected authentication response during registration.".to_string(),
-                        );
-                        Task::none()
-                    }
-                    Err(e) => {
-                        self.creating_cube = false;
-                        // `Display` is the developer string ("Passkey ceremony
-                        // failed: …"); the user gets the registration copy, and
-                        // the detail goes to the log where it is of use.
-                        tracing::warn!("passkey registration failed: {e}");
-                        self.error = Some(e.registration_message());
-                        Task::none()
-                    }
-                }
-            }
-            Message::CancelPasskeyCeremony => {
-                if let Some(mut ceremony) = self.passkey_ceremony.take() {
-                    ceremony.close();
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    if let Some(ceremony) = self.native_passkey_ceremony.take() {
-                        ceremony.cancel();
-                    }
-                }
-                self.creating_cube = false;
-                Task::none()
-            }
+            Message::CatchUpSyncFinished(Ok(outcomes)) => self.catch_up_sync_finished(outcomes),
+            Message::CubeLimitsLoaded(result) => self.cube_limits_loaded(result),
+            Message::PasskeyCeremonyResult(result) => self.finish_passkey_ceremony(result),
+            Message::CancelPasskeyCeremony => self.cancel_passkey_ceremony(),
             #[cfg(target_os = "macos")]
-            Message::NativePasskeyTick => {
-                use crate::services::passkey::macos::NativeOutcome;
-                let outcome = self
-                    .native_passkey_ceremony
-                    .as_ref()
-                    .and_then(|c| c.try_recv());
-                let Some(outcome) = outcome else {
-                    return Task::none();
-                };
-                // Drop the ceremony now that we have a result.
-                self.native_passkey_ceremony = None;
-
-                match outcome {
-                    NativeOutcome::Registered {
-                        credential_id,
-                        prf_output,
-                    } => {
-                        // Same shared transition as the webview ceremony.
-                        self.passkey_registration_succeeded_raw(&credential_id, &prf_output)
-                    }
-                    NativeOutcome::Authenticated { .. } => {
-                        self.creating_cube = false;
-                        self.error = Some(
-                            "Unexpected authentication response during registration.".to_string(),
-                        );
-                        Task::none()
-                    }
-                    NativeOutcome::Failed(e) => {
-                        self.creating_cube = false;
-                        // Registration, not unlock — but the same rule applies:
-                        // a cancelled Touch ID prompt must read as "nothing
-                        // happened", not as a failure the user has to interpret.
-                        // Nothing has been written to disk at this point, which
-                        // is why `registration_message` and not `user_message`:
-                        // the unlock copy would name a Cube that doesn't exist
-                        // and send the user to a Recovery Kit they can't have.
-                        tracing::warn!("passkey registration failed: {e}");
-                        self.error = Some(e.registration_message());
-                        Task::none()
-                    }
-                }
-            }
+            Message::NativePasskeyTick => self.poll_native_passkey(),
             #[cfg(not(target_os = "macos"))]
             Message::NativePasskeyTick => Task::none(),
             Message::NetworkCatalogLoaded {
                 generation,
                 chain,
                 cubes,
-            } => {
-                // A read superseded by a newer load, or for a network that
-                // has since become current or stopped being listed, is
-                // dropped: it describes nothing on screen.
-                if generation != self.network_catalog_generation
-                    || !self.network_catalog_requested.contains(&chain)
-                {
-                    return Task::none();
-                }
-                self.network_catalog_unread.retain(|c| *c != chain);
-                match cubes {
-                    Ok(cubes) => match self.network_catalog.iter_mut().find(|(c, _)| *c == chain) {
-                        Some((_, list)) => *list = cubes,
-                        None => self.network_catalog.push((chain, cubes)),
-                    },
-                    // Keep whatever was last read; the menu says the
-                    // network is unavailable rather than showing 0 Cubes.
-                    Err(_) => self.network_catalog_unread.push(chain),
-                }
-                Task::none()
-            }
+            } => self.network_catalog_loaded(generation, chain, cubes),
             Message::RemoteCubesLoaded {
                 request_id,
                 result,
@@ -2723,995 +1822,58 @@ impl Home {
                 cube_id,
                 network,
                 result,
-            } => match result {
-                Ok(_) => {
-                    log::info!("[LAUNCHER] Cube {} updated remotely", cube_id);
-                    let network_dir = self.datadir_path.network_directory(network);
-                    let owner = self.connect_owner();
-                    Task::perform(
-                        async move {
-                            settings::mark_cube_synced(&network_dir, &cube_id, owner)
-                                .await
-                                .ok();
-                        },
-                        |_| Message::View(ViewMessage::Check),
-                    )
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[LAUNCHER] Failed to update cube {} remotely: {}",
-                        cube_id,
-                        e
-                    );
-                    Task::none()
-                }
-            },
-            Message::CubeBackupDeleted(result) => {
-                match &result {
-                    Ok(()) => log::info!("[LAUNCHER] Cube Connect backup deleted"),
-                    Err(e) => log::warn!("[LAUNCHER] Failed to delete cube backup: {}", e),
-                }
-                // Either outcome changes what the restore list should show, and
-                // the delete has now settled: on success the Cube is gone from
-                // Connect and must not reappear as restorable; on failure its
-                // Connect copy survived the local delete, so it *is* restorable
-                // and has to show up. Both are one re-fetch away.
-                self.fetch_remote_cubes()
-            }
-            Message::RemoteCubeDeleted(result) => {
-                match result {
-                    Ok(()) => {
-                        log::info!("[LAUNCHER] Remote cube deleted");
-                        if let Some(modal) = self.delete_remote_cube_modal.take() {
-                            self.remote_cubes.retain(|rc| rc.uuid != modal.cube.uuid);
-                            let reload_task = self.reload();
-                            // Dropping the row locally is not enough: a fetch
-                            // issued before the delete settled is still in
-                            // flight, and its pre-delete list still contains
-                            // this Cube. `Message::Checked` only *prunes*
-                            // `remote_cubes`, so nothing in `reload` would stop
-                            // that result from putting the deleted row back on
-                            // screen. Re-fetching claims a new generation,
-                            // which discards the in-flight result, and replaces
-                            // it with the server's post-delete state.
-                            return Task::batch([reload_task, self.fetch_remote_cubes()]);
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("[LAUNCHER] Failed to delete remote cube: {}", e);
-                        if let Some(modal) = &mut self.delete_remote_cube_modal {
-                            modal.deleting = false;
-                            modal.error = Some(e);
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::CubeRenamed(result) => match result {
-                Ok(()) => {
-                    self.rename_cube_modal = None;
-                    let reload_task = self.reload();
-
-                    // Fire remote update now that local write succeeded
-                    if let Some(pending) = self.pending_remote_rename.take() {
-                        if let Some(client) = self.connect_account.authenticated_client() {
-                            let update_req = UpdateCubeRequest {
-                                name: Some(pending.new_name),
-                                status: None,
-                                // Name-only rename: leave server Vault presence
-                                // and the Spark Stable Balance record untouched.
-                                has_vault: None,
-                                spark_stable_balance: None,
-                            };
-                            let cube_uuid = pending.cube_id.clone();
-                            let cube_id = pending.cube_id;
-                            let cube_network = pending.cube_network;
-                            let remote_task = Task::perform(
-                                async move {
-                                    let cubes =
-                                        client.list_cubes().await.map_err(|e| e.to_string())?;
-                                    let server_cube = cubes.iter().find(|c| c.uuid == cube_uuid);
-                                    if let Some(sc) = server_cube {
-                                        let server_id = sc.id.to_string();
-                                        client
-                                            .update_cube(&server_id, update_req)
-                                            .await
-                                            .map_err(|e| e.to_string())
-                                    } else {
-                                        Err("Cube not yet registered remotely".to_string())
-                                    }
-                                },
-                                move |result| Message::CubeRemoteUpdated {
-                                    cube_id,
-                                    network: cube_network,
-                                    result,
-                                },
-                            );
-                            return Task::batch([reload_task, remote_task]);
-                        }
-                    }
-                    reload_task
-                }
-                Err(e) => {
-                    // Clear pending remote rename on local failure
-                    self.pending_remote_rename = None;
-                    self.error = Some(format!("Failed to rename Cube: {}", e));
-                    Task::none()
-                }
-            },
+            } => self.cube_remote_updated(cube_id, network, result),
+            Message::CubeBackupDeleted(result) => self.cube_backup_deleted(result),
+            Message::RemoteCubeDeleted(result) => self.remote_cube_deleted(result),
+            Message::CubeRenamed(result) => self.cube_renamed(result),
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModalFor {
                 cube_id,
                 chain,
-            })) => {
-                // The Launcher may be listing another network. Its probe
-                // then reads the Cube's network.
-                let load = if chain == self.network {
-                    self.reload()
-                } else {
-                    self.update_inner(Message::View(ViewMessage::SelectNetwork(chain)))
-                };
-                if self.network != chain {
-                    // The switch was refused; its reason is on screen.
-                    return load;
-                }
-                // Never the row already listed: a retained Launcher may hold
-                // one from before the import moved on, and the delete checks
-                // its snapshot against the Cube's current settings.
-                self.delete_after_check = Some(cube_id);
-                load
-            }
+            })) => self.show_delete_for(cube_id, chain),
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))) => {
-                if let State::Cubes { cubes, .. } = &self.state {
-                    if let Some(cube) = cubes.get(i) {
-                        let wallet_datadir = self.datadir_path.network_directory(cube.network);
-                        let config_path =
-                            wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
-
-                        // Get wallet settings if vault exists
-                        let (wallet_settings, internal_bitcoind) =
-                            if let Some(vault_id) = &cube.vault_wallet_id {
-                                match settings::Settings::from_file(&wallet_datadir) {
-                                    Ok(s) => {
-                                        if let Some(wallet) =
-                                            s.wallets.iter().find(|w| w.wallet_id() == *vault_id)
-                                        {
-                                            let internal_bitcoind =
-                                                if wallet.remote_backend_auth.is_some() {
-                                                    Some(false)
-                                                } else if wallet.start_internal_bitcoind.is_some() {
-                                                    wallet.start_internal_bitcoind
-                                                } else if let Ok(cfg) =
-                                                    app::Config::from_file(&config_path)
-                                                {
-                                                    Some(cfg.start_internal_bitcoind)
-                                                } else {
-                                                    None
-                                                };
-                                            (Some(wallet.clone()), internal_bitcoind)
-                                        } else {
-                                            (None, None)
-                                        }
-                                    }
-                                    Err(_) => (None, None),
-                                }
-                            } else {
-                                (None, None)
-                            };
-
-                        self.delete_cube_modal = Some(DeleteCubeModal::new(
-                            cube.clone(),
-                            wallet_datadir,
-                            self.datadir_path.path().to_path_buf(),
-                            wallet_settings,
-                            internal_bitcoind,
-                            self.connect_account.is_authenticated(),
-                        ));
-                    }
-                }
-                Task::none()
+                self.show_delete_modal(i)
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowRemoteModal(uuid))) => {
-                if let Some(rc) = self.remote_cubes.iter().find(|r| r.uuid == uuid) {
-                    self.delete_remote_cube_modal = Some(DeleteRemoteCubeModal {
-                        cube: rc.clone(),
-                        deleting: false,
-                        error: None,
-                        typed_name: String::new(),
-                    });
-                }
-                Task::none()
+                self.show_remote_delete_modal(uuid)
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseRemoteModal)) => {
-                let opener = self
-                    .delete_remote_cube_modal
-                    .as_ref()
-                    .map(|modal| modal.cube.uuid.clone());
-                self.delete_remote_cube_modal = None;
-                opener
-                    .as_deref()
-                    .map(|uuid| focus_remote_delete_opener(self, uuid))
-                    .unwrap_or_else(Task::none)
+                self.close_remote_delete_modal()
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::RemoteNameInput(name))) => {
-                if let Some(modal) = &mut self.delete_remote_cube_modal {
-                    if !modal.deleting {
-                        modal.typed_name = name;
-                    }
-                }
-                Task::none()
+                self.edit_remote_delete_name(name)
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::RestoreInstead(uuid))) => {
-                // A Cube with nothing this build can restore keeps its modal
-                // open: no button offers this, and a stale press must not
-                // close it.
-                let Some(modal) = self.delete_remote_cube_modal.take_if(|modal| {
-                    !modal.deleting && modal.cube.uuid == uuid && modal.restorable()
-                }) else {
-                    return Task::none();
-                };
-                match launcher_catalog::remote_restore(&modal.cube).action {
-                    Some((restore, _)) => self.update_inner(Message::View(restore)),
-                    None => Task::none(),
-                }
+                self.restore_remote_instead(uuid)
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ConfirmRemoteDelete(
                 uuid,
-            ))) => {
-                // The view only offers Delete once the name matches; a stale
-                // press for another Cube, or one before that, does nothing.
-                match &mut self.delete_remote_cube_modal {
-                    Some(modal)
-                        if !modal.deleting && modal.cube.uuid == uuid && modal.name_confirmed() =>
-                    {
-                        modal.deleting = true;
-                    }
-                    _ => return Task::none(),
-                }
-                if let Some(client) = self.connect_account.authenticated_client() {
-                    Task::perform(
-                        async move {
-                            let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
-                            let server_cube = cubes.iter().find(|c| c.uuid == uuid);
-                            if let Some(cube) = server_cube {
-                                let server_id = cube.id.to_string();
-                                client
-                                    .delete_cube(&server_id)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            } else {
-                                Err("Cube not found on server".to_string())
-                            }
-                        },
-                        Message::RemoteCubeDeleted,
-                    )
-                } else {
-                    if let Some(modal) = &mut self.delete_remote_cube_modal {
-                        modal.deleting = false;
-                        modal.error = Some("Not authenticated with Connect".to_string());
-                    }
-                    Task::none()
-                }
-            }
-            Message::View(ViewMessage::SelectNetwork(network)) => {
-                self.catalog.network_menu = false;
-                self.create_network_menu = false;
-                // Not while a Cube is mid-creation: its seed, passkey and any
-                // Recovery Kit were made for this network, and the write reads
-                // `self.network`. The header menu is closed in the step; this
-                // refuses the other routes too.
-                if matches!(self.state, State::CreationBackup(_)) || self.creating_cube {
-                    self.catalog.pending_select = None;
-                    self.set_error(
-                        "Finish or cancel creating this Cube before switching networks."
-                            .to_string(),
-                    );
-                    return Task::none();
-                }
-                if !(self.developer_mode
-                    || network == ChainId::Bitcoin
-                    || network == ChainId::BitcoinBlake2b
-                        && self.chain_availability(network).is_available())
-                {
-                    tracing::debug!(
-                        "Ignoring SelectNetwork action because developer mode is disabled"
-                    );
-                    self.catalog.pending_select = None;
-                    return Task::none();
-                }
-                if let Some(reason) = self.chain_availability(network).reason() {
-                    self.set_error(reason.to_string());
-                    self.catalog.pending_select = None;
-                    return Task::none();
-                }
-                self.create_network_selection_pending =
-                    matches!(self.active_section, HomeSection::Cubes)
-                        && self.showing_create_form()
-                        && self.pending_bitcoin_import.is_none();
-                self.network = network;
-                self.open_created_cube = None;
-                self.delete_after_check = None;
-                self.open_after_registration = None;
-                if network != ChainId::Bitcoin {
-                    // Import Bitcoin wallet is Bitcoin only: leaving Bitcoin
-                    // drops a pending import. Import or restore itself stays
-                    // open and re-filters for the new network.
-                    self.pending_bitcoin_import = None;
-                }
-                self.error = None;
-                // Clear stale limit from previous network
-                self.server_cube_limit = None;
-                let network_dir = self.datadir_path.network_directory(self.network);
-                let mut tasks: Vec<Task<Message>> =
-                    vec![probe_network_datadir(self.network, network_dir)];
-                // Re-fetch limits for the new network if authenticated
-                if let Some(client) = self.connect_account.authenticated_client() {
-                    let network_str = settings::network_to_api_string(self.network);
-                    tasks.push(Task::perform(
-                        async move {
-                            client
-                                .get_cube_limits(&network_str)
-                                .await
-                                .map_err(|e| e.to_string())
-                        },
-                        Message::CubeLimitsLoaded,
-                    ));
-                }
-                Task::batch(tasks)
-            }
+            ))) => self.confirm_remote_delete(uuid),
+            Message::View(ViewMessage::SelectNetwork(network)) => self.select_network(network),
             Message::View(ViewMessage::ToggleDeveloperMode(enabled)) => {
-                let path = GlobalSettings::path(&self.datadir_path);
-                match GlobalSettings::update_developer_mode(&path, enabled) {
-                    Ok(()) => {
-                        self.settings_error = None;
-                        Task::batch([
-                            self.reload_global_settings(),
-                            Task::done(Message::GlobalSettingsChanged),
-                        ])
-                    }
-                    Err(e) => {
-                        self.settings_error = Some(coincube_ui::localized_format!(
-                            "Couldn't save developer mode: {e}",
-                            "No se pudo guardar el modo de desarrollador: {e}"
-                        ));
-                        Task::none()
-                    }
-                }
+                self.set_developer_mode(enabled)
             }
             Message::View(ViewMessage::ToggleBitcoinBlake2bBeta(enabled)) => {
-                let path = GlobalSettings::path(&self.datadir_path);
-                match GlobalSettings::update_bitcoin_blake2b_beta(&path, enabled) {
-                    Ok(()) => {
-                        self.settings_error = None;
-                        Task::batch([
-                            self.reload_global_settings(),
-                            if enabled {
-                                self.recheck_global_feature()
-                            } else {
-                                Task::none()
-                            },
-                            Task::done(Message::GlobalSettingsChanged),
-                        ])
-                    }
-                    Err(e) => {
-                        self.settings_error = Some(coincube_ui::localized_format!(
-                            "Couldn't save Bitcoin Blake2b beta: {e}",
-                            "No se pudo guardar la beta de Bitcoin Blake2b: {e}"
-                        ));
-                        Task::none()
-                    }
-                }
+                self.set_blake2b_beta(enabled)
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted)) => {
-                // Only delete from the Connect API if user opted in
-                let should_delete_remote = self
-                    .delete_cube_modal
-                    .as_ref()
-                    .is_some_and(|m| m.delete_connect_backup);
-
-                let delete_task = if should_delete_remote {
-                    if let Some(client) = self.connect_account.authenticated_client() {
-                        self.delete_cube_modal
-                            .as_ref()
-                            .map(|m| m.cube.id.clone())
-                            .map(|uuid| {
-                                Task::perform(
-                                    async move {
-                                        let cubes =
-                                            client.list_cubes().await.map_err(|e| e.to_string())?;
-                                        let server_cube = cubes.iter().find(|c| c.uuid == uuid);
-                                        if let Some(cube) = server_cube {
-                                            let server_id = cube.id.to_string();
-                                            client
-                                                .delete_cube(&server_id)
-                                                .await
-                                                .map_err(|e| e.to_string())
-                                        } else {
-                                            Ok(())
-                                        }
-                                    },
-                                    Message::CubeBackupDeleted,
-                                )
-                            })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // Close modal and reload cubes.
-                self.delete_cube_modal = None;
-                let reload_task = self.reload();
-                // The deleted Cube may still exist on Connect — that's the whole
-                // point of leaving the box unchecked — in which case it just
-                // became remote-only and belongs in the restore list. `reload`
-                // alone can't discover that: `Message::Checked` only *prunes*
-                // `remote_cubes`, so without a re-fetch the Cube vanishes from
-                // the page entirely and looks unrecoverable until the next
-                // sign-in. Re-fetch after the remote delete (when there was one)
-                // so the list reflects the server's post-delete state rather
-                // than racing it.
-                if let Some(delete_task) = delete_task {
-                    Task::batch([reload_task, delete_task])
-                } else {
-                    Task::batch([reload_task, self.fetch_remote_cubes()])
-                }
+                self.local_cube_deleted()
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseModal)) => {
-                let opener = self.delete_cube_modal.as_ref().map(|modal| CubeCatalogKey {
-                    chain: modal.cube.network,
-                    cube_id: modal.cube.id.clone(),
-                });
-                self.delete_cube_modal = None;
-                if self.network == ChainId::Testnet
-                    && !has_existing_wallet(&self.datadir_path, Network::Testnet)
-                {
-                    self.network = ChainId::Testnet4;
-                }
-                opener
-                    .as_ref()
-                    .map(|key| focus_local_delete_opener(self, key))
-                    .unwrap_or_else(Task::none)
+                self.close_delete_modal()
             }
-            Message::Checked { for_chain, res } => match res {
-                // The probe was started for a network the user has since
-                // switched away from: its result describes another
-                // directory. Dropping it keeps `State::Cubes::source` — and
-                // the list it labels — in step with `self.network`.
-                _ if for_chain != self.network => {
-                    tracing::debug!(
-                        "Ignoring stale datadir probe for {} (now on {})",
-                        for_chain,
-                        self.network
-                    );
-                    Task::none()
-                }
-                Err(e) => {
-                    self.catalog.pending_select = None;
-                    self.create_network_selection_pending = false;
-                    self.delete_after_check = None;
-                    self.error = Some(e.to_string());
-                    Task::none()
-                }
-                Ok(mut state) if matches!(self.state, State::CreationBackup(_)) => {
-                    // The backup step owns the screen and an unwritten Cube's
-                    // seed. A reload that lands now (the catch-up sync after
-                    // signing in from the hub, say) must not replace it; it
-                    // only refreshes the list a Cancel returns to.
-                    if let State::Cubes { cubes, .. } = &mut state {
-                        self.creation_backup_cubes = std::mem::take(cubes);
-                    }
-                    Task::none()
-                }
-                Ok(mut state) => {
-                    if self.create_network_selection_pending || self.showing_create_form() {
-                        if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } =
-                            &mut state
-                        {
-                            *create_cube = true;
-                        }
-                        self.create_network_selection_pending = false;
-                    }
-                    if self.showing_import_or_restore() {
-                        match &mut state {
-                            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
-                                *create_cube = true
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Prune remote cubes that now exist locally
-                    if let State::Cubes { cubes, .. } = &state {
-                        let local_ids: std::collections::HashSet<&str> =
-                            cubes.iter().map(|c| c.id.as_str()).collect();
-                        self.remote_cubes
-                            .retain(|rc| !local_ids.contains(rc.uuid.as_str()));
-                    }
-                    // The list this replaces keeps showing as another
-                    // network's, so the floor does not lose those Cubes while
-                    // they are read again from disk.
-                    if let State::Cubes { cubes, source, .. } = &self.state {
-                        if *source != self.network {
-                            let (source, cubes) = (*source, cubes.clone());
-                            match self.network_catalog.iter_mut().find(|(c, _)| *c == source) {
-                                Some((_, list)) => *list = cubes,
-                                None => self.network_catalog.push((source, cubes)),
-                            }
-                        }
-                    }
-                    self.state = state;
-                    // Taken before the import's own Open returns early, so
-                    // a pending pick never outlives this checked list.
-                    let pending = self.catalog.pending_select.take();
-                    // One checked list answers the request: a Cube missing
-                    // from it is not asked about by a later reload.
-                    if let Some(id) = self.delete_after_check.take() {
-                        if let State::Cubes { cubes, .. } = &self.state {
-                            if let Some(index) = cubes.iter().position(|cube| cube.id == id) {
-                                return self.update_inner(Message::View(ViewMessage::DeleteCube(
-                                    DeleteCubeMessage::ShowModal(index),
-                                )));
-                            }
-                        }
-                    }
-                    if let (Some(id), State::Cubes { cubes, .. }) =
-                        (&self.open_created_cube, &self.state)
-                    {
-                        if let Some(index) = cubes.iter().position(|cube| &cube.id == id) {
-                            self.open_created_cube = None;
-                            return self.update_inner(Message::View(ViewMessage::Run(index)));
-                        }
-                    }
-                    // A Cube picked on another network made that network
-                    // current; now that its list is checked, select it.
-                    // Open replays as `RunCatalog`, which resolves the Cube
-                    // through `catalog_index` on this checked list again.
-                    let select = match pending {
-                        Some((key, intent)) if key.chain == self.network => {
-                            Task::done(Message::View(match intent {
-                                launcher_catalog::PendingIntent::Select => ViewMessage::Catalog(
-                                    launcher_catalog::CatalogMessage::SelectFloor(key),
-                                ),
-                                launcher_catalog::PendingIntent::Open => {
-                                    ViewMessage::RunCatalog(key)
-                                }
-                            }))
-                        }
-                        _ => Task::none(),
-                    };
-                    match self.refresh_network_catalog(true) {
-                        Some(load) => Task::batch([select, load]),
-                        None => select,
-                    }
-                }
-            },
-            Message::View(ViewMessage::Run(index)) => {
-                if let State::Cubes { cubes, source, .. } = &self.state {
-                    if let Some(cube) = cubes.get(index) {
-                        let source = *source;
-                        // The record was read from `source`'s directory. Its
-                        // own `network` must say the same, and this build must
-                        // be able to run that chain — both decided here, before
-                        // any file the *record* would point at is read. A
-                        // record that disagrees is a copied or hand-edited
-                        // settings.json; trusting it would open the wrong
-                        // chain's config, seed folder and provider.
-                        if cube.network != source {
-                            self.error = Some(coincube_ui::localized_format!(
-                                "This Cube's settings say it lives on {}, but it was found in \
-                                 the {} folder. COINCUBE Desktop won't open it until the two agree.",
-                                "Los ajustes de este Cube indican que está en {}, pero se encontró \
-                                 en la carpeta {}. COINCUBE Desktop no lo abrirá hasta que coincidan.",
-                                cube.network.label(),
-                                source.label(),
-                            ));
-                            return Task::none();
-                        }
-                        if let Some(reason) = self.chain_availability(cube.network).reason() {
-                            self.error = Some(reason.to_string());
-                            return Task::none();
-                        }
-                        // The GUI config of the directory the record came from —
-                        // never the one a record's claim would select.
-                        let datadir_path = self.datadir_path.clone();
-                        let mut path = self
-                            .datadir_path
-                            .network_directory(source)
-                            .path()
-                            .to_path_buf();
-                        path.push(app::config::DEFAULT_FILE_NAME);
-                        // `check_network_datadir` created this file if it was
-                        // missing, but the disk is not frozen between that probe
-                        // and this click: surface a read failure, don't panic.
-                        let cfg = match app::Config::from_file(&path) {
-                            Ok(cfg) => cfg,
-                            Err(e) => {
-                                self.error = Some(coincube_ui::localized_format!(
-                                    "Couldn't read the {} folder's configuration ({}): {}",
-                                    "No se pudo leer la configuración de la carpeta {} ({}): {}",
-                                    source.label(),
-                                    path.display(),
-                                    e
-                                ));
-                                return Task::none();
-                            }
-                        };
-                        let cube = cube.clone();
-                        let floor_generation = self
-                            .catalog
-                            .open_from_floor
-                            .then_some(self.catalog.floor_open_generation);
-                        Task::perform(
-                            async move { (datadir_path, cfg, source, cube, floor_generation) },
-                            |(root, cfg, chain, cube, generation)| match generation {
-                                Some(generation) => {
-                                    Message::RunFromFloor(root, cfg, chain, cube, generation)
-                                }
-                                None => Message::Run(root, cfg, chain, cube),
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                }
-            }
+            Message::Checked { for_chain, res } => self.checked_result(for_chain, res),
+            Message::View(ViewMessage::Run(index)) => self.run_cube(index),
             Message::View(ViewMessage::ToggleRecoveryCheckBox) => Task::none(),
             Message::View(ViewMessage::RecoveryWordInput { index, word }) => {
-                if index < 12 {
-                    let normalized = word
-                        .chars()
-                        .filter(|c| c.is_ascii_alphabetic())
-                        .collect::<String>()
-                        .to_lowercase();
-
-                    let mut valid_prefix = String::new();
-                    for ch in normalized.chars() {
-                        let mut next = valid_prefix.clone();
-                        next.push(ch);
-                        if bip39_suggestions(&next, 1).is_empty() {
-                            break;
-                        }
-                        valid_prefix = next;
-                    }
-
-                    self.recovery_words[index] = valid_prefix.clone();
-                    self.recovery_active_index = if valid_prefix.is_empty() {
-                        None
-                    } else {
-                        Some(index)
-                    };
-                    self.error = None;
-                }
-                Task::none()
+                self.edit_recovery_word(index, word)
             }
             Message::View(ViewMessage::SelectRecoverySuggestion { index, word }) => {
-                if index < 12 {
-                    self.recovery_words[index] = word;
-                    self.recovery_active_index = None;
-                    self.error = None;
-                }
-                Task::none()
+                self.select_recovery_suggestion(index, word)
             }
-            Message::View(ViewMessage::SubmitRecovery) => {
-                let words = self.recovery_words.join(" ");
-                match bip39::Mnemonic::parse_in(bip39::Language::English, words) {
-                    Ok(mnemonic) => {
-                        log::info!("Mnemonic parsed successfully");
+            Message::View(ViewMessage::SubmitRecovery) => self.submit_recovery(),
+            Message::View(ViewMessage::CancelRecovery) => self.cancel_recovery(),
 
-                        if self.creating_cube {
-                            return Task::none();
-                        }
-
-                        if self.create_cube_name.value.trim().is_empty() {
-                            return Task::none();
-                        }
-
-                        // Validate PIN (always required)
-                        if !self.create_cube_pin.is_complete() {
-                            self.error = Some("Please enter all 4 PIN digits".to_string());
-                            return Task::none();
-                        }
-                        if !self.create_cube_pin_confirm.is_complete() {
-                            self.error = Some("Please confirm all 4 PIN digits".to_string());
-                            return Task::none();
-                        }
-                        if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
-                            self.error = Some("PIN codes do not match".to_string());
-                            return Task::none();
-                        }
-
-                        self.creating_cube = true;
-                        let network = self.network;
-                        let cube_name = self.create_cube_name.value.trim().to_string();
-                        let pin = self.create_cube_pin.value();
-                        let datadir_path = self.datadir_path.clone();
-                        let pending_bitcoin_import = self.pending_bitcoin_import.clone();
-                        // A ghost's import takes the ghost's identity only when
-                        // the phrase proves it is that Cube's seed, so Connect's
-                        // registration is reclaimed rather than duplicated. The
-                        // ghost's ID never enters `pending_cube_id`: that slot
-                        // outlives this form (a failed write keeps it for a
-                        // retry), and a later Create or import must not reuse it.
-                        let ghost_id = match &self.ghost_import {
-                            Some(ghost) => match self
-                                .ghost_still_registered(ghost)
-                                .and_then(|()| ghost_import_identity(ghost, network, &mnemonic))
-                            {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    self.creating_cube = false;
-                                    self.error = Some(e);
-                                    return Task::none();
-                                }
-                            },
-                            None => None,
-                        };
-                        // Held until the write lands: its registration must
-                        // go only to the account the ghost was listed under.
-                        self.ghost_claim = ghost_id.map(|id| {
-                            (
-                                id.to_string(),
-                                self.ghost_import.as_ref().and_then(|ghost| ghost.account),
-                            )
-                        });
-                        // Otherwise reuse the UUID that was pre-generated when
-                        // the user first clicked "Create Cube" (recovery path).
-                        let cube_id = match ghost_id {
-                            Some(id) => id,
-                            None => *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4),
-                        };
-
-                        Task::perform(
-                            async move {
-                                // Same device-secret mint + refusal as the
-                                // non-recovery path above.
-                                let device_secret = match unlock::device_secret::capability() {
-                                    unlock::device_secret::Capability::Available => Some(
-                                        unlock::device_secret::get_or_create(
-                                            datadir_path.path(),
-                                            &cube_id.to_string(),
-                                        )
-                                        .map_err(|e| e.to_string())?,
-                                    ),
-                                    unlock::device_secret::Capability::Unavailable(why) => {
-                                        return Err(why)
-                                    }
-                                };
-
-                                // Restore MasterSigner from recovery mnemonic
-                                let master_signer = MasterSigner::from_mnemonic(
-                                    network.bitcoin_network(),
-                                    mnemonic,
-                                )
-                                .map_err(|e| format!("Failed to restore from mnemonic: {}", e))?;
-
-                                // Create secp context for fingerprint calculation
-                                let secp =
-                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let master_fingerprint = master_signer.fingerprint(&secp);
-
-                                // Store master seed mnemonic (encrypted with PIN)
-                                let network_dir = datadir_path.network_directory(network);
-                                network_dir.init().map_err(|e| {
-                                    format!("Failed to create network directory: {}", e)
-                                })?;
-
-                                // One timestamp for the seed file and the Cube
-                                // — see the note on the non-recovery path (X7).
-                                let timestamp = chrono::Utc::now().timestamp();
-                                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                                // Store master seed mnemonic encrypted with PIN (always required)
-                                master_signer
-                                    .store_encrypted_for_chain(
-                                        datadir_path.path(),
-                                        network,
-                                        &secp,
-                                        Some((master_checksum, timestamp)),
-                                        &pin,
-                                        &cube_id.to_string(),
-                                        device_secret.as_ref(),
-                                    )
-                                    .map_err(|e| {
-                                        format!("Failed to store master seed mnemonic: {}", e)
-                                    })?;
-
-                                tracing::info!("Master signer created and stored (encrypted with PIN) with fingerprint: {}", master_fingerprint);
-
-                                // Build Cube settings using the pre-generated,
-                                // stable UUID. No PIN hash — see the note on
-                                // the non-recovery path above.
-                                let mut cube =
-                                    CubeSettings::new_with_id(cube_id, cube_name, network)
-                                        .with_master_signer(master_fingerprint);
-                                cube.bitcoin_import = pending_bitcoin_import;
-                                // Same instant the seed file carries (X7).
-                                cube.created_at = timestamp;
-                                // The Cube's second slot, written at creation —
-                                // see the note on the non-recovery path (6b).
-                                let slot_name = unlock::marker::new_file_name(timestamp);
-                                match unlock::marker::write_decoy(
-                                    datadir_path.path(),
-                                    network,
-                                    &cube_id.to_string(),
-                                    &slot_name,
-                                    device_secret.as_ref(),
-                                ) {
-                                    Ok(()) => cube.duress_slot_file = Some(slot_name),
-                                    Err(e) => tracing::warn!(
-                                        "could not write the Cube's second slot: {}",
-                                        e
-                                    ),
-                                }
-                                // Reaching here means the user typed all twelve
-                                // words of this seed back into the app and they
-                                // passed the BIP39 checksum. That *is* the
-                                // backup demonstration — a stricter one than
-                                // the creation flow's three-word challenge, and
-                                // it is the same claim `backed_up` makes
-                                // everywhere else ("the user wrote the seed
-                                // phrase down and confirmed it").
-                                //
-                                // Recording it is what makes arming the gate
-                                // below safe: a restored Cube satisfies
-                                // `creation_gate::evaluate` on its own local
-                                // evidence and opens immediately.
-                                cube.backed_up = true;
-                                cube.creation_backup_required = true;
-
-                                // Save Cube settings to settings file.
-                                // Idempotency: skip insert if UUID already exists.
-                                settings::update_settings_file(&network_dir, |mut settings| {
-                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
-                                        return Some(settings);
-                                    }
-                                    settings.cubes.push(cube.clone());
-                                    Some(settings)
-                                })
-                                .await
-                                .map(|_| cube)
-                                .map_err(|e| e.to_string())
-                            },
-                            Message::CubeCreated,
-                        )
-                    }
-                    Err(error) => {
-                        // Clear recovery words on error
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
-                        self.error = Some(error.to_string());
-                        Task::none()
-                    }
-                }
-            }
-            Message::View(ViewMessage::CancelRecovery) => {
-                // Once the write has started it runs to completion; the
-                // form's Cancel is disabled until it does.
-                if self.creating_cube {
-                    return Task::none();
-                }
-                for word in &mut self.recovery_words {
-                    word.clear();
-                    word.shrink_to_fit();
-                }
-                self.recovery_active_index = None;
-                self.create_cube_name = coincube_ui::component::form::Value::default();
-                self.create_cube_pin = pin_input::PinInput::new();
-                self.create_cube_pin_confirm = pin_input::PinInput::new();
-                self.pending_bitcoin_import = None;
-                self.ghost_import = None;
-                self.error = None;
-                self.reload()
-            }
-
-            Message::View(ViewMessage::GoToSection(section)) => {
-                self.catalog.dismiss_popovers();
-                // Duress launch kill-switch backstop: a deep-linked or otherwise
-                // programmatic navigation to the Duress section while it's gated
-                // off (the nav hides the entry, so a click can't produce this)
-                // redirects to Overview — fail-closed, hidden not greyed, the
-                // same shape as the Marketplace route guard. See
-                // `ConnectAccountPanel::show_duress`.
-                let section = if matches!(
-                    section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
-                ) && !self.connect_account.show_duress()
-                {
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                } else {
-                    section
-                };
-                if !matches!(
-                    section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                ) {
-                    self.leave_recovery_services();
-                }
-                // Update the account panel's active_sub when navigating to a Connect submenu
-                if let HomeSection::Connect(ref sub) = section {
-                    self.connect_account.active_sub = sub.clone();
-                }
-                self.active_section = section;
-                if matches!(self.active_section, HomeSection::Settings) {
-                    return self.recheck_global_feature();
-                }
-                if matches!(self.active_section, HomeSection::Cubes) {
-                    return self.on_focus();
-                }
-                // If navigating to Connect and not yet initialized, trigger Init
-                if matches!(self.active_section, HomeSection::Connect(_))
-                    && matches!(
-                        self.connect_account.step,
-                        crate::app::state::connect::ConnectFlowStep::CheckingSession
-                    )
-                {
-                    return map_connect_task(
-                        self.connect_account
-                            .update_message(ConnectAccountMessage::Init),
-                    );
-                }
-                // Load Security data on demand (mirrors App::set_current_panel)
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Security)
-                ) && self.connect_account.is_authenticated()
-                {
-                    return map_connect_task(self.connect_account.reload_security());
-                }
-                // Load Overview summary counts on demand
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                ) && self.connect_account.is_authenticated()
-                {
-                    return map_connect_task(self.connect_account.reload_overview());
-                }
-                // Load Contacts data on demand
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Contacts)
-                ) && self.connect_account.is_authenticated()
-                {
-                    return map_connect_task(self.connect_account.reload_contacts());
-                }
-                // Load duress Emergency-contacts on demand (Estate Notifications).
-                // `reload_duress_contacts` no-ops for non-Estate accounts, so this
-                // never fires a request that would just 403.
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
-                ) && self.connect_account.is_authenticated()
-                {
-                    // Load the Emergency-contacts list, the per-Cube
-                    // recovery-kit checklist, and the server-side duress state
-                    // (so the screen reflects the enabled state); each no-ops
-                    // for accounts that lack the relevant entitlement.
-                    return map_connect_task(iced::Task::batch([
-                        self.connect_account.reload_duress_contacts(),
-                        self.connect_account.reload_duress_cubes(),
-                        self.connect_account.reload_duress_state(),
-                    ]));
-                }
-                // Load the recoverable-vault list on demand when opening the
-                // heir discovery surface (once per session — `is_loaded()`
-                // guards re-fetch on every reopen).
-                if matches!(self.active_section, HomeSection::RecoverVault)
-                    && !self.recover_vault.is_loaded()
-                {
-                    let client = self.connect_account.authenticated_client();
-                    let gen = self.connect_account.session_generation();
-                    return self
-                        .recover_vault
-                        .update(RecoverVaultMessage::Load, client, gen)
-                        .map(|m| Message::View(ViewMessage::RecoverVault(m)));
-                }
-                Task::none()
-            }
+            Message::View(ViewMessage::GoToSection(section)) => self.go_to_section(section),
 
             // Heir clicked "Recover" on an actionable row: launch the installer's
             // inheritance-recovery flow (COIN-377 PR 3). Intercepted here (not
@@ -3722,22 +1884,7 @@ impl Home {
             Message::View(ViewMessage::RecoverVault(RecoverVaultMessage::Launch {
                 cube_id,
                 full_cube,
-            })) => {
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                let client = self.connect_account.authenticated_client();
-                Task::perform(
-                    async move { (datadir_path, network, client) },
-                    move |(d, n, c)| {
-                        Message::Install(
-                            d,
-                            n,
-                            UserFlow::RecoverInheritedVault { cube_id, full_cube },
-                            c,
-                        )
-                    },
-                )
-            }
+            })) => self.launch_inherited_recovery(cube_id, full_cube),
             Message::View(ViewMessage::RecoverVault(msg)) => {
                 // Forward to the discovery panel with the heir's authenticated
                 // Connect client; map the panel's task back into home messages.
@@ -3756,205 +1903,23 @@ impl Home {
             // authenticated Connect client is threaded into the installer
             // Context for the decrypt step.
             Message::View(ViewMessage::RestoreWithPhone { cube_id, full_cube }) => {
-                // Selecting a method closes the picker (a no-op when the launch
-                // came straight from a single-method row).
-                self.recovery_method_modal = None;
-                let datadir_path = self.datadir_path.clone();
-                let network = self.network;
-                let client = self.connect_account.authenticated_client();
-                Task::perform(
-                    async move { (datadir_path, network, client) },
-                    move |(d, n, c)| {
-                        Message::Install(
-                            d,
-                            n,
-                            UserFlow::RecoverOwnCubeWithPhone { cube_id, full_cube },
-                            c,
-                        )
-                    },
-                )
+                self.restore_with_phone(cube_id, full_cube)
             }
 
-            Message::View(ViewMessage::RenameCube(index)) => {
-                if let State::Cubes { cubes, .. } = &self.state {
-                    if let Some(cube) = cubes.get(index) {
-                        self.rename_cube_modal = Some((
-                            CubeCatalogKey {
-                                chain: cube.network,
-                                cube_id: cube.id.clone(),
-                            },
-                            cube.name.clone(),
-                        ));
-                    }
-                }
-                Task::none()
-            }
-            Message::View(ViewMessage::RenameCubeNameEdited(name)) => {
-                if let Some((_, ref mut input)) = self.rename_cube_modal {
-                    *input = name;
-                }
-                Task::none()
-            }
-            Message::View(ViewMessage::RenameCubeConfirm) => {
-                let Some((ref key, ref new_name)) = self.rename_cube_modal else {
-                    return Task::none();
-                };
-                let new_name = new_name.trim().to_string();
-                if new_name.is_empty() {
-                    return Task::none();
-                }
-                let Some(index) = self.catalog_index(key) else {
-                    self.rename_cube_modal = None;
-                    self.error = Some("This Cube is no longer in the current catalog. Review the list and try again.".into());
-                    return Task::none();
-                };
-                let Some(cube) = (if let State::Cubes { cubes, .. } = &self.state {
-                    cubes.get(index).cloned()
-                } else {
-                    None
-                }) else {
-                    return Task::none();
-                };
-
-                let network_dir = self.datadir_path.network_directory(cube.network);
-                let cube_id = cube.id.clone();
-                let name_for_settings = new_name.clone();
-
-                // Stash context for remote update — will be consumed in
-                // CubeRenamed handler only if the local write succeeds.
-                if self.connect_account.is_authenticated() {
-                    self.pending_remote_rename = Some(PendingRemoteRename {
-                        cube_id: cube.id.clone(),
-                        cube_network: cube.network,
-                        new_name: new_name.clone(),
-                    });
-                }
-
-                // Update local settings file first; remote update follows
-                // in the CubeRenamed success handler.
-                Task::perform(
-                    async move {
-                        settings::update_settings_file(&network_dir, |mut s| {
-                            if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
-                                c.name = name_for_settings;
-                                // Mark unsynced so catch-up can pick up the
-                                // name change if the remote update fails or
-                                // we're offline.
-                                c.remote_synced = false;
-                            }
-                            Some(s)
-                        })
-                        .await
-                        .map_err(|e| e.to_string())
-                    },
-                    Message::CubeRenamed,
-                )
-            }
-            Message::View(ViewMessage::RenameCubeCancel) => {
-                self.rename_cube_modal = None;
-                Task::none()
-            }
+            Message::View(ViewMessage::RenameCube(index)) => self.show_rename_modal(index),
+            Message::View(ViewMessage::RenameCubeNameEdited(name)) => self.edit_rename_name(name),
+            Message::View(ViewMessage::RenameCubeConfirm) => self.confirm_rename(),
+            Message::View(ViewMessage::RenameCubeCancel) => self.close_rename_modal(),
 
             Message::View(ViewMessage::ToggleConnect) => {
                 self.connect_expanded = !self.connect_expanded;
                 Task::none()
             }
 
-            Message::PersistDuressEnrollment(payload) => {
-                // Drop a completion that outlived its Connect session: a logout
-                // or session reset bumps `session_generation`, and persisting
-                // now would arm the duress PIN + DuressLocalState for an account
-                // the user is no longer signed into.
-                if payload.gen != self.connect_account.session_generation() {
-                    log::warn!("duress: ignoring enrollment completion from a stale session");
-                    return Task::none();
-                }
-                let app::message::DuressEnrollmentPayload {
-                    duress_pin,
-                    duress_code,
-                    account_id,
-                    ..
-                } = payload;
-                Task::perform(
-                    app::persist_duress_enrollment(
-                        self.datadir_path.clone(),
-                        duress_pin,
-                        duress_code,
-                        account_id,
-                    ),
-                    |res| res,
-                )
-                .then(|res| match res {
-                    Ok(()) => Task::batch([
-                        // Reflect the enabled state only now that the duress PIN
-                        // is actually armed on every Cube.
-                        Task::done(Message::View(ViewMessage::ConnectAccount(
-                            ConnectAccountMessage::Duress(
-                                app::view::DuressMessage::EnrollmentPersisted,
-                            ),
-                        ))),
-                        Task::done(Message::View(ViewMessage::Check)),
-                    ]),
-                    Err(e) => {
-                        log::error!("duress: failed to persist enrollment: {e}");
-                        // Surface via the Connect panel's error display.
-                        Task::done(Message::View(ViewMessage::ConnectAccount(
-                            ConnectAccountMessage::Error(crate::user_error::UserError::logged(
-                                "Couldn't finish enabling duress mode",
-                                "Try again. If it keeps failing, contact support and quote the reference below.",
-                                crate::user_error::CC_API_BADRESP,
-                                true,
-                                e,
-                            )),
-                        )))
-                    }
-                })
-            }
+            Message::PersistDuressEnrollment(payload) => self.persist_duress_enrollment(payload),
             Message::View(ViewMessage::ConnectAccount(
                 ConnectAccountMessage::OpenRecoveryService(target),
-            )) => {
-                if !matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                ) || !self.connect_account.is_authenticated()
-                    || !matches!(
-                        &self.connect_account.recovery_services,
-                        RecoveryServicesState::Ready(rows)
-                            if rows.iter().filter(|row| row.target == target).count() == 1
-                    )
-                {
-                    return Task::none();
-                }
-                let (Some(client), Some(user)) = (
-                    self.connect_account.authenticated_client(),
-                    self.connect_account.user.as_ref(),
-                ) else {
-                    return Task::none();
-                };
-                let user_id = user.id;
-                let session_generation = self.connect_account.session_generation();
-                self.recovery_open_request = self.recovery_open_request.wrapping_add(1);
-                let request = self.recovery_open_request;
-                self.connect_account.error = None;
-                let datadir = self.datadir_path.clone();
-                let resolve_target = target.clone();
-                Task::perform(
-                    async move {
-                        let cubes = client
-                            .list_cubes()
-                            .await
-                            .map_err(|error| error.to_string())?;
-                        resolve_recovery_service_destination(&datadir, &resolve_target, &cubes)
-                    },
-                    move |result| Message::RecoveryServiceResolved {
-                        target: target.clone(),
-                        session_generation,
-                        user_id,
-                        request,
-                        result,
-                    },
-                )
-            }
+            )) => self.open_recovery_service(target),
             Message::RecoveryServiceResolved {
                 target,
                 session_generation,
@@ -3962,421 +1927,13 @@ impl Home {
                 request,
                 result,
             } => {
-                if request != self.recovery_open_request
-                    || session_generation != self.connect_account.session_generation()
-                    || !self.connect_account.is_authenticated()
-                    || self.connect_account.user.as_ref().map(|user| user.id) != Some(user_id)
-                    || !matches!(
-                        self.active_section,
-                        HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                    )
-                    || !matches!(
-                        &self.connect_account.recovery_services,
-                        RecoveryServicesState::Ready(rows)
-                            if rows.iter().filter(|row| row.target == target).count() == 1
-                    )
-                {
-                    return Task::none();
-                }
-                let destination = match result {
-                    Ok(destination) => destination,
-                    Err(detail) => {
-                        self.connect_account.error =
-                            Some(crate::app::state::connect::account::PanelError::settled(
-                                crate::user_error::UserError::logged(
-                                    "Couldn't open this Cube",
-                                    "Refresh Recovery services, then try again.",
-                                    crate::user_error::CC_API_BADRESP,
-                                    false,
-                                    detail,
-                                ),
-                            ));
-                        return Task::none();
-                    }
-                };
-                let chain = match &destination {
-                    RecoveryServiceDestination::Local(chain, ..)
-                    | RecoveryServiceDestination::Remote(chain) => *chain,
-                };
-                if !(self.developer_mode
-                    || chain == ChainId::Bitcoin
-                    || chain == ChainId::BitcoinBlake2b
-                        && self.chain_availability(chain).is_available())
-                    || !self.chain_availability(chain).is_available()
-                {
-                    self.connect_account.error =
-                        Some(crate::app::state::connect::account::PanelError::settled(
-                            crate::user_error::UserError::new(
-                                "This Cube network is unavailable",
-                                "Enable its network in Global Settings before opening this Cube.",
-                                crate::user_error::CC_API_BADRESP,
-                                false,
-                            ),
-                        ));
-                    return Task::none();
-                }
-                self.connect_account.error = None;
-                match destination {
-                    RecoveryServiceDestination::Local(chain, cube, config) => Task::done(
-                        Message::RunToRecovery(self.datadir_path.clone(), config, chain, cube),
-                    ),
-                    RecoveryServiceDestination::Remote(chain) => {
-                        if chain.is_blake2b() {
-                            self.connect_account.error = Some(
-                                crate::app::state::connect::account::PanelError::settled(
-                                    crate::user_error::UserError::new(
-                                        "This Cube cannot be opened here",
-                                        "This remote Bitcoin Blake2b Cube is not available in the local Cube catalog. Recover it on its original device.",
-                                        crate::user_error::CC_API_BADRESP,
-                                        false,
-                                    ),
-                                ),
-                            );
-                            return Task::none();
-                        }
-                        // A Connect record is not an unlock credential. Show
-                        // the existing remote-only restore card in the Cube
-                        // catalog; the user chooses its normal recovery flow.
-                        // Refresh the catalog as its earlier account-scoped
-                        // fetch may predate this newly selected server row.
-                        self.active_section = HomeSection::Cubes;
-                        Task::batch([
-                            self.update(Message::View(ViewMessage::SelectNetwork(chain))),
-                            self.fetch_remote_cubes(),
-                        ])
-                    }
-                }
+                self.recovery_service_resolved(target, session_generation, user_id, request, result)
             }
             Message::View(
                 view @ (ViewMessage::ConnectAccount(_) | ViewMessage::ConnectSheetAccount(_)),
-            ) => {
-                let sheet_message = matches!(view, ViewMessage::ConnectSheetAccount(_));
-                let msg = match view {
-                    ViewMessage::ConnectAccount(msg) | ViewMessage::ConnectSheetAccount(msg) => msg,
-                    _ => unreachable!(),
-                };
-                // The banner CTAs navigate the panel to Plan & Billing by
-                // setting its `active_sub`, but the sidebar highlight follows
-                // the host's `active_section`. Mirror the move here so the two
-                // stay in sync (otherwise the rail keeps highlighting Overview
-                // while the pane shows the picker/checkout, and re-selecting
-                // Overview would silently reset `active_sub`).
-                if !sheet_message
-                    && matches!(
-                        msg,
-                        ConnectAccountMessage::OpenPlanBilling
-                            | ConnectAccountMessage::RenewCurrentPlan
-                    )
-                {
-                    self.leave_recovery_services();
-                    self.active_section =
-                        HomeSection::Connect(app::menu::ConnectSubMenu::PlanBilling);
-                }
-                let explicit_logout = matches!(&msg, ConnectAccountMessage::LogOut);
-                if explicit_logout {
-                    self.connect_account.forget_shared_session_for_logout();
-                }
-                let was_authenticated = self.connect_account.is_authenticated();
-                let task = map_connect_task(self.connect_account.update_message(msg));
-                let now_authenticated = self.connect_account.is_authenticated();
-                self.refresh_displayed_networks();
-                // Update cached keyring state on login/logout transitions
-                if was_authenticated != now_authenticated {
-                    self.has_stored_session = now_authenticated;
-                }
-                // A rejected stored-session refresh dispatches `LogOut` into
-                // a fresh Home that is already unauthenticated. Treat that
-                // explicit invalidation like a signed-in -> signed-out edge so
-                // a pending post-install Split intent cannot survive and resume
-                // after a later login.
-                if !now_authenticated && (was_authenticated || explicit_logout) {
-                    self.server_cube_limit = None;
-                    // Refusal reasons are account-scoped: they say what
-                    // *that* account's server said about a Cube. The local
-                    // Cube outlives the sign-out, so leaving them keyed by
-                    // its id would show the previous account's refusal —
-                    // rendered with the new account's tier and limits — to
-                    // someone who may have slots to spare. Nothing else
-                    // clears them promptly: the next catch-up sync only
-                    // replaces them if it completes, and an aborted round
-                    // deliberately keeps what it already has.
-                    self.cube_sync_errors.clear();
-                    self.remote_cubes.clear();
-                    self.connect_off_cubes.clear();
-                    // Clearing alone isn't enough: a fetch issued for the
-                    // account we just left is still in flight and would
-                    // repopulate the list. Bump the generation so its
-                    // result is discarded on arrival.
-                    self.invalidate_remote_cubes();
-                    // Reset the heir discovery surface back to Idle so the
-                    // next sign-in re-fetches: otherwise its `Loaded` state
-                    // (and `is_loaded()` re-fetch guard) would persist and a
-                    // later account would see the prior account's vault rows.
-                    self.recover_vault = RecoverVaultPanel::new();
-                    // Drop any open recovery-method picker so it can't
-                    // reference a prior account's remote cube.
-                    self.recovery_method_modal = None;
-                }
-                // Auto-expand Connect submenu and navigate to Cubes after login
-                if !was_authenticated && now_authenticated {
-                    self.connect_expanded = true;
-                    self.active_section = HomeSection::Cubes;
-                }
-                // Duress launch kill-switch backstop for a mid-session flip: if
-                // the features refetch (or a duress-state change) that just flowed
-                // through `update_message` turned the gate off while the user is
-                // sitting on the Duress section, redirect to Overview. The surface
-                // is hidden, not greyed, so a stale route must not keep rendering
-                // it — a server flag flip propagates on the next `/connect/
-                // features` poll without a restart. See `show_duress`.
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
-                ) && !self.connect_account.show_duress()
-                {
-                    // Hiding the surface out from under an in-flight enrollment
-                    // wizard or step-up dialog: scrub its secrets the same way
-                    // Cancel would, so the flag flip can't strand duress
-                    // PINs/codes on the heap once the route is unreachable.
-                    self.connect_account.scrub_duress_dialogs();
-                    self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
-                    self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
-                }
-                // Sync account tier from the Connect plan data
-                let old_tier = self.account_tier;
-                self.account_tier =
-                    self.connect_account
-                        .plan
-                        .as_ref()
-                        .map_or(AccountTier::default(), |plan| match plan.tier() {
-                            crate::services::coincube::PlanTier::Free => AccountTier::Free,
-                            crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
-                            crate::services::coincube::PlanTier::Estate => AccountTier::Estate,
-                        });
-                // When the plan tier changes (e.g. upgrade), invalidate the
-                // cached server limit so `cube_limit()` uses the new tier
-                // until fresh limits are fetched.
-                let tier_changed = old_tier != self.account_tier;
-                if tier_changed {
-                    self.server_cube_limit = None;
-                }
-                if let Err(e) = GlobalSettings::update_account_tier(
-                    &GlobalSettings::path(&self.datadir_path),
-                    self.account_tier,
-                ) {
-                    log::error!("[LAUNCHER] Failed to persist account tier: {e}");
-                }
+            ) => self.update_connect_account(view),
 
-                // On first login: catch-up sync unsynced cubes + fetch limits
-                if !was_authenticated && now_authenticated {
-                    // The startup probe may precede Connect's session restore
-                    // and its local settings updates. Refresh the visible list
-                    // even when every Cube is already synced (so catch-up has
-                    // nothing to do). FocusedCubes preserves an in-progress form.
-                    let mut tasks = vec![task, self.on_focus()];
-
-                    // Tell the pane so it can rebroadcast the session
-                    // check to every other open Cube tab — those panels
-                    // hold their own ConnectAccountPanel and would
-                    // otherwise stay on the "Sign in" prompt until the
-                    // user clicked it or restarted the tab.
-                    tasks.push(Task::done(Message::ConnectSignedInBubble));
-
-                    // Fetch cube limits for the current network from the server
-                    if let Some(limits_client) = self.connect_account.authenticated_client() {
-                        let network_str = settings::network_to_api_string(self.network);
-                        tasks.push(Task::perform(
-                            async move {
-                                limits_client
-                                    .get_cube_limits(&network_str)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            },
-                            Message::CubeLimitsLoaded,
-                        ));
-                    }
-
-                    // Sync all unsynced cubes across ALL networks with the API.
-                    // Loads settings from each network directory, collects
-                    // unsynced cubes, fetches the server cube list once, then
-                    // for each unsynced local cube either registers (new) or
-                    // updates (already exists but name may have changed).
-                    if let Some(client) = self.connect_account.authenticated_client() {
-                        let datadir = self.datadir_path.clone();
-                        let owner = self.connect_owner();
-                        let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
-                            .into_iter()
-                            .filter(|cube| !cube.remote_synced)
-                            .collect();
-                        if !unsynced.is_empty() {
-                            tasks.push(Task::perform(
-                                async move {
-                                    // One entry per Cube this round examines,
-                                    // so the handler can say *why* a Cube is
-                                    // still unsynced instead of promising a
-                                    // sync that will never land — and can leave
-                                    // Cubes outside this round alone.
-                                    let mut outcomes: Vec<(String, Option<String>)> = Vec::new();
-                                    // Fetch all server cubes once — bail if this
-                                    // fails so we don't re-register everything.
-                                    let server_cubes = match client.list_cubes().await {
-                                        Ok(cubes) => cubes,
-                                        Err(e) => {
-                                            log::warn!(
-                                                "[LAUNCHER] Catch-up sync aborted: \
-                                                 failed to list server cubes: {}",
-                                                e
-                                            );
-                                            // Aborting says nothing about any
-                                            // individual Cube — reported as a
-                                            // distinct outcome so the handler
-                                            // keeps what it already knows
-                                            // instead of reading an empty list
-                                            // as "all clear".
-                                            return Err(());
-                                        }
-                                    };
-
-                                    for cube in &unsynced {
-                                        let server_match =
-                                            server_cubes.iter().find(|sc| sc.uuid == cube.id);
-                                        let outcome = match server_match {
-                                            Some(sc) => {
-                                                // Already registered — re-sync if the name differs
-                                                // or this device can *upgrade* the Vault flag
-                                                // (PLAN-duress-vault-gate PR 3: a Vault created
-                                                // while offline is reported on the next launch).
-                                                //
-                                                // Upgrade-only: report `hasVault=true` solely when
-                                                // this device holds the Vault and the server doesn't
-                                                // already show it. Never send `false` — this device
-                                                // can't tell a vaultless Cube from one whose Vault
-                                                // lives on another device, and a spurious `false`
-                                                // would clobber a `true` that device reported and
-                                                // silently unblock its duress gate.
-                                                let vault_report = vault_presence_report(
-                                                    cube.holds_vault(),
-                                                    sc.has_vault,
-                                                );
-                                                // Seed the server's Spark Stable Balance record
-                                                // from this device's decision only while the
-                                                // server has none: once it does, the live
-                                                // App reconciles against it and pushes changes
-                                                // as they're made, so catch-up never overrides.
-                                                let stable_report = cube
-                                                    .spark_stable_balance
-                                                    .filter(|_| sc.spark_stable_balance.is_none());
-                                                let name_drift = sc.name != cube.name;
-                                                if name_drift
-                                                    || vault_report.is_some()
-                                                    || stable_report.is_some()
-                                                {
-                                                    let req = UpdateCubeRequest {
-                                                        name: name_drift.then(|| cube.name.clone()),
-                                                        status: None,
-                                                        has_vault: vault_report,
-                                                        spark_stable_balance: stable_report,
-                                                    };
-                                                    client
-                                                        .update_cube(&sc.id.to_string(), req)
-                                                        .await
-                                                        .map(|_| ())
-                                                        .map_err(|e| e.to_string())
-                                                } else {
-                                                    Ok(())
-                                                }
-                                            }
-                                            None => {
-                                                // Not registered — create. Monotonic upgrade-only:
-                                                // report the Vault only when present.
-                                                let req = RegisterCubeRequest {
-                                                    uuid: cube.id.clone(),
-                                                    name: cube.name.clone(),
-                                                    network: cube.api_network_string(),
-                                                    has_vault: cube.holds_vault().then_some(true),
-                                                    spark_stable_balance: cube.spark_stable_balance,
-                                                };
-                                                client
-                                                    .register_cube(req)
-                                                    .await
-                                                    .map(|_| ())
-                                                    .map_err(|e| e.to_string())
-                                            }
-                                        };
-                                        match outcome {
-                                            Ok(()) => {
-                                                let nd = datadir.network_directory(cube.network);
-                                                let _ = settings::mark_cube_synced(
-                                                    &nd,
-                                                    &cube.id,
-                                                    owner.clone(),
-                                                )
-                                                .await;
-                                                outcomes.push((cube.id.clone(), None));
-                                            }
-                                            Err(e) => {
-                                                log::warn!(
-                                                    "[LAUNCHER] Catch-up sync failed for cube \
-                                                     {}: {}",
-                                                    cube.id,
-                                                    e
-                                                );
-                                                outcomes.push((cube.id.clone(), Some(e)));
-                                            }
-                                        }
-                                    }
-                                    Ok(outcomes)
-                                },
-                                Message::CatchUpSyncFinished,
-                            ));
-                        }
-                    }
-
-                    // Fetch full server cube list and compare with local cubes
-                    // to identify remote-only cubes.
-                    tasks.push(self.fetch_remote_cubes());
-
-                    return Task::batch(tasks);
-                }
-
-                // A mid-session upgrade or downgrade changes which Cubes
-                // Connect keeps on (billing v2: the oldest N per network), so
-                // re-read the list for the Connect-off tags. The fetch claims a
-                // new generation, so one started under the old tier is dropped.
-                // The sign-in edge above already fetched.
-                if tier_changed && now_authenticated {
-                    return Task::batch([task, self.fetch_remote_cubes()]);
-                }
-
-                task
-            }
-
-            Message::View(ViewMessage::DismissAdvisoryNotice) => {
-                if let Some(advisory) = self.advisory_notice.take() {
-                    match GlobalSettings::mark_advisory_notice_seen(
-                        &GlobalSettings::path(&self.datadir_path),
-                        advisory.id,
-                    ) {
-                        // Re-ask rather than just clearing: a fresh install
-                        // owes a notice for every advisory we ship, and
-                        // deferring the second one to the next launch would
-                        // let someone who opens the app rarely sit on it for
-                        // weeks.
-                        Ok(()) => {
-                            self.advisory_notice = pending_advisory_notice(&self.datadir_path)
-                        }
-                        // This modal has no other way out — no blur dismiss,
-                        // one button. A settings file we cannot write must
-                        // therefore not re-ask, or "Got it" would reopen the
-                        // same notice forever. Stay quiet for this session and
-                        // let the next launch owe it again.
-                        Err(e) => {
-                            log::error!("[LAUNCHER] Failed to persist advisory notice: {}", e)
-                        }
-                    }
-                }
-                Task::none()
-            }
+            Message::View(ViewMessage::DismissAdvisoryNotice) => self.dismiss_advisory(),
 
             Message::View(ViewMessage::OpenUrl(url)) => {
                 if let Err(e) = crate::browser::open_url(&url) {
@@ -4385,13 +1942,2675 @@ impl Home {
                 Task::none()
             }
 
-            _ => {
-                if let Some(modal) = &mut self.delete_cube_modal {
-                    return modal.update(message);
-                }
+            _ => self.update_delete_modal(message),
+        }
+    }
+
+    fn request_creation_backup_bypass(&mut self) -> Task<Message> {
+        // Not while a Kit upload is in flight: its result decides
+        // whether a Cube gets written, and taking the acknowledgement
+        // underneath it would race two finalizers.
+        if matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::KitUploading)
+        ) || self.creation_backup_hub().any()
+        {
+            // A finished backup is written by Continue; the bypass
+            // would record "no backup" over it.
+            return Task::none();
+        }
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.state = State::CreationBackup(CreationBackupStep::Bypass {
+                acknowledged: false,
+            });
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn acknowledge_creation_backup_bypass(&mut self, acknowledged: bool) -> Task<Message> {
+        if let State::CreationBackup(CreationBackupStep::Bypass { .. }) = &self.state {
+            self.state = State::CreationBackup(CreationBackupStep::Bypass { acknowledged });
+        }
+        Task::none()
+    }
+
+    fn confirm_creation_backup_bypass(&mut self) -> Task<Message> {
+        // Only an *acknowledged* bypass proceeds. Reaching this message
+        // with the box unticked means the view let a click through, and
+        // the safe answer is to do nothing rather than create an
+        // unbacked-up Cube the user never agreed to.
+        if !matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::Bypass { acknowledged: true })
+        ) || self.creation_backup_hub().any()
+        {
+            return Task::none();
+        }
+        let bypass = creation_gate::CreationBackupBypass {
+            at: chrono::Utc::now().timestamp(),
+            // Verbatim, so a later support conversation is about the
+            // same words the user actually agreed to.
+            acknowledged: creation_gate::BYPASS_ACKNOWLEDGEMENT.to_string(),
+        };
+        // Same acknowledgement, same recorded evidence, either shape of
+        // Cube. Only the write differs: a passkey Cube has no seed file
+        // or device secret to mint.
+        if self.creating_passkey_cube() {
+            self.finalize_passkey_cube_creation(false, Some(bypass), None)
+        } else {
+            self.finalize_cube_creation(false, Some(bypass), None)
+        }
+    }
+
+    fn choose_creation_backup(&mut self) -> Task<Message> {
+        // Never mid-upload: that result decides whether a Cube gets
+        // written, and stepping away underneath it would race two
+        // finalizers.
+        if matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::KitUploading)
+        ) {
+            return Task::none();
+        }
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.scrub_creation_kit();
+            self.state = State::CreationBackup(CreationBackupStep::Choice);
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn request_creation_kit(&mut self) -> Task<Message> {
+        // From the choice screen, or back out of "I'll do this later" —
+        // the acknowledgement is a decision the user may reverse while
+        // the Cube is still unwritten. Never while a Kit is out of
+        // reach: a signed-out session has nowhere to upload one.
+        // Applies to both unlock methods.
+        if !matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::Choice | CreationBackupStep::Bypass { .. })
+        ) || !self.can_create_recovery_kit()
+            || self.creation_kit_evidence.is_some()
+        {
+            return Task::none();
+        }
+        self.scrub_creation_kit();
+        self.state = State::CreationBackup(CreationBackupStep::KitPassword);
+        Task::none()
+    }
+
+    fn creation_kit_uploaded(
+        &mut self,
+        result: Result<(u32, creation_gate::CreationRecoveryKit), String>,
+    ) -> Task<Message> {
+        // Only the upload this step is waiting on counts.
+        if !matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::KitUploading)
+        ) {
+            return Task::none();
+        }
+        match result {
+            Ok(evidence) => {
+                // The Kit is on Connect. Back to the hub, which shows
+                // it as backed up; Continue there writes the Cube with
+                // this evidence (and the phrase's, if confirmed too).
+                self.scrub_creation_kit();
+                self.creating_cube = false;
+                self.creation_kit_evidence = Some(evidence);
+                self.state = State::CreationBackup(CreationBackupStep::Choice);
+                Task::none()
+            }
+            Err(e) => {
+                // Nothing was written. Back to the password screen with
+                // the reason: the user can retry, or take the
+                // acknowledgement instead. Both exits still exist.
+                tracing::warn!("recovery kit upload during creation failed: {}", e);
+                self.creating_cube = false;
+                self.creation_kit_error = Some(e);
+                self.state = State::CreationBackup(CreationBackupStep::KitPassword);
                 Task::none()
             }
         }
+    }
+
+    fn attach_passkey_webview(&mut self, window_id: iced_wry::ExtractedWindowId) -> Task<Message> {
+        if let Some(ceremony) = &mut self.passkey_ceremony {
+            if !ceremony.create_webview(window_id) {
+                self.creating_cube = false;
+                self.passkey_ceremony = None;
+                self.error = Some(
+                    "Failed to open passkey webview. Check your system's WebView support."
+                        .to_string(),
+                );
+            }
+        }
+        Task::none()
+    }
+
+    fn update_passkey_webview(&mut self, msg: iced_wry::IcedWryMessage) -> Task<Message> {
+        if let Some(ceremony) = &mut self.passkey_ceremony {
+            ceremony.webview_manager.update(msg);
+
+            // Poll for IPC result
+            if let Some(result) = ceremony.try_recv_result() {
+                return Task::done(Message::PasskeyCeremonyResult(result));
+            }
+        }
+        Task::none()
+    }
+
+    fn cube_remote_registered(
+        &mut self,
+        cube_id: String,
+        network: ChainId,
+        result: Result<CubeResponse, String>,
+    ) -> Task<Message> {
+        let open = self.open_after_registration.as_ref() == Some(&cube_id);
+        if open {
+            self.open_after_registration = None;
+            self.open_created_cube = Some(cube_id.clone());
+        }
+        match result {
+            Ok(resp) => {
+                log::info!(
+                    "[LAUNCHER] Cube {} registered remotely (server ID: {})",
+                    resp.uuid,
+                    resp.id
+                );
+                self.cube_sync_errors.remove(&cube_id);
+                let network_dir = self.datadir_path.network_directory(network);
+                let owner = self.connect_owner();
+                Task::perform(
+                    async move {
+                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                            .await
+                            .ok();
+                    },
+                    |_| Message::View(ViewMessage::Check),
+                )
+            }
+            Err(e) => {
+                log::warn!(
+                    "[LAUNCHER] Failed to register cube {} remotely: {}",
+                    cube_id,
+                    e
+                );
+                // Keep the reason: this is the only signal the Cubes list
+                // has that the Cube is not merely mid-sync.
+                self.cube_sync_errors.insert(cube_id, e);
+                // The Cube still opens; the catch-up sync registers it.
+                if open {
+                    self.reload()
+                } else {
+                    Task::none()
+                }
+            }
+        }
+    }
+
+    fn finish_passkey_ceremony(
+        &mut self,
+        result: Result<CeremonyOutcome, passkey_svc::PasskeyError>,
+    ) -> Task<Message> {
+        // Close the ceremony webview
+        if let Some(mut ceremony) = self.passkey_ceremony.take() {
+            ceremony.close();
+        }
+
+        match result {
+            Ok(CeremonyOutcome::Registered(registration)) => {
+                // Shared with the native macOS path: one place decides
+                // what a successful registration does, so the two
+                // ceremony backends cannot drift on whether the Cube is
+                // gated (they did — this one persisted immediately).
+                self.passkey_registration_succeeded(
+                    registration.credential_id.clone(),
+                    &registration.prf_output,
+                )
+            }
+            Ok(CeremonyOutcome::Authenticated(_auth)) => {
+                // Authentication during creation shouldn't happen,
+                // but handle gracefully.
+                self.creating_cube = false;
+                self.error =
+                    Some("Unexpected authentication response during registration.".to_string());
+                Task::none()
+            }
+            Err(e) => {
+                self.creating_cube = false;
+                // `Display` is the developer string ("Passkey ceremony
+                // failed: …"); the user gets the registration copy, and
+                // the detail goes to the log where it is of use.
+                tracing::warn!("passkey registration failed: {e}");
+                self.error = Some(e.registration_message());
+                Task::none()
+            }
+        }
+    }
+
+    fn cancel_passkey_ceremony(&mut self) -> Task<Message> {
+        if let Some(mut ceremony) = self.passkey_ceremony.take() {
+            ceremony.close();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(ceremony) = self.native_passkey_ceremony.take() {
+                ceremony.cancel();
+            }
+        }
+        self.creating_cube = false;
+        Task::none()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn poll_native_passkey(&mut self) -> Task<Message> {
+        use crate::services::passkey::macos::NativeOutcome;
+        let outcome = self
+            .native_passkey_ceremony
+            .as_ref()
+            .and_then(|c| c.try_recv());
+        let Some(outcome) = outcome else {
+            return Task::none();
+        };
+        // Drop the ceremony now that we have a result.
+        self.native_passkey_ceremony = None;
+
+        match outcome {
+            NativeOutcome::Registered {
+                credential_id,
+                prf_output,
+            } => {
+                // Same shared transition as the webview ceremony.
+                self.passkey_registration_succeeded_raw(&credential_id, &prf_output)
+            }
+            NativeOutcome::Authenticated { .. } => {
+                self.creating_cube = false;
+                self.error =
+                    Some("Unexpected authentication response during registration.".to_string());
+                Task::none()
+            }
+            NativeOutcome::Failed(e) => {
+                self.creating_cube = false;
+                // Registration, not unlock — but the same rule applies:
+                // a cancelled Touch ID prompt must read as "nothing
+                // happened", not as a failure the user has to interpret.
+                // Nothing has been written to disk at this point, which
+                // is why `registration_message` and not `user_message`:
+                // the unlock copy would name a Cube that doesn't exist
+                // and send the user to a Recovery Kit they can't have.
+                tracing::warn!("passkey registration failed: {e}");
+                self.error = Some(e.registration_message());
+                Task::none()
+            }
+        }
+    }
+
+    fn permit_blake2b_launcher_message(&mut self, message: &Message) -> bool {
+        // Explicitly supported launcher actions only: the Create Cube
+        // journey (name, PIN or passkey, backup), opening, renaming and
+        // deleting a Cube, and bringing a Connect Cube back from its
+        // recovery phrase, its Recovery Kit or a paired phone. Its Vault
+        // is created from inside the Cube. No Bitcoin wallet import or
+        // duress completion route.
+        let allowed = match message {
+            // An unfinished import's Cube is never on this chain; its
+            // request switches the Launcher to the Cube's network.
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModalFor {
+                chain,
+                ..
+            })) => !chain.is_blake2b(),
+            Message::View(view) => matches!(
+                view,
+                ViewMessage::CreateCube
+                    | ViewMessage::ShowCreateCube(_)
+                    | ViewMessage::CubeNameEdited(_)
+                    | ViewMessage::PinInput(_)
+                    | ViewMessage::PinConfirmInput(_)
+                    | ViewMessage::TogglePasskeyMode(_)
+                    | ViewMessage::CreationBackup(_)
+                    | ViewMessage::CreationBackupBypassRequested
+                    | ViewMessage::CreationBackupChoiceRequested
+                    | ViewMessage::CreationBackupContinue
+                    | ViewMessage::CreationBackupAcknowledgeBypass(_)
+                    | ViewMessage::CreationBackupBypassConfirmed
+                    | ViewMessage::CancelCreationBackup
+                    | ViewMessage::CreationKitRequested
+                    | ViewMessage::CreationKit(_)
+                    | ViewMessage::CreationKitUploaded(_)
+                    | ViewMessage::CreateNetworkMenu(_)
+                    | ViewMessage::ShowRestoreHub
+                    | ViewMessage::ShowRestorePhone
+                    | ViewMessage::ShowRestoreAllNetworks(_)
+                    | ViewMessage::SelectNetwork(_)
+                    | ViewMessage::Check
+                    | ViewMessage::Run(_)
+                    | ViewMessage::ConnectAccount(_)
+                    | ViewMessage::ConnectSheetAccount(_)
+                    | ViewMessage::ToggleConnect
+                    | ViewMessage::ToggleDeveloperMode(_)
+                    | ViewMessage::ToggleBitcoinBlake2bBeta(_)
+                    | ViewMessage::ToggleTheme
+                    | ViewMessage::OpenAppPreferences
+                    | ViewMessage::ChangeDevicePreference(_)
+                    | ViewMessage::GoToSection(
+                        HomeSection::Cubes | HomeSection::Settings | HomeSection::Connect(_),
+                    )
+                    | ViewMessage::OpenUrl(_)
+                    | ViewMessage::DismissAdvisoryNotice
+                    | ViewMessage::RenameCube(_)
+                    | ViewMessage::RenameCubeNameEdited(_)
+                    | ViewMessage::RenameCubeConfirm
+                    | ViewMessage::RenameCubeCancel
+                    | ViewMessage::ImportGhostWithPhrase(_)
+                    | ViewMessage::RecoveryWordInput { .. }
+                    | ViewMessage::SelectRecoverySuggestion { .. }
+                    | ViewMessage::SubmitRecovery
+                    | ViewMessage::CancelRecovery
+                    | ViewMessage::RestoreFromRecoveryKit(_)
+                    | ViewMessage::RestoreFromAnyRecoveryKit
+                    | ViewMessage::RestoreWithPhone { .. }
+                    | ViewMessage::RestoreWithPhoneOn { .. }
+                    | ViewMessage::ShowRecoveryMethodPicker(_)
+                    | ViewMessage::CloseRecoveryMethodPicker
+                    | ViewMessage::DeleteCube(
+                        DeleteCubeMessage::ShowModal(_)
+                            | DeleteCubeMessage::CloseModal
+                            | DeleteCubeMessage::Confirm(_)
+                            | DeleteCubeMessage::DeleteConnectBackup(_)
+                            | DeleteCubeMessage::Deleted
+                            | DeleteCubeMessage::DaemonStopped(_)
+                            | DeleteCubeMessage::PinInput(_)
+                            | DeleteCubeMessage::ShowRemoteModal(_)
+                            | DeleteCubeMessage::CloseRemoteModal
+                            | DeleteCubeMessage::RemoteNameInput(_)
+                            | DeleteCubeMessage::ConfirmRemoteDelete(_)
+                            | DeleteCubeMessage::RestoreInstead(_)
+                    )
+            ),
+            Message::StartRecovery
+            | Message::Checked { .. }
+            | Message::CubeLimitsLoaded(_)
+            | Message::RemoteCubesLoaded { .. }
+            | Message::NetworkCatalogLoaded { .. }
+            | Message::ConnectSignedInBubble
+            | Message::CatchUpSyncFinished(_)
+            | Message::CubeRemoteRegistered { .. }
+            | Message::CubeRemoteUpdated { .. }
+            | Message::CubeCreated(_)
+            | Message::CubeBackupDeleted(_)
+            | Message::RemoteCubeDeleted(_)
+            | Message::CubeRenamed(_)
+            | Message::PasskeyWindowId(_)
+            | Message::PasskeyWebviewUpdate(_)
+            | Message::PasskeyCeremonyResult(_)
+            | Message::CancelPasskeyCeremony
+            | Message::NativePasskeyTick => true,
+            _ => false,
+        };
+        if !allowed {
+            self.set_error("Bitcoin Blake2b Cubes can't be imported or restored here yet");
+            return false;
+        }
+        // Nothing on the Create Cube journey runs while this chain is
+        // unavailable: no seed, keystore or passkey work starts.
+        if matches!(
+            message,
+            Message::View(
+                ViewMessage::CreateCube
+                    | ViewMessage::ShowCreateCube(true)
+                    | ViewMessage::Run(_)
+                    | ViewMessage::TogglePasskeyMode(_)
+                    | ViewMessage::CreationBackup(_)
+                    | ViewMessage::CreationBackupBypassConfirmed
+                    | ViewMessage::CreationBackupContinue
+                    | ViewMessage::CreationKitRequested
+                    | ViewMessage::CreationKit(_)
+            )
+        ) {
+            if let Some(reason) = self.chain_availability(self.network).reason() {
+                self.set_error(reason.to_string());
+                return false;
+            }
+        }
+        true
+    }
+
+    fn restore_with_phone_on(
+        &mut self,
+        chain: ChainId,
+        cube_id: u64,
+        full_cube: bool,
+    ) -> Task<Message> {
+        let switch = if chain == self.network {
+            Task::none()
+        } else {
+            self.update_inner(Message::View(ViewMessage::SelectNetwork(chain)))
+        };
+        if self.network != chain {
+            // The switch was refused; its reason is on screen.
+            return switch;
+        }
+        Task::batch([
+            switch,
+            self.update_inner(Message::View(ViewMessage::RestoreWithPhone {
+                cube_id,
+                full_cube,
+            })),
+        ])
+    }
+
+    fn show_restore_hub(&mut self) -> Task<Message> {
+        // Leaving a path for the Overview drops that path's intent;
+        // the Cube name and PIN stay as entered.
+        if self.creating_cube || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. }) {
+            return Task::none();
+        }
+        self.catalog.dismiss_popovers();
+        self.pending_bitcoin_import = None;
+        self.restore_hub = true;
+        self.restore_phone = false;
+        self.restore_all_networks = false;
+        if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } = &mut self.state {
+            *create_cube = true;
+        }
+        self.error = None;
+        Task::none()
+    }
+
+    fn show_restore_phone(&mut self) -> Task<Message> {
+        if self.creating_cube
+            || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
+            || !feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED
+        {
+            return Task::none();
+        }
+        self.catalog.dismiss_popovers();
+        self.pending_bitcoin_import = None;
+        self.restore_hub = true;
+        self.restore_phone = true;
+        if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } = &mut self.state {
+            *create_cube = true;
+        }
+        self.error = None;
+        Task::none()
+    }
+
+    fn persist_duress_enrollment(
+        &mut self,
+        payload: app::message::DuressEnrollmentPayload,
+    ) -> Task<Message> {
+        // Drop a completion that outlived its Connect session: a logout
+        // or session reset bumps `session_generation`, and persisting
+        // now would arm the duress PIN + DuressLocalState for an account
+        // the user is no longer signed into.
+        if payload.gen != self.connect_account.session_generation() {
+            log::warn!("duress: ignoring enrollment completion from a stale session");
+            return Task::none();
+        }
+        let app::message::DuressEnrollmentPayload {
+            duress_pin,
+            duress_code,
+            account_id,
+            ..
+        } = payload;
+        Task::perform(
+            app::persist_duress_enrollment(
+                self.datadir_path.clone(),
+                duress_pin,
+                duress_code,
+                account_id,
+            ),
+            |res| res,
+        )
+        .then(|res| match res {
+            Ok(()) => Task::batch([
+                // Reflect the enabled state only now that the duress PIN
+                // is actually armed on every Cube.
+                Task::done(Message::View(ViewMessage::ConnectAccount(
+                    ConnectAccountMessage::Duress(
+                        app::view::DuressMessage::EnrollmentPersisted,
+                    ),
+                ))),
+                Task::done(Message::View(ViewMessage::Check)),
+            ]),
+            Err(e) => {
+                log::error!("duress: failed to persist enrollment: {e}");
+                // Surface via the Connect panel's error display.
+                Task::done(Message::View(ViewMessage::ConnectAccount(
+                    ConnectAccountMessage::Error(crate::user_error::UserError::logged(
+                        "Couldn't finish enabling duress mode",
+                        "Try again. If it keeps failing, contact support and quote the reference below.",
+                        crate::user_error::CC_API_BADRESP,
+                        true,
+                        e,
+                    )),
+                )))
+            }
+        })
+    }
+
+    fn open_recovery_service(&mut self, target: RecoveryServiceTarget) -> Task<Message> {
+        if !matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        ) || !self.connect_account.is_authenticated()
+            || !matches!(
+                &self.connect_account.recovery_services,
+                RecoveryServicesState::Ready(rows)
+                    if rows.iter().filter(|row| row.target == target).count() == 1
+            )
+        {
+            return Task::none();
+        }
+        let (Some(client), Some(user)) = (
+            self.connect_account.authenticated_client(),
+            self.connect_account.user.as_ref(),
+        ) else {
+            return Task::none();
+        };
+        let user_id = user.id;
+        let session_generation = self.connect_account.session_generation();
+        self.recovery_open_request = self.recovery_open_request.wrapping_add(1);
+        let request = self.recovery_open_request;
+        self.connect_account.error = None;
+        let datadir = self.datadir_path.clone();
+        let resolve_target = target.clone();
+        Task::perform(
+            async move {
+                let cubes = client
+                    .list_cubes()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                resolve_recovery_service_destination(&datadir, &resolve_target, &cubes)
+            },
+            move |result| Message::RecoveryServiceResolved {
+                target: target.clone(),
+                session_generation,
+                user_id,
+                request,
+                result,
+            },
+        )
+    }
+
+    fn go_to_section(&mut self, section: HomeSection) -> Task<Message> {
+        self.catalog.dismiss_popovers();
+        // Duress launch kill-switch backstop: a deep-linked or otherwise
+        // programmatic navigation to the Duress section while it's gated
+        // off (the nav hides the entry, so a click can't produce this)
+        // redirects to Overview — fail-closed, hidden not greyed, the
+        // same shape as the Marketplace route guard. See
+        // `ConnectAccountPanel::show_duress`.
+        let section = if matches!(
+            section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        ) && !self.connect_account.show_duress()
+        {
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        } else {
+            section
+        };
+        if !matches!(
+            section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        ) {
+            self.leave_recovery_services();
+        }
+        // Update the account panel's active_sub when navigating to a Connect submenu
+        if let HomeSection::Connect(ref sub) = section {
+            self.connect_account.active_sub = sub.clone();
+        }
+        self.active_section = section;
+        if matches!(self.active_section, HomeSection::Settings) {
+            return self.recheck_global_feature();
+        }
+        if matches!(self.active_section, HomeSection::Cubes) {
+            return self.on_focus();
+        }
+        self.load_section_data()
+    }
+
+    fn load_section_data(&mut self) -> Task<Message> {
+        // If navigating to Connect and not yet initialized, trigger Init
+        if matches!(self.active_section, HomeSection::Connect(_))
+            && matches!(
+                self.connect_account.step,
+                crate::app::state::connect::ConnectFlowStep::CheckingSession
+            )
+        {
+            return map_connect_task(
+                self.connect_account
+                    .update_message(ConnectAccountMessage::Init),
+            );
+        }
+        // Load Security data on demand (mirrors App::set_current_panel)
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Security)
+        ) && self.connect_account.is_authenticated()
+        {
+            return map_connect_task(self.connect_account.reload_security());
+        }
+        // Load Overview summary counts on demand
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        ) && self.connect_account.is_authenticated()
+        {
+            return map_connect_task(self.connect_account.reload_overview());
+        }
+        // Load Contacts data on demand
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Contacts)
+        ) && self.connect_account.is_authenticated()
+        {
+            return map_connect_task(self.connect_account.reload_contacts());
+        }
+        // Load duress Emergency-contacts on demand (Estate Notifications).
+        // `reload_duress_contacts` no-ops for non-Estate accounts, so this
+        // never fires a request that would just 403.
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        ) && self.connect_account.is_authenticated()
+        {
+            // Load the Emergency-contacts list, the per-Cube
+            // recovery-kit checklist, and the server-side duress state
+            // (so the screen reflects the enabled state); each no-ops
+            // for accounts that lack the relevant entitlement.
+            return map_connect_task(iced::Task::batch([
+                self.connect_account.reload_duress_contacts(),
+                self.connect_account.reload_duress_cubes(),
+                self.connect_account.reload_duress_state(),
+            ]));
+        }
+        // Load the recoverable-vault list on demand when opening the
+        // heir discovery surface (once per session — `is_loaded()`
+        // guards re-fetch on every reopen).
+        if matches!(self.active_section, HomeSection::RecoverVault)
+            && !self.recover_vault.is_loaded()
+        {
+            let client = self.connect_account.authenticated_client();
+            let gen = self.connect_account.session_generation();
+            return self
+                .recover_vault
+                .update(RecoverVaultMessage::Load, client, gen)
+                .map(|m| Message::View(ViewMessage::RecoverVault(m)));
+        }
+        Task::none()
+    }
+
+    fn update_connect_account(&mut self, view: ViewMessage) -> Task<Message> {
+        let sheet_message = matches!(view, ViewMessage::ConnectSheetAccount(_));
+        let msg = match view {
+            ViewMessage::ConnectAccount(msg) | ViewMessage::ConnectSheetAccount(msg) => msg,
+            _ => unreachable!(),
+        };
+        // The banner CTAs navigate the panel to Plan & Billing by
+        // setting its `active_sub`, but the sidebar highlight follows
+        // the host's `active_section`. Mirror the move here so the two
+        // stay in sync (otherwise the rail keeps highlighting Overview
+        // while the pane shows the picker/checkout, and re-selecting
+        // Overview would silently reset `active_sub`).
+        if !sheet_message
+            && matches!(
+                msg,
+                ConnectAccountMessage::OpenPlanBilling | ConnectAccountMessage::RenewCurrentPlan
+            )
+        {
+            self.leave_recovery_services();
+            self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::PlanBilling);
+        }
+        let explicit_logout = matches!(&msg, ConnectAccountMessage::LogOut);
+        if explicit_logout {
+            self.connect_account.forget_shared_session_for_logout();
+        }
+        let was_authenticated = self.connect_account.is_authenticated();
+        let task = map_connect_task(self.connect_account.update_message(msg));
+        let now_authenticated = self.connect_account.is_authenticated();
+        self.refresh_displayed_networks();
+        self.reconcile_launcher_session(was_authenticated, now_authenticated, explicit_logout);
+        self.redirect_unavailable_duress();
+        let tier_changed = self.sync_launcher_account_tier();
+
+        // On first login: catch-up sync unsynced cubes + fetch limits
+        if !was_authenticated && now_authenticated {
+            return self.first_connect_login(task);
+        }
+
+        // A mid-session upgrade or downgrade changes which Cubes
+        // Connect keeps on (billing v2: the oldest N per network), so
+        // re-read the list for the Connect-off tags. The fetch claims a
+        // new generation, so one started under the old tier is dropped.
+        // The sign-in edge above already fetched.
+        if tier_changed && now_authenticated {
+            return Task::batch([task, self.fetch_remote_cubes()]);
+        }
+
+        task
+    }
+
+    fn reconcile_launcher_session(
+        &mut self,
+        was_authenticated: bool,
+        now_authenticated: bool,
+        explicit_logout: bool,
+    ) {
+        // Update cached keyring state on login/logout transitions
+        if was_authenticated != now_authenticated {
+            self.has_stored_session = now_authenticated;
+        }
+        // A rejected stored-session refresh dispatches `LogOut` into
+        // a fresh Home that is already unauthenticated. Treat that
+        // explicit invalidation like a signed-in -> signed-out edge so
+        // a pending post-install Split intent cannot survive and resume
+        // after a later login.
+        if !now_authenticated && (was_authenticated || explicit_logout) {
+            self.server_cube_limit = None;
+            // Refusal reasons are account-scoped: they say what
+            // *that* account's server said about a Cube. The local
+            // Cube outlives the sign-out, so leaving them keyed by
+            // its id would show the previous account's refusal —
+            // rendered with the new account's tier and limits — to
+            // someone who may have slots to spare. Nothing else
+            // clears them promptly: the next catch-up sync only
+            // replaces them if it completes, and an aborted round
+            // deliberately keeps what it already has.
+            self.cube_sync_errors.clear();
+            self.remote_cubes.clear();
+            self.connect_off_cubes.clear();
+            // Clearing alone isn't enough: a fetch issued for the
+            // account we just left is still in flight and would
+            // repopulate the list. Bump the generation so its
+            // result is discarded on arrival.
+            self.invalidate_remote_cubes();
+            // Reset the heir discovery surface back to Idle so the
+            // next sign-in re-fetches: otherwise its `Loaded` state
+            // (and `is_loaded()` re-fetch guard) would persist and a
+            // later account would see the prior account's vault rows.
+            self.recover_vault = RecoverVaultPanel::new();
+            // Drop any open recovery-method picker so it can't
+            // reference a prior account's remote cube.
+            self.recovery_method_modal = None;
+        }
+        // Auto-expand Connect submenu and navigate to Cubes after login
+        if !was_authenticated && now_authenticated {
+            self.connect_expanded = true;
+            self.active_section = HomeSection::Cubes;
+        }
+    }
+
+    fn redirect_unavailable_duress(&mut self) {
+        // Duress launch kill-switch backstop for a mid-session flip: if
+        // the features refetch (or a duress-state change) that just flowed
+        // through `update_message` turned the gate off while the user is
+        // sitting on the Duress section, redirect to Overview. The surface
+        // is hidden, not greyed, so a stale route must not keep rendering
+        // it — a server flag flip propagates on the next `/connect/
+        // features` poll without a restart. See `show_duress`.
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        ) && !self.connect_account.show_duress()
+        {
+            // Hiding the surface out from under an in-flight enrollment
+            // wizard or step-up dialog: scrub its secrets the same way
+            // Cancel would, so the flag flip can't strand duress
+            // PINs/codes on the heap once the route is unreachable.
+            self.connect_account.scrub_duress_dialogs();
+            self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
+            self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
+        }
+    }
+
+    fn sync_launcher_account_tier(&mut self) -> bool {
+        // Sync account tier from the Connect plan data
+        let old_tier = self.account_tier;
+        self.account_tier =
+            self.connect_account
+                .plan
+                .as_ref()
+                .map_or(AccountTier::default(), |plan| match plan.tier() {
+                    crate::services::coincube::PlanTier::Free => AccountTier::Free,
+                    crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
+                    crate::services::coincube::PlanTier::Estate => AccountTier::Estate,
+                });
+        // When the plan tier changes (e.g. upgrade), invalidate the
+        // cached server limit so `cube_limit()` uses the new tier
+        // until fresh limits are fetched.
+        let tier_changed = old_tier != self.account_tier;
+        if tier_changed {
+            self.server_cube_limit = None;
+        }
+        if let Err(e) = GlobalSettings::update_account_tier(
+            &GlobalSettings::path(&self.datadir_path),
+            self.account_tier,
+        ) {
+            log::error!("[LAUNCHER] Failed to persist account tier: {e}");
+        }
+        tier_changed
+    }
+
+    fn first_connect_login(&mut self, task: Task<Message>) -> Task<Message> {
+        // The startup probe may precede Connect's session restore
+        // and its local settings updates. Refresh the visible list
+        // even when every Cube is already synced (so catch-up has
+        // nothing to do). FocusedCubes preserves an in-progress form.
+        let mut tasks = vec![task, self.on_focus()];
+
+        // Tell the pane so it can rebroadcast the session
+        // check to every other open Cube tab — those panels
+        // hold their own ConnectAccountPanel and would
+        // otherwise stay on the "Sign in" prompt until the
+        // user clicked it or restarted the tab.
+        tasks.push(Task::done(Message::ConnectSignedInBubble));
+
+        // Fetch cube limits for the current network from the server
+        if let Some(limits_client) = self.connect_account.authenticated_client() {
+            let network_str = settings::network_to_api_string(self.network);
+            tasks.push(Task::perform(
+                async move {
+                    limits_client
+                        .get_cube_limits(&network_str)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+                Message::CubeLimitsLoaded,
+            ));
+        }
+
+        // Sync all unsynced cubes across ALL networks with the API.
+        // Loads settings from each network directory, collects
+        // unsynced cubes, fetches the server cube list once, then
+        // for each unsynced local cube either registers (new) or
+        // updates (already exists but name may have changed).
+        if let Some(client) = self.connect_account.authenticated_client() {
+            let datadir = self.datadir_path.clone();
+            let owner = self.connect_owner();
+            let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
+                .into_iter()
+                .filter(|cube| !cube.remote_synced)
+                .collect();
+            if !unsynced.is_empty() {
+                tasks.push(Task::perform(
+                    async move {
+                        // One entry per Cube this round examines,
+                        // so the handler can say *why* a Cube is
+                        // still unsynced instead of promising a
+                        // sync that will never land — and can leave
+                        // Cubes outside this round alone.
+                        let mut outcomes: Vec<(String, Option<String>)> = Vec::new();
+                        // Fetch all server cubes once — bail if this
+                        // fails so we don't re-register everything.
+                        let server_cubes = match client.list_cubes().await {
+                            Ok(cubes) => cubes,
+                            Err(e) => {
+                                log::warn!(
+                                    "[LAUNCHER] Catch-up sync aborted: \
+                                     failed to list server cubes: {}",
+                                    e
+                                );
+                                // Aborting says nothing about any
+                                // individual Cube — reported as a
+                                // distinct outcome so the handler
+                                // keeps what it already knows
+                                // instead of reading an empty list
+                                // as "all clear".
+                                return Err(());
+                            }
+                        };
+
+                        for cube in &unsynced {
+                            let server_match = server_cubes.iter().find(|sc| sc.uuid == cube.id);
+                            let outcome =
+                                Self::sync_catch_up_cube(&client, cube, server_match).await;
+                            match outcome {
+                                Ok(()) => {
+                                    let nd = datadir.network_directory(cube.network);
+                                    let _ =
+                                        settings::mark_cube_synced(&nd, &cube.id, owner.clone())
+                                            .await;
+                                    outcomes.push((cube.id.clone(), None));
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[LAUNCHER] Catch-up sync failed for cube \
+                                         {}: {}",
+                                        cube.id,
+                                        e
+                                    );
+                                    outcomes.push((cube.id.clone(), Some(e)));
+                                }
+                            }
+                        }
+                        Ok(outcomes)
+                    },
+                    Message::CatchUpSyncFinished,
+                ));
+            }
+        }
+
+        // Fetch full server cube list and compare with local cubes
+        // to identify remote-only cubes.
+        tasks.push(self.fetch_remote_cubes());
+
+        Task::batch(tasks)
+    }
+
+    async fn sync_catch_up_cube(
+        client: &CoincubeClient,
+        cube: &CubeSettings,
+        server_match: Option<&CubeResponse>,
+    ) -> Result<(), String> {
+        match server_match {
+            Some(sc) => {
+                // Already registered — re-sync if the name differs
+                // or this device can *upgrade* the Vault flag
+                // (PLAN-duress-vault-gate PR 3: a Vault created
+                // while offline is reported on the next launch).
+                //
+                // Upgrade-only: report `hasVault=true` solely when
+                // this device holds the Vault and the server doesn't
+                // already show it. Never send `false` — this device
+                // can't tell a vaultless Cube from one whose Vault
+                // lives on another device, and a spurious `false`
+                // would clobber a `true` that device reported and
+                // silently unblock its duress gate.
+                let vault_report = vault_presence_report(cube.holds_vault(), sc.has_vault);
+                // Seed the server's Spark Stable Balance record
+                // from this device's decision only while the
+                // server has none: once it does, the live
+                // App reconciles against it and pushes changes
+                // as they're made, so catch-up never overrides.
+                let stable_report = cube
+                    .spark_stable_balance
+                    .filter(|_| sc.spark_stable_balance.is_none());
+                let name_drift = sc.name != cube.name;
+                if name_drift || vault_report.is_some() || stable_report.is_some() {
+                    let req = UpdateCubeRequest {
+                        name: name_drift.then(|| cube.name.clone()),
+                        status: None,
+                        has_vault: vault_report,
+                        spark_stable_balance: stable_report,
+                    };
+                    client
+                        .update_cube(&sc.id.to_string(), req)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                } else {
+                    Ok(())
+                }
+            }
+            None => {
+                // Not registered — create. Monotonic upgrade-only:
+                // report the Vault only when present.
+                let req = RegisterCubeRequest {
+                    uuid: cube.id.clone(),
+                    name: cube.name.clone(),
+                    network: cube.api_network_string(),
+                    has_vault: cube.holds_vault().then_some(true),
+                    spark_stable_balance: cube.spark_stable_balance,
+                };
+                client
+                    .register_cube(req)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            }
+        }
+    }
+
+    fn show_import_bitcoin(&mut self) -> Task<Message> {
+        self.catalog.dismiss_popovers();
+        if self.creating_cube
+            || !matches!(
+                self.state,
+                State::Cubes { .. } | State::NoCube { .. } | State::Unchecked
+            )
+        {
+            return Task::none();
+        }
+        if self.network != ChainId::Bitcoin {
+            self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
+            return Task::none();
+        }
+        // Every entry is disabled at the limit; this refuses a queued
+        // or stale press before the user fills in a name and PIN.
+        if launcher_catalog::project(self).at_limit() {
+            self.set_error(
+                if launcher_chrome::is_top_tier(self.account_tier.display_name()) {
+                    "Bitcoin mainnet has no free Cube slot on your plan. Delete a \
+                     Bitcoin mainnet Cube to import a wallet."
+                } else {
+                    "Bitcoin mainnet has no free Cube slot on your plan. Upgrade, or \
+                     delete a Bitcoin mainnet Cube, to import a wallet."
+                },
+            );
+            return Task::none();
+        }
+        if self.pending_bitcoin_import.is_none() {
+            self.pending_bitcoin_import = Some(Box::new(BitcoinImport::pending()));
+        }
+        self.restore_hub = false;
+        self.restore_phone = false;
+        // A passkey can't hold an imported secret: import sets a PIN.
+        self.passkey_mode = false;
+        match &mut self.state {
+            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                *create_cube = true;
+            }
+            State::Unchecked => {}
+            _ => return Task::none(),
+        }
+        self.error = None;
+        Task::none()
+    }
+
+    fn edit_recovery_word(&mut self, index: usize, word: String) -> Task<Message> {
+        if index < 12 {
+            let normalized = word
+                .chars()
+                .filter(|c| c.is_ascii_alphabetic())
+                .collect::<String>()
+                .to_lowercase();
+
+            let mut valid_prefix = String::new();
+            for ch in normalized.chars() {
+                let mut next = valid_prefix.clone();
+                next.push(ch);
+                if bip39_suggestions(&next, 1).is_empty() {
+                    break;
+                }
+                valid_prefix = next;
+            }
+
+            self.recovery_words[index] = valid_prefix.clone();
+            self.recovery_active_index = if valid_prefix.is_empty() {
+                None
+            } else {
+                Some(index)
+            };
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn select_recovery_suggestion(&mut self, index: usize, word: String) -> Task<Message> {
+        if index < 12 {
+            self.recovery_words[index] = word;
+            self.recovery_active_index = None;
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn cancel_recovery(&mut self) -> Task<Message> {
+        // Once the write has started it runs to completion; the
+        // form's Cancel is disabled until it does.
+        if self.creating_cube {
+            return Task::none();
+        }
+        for word in &mut self.recovery_words {
+            word.clear();
+            word.shrink_to_fit();
+        }
+        self.recovery_active_index = None;
+        self.create_cube_name = coincube_ui::component::form::Value::default();
+        self.create_cube_pin = pin_input::PinInput::new();
+        self.create_cube_pin_confirm = pin_input::PinInput::new();
+        self.pending_bitcoin_import = None;
+        self.ghost_import = None;
+        self.error = None;
+        self.reload()
+    }
+
+    fn submit_recovery(&mut self) -> Task<Message> {
+        let words = self.recovery_words.join(" ");
+        match bip39::Mnemonic::parse_in(bip39::Language::English, words) {
+            Ok(mnemonic) => self.recover_cube_from_mnemonic(mnemonic),
+            Err(error) => {
+                // Clear recovery words on error
+                for word in &mut self.recovery_words {
+                    word.clear();
+                    word.shrink_to_fit();
+                }
+                self.recovery_active_index = None;
+                self.error = Some(error.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn recover_cube_from_mnemonic(&mut self, mnemonic: bip39::Mnemonic) -> Task<Message> {
+        log::info!("Mnemonic parsed successfully");
+
+        if self.creating_cube {
+            return Task::none();
+        }
+
+        if self.create_cube_name.value.trim().is_empty() {
+            return Task::none();
+        }
+
+        // Validate PIN (always required)
+        if !self.validate_creation_pin() {
+            return Task::none();
+        }
+
+        self.creating_cube = true;
+        let network = self.network;
+        let cube_name = self.create_cube_name.value.trim().to_string();
+        let pin = self.create_cube_pin.value();
+        let datadir_path = self.datadir_path.clone();
+        let pending_bitcoin_import = self.pending_bitcoin_import.clone();
+        // A ghost's import takes the ghost's identity only when
+        // the phrase proves it is that Cube's seed, so Connect's
+        // registration is reclaimed rather than duplicated. The
+        // ghost's ID never enters `pending_cube_id`: that slot
+        // outlives this form (a failed write keeps it for a
+        // retry), and a later Create or import must not reuse it.
+        let ghost_id = match &self.ghost_import {
+            Some(ghost) => match self
+                .ghost_still_registered(ghost)
+                .and_then(|()| ghost_import_identity(ghost, network, &mnemonic))
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    self.creating_cube = false;
+                    self.error = Some(e);
+                    return Task::none();
+                }
+            },
+            None => None,
+        };
+        // Held until the write lands: its registration must
+        // go only to the account the ghost was listed under.
+        self.ghost_claim = ghost_id.map(|id| {
+            (
+                id.to_string(),
+                self.ghost_import.as_ref().and_then(|ghost| ghost.account),
+            )
+        });
+        // Otherwise reuse the UUID that was pre-generated when
+        // the user first clicked "Create Cube" (recovery path).
+        let cube_id = match ghost_id {
+            Some(id) => id,
+            None => *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4),
+        };
+
+        Task::perform(
+            async move {
+                // Same device-secret mint + refusal as the
+                // non-recovery path above.
+                let device_secret = Self::require_pin_cube_device_secret(&datadir_path, cube_id)?;
+
+                // Restore MasterSigner from recovery mnemonic
+                let master_signer =
+                    MasterSigner::from_mnemonic(network.bitcoin_network(), mnemonic)
+                        .map_err(|e| format!("Failed to restore from mnemonic: {}", e))?;
+
+                // Create secp context for fingerprint calculation
+                let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                let master_fingerprint = master_signer.fingerprint(&secp);
+
+                // Store master seed mnemonic (encrypted with PIN)
+                let network_dir = datadir_path.network_directory(network);
+                network_dir
+                    .init()
+                    .map_err(|e| format!("Failed to create network directory: {}", e))?;
+
+                // One timestamp for the seed file and the Cube
+                // — see the note on the non-recovery path (X7).
+                let timestamp = Self::store_pin_cube_master_seed(
+                    &master_signer,
+                    &datadir_path,
+                    network,
+                    &secp,
+                    &pin,
+                    cube_id,
+                    &device_secret,
+                )?;
+
+                tracing::info!(
+                    "Master signer created and stored (encrypted with PIN) with fingerprint: {}",
+                    master_fingerprint
+                );
+
+                // Build Cube settings using the pre-generated,
+                // stable UUID. No PIN hash — see the note on
+                // the non-recovery path above.
+                let mut cube = CubeSettings::new_with_id(cube_id, cube_name, network)
+                    .with_master_signer(master_fingerprint);
+                cube.bitcoin_import = pending_bitcoin_import;
+                // Same instant the seed file carries (X7).
+                cube.created_at = timestamp;
+                // The Cube's second slot, written at creation —
+                // see the note on the non-recovery path (6b).
+                Self::write_pin_cube_decoy(
+                    &mut cube,
+                    &datadir_path,
+                    network,
+                    cube_id,
+                    timestamp,
+                    &device_secret,
+                );
+                // Reaching here means the user typed all twelve
+                // words of this seed back into the app and they
+                // passed the BIP39 checksum. That *is* the
+                // backup demonstration — a stricter one than
+                // the creation flow's three-word challenge, and
+                // it is the same claim `backed_up` makes
+                // everywhere else ("the user wrote the seed
+                // phrase down and confirmed it").
+                //
+                // Recording it is what makes arming the gate
+                // below safe: a restored Cube satisfies
+                // `creation_gate::evaluate` on its own local
+                // evidence and opens immediately.
+                cube.backed_up = true;
+                cube.creation_backup_required = true;
+
+                // Save Cube settings to settings file.
+                // Idempotency: skip insert if UUID already exists.
+                settings::update_settings_file(&network_dir, |mut settings| {
+                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                        return Some(settings);
+                    }
+                    settings.cubes.push(cube.clone());
+                    Some(settings)
+                })
+                .await
+                .map(|_| cube)
+                .map_err(|e| e.to_string())
+            },
+            Message::CubeCreated,
+        )
+    }
+
+    fn recovery_service_resolved(
+        &mut self,
+        target: RecoveryServiceTarget,
+        session_generation: u64,
+        user_id: u32,
+        request: u64,
+        result: Result<RecoveryServiceDestination, String>,
+    ) -> Task<Message> {
+        if request != self.recovery_open_request
+            || session_generation != self.connect_account.session_generation()
+            || !self.connect_account.is_authenticated()
+            || self.connect_account.user.as_ref().map(|user| user.id) != Some(user_id)
+            || !matches!(
+                self.active_section,
+                HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+            )
+            || !matches!(
+                &self.connect_account.recovery_services,
+                RecoveryServicesState::Ready(rows)
+                    if rows.iter().filter(|row| row.target == target).count() == 1
+            )
+        {
+            return Task::none();
+        }
+        let destination = match result {
+            Ok(destination) => destination,
+            Err(detail) => {
+                self.connect_account.error =
+                    Some(crate::app::state::connect::account::PanelError::settled(
+                        crate::user_error::UserError::logged(
+                            "Couldn't open this Cube",
+                            "Refresh Recovery services, then try again.",
+                            crate::user_error::CC_API_BADRESP,
+                            false,
+                            detail,
+                        ),
+                    ));
+                return Task::none();
+            }
+        };
+        self.open_recovery_service_destination(destination)
+    }
+
+    fn open_recovery_service_destination(
+        &mut self,
+        destination: RecoveryServiceDestination,
+    ) -> Task<Message> {
+        let chain = match &destination {
+            RecoveryServiceDestination::Local(chain, ..)
+            | RecoveryServiceDestination::Remote(chain) => *chain,
+        };
+        if !(self.developer_mode
+            || chain == ChainId::Bitcoin
+            || chain == ChainId::BitcoinBlake2b && self.chain_availability(chain).is_available())
+            || !self.chain_availability(chain).is_available()
+        {
+            self.connect_account.error =
+                Some(crate::app::state::connect::account::PanelError::settled(
+                    crate::user_error::UserError::new(
+                        "This Cube network is unavailable",
+                        "Enable its network in Global Settings before opening this Cube.",
+                        crate::user_error::CC_API_BADRESP,
+                        false,
+                    ),
+                ));
+            return Task::none();
+        }
+        self.connect_account.error = None;
+        match destination {
+            RecoveryServiceDestination::Local(chain, cube, config) => Task::done(
+                Message::RunToRecovery(self.datadir_path.clone(), config, chain, cube),
+            ),
+            RecoveryServiceDestination::Remote(chain) => {
+                if chain.is_blake2b() {
+                    self.connect_account.error = Some(
+                        crate::app::state::connect::account::PanelError::settled(
+                            crate::user_error::UserError::new(
+                                "This Cube cannot be opened here",
+                                "This remote Bitcoin Blake2b Cube is not available in the local Cube catalog. Recover it on its original device.",
+                                crate::user_error::CC_API_BADRESP,
+                                false,
+                            ),
+                        ),
+                    );
+                    return Task::none();
+                }
+                // A Connect record is not an unlock credential. Show
+                // the existing remote-only restore card in the Cube
+                // catalog; the user chooses its normal recovery flow.
+                // Refresh the catalog as its earlier account-scoped
+                // fetch may predate this newly selected server row.
+                self.active_section = HomeSection::Cubes;
+                Task::batch([
+                    self.update(Message::View(ViewMessage::SelectNetwork(chain))),
+                    self.fetch_remote_cubes(),
+                ])
+            }
+        }
+    }
+
+    fn show_create_cube(&mut self, show: bool) -> Task<Message> {
+        // A queued navigation event must not clear the name while a
+        // passkey ceremony or PIN creation task is using it.
+        if !show && self.creating_cube {
+            return Task::none();
+        }
+        self.catalog.dismiss_popovers();
+        self.restore_hub = false;
+        self.restore_phone = false;
+        if show {
+            self.pending_bitcoin_import = None;
+            self.create_network_menu = false;
+            self.create_network_selection_pending = false;
+            // Opening the form picks the default afresh: whether the
+            // passkey path can demonstrate a backup depends on the
+            // Connect session, which can change between visits.
+            self.passkey_mode = self.default_passkey_mode();
+        }
+        // Both list screens navigate to the same form, so both carry
+        // the flag, including an empty Launcher on a fresh device.
+        let toggled = match &mut self.state {
+            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                *create_cube = show;
+                true
+            }
+            _ => false,
+        };
+        if toggled && !show {
+            self.create_network_menu = false;
+            self.create_network_selection_pending = false;
+            self.pending_bitcoin_import = None;
+            self.create_cube_name = coincube_ui::component::form::Value::default();
+            self.create_cube_pin = pin_input::PinInput::new();
+            self.create_cube_pin_confirm = pin_input::PinInput::new();
+            // Back to the default unlock method — dismissing the
+            // form discards the custody choice along with the rest
+            // of the inputs, so reopening it starts from the same
+            // state a first-time user sees.
+            self.passkey_mode = self.default_passkey_mode();
+            // Clear recovery words when exiting create cube flow
+            for word in &mut self.recovery_words {
+                word.clear();
+                word.shrink_to_fit();
+            }
+            self.recovery_active_index = None;
+            // Show every Cube when returning from an empty filter.
+            if !self.has_cube_list() {
+                self.catalog.filter = launcher_catalog::NetworkFilter::All;
+                self.catalog.page = 0;
+            }
+        }
+        Task::none()
+    }
+
+    fn begin_create_cube(&mut self) -> Task<Message> {
+        if self.creating_cube {
+            return Task::none();
+        }
+        if self.pending_bitcoin_import.is_some() && self.network != ChainId::Bitcoin {
+            self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
+            return Task::none();
+        }
+
+        if self.create_cube_name.value.trim().is_empty() {
+            return Task::none();
+        }
+
+        // Enforce per-network Cube limit based on Connect account tier.
+        // Includes remote cubes (on server but not local) since the
+        // limit applies across all devices.
+        let cube_count = self.total_cube_count();
+        let limit = self.cube_limit();
+        if cube_count >= limit {
+            self.error = Some(self.cube_limit_error());
+            return Task::none();
+        }
+
+        // Defensive guard: even if `self.passkey_mode` somehow became
+        // true while the feature is disabled (stale state, manual
+        // toggle before a hot-reload, etc.), always fall through to
+        // the PIN flow when the compile-time flag is off.
+        let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_CREATION_AVAILABLE;
+
+        if !passkey_mode && !self.validate_creation_pin() {
+            return Task::none();
+        }
+
+        self.creating_cube = true;
+        let cube_name = self.create_cube_name.value.trim().to_string();
+
+        // Pre-generate the UUID before the async task so that retries
+        // reuse the same identifier (idempotent creation). The
+        // PIN-based path re-reads it in `finalize_cube_creation`, which
+        // is what actually persists the Cube.
+        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+
+        if passkey_mode {
+            self.start_creation_passkey(cube_id, cube_name)
+        } else {
+            self.start_pin_creation_backup()
+        }
+    }
+
+    fn validate_creation_pin(&mut self) -> bool {
+        // PIN-based flow: validate PIN
+        if !self.create_cube_pin.is_complete() {
+            self.error = Some("Please enter all 4 PIN digits".to_string());
+            return false;
+        }
+        if !self.create_cube_pin_confirm.is_complete() {
+            self.error = Some("Please confirm all 4 PIN digits".to_string());
+            return false;
+        }
+        if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
+            self.error = Some("PIN codes do not match".to_string());
+            return false;
+        }
+        true
+    }
+
+    fn start_creation_passkey(&mut self, cube_id: uuid::Uuid, cube_name: String) -> Task<Message> {
+        // Passkey-based Cube creation.
+        // On macOS: use the native AuthenticationServices framework
+        //   (WKWebView doesn't have the entitlement to call WebAuthn).
+        // On other platforms: fall back to the embedded webview ceremony.
+        #[cfg(target_os = "macos")]
+        {
+            let user_id_bytes = cube_id.as_bytes().to_vec();
+            match crate::services::passkey::macos::NativePasskeyCeremony::register(
+                passkey_svc::RP_ID,
+                &user_id_bytes,
+                &cube_name,
+            ) {
+                Ok(ceremony) => {
+                    self.native_passkey_ceremony = Some(ceremony);
+                    Task::none()
+                }
+                Err(e) => {
+                    self.creating_cube = false;
+                    self.error = Some(coincube_ui::localized_format!(
+                        "Failed to start passkey ceremony: {}",
+                        "No se pudo iniciar la verificación con llave de acceso: {}",
+                        e
+                    ));
+                    Task::none()
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let user_id = cube_id.to_string();
+            let ceremony = PasskeyCeremony::new(CeremonyMode::Register {
+                user_id,
+                user_name: cube_name,
+            });
+            self.passkey_ceremony = Some(ceremony);
+            // Extract the window ID so we can attach the webview
+            iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
+        }
+    }
+
+    fn start_pin_creation_backup(&mut self) -> Task<Message> {
+        // PIN-based Cube creation, phase 1: generate the seed into
+        // memory and hand it to the backup step.
+        //
+        // Nothing is written to disk here — not the seed file, not
+        // the settings entry, not the OS-keystore device secret.
+        // All of that is `finalize_cube_creation`, which runs only
+        // once the user has demonstrated a backup or explicitly
+        // bypassed. Abandoning the step therefore leaves no
+        // half-created Cube and no orphaned keystore entry.
+        //
+        // Probe the keystore **here**, before a single word is
+        // shown. `finalize_cube_creation` mints the real secret,
+        // and if the keystore is unusable it refuses (I7) — but
+        // refusing there means the user has already written down
+        // twelve words and verified three of them, for a Cube that
+        // will never exist. Probe early, mint late: `capability()`
+        // writes and deletes a throwaway item, so it stakes no
+        // claim on this Cube and leaves 3a's
+        // no-writes-until-committed property intact.
+        if let unlock::device_secret::Capability::Unavailable(why) =
+            unlock::device_secret::capability()
+        {
+            self.creating_cube = false;
+            self.error = Some(why);
+            return Task::none();
+        }
+        match MasterSigner::generate(self.network.bitcoin_network()) {
+            Ok(signer) => {
+                self.creating_cube = false;
+                self.error = None;
+                self.enter_creation_backup(signer.words().iter().map(|w| w.to_string()).collect());
+                Task::none()
+            }
+            Err(e) => {
+                self.creating_cube = false;
+                self.error = Some(coincube_ui::localized_format!(
+                    "Failed to generate master seed signer: {}",
+                    "No se pudo generar el firmante de la frase maestra: {}",
+                    e
+                ));
+                Task::none()
+            }
+        }
+    }
+
+    fn cube_created(&mut self, res: Result<CubeSettings, String>) -> Task<Message> {
+        self.creating_cube = false;
+        match res {
+            Ok(cube) => self.apply_created_cube(cube),
+            Err(e) => self.handle_cube_creation_error(e),
+        }
+    }
+
+    fn apply_created_cube(&mut self, cube: CubeSettings) -> Task<Message> {
+        // UUID was consumed successfully — reset it so the next
+        // cube creation starts with a fresh identifier.
+        self.pending_cube_id = None;
+        self.ghost_import = None;
+        let ghost_claim = self.ghost_claim.take();
+        // The operation identity is now durable on this exact
+        // Cube. A fresh creation must not reuse it.
+        self.pending_bitcoin_import = None;
+        self.open_created_cube = None;
+        self.open_after_registration = None;
+        // Clear any previous error state
+        self.error = None;
+        // Reset form fields
+        self.create_cube_name = coincube_ui::component::form::Value::default();
+        self.create_cube_pin = pin_input::PinInput::new();
+        self.create_cube_pin_confirm = pin_input::PinInput::new();
+        // The creation-time backup step's copy of the seed has
+        // done its job — scrub it. The step itself is replaced
+        // just below, and `reload()` refreshes that list.
+        self.scrub_creation_seed();
+        self.scrub_creation_kit();
+        self.reset_creation_backup_progress();
+        // The passkey registration has been consumed by the
+        // write; holding it would let a second finalize insert
+        // a duplicate.
+        self.pending_passkey_cube = None;
+        // Off the backup hub now, not when the reload lands:
+        // in between, its Continue and "I'll do this later"
+        // would act on a Cube that is already written.
+        let parked = std::mem::take(&mut self.creation_backup_cubes);
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.state = State::Cubes {
+                cubes: parked,
+                create_cube: false,
+                source: self.network,
+            };
+        }
+        // Explicitly clear recovery words to prevent mnemonic from lingering in memory
+        for word in &mut self.recovery_words {
+            word.clear();
+            word.shrink_to_fit();
+        }
+        self.recovery_active_index = None;
+        let reload_task = self.reload();
+
+        // If logged in, register the new cube with the Connect API.
+        // A Cube whose Recovery Kit was made during creation is
+        // already registered — the Kit could not have been
+        // uploaded otherwise — and registering again would
+        // create a duplicate server-side record.
+        if cube.remote_synced {
+            tracing::debug!(
+                "Cube {} was registered by the creation Recovery Kit — \
+                 skipping the post-creation registration",
+                cube.id
+            );
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
+        } else if ghost_claim.as_ref().is_some_and(|(uuid, account)| {
+            *uuid == cube.id && *account != self.connect_account_id()
+        }) {
+            // A ghost's Cube reclaims a registration in the
+            // account that listed it. Signed out or switched
+            // since, it stays local: the catch-up sync
+            // registers it once that account is back.
+            tracing::warn!(
+                "Cube {} reclaimed a Connect registration from another session; \
+                 not registering it with the current account",
+                cube.id
+            );
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
+        } else if let Some(client) = self.connect_account.authenticated_client() {
+            let cube_id = cube.id.clone();
+            let cube_network = cube.network;
+            let req = RegisterCubeRequest {
+                uuid: cube.id.clone(),
+                name: cube.name.clone(),
+                network: cube.api_network_string(),
+                // Monotonic upgrade-only report: a freshly-
+                // created Cube has no Vault yet, so omit the
+                // flag (server default `false`). It flips later
+                // via the vault-creation re-report
+                // (PLAN-duress-vault-gate PR 3).
+                has_vault: cube.holds_vault().then_some(true),
+                spark_stable_balance: cube.spark_stable_balance,
+            };
+            self.open_after_registration = Some(cube.id.clone());
+            let register_task = Task::perform(
+                async move { client.register_cube(req).await.map_err(|e| e.to_string()) },
+                move |result| Message::CubeRemoteRegistered {
+                    cube_id,
+                    network: cube_network,
+                    result,
+                },
+            );
+            Task::batch([reload_task, register_task])
+        } else {
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
+        }
+    }
+
+    fn handle_cube_creation_error(&mut self, e: String) -> Task<Message> {
+        self.ghost_claim = None;
+        // Retain pending_cube_id so a retry reuses the same UUID,
+        // unless a Kit was saved for it (`abandon_creation_backup`).
+        // Clear recovery words on error too
+        for word in &mut self.recovery_words {
+            word.clear();
+            word.shrink_to_fit();
+        }
+        self.recovery_active_index = None;
+        // A failed write means no Cube exists, so the seed the
+        // user was just shown is worthless — scrub it and send
+        // them back to the create form, where the error below
+        // is visible and a retry generates a fresh seed.
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.abandon_creation_backup();
+        } else {
+            self.scrub_creation_seed();
+        }
+        self.error = Some(coincube_ui::localized_format!(
+            "Failed to create Cube: {}",
+            "No se pudo crear el Cube: {}",
+            e
+        ));
+        Task::none()
+    }
+
+    fn checked_result(&mut self, for_chain: ChainId, res: Result<State, String>) -> Task<Message> {
+        match res {
+            // The probe was started for a network the user has since
+            // switched away from: its result describes another
+            // directory. Dropping it keeps `State::Cubes::source` — and
+            // the list it labels — in step with `self.network`.
+            _ if for_chain != self.network => {
+                tracing::debug!(
+                    "Ignoring stale datadir probe for {} (now on {})",
+                    for_chain,
+                    self.network
+                );
+                Task::none()
+            }
+            Err(e) => {
+                self.catalog.pending_select = None;
+                self.create_network_selection_pending = false;
+                self.delete_after_check = None;
+                self.error = Some(e.to_string());
+                Task::none()
+            }
+            Ok(mut state) if matches!(self.state, State::CreationBackup(_)) => {
+                // The backup step owns the screen and an unwritten Cube's
+                // seed. A reload that lands now (the catch-up sync after
+                // signing in from the hub, say) must not replace it; it
+                // only refreshes the list a Cancel returns to.
+                if let State::Cubes { cubes, .. } = &mut state {
+                    self.creation_backup_cubes = std::mem::take(cubes);
+                }
+                Task::none()
+            }
+            Ok(state) => self.apply_checked_state(state),
+        }
+    }
+
+    fn apply_checked_state(&mut self, mut state: State) -> Task<Message> {
+        self.preserve_checked_view(&mut state);
+        self.reconcile_checked_catalog(&state);
+        self.state = state;
+        // Taken before the import's own Open returns early, so
+        // a pending pick never outlives this checked list.
+        let pending = self.catalog.pending_select.take();
+        if let Some(task) = self.checked_delete_task() {
+            return task;
+        }
+        if let Some(task) = self.checked_created_cube_task() {
+            return task;
+        }
+        // A Cube picked on another network made that network
+        // current; now that its list is checked, select it.
+        // Open replays as `RunCatalog`, which resolves the Cube
+        // through `catalog_index` on this checked list again.
+        let select = match pending {
+            Some((key, intent)) if key.chain == self.network => {
+                Task::done(Message::View(match intent {
+                    launcher_catalog::PendingIntent::Select => {
+                        ViewMessage::Catalog(launcher_catalog::CatalogMessage::SelectFloor(key))
+                    }
+                    launcher_catalog::PendingIntent::Open => ViewMessage::RunCatalog(key),
+                }))
+            }
+            _ => Task::none(),
+        };
+        match self.refresh_network_catalog(true) {
+            Some(load) => Task::batch([select, load]),
+            None => select,
+        }
+    }
+
+    fn preserve_checked_view(&mut self, state: &mut State) {
+        if self.create_network_selection_pending || self.showing_create_form() {
+            if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } = &mut *state {
+                *create_cube = true;
+            }
+            self.create_network_selection_pending = false;
+        }
+        if self.showing_import_or_restore() {
+            match &mut *state {
+                State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                    *create_cube = true
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn reconcile_checked_catalog(&mut self, state: &State) {
+        // Prune remote cubes that now exist locally
+        if let State::Cubes { cubes, .. } = state {
+            let local_ids: std::collections::HashSet<&str> =
+                cubes.iter().map(|c| c.id.as_str()).collect();
+            self.remote_cubes
+                .retain(|rc| !local_ids.contains(rc.uuid.as_str()));
+        }
+        // The list this replaces keeps showing as another
+        // network's, so the floor does not lose those Cubes while
+        // they are read again from disk.
+        if let State::Cubes { cubes, source, .. } = &self.state {
+            if *source != self.network {
+                let (source, cubes) = (*source, cubes.clone());
+                match self.network_catalog.iter_mut().find(|(c, _)| *c == source) {
+                    Some((_, list)) => *list = cubes,
+                    None => self.network_catalog.push((source, cubes)),
+                }
+            }
+        }
+    }
+
+    fn checked_delete_task(&mut self) -> Option<Task<Message>> {
+        // One checked list answers the request: a Cube missing
+        // from it is not asked about by a later reload.
+        if let Some(id) = self.delete_after_check.take() {
+            if let State::Cubes { cubes, .. } = &self.state {
+                if let Some(index) = cubes.iter().position(|cube| cube.id == id) {
+                    return Some(self.update_inner(Message::View(ViewMessage::DeleteCube(
+                        DeleteCubeMessage::ShowModal(index),
+                    ))));
+                }
+            }
+        }
+        None
+    }
+
+    fn checked_created_cube_task(&mut self) -> Option<Task<Message>> {
+        if let (Some(id), State::Cubes { cubes, .. }) = (&self.open_created_cube, &self.state) {
+            if let Some(index) = cubes.iter().position(|cube| &cube.id == id) {
+                self.open_created_cube = None;
+                return Some(self.update_inner(Message::View(ViewMessage::Run(index))));
+            }
+        }
+        None
+    }
+
+    fn run_cube(&mut self, index: usize) -> Task<Message> {
+        let State::Cubes { cubes, source, .. } = &self.state else {
+            return Task::none();
+        };
+        let Some(cube) = cubes.get(index) else {
+            return Task::none();
+        };
+        let source = *source;
+        // The record was read from `source`'s directory. Its
+        // own `network` must say the same, and this build must
+        // be able to run that chain — both decided here, before
+        // any file the *record* would point at is read. A
+        // record that disagrees is a copied or hand-edited
+        // settings.json; trusting it would open the wrong
+        // chain's config, seed folder and provider.
+        if cube.network != source {
+            self.error = Some(coincube_ui::localized_format!(
+                "This Cube's settings say it lives on {}, but it was found in \
+                 the {} folder. COINCUBE Desktop won't open it until the two agree.",
+                "Los ajustes de este Cube indican que está en {}, pero se encontró \
+                 en la carpeta {}. COINCUBE Desktop no lo abrirá hasta que coincidan.",
+                cube.network.label(),
+                source.label(),
+            ));
+            return Task::none();
+        }
+        if let Some(reason) = self.chain_availability(cube.network).reason() {
+            self.error = Some(reason.to_string());
+            return Task::none();
+        }
+        // The GUI config of the directory the record came from —
+        // never the one a record's claim would select.
+        let datadir_path = self.datadir_path.clone();
+        let mut path = self
+            .datadir_path
+            .network_directory(source)
+            .path()
+            .to_path_buf();
+        path.push(app::config::DEFAULT_FILE_NAME);
+        // `check_network_datadir` created this file if it was
+        // missing, but the disk is not frozen between that probe
+        // and this click: surface a read failure, don't panic.
+        let cfg = match app::Config::from_file(&path) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                self.error = Some(coincube_ui::localized_format!(
+                    "Couldn't read the {} folder's configuration ({}): {}",
+                    "No se pudo leer la configuración de la carpeta {} ({}): {}",
+                    source.label(),
+                    path.display(),
+                    e
+                ));
+                return Task::none();
+            }
+        };
+        let cube = cube.clone();
+        let floor_generation = self
+            .catalog
+            .open_from_floor
+            .then_some(self.catalog.floor_open_generation);
+        Task::perform(
+            async move { (datadir_path, cfg, source, cube, floor_generation) },
+            |(root, cfg, chain, cube, generation)| match generation {
+                Some(generation) => Message::RunFromFloor(root, cfg, chain, cube, generation),
+                None => Message::Run(root, cfg, chain, cube),
+            },
+        )
+    }
+
+    fn restore_from_kit(&mut self, cube_uuid: String) -> Task<Message> {
+        // Selecting a method closes the picker (a no-op when the
+        // launch came straight from a single-method row).
+        self.recovery_method_modal = None;
+        // W13 — same launch shape as CreateWallet; the
+        // installer picks the Recovery-Kit step sequence off
+        // the UserFlow. The clicked cube's `uuid` is threaded
+        // through so the step preselects it and skips the cube
+        // picker.
+        //
+        // Forward the home's already-authenticated Connect
+        // client so `RecoveryKitRestoreStep` can skip its own
+        // email + OTP form (the user already signed in to see
+        // the list of remote cubes on this very screen —
+        // re-prompting them for the same credentials right
+        // after they clicked "restore this one" is pure churn).
+        // Falls back to `None` when the session isn't active
+        // yet (developer-mode path, or stale cached home
+        // state), in which case the step's own auth form
+        // kicks in.
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        let client = self.connect_account.authenticated_client();
+        Task::perform(
+            async move { (datadir_path, network, client) },
+            move |(d, n, c)| {
+                Message::Install(
+                    d,
+                    n,
+                    UserFlow::RestoreFromRecoveryKit {
+                        cube_uuid: Some(cube_uuid),
+                    },
+                    c,
+                )
+            },
+        )
+    }
+
+    fn show_recovery_method(&mut self, cube_uuid: String) -> Task<Message> {
+        // Open the picker for a cube that offers both methods. Snapshot
+        // the row so the modal stays valid even if the list reloads.
+        if let Some(cube) = self.remote_cubes.iter().find(|r| r.uuid == cube_uuid) {
+            self.recovery_method_modal = Some(RecoveryMethodModal { cube: cube.clone() });
+        }
+        Task::none()
+    }
+
+    fn set_create_network_menu(&mut self, open: bool) -> Task<Message> {
+        self.create_network_menu = open && self.create_network_menu_editable();
+        if !open {
+            return create_journey_focus_task(Id::new(restore_frame::NETWORK_CONTROL_ID));
+        }
+        Task::none()
+    }
+
+    fn restore_from_any_kit(&mut self) -> Task<Message> {
+        // The Recovery Kit path: the installer signs in to Connect
+        // (or reuses this session) and lists the account's Cubes.
+        self.recovery_method_modal = None;
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        let client = self.connect_account.authenticated_client();
+        Task::perform(
+            async move { (datadir_path, network, client) },
+            move |(d, n, c)| {
+                Message::Install(
+                    d,
+                    n,
+                    UserFlow::RestoreFromRecoveryKit { cube_uuid: None },
+                    c,
+                )
+            },
+        )
+    }
+
+    fn set_developer_mode(&mut self, enabled: bool) -> Task<Message> {
+        let path = GlobalSettings::path(&self.datadir_path);
+        match GlobalSettings::update_developer_mode(&path, enabled) {
+            Ok(()) => {
+                self.settings_error = None;
+                Task::batch([
+                    self.reload_global_settings(),
+                    Task::done(Message::GlobalSettingsChanged),
+                ])
+            }
+            Err(e) => {
+                self.settings_error = Some(coincube_ui::localized_format!(
+                    "Couldn't save developer mode: {e}",
+                    "No se pudo guardar el modo de desarrollador: {e}"
+                ));
+                Task::none()
+            }
+        }
+    }
+
+    fn set_blake2b_beta(&mut self, enabled: bool) -> Task<Message> {
+        let path = GlobalSettings::path(&self.datadir_path);
+        match GlobalSettings::update_bitcoin_blake2b_beta(&path, enabled) {
+            Ok(()) => {
+                self.settings_error = None;
+                Task::batch([
+                    self.reload_global_settings(),
+                    if enabled {
+                        self.recheck_global_feature()
+                    } else {
+                        Task::none()
+                    },
+                    Task::done(Message::GlobalSettingsChanged),
+                ])
+            }
+            Err(e) => {
+                self.settings_error = Some(coincube_ui::localized_format!(
+                    "Couldn't save Bitcoin Blake2b beta: {e}",
+                    "No se pudo guardar la beta de Bitcoin Blake2b: {e}"
+                ));
+                Task::none()
+            }
+        }
+    }
+
+    fn launch_inherited_recovery(&mut self, cube_id: u64, full_cube: bool) -> Task<Message> {
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        let client = self.connect_account.authenticated_client();
+        Task::perform(
+            async move { (datadir_path, network, client) },
+            move |(d, n, c)| {
+                Message::Install(
+                    d,
+                    n,
+                    UserFlow::RecoverInheritedVault { cube_id, full_cube },
+                    c,
+                )
+            },
+        )
+    }
+
+    fn restore_with_phone(&mut self, cube_id: u64, full_cube: bool) -> Task<Message> {
+        // Selecting a method closes the picker (a no-op when the launch
+        // came straight from a single-method row).
+        self.recovery_method_modal = None;
+        let datadir_path = self.datadir_path.clone();
+        let network = self.network;
+        let client = self.connect_account.authenticated_client();
+        Task::perform(
+            async move { (datadir_path, network, client) },
+            move |(d, n, c)| {
+                Message::Install(
+                    d,
+                    n,
+                    UserFlow::RecoverOwnCubeWithPhone { cube_id, full_cube },
+                    c,
+                )
+            },
+        )
+    }
+
+    fn dismiss_advisory(&mut self) -> Task<Message> {
+        if let Some(advisory) = self.advisory_notice.take() {
+            match GlobalSettings::mark_advisory_notice_seen(
+                &GlobalSettings::path(&self.datadir_path),
+                advisory.id,
+            ) {
+                // Re-ask rather than just clearing: a fresh install
+                // owes a notice for every advisory we ship, and
+                // deferring the second one to the next launch would
+                // let someone who opens the app rarely sit on it for
+                // weeks.
+                Ok(()) => self.advisory_notice = pending_advisory_notice(&self.datadir_path),
+                // This modal has no other way out — no blur dismiss,
+                // one button. A settings file we cannot write must
+                // therefore not re-ask, or "Got it" would reopen the
+                // same notice forever. Stay quiet for this session and
+                // let the next launch owe it again.
+                Err(e) => {
+                    log::error!("[LAUNCHER] Failed to persist advisory notice: {}", e)
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn update_delete_modal(&mut self, message: Message) -> Task<Message> {
+        if let Some(modal) = &mut self.delete_cube_modal {
+            return modal.update(message);
+        }
+        Task::none()
+    }
+
+    fn remote_rename_after_local(&mut self, reload_task: Task<Message>) -> Task<Message> {
+        // Fire remote update now that local write succeeded
+        if let Some(pending) = self.pending_remote_rename.take() {
+            if let Some(client) = self.connect_account.authenticated_client() {
+                let update_req = UpdateCubeRequest {
+                    name: Some(pending.new_name),
+                    status: None,
+                    // Name-only rename: leave server Vault presence
+                    // and the Spark Stable Balance record untouched.
+                    has_vault: None,
+                    spark_stable_balance: None,
+                };
+                let cube_uuid = pending.cube_id.clone();
+                let cube_id = pending.cube_id;
+                let cube_network = pending.cube_network;
+                let remote_task = Task::perform(
+                    async move {
+                        let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
+                        let server_cube = cubes.iter().find(|c| c.uuid == cube_uuid);
+                        if let Some(sc) = server_cube {
+                            let server_id = sc.id.to_string();
+                            client
+                                .update_cube(&server_id, update_req)
+                                .await
+                                .map_err(|e| e.to_string())
+                        } else {
+                            Err("Cube not yet registered remotely".to_string())
+                        }
+                    },
+                    move |result| Message::CubeRemoteUpdated {
+                        cube_id,
+                        network: cube_network,
+                        result,
+                    },
+                );
+                return Task::batch([reload_task, remote_task]);
+            }
+        }
+        reload_task
+    }
+
+    fn cube_renamed(&mut self, result: Result<(), String>) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                self.rename_cube_modal = None;
+                let reload_task = self.reload();
+
+                self.remote_rename_after_local(reload_task)
+            }
+            Err(e) => {
+                // Clear pending remote rename on local failure
+                self.pending_remote_rename = None;
+                self.error = Some(format!("Failed to rename Cube: {}", e));
+                Task::none()
+            }
+        }
+    }
+
+    fn show_delete_for(&mut self, cube_id: String, chain: ChainId) -> Task<Message> {
+        // The Launcher may be listing another network. Its probe
+        // then reads the Cube's network.
+        let load = if chain == self.network {
+            self.reload()
+        } else {
+            self.update_inner(Message::View(ViewMessage::SelectNetwork(chain)))
+        };
+        if self.network != chain {
+            // The switch was refused; its reason is on screen.
+            return load;
+        }
+        // Never the row already listed: a retained Launcher may hold
+        // one from before the import moved on, and the delete checks
+        // its snapshot against the Cube's current settings.
+        self.delete_after_check = Some(cube_id);
+        load
+    }
+
+    fn show_delete_modal(&mut self, i: usize) -> Task<Message> {
+        if let State::Cubes { cubes, .. } = &self.state {
+            if let Some(cube) = cubes.get(i) {
+                let wallet_datadir = self.datadir_path.network_directory(cube.network);
+                let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
+
+                // Get wallet settings if vault exists
+                let (wallet_settings, internal_bitcoind) =
+                    delete_wallet_context(cube, &wallet_datadir, &config_path);
+
+                self.delete_cube_modal = Some(DeleteCubeModal::new(
+                    cube.clone(),
+                    wallet_datadir,
+                    self.datadir_path.path().to_path_buf(),
+                    wallet_settings,
+                    internal_bitcoind,
+                    self.connect_account.is_authenticated(),
+                ));
+            }
+        }
+        Task::none()
+    }
+
+    fn restore_remote_instead(&mut self, uuid: String) -> Task<Message> {
+        // A Cube with nothing this build can restore keeps its modal
+        // open: no button offers this, and a stale press must not
+        // close it.
+        let Some(modal) = self
+            .delete_remote_cube_modal
+            .take_if(|modal| !modal.deleting && modal.cube.uuid == uuid && modal.restorable())
+        else {
+            return Task::none();
+        };
+        match launcher_catalog::remote_restore(&modal.cube).action {
+            Some((restore, _)) => self.update_inner(Message::View(restore)),
+            None => Task::none(),
+        }
+    }
+
+    fn confirm_remote_delete(&mut self, uuid: String) -> Task<Message> {
+        // The view only offers Delete once the name matches; a stale
+        // press for another Cube, or one before that, does nothing.
+        match &mut self.delete_remote_cube_modal {
+            Some(modal) if !modal.deleting && modal.cube.uuid == uuid && modal.name_confirmed() => {
+                modal.deleting = true;
+            }
+            _ => return Task::none(),
+        }
+        if let Some(client) = self.connect_account.authenticated_client() {
+            Task::perform(
+                async move {
+                    let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
+                    let server_cube = cubes.iter().find(|c| c.uuid == uuid);
+                    if let Some(cube) = server_cube {
+                        let server_id = cube.id.to_string();
+                        client
+                            .delete_cube(&server_id)
+                            .await
+                            .map_err(|e| e.to_string())
+                    } else {
+                        Err("Cube not found on server".to_string())
+                    }
+                },
+                Message::RemoteCubeDeleted,
+            )
+        } else {
+            if let Some(modal) = &mut self.delete_remote_cube_modal {
+                modal.deleting = false;
+                modal.error = Some("Not authenticated with Connect".to_string());
+            }
+            Task::none()
+        }
+    }
+
+    fn remote_delete_after_local(&self) -> Option<Task<Message>> {
+        // Only delete from the Connect API if user opted in
+        let should_delete_remote = self
+            .delete_cube_modal
+            .as_ref()
+            .is_some_and(|m| m.delete_connect_backup);
+
+        if should_delete_remote {
+            if let Some(client) = self.connect_account.authenticated_client() {
+                self.delete_cube_modal
+                    .as_ref()
+                    .map(|m| m.cube.id.clone())
+                    .map(|uuid| {
+                        Task::perform(
+                            async move {
+                                let cubes = client.list_cubes().await.map_err(|e| e.to_string())?;
+                                let server_cube = cubes.iter().find(|c| c.uuid == uuid);
+                                if let Some(cube) = server_cube {
+                                    let server_id = cube.id.to_string();
+                                    client
+                                        .delete_cube(&server_id)
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                            Message::CubeBackupDeleted,
+                        )
+                    })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn local_cube_deleted(&mut self) -> Task<Message> {
+        let delete_task = self.remote_delete_after_local();
+
+        // Close modal and reload cubes.
+        self.delete_cube_modal = None;
+        let reload_task = self.reload();
+        // The deleted Cube may still exist on Connect — that's the whole
+        // point of leaving the box unchecked — in which case it just
+        // became remote-only and belongs in the restore list. `reload`
+        // alone can't discover that: `Message::Checked` only *prunes*
+        // `remote_cubes`, so without a re-fetch the Cube vanishes from
+        // the page entirely and looks unrecoverable until the next
+        // sign-in. Re-fetch after the remote delete (when there was one)
+        // so the list reflects the server's post-delete state rather
+        // than racing it.
+        if let Some(delete_task) = delete_task {
+            Task::batch([reload_task, delete_task])
+        } else {
+            Task::batch([reload_task, self.fetch_remote_cubes()])
+        }
+    }
+
+    fn close_delete_modal(&mut self) -> Task<Message> {
+        let opener = self.delete_cube_modal.as_ref().map(|modal| CubeCatalogKey {
+            chain: modal.cube.network,
+            cube_id: modal.cube.id.clone(),
+        });
+        self.delete_cube_modal = None;
+        if self.network == ChainId::Testnet
+            && !has_existing_wallet(&self.datadir_path, Network::Testnet)
+        {
+            self.network = ChainId::Testnet4;
+        }
+        opener
+            .as_ref()
+            .map(|key| focus_local_delete_opener(self, key))
+            .unwrap_or_else(Task::none)
+    }
+
+    fn confirm_rename(&mut self) -> Task<Message> {
+        let Some((ref key, ref new_name)) = self.rename_cube_modal else {
+            return Task::none();
+        };
+        let new_name = new_name.trim().to_string();
+        if new_name.is_empty() {
+            return Task::none();
+        }
+        let Some(index) = self.catalog_index(key) else {
+            self.rename_cube_modal = None;
+            self.error = Some(
+                "This Cube is no longer in the current catalog. Review the list and try again."
+                    .into(),
+            );
+            return Task::none();
+        };
+        let Some(cube) = (if let State::Cubes { cubes, .. } = &self.state {
+            cubes.get(index).cloned()
+        } else {
+            None
+        }) else {
+            return Task::none();
+        };
+
+        let network_dir = self.datadir_path.network_directory(cube.network);
+        let cube_id = cube.id.clone();
+        let name_for_settings = new_name.clone();
+
+        // Stash context for remote update — will be consumed in
+        // CubeRenamed handler only if the local write succeeds.
+        if self.connect_account.is_authenticated() {
+            self.pending_remote_rename = Some(PendingRemoteRename {
+                cube_id: cube.id.clone(),
+                cube_network: cube.network,
+                new_name: new_name.clone(),
+            });
+        }
+
+        // Update local settings file first; remote update follows
+        // in the CubeRenamed success handler.
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, |mut s| {
+                    if let Some(c) = s.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        c.name = name_for_settings;
+                        // Mark unsynced so catch-up can pick up the
+                        // name change if the remote update fails or
+                        // we're offline.
+                        c.remote_synced = false;
+                    }
+                    Some(s)
+                })
+                .await
+                .map_err(|e| e.to_string())
+            },
+            Message::CubeRenamed,
+        )
+    }
+
+    fn catch_up_sync_finished(&mut self, outcomes: Vec<(String, Option<String>)>) -> Task<Message> {
+        // Apply per Cube rather than replacing the map. A Cube the
+        // round synced loses its reason (a slot freed up, a rename went
+        // through); one it could not sync gains the current one. A Cube
+        // the round never examined — created after it snapshotted the
+        // unsynced set, and refused in the meantime — keeps what
+        // `CubeRemoteRegistered` recorded, which a blanket clear would
+        // have erased.
+        for (cube_id, outcome) in outcomes {
+            match outcome {
+                Some(reason) => {
+                    self.cube_sync_errors.insert(cube_id, reason);
+                }
+                None => {
+                    self.cube_sync_errors.remove(&cube_id);
+                }
+            }
+        }
+        // Successes wrote `remote_synced` to disk; reload so the list
+        // reflects them.
+        self.reload()
+    }
+
+    fn cube_limits_loaded(&mut self, result: Result<CubeLimitsResponse, String>) -> Task<Message> {
+        match result {
+            Ok(limits) => {
+                self.server_cube_limit = Some(limits.max_allowed);
+            }
+            Err(e) => {
+                log::warn!("[LAUNCHER] Failed to fetch cube limits: {}", e);
+            }
+        }
+        Task::none()
+    }
+
+    fn network_catalog_loaded(
+        &mut self,
+        generation: u64,
+        chain: ChainId,
+        cubes: Result<Vec<CubeSettings>, String>,
+    ) -> Task<Message> {
+        // A read superseded by a newer load, or for a network that
+        // has since become current or stopped being listed, is
+        // dropped: it describes nothing on screen.
+        if generation != self.network_catalog_generation
+            || !self.network_catalog_requested.contains(&chain)
+        {
+            return Task::none();
+        }
+        self.network_catalog_unread.retain(|c| *c != chain);
+        match cubes {
+            Ok(cubes) => match self.network_catalog.iter_mut().find(|(c, _)| *c == chain) {
+                Some((_, list)) => *list = cubes,
+                None => self.network_catalog.push((chain, cubes)),
+            },
+            // Keep whatever was last read; the menu says the
+            // network is unavailable rather than showing 0 Cubes.
+            Err(_) => self.network_catalog_unread.push(chain),
+        }
+        Task::none()
+    }
+
+    fn cube_remote_updated(
+        &mut self,
+        cube_id: String,
+        network: ChainId,
+        result: Result<CubeResponse, String>,
+    ) -> Task<Message> {
+        match result {
+            Ok(_) => {
+                log::info!("[LAUNCHER] Cube {} updated remotely", cube_id);
+                let network_dir = self.datadir_path.network_directory(network);
+                let owner = self.connect_owner();
+                Task::perform(
+                    async move {
+                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                            .await
+                            .ok();
+                    },
+                    |_| Message::View(ViewMessage::Check),
+                )
+            }
+            Err(e) => {
+                log::warn!(
+                    "[LAUNCHER] Failed to update cube {} remotely: {}",
+                    cube_id,
+                    e
+                );
+                Task::none()
+            }
+        }
+    }
+
+    fn cube_backup_deleted(&mut self, result: Result<(), String>) -> Task<Message> {
+        match &result {
+            Ok(()) => log::info!("[LAUNCHER] Cube Connect backup deleted"),
+            Err(e) => log::warn!("[LAUNCHER] Failed to delete cube backup: {}", e),
+        }
+        // Either outcome changes what the restore list should show, and
+        // the delete has now settled: on success the Cube is gone from
+        // Connect and must not reappear as restorable; on failure its
+        // Connect copy survived the local delete, so it *is* restorable
+        // and has to show up. Both are one re-fetch away.
+        self.fetch_remote_cubes()
+    }
+
+    fn remote_cube_deleted(&mut self, result: Result<(), String>) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                log::info!("[LAUNCHER] Remote cube deleted");
+                if let Some(modal) = self.delete_remote_cube_modal.take() {
+                    self.remote_cubes.retain(|rc| rc.uuid != modal.cube.uuid);
+                    let reload_task = self.reload();
+                    // Dropping the row locally is not enough: a fetch
+                    // issued before the delete settled is still in
+                    // flight, and its pre-delete list still contains
+                    // this Cube. `Message::Checked` only *prunes*
+                    // `remote_cubes`, so nothing in `reload` would stop
+                    // that result from putting the deleted row back on
+                    // screen. Re-fetching claims a new generation,
+                    // which discards the in-flight result, and replaces
+                    // it with the server's post-delete state.
+                    return Task::batch([reload_task, self.fetch_remote_cubes()]);
+                }
+            }
+            Err(e) => {
+                log::warn!("[LAUNCHER] Failed to delete remote cube: {}", e);
+                if let Some(modal) = &mut self.delete_remote_cube_modal {
+                    modal.deleting = false;
+                    modal.error = Some(e);
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn show_remote_delete_modal(&mut self, uuid: String) -> Task<Message> {
+        if let Some(rc) = self.remote_cubes.iter().find(|r| r.uuid == uuid) {
+            self.delete_remote_cube_modal = Some(DeleteRemoteCubeModal {
+                cube: rc.clone(),
+                deleting: false,
+                error: None,
+                typed_name: String::new(),
+            });
+        }
+        Task::none()
+    }
+
+    fn close_remote_delete_modal(&mut self) -> Task<Message> {
+        let opener = self
+            .delete_remote_cube_modal
+            .as_ref()
+            .map(|modal| modal.cube.uuid.clone());
+        self.delete_remote_cube_modal = None;
+        opener
+            .as_deref()
+            .map(|uuid| focus_remote_delete_opener(self, uuid))
+            .unwrap_or_else(Task::none)
+    }
+
+    fn edit_remote_delete_name(&mut self, name: String) -> Task<Message> {
+        if let Some(modal) = &mut self.delete_remote_cube_modal {
+            if !modal.deleting {
+                modal.typed_name = name;
+            }
+        }
+        Task::none()
+    }
+
+    fn show_rename_modal(&mut self, index: usize) -> Task<Message> {
+        if let State::Cubes { cubes, .. } = &self.state {
+            if let Some(cube) = cubes.get(index) {
+                self.rename_cube_modal = Some((
+                    CubeCatalogKey {
+                        chain: cube.network,
+                        cube_id: cube.id.clone(),
+                    },
+                    cube.name.clone(),
+                ));
+            }
+        }
+        Task::none()
+    }
+
+    fn edit_rename_name(&mut self, name: String) -> Task<Message> {
+        if let Some((_, ref mut input)) = self.rename_cube_modal {
+            *input = name;
+        }
+        Task::none()
+    }
+
+    fn close_rename_modal(&mut self) -> Task<Message> {
+        self.rename_cube_modal = None;
+        Task::none()
+    }
+
+    fn select_network(&mut self, network: ChainId) -> Task<Message> {
+        self.catalog.network_menu = false;
+        self.create_network_menu = false;
+        // Not while a Cube is mid-creation: its seed, passkey and any
+        // Recovery Kit were made for this network, and the write reads
+        // `self.network`. The header menu is closed in the step; this
+        // refuses the other routes too.
+        if matches!(self.state, State::CreationBackup(_)) || self.creating_cube {
+            self.catalog.pending_select = None;
+            self.set_error(
+                "Finish or cancel creating this Cube before switching networks.".to_string(),
+            );
+            return Task::none();
+        }
+        if !(self.developer_mode
+            || network == ChainId::Bitcoin
+            || network == ChainId::BitcoinBlake2b
+                && self.chain_availability(network).is_available())
+        {
+            tracing::debug!("Ignoring SelectNetwork action because developer mode is disabled");
+            self.catalog.pending_select = None;
+            return Task::none();
+        }
+        if let Some(reason) = self.chain_availability(network).reason() {
+            self.set_error(reason.to_string());
+            self.catalog.pending_select = None;
+            return Task::none();
+        }
+        self.create_network_selection_pending = matches!(self.active_section, HomeSection::Cubes)
+            && self.showing_create_form()
+            && self.pending_bitcoin_import.is_none();
+        self.network = network;
+        self.open_created_cube = None;
+        self.delete_after_check = None;
+        self.open_after_registration = None;
+        if network != ChainId::Bitcoin {
+            // Import Bitcoin wallet is Bitcoin only: leaving Bitcoin
+            // drops a pending import. Import or restore itself stays
+            // open and re-filters for the new network.
+            self.pending_bitcoin_import = None;
+        }
+        self.error = None;
+        // Clear stale limit from previous network
+        self.server_cube_limit = None;
+        let network_dir = self.datadir_path.network_directory(self.network);
+        let mut tasks: Vec<Task<Message>> = vec![probe_network_datadir(self.network, network_dir)];
+        // Re-fetch limits for the new network if authenticated
+        if let Some(client) = self.connect_account.authenticated_client() {
+            let network_str = settings::network_to_api_string(self.network);
+            tasks.push(Task::perform(
+                async move {
+                    client
+                        .get_cube_limits(&network_str)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+                Message::CubeLimitsLoaded,
+            ));
+        }
+        Task::batch(tasks)
     }
 
     /// Drive the creation-time backup step.
@@ -5157,16 +5376,7 @@ impl Home {
                 // to PIN-only. A user who believes they have
                 // two-factor protection and has one factor is worse
                 // off than a user who was told the truth (I7).
-                let device_secret = match unlock::device_secret::capability() {
-                    unlock::device_secret::Capability::Available => Some(
-                        unlock::device_secret::get_or_create(
-                            datadir_path.path(),
-                            &cube_id.to_string(),
-                        )
-                        .map_err(|e| e.to_string())?,
-                    ),
-                    unlock::device_secret::Capability::Unavailable(why) => return Err(why),
-                };
+                let device_secret = Self::require_pin_cube_device_secret(&datadir_path, cube_id)?;
 
                 // Rebuild the signer from the phrase the user was just shown.
                 // Same call the recovery path makes, so "what the user wrote
@@ -5208,21 +5418,15 @@ impl Home {
                 //
                 // Taking it once removes both. `cube.created_at` is overwritten
                 // with this value below.
-                let timestamp = chrono::Utc::now().timestamp();
-                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                // Store master seed mnemonic encrypted with PIN
-                master_signer
-                    .store_encrypted_for_chain(
-                        datadir_path.path(),
-                        network,
-                        &secp,
-                        Some((master_checksum, timestamp)),
-                        &pin,
-                        &cube_id.to_string(),
-                        device_secret.as_ref(),
-                    )
-                    .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+                let timestamp = Self::store_pin_cube_master_seed(
+                    &master_signer,
+                    &datadir_path,
+                    network,
+                    &secp,
+                    &pin,
+                    cube_id,
+                    &device_secret,
+                )?;
 
                 tracing::info!(
                     "Master signer created and stored (encrypted with PIN) \
@@ -5257,17 +5461,14 @@ impl Home {
                 // surfaced — telling the user "the duress decoy failed" on a
                 // machine with no duress enrolled would leak more than the
                 // missing file does.
-                let slot_name = unlock::marker::new_file_name(timestamp);
-                match unlock::marker::write_decoy(
-                    datadir_path.path(),
+                Self::write_pin_cube_decoy(
+                    &mut cube,
+                    &datadir_path,
                     network,
-                    &cube_id.to_string(),
-                    &slot_name,
-                    device_secret.as_ref(),
-                ) {
-                    Ok(()) => cube.duress_slot_file = Some(slot_name),
-                    Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
-                }
+                    cube_id,
+                    timestamp,
+                    &device_secret,
+                );
                 // The outcome of the backup step above. `backed_up` is the
                 // same flag Settings → Backup Master Seed sets, and it is what
                 // satisfies `creation_gate::evaluate`.
@@ -5306,6 +5507,65 @@ impl Home {
             },
             Message::CubeCreated,
         )
+    }
+
+    fn require_pin_cube_device_secret(
+        datadir_path: &CoincubeDirectory,
+        cube_id: uuid::Uuid,
+    ) -> Result<DeviceSecret, String> {
+        match unlock::device_secret::capability() {
+            unlock::device_secret::Capability::Available => {
+                unlock::device_secret::get_or_create(datadir_path.path(), &cube_id.to_string())
+                    .map_err(|e| e.to_string())
+            }
+            unlock::device_secret::Capability::Unavailable(why) => Err(why),
+        }
+    }
+
+    fn store_pin_cube_master_seed(
+        master_signer: &MasterSigner,
+        datadir_path: &CoincubeDirectory,
+        network: ChainId,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        pin: &str,
+        cube_id: uuid::Uuid,
+        device_secret: &DeviceSecret,
+    ) -> Result<i64, String> {
+        let timestamp = chrono::Utc::now().timestamp();
+        let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
+        master_signer
+            .store_encrypted_for_chain(
+                datadir_path.path(),
+                network,
+                secp,
+                Some((master_checksum, timestamp)),
+                pin,
+                &cube_id.to_string(),
+                Some(device_secret),
+            )
+            .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+        Ok(timestamp)
+    }
+
+    fn write_pin_cube_decoy(
+        cube: &mut CubeSettings,
+        datadir_path: &CoincubeDirectory,
+        network: ChainId,
+        cube_id: uuid::Uuid,
+        timestamp: i64,
+        device_secret: &DeviceSecret,
+    ) {
+        let slot_name = unlock::marker::new_file_name(timestamp);
+        match unlock::marker::write_decoy(
+            datadir_path.path(),
+            network,
+            &cube_id.to_string(),
+            &slot_name,
+            Some(device_secret),
+        ) {
+            Ok(()) => cube.duress_slot_file = Some(slot_name),
+            Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
+        }
     }
 
     fn creation_form(&self, submit_in_form: bool) -> Element<ViewMessage> {
@@ -7378,6 +7638,43 @@ fn vault_subtitle(cube: &CubeSettings) -> String {
         (None, _) => "No Vault configured".to_string(),
         (Some(_), None) => "Vault configured".to_string(),
         (Some(_), Some(fp)) => format!("Vault {}", fp),
+    }
+}
+
+fn wallet_internal_bitcoind(
+    wallet: &WalletSettings,
+    config_path: &std::path::Path,
+) -> Option<bool> {
+    if wallet.remote_backend_auth.is_some() {
+        Some(false)
+    } else if wallet.start_internal_bitcoind.is_some() {
+        wallet.start_internal_bitcoind
+    } else if let Ok(cfg) = app::Config::from_file(config_path) {
+        Some(cfg.start_internal_bitcoind)
+    } else {
+        None
+    }
+}
+
+fn delete_wallet_context(
+    cube: &CubeSettings,
+    wallet_datadir: &NetworkDirectory,
+    config_path: &std::path::Path,
+) -> (Option<WalletSettings>, Option<bool>) {
+    if let Some(vault_id) = &cube.vault_wallet_id {
+        match settings::Settings::from_file(wallet_datadir) {
+            Ok(s) => {
+                if let Some(wallet) = s.wallets.iter().find(|w| w.wallet_id() == *vault_id) {
+                    let internal_bitcoind = wallet_internal_bitcoind(wallet, config_path);
+                    (Some(wallet.clone()), internal_bitcoind)
+                } else {
+                    (None, None)
+                }
+            }
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
     }
 }
 
