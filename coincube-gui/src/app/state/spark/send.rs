@@ -1209,7 +1209,7 @@ impl SparkSend {
         let input = self.destination_input.trim().to_string();
         let generation = self.begin_preparation();
 
-        // The THEY RECEIVE selection the path. A stablecoin
+        // The THEY RECEIVE selection decides the path. A stablecoin
         // target is a BTC-funded cross-chain send: ask the bridge for
         // routes, then confirm a chain + quote before anything moves.
         // Providers/chains have no test deployment, so it's mainnet-only.
@@ -1273,7 +1273,7 @@ impl SparkSend {
     ) -> Task<Message> {
         use crate::app::view::SparkSendMessage;
 
-        // A bitcoin rail:y the destination via `parse_input` and
+        // A bitcoin rail: classify the destination via `parse_input` and
         // dispatch to the right prepare RPC (`prepare_send` /
         // `prepare_lnurl_pay`) in one task, so the user sees a single
         // "Preparing…" regardless of the underlying rail.
