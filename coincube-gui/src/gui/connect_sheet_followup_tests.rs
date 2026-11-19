@@ -736,14 +736,9 @@ fn assert_launcher_auth_focus_case(
     close_connect_sheet_and_assert_focus(&mut gui, escape, expected);
 }
 
-fn assert_cube_auth_focus_case(path: &std::path::Path, signed_in_at_open: bool, escape: bool) {
-    let (mut app, _) = app::shell_tests::bitcoin_app(path);
-    if signed_in_at_open {
-        app::shell_tests::signed_in_connect_for_shell(&mut app);
-        app.cache_mut().sidebar_connect_signed_in = true;
-    }
+fn single_cube_gui(path: &std::path::Path, app: app::App) -> (GUI, pane_grid::Pane) {
     let (panes, pane_id) = pane_grid::State::new(pane::Pane::new_with_tab(tab::State::App(app)));
-    let mut gui = GUI {
+    let gui = GUI {
         panes,
         focus: Some(pane_id),
         config: Config::new(CoincubeDirectory::new(path.to_path_buf()), None),
@@ -760,6 +755,16 @@ fn assert_cube_auth_focus_case(path: &std::path::Path, signed_in_at_open: bool, 
         zoom: ZoomState::default(),
         worldview_sharing: worldview::Sharing::default(),
     };
+    (gui, pane_id)
+}
+
+fn assert_cube_auth_focus_case(path: &std::path::Path, signed_in_at_open: bool, escape: bool) {
+    let (mut app, _) = app::shell_tests::bitcoin_app(path);
+    if signed_in_at_open {
+        app::shell_tests::signed_in_connect_for_shell(&mut app);
+        app.cache_mut().sidebar_connect_signed_in = true;
+    }
+    let (mut gui, pane_id) = single_cube_gui(path, app);
     let tab_id = gui.panes.get(pane_id).unwrap().tabs[0].id;
     drop(gui.update(Message::Pane(
         pane_id,
@@ -908,25 +913,7 @@ fn probe_p4_signed_out_cube_chip_overlays_cube() {
     with_runtime("pr805-p4", |path, runtime| {
         let (app, _) = app::shell_tests::bitcoin_app(path);
         assert!(!app.can_restore_connect_session());
-        let (panes, pane_id) =
-            pane_grid::State::new(pane::Pane::new_with_tab(tab::State::App(app)));
-        let mut gui = GUI {
-            panes,
-            focus: Some(pane_id),
-            config: Config::new(CoincubeDirectory::new(path.to_path_buf()), None),
-            window_id: None,
-            window_init: None,
-            window_config: None,
-            global_cache: GlobalCache::default(),
-            theme_mode: Default::default(),
-            system_theme: None,
-            system_reduces_motion: None,
-            preferences_sheet: None,
-            connect_sheet: None,
-            preferences: unresolved_test_preferences(),
-            zoom: ZoomState::default(),
-            worldview_sharing: worldview::Sharing::default(),
-        };
+        let (mut gui, pane_id) = single_cube_gui(path, app);
         let cube_tab = gui.panes.get(pane_id).unwrap().tabs[0].id;
         drop(gui.view());
         let queue = vec![Message::Pane(
@@ -1015,25 +1002,7 @@ fn drive_p4_sign_in_navigation(
 fn view_plans_sheet_returns_focus_to_cube_settings() {
     with_runtime("connect-view-plans-focus", |path, _| {
         let (app, _) = app::shell_tests::bitcoin_app(path);
-        let (panes, pane_id) =
-            pane_grid::State::new(pane::Pane::new_with_tab(tab::State::App(app)));
-        let mut gui = GUI {
-            panes,
-            focus: Some(pane_id),
-            config: Config::new(CoincubeDirectory::new(path.to_path_buf()), None),
-            window_id: None,
-            window_init: None,
-            window_config: None,
-            global_cache: GlobalCache::default(),
-            theme_mode: Default::default(),
-            system_theme: None,
-            system_reduces_motion: None,
-            preferences_sheet: None,
-            connect_sheet: None,
-            preferences: unresolved_test_preferences(),
-            zoom: ZoomState::default(),
-            worldview_sharing: worldview::Sharing::default(),
-        };
+        let (mut gui, pane_id) = single_cube_gui(path, app);
         let tab_id = gui.panes.get(pane_id).unwrap().tabs[0].id;
         for id in [
             crate::app::view::settings::general::RECOVERY_ALERTS_VIEW_PLANS_ID,
