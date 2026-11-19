@@ -352,6 +352,147 @@ impl Activity {
         }
     }
 
+    fn finish_vault_load(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        result: Result<(Vec<HistoryTransaction>, bool), String>,
+    ) -> Task<Message> {
+        self.vault_loading = false;
+        match result {
+            Ok((rows, more)) => {
+                self.vault = rows;
+                self.vault_has_more = more;
+                self.vault_error = None;
+            }
+            Err(error) => self.vault_error = Some(error),
+        }
+        if std::mem::take(&mut self.vault_stale) {
+            return self.refresh_wallet(WalletFilter::Vault, daemon, None);
+        }
+        Task::none()
+    }
+
+    fn finish_label_save(
+        &mut self,
+        request: u64,
+        result: Result<(String, String, Option<String>), String>,
+    ) {
+        // Only this request's own answer ends its "Saving…"; an
+        // answer from before a reload still updates the rows.
+        let current = self
+            .label_saves
+            .iter()
+            .position(|(pending, _, _)| *pending == request)
+            .map(|index| self.label_saves.remove(index));
+        match result {
+            Ok((entry_id, key, label)) => {
+                self.apply_label(&key, label.as_deref());
+                self.label_errors.remove(&entry_id);
+                if self.label_draft.as_ref().is_some_and(|(id, draft)| {
+                    id == &entry_id && draft.trim() == label.as_deref().unwrap_or("")
+                }) {
+                    self.label_draft = None;
+                }
+            }
+            Err(_) => {
+                if let Some((_, entry_id, text)) = current {
+                    // Give the text back, unless another row's edit
+                    // holds the draft now.
+                    if self
+                        .label_draft
+                        .as_ref()
+                        .is_none_or(|(id, _)| id == &entry_id)
+                    {
+                        self.label_draft = Some((entry_id.clone(), text));
+                    }
+                    self.label_errors.insert(
+                        entry_id,
+                        "The label couldn't be saved. Press Enter to retry.".to_owned(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn update_activity_view(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        event: ActivityMessage,
+    ) -> Task<Message> {
+        match event {
+            ActivityMessage::Wallet(value) => self.filters.wallet = value,
+            ActivityMessage::Direction(value) => self.filters.direction = value,
+            ActivityMessage::Status(value) => self.filters.status = value,
+            ActivityMessage::DateRange(value) => self.filters.date_range = value,
+            ActivityMessage::Search(value) => self.filters.search = value,
+            ActivityMessage::Clear => self.filters = Default::default(),
+            ActivityMessage::Select(id) => {
+                if self.selected_id.as_deref() != Some(id.as_str()) {
+                    self.details_open = None;
+                }
+                // One draft at a time, kept for its own row (a failed
+                // save gives its text back); a row's save error stays.
+                if self
+                    .label_draft
+                    .as_ref()
+                    .is_some_and(|(draft_id, _)| draft_id != &id)
+                {
+                    self.label_draft = None;
+                }
+                self.opened = None;
+                self.selected_id = Some(id);
+            }
+            ActivityMessage::ToggleDetails(open) => {
+                self.details_open = open.then(|| self.selected_id.clone()).flatten();
+            }
+            ActivityMessage::LabelEdited(value) => {
+                if let Some(id) = self.selected_id.clone() {
+                    self.label_errors.remove(&id);
+                    self.label_draft = Some((id, value));
+                }
+            }
+            ActivityMessage::SaveLabel => return self.save_label(daemon),
+            ActivityMessage::CloseDetail => {
+                self.details_open = None;
+                self.label_draft = None;
+                self.opened = None;
+                let selected = self.selected_id.take();
+                return selected.map_or_else(Task::none, |id| {
+                    iced::widget::operation::focus(view::activity::row_focus_id(&id))
+                });
+            }
+            ActivityMessage::Retry => return self.reload(daemon, self.wallet.clone()),
+            ActivityMessage::RetryWallet(wallet) => {
+                return self.refresh_wallet(wallet, daemon, None)
+            }
+            ActivityMessage::LoadMore => return self.load_more(daemon),
+            ActivityMessage::OpenDetail(target) => {
+                return Task::done(Message::ActivityOpenDetail(target))
+            }
+            ActivityMessage::ViewAll(wallet) => {
+                // App switches to Activity; it opens on this wallet alone.
+                self.clear_selection();
+                self.filters = view::activity::Filters {
+                    wallet,
+                    ..Default::default()
+                };
+            }
+            ActivityMessage::Open(id) => {
+                // App switches to Activity; it opens unfiltered with this
+                // row selected. The id is the row's own, not its place in
+                // a list, so the selection holds while the page reloads.
+                // App keeps the row as the Overview listed it
+                // (`Self::opened`), read before the reload cleared it.
+                let opened = self.entries().into_iter().find(|entry| entry.id == id);
+                self.clear_selection();
+                self.filters = Default::default();
+                self.opened = opened;
+                self.selected_id = Some(id);
+            }
+        }
+        Task::none()
+    }
+
     fn save_label(&mut self, daemon: Option<Arc<dyn Daemon + Sync + Send>>) -> Task<Message> {
         let Some((entry_id, draft)) = self.label_draft.clone() else {
             return Task::none();
@@ -577,24 +718,13 @@ impl State for Activity {
 
     fn update(
         &mut self,
-        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         match message {
             Message::ActivityVaultLoaded(generation, result) if generation == self.generation => {
-                self.vault_loading = false;
-                match result {
-                    Ok((rows, more)) => {
-                        self.vault = rows;
-                        self.vault_has_more = more;
-                        self.vault_error = None;
-                    }
-                    Err(error) => self.vault_error = Some(error),
-                }
-                if std::mem::take(&mut self.vault_stale) {
-                    return self.refresh_wallet(WalletFilter::Vault, _daemon, None);
-                }
+                return self.finish_vault_load(daemon, result);
             }
             Message::ActivityPsbtLoaded(generation, result) if generation == self.generation => {
                 self.psbt_loading = false;
@@ -640,114 +770,10 @@ impl State for Activity {
                     return self.refresh_wallet(WalletFilter::Spark, None, None);
                 }
             }
-            Message::ActivityLabelSaved(request, result) => {
-                // Only this request's own answer ends its "Saving…"; an
-                // answer from before a reload still updates the rows.
-                let current = self
-                    .label_saves
-                    .iter()
-                    .position(|(pending, _, _)| *pending == request)
-                    .map(|index| self.label_saves.remove(index));
-                match result {
-                    Ok((entry_id, key, label)) => {
-                        self.apply_label(&key, label.as_deref());
-                        self.label_errors.remove(&entry_id);
-                        if self.label_draft.as_ref().is_some_and(|(id, draft)| {
-                            id == &entry_id && draft.trim() == label.as_deref().unwrap_or("")
-                        }) {
-                            self.label_draft = None;
-                        }
-                    }
-                    Err(_) => {
-                        if let Some((_, entry_id, text)) = current {
-                            // Give the text back, unless another row's edit
-                            // holds the draft now.
-                            if self
-                                .label_draft
-                                .as_ref()
-                                .is_none_or(|(id, _)| id == &entry_id)
-                            {
-                                self.label_draft = Some((entry_id.clone(), text));
-                            }
-                            self.label_errors.insert(
-                                entry_id,
-                                "The label couldn't be saved. Press Enter to retry.".to_owned(),
-                            );
-                        }
-                    }
-                }
+            Message::ActivityLabelSaved(request, result) => self.finish_label_save(request, result),
+            Message::View(view::Message::Activity(event)) => {
+                return self.update_activity_view(daemon, event)
             }
-            Message::View(view::Message::Activity(event)) => match event {
-                ActivityMessage::Wallet(value) => self.filters.wallet = value,
-                ActivityMessage::Direction(value) => self.filters.direction = value,
-                ActivityMessage::Status(value) => self.filters.status = value,
-                ActivityMessage::DateRange(value) => self.filters.date_range = value,
-                ActivityMessage::Search(value) => self.filters.search = value,
-                ActivityMessage::Clear => self.filters = Default::default(),
-                ActivityMessage::Select(id) => {
-                    if self.selected_id.as_deref() != Some(id.as_str()) {
-                        self.details_open = None;
-                    }
-                    // One draft at a time, kept for its own row (a failed
-                    // save gives its text back); a row's save error stays.
-                    if self
-                        .label_draft
-                        .as_ref()
-                        .is_some_and(|(draft_id, _)| draft_id != &id)
-                    {
-                        self.label_draft = None;
-                    }
-                    self.opened = None;
-                    self.selected_id = Some(id);
-                }
-                ActivityMessage::ToggleDetails(open) => {
-                    self.details_open = open.then(|| self.selected_id.clone()).flatten();
-                }
-                ActivityMessage::LabelEdited(value) => {
-                    if let Some(id) = self.selected_id.clone() {
-                        self.label_errors.remove(&id);
-                        self.label_draft = Some((id, value));
-                    }
-                }
-                ActivityMessage::SaveLabel => return self.save_label(_daemon),
-                ActivityMessage::CloseDetail => {
-                    self.details_open = None;
-                    self.label_draft = None;
-                    self.opened = None;
-                    let selected = self.selected_id.take();
-                    return selected.map_or_else(Task::none, |id| {
-                        iced::widget::operation::focus(view::activity::row_focus_id(&id))
-                    });
-                }
-                ActivityMessage::Retry => return self.reload(_daemon, self.wallet.clone()),
-                ActivityMessage::RetryWallet(wallet) => {
-                    return self.refresh_wallet(wallet, _daemon, None)
-                }
-                ActivityMessage::LoadMore => return self.load_more(_daemon),
-                ActivityMessage::OpenDetail(target) => {
-                    return Task::done(Message::ActivityOpenDetail(target))
-                }
-                ActivityMessage::ViewAll(wallet) => {
-                    // App switches to Activity; it opens on this wallet alone.
-                    self.clear_selection();
-                    self.filters = view::activity::Filters {
-                        wallet,
-                        ..Default::default()
-                    };
-                }
-                ActivityMessage::Open(id) => {
-                    // App switches to Activity; it opens unfiltered with this
-                    // row selected. The id is the row's own, not its place in
-                    // a list, so the selection holds while the page reloads.
-                    // App keeps the row as the Overview listed it
-                    // (`Self::opened`), read before the reload cleared it.
-                    let opened = self.entries().into_iter().find(|entry| entry.id == id);
-                    self.clear_selection();
-                    self.filters = Default::default();
-                    self.opened = opened;
-                    self.selected_id = Some(id);
-                }
-            },
             _ => {}
         }
         Task::none()
