@@ -3680,6 +3680,20 @@ mod tests {
         Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap())
     }
 
+    fn first_widget_operation(
+        task: Task<Message>,
+    ) -> Option<Box<dyn iced::advanced::widget::Operation<()>>> {
+        use iced::futures::StreamExt;
+
+        let mut stream = iced_runtime::task::into_stream(task)?;
+        while let Some(action) = iced::futures::executor::block_on(stream.next()) {
+            if let iced_runtime::Action::Widget(op) = action {
+                return Some(op);
+            }
+        }
+        None
+    }
+
     fn focus_after_restore(
         task: Task<Message>,
         target: iced::advanced::widget::Id,
@@ -3692,7 +3706,6 @@ mod tests {
             widget::{operation, operation::focusable, Operation, Tree},
             Layout,
         };
-        use iced::futures::StreamExt;
         for bytes in coincube_ui::font::load() {
             iced::advanced::graphics::text::font_system()
                 .write()
@@ -3741,13 +3754,8 @@ mod tests {
         if focused_elsewhere {
             apply(Box::new(focusable::focus(elsewhere)));
         }
-        if let Some(mut stream) = iced_runtime::task::into_stream(task) {
-            while let Some(action) = iced::futures::executor::block_on(stream.next()) {
-                if let iced_runtime::Action::Widget(op) = action {
-                    apply(op);
-                    break;
-                }
-            }
+        if let Some(op) = first_widget_operation(task) {
+            apply(op);
         }
         let mut find: Box<dyn Operation<iced::advanced::widget::Id>> =
             Box::new(focusable::find_focused());
