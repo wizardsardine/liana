@@ -157,8 +157,17 @@ impl<T: Runtime> BitBox02<T> {
     pub async fn is_policy_registered(&self, policy: &str) -> Result<bool, HWIError> {
         let pb_network = coin_from_network(self.network);
         let policy = extract_script_config_policy(policy)?;
+        let fg = self
+            .client
+            .root_fingerprint()
+            .await
+            .map_err(|e| HWIError::Device(e.to_string()))
+            .and_then(|fg| {
+                Fingerprint::from_str(&fg).map_err(|e| HWIError::Device(e.to_string()))
+            })?;
+        let (config, keypath) = policy.script_config(fg);
         self.client
-            .btc_is_script_config_registered(pb_network, &policy.into(), None)
+            .btc_is_script_config_registered(pb_network, &config, keypath.as_ref())
             .await
             .map_err(|e| e.into())
     }
@@ -269,7 +278,7 @@ impl<T: Runtime + Sync + Send> HWI for BitBox02<T> {
                             pb::BtcCoin::Tbtc
                         },
                         &Keypath::from(&path),
-                        &policy.into(),
+                        &policy.script_config(fg).0,
                         true,
                     )
                     .await?;
@@ -285,9 +294,11 @@ impl<T: Runtime + Sync + Send> HWI for BitBox02<T> {
     ) -> Result<Option<[u8; 32]>, HWIError> {
         let pb_network = coin_from_network(self.network);
         let policy = extract_script_config_policy(policy)?;
+        let fg = self.get_master_fingerprint().await?;
+        let (config, keypath) = policy.script_config(fg);
         if self
             .client
-            .btc_is_script_config_registered(pb_network, &policy.clone().into(), None)
+            .btc_is_script_config_registered(pb_network, &config, keypath.as_ref())
             .await?
         {
             return Ok(None);
@@ -295,8 +306,8 @@ impl<T: Runtime + Sync + Send> HWI for BitBox02<T> {
         self.client
             .btc_register_script_config(
                 pb_network,
-                &policy.into(),
-                None,
+                &config,
+                keypath.as_ref(),
                 pb::btc_register_script_config_request::XPubType::AutoXpubTpub,
                 Some(name),
             )
@@ -308,8 +319,10 @@ impl<T: Runtime + Sync + Send> HWI for BitBox02<T> {
     async fn is_wallet_registered(&self, _name: &str, policy: &str) -> Result<bool, HWIError> {
         let pb_network = coin_from_network(self.network);
         let policy = extract_script_config_policy(policy)?;
+        let fg = self.get_master_fingerprint().await?;
+        let (config, keypath) = policy.script_config(fg);
         self.client
-            .btc_is_script_config_registered(pb_network, &policy.clone().into(), None)
+            .btc_is_script_config_registered(pb_network, &config, keypath.as_ref())
             .await
             .map_err(|e| e.into())
     }
@@ -331,7 +344,7 @@ impl<T: Runtime + Sync + Send> HWI for BitBox02<T> {
                     }
                 }
                 Some(pb::BtcScriptConfigWithKeypath {
-                    script_config: Some(policy.into()),
+                    script_config: Some(policy.script_config(fg).0),
                     keypath: Keypath::from(&path).to_vec(),
                 })
             } else {
@@ -480,10 +493,76 @@ pub struct Policy {
     pubkeys: Vec<KeyInfo>,
 }
 
-impl From<Policy> for BtcScriptConfig {
-    fn from(p: Policy) -> BtcScriptConfig {
-        let keys: Vec<KeyOriginInfo> = p.pubkeys.into_iter().map(|k| k.into()).collect();
-        bitbox_api::btc::make_script_config_policy(&p.template, &keys)
+impl Policy {
+    /// The script config the BitBox02 registers and signs this policy with,
+    /// plus the account keypath it needs alongside it (multisig only).
+    ///
+    /// BitBox02 firmware rejects `sortedmulti` inside a wallet *policy* config
+    /// ("invalid input"): `sortedmulti` is not miniscript. Its native multisig
+    /// script config is sortedmulti (BIP67 key order), so a plain
+    /// `wsh(sortedmulti(..))` or `sh(wsh(sortedmulti(..)))` over `/<0;1>/*`
+    /// keys goes there, keyed on the device's own account (`fingerprint`).
+    /// Anything else — and a sortedmulti the device holds no key in — stays a
+    /// policy config.
+    pub fn script_config(&self, fingerprint: Fingerprint) -> (BtcScriptConfig, Option<Keypath>) {
+        if let Some(multisig) = self.sorted_multisig(fingerprint) {
+            return multisig;
+        }
+        let keys: Vec<KeyOriginInfo> = self.pubkeys.iter().cloned().map(|k| k.into()).collect();
+        (
+            bitbox_api::btc::make_script_config_policy(&self.template, &keys),
+            None,
+        )
+    }
+
+    fn sorted_multisig(
+        &self,
+        fingerprint: Fingerprint,
+    ) -> Option<(BtcScriptConfig, Option<Keypath>)> {
+        use pb::btc_script_config::multisig::ScriptType;
+        let (script_type, inner) = if let Some(inner) = self
+            .template
+            .strip_prefix("sh(wsh(sortedmulti(")
+            .and_then(|t| t.strip_suffix(")))"))
+        {
+            (ScriptType::P2wshP2sh, inner)
+        } else {
+            (
+                ScriptType::P2wsh,
+                self.template
+                    .strip_prefix("wsh(sortedmulti(")?
+                    .strip_suffix("))")?,
+            )
+        };
+        let mut parts = inner.split(',');
+        let threshold: u32 = parts.next()?.parse().ok()?;
+        let keys: Vec<&str> = parts.collect();
+        if keys.len() != self.pubkeys.len() {
+            return None;
+        }
+        // Each key must be the next placeholder over the standard
+        // receive/change branches: the only derivation BitBox02 multisig uses.
+        for (i, key) in keys.iter().enumerate() {
+            let rest = key.strip_prefix(&format!("@{i}"))?;
+            if rest != "/**" && rest != "/<0;1>/*" {
+                return None;
+            }
+        }
+        let our_index = self
+            .pubkeys
+            .iter()
+            .position(|k| k.master_fingerprint == Some(fingerprint) && k.path.is_some())?;
+        let keypath = Keypath::from(self.pubkeys[our_index].path.as_ref()?);
+        let xpubs: Vec<Xpub> = self.pubkeys.iter().map(|k| k.xpub).collect();
+        Some((
+            bitbox_api::btc::make_script_config_multisig(
+                threshold,
+                &xpubs,
+                our_index as u32,
+                script_type,
+            ),
+            Some(keypath),
+        ))
     }
 }
 
@@ -523,6 +602,59 @@ mod tests {
                 "wsh(or_d(multi(2,@0/<0;1>/*,@1/<0;1>/*),and_v(v:thresh(2,pkh(@0/<2;3>/*),a:pkh(@1/<2;3>/*),a:pkh(@2/<0;1>/*)),older(300))))",
                 policy.template
             );
+    }
+
+    #[test]
+    fn sortedmulti_uses_the_native_multisig_config() {
+        use pb::btc_script_config::{multisig::ScriptType, Config};
+        let x = [
+            "[b0822927/48'/1'/0'/2']tpubDEvZxV86Br8Knbm9tWcr5Hvmg5cYTYsg92vinqH6Bie6U8ix8CsoN9W11NQygdqVwmHUJpsHXxNsi5gXn36g4xNfLWkMqPuFhRZAmMQ7jjQ",
+            "[7fc39c07/48'/1'/0'/2']tpubDEvjgXtrUuH3Qtkapny9aE8gN847xiXsf9MDM5XueGf9nrvStqAuBSva3ajGyTvtp8Ti55FvVXsgYSXuS1tQkBeopFuodx2hRUDmQbvKxbZ",
+            "[1a1ffd98/48'/1'/0'/2']tpubDFZqzTvGijYb13BC73CkS1er8DrP5YdzMhziN3kWCKUFaW51Yj6ggvf99YpdrkTJy4RT85mxQMHXDiFAKRxzf6BykQgT4pRRBNPshSJJcKo",
+        ];
+        let ours = Fingerprint::from_str("7fc39c07").unwrap();
+        for (wrapped, script_type) in [
+            (
+                format!(
+                    "wsh(sortedmulti(2,{0}/<0;1>/*,{1}/<0;1>/*,{2}/<0;1>/*))",
+                    x[0], x[1], x[2]
+                ),
+                ScriptType::P2wsh,
+            ),
+            (
+                format!(
+                    "sh(wsh(sortedmulti(2,{0}/**,{1}/**,{2}/**)))",
+                    x[0], x[1], x[2]
+                ),
+                ScriptType::P2wshP2sh,
+            ),
+        ] {
+            let policy = extract_script_config_policy(&wrapped).unwrap();
+            let (config, keypath) = policy.script_config(ours);
+            let Some(Config::Multisig(m)) = config.config else {
+                panic!("expected a multisig config for {}", wrapped);
+            };
+            assert_eq!(m.threshold, 2);
+            assert_eq!(m.xpubs.len(), 3);
+            assert_eq!(m.our_xpub_index, 1);
+            assert_eq!(m.script_type, script_type as i32);
+            let expected = DerivationPath::from_str("m/48'/1'/0'/2'").unwrap();
+            assert_eq!(keypath.unwrap().to_vec(), Keypath::from(&expected).to_vec());
+        }
+
+        // Not one of our keys, or not sortedmulti: stays a policy config.
+        let sorted = format!("wsh(sortedmulti(2,{0}/<0;1>/*,{1}/<0;1>/*))", x[0], x[2]);
+        let (config, keypath) = extract_script_config_policy(&sorted)
+            .unwrap()
+            .script_config(ours);
+        assert!(matches!(config.config, Some(Config::Policy(_))));
+        assert!(keypath.is_none());
+        let multi = format!("wsh(multi(2,{0}/<0;1>/*,{1}/<0;1>/*))", x[0], x[1]);
+        let (config, keypath) = extract_script_config_policy(&multi)
+            .unwrap()
+            .script_config(ours);
+        assert!(matches!(config.config, Some(Config::Policy(_))));
+        assert!(keypath.is_none());
     }
 
     #[test]
