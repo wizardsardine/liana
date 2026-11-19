@@ -312,6 +312,14 @@ jobs:
       # /org/freedesktop/secrets/collection/login" rather than creating the
       # collection. Write the empty-password login keyring and its default
       # alias directly, before the daemon starts.
+      #
+      # gnome-keyring-daemon 50 aborts (SIGABRT after "gkd_secret_service_
+      # get_pkcs11_session: assertion 'client' failed") when many Secret
+      # Service clients connect and disconnect at once, and keyring 3.3 opens
+      # a connection per call. The device-secret backend therefore serialises
+      # its keystore calls; the supervisor below still fails the run if the
+      # daemon dies or changes.
+      # Keep this block in step with coverage.yml.
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
