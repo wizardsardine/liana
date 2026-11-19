@@ -4024,6 +4024,159 @@ impl GUI {
         }
     }
 
+    fn complete_preferences_save(
+        &mut self,
+        request: SaveRequest,
+        result: Result<PreferencesReceipt, String>,
+    ) -> Task<Message> {
+        let before = self
+            .preferences
+            .accepted()
+            .map(|accepted| accepted.preferences);
+        let outcome = self.preferences.complete(&request, result);
+        let applied = matches!(outcome, SaveOutcome::Applied(_));
+        let failed = matches!(outcome, SaveOutcome::Failed(_));
+        self.publish_balance_privacy();
+        let mut tasks = Vec::new();
+        if applied {
+            let after = self
+                .preferences
+                .accepted()
+                .map(|accepted| accepted.preferences);
+            if before.map(|prefs| prefs.theme) != after.map(|prefs| prefs.theme) {
+                self.publish_appearance();
+            }
+            if let (
+                Operation::Save(crate::app::settings::preferences::PreferenceChange::Worldview(
+                    mode,
+                )),
+                Some(sheet),
+            ) = (request.operation, &mut self.preferences_sheet)
+            {
+                if before.is_some_and(|prefs| prefs.worldview != mode)
+                    && after.is_some_and(|prefs| prefs.worldview == mode)
+                {
+                    sheet.worldview_changed = Some(mode);
+                }
+            }
+            if launcher_presentation_changed(before, after) {
+                self.refresh_all_launcher_modes();
+            }
+            if needs_global_settings_reload(before, after) {
+                tasks.push(self.reload_all_global_settings());
+            }
+        }
+        self.worldview_saved(&request, applied, before);
+        if let Some(next) = self.preferences.begin_next_queued_save() {
+            self.worldview_start_queued_save(&next);
+            self.publish_balance_privacy();
+            tasks.push(self.run_preferences(next));
+        }
+        self.discard_failed_zoom(request.operation, failed);
+        tasks.push(self.save_pending_zoom());
+        tasks.push(self.worldview_automatic());
+        Task::batch(tasks)
+    }
+
+    fn discard_failed_zoom(&mut self, operation: Operation, failed: bool) {
+        // A zoom that failed to save goes back to the saved one, like
+        // every other choice ("Your previous settings remain active").
+        // A newer step pressed during the save is kept and saved next.
+        if let Operation::Save(crate::app::settings::preferences::PreferenceChange::Zoom(zoom)) =
+            operation
+        {
+            if failed && self.zoom.pending == Some(zoom) {
+                self.zoom.pending = None;
+            }
+        }
+    }
+
+    fn handle_pane_message(&mut self, i: pane_grid::Pane, msg: pane::Message) -> Task<Message> {
+        match msg {
+            // Handle ListCurrencies requests separately.
+            pane::Message::Tab(tab_id, inner)
+                if matches!(
+                    inner.as_ref(),
+                    tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(_)))
+                ) =>
+            {
+                let tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(source))) =
+                    *inner
+                else {
+                    tracing::error!("Unexpected message type after unboxing");
+                    return Task::none();
+                };
+                // BTCB2 uses only Connect pricing. Currency preferences do not
+                // authorize a Bitcoin/aggregator currency-list request either.
+                let btcb2 = self
+                    .panes
+                    .get(i)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+                    .and_then(|tab| tab.cube_settings())
+                    .is_some_and(|cube| cube.network.is_blake2b());
+                if btcb2 {
+                    if let Some(pane) = self.panes.get_mut(i) {
+                        return pane
+                            .update_tab_with_app_msg(
+                                tab_id,
+                                AppFiatMessage::ListCurrenciesResult(
+                                    source,
+                                    Ok(ListCurrenciesResult {
+                                        currencies: Currency::ALL.to_vec(),
+                                    }),
+                                ),
+                                &self.config,
+                            )
+                            .map(move |msg| Message::Pane(i, msg));
+                    }
+                    return Task::none();
+                }
+                // If we already have a fresh list of currencies for this source, return it directly to the tab.
+                if let Some(fresh_list) = self.global_cache.fresh_currencies(source) {
+                    tracing::debug!("Using cached currencies list for {}", source,);
+                    if let Some(pane) = self.panes.get_mut(i) {
+                        return pane
+                            .update_tab_with_app_msg(
+                                tab_id,
+                                AppFiatMessage::ListCurrenciesResult(
+                                    source,
+                                    Ok(ListCurrenciesResult {
+                                        currencies: fresh_list.clone(),
+                                    }),
+                                ),
+                                &self.config,
+                            )
+                            .map(move |msg| Message::Pane(i, msg));
+                    }
+                } else {
+                    tracing::debug!("Requesting list of currencies from {}", source);
+                    return Task::perform(
+                        async move {
+                            let client = PriceClient::default_from_source(source);
+                            (
+                                tab_id,
+                                source,
+                                Instant::now(),
+                                client.list_currencies().await,
+                            )
+                        },
+                        move |(tab_id, source, now, res)| {
+                            FiatMessage::ListCurrenciesResult(i, tab_id, source, now, res).into()
+                        },
+                    );
+                }
+            }
+            _ => {
+                if let Some(pane) = self.panes.get_mut(i) {
+                    return pane
+                        .update(msg, &self.config)
+                        .map(move |msg| Message::Pane(i, msg));
+                }
+            }
+        }
+        Task::none()
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -4185,156 +4338,14 @@ impl GUI {
                 };
                 self.handle_launcher_message(p, t, msg)
             }
-            Message::Pane(i, msg) => {
-                match msg {
-                    // Handle ListCurrencies requests separately.
-                    pane::Message::Tab(tab_id, inner)
-                        if matches!(
-                            inner.as_ref(),
-                            tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(_)))
-                        ) =>
-                    {
-                        let tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(
-                            source,
-                        ))) = *inner
-                        else {
-                            tracing::error!("Unexpected message type after unboxing");
-                            return Task::none();
-                        };
-                        // BTCB2 uses only Connect pricing. Currency preferences do not
-                        // authorize a Bitcoin/aggregator currency-list request either.
-                        let btcb2 = self
-                            .panes
-                            .get(i)
-                            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                            .and_then(|tab| tab.cube_settings())
-                            .is_some_and(|cube| cube.network.is_blake2b());
-                        if btcb2 {
-                            if let Some(pane) = self.panes.get_mut(i) {
-                                return pane
-                                    .update_tab_with_app_msg(
-                                        tab_id,
-                                        AppFiatMessage::ListCurrenciesResult(
-                                            source,
-                                            Ok(ListCurrenciesResult {
-                                                currencies: Currency::ALL.to_vec(),
-                                            }),
-                                        ),
-                                        &self.config,
-                                    )
-                                    .map(move |msg| Message::Pane(i, msg));
-                            }
-                            return Task::none();
-                        }
-                        // If we already have a fresh list of currencies for this source, return it directly to the tab.
-                        if let Some(fresh_list) = self.global_cache.fresh_currencies(source) {
-                            tracing::debug!("Using cached currencies list for {}", source,);
-                            if let Some(pane) = self.panes.get_mut(i) {
-                                return pane
-                                    .update_tab_with_app_msg(
-                                        tab_id,
-                                        AppFiatMessage::ListCurrenciesResult(
-                                            source,
-                                            Ok(ListCurrenciesResult {
-                                                currencies: fresh_list.clone(),
-                                            }),
-                                        ),
-                                        &self.config,
-                                    )
-                                    .map(move |msg| Message::Pane(i, msg));
-                            }
-                        } else {
-                            tracing::debug!("Requesting list of currencies from {}", source);
-                            return Task::perform(
-                                async move {
-                                    let client = PriceClient::default_from_source(source);
-                                    (
-                                        tab_id,
-                                        source,
-                                        Instant::now(),
-                                        client.list_currencies().await,
-                                    )
-                                },
-                                move |(tab_id, source, now, res)| {
-                                    FiatMessage::ListCurrenciesResult(i, tab_id, source, now, res)
-                                        .into()
-                                },
-                            );
-                        }
-                    }
-                    _ => {
-                        if let Some(pane) = self.panes.get_mut(i) {
-                            return pane
-                                .update(msg, &self.config)
-                                .map(move |msg| Message::Pane(i, msg));
-                        }
-                    }
-                }
-                Task::none()
-            }
+            Message::Pane(i, msg) => self.handle_pane_message(i, msg),
             Message::Clicked(pane) => {
                 self.focus = Some(pane);
                 Task::none()
             }
             Message::Resized(_) | Message::Dragged(_) => Task::none(),
             Message::Preferences(request, result) => {
-                let before = self
-                    .preferences
-                    .accepted()
-                    .map(|accepted| accepted.preferences);
-                let outcome = self.preferences.complete(&request, result);
-                let applied = matches!(outcome, SaveOutcome::Applied(_));
-                let failed = matches!(outcome, SaveOutcome::Failed(_));
-                self.publish_balance_privacy();
-                let mut tasks = Vec::new();
-                if applied {
-                    let after = self
-                        .preferences
-                        .accepted()
-                        .map(|accepted| accepted.preferences);
-                    if before.map(|prefs| prefs.theme) != after.map(|prefs| prefs.theme) {
-                        self.publish_appearance();
-                    }
-                    if let (
-                        Operation::Save(
-                            crate::app::settings::preferences::PreferenceChange::Worldview(mode),
-                        ),
-                        Some(sheet),
-                    ) = (request.operation, &mut self.preferences_sheet)
-                    {
-                        if before.is_some_and(|prefs| prefs.worldview != mode)
-                            && after.is_some_and(|prefs| prefs.worldview == mode)
-                        {
-                            sheet.worldview_changed = Some(mode);
-                        }
-                    }
-                    if launcher_presentation_changed(before, after) {
-                        self.refresh_all_launcher_modes();
-                    }
-                    if needs_global_settings_reload(before, after) {
-                        tasks.push(self.reload_all_global_settings());
-                    }
-                }
-                self.worldview_saved(&request, applied, before);
-                if let Some(next) = self.preferences.begin_next_queued_save() {
-                    self.worldview_start_queued_save(&next);
-                    self.publish_balance_privacy();
-                    tasks.push(self.run_preferences(next));
-                }
-                // A zoom that failed to save goes back to the saved one, like
-                // every other choice ("Your previous settings remain active").
-                // A newer step pressed during the save is kept and saved next.
-                if let Operation::Save(crate::app::settings::preferences::PreferenceChange::Zoom(
-                    zoom,
-                )) = request.operation
-                {
-                    if failed && self.zoom.pending == Some(zoom) {
-                        self.zoom.pending = None;
-                    }
-                }
-                tasks.push(self.save_pending_zoom());
-                tasks.push(self.worldview_automatic());
-                Task::batch(tasks)
+                self.complete_preferences_save(request, result)
             }
             Message::ToggleTheme => {
                 use crate::app::settings::preferences::{PreferenceChange, ThemePreference};
