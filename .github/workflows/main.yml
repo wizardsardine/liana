@@ -253,12 +253,10 @@ jobs:
           Add-MpPreference -ExclusionPath $env:RUNNER_TEMP -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-      # Chocolatey updates the machine PATH, which a new PowerShell process
-      # reloads. Keep installation separate from Cargo so prost-build can find
-      # protoc on runners where it was not already present.
+      # Pinned and checksummed; exports PROTOC for prost-build.
       - name: Install Windows dependencies
         if: matrix.os == 'windows-latest'
-        run: choco install protoc --yes --no-progress
+        uses: ./.github/actions/install-protoc-windows
       - name: Test on Rust ${{ matrix.toolchain }} (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -395,7 +393,7 @@ jobs:
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
       - name: Install Windows dependencies
-        run: choco install protoc --yes --no-progress
+        uses: ./.github/actions/install-protoc-windows
       - name: Windows MCP adapter and STDIO boundaries
         shell: pwsh
         run: |

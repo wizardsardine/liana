@@ -197,7 +197,7 @@ jobs:
 
       - name: Install Windows dependencies
         if: matrix.platform == 'windows'
-        run: choco install protoc --yes --no-progress
+        uses: ./.github/actions/install-protoc-windows
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
