@@ -2144,10 +2144,9 @@ impl Tab {
                 home::Message::Run(..)
                     | home::Message::RunToRecovery(..)
                     | home::Message::Install(..)
-            ) {
-                if !self.allow_tab_launch_exit(launch) {
-                    return Break(Task::none());
-                }
+            ) && !self.allow_tab_launch_exit(launch)
+            {
+                return Break(Task::none());
             }
         }
         Continue(message)
@@ -4417,9 +4416,7 @@ impl Tab {
         if cube.connect_encryption_pubkey.is_some() {
             return None;
         }
-        let Some(fp) = master_signer_fingerprint else {
-            return None;
-        };
+        let fp = master_signer_fingerprint?;
         use app::settings::ConnectEncryptionKey as CEK;
         match app::settings::derive_connect_encryption_pubkey(
             datadir_clone.path(),
@@ -6112,8 +6109,8 @@ pub(crate) async fn find_or_create_cube<C: Into<crate::chain::ChainId>>(
                     uuid,
                     vault,
                     network,
-                    &decorate_new,
-                    &new_cube_base,
+                    decorate_new,
+                    new_cube_base,
                 )?;
                 return save_cube_settings(network_dir, cube, network, settings_data, expected)
                     .await;
@@ -6126,7 +6123,7 @@ pub(crate) async fn find_or_create_cube<C: Into<crate::chain::ChainId>>(
                     &target_cube_id,
                     vault,
                     network,
-                    &decorate_new,
+                    decorate_new,
                 )?;
                 return save_cube_settings(network_dir, cube, network, settings_data, expected)
                     .await;
@@ -6282,7 +6279,7 @@ fn reattach_restored_cube(
     ) -> Result<app::settings::CubeSettings, String>,
     new_cube_base: impl FnOnce() -> app::settings::CubeSettings,
 ) -> Result<app::settings::CubeSettings, String> {
-    if let Some(idx) = settings_data.cubes.iter().position(|c| &c.id == uuid) {
+    if let Some(idx) = settings_data.cubes.iter().position(|c| c.id == uuid) {
         if settings_data.cubes[idx].bitcoin_import.is_some() {
             return Err("The restored Cube is reserved for a Bitcoin wallet import.".into());
         }
