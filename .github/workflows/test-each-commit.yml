@@ -11,7 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_PROFILE_TEST_DEBUG: line-tables-only
-  RUSTUP_TOOLCHAIN: 1.88.0
+  RUSTUP_TOOLCHAIN: 1.90.0
 
 jobs:
   # first we list all commits
@@ -86,13 +86,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ needs.list-commits.outputs.cache-prefix }}
-          shared-key: ubuntu-latest-1.88.0
+          shared-key: ubuntu-latest-1.90.0
           save-if: false
 
       - name: Wait for the system dependencies
@@ -140,12 +140,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
 
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ needs.list-commits.outputs.cache-prefix }}
-          shared-key: ubuntu-latest-1.88.0
+          shared-key: ubuntu-latest-1.90.0
           save-if: false
 
       - name: List the crates of the slice in this commit
@@ -203,7 +203,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
 
       - uses: Swatinem/rust-cache@v2
         with:

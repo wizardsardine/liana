@@ -2821,7 +2821,7 @@ CREATE TABLE labels (
             };
             let txid = tx.compute_txid();
             let outpoint = bitcoin::OutPoint { txid, vout: 0 };
-            conn.new_txs(&[tx.clone()]);
+            conn.new_txs(std::slice::from_ref(&tx));
             conn.new_unspent_coins(&[Coin {
                 outpoint,
                 is_immature: false,
@@ -2934,7 +2934,7 @@ CREATE TABLE labels (
                 spend_block: None,
                 is_from_self: false,
             };
-            conn.new_txs(&[tx_c.clone()]);
+            conn.new_txs(std::slice::from_ref(&tx_c));
             conn.spend_coins(&[(coin_tx_a.outpoint, tx_c.compute_txid())]);
             conn.new_unspent_coins(&[coin_tx_c]);
 
@@ -2958,7 +2958,7 @@ CREATE TABLE labels (
                 spend_block: None,
                 is_from_self: false,
             };
-            conn.new_txs(&[tx_d.clone()]);
+            conn.new_txs(std::slice::from_ref(&tx_d));
             conn.spend_coins(&[(coin_tx_c.outpoint, tx_d.compute_txid())]);
             conn.new_unspent_coins(&[coin_tx_d]);
 
@@ -2981,7 +2981,7 @@ CREATE TABLE labels (
                 spend_block: None,
                 is_from_self: false,
             };
-            conn.new_txs(&[tx_e.clone()]);
+            conn.new_txs(std::slice::from_ref(&tx_e));
             conn.spend_coins(&[
                 (coin_tx_b.outpoint, tx_e.compute_txid()),
                 (coin_tx_d.outpoint, tx_e.compute_txid()),
@@ -3006,7 +3006,7 @@ CREATE TABLE labels (
                 spend_block: None,
                 is_from_self: false,
             };
-            conn.new_txs(&[tx_f.clone()]);
+            conn.new_txs(std::slice::from_ref(&tx_f));
             conn.spend_coins(&[(coin_tx_e.outpoint, tx_f.compute_txid())]);
             conn.new_unspent_coins(&[coin_tx_f]);
 
@@ -3345,7 +3345,7 @@ CREATE TABLE labels (
                 input: vec![bitcoin::TxIn::default()], // a single input
                 output: vec![bitcoin::TxOut::minimal_non_dust(ScriptBuf::default())], // a single output,
             };
-            conn.new_txs(&[tx.clone()]);
+            conn.new_txs(std::slice::from_ref(&tx));
             conn.new_unspent_coins(&[Coin {
                 outpoint: bitcoin::OutPoint::new(tx.compute_txid(), 1),
                 is_immature: true,
