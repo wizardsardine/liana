@@ -3048,10 +3048,6 @@ pub enum LocalNodeSwitchStep {
     Complete,
 }
 
-/// The card that moves a Vault from Connect to the local node: sync the
-/// blockchain, bring the Vault's history over, then switch. All three steps
-/// stay on screen in every state, so a switch that is not yet possible says
-/// why instead of disappearing.
 fn wallet_history_progress_bar<'a>(progress: f32) -> Element<'a, NodeSettingsMessage> {
     ProgressBar::new(0.0..=1.0, progress)
         .length(Length::Fill)
@@ -3456,6 +3452,10 @@ fn wallet_history_idle(status: &crate::app::node_history::Status, switching: boo
             .is_none_or(|job| matches!(job.phase, Phase::Complete | Phase::Cancelled))
 }
 
+/// The card that moves a Vault from Connect to the local node: sync the
+/// blockchain, bring the Vault's history over, then switch. All three steps
+/// stay on screen in every state, so a switch that is not yet possible says
+/// why instead of disappearing.
 pub fn wallet_history_section<'a>(
     start: &'a form::Value<String>,
     status: &'a crate::app::node_history::Status,
