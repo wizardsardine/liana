@@ -16,59 +16,7 @@ impl App {
                 .iter()
                 .find(|c| c.id == self.cube_settings.id)
             {
-                self.cache.bitcoin_unit = cube.unit_setting.display_unit;
-                self.cube_settings.fiat_price = cube.fiat_price.clone();
-                if self.cube_settings.network.is_blake2b()
-                    && self.cache.fiat_price.as_ref().is_some_and(|price| {
-                        !cube.fiat_price.as_ref().is_some_and(|setting| {
-                            setting.is_enabled && setting.currency == price.currency()
-                        })
-                    })
-                {
-                    self.cache.clear_btcb2_fiat();
-                    self.cache.btcb2_price_request = None;
-                }
-                // The backup attention row follows persisted state.
-                self.cache.current_cube_backed_up = cube.backed_up;
-                self.cube_settings.backed_up = cube.backed_up;
-                // Mirror the drift fingerprint cache (W12). Refreshing
-                // on every SettingsSaved keeps the Recovery-Kit card
-                // in sync after a successful upload or remove.
-                self.cache
-                    .recovery_kit_last_backed_up_descriptor_fingerprint = cube
-                    .recovery_kit_last_backed_up_descriptor_fingerprint
-                    .clone();
-                self.cube_settings
-                    .recovery_kit_last_backed_up_descriptor_fingerprint = cube
-                    .recovery_kit_last_backed_up_descriptor_fingerprint
-                    .clone();
-                // Same for the keychain (phone) drift slot (per-method
-                // drift, PR 3).
-                self.cache
-                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
-                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
-                    .clone();
-                self.cube_settings
-                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
-                    .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
-                    .clone();
-                // And the password kit's *presence* flag — the signal
-                // `has_recovery_kit()` reads for that method, which a
-                // Vault-less (seed-only) kit has no fingerprint to carry.
-                self.cache.recovery_kit_password_backed_up = cube.recovery_kit_password_backed_up;
-                self.cube_settings.recovery_kit_password_backed_up =
-                    cube.recovery_kit_password_backed_up;
-
-                // Clear cached fiat display price if disabled.
-                // Note: btc_usd_price is NOT cleared — it's needed for
-                // USDt→sats conversion regardless of fiat display setting.
-                if !cube.fiat_price.as_ref().is_some_and(|p| p.is_enabled) {
-                    self.cache.fiat_price = None;
-                    if self.cube_settings.network.is_blake2b() {
-                        self.cache.clear_btcb2_fiat();
-                        self.cache.btcb2_price_request = None;
-                    }
-                }
+                self.refresh_persisted_cube_settings(cube);
             }
         }
 
@@ -89,6 +37,61 @@ impl App {
         }
 
         Task::done(Message::CacheUpdated)
+    }
+
+    fn refresh_persisted_cube_settings(&mut self, cube: &settings::CubeSettings) {
+        self.cache.bitcoin_unit = cube.unit_setting.display_unit;
+        self.cube_settings.fiat_price = cube.fiat_price.clone();
+        if self.cube_settings.network.is_blake2b()
+            && self.cache.fiat_price.as_ref().is_some_and(|price| {
+                !cube.fiat_price.as_ref().is_some_and(|setting| {
+                    setting.is_enabled && setting.currency == price.currency()
+                })
+            })
+        {
+            self.cache.clear_btcb2_fiat();
+            self.cache.btcb2_price_request = None;
+        }
+        // The backup attention row follows persisted state.
+        self.cache.current_cube_backed_up = cube.backed_up;
+        self.cube_settings.backed_up = cube.backed_up;
+        // Mirror the drift fingerprint cache (W12). Refreshing
+        // on every SettingsSaved keeps the Recovery-Kit card
+        // in sync after a successful upload or remove.
+        self.cache
+            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .clone();
+        self.cube_settings
+            .recovery_kit_last_backed_up_descriptor_fingerprint = cube
+            .recovery_kit_last_backed_up_descriptor_fingerprint
+            .clone();
+        // Same for the keychain (phone) drift slot (per-method
+        // drift, PR 3).
+        self.cache
+            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
+            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+            .clone();
+        self.cube_settings
+            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint = cube
+            .recovery_kit_last_backed_up_keychain_descriptor_fingerprint
+            .clone();
+        // And the password kit's *presence* flag — the signal
+        // `has_recovery_kit()` reads for that method, which a
+        // Vault-less (seed-only) kit has no fingerprint to carry.
+        self.cache.recovery_kit_password_backed_up = cube.recovery_kit_password_backed_up;
+        self.cube_settings.recovery_kit_password_backed_up = cube.recovery_kit_password_backed_up;
+
+        // Clear cached fiat display price if disabled.
+        // Note: btc_usd_price is NOT cleared — it's needed for
+        // USDt→sats conversion regardless of fiat display setting.
+        if !cube.fiat_price.as_ref().is_some_and(|p| p.is_enabled) {
+            self.cache.fiat_price = None;
+            if self.cube_settings.network.is_blake2b() {
+                self.cache.clear_btcb2_fiat();
+                self.cache.btcb2_price_request = None;
+            }
+        }
     }
 }
 
