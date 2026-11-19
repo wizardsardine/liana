@@ -2941,41 +2941,39 @@ impl GUI {
         provider: &str,
     ) -> Option<ForkUnlockCandidate> {
         let mut selected: Option<ForkUnlockCandidate> = None;
-        for (_, pane) in self.panes.iter() {
-            for tab in &pane.tabs {
-                let identity = match &tab.state {
-                    tab::State::Home(home) if home.connect_account.is_authenticated() => {
-                        home.connect_account.user.as_ref().and_then(|user| {
-                            home.connect_account
-                                .authenticated_client()
-                                .map(|client| (home.datadir_path.clone(), user.id, client))
-                        })
-                    }
-                    tab::State::App(app) => app
-                        .shareable_connect_identity()
-                        .map(|(user_id, client)| (app.datadir().clone(), user_id, client)),
-                    _ => None,
-                };
-                let Some((source_root, user_id, client)) = identity else {
-                    continue;
-                };
-                if !crate::chain::same_path(root.path(), source_root.path())
-                    || provider.trim_end_matches('/') != client.base_url.trim_end_matches('/')
-                    || client.token().is_none_or(|token| token.trim().is_empty())
-                {
-                    continue;
+        for tab in self.panes.iter().flat_map(|(_, pane)| pane.tabs.iter()) {
+            let identity = match &tab.state {
+                tab::State::Home(home) if home.connect_account.is_authenticated() => {
+                    home.connect_account.user.as_ref().and_then(|user| {
+                        home.connect_account
+                            .authenticated_client()
+                            .map(|client| (home.datadir_path.clone(), user.id, client))
+                    })
                 }
-                if let Some(previous) = &selected {
-                    if previous.user_id != user_id || previous.client.token() != client.token() {
-                        return None;
-                    }
-                } else {
-                    selected = Some(ForkUnlockCandidate {
-                        root: source_root,
-                        client,
-                        user_id,
-                    });
+                tab::State::App(app) => app
+                    .shareable_connect_identity()
+                    .map(|(user_id, client)| (app.datadir().clone(), user_id, client)),
+                _ => None,
+            };
+            let Some((source_root, user_id, client)) = identity else {
+                continue;
+            };
+            if !crate::chain::same_path(root.path(), source_root.path())
+                || provider.trim_end_matches('/') != client.base_url.trim_end_matches('/')
+                || client.token().is_none_or(|token| token.trim().is_empty())
+            {
+                continue;
+            }
+            if let Some(previous) = &selected {
+                if previous.user_id != user_id || previous.client.token() != client.token() {
+                    return None;
                 }
+            } else {
+                selected = Some(ForkUnlockCandidate {
+                    root: source_root,
+                    client,
+                    user_id,
+                });
             }
         }
         selected
