@@ -244,9 +244,51 @@ impl DuressOrchestrator {
         //    transiently unreadable. Only the in-session drainer needs the key to
         //    decrypt in-flight; without it, the launch-time drainer fires the
         //    POST on a later launch once the key is readable again.
-        if let (Some(acct), Some(encrypted)) =
-            (account_id.as_ref(), self.local_state.duress_code.clone())
-        {
+        self.enqueue_connect_activation(account_id.as_ref());
+
+        // 4. Wipe (anchor) — runs IN PARALLEL with the POST above; starts
+        //    immediately and is never gated on any network condition. Retry so a
+        //    transient lock/IO error doesn't leave Cube seeds or PIN material on
+        //    disk.
+        let mut wiped = false;
+        let mut last_err = None;
+        for attempt in 1..=WIPE_RETRIES {
+            match self.wipe.execute_atomic() {
+                Ok(()) => {
+                    wiped = true;
+                    break;
+                }
+                Err(e) => {
+                    log::error!("duress: wipe attempt {attempt}/{WIPE_RETRIES} failed: {e}");
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        // 5. Persist active state (the file survives the wipe, so on relaunch we
+        //    route straight to the cryptic screen). Logged-not-fatal: the journal
+        //    already guards an interrupted wipe.
+        self.local_state.active = true;
+        self.local_state.last_activation_attempt = Some(Utc::now());
+        if let Err(e) = self.local_state.save(&self.data_dir) {
+            log::error!("duress: failed to persist active state: {e}");
+        }
+
+        // 6. Transition UI to the cryptic activation screen.
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(DuressEvent::Activated);
+        }
+
+        match (wiped, last_err) {
+            (true, _) => Ok(()),
+            (false, Some(e)) => Err(DuressError::Io(e)),
+            // Unreachable: WIPE_RETRIES >= 1, so a non-wipe leaves an error.
+            (false, None) => Ok(()),
+        }
+    }
+
+    fn enqueue_connect_activation(&self, account_id: Option<&String>) {
+        if let (Some(acct), Some(encrypted)) = (account_id, self.local_state.duress_code.clone()) {
             let pending = PendingActivation {
                 account_id: acct.clone(),
                 duress_code: encrypted,
@@ -297,46 +339,6 @@ impl DuressOrchestrator {
                      launch-time drainer to fire once the key is readable"
                 ),
             }
-        }
-
-        // 4. Wipe (anchor) — runs IN PARALLEL with the POST above; starts
-        //    immediately and is never gated on any network condition. Retry so a
-        //    transient lock/IO error doesn't leave Cube seeds or PIN material on
-        //    disk.
-        let mut wiped = false;
-        let mut last_err = None;
-        for attempt in 1..=WIPE_RETRIES {
-            match self.wipe.execute_atomic() {
-                Ok(()) => {
-                    wiped = true;
-                    break;
-                }
-                Err(e) => {
-                    log::error!("duress: wipe attempt {attempt}/{WIPE_RETRIES} failed: {e}");
-                    last_err = Some(e);
-                }
-            }
-        }
-
-        // 5. Persist active state (the file survives the wipe, so on relaunch we
-        //    route straight to the cryptic screen). Logged-not-fatal: the journal
-        //    already guards an interrupted wipe.
-        self.local_state.active = true;
-        self.local_state.last_activation_attempt = Some(Utc::now());
-        if let Err(e) = self.local_state.save(&self.data_dir) {
-            log::error!("duress: failed to persist active state: {e}");
-        }
-
-        // 6. Transition UI to the cryptic activation screen.
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(DuressEvent::Activated);
-        }
-
-        match (wiped, last_err) {
-            (true, _) => Ok(()),
-            (false, Some(e)) => Err(DuressError::Io(e)),
-            // Unreachable: WIPE_RETRIES >= 1, so a non-wipe leaves an error.
-            (false, None) => Ok(()),
         }
     }
 

@@ -4,6 +4,7 @@ use crate::chain::ChainId;
 use crate::services::coincube::CoincubeClient;
 use httpmock::prelude::*;
 use serde_json::json;
+use std::sync::atomic::AtomicUsize;
 
 const DESCRIPTOR: &str = concat!(
     "wsh(andor(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4z",
@@ -150,11 +151,69 @@ impl Drop for ActivationServer {
 }
 
 impl ActivationServer {
+    fn response_for_request(
+        request: &str,
+        clock: &impl Fn() -> u64,
+        feature_hits: &AtomicUsize,
+        bitcoin_hits: &AtomicUsize,
+    ) -> (i32, String) {
+        use std::sync::atomic::Ordering;
+
+        let path = request.split_whitespace().nth(1).unwrap();
+        let authorized = request.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case("authorization")
+                    && value.trim() == "Bearer synthetic-activation-token"
+            })
+        });
+        let anonymous_proxy = path.starts_with("/api/v1/esplora/");
+        if anonymous_proxy {
+            assert!(
+                !request.lines().any(|line| line
+                    .split_once(':')
+                    .is_some_and(|(name, _)| name.eq_ignore_ascii_case("authorization"))),
+                "Connect credentials must not reach anonymous Esplora routes"
+            );
+        }
+        if !anonymous_proxy && !authorized {
+            (401, String::new())
+        } else if path == "/api/v1/connect/features" {
+            feature_hits.fetch_add(1, Ordering::Relaxed);
+            (
+                200,
+                json!({"success":true,"data":{"plans":[],"bitcoinBlake2bEnabled":true}})
+                    .to_string(),
+            )
+        } else if path == "/api/v1/connect/networks/bitcoin-blake2b/anchor" {
+            (200, json!({"success":true,"data":{"network":"bitcoin-blake2b","state":"available","anchor":{
+                "tip_hash":"11".repeat(32),"tip_height":973029,"tip_median_time_past":1800000000,
+                "observed_at":clock(),
+                "observation":{"tip_height":973029,"fork":{"height":972000,"active":true},
+                    "rdts":{"state":"flagday","flagday":{"height":972000,"expiry_time":1800010000_i64,"active":false}}}
+            }}}).to_string())
+        } else if let Some(route) = path.strip_prefix("/api/v1/esplora/bitcoin-blake2b/mainnet") {
+            match route {
+                "/block-height/0" => (
+                    200,
+                    "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f".into(),
+                ),
+                "/block-height/973029" | "/blocks/tip/hash" => (200, "11".repeat(32)),
+                route if route == format!("/block/{}/status", "11".repeat(32)) => (
+                    200,
+                    json!({"in_best_chain":true,"height":973029,"next_best":null}).to_string(),
+                ),
+                _ => (404, String::new()),
+            }
+        } else {
+            if path.contains("/esplora/bitcoin/") {
+                bitcoin_hits.fetch_add(1, Ordering::Relaxed);
+            }
+            (404, String::new())
+        }
+    }
+
     async fn start(clock: impl Fn() -> u64 + Send + 'static) -> Self {
-        use std::sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        };
+        use std::sync::Arc;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -179,61 +238,8 @@ impl ActivationServer {
                     }
                 }
                 let request = String::from_utf8(request).unwrap();
-                let path = request.split_whitespace().nth(1).unwrap();
-                let authorized = request.lines().any(|line| {
-                    line.split_once(':').is_some_and(|(name, value)| {
-                        name.eq_ignore_ascii_case("authorization")
-                            && value.trim() == "Bearer synthetic-activation-token"
-                    })
-                });
-                let anonymous_proxy = path.starts_with("/api/v1/esplora/");
-                if anonymous_proxy {
-                    assert!(
-                        !request.lines().any(|line| line
-                            .split_once(':')
-                            .is_some_and(|(name, _)| name.eq_ignore_ascii_case("authorization"))),
-                        "Connect credentials must not reach anonymous Esplora routes"
-                    );
-                }
-                let (status, body) = if !anonymous_proxy && !authorized {
-                    (401, String::new())
-                } else if path == "/api/v1/connect/features" {
-                    feature_hits.fetch_add(1, Ordering::Relaxed);
-                    (
-                        200,
-                        json!({"success":true,"data":{"plans":[],"bitcoinBlake2bEnabled":true}})
-                            .to_string(),
-                    )
-                } else if path == "/api/v1/connect/networks/bitcoin-blake2b/anchor" {
-                    (200, json!({"success":true,"data":{"network":"bitcoin-blake2b","state":"available","anchor":{
-                        "tip_hash":"11".repeat(32),"tip_height":973029,"tip_median_time_past":1800000000,
-                        "observed_at":clock(),
-                        "observation":{"tip_height":973029,"fork":{"height":972000,"active":true},
-                            "rdts":{"state":"flagday","flagday":{"height":972000,"expiry_time":1800010000_i64,"active":false}}}
-                    }}}).to_string())
-                } else if let Some(route) =
-                    path.strip_prefix("/api/v1/esplora/bitcoin-blake2b/mainnet")
-                {
-                    match route {
-                        "/block-height/0" => (
-                            200,
-                            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
-                                .into(),
-                        ),
-                        "/block-height/973029" | "/blocks/tip/hash" => (200, "11".repeat(32)),
-                        route if route == format!("/block/{}/status", "11".repeat(32)) => (
-                            200,
-                            json!({"in_best_chain":true,"height":973029,"next_best":null})
-                                .to_string(),
-                        ),
-                        _ => (404, String::new()),
-                    }
-                } else {
-                    if path.contains("/esplora/bitcoin/") {
-                        bitcoin_hits.fetch_add(1, Ordering::Relaxed);
-                    }
-                    (404, String::new())
-                };
+                let (status, body) =
+                    Self::response_for_request(&request, &clock, &feature_hits, &bitcoin_hits);
                 let response = format!("HTTP/1.1 {status} Synthetic\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                 stream.write_all(response.as_bytes()).await.unwrap();
             }

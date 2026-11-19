@@ -552,195 +552,26 @@ pub fn update_with_imported(
     wallet: Option<Arc<Wallet>>,
     imported: Option<ImportedBackupSource>,
 ) -> Task<Message> {
-    if wallet.is_some() && imported.is_some() {
-        rk.flow = RecoveryKitState::Error {
-            message: "This Cube has conflicting wallet sources; reopen it before backing up".into(),
-        };
-        return Task::none();
-    }
-    // UI buttons are disabled while status is unknown or stale, but messages
-    // can already be queued when a refresh fails (especially ConfirmRemove).
-    // Enforce the same gate at the reducer before collecting a PIN or issuing
-    // any destructive request.
-    if matches!(
-        &msg,
-        RecoveryKitMessage::Start(_)
-            | RecoveryKitMessage::Remove
-            | RecoveryKitMessage::ConfirmRemove
-    ) && (rk.status_loading || rk.status_stale || rk.status.is_none())
-    {
-        rk.reset_flow();
-        let guidance = if rk.status_loading {
-            "Wait for the Recovery Kit status check to finish before making changes."
-        } else {
-            "Recovery Kit status is unavailable. Refresh it before making changes."
-        };
-        return Task::done(Message::View(view::Message::ShowError(guidance.to_owned())));
+    if let Some(task) = reject_kit_update(rk, &msg, wallet.is_some() && imported.is_some()) {
+        return task;
     }
     match msg {
         RecoveryKitMessage::LoadStatus => load_status(rk, client, server_cube_id),
 
-        RecoveryKitMessage::StatusLoaded(res) => {
-            rk.status_loading = false;
-            match res {
-                Ok(Some(s)) => {
-                    rk.status = Some(s);
-                    rk.status_stale = false;
-                }
-                Ok(None) => {
-                    // 404 — no kit on the server; render card in
-                    // "Create" state.
-                    rk.status = Some(RecoveryKitStatus {
-                        has_recovery_kit: false,
-                        has_encrypted_seed: false,
-                        has_encrypted_wallet_descriptor: false,
-                        encryption_scheme: String::new(),
-                        created_at: None,
-                        updated_at: None,
-                        owner_self: None,
-                    });
-                    rk.status_stale = false;
-                }
-                Err(e) => {
-                    tracing::warn!("get_recovery_kit_status failed: {}", e);
-                    // Keep the prior cached status (if any) so the
-                    // card doesn't flicker; surface a toast only —
-                    // no state transition. Also clear the nudge
-                    // flag — we don't want to defer the toast
-                    // indefinitely because of a transient error.
-                    rk.nudge_on_next_status_load = false;
-                    rk.status_stale = true;
-                    // A confirmation prepared from the old delete set can no
-                    // longer be trusted. Dismiss it even if its Confirm event
-                    // was already queued; the reducer gate above also catches
-                    // that late event.
-                    if matches!(rk.flow, RecoveryKitState::ConfirmRemove) {
-                        rk.reset_flow();
-                    }
-                    return Task::done(Message::View(view::Message::ShowError(kit_toast(
-                        "Couldn't load your Recovery Kit",
-                        "Check your internet connection and try again.",
-                        &e,
-                    ))));
-                }
-            }
-            // Reconcile the persisted password-kit presence flag against what
-            // the server just told us. `has_recovery_kit()` — and so the Home
-            // card — is otherwise a record of backups made *from this device*,
-            // which leaves two stale cases: a Cube backed up before this flag
-            // existed, and one backed up (or removed) from another device. The
-            // status response is authoritative for the password kit, so adopt
-            // it. Only written on an actual mismatch: a settings write on every
-            // Settings-page visit would be pure churn.
-            let reconcile = presence_to_reconcile(
-                rk.status.as_ref().map(|s| s.has_recovery_kit),
-                cache.recovery_kit_password_backed_up,
-            )
-            .map(|present| persist_password_kit_presence(cache, local_cube_id, present));
-            // W10 post-vault-creation nudge: fires only against a
-            // freshly-loaded status so we don't nag users whose kit
-            // already has a descriptor backed up. One-shot flag is
-            // cleared here regardless of outcome.
-            let nudge = if rk.nudge_on_next_status_load {
-                rk.nudge_on_next_status_load = false;
-                should_nudge_for_status(rk.status.as_ref()).then(|| {
-                    Task::done(Message::View(view::Message::ShowToast(
-                        log::Level::Info,
-                        "Your new Vault is ready — back up your Wallet Descriptor in \
-                         Settings → General → Cube Recovery Kit."
-                            .to_string(),
-                    )))
-                })
-            } else {
-                None
-            };
-            Task::batch(reconcile.into_iter().chain(nudge))
-        }
+        RecoveryKitMessage::StatusLoaded(res) => apply_kit_status(rk, res, cache, local_cube_id),
 
-        RecoveryKitMessage::Start(mode) => {
-            rk.pin.clear();
-            rk.pin_attempt = None;
-            if let Some(error) =
-                imported_backup_source_error(cache, local_cube_id, imported.as_ref())
-            {
-                rk.flow = RecoveryKitState::Error {
-                    message: error.into(),
-                };
-                return Task::none();
-            }
-            // Gate the whole wizard on Connect auth + cube
-            // registration *before* we collect anything sensitive
-            // (PIN, password). Without those, the final upload in
-            // `submit_password` would always fail — and the user
-            // would've re-entered their PIN and typed a password
-            // for nothing. Fail fast and point them at sign-in.
-            match start_guard(client.as_ref(), server_cube_id) {
-                StartGuard::Ok => {}
-                StartGuard::NotSignedIn => {
-                    rk.flow = RecoveryKitState::Error {
-                        message: "Sign in to Connect to back up your Recovery Kit. \
-                                  You can sign in from Home → Sign In."
-                            .to_string(),
-                    };
-                    return Task::none();
-                }
-                StartGuard::CubeNotRegistered => {
-                    rk.flow = RecoveryKitState::Error {
-                        message: "This Cube isn't registered with Connect yet. \
-                                  Open the Connect panel to finish setup, then try again."
-                            .to_string(),
-                    };
-                    return Task::none();
-                }
-            }
-            match seed_source {
-                SeedSource::Mnemonic => {
-                    rk.flow = RecoveryKitState::PinEntry { mode, error: None };
-                }
-                SeedSource::Passkey => {
-                    // **I11**: a passkey Cube's Kit carries the encrypted
-                    // master seed. The seed comes from a re-authentication
-                    // ceremony *here*, at Kit time, not from anything captured
-                    // at creation — which is what lets a Cube whose owner
-                    // skipped the Kit at creation come back and build one.
-                    //
-                    // The Vault guard this replaced is gone with it. It said
-                    // "create a Vault first, a passkey Cube can only back up
-                    // its Wallet Descriptor"; a vaultless passkey Cube now has
-                    // exactly one thing to back up and it is the important one.
-                    let Some(cube) = lookup_cube(cache, local_cube_id) else {
-                        rk.flow = RecoveryKitState::Error {
-                            message: "Couldn't read this Cube's settings.".to_string(),
-                        };
-                        return Task::none();
-                    };
-                    match crate::services::passkey::reauth::begin(&cube) {
-                        Ok(fut) => {
-                            rk.flow = RecoveryKitState::PasskeyReauth { mode };
-                            // Resolves into the same `PinVerified` handler the
-                            // PIN path uses: by then both shapes are holding
-                            // the same thing, a `Zeroizing<Vec<String>>`.
-                            return Task::perform(fut, |res| {
-                                Message::View(view::Message::Settings(
-                                    view::SettingsMessage::RecoveryKit(
-                                        RecoveryKitMessage::PinVerified(
-                                            res.map_err(|e| e.user_message()),
-                                        ),
-                                    ),
-                                ))
-                            });
-                        }
-                        Err(e) => {
-                            rk.flow = RecoveryKitState::Error {
-                                message: e.user_message(),
-                            };
-                            return Task::none();
-                        }
-                    }
-                }
-            }
-            Task::none()
-        }
+        RecoveryKitMessage::Start(mode) => start_recovery_kit(
+            rk,
+            mode,
+            RecoveryKitScope {
+                cache,
+                local_cube_id,
+            },
+            seed_source,
+            client.as_ref(),
+            server_cube_id,
+            imported.as_ref(),
+        ),
 
         RecoveryKitMessage::Cancel => {
             // Drops the parked ceremony, which dismisses the system sheet and
@@ -783,49 +614,7 @@ pub fn update_with_imported(
             )
         }
 
-        RecoveryKitMessage::PinVerified(res) => {
-            rk.pin.clear();
-            rk.pin_attempt = None;
-            // Both unlock shapes land here. `PasskeyReauth` has no input to
-            // restore on failure, so it is tracked separately below.
-            let (mode, from_passkey) = match &rk.flow {
-                RecoveryKitState::PinEntry { mode, .. } => (*mode, false),
-                RecoveryKitState::PasskeyReauth { mode } => (*mode, true),
-                _ => return Task::none(),
-            };
-            if from_passkey {
-                // The ceremony is finished; drop the parked controller so the
-                // next Start is not replacing a live one.
-                crate::services::passkey::reauth::cancel();
-            }
-            match res {
-                Ok(words) => {
-                    // `words: Zeroizing<Vec<String>>` — the wrap
-                    // already happened at the async boundary in
-                    // `verify_pin`'s task. Just move it into state. When the
-                    // owner-keychain flag is on, the seed is now unlocked so we
-                    // offer the protection-mode choice (PR 2), auto-detecting the
-                    // phone key on entry; otherwise go straight to the password
-                    // entry as before.
-                    enter_after_seed_unlock(rk, mode, Some(words), client, server_cube_id)
-                }
-                Err(e) => {
-                    rk.flow = if from_passkey {
-                        // No keypad to return to — the prompt was the system's.
-                        // The message is already I12-compliant copy from
-                        // `PasskeyError::user_message`, so show it as-is and let
-                        // the user start the wizard again.
-                        RecoveryKitState::Error { message: e }
-                    } else {
-                        RecoveryKitState::PinEntry {
-                            mode,
-                            error: Some(e),
-                        }
-                    };
-                    Task::none()
-                }
-            }
-        }
+        RecoveryKitMessage::PinVerified(res) => apply_kit_unlock(rk, res, client, server_cube_id),
 
         RecoveryKitMessage::PasswordChanged(value) => {
             if let RecoveryKitState::PasswordEntry {
@@ -856,137 +645,25 @@ pub fn update_with_imported(
             Task::none()
         }
 
-        RecoveryKitMessage::SelectProtectionMode(protection) => {
-            // Pull mode + the unlocked mnemonic out of the choice screen (ends
-            // the borrow before we reassign `rk.flow`).
-            let (mode, mnemonic) = match &mut rk.flow {
-                RecoveryKitState::ProtectionChoice { mode, mnemonic, .. } => {
-                    (*mode, mnemonic.take())
-                }
-                _ => return Task::none(),
-            };
-            match protection {
-                RecoveryProtectionMode::Password => {
-                    rk.also_phone_seal = false;
-                    rk.flow = password_entry(mode, mnemonic);
-                    Task::none()
-                }
-                RecoveryProtectionMode::Both => {
-                    // Run the password path now; chain the phone seal after the
-                    // upload succeeds (see the `UploadResult` handler).
-                    rk.also_phone_seal = true;
-                    rk.flow = password_entry(mode, mnemonic);
-                    Task::none()
-                }
-                RecoveryProtectionMode::Phone => {
-                    rk.also_phone_seal = false;
-                    start_phone_seal(
-                        rk,
-                        cache,
-                        local_cube_id,
-                        client,
-                        server_cube_id,
-                        wallet,
-                        imported,
-                        mode,
-                        mnemonic,
-                    )
-                }
-            }
-        }
+        RecoveryKitMessage::SelectProtectionMode(protection) => select_kit_protection(
+            rk,
+            protection,
+            RecoveryKitScope {
+                cache,
+                local_cube_id,
+            },
+            client,
+            server_cube_id,
+            wallet,
+            imported,
+        ),
 
-        RecoveryKitMessage::ProvisionPhone => {
-            // Re-run detection (the "Check again" link). Two guards:
-            //   * Off the choice screen → no-op.
-            //   * Already `Checking` → no-op. Dropping a duplicate request
-            //     (e.g. a double-click) keeps a single detection outstanding,
-            //     so a late `ProvisionResult` can't be a stale duplicate that
-            //     clobbers a newer one. Results that arrive after the user has
-            //     left the choice screen are already discarded by
-            //     `set_phone_detection` (the same flow guard `PhoneSealResult`
-            //     uses). `begin_phone_detection` sets `PhoneKey::Checking` and
-            //     handles the not-signed-in / unregistered cases inline.
-            match &rk.flow {
-                RecoveryKitState::ProtectionChoice {
-                    phone: PhoneKey::Checking,
-                    ..
-                } => Task::none(),
-                RecoveryKitState::ProtectionChoice { .. } => {
-                    begin_phone_detection(rk, client, server_cube_id)
-                }
-                _ => Task::none(),
-            }
-        }
+        RecoveryKitMessage::ProvisionPhone => retry_phone_detection(rk, client, server_cube_id),
 
-        RecoveryKitMessage::ProvisionResult(outcome) => {
-            let status = match outcome {
-                // The `owner-self` recipient exists; the phone/both options unlock.
-                PhoneKeyOutcome::Present => PhoneKey::Present,
-                // No key yet — show guidance rather than an error.
-                PhoneKeyOutcome::Absent => PhoneKey::Absent,
-                PhoneKeyOutcome::Failed(e) => PhoneKey::Error(e),
-            };
-            set_phone_detection(rk, status);
-            Task::none()
-        }
+        RecoveryKitMessage::ProvisionResult(outcome) => apply_phone_detection_result(rk, outcome),
 
         RecoveryKitMessage::PhoneSealResult(res) => {
-            // Ignore a stale result: the seal runs async, so the user may have
-            // cancelled or started a new flow while it was in flight. Only a
-            // wizard still in `PhoneSealing` should react — otherwise a late
-            // result would show a false "backed up" toast or replace an
-            // unrelated in-progress wizard with an error screen. Mirrors the
-            // `ProvisionResult` staleness guard.
-            if !matches!(rk.flow, RecoveryKitState::PhoneSealing { .. }) {
-                return Task::none();
-            }
-            match res {
-                Ok(descriptor_fingerprint) => {
-                    rk.reset_flow();
-                    // Persist the keychain drift slot from the descriptor that was
-                    // actually sealed (per-method drift, PR 3). Mirror
-                    // `next_fingerprint_to_persist`'s rule: only a seal that
-                    // included a descriptor writes the slot — never wipe a stored
-                    // fingerprint on a descriptor-less seal (a vaultless Cube seals
-                    // seed-only, so `None` is the normal case until it has a Vault).
-                    let persist = if let Some(fp) = descriptor_fingerprint {
-                        persist_descriptor_fingerprint(
-                            cache,
-                            local_cube_id,
-                            DescriptorFingerprintSlot::Keychain,
-                            Some(fp),
-                        )
-                    } else {
-                        Task::none()
-                    };
-                    let reload = load_status(rk, client, server_cube_id);
-                    let toast = Task::done(Message::View(view::Message::ShowToast(
-                        log::Level::Info,
-                        "Backed up to your phone. You can restore this Cube by approving in \
-                         COINCUBE Mobile."
-                            .to_string(),
-                    )));
-                    Task::batch([toast, persist, reload])
-                }
-                Err(e) => {
-                    rk.flow = RecoveryKitState::Error { message: e.clone() };
-                    // "Both" mode chains this seal *after* a successful password
-                    // upload, so the kit on Connect has already changed even though
-                    // the phone half failed. Refresh status now (it only updates
-                    // `rk.status`, not the `Error` flow) so the inline card reflects
-                    // the real server state once the user dismisses the error —
-                    // otherwise it keeps showing the pre-upload cache.
-                    let reload = load_status(rk, client, server_cube_id);
-                    Task::batch([
-                        Task::done(Message::View(view::Message::ShowError(kit_toast(
-                            "Couldn't finish sealing your Recovery Kit",
-                            "Your phone's copy wasn't saved. Try again from Settings.",
-                            &e,
-                        )))),
-                        reload,
-                    ])
-                }
-            }
+            apply_phone_seal_result(rk, res, cache, local_cube_id, client, server_cube_id)
         }
 
         RecoveryKitMessage::SubmitPassword => submit_password(
@@ -999,73 +676,18 @@ pub fn update_with_imported(
             imported,
         ),
 
-        RecoveryKitMessage::UploadResult(res) => {
-            match res {
-                Ok(outcome) => {
-                    let updated_at = outcome.updated_at.clone();
-                    let now_has_seed = outcome.now_has_seed;
-                    let now_has_descriptor = outcome.now_has_descriptor;
-                    // Mark the password kit present, and only refresh the
-                    // cached drift fingerprint when *this* upload actually
-                    // included a descriptor half. Passing through `None`
-                    // would wipe a previously-stored fingerprint on a
-                    // seed-only upload (e.g. `AddSeed`), which then
-                    // silently disables drift detection for the descriptor
-                    // that's still on the server. The `Remove` path clears
-                    // both through its own dedicated call.
-                    let persist = persist_password_kit_uploaded(
-                        cache,
-                        local_cube_id,
-                        next_fingerprint_to_persist(&outcome),
-                    );
-                    // "Both" protection mode (PR 2): the password kit is now
-                    // uploaded; chain the phone seal with the same material. Pull
-                    // the unlocked mnemonic out of the `Uploading` snapshot (ends
-                    // the borrow before `start_phone_seal` reborrows `rk`).
-                    if rk.also_phone_seal {
-                        rk.also_phone_seal = false;
-                        let (mode, mnemonic) = match &mut rk.flow {
-                            RecoveryKitState::Uploading { pending } => {
-                                (pending.mode, pending.mnemonic.take())
-                            }
-                            _ => (RecoveryKitMode::Create, None),
-                        };
-                        let phone = start_phone_seal(
-                            rk,
-                            cache,
-                            local_cube_id,
-                            client,
-                            server_cube_id,
-                            wallet,
-                            imported,
-                            mode,
-                            mnemonic,
-                        );
-                        Task::batch([persist, phone])
-                    } else {
-                        rk.flow = RecoveryKitState::Completed {
-                            updated_at,
-                            now_has_seed,
-                            now_has_descriptor,
-                        };
-                        persist
-                    }
-                }
-                Err(e) => {
-                    // Restore the user's password-entry inputs from
-                    // the `Uploading` snapshot so a transient network
-                    // failure doesn't force them to retype their
-                    // password (and re-enter their PIN to decrypt
-                    // the mnemonic again). See `restore_entry_on_upload_error`.
-                    restore_entry_on_upload_error(&mut rk.flow, &e);
-                    Task::done(Message::View(view::Message::ShowError(kit_toast(
-                        "Couldn't save your Recovery Kit",
-                        "Your password is still filled in. Check your internet connection and try again.",
-                        &e,
-                    ))))
-                }
-            }
-        }
+        RecoveryKitMessage::UploadResult(res) => apply_kit_upload_result(
+            rk,
+            res,
+            RecoveryKitScope {
+                cache,
+                local_cube_id,
+            },
+            client,
+            server_cube_id,
+            wallet,
+            imported,
+        ),
 
         RecoveryKitMessage::DismissCompleted => {
             rk.reset_flow();
@@ -1082,99 +704,612 @@ pub fn update_with_imported(
             Task::none()
         }
 
-        RecoveryKitMessage::ConfirmRemove => {
-            // Only the review screen may authorize deletion. A delayed or
-            // duplicated confirm event must not start a new removal after
-            // Cancel or a failed status refresh closed that screen.
-            if !matches!(rk.flow, RecoveryKitState::ConfirmRemove) {
-                return Task::none();
-            }
-            let Some(client) = client else {
-                return Task::done(Message::View(view::Message::ShowError(
-                    "Sign in to Connect to remove your Recovery Kit.".to_string(),
-                )));
-            };
-            let Some(cube_id) = server_cube_id else {
-                return Task::done(Message::View(view::Message::ShowError(
-                    "This Cube isn't registered with Connect yet.".to_string(),
-                )));
-            };
-            // Build the delete set from the current status — the same
-            // per-method view the confirm screen showed the user. The password
-            // kit is always torn down (idempotent, 404-tolerant); the keychain
-            // half only when a phone envelope set is present.
-            let overview = backup_overview(rk.status.as_ref());
-            let delete_keychain = overview.keychain.is_some();
-            if !overview.any_enabled() {
-                // No-op guard: nothing enabled (e.g. status changed underneath
-                // us). Return to the card rather than firing empty deletes.
-                rk.reset_flow();
-                return load_status(rk, Some(client), server_cube_id);
-            }
-            rk.flow = RecoveryKitState::Removing;
-            Task::perform(
-                async move { remove_backups(client, cube_id, delete_keychain).await },
-                |res| {
-                    Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
-                        RecoveryKitMessage::RemoveResult(res),
-                    )))
-                },
-            )
-        }
+        RecoveryKitMessage::ConfirmRemove => confirm_kit_removal(rk, client, server_cube_id),
 
         RecoveryKitMessage::RemoveResult(res) => {
-            match res {
-                Ok(()) => {
-                    rk.reset_flow();
-                    // Clear the password presence flag and both local drift
-                    // fingerprint slots — Remove-all left nothing backed up, by
-                    // either method (per-method drift, PR 3).
-                    let persist = clear_recovery_kit_state(cache, local_cube_id);
-                    let reload = load_status(rk, client, server_cube_id);
-                    Task::batch([persist, reload])
+            apply_kit_removal_result(rk, res, cache, local_cube_id, client, server_cube_id)
+        }
+    }
+}
+
+struct RecoveryKitScope<'a> {
+    cache: &'a Cache,
+    local_cube_id: &'a str,
+}
+
+fn reject_kit_update(
+    rk: &mut RecoveryKit,
+    msg: &RecoveryKitMessage,
+    conflicting_wallet_sources: bool,
+) -> Option<Task<Message>> {
+    if conflicting_wallet_sources {
+        rk.flow = RecoveryKitState::Error {
+            message: "This Cube has conflicting wallet sources; reopen it before backing up".into(),
+        };
+        return Some(Task::none());
+    }
+    // UI buttons are disabled while status is unknown or stale, but messages
+    // can already be queued when a refresh fails (especially ConfirmRemove).
+    // Enforce the same gate at the reducer before collecting a PIN or issuing
+    // any destructive request.
+    if matches!(
+        msg,
+        RecoveryKitMessage::Start(_)
+            | RecoveryKitMessage::Remove
+            | RecoveryKitMessage::ConfirmRemove
+    ) && (rk.status_loading || rk.status_stale || rk.status.is_none())
+    {
+        rk.reset_flow();
+        let guidance = if rk.status_loading {
+            "Wait for the Recovery Kit status check to finish before making changes."
+        } else {
+            "Recovery Kit status is unavailable. Refresh it before making changes."
+        };
+        return Some(Task::done(Message::View(view::Message::ShowError(
+            guidance.to_owned(),
+        ))));
+    }
+    None
+}
+
+fn apply_kit_status(
+    rk: &mut RecoveryKit,
+    res: Result<Option<RecoveryKitStatus>, String>,
+    cache: &Cache,
+    local_cube_id: &str,
+) -> Task<Message> {
+    rk.status_loading = false;
+    match res {
+        Ok(Some(s)) => {
+            rk.status = Some(s);
+            rk.status_stale = false;
+        }
+        Ok(None) => {
+            // 404 — no kit on the server; render card in
+            // "Create" state.
+            rk.status = Some(RecoveryKitStatus {
+                has_recovery_kit: false,
+                has_encrypted_seed: false,
+                has_encrypted_wallet_descriptor: false,
+                encryption_scheme: String::new(),
+                created_at: None,
+                updated_at: None,
+                owner_self: None,
+            });
+            rk.status_stale = false;
+        }
+        Err(e) => {
+            tracing::warn!("get_recovery_kit_status failed: {}", e);
+            // Keep the prior cached status (if any) so the
+            // card doesn't flicker; surface a toast only —
+            // no state transition. Also clear the nudge
+            // flag — we don't want to defer the toast
+            // indefinitely because of a transient error.
+            rk.nudge_on_next_status_load = false;
+            rk.status_stale = true;
+            // A confirmation prepared from the old delete set can no
+            // longer be trusted. Dismiss it even if its Confirm event
+            // was already queued; the reducer gate above also catches
+            // that late event.
+            if matches!(rk.flow, RecoveryKitState::ConfirmRemove) {
+                rk.reset_flow();
+            }
+            return Task::done(Message::View(view::Message::ShowError(kit_toast(
+                "Couldn't load your Recovery Kit",
+                "Check your internet connection and try again.",
+                &e,
+            ))));
+        }
+    }
+    // Reconcile the persisted password-kit presence flag against what
+    // the server just told us. `has_recovery_kit()` — and so the Home
+    // card — is otherwise a record of backups made *from this device*,
+    // which leaves two stale cases: a Cube backed up before this flag
+    // existed, and one backed up (or removed) from another device. The
+    // status response is authoritative for the password kit, so adopt
+    // it. Only written on an actual mismatch: a settings write on every
+    // Settings-page visit would be pure churn.
+    let reconcile = presence_to_reconcile(
+        rk.status.as_ref().map(|s| s.has_recovery_kit),
+        cache.recovery_kit_password_backed_up,
+    )
+    .map(|present| persist_password_kit_presence(cache, local_cube_id, present));
+    // W10 post-vault-creation nudge: fires only against a
+    // freshly-loaded status so we don't nag users whose kit
+    // already has a descriptor backed up. One-shot flag is
+    // cleared here regardless of outcome.
+    let nudge = if rk.nudge_on_next_status_load {
+        rk.nudge_on_next_status_load = false;
+        should_nudge_for_status(rk.status.as_ref()).then(|| {
+            Task::done(Message::View(view::Message::ShowToast(
+                log::Level::Info,
+                "Your new Vault is ready — back up your Wallet Descriptor in \
+                 Settings → General → Cube Recovery Kit."
+                    .to_string(),
+            )))
+        })
+    } else {
+        None
+    };
+    Task::batch(reconcile.into_iter().chain(nudge))
+}
+
+fn start_recovery_kit(
+    rk: &mut RecoveryKit,
+    mode: RecoveryKitMode,
+    scope: RecoveryKitScope<'_>,
+    seed_source: SeedSource,
+    client: Option<&CoincubeClient>,
+    server_cube_id: Option<u64>,
+    imported: Option<&ImportedBackupSource>,
+) -> Task<Message> {
+    let RecoveryKitScope {
+        cache,
+        local_cube_id,
+    } = scope;
+    rk.pin.clear();
+    rk.pin_attempt = None;
+    if let Some(error) = imported_backup_source_error(cache, local_cube_id, imported) {
+        rk.flow = RecoveryKitState::Error {
+            message: error.into(),
+        };
+        return Task::none();
+    }
+    // Gate the whole wizard on Connect auth + cube
+    // registration *before* we collect anything sensitive
+    // (PIN, password). Without those, the final upload in
+    // `submit_password` would always fail — and the user
+    // would've re-entered their PIN and typed a password
+    // for nothing. Fail fast and point them at sign-in.
+    match start_guard(client, server_cube_id) {
+        StartGuard::Ok => {}
+        StartGuard::NotSignedIn => {
+            rk.flow = RecoveryKitState::Error {
+                message: "Sign in to Connect to back up your Recovery Kit. \
+                          You can sign in from Home → Sign In."
+                    .to_string(),
+            };
+            return Task::none();
+        }
+        StartGuard::CubeNotRegistered => {
+            rk.flow = RecoveryKitState::Error {
+                message: "This Cube isn't registered with Connect yet. \
+                          Open the Connect panel to finish setup, then try again."
+                    .to_string(),
+            };
+            return Task::none();
+        }
+    }
+    match seed_source {
+        SeedSource::Mnemonic => {
+            rk.flow = RecoveryKitState::PinEntry { mode, error: None };
+        }
+        SeedSource::Passkey => {
+            // **I11**: a passkey Cube's Kit carries the encrypted
+            // master seed. The seed comes from a re-authentication
+            // ceremony *here*, at Kit time, not from anything captured
+            // at creation — which is what lets a Cube whose owner
+            // skipped the Kit at creation come back and build one.
+            //
+            // The Vault guard this replaced is gone with it. It said
+            // "create a Vault first, a passkey Cube can only back up
+            // its Wallet Descriptor"; a vaultless passkey Cube now has
+            // exactly one thing to back up and it is the important one.
+            let Some(cube) = lookup_cube(cache, local_cube_id) else {
+                rk.flow = RecoveryKitState::Error {
+                    message: "Couldn't read this Cube's settings.".to_string(),
+                };
+                return Task::none();
+            };
+            match crate::services::passkey::reauth::begin(&cube) {
+                Ok(fut) => {
+                    rk.flow = RecoveryKitState::PasskeyReauth { mode };
+                    // Resolves into the same `PinVerified` handler the
+                    // PIN path uses: by then both shapes are holding
+                    // the same thing, a `Zeroizing<Vec<String>>`.
+                    return Task::perform(fut, |res| {
+                        Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
+                            RecoveryKitMessage::PinVerified(res.map_err(|e| e.user_message())),
+                        )))
+                    });
                 }
-                Err(RemoveFailure {
-                    message,
-                    password_kit_deleted,
-                }) => {
+                Err(e) => {
                     rk.flow = RecoveryKitState::Error {
-                        message: message.clone(),
+                        message: e.user_message(),
                     };
-                    // Removal runs sequentially and can partially succeed — e.g.
-                    // the password kit was deleted, then the phone (Keychain)
-                    // step failed. The server state has already changed even
-                    // though the overall op reports failure, so refresh status
-                    // now (it only updates `rk.status`, not the `Error` flow) —
-                    // otherwise the card keeps showing a password backup Connect
-                    // no longer has once the user dismisses the error. Mirrors
-                    // the `PhoneSealResult` partial-failure handling.
-                    let reload = load_status(rk, client, server_cube_id);
-                    // `load_status` only fixes the in-memory `rk.status`; the
-                    // persisted per-method state drives `has_recovery_kit()` /
-                    // `connect_state()`. When the password kit was already torn
-                    // down before the failure, its local presence flag and
-                    // fingerprint now describe a kit Connect no longer holds, so
-                    // clear just that method. The keychain slot stays: its copy may
-                    // well survive the failure (the very reason we failed loudly),
-                    // and a retry — or the phone-seal path — reconciles it.
-                    let clear_stale_password = if password_kit_deleted {
-                        clear_password_kit_state(cache, local_cube_id)
-                    } else {
-                        Task::none()
-                    };
-                    Task::batch([
-                        Task::done(Message::View(view::Message::ShowError(kit_toast(
-                            "Couldn't remove your Recovery Kit",
-                            "Some copies may still be stored. Reopen Settings to see what's left, then try again.",
-                            &message,
-                        )))),
-                        clear_stale_password,
-                        reload,
-                    ])
+                    return Task::none();
                 }
             }
         }
     }
+    Task::none()
+}
+
+fn apply_kit_unlock(
+    rk: &mut RecoveryKit,
+    res: Result<Zeroizing<Vec<String>>, String>,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    rk.pin.clear();
+    rk.pin_attempt = None;
+    // Both unlock shapes land here. `PasskeyReauth` has no input to
+    // restore on failure, so it is tracked separately below.
+    let (mode, from_passkey) = match &rk.flow {
+        RecoveryKitState::PinEntry { mode, .. } => (*mode, false),
+        RecoveryKitState::PasskeyReauth { mode } => (*mode, true),
+        _ => return Task::none(),
+    };
+    if from_passkey {
+        // The ceremony is finished; drop the parked controller so the
+        // next Start is not replacing a live one.
+        crate::services::passkey::reauth::cancel();
+    }
+    match res {
+        Ok(words) => {
+            // `words: Zeroizing<Vec<String>>` — the wrap
+            // already happened at the async boundary in
+            // `verify_pin`'s task. Just move it into state. When the
+            // owner-keychain flag is on, the seed is now unlocked so we
+            // offer the protection-mode choice (PR 2), auto-detecting the
+            // phone key on entry; otherwise go straight to the password
+            // entry as before.
+            enter_after_seed_unlock(rk, mode, Some(words), client, server_cube_id)
+        }
+        Err(e) => {
+            rk.flow = if from_passkey {
+                // No keypad to return to — the prompt was the system's.
+                // The message is already I12-compliant copy from
+                // `PasskeyError::user_message`, so show it as-is and let
+                // the user start the wizard again.
+                RecoveryKitState::Error { message: e }
+            } else {
+                RecoveryKitState::PinEntry {
+                    mode,
+                    error: Some(e),
+                }
+            };
+            Task::none()
+        }
+    }
+}
+
+fn select_kit_protection(
+    rk: &mut RecoveryKit,
+    protection: RecoveryProtectionMode,
+    scope: RecoveryKitScope<'_>,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+    wallet: Option<Arc<Wallet>>,
+    imported: Option<ImportedBackupSource>,
+) -> Task<Message> {
+    let RecoveryKitScope {
+        cache,
+        local_cube_id,
+    } = scope;
+    // Pull mode + the unlocked mnemonic out of the choice screen (ends
+    // the borrow before we reassign `rk.flow`).
+    let (mode, mnemonic) = match &mut rk.flow {
+        RecoveryKitState::ProtectionChoice { mode, mnemonic, .. } => (*mode, mnemonic.take()),
+        _ => return Task::none(),
+    };
+    match protection {
+        RecoveryProtectionMode::Password => {
+            rk.also_phone_seal = false;
+            rk.flow = password_entry(mode, mnemonic);
+            Task::none()
+        }
+        RecoveryProtectionMode::Both => {
+            // Run the password path now; chain the phone seal after the
+            // upload succeeds (see the `UploadResult` handler).
+            rk.also_phone_seal = true;
+            rk.flow = password_entry(mode, mnemonic);
+            Task::none()
+        }
+        RecoveryProtectionMode::Phone => {
+            rk.also_phone_seal = false;
+            start_phone_seal(
+                rk,
+                cache,
+                local_cube_id,
+                client,
+                server_cube_id,
+                wallet,
+                imported,
+                mode,
+                mnemonic,
+            )
+        }
+    }
+}
+
+fn retry_phone_detection(
+    rk: &mut RecoveryKit,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    // Re-run detection (the "Check again" link). Two guards:
+    //   * Off the choice screen → no-op.
+    //   * Already `Checking` → no-op. Dropping a duplicate request
+    //     (e.g. a double-click) keeps a single detection outstanding,
+    //     so a late `ProvisionResult` can't be a stale duplicate that
+    //     clobbers a newer one. Results that arrive after the user has
+    //     left the choice screen are already discarded by
+    //     `set_phone_detection` (the same flow guard `PhoneSealResult`
+    //     uses). `begin_phone_detection` sets `PhoneKey::Checking` and
+    //     handles the not-signed-in / unregistered cases inline.
+    match &rk.flow {
+        RecoveryKitState::ProtectionChoice {
+            phone: PhoneKey::Checking,
+            ..
+        } => Task::none(),
+        RecoveryKitState::ProtectionChoice { .. } => {
+            begin_phone_detection(rk, client, server_cube_id)
+        }
+        _ => Task::none(),
+    }
+}
+
+fn apply_phone_seal_result(
+    rk: &mut RecoveryKit,
+    res: Result<Option<String>, String>,
+    cache: &Cache,
+    local_cube_id: &str,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    // Ignore a stale result: the seal runs async, so the user may have
+    // cancelled or started a new flow while it was in flight. Only a
+    // wizard still in `PhoneSealing` should react — otherwise a late
+    // result would show a false "backed up" toast or replace an
+    // unrelated in-progress wizard with an error screen. Mirrors the
+    // `ProvisionResult` staleness guard.
+    if !matches!(rk.flow, RecoveryKitState::PhoneSealing { .. }) {
+        return Task::none();
+    }
+    match res {
+        Ok(descriptor_fingerprint) => {
+            rk.reset_flow();
+            // Persist the keychain drift slot from the descriptor that was
+            // actually sealed (per-method drift, PR 3). Mirror
+            // `next_fingerprint_to_persist`'s rule: only a seal that
+            // included a descriptor writes the slot — never wipe a stored
+            // fingerprint on a descriptor-less seal (a vaultless Cube seals
+            // seed-only, so `None` is the normal case until it has a Vault).
+            let persist = if let Some(fp) = descriptor_fingerprint {
+                persist_descriptor_fingerprint(
+                    cache,
+                    local_cube_id,
+                    DescriptorFingerprintSlot::Keychain,
+                    Some(fp),
+                )
+            } else {
+                Task::none()
+            };
+            let reload = load_status(rk, client, server_cube_id);
+            let toast = Task::done(Message::View(view::Message::ShowToast(
+                log::Level::Info,
+                "Backed up to your phone. You can restore this Cube by approving in \
+                 COINCUBE Mobile."
+                    .to_string(),
+            )));
+            Task::batch([toast, persist, reload])
+        }
+        Err(e) => {
+            rk.flow = RecoveryKitState::Error { message: e.clone() };
+            // "Both" mode chains this seal *after* a successful password
+            // upload, so the kit on Connect has already changed even though
+            // the phone half failed. Refresh status now (it only updates
+            // `rk.status`, not the `Error` flow) so the inline card reflects
+            // the real server state once the user dismisses the error —
+            // otherwise it keeps showing the pre-upload cache.
+            let reload = load_status(rk, client, server_cube_id);
+            Task::batch([
+                Task::done(Message::View(view::Message::ShowError(kit_toast(
+                    "Couldn't finish sealing your Recovery Kit",
+                    "Your phone's copy wasn't saved. Try again from Settings.",
+                    &e,
+                )))),
+                reload,
+            ])
+        }
+    }
+}
+
+fn apply_kit_upload_result(
+    rk: &mut RecoveryKit,
+    res: Result<RecoveryKitUploadOutcome, String>,
+    scope: RecoveryKitScope<'_>,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+    wallet: Option<Arc<Wallet>>,
+    imported: Option<ImportedBackupSource>,
+) -> Task<Message> {
+    let RecoveryKitScope {
+        cache,
+        local_cube_id,
+    } = scope;
+    match res {
+        Ok(outcome) => {
+            let updated_at = outcome.updated_at.clone();
+            let now_has_seed = outcome.now_has_seed;
+            let now_has_descriptor = outcome.now_has_descriptor;
+            // Mark the password kit present, and only refresh the
+            // cached drift fingerprint when *this* upload actually
+            // included a descriptor half. Passing through `None`
+            // would wipe a previously-stored fingerprint on a
+            // seed-only upload (e.g. `AddSeed`), which then
+            // silently disables drift detection for the descriptor
+            // that's still on the server. The `Remove` path clears
+            // both through its own dedicated call.
+            let persist = persist_password_kit_uploaded(
+                cache,
+                local_cube_id,
+                next_fingerprint_to_persist(&outcome),
+            );
+            // "Both" protection mode (PR 2): the password kit is now
+            // uploaded; chain the phone seal with the same material. Pull
+            // the unlocked mnemonic out of the `Uploading` snapshot (ends
+            // the borrow before `start_phone_seal` reborrows `rk`).
+            if rk.also_phone_seal {
+                rk.also_phone_seal = false;
+                let (mode, mnemonic) = match &mut rk.flow {
+                    RecoveryKitState::Uploading { pending } => {
+                        (pending.mode, pending.mnemonic.take())
+                    }
+                    _ => (RecoveryKitMode::Create, None),
+                };
+                let phone = start_phone_seal(
+                    rk,
+                    cache,
+                    local_cube_id,
+                    client,
+                    server_cube_id,
+                    wallet,
+                    imported,
+                    mode,
+                    mnemonic,
+                );
+                Task::batch([persist, phone])
+            } else {
+                rk.flow = RecoveryKitState::Completed {
+                    updated_at,
+                    now_has_seed,
+                    now_has_descriptor,
+                };
+                persist
+            }
+        }
+        Err(e) => {
+            // Restore the user's password-entry inputs from
+            // the `Uploading` snapshot so a transient network
+            // failure doesn't force them to retype their
+            // password (and re-enter their PIN to decrypt
+            // the mnemonic again). See `restore_entry_on_upload_error`.
+            restore_entry_on_upload_error(&mut rk.flow, &e);
+            Task::done(Message::View(view::Message::ShowError(kit_toast(
+                "Couldn't save your Recovery Kit",
+                "Your password is still filled in. Check your internet connection and try again.",
+                &e,
+            ))))
+        }
+    }
+}
+
+fn confirm_kit_removal(
+    rk: &mut RecoveryKit,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    // Only the review screen may authorize deletion. A delayed or
+    // duplicated confirm event must not start a new removal after
+    // Cancel or a failed status refresh closed that screen.
+    if !matches!(rk.flow, RecoveryKitState::ConfirmRemove) {
+        return Task::none();
+    }
+    let Some(client) = client else {
+        return Task::done(Message::View(view::Message::ShowError(
+            "Sign in to Connect to remove your Recovery Kit.".to_string(),
+        )));
+    };
+    let Some(cube_id) = server_cube_id else {
+        return Task::done(Message::View(view::Message::ShowError(
+            "This Cube isn't registered with Connect yet.".to_string(),
+        )));
+    };
+    // Build the delete set from the current status — the same
+    // per-method view the confirm screen showed the user. The password
+    // kit is always torn down (idempotent, 404-tolerant); the keychain
+    // half only when a phone envelope set is present.
+    let overview = backup_overview(rk.status.as_ref());
+    let delete_keychain = overview.keychain.is_some();
+    if !overview.any_enabled() {
+        // No-op guard: nothing enabled (e.g. status changed underneath
+        // us). Return to the card rather than firing empty deletes.
+        rk.reset_flow();
+        return load_status(rk, Some(client), server_cube_id);
+    }
+    rk.flow = RecoveryKitState::Removing;
+    Task::perform(
+        async move { remove_backups(client, cube_id, delete_keychain).await },
+        |res| {
+            Message::View(view::Message::Settings(view::SettingsMessage::RecoveryKit(
+                RecoveryKitMessage::RemoveResult(res),
+            )))
+        },
+    )
+}
+
+fn apply_kit_removal_result(
+    rk: &mut RecoveryKit,
+    res: Result<(), RemoveFailure>,
+    cache: &Cache,
+    local_cube_id: &str,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+) -> Task<Message> {
+    match res {
+        Ok(()) => {
+            rk.reset_flow();
+            // Clear the password presence flag and both local drift
+            // fingerprint slots — Remove-all left nothing backed up, by
+            // either method (per-method drift, PR 3).
+            let persist = clear_recovery_kit_state(cache, local_cube_id);
+            let reload = load_status(rk, client, server_cube_id);
+            Task::batch([persist, reload])
+        }
+        Err(RemoveFailure {
+            message,
+            password_kit_deleted,
+        }) => {
+            rk.flow = RecoveryKitState::Error {
+                message: message.clone(),
+            };
+            // Removal runs sequentially and can partially succeed — e.g.
+            // the password kit was deleted, then the phone (Keychain)
+            // step failed. The server state has already changed even
+            // though the overall op reports failure, so refresh status
+            // now (it only updates `rk.status`, not the `Error` flow) —
+            // otherwise the card keeps showing a password backup Connect
+            // no longer has once the user dismisses the error. Mirrors
+            // the `PhoneSealResult` partial-failure handling.
+            let reload = load_status(rk, client, server_cube_id);
+            // `load_status` only fixes the in-memory `rk.status`; the
+            // persisted per-method state drives `has_recovery_kit()` /
+            // `connect_state()`. When the password kit was already torn
+            // down before the failure, its local presence flag and
+            // fingerprint now describe a kit Connect no longer holds, so
+            // clear just that method. The keychain slot stays: its copy may
+            // well survive the failure (the very reason we failed loudly),
+            // and a retry — or the phone-seal path — reconciles it.
+            let clear_stale_password = if password_kit_deleted {
+                clear_password_kit_state(cache, local_cube_id)
+            } else {
+                Task::none()
+            };
+            Task::batch([
+                Task::done(Message::View(view::Message::ShowError(kit_toast(
+                    "Couldn't remove your Recovery Kit",
+                    "Some copies may still be stored. Reopen Settings to see what's left, then try again.",
+                    &message,
+                )))),
+                clear_stale_password,
+                reload,
+            ])
+        }
+    }
+}
+
+fn apply_phone_detection_result(rk: &mut RecoveryKit, outcome: PhoneKeyOutcome) -> Task<Message> {
+    let status = match outcome {
+        // The `owner-self` recipient exists; the phone/both options unlock.
+        PhoneKeyOutcome::Present => PhoneKey::Present,
+        // No key yet — show guidance rather than an error.
+        PhoneKeyOutcome::Absent => PhoneKey::Absent,
+        PhoneKeyOutcome::Failed(e) => PhoneKey::Error(e),
+    };
+    set_phone_detection(rk, status);
+    Task::none()
 }
 
 fn load_status(

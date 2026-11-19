@@ -194,18 +194,8 @@ async fn fence_checkpoint_attempt(
         if !is_current() {
             return Err(PublicationError::Cancelled);
         }
-        if !remote.active && remote.generation > floor {
+        let Some(expected) = checkpoint_fence_step(journal, &remote, floor, attempt == 2)? else {
             return Ok(remote);
-        }
-        if attempt == 2 {
-            return Err(PublicationError::Stale);
-        }
-        let expected = if journal.matches(&remote) {
-            remote.generation
-        } else if journal.ciphertext.is_some() && !remote.active && remote.generation == floor {
-            floor
-        } else {
-            return Err(PublicationError::Stale);
         };
         if !is_current() {
             return Err(PublicationError::Cancelled);
@@ -227,6 +217,28 @@ async fn fence_checkpoint_attempt(
         // authenticated GET. No successful local release is inferred from it.
     }
     unreachable!("bounded cancellation loop always returns")
+}
+
+fn checkpoint_fence_step(
+    journal: &Journal,
+    remote: &Checkpoint,
+    floor: u64,
+    last_attempt: bool,
+) -> Result<Option<u64>, PublicationError> {
+    if !remote.active && remote.generation > floor {
+        return Ok(None);
+    }
+    if last_attempt {
+        return Err(PublicationError::Stale);
+    }
+    let expected = if journal.matches(remote) {
+        remote.generation
+    } else if journal.ciphertext.is_some() && !remote.active && remote.generation == floor {
+        floor
+    } else {
+        return Err(PublicationError::Stale);
+    };
+    Ok(Some(expected))
 }
 
 impl LocalKeyRepository<'_> {

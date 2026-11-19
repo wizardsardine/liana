@@ -358,6 +358,50 @@ async fn update_connect_cache_inner(
     };
 
     let guarded = guard.is_some();
+    validate_cache_update_guard(&cache, email, guard)?;
+
+    let newer_cached_tokens = cache
+        .accounts
+        .iter()
+        .find(|cred| cred.email == *email)
+        .filter(|account| !guarded && current_tokens.expires_at < account.tokens.expires_at)
+        .map(|account| account.tokens.clone());
+
+    let tokens = if let Some(tokens) = newer_cached_tokens {
+        tracing::debug!("Connect authentication tokens are up to date");
+        tokens
+    } else {
+        current_tokens.clone()
+    };
+
+    cache.upsert_credential(email, tokens.clone(), action);
+
+    let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
+    })?;
+
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
+    })?;
+
+    file.write_all(&content).await.map_err(|e| {
+        tracing::warn!("failed to write to file: {:?}", e);
+        ConnectCacheError::WritingFile(e.to_string())
+    })?;
+
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+
+    Ok(tokens)
+}
+
+fn validate_cache_update_guard(
+    cache: &ConnectCache,
+    email: &str,
+    guard: Option<CacheUpdateGuard<'_>>,
+) -> Result<(), ConnectCacheError> {
     match guard {
         Some(CacheUpdateGuard::LoginSnapshot(started_from)) => {
             let before = started_from.accounts.iter().find(|a| a.email == *email);
@@ -399,9 +443,9 @@ async fn update_connect_cache_inner(
             let active_now = cache.active_account().map(|a| a.email.as_str());
             if cache.active_email != started_from.active_email
                 || active_now != active_before
-                || account_tokens(&cache, email) != account_tokens(started_from, email)
+                || account_tokens(cache, email) != account_tokens(started_from, email)
                 || active_before.is_some_and(|active| {
-                    account_tokens(&cache, active) != account_tokens(started_from, active)
+                    account_tokens(cache, active) != account_tokens(started_from, active)
                 })
             {
                 return Err(ConnectCacheError::Unexpected(
@@ -421,42 +465,7 @@ async fn update_connect_cache_inner(
         }
         None => {}
     }
-
-    let newer_cached_tokens = cache
-        .accounts
-        .iter()
-        .find(|cred| cred.email == *email)
-        .filter(|account| !guarded && current_tokens.expires_at < account.tokens.expires_at)
-        .map(|account| account.tokens.clone());
-
-    let tokens = if let Some(tokens) = newer_cached_tokens {
-        tracing::debug!("Connect authentication tokens are up to date");
-        tokens
-    } else {
-        current_tokens.clone()
-    };
-
-    cache.upsert_credential(email, tokens.clone(), action);
-
-    let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
-    })?;
-
-    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
-        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
-    })?;
-
-    file.write_all(&content).await.map_err(|e| {
-        tracing::warn!("failed to write to file: {:?}", e);
-        ConnectCacheError::WritingFile(e.to_string())
-    })?;
-
-    file.inner_mut()
-        .set_len(content.len() as u64)
-        .await
-        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
-
-    Ok(tokens)
+    Ok(())
 }
 
 /// Persist (or clear) the gRPC-issued `device_id` for the account matching
@@ -602,61 +611,10 @@ async fn mutate_device_registration(
         }
     };
 
-    let is_active = cache.active_email_matches(email);
-    let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
-        return Ok(false);
+    let accepted = match apply_device_registration_update(network_dir, &mut cache, email, update) {
+        DeviceRegistrationMutation::Unchanged(accepted) => return Ok(accepted),
+        DeviceRegistrationMutation::Changed(accepted) => accepted,
     };
-    let mut accepted = true;
-    let changed = match update {
-        DeviceRegistrationUpdate::Begin { expected_id, claim } => {
-            if !is_active || account.device_id.as_deref() != Some(expected_id) {
-                return Ok(false);
-            }
-            account.reregister_claim = Some(claim.to_string());
-            true
-        }
-        DeviceRegistrationUpdate::Set {
-            device_id,
-            claim,
-            expected_refresh_token,
-        } => {
-            if let Some(claim) = claim {
-                if account.reregister_claim.as_deref() != Some(claim) {
-                    return Ok(false);
-                }
-                // The account lost selection while its RPC was in flight.
-                // Retire only this request's claim; keep its previous device
-                // id and never install the late RPC result.
-                if is_active {
-                    account.device_id = device_id.map(str::to_string);
-                } else {
-                    accepted = false;
-                }
-                account.reregister_claim = None;
-                true
-            } else {
-                if expected_refresh_token
-                    .is_some_and(|expected| !is_active || account.tokens.refresh_token != expected)
-                {
-                    return Ok(false);
-                }
-                if has_live_reregister_claim_for_account(network_dir, account) {
-                    return Ok(false);
-                }
-                if account.device_id.as_deref() == device_id && account.reregister_claim.is_none() {
-                    return Ok(true);
-                }
-                account.device_id = device_id.map(str::to_string);
-                // An exited process's claim is abandoned. Its late completion
-                // still needs the exact claim to commit.
-                account.reregister_claim = None;
-                true
-            }
-        }
-    };
-    if !changed {
-        return Ok(false);
-    }
 
     let content = serde_json::to_vec_pretty(&cache)
         .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to serialize cache: {}", e)))?;
@@ -673,6 +631,87 @@ async fn mutate_device_registration(
         .await
         .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
     Ok(accepted)
+}
+
+enum DeviceRegistrationMutation {
+    Unchanged(bool),
+    Changed(bool),
+}
+
+fn apply_device_registration_update(
+    network_dir: &NetworkDirectory,
+    cache: &mut ConnectCache,
+    email: &str,
+    update: DeviceRegistrationUpdate<'_>,
+) -> DeviceRegistrationMutation {
+    let is_active = cache.active_email_matches(email);
+    let Some(account) = cache.accounts.iter_mut().find(|a| a.email == email) else {
+        return DeviceRegistrationMutation::Unchanged(false);
+    };
+    let mut accepted = true;
+    match update {
+        DeviceRegistrationUpdate::Begin { expected_id, claim } => {
+            if !is_active || account.device_id.as_deref() != Some(expected_id) {
+                return DeviceRegistrationMutation::Unchanged(false);
+            }
+            account.reregister_claim = Some(claim.to_string());
+            DeviceRegistrationMutation::Changed(accepted)
+        }
+        DeviceRegistrationUpdate::Set {
+            device_id,
+            claim,
+            expected_refresh_token,
+        } => {
+            if let Some(claim) = claim {
+                if account.reregister_claim.as_deref() != Some(claim) {
+                    return DeviceRegistrationMutation::Unchanged(false);
+                }
+                // The account lost selection while its RPC was in flight.
+                // Retire only this request's claim; keep its previous device
+                // id and never install the late RPC result.
+                if is_active {
+                    account.device_id = device_id.map(str::to_string);
+                } else {
+                    accepted = false;
+                }
+                account.reregister_claim = None;
+                DeviceRegistrationMutation::Changed(accepted)
+            } else {
+                apply_unclaimed_device_registration(
+                    network_dir,
+                    account,
+                    is_active,
+                    device_id,
+                    expected_refresh_token,
+                )
+            }
+        }
+    }
+}
+
+fn apply_unclaimed_device_registration(
+    network_dir: &NetworkDirectory,
+    account: &mut Account,
+    is_active: bool,
+    device_id: Option<&str>,
+    expected_refresh_token: Option<&str>,
+) -> DeviceRegistrationMutation {
+    if expected_refresh_token
+        .is_some_and(|expected| !is_active || account.tokens.refresh_token != expected)
+    {
+        return DeviceRegistrationMutation::Unchanged(false);
+    }
+    if has_live_reregister_claim_for_account(network_dir, account) {
+        return DeviceRegistrationMutation::Unchanged(false);
+    }
+    if account.device_id.as_deref() == device_id && account.reregister_claim.is_none() {
+        return DeviceRegistrationMutation::Unchanged(true);
+    }
+    account.device_id = device_id.map(str::to_string);
+    // An exited process's claim is abandoned. Its late completion
+    // still needs the exact claim to commit.
+    account.reregister_claim = None;
+    DeviceRegistrationMutation::Changed(true)
 }
 
 /// Persist the highest event_seq observed on the realtime stream for the

@@ -177,53 +177,61 @@ impl std::fmt::Display for InstallBitcoindError {
 // https://github.com/RCasatta/bitcoind/blob/bada7ebb7197b89fd67e607f815ce1e43e76da7f/build.rs#L73.
 
 /// Unpack the downloaded bytes in the specified directory.
-fn unpack_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+fn unpack_bitcoind(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    {
-        let d = GzDecoder::new(bytes);
+    unpack_bitcoind_tar(install_dir, bytes)?;
+    #[cfg(target_os = "windows")]
+    unpack_bitcoind_zip(install_dir, bytes)?;
+    Ok(())
+}
 
-        let mut archive = Archive::new(d);
-        for mut entry in archive
-            .entries()
-            .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?
-            .flatten()
-        {
-            if let Ok(file) = entry.path() {
-                if file.ends_with("bitcoind") {
-                    if let Err(e) = entry.unpack_in(install_dir) {
-                        return Err(InstallBitcoindError::UnpackingError(e.to_string()));
-                    }
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn unpack_bitcoind_tar(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+    let d = GzDecoder::new(bytes);
+
+    let mut archive = Archive::new(d);
+    for mut entry in archive
+        .entries()
+        .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?
+        .flatten()
+    {
+        if let Ok(file) = entry.path() {
+            if file.ends_with("bitcoind") {
+                if let Err(e) = entry.unpack_in(install_dir) {
+                    return Err(InstallBitcoindError::UnpackingError(e.to_string()));
                 }
             }
         }
     }
-    #[cfg(target_os = "windows")]
-    {
-        let cursor = Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(cursor)
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn unpack_bitcoind_zip(install_dir: &Path, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+    let cursor = Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
+    for i in 0..zip::ZipArchive::len(&archive) {
+        let mut file = archive
+            .by_index(i)
             .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
-        for i in 0..zip::ZipArchive::len(&archive) {
-            let mut file = archive
-                .by_index(i)
-                .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
-            let outpath = match file.enclosed_name() {
-                Some(path) => path.to_owned(),
-                None => continue,
-            };
-            if outpath.file_name().map(|s| s.to_str()) == Some(Some("bitcoind.exe")) {
-                let mut exe_path = PathBuf::from(install_dir);
-                for d in outpath.iter() {
-                    exe_path.push(d);
-                }
-                let parent = exe_path.parent().expect("bitcoind.exe should have parent.");
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
-                let mut outfile = std::fs::File::create(&exe_path)
-                    .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
-                io::copy(&mut file, &mut outfile)
-                    .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
-                break;
+        let outpath = match file.enclosed_name() {
+            Some(path) => path.to_owned(),
+            None => continue,
+        };
+        if outpath.file_name().map(|s| s.to_str()) == Some(Some("bitcoind.exe")) {
+            let mut exe_path = PathBuf::from(install_dir);
+            for d in outpath.iter() {
+                exe_path.push(d);
             }
+            let parent = exe_path.parent().expect("bitcoind.exe should have parent.");
+            std::fs::create_dir_all(parent)
+                .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
+            let mut outfile = std::fs::File::create(&exe_path)
+                .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
+            io::copy(&mut file, &mut outfile)
+                .map_err(|e| InstallBitcoindError::UnpackingError(e.to_string()))?;
+            break;
         }
     }
     Ok(())
@@ -429,7 +437,7 @@ fn verify_download(
 
 /// Install bitcoind by verifying the download and unpacking in `install_dir`.
 pub fn install_bitcoind(
-    install_dir: &PathBuf,
+    install_dir: &Path,
     bytes: &[u8],
     verification: &DownloadVerification,
 ) -> Result<(), InstallBitcoindError> {
@@ -916,17 +924,7 @@ impl DefineBitcoind {
         if let message::DefineNode::DefineBitcoind(msg) = message {
             match msg {
                 message::DefineBitcoind::ConfigFieldEdited(field, value) => match field {
-                    ConfigField::Address => {
-                        self.address.value.clone_from(&value);
-                        self.address.valid = false;
-                        if let Some((ip, port)) = value.rsplit_once(':') {
-                            let port = u16::from_str(port);
-                            let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
-                            if port.is_ok() && (ipv4.is_ok() || ipv6.is_ok()) {
-                                self.address.valid = true;
-                            }
-                        }
-                    }
+                    ConfigField::Address => self.edit_address(value),
                     ConfigField::CookieFilePath => {
                         self.rpc_auth_vals.cookie_path.value = value;
                         self.rpc_auth_vals.cookie_path.valid = true;
@@ -946,6 +944,18 @@ impl DefineBitcoind {
             }
         }
         Task::none()
+    }
+
+    fn edit_address(&mut self, value: String) {
+        self.address.value.clone_from(&value);
+        self.address.valid = false;
+        if let Some((ip, port)) = value.rsplit_once(':') {
+            let port = u16::from_str(port);
+            let (ipv4, ipv6) = (Ipv4Addr::from_str(ip), Ipv6Addr::from_str(ip));
+            if port.is_ok() && (ipv4.is_ok() || ipv6.is_ok()) {
+                self.address.valid = true;
+            }
+        }
     }
 
     pub fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -1026,6 +1036,11 @@ pub struct InternalBitcoindStep {
     /// Gate: the download/install/start flow only runs once the user confirms
     /// the flavour on this screen. Until then the flavour picker is shown.
     flavor_confirmed: bool,
+    /// Identifies the current setup attempt (one confirmation of the picker).
+    /// Bumped on every new confirmation, on Back and on a chain change, and
+    /// carried by the async `ManifestFetched` result and the queued
+    /// `Install` / `Start`, so follow-ups of an abandoned attempt are ignored.
+    setup_attempt: u64,
     /// Node-resources advanced disclosure open on the flavour screen.
     show_advanced: bool,
     /// Custom prune-target field (MB). Source of truth for the written `prune`;
@@ -1065,6 +1080,7 @@ impl InternalBitcoindStep {
             internal_bitcoind: None,
             existing_flavor: None,
             flavor_confirmed: false,
+            setup_attempt: 0,
             show_advanced: false,
             prune_mb: form::Value {
                 value: PRUNE_DEFAULT.to_string(),
@@ -1123,11 +1139,577 @@ impl InternalBitcoindStep {
         self.show_advanced = true;
     }
 
+    fn load_resource_fields_once(&mut self) {
+        // Pre-fill the node-resource fields from any existing on-disk config
+        // exactly once (load_context calls this every frame). An untouched fresh
+        // install has no config, so the constructor defaults (15000 MB prune,
+        // blank mempool) stand. Reusing an existing datadir shows its current
+        // values instead.
+        if !self.resources_loaded {
+            self.resources_loaded = true;
+            if let Ok(conf) = InternalBitcoindConfig::from_file(
+                &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
+            ) {
+                if let Some(net_conf) = conf.networks.get(&self.network) {
+                    self.prune_mb.value = net_conf.prune.to_string();
+                    self.prune_mb.valid = true;
+                    self.prune_mb.warning = None;
+                }
+                self.max_mempool_mb.value = conf
+                    .max_mempool_mb
+                    .map(|mb| mb.to_string())
+                    .unwrap_or_default();
+                self.max_mempool_mb.valid = true;
+                self.max_mempool_mb.warning = None;
+            }
+        }
+    }
+
     /// Validate both resource fields and return the chosen values, marking the
     /// offending field invalid on failure. Returns `None` so `DefineConfig` bails
     /// without writing.
     fn resource_values(&mut self) -> Option<NodeResources> {
         bitcoind::resources_from_forms(&mut self.prune_mb, &mut self.max_mempool_mb)
+    }
+
+    fn route_local_feature_message(
+        &mut self,
+        msg: message::InternalBitcoindMsg,
+    ) -> Result<message::InternalBitcoindMsg, Task<Message>> {
+        use message::InternalBitcoindMsg as M;
+        match msg {
+            M::LocalFeatureChecked(chain, request, pending, result) => {
+                self.handle_local_feature_check(chain, request, *pending, result)
+            }
+            M::Previous => {
+                self.local_feature_request = self.local_feature_request.wrapping_add(1);
+                self.local_feature_pending = false;
+                self.local_feature_checked_at = None;
+                self.local_feature_revoked = false;
+                self.local_sync_ready = false;
+                self.local_sync_pending = false;
+                Ok(M::Previous)
+            }
+            msg if self.wait_for_local_fork => self.check_local_feature_before(msg),
+            msg => Ok(msg),
+        }
+    }
+
+    fn handle_local_feature_check(
+        &mut self,
+        chain: crate::chain::ChainId,
+        request: u64,
+        pending: message::InternalBitcoindMsg,
+        result: Result<(), String>,
+    ) -> Result<message::InternalBitcoindMsg, Task<Message>> {
+        if chain != self.chain || request != self.local_feature_request {
+            return Err(Task::none());
+        }
+        self.local_feature_pending = false;
+        if let Err(error) = result {
+            self.local_feature_request = self.local_feature_request.wrapping_add(1);
+            self.local_feature_revoked = true;
+            self.local_feature_checked_at = None;
+            self.local_sync_ready = false;
+            self.local_sync_pending = false;
+            self.error = Some(error.clone());
+            self.local_sync_error = Some(error);
+            self.exe_download = None;
+            self.stop();
+            return Err(Task::none());
+        }
+        self.local_feature_checked_at = Some(std::time::Instant::now());
+        Ok(pending)
+    }
+
+    fn check_local_feature_before(
+        &mut self,
+        msg: message::InternalBitcoindMsg,
+    ) -> Result<message::InternalBitcoindMsg, Task<Message>> {
+        use message::InternalBitcoindMsg as M;
+        if matches!(msg, M::Reload) {
+            self.local_feature_revoked = false;
+        }
+        if self.local_feature_revoked {
+            return Err(Task::none());
+        }
+        let mutation = matches!(
+            msg,
+            M::ConfirmFlavor | M::DefineConfig | M::Download | M::Install(_) | M::Start(_)
+        );
+        let sync_refresh = matches!(msg, M::CheckLocalSync)
+            && self
+                .local_feature_checked_at
+                .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(60));
+        if sync_refresh && self.local_feature_pending {
+            return Err(Task::none());
+        }
+        if mutation || sync_refresh {
+            self.local_sync_pending = false;
+            self.local_feature_pending = true;
+            self.local_feature_request = self.local_feature_request.wrapping_add(1);
+            let request = self.local_feature_request;
+            let chain = self.chain;
+            let client = self.local_feature_client.clone();
+            let root = self.coincube_datadir.clone();
+            return Err(Task::perform(
+                async move { crate::chain::require_local_feature(chain, client, &root).await },
+                move |result| {
+                    Message::InternalBitcoind(M::LocalFeatureChecked(
+                        chain,
+                        request,
+                        Box::new(msg.clone()),
+                        result,
+                    ))
+                },
+            ));
+        }
+        Ok(msg)
+    }
+
+    fn check_local_sync(&mut self) -> Task<Message> {
+        if !self.wait_for_local_fork
+            || self.local_sync_ready
+            || self.local_sync_pending
+            || !matches!(self.started, Some(Ok(())))
+        {
+            return Task::none();
+        }
+        let Some(node) = self.bitcoind_config.clone() else {
+            return Task::none();
+        };
+        self.local_sync_pending = true;
+        let request = self.local_feature_request;
+        let chain = self.chain;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    // This probe reads node RPC only; it does not create a wallet.
+                    coincubed::BitcoinD::new(&node, "local-fork-admission-probe".into())
+                        .and_then(|node| node.check_local_fork_chain(chain, true))
+                        .map_err(|e| e.to_string())
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |result| {
+                Message::InternalBitcoind(message::InternalBitcoindMsg::LocalSyncChecked(
+                    chain, request, result,
+                ))
+            },
+        )
+    }
+
+    fn handle_local_sync_check(
+        &mut self,
+        chain: crate::chain::ChainId,
+        request: u64,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        if chain != self.chain
+            || request != self.local_feature_request
+            || !self.local_sync_pending
+            || !matches!(self.started, Some(Ok(())))
+        {
+            return Task::none();
+        }
+        self.local_sync_pending = false;
+        self.local_sync_ready = result.is_ok();
+        self.local_sync_error = result.err();
+        Task::none()
+    }
+
+    fn leave_node_setup(&mut self) -> Task<Message> {
+        if let Some(bitcoind) = self.internal_bitcoind.take() {
+            bitcoind.stop();
+        }
+        if let Some(download) = self.exe_download.as_ref() {
+            // Clear exe_download if not Finished.
+            if let DownloadState::Finished { .. } = download.state {
+            } else {
+                self.exe_download = None;
+            }
+        }
+        self.started = None; // clear both Ok and Err
+                             // Re-show the flavour picker when the user comes back.
+        self.flavor_confirmed = false;
+        // Abandon this attempt: a manifest fetch or queued install/start still
+        // in flight must not resume it.
+        self.setup_attempt = self.setup_attempt.wrapping_add(1);
+        // The picker now shows `error`; don't carry the old attempt's over.
+        self.error = None;
+        Task::perform(async {}, |_| Message::Previous)
+    }
+
+    fn select_node_flavor(&mut self, flavor: NodeFlavor) -> Task<Message> {
+        // Only before the user confirms and the flow kicks off, and
+        // only a provider of this chain's family.
+        if let Err(e) = flavor.check_chain(self.chain) {
+            self.error = Some(e.to_string());
+            return Task::none();
+        }
+        if !self.flavor_confirmed {
+            self.flavor = flavor;
+            // The binary is (re)resolved for the chosen flavour on
+            // confirm, so drop any eagerly-set path/download.
+            self.exe_path = None;
+            self.exe_download = None;
+        }
+        Task::none()
+    }
+
+    fn confirm_node_flavor(&mut self) -> Task<Message> {
+        if !self.flavor_confirmed {
+            self.flavor_confirmed = true;
+            self.setup_attempt = self.setup_attempt.wrapping_add(1);
+            // A new confirmation may pick another flavour or other resource
+            // values than a config written by an earlier attempt, so drop the
+            // cached one: `load` then runs `DefineConfig` again (a locked
+            // fresh read that keeps the existing ports and RPC auth) before
+            // any download or start.
+            self.internal_bitcoind_config = None;
+            self.bitcoind_config = None;
+            // Resolve the binary for the chosen flavour: reuse it if
+            // already installed, else queue a download.
+            let exe_path = bitcoind::internal_bitcoind_exe_path_for(
+                &self.coincube_datadir,
+                self.flavor.chain_family(),
+                self.flavor.version(),
+            );
+            if exe_path.exists() {
+                self.exe_path = Some(exe_path);
+                self.exe_download = None;
+            } else {
+                self.exe_path = None;
+                self.exe_download = Some(Download::new());
+            }
+        }
+        self.load()
+    }
+
+    fn write_selected_config(&mut self) -> Task<Message> {
+        if self.provider_mismatch() {
+            return Task::none();
+        }
+        // Validate the node-resource choices before touching files, so
+        // bad input fails fast and re-opens the advanced disclosure.
+        let resources = match self.resource_values() {
+            Some(r) => r,
+            None => {
+                // Back to the picker, advanced controls open, so the
+                // offending field can be fixed and confirmed again.
+                self.flavor_confirmed = false;
+                self.show_advanced = true;
+                self.error = Some(
+                    "Enter a prune target of at least 550 MB, and a mempool cap \
+                     of at least 5 MB (or leave the mempool field blank for the \
+                     300 MB default)."
+                        .to_string(),
+                );
+                return Task::none();
+            }
+        };
+        // Everything from the read of the existing conf to its
+        // replacement runs under the datadir-wide managed-conf
+        // lock, on a fresh read: the ports chosen here are chosen
+        // against what every other setup has persisted by now, and
+        // the write cannot erase a section one of them added
+        // meanwhile. The ledger is recorded inside the same span,
+        // before the write that would drop a legacy marker — so a
+        // failure to replace the conf leaves the ledger recorded
+        // and the conf as it was (two files, not one transaction).
+        let flavor = self.flavor;
+        let network = self.network;
+        let coincube_datadir = self.coincube_datadir.clone();
+        let bitcoind_datadir = self.bitcoind_datadir.clone();
+        let written = crate::node::managed_conf::update_managed_conf(
+            &self.coincube_datadir,
+            flavor.chain_family(),
+            |txn| {
+                let mut conf = match txn.conf.clone() {
+                    // An existing managed node is shared by every
+                    // Vault, so flavour is global. Keep its
+                    // ports/datadir (so every Vault keeps
+                    // connecting to the same RPC endpoint) and
+                    // apply the chosen flavour in place — a switch
+                    // just flips the binary, and `maybe_start`
+                    // stops the old-flavour node so the configured
+                    // binary takes over the same port.
+                    Some(mut conf) => {
+                        conf.flavor = flavor;
+                        conf
+                    }
+                    // Fresh install: build for the chosen flavour
+                    // (ports are allocated below).
+                    None => InternalBitcoindConfig::for_flavor(flavor),
+                };
+                let network_conf = conf.networks.get(&network).cloned();
+                // Use same ports again if there is an existing
+                // installation.
+                let (rpc_port, p2p_port) = match &network_conf {
+                    Some(network_conf) => (network_conf.rpc_port, network_conf.p2p_port),
+                    // Never a port another network section or the
+                    // other chain family's node already holds,
+                    // bound right now or not; refuse outright if
+                    // that cannot be known.
+                    None => txn.allocate_ports(&conf, get_available_port)?,
+                };
+
+                // Use cookie file authentication for new wallets.
+                // For an existing bitcoind, we would not know the
+                // RPC password to use without checking in other
+                // daemon.toml files.
+                let cookie_file_auth = BitcoindRpcAuth::CookieFile(internal_bitcoind_cookie_path(
+                    &bitcoind_datadir,
+                    &network,
+                ));
+                let bitcoind_config = BitcoindConfig {
+                    rpc_auth: cookie_file_auth,
+                    addr: internal_bitcoind_address(rpc_port),
+                };
+                // Use existing network conf if it exists as it may
+                // have rpc_auth field set. This ensures an existing
+                // wallet using username/password authentication
+                // will continue to work.
+                let mut network_conf = network_conf.unwrap_or(InternalBitcoindNetworkConfig {
+                    rpc_port,
+                    p2p_port,
+                    prune: resources.prune_mb,
+                    rpc_auth: None, // can be omitted for new bitcoin.conf entries
+                });
+                // Overwrite prune even for an existing datadir so
+                // an edited target actually applies (keeping
+                // ports/rpc_auth). The mempool cap is a global key
+                // on the whole config.
+                network_conf.prune = resources.prune_mb;
+                conf.networks.insert(network, network_conf);
+                conf.max_mempool_mb = resources.max_mempool_mb;
+                // The file itself cannot say which flavour it is
+                // for, so the ledger has to — recorded before the
+                // write that would drop a legacy `consensusrules`
+                // marker.
+                crate::node::revalidate::ManagedNodeState::record_configured(
+                    &coincube_datadir,
+                    flavor,
+                );
+                Ok(((bitcoind_config, conf.clone()), Some(conf)))
+            },
+        );
+        let (bitcoind_config, conf) = match written {
+            Ok(outcome) => outcome.logged("writing the managed bitcoin.conf"),
+            Err(e) => {
+                self.error = Some(e.to_string());
+                return Task::none();
+            }
+        };
+        // Keep the step in sync with the flavour actually written,
+        // so the download / executable / verification paths match
+        // the conf.
+        self.flavor = conf.flavor;
+        // Default-ON inbound-over-Tor for a freshly set-up enforcing
+        // (Knots) node on mainnet — see the settings path for
+        // rationale; it's mainnet-only. Only write the sidecar when
+        // the user hasn't already chosen, so an existing opt-out
+        // survives.
+        if matches!(self.flavor, NodeFlavor::Knots)
+            && self.network == Network::Bitcoin
+            && !crate::node::tor::InboundTorPreference::path(&self.coincube_datadir).exists()
+        {
+            if let Err(e) = crate::node::tor::InboundTorPreference::default_enabled()
+                .save(&self.coincube_datadir)
+            {
+                info!("could not write default inbound-tor preference: {e}");
+            }
+        }
+        self.error = None;
+        self.internal_bitcoind_config = Some(conf);
+        self.bitcoind_config = Some(bitcoind_config);
+        Task::perform(async {}, |_| {
+            Message::InternalBitcoind(message::InternalBitcoindMsg::Reload)
+        })
+    }
+
+    fn start_node_download(&mut self) -> Task<Message> {
+        if self.provider_mismatch() {
+            return Task::none();
+        }
+        let flavor = self.flavor;
+        if let Some(download) = &mut self.exe_download {
+            if let DownloadState::Idle = download.state {
+                info!(
+                    "Downloading {} version {}...",
+                    flavor.display_name(),
+                    flavor.version()
+                );
+                return download.start(flavor.download_url()).map(|update| {
+                    Message::InternalBitcoind(message::InternalBitcoindMsg::DownloadProgressed(
+                        update,
+                    ))
+                });
+            }
+        }
+        Task::none()
+    }
+
+    fn update_node_download(&mut self, update: DownloadUpdate) -> Task<Message> {
+        if let Some(download) = self.exe_download.as_mut() {
+            download.update(update);
+            if let DownloadState::Finished(_) = &download.state {
+                info!("Download of bitcoind complete.");
+                // Fetch the release SHA256SUMS(+.asc) the archive is
+                // verified against (Knots); a no-op for Core.
+                let flavor = self.flavor;
+                let attempt = self.setup_attempt;
+                return Task::perform(
+                    async move {
+                        crate::download::fetch_release_manifest(flavor)
+                            .await
+                            .map_err(|e| e.to_string())
+                    },
+                    move |r| {
+                        Message::InternalBitcoind(message::InternalBitcoindMsg::ManifestFetched(
+                            attempt, r,
+                        ))
+                    },
+                );
+            }
+        }
+        Task::none()
+    }
+
+    fn install_selected_bitcoind(&mut self) -> Task<Message> {
+        if self.provider_mismatch() {
+            return Task::none();
+        }
+        let flavor = self.flavor;
+        let verification = match DownloadVerification::for_flavor(flavor, self.manifest.clone()) {
+            Some(v) => v,
+            None => {
+                let e = InstallBitcoindError::MissingSignature;
+                self.install_state = Some(InstallState::Errored(e.clone()));
+                self.error = Some(e.to_string());
+                return Task::none();
+            }
+        };
+        if let Some(download) = &self.exe_download {
+            if let DownloadState::Finished(bytes) = &download.state {
+                info!("Installing {}...", flavor.display_name());
+                self.install_state = Some(InstallState::InProgress);
+                match install_bitcoind(
+                    &bitcoind::internal_bitcoind_directory_for(
+                        &self.coincube_datadir,
+                        self.flavor.chain_family(),
+                    ),
+                    bytes,
+                    &verification,
+                ) {
+                    Ok(_) => {
+                        info!("Installation of bitcoind complete.");
+                        self.install_state = Some(InstallState::Finished);
+                        self.exe_path = Some(bitcoind::internal_bitcoind_exe_path_for(
+                            &self.coincube_datadir,
+                            flavor.chain_family(),
+                            flavor.version(),
+                        ));
+                        let attempt = self.setup_attempt;
+                        return Task::perform(async {}, move |_| {
+                            Message::InternalBitcoind(message::InternalBitcoindMsg::Start(attempt))
+                        });
+                    }
+                    Err(e) => {
+                        info!("Installation of bitcoind failed.");
+                        self.install_state = Some(InstallState::Errored(e.clone()));
+                        self.error = Some(e.to_string());
+                        return Task::none();
+                    }
+                };
+            }
+        }
+        Task::none()
+    }
+
+    fn start_selected_bitcoind(&mut self) -> Task<Message> {
+        if let Err(e) = self.bitcoind_datadir.canonicalize() {
+            self.started = Some(Err(
+                StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
+            ));
+            return Task::none();
+        }
+        // Only reachable once `DefineConfig` has run for this attempt; refuse
+        // quietly rather than panic if it has not.
+        let Some(bitcoind_config) = self.bitcoind_config.clone() else {
+            return Task::none();
+        };
+        let lifecycle = match crate::node::bitcoind::ManagedNodeLifecycle::acquire(
+            &self.coincube_datadir,
+            crate::node::bitcoind::NodeChainFamily::from_chain(self.chain),
+        ) {
+            Ok(guard) => guard,
+            Err(e) => {
+                self.started = Some(Err(e));
+                return Task::none();
+            }
+        };
+        if self.chain.is_blake2b() {
+            if let Err(e) = crate::node::tor::prepare_inbound_tor_for_chain_locked(
+                &self.coincube_datadir,
+                self.chain,
+                &lifecycle,
+            ) {
+                // Record it as the start's outcome, like the other
+                // refusals here: with `started` left unset, `load`
+                // dispatched `Start` again on every reload and the
+                // view never showed the start as failed.
+                self.started = Some(Err(StartInternalBitcoindError::ConfigUnavailable(
+                    e.to_string(),
+                )));
+                return Task::none();
+            }
+        }
+        match Bitcoind::maybe_start_for_chain_locked(
+            self.chain,
+            bitcoind_config,
+            &self.coincube_datadir,
+            &lifecycle,
+        ) {
+            Err(e) => {
+                self.started = Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
+                return Task::none();
+            }
+            Ok(bitcoind) => {
+                self.error = None;
+                self.started = Some(Ok(()));
+                self.internal_bitcoind = Some(bitcoind);
+            }
+        }
+        Task::none()
+    }
+
+    fn handle_node_manifest(
+        &mut self,
+        res: Result<Option<(String, String)>, String>,
+    ) -> Task<Message> {
+        match res {
+            Ok(manifest) => {
+                self.manifest = manifest;
+                let attempt = self.setup_attempt;
+                Task::perform(async {}, move |_| {
+                    Message::InternalBitcoind(message::InternalBitcoindMsg::Install(attempt))
+                })
+            }
+            Err(e) => {
+                // Refuse to install a binary we can't verify.
+                let msg = coincube_ui::localized_format!(
+                    "Failed to fetch release SHA256SUMS manifest: {e}",
+                    "No se pudo obtener el manifiesto SHA256SUMS de la versión: {e}"
+                );
+                self.install_state = Some(InstallState::Errored(
+                    InstallBitcoindError::MissingSignature,
+                ));
+                self.error = Some(msg);
+                Task::none()
+            }
+        }
     }
 }
 
@@ -1153,6 +1735,7 @@ impl Step for InternalBitcoindStep {
             self.bitcoind_config = None;
             self.internal_bitcoind_config = None;
             self.flavor_confirmed = false;
+            self.setup_attempt = self.setup_attempt.wrapping_add(1);
             self.resources_loaded = false;
             self.local_sync_ready = false;
             self.local_sync_pending = false;
@@ -1197,28 +1780,7 @@ impl Step for InternalBitcoindStep {
             // Prune is per-network, so re-read the resource fields for the new one.
             self.resources_loaded = false;
         }
-        // Pre-fill the node-resource fields from any existing on-disk config
-        // exactly once (this runs every frame). An untouched fresh install has no
-        // config, so the constructor defaults (15000 MB prune, blank mempool)
-        // stand. Reusing an existing datadir shows its current values instead.
-        if !self.resources_loaded {
-            self.resources_loaded = true;
-            if let Ok(conf) = InternalBitcoindConfig::from_file(
-                &bitcoind::internal_bitcoind_config_path(&self.bitcoind_datadir),
-            ) {
-                if let Some(net_conf) = conf.networks.get(&self.network) {
-                    self.prune_mb.value = net_conf.prune.to_string();
-                    self.prune_mb.valid = true;
-                    self.prune_mb.warning = None;
-                }
-                self.max_mempool_mb.value = conf
-                    .max_mempool_mb
-                    .map(|mb| mb.to_string())
-                    .unwrap_or_default();
-                self.max_mempool_mb.valid = true;
-                self.max_mempool_mb.warning = None;
-            }
-        }
+        self.load_resource_fields_once();
         if let Some(Ok(_)) = self.started {
             // This case can arise if a user switches from internal bitcoind to external and back to internal.
             if ctx.bitcoin_backend.is_none() {
@@ -1228,185 +1790,26 @@ impl Step for InternalBitcoindStep {
     }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::InternalBitcoind(msg) = message {
-            use message::InternalBitcoindMsg as M;
-            let msg = match msg {
-                M::LocalFeatureChecked(chain, request, pending, result) => {
-                    if chain != self.chain || request != self.local_feature_request {
-                        return Task::none();
-                    }
-                    self.local_feature_pending = false;
-                    if let Err(error) = result {
-                        self.local_feature_request = self.local_feature_request.wrapping_add(1);
-                        self.local_feature_revoked = true;
-                        self.local_feature_checked_at = None;
-                        self.local_sync_ready = false;
-                        self.local_sync_pending = false;
-                        self.error = Some(error.clone());
-                        self.local_sync_error = Some(error);
-                        self.exe_download = None;
-                        self.stop();
-                        return Task::none();
-                    }
-                    self.local_feature_checked_at = Some(std::time::Instant::now());
-                    *pending
-                }
-                M::Previous => {
-                    self.local_feature_request = self.local_feature_request.wrapping_add(1);
-                    self.local_feature_pending = false;
-                    self.local_feature_checked_at = None;
-                    self.local_feature_revoked = false;
-                    self.local_sync_ready = false;
-                    self.local_sync_pending = false;
-                    M::Previous
-                }
-                msg if self.wait_for_local_fork => {
-                    if matches!(msg, M::Reload) {
-                        self.local_feature_revoked = false;
-                    }
-                    if self.local_feature_revoked {
-                        return Task::none();
-                    }
-                    let mutation = matches!(
-                        msg,
-                        M::ConfirmFlavor | M::DefineConfig | M::Download | M::Install | M::Start
-                    );
-                    let sync_refresh = matches!(msg, M::CheckLocalSync)
-                        && self
-                            .local_feature_checked_at
-                            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(60));
-                    if sync_refresh && self.local_feature_pending {
-                        return Task::none();
-                    }
-                    if mutation || sync_refresh {
-                        self.local_sync_pending = false;
-                        self.local_feature_pending = true;
-                        self.local_feature_request = self.local_feature_request.wrapping_add(1);
-                        let request = self.local_feature_request;
-                        let chain = self.chain;
-                        let client = self.local_feature_client.clone();
-                        let root = self.coincube_datadir.clone();
-                        return Task::perform(
-                            async move {
-                                crate::chain::require_local_feature(chain, client, &root).await
-                            },
-                            move |result| {
-                                Message::InternalBitcoind(M::LocalFeatureChecked(
-                                    chain,
-                                    request,
-                                    Box::new(msg.clone()),
-                                    result,
-                                ))
-                            },
-                        );
-                    }
-                    msg
-                }
-                msg => msg,
+            let msg = match self.route_local_feature_message(msg) {
+                Ok(msg) => msg,
+                Err(task) => return task,
             };
             match msg {
                 message::InternalBitcoindMsg::LocalFeatureChecked(..) => {
                     unreachable!("handled above")
                 }
-                message::InternalBitcoindMsg::CheckLocalSync => {
-                    if !self.wait_for_local_fork
-                        || self.local_sync_ready
-                        || self.local_sync_pending
-                        || !matches!(self.started, Some(Ok(())))
-                    {
-                        return Task::none();
-                    }
-                    let Some(node) = self.bitcoind_config.clone() else {
-                        return Task::none();
-                    };
-                    self.local_sync_pending = true;
-                    let request = self.local_feature_request;
-                    let chain = self.chain;
-                    return Task::perform(
-                        async move {
-                            tokio::task::spawn_blocking(move || {
-                                // This probe reads node RPC only; it does not create a wallet.
-                                coincubed::BitcoinD::new(&node, "local-fork-admission-probe".into())
-                                    .and_then(|node| node.check_local_fork_chain(chain, true))
-                                    .map_err(|e| e.to_string())
-                            })
-                            .await
-                            .unwrap_or_else(|e| Err(e.to_string()))
-                        },
-                        move |result| {
-                            Message::InternalBitcoind(
-                                message::InternalBitcoindMsg::LocalSyncChecked(
-                                    chain, request, result,
-                                ),
-                            )
-                        },
-                    );
-                }
+                message::InternalBitcoindMsg::CheckLocalSync => return self.check_local_sync(),
                 message::InternalBitcoindMsg::LocalSyncChecked(chain, request, result) => {
-                    if chain != self.chain
-                        || request != self.local_feature_request
-                        || !self.local_sync_pending
-                        || !matches!(self.started, Some(Ok(())))
-                    {
-                        return Task::none();
-                    }
-                    self.local_sync_pending = false;
-                    self.local_sync_ready = result.is_ok();
-                    self.local_sync_error = result.err();
+                    return self.handle_local_sync_check(chain, request, result)
                 }
-                message::InternalBitcoindMsg::Previous => {
-                    if let Some(bitcoind) = self.internal_bitcoind.take() {
-                        bitcoind.stop();
-                    }
-                    if let Some(download) = self.exe_download.as_ref() {
-                        // Clear exe_download if not Finished.
-                        if let DownloadState::Finished { .. } = download.state {
-                        } else {
-                            self.exe_download = None;
-                        }
-                    }
-                    self.started = None; // clear both Ok and Err
-                                         // Re-show the flavour picker when the user comes back.
-                    self.flavor_confirmed = false;
-                    return Task::perform(async {}, |_| Message::Previous);
-                }
+                message::InternalBitcoindMsg::Previous => return self.leave_node_setup(),
                 message::InternalBitcoindMsg::Reload => {
                     return self.load();
                 }
                 message::InternalBitcoindMsg::SelectFlavor(flavor) => {
-                    // Only before the user confirms and the flow kicks off, and
-                    // only a provider of this chain's family.
-                    if let Err(e) = flavor.check_chain(self.chain) {
-                        self.error = Some(e.to_string());
-                        return Task::none();
-                    }
-                    if !self.flavor_confirmed {
-                        self.flavor = flavor;
-                        // The binary is (re)resolved for the chosen flavour on
-                        // confirm, so drop any eagerly-set path/download.
-                        self.exe_path = None;
-                        self.exe_download = None;
-                    }
+                    return self.select_node_flavor(flavor)
                 }
-                message::InternalBitcoindMsg::ConfirmFlavor => {
-                    if !self.flavor_confirmed {
-                        self.flavor_confirmed = true;
-                        // Resolve the binary for the chosen flavour: reuse it if
-                        // already installed, else queue a download.
-                        let exe_path = bitcoind::internal_bitcoind_exe_path_for(
-                            &self.coincube_datadir,
-                            self.flavor.chain_family(),
-                            self.flavor.version(),
-                        );
-                        if exe_path.exists() {
-                            self.exe_path = Some(exe_path);
-                            self.exe_download = None;
-                        } else {
-                            self.exe_path = None;
-                            self.exe_download = Some(Download::new());
-                        }
-                    }
-                    return self.load();
-                }
+                message::InternalBitcoindMsg::ConfirmFlavor => return self.confirm_node_flavor(),
                 message::InternalBitcoindMsg::ToggleAdvanced => {
                     self.show_advanced = !self.show_advanced;
                 }
@@ -1422,317 +1825,23 @@ impl Step for InternalBitcoindStep {
                 message::InternalBitcoindMsg::RegularComputerPreset => {
                     self.apply_resource_preset(NodeResources::regular_computer());
                 }
-                message::InternalBitcoindMsg::DefineConfig => {
-                    if self.provider_mismatch() {
-                        return Task::none();
-                    }
-                    // Validate the node-resource choices before touching files, so
-                    // bad input fails fast and re-opens the advanced disclosure.
-                    let resources = match self.resource_values() {
-                        Some(r) => r,
-                        None => {
-                            self.show_advanced = true;
-                            self.error = Some(
-                                "Enter a prune target of at least 550 MB, and a mempool cap \
-                                 of at least 5 MB (or leave the mempool field blank for the \
-                                 300 MB default)."
-                                    .to_string(),
-                            );
-                            return Task::none();
-                        }
-                    };
-                    // Everything from the read of the existing conf to its
-                    // replacement runs under the datadir-wide managed-conf
-                    // lock, on a fresh read: the ports chosen here are chosen
-                    // against what every other setup has persisted by now, and
-                    // the write cannot erase a section one of them added
-                    // meanwhile. The ledger is recorded inside the same span,
-                    // before the write that would drop a legacy marker — so a
-                    // failure to replace the conf leaves the ledger recorded
-                    // and the conf as it was (two files, not one transaction).
-                    let flavor = self.flavor;
-                    let network = self.network;
-                    let coincube_datadir = self.coincube_datadir.clone();
-                    let bitcoind_datadir = self.bitcoind_datadir.clone();
-                    let written = crate::node::managed_conf::update_managed_conf(
-                        &self.coincube_datadir,
-                        flavor.chain_family(),
-                        |txn| {
-                            let mut conf = match txn.conf.clone() {
-                                // An existing managed node is shared by every
-                                // Vault, so flavour is global. Keep its
-                                // ports/datadir (so every Vault keeps
-                                // connecting to the same RPC endpoint) and
-                                // apply the chosen flavour in place — a switch
-                                // just flips the binary, and `maybe_start`
-                                // stops the old-flavour node so the configured
-                                // binary takes over the same port.
-                                Some(mut conf) => {
-                                    conf.flavor = flavor;
-                                    conf
-                                }
-                                // Fresh install: build for the chosen flavour
-                                // (ports are allocated below).
-                                None => InternalBitcoindConfig::for_flavor(flavor),
-                            };
-                            let network_conf = conf.networks.get(&network).cloned();
-                            // Use same ports again if there is an existing
-                            // installation.
-                            let (rpc_port, p2p_port) = match &network_conf {
-                                Some(network_conf) => {
-                                    (network_conf.rpc_port, network_conf.p2p_port)
-                                }
-                                // Never a port another network section or the
-                                // other chain family's node already holds,
-                                // bound right now or not; refuse outright if
-                                // that cannot be known.
-                                None => txn.allocate_ports(&conf, get_available_port)?,
-                            };
-
-                            // Use cookie file authentication for new wallets.
-                            // For an existing bitcoind, we would not know the
-                            // RPC password to use without checking in other
-                            // daemon.toml files.
-                            let cookie_file_auth = BitcoindRpcAuth::CookieFile(
-                                internal_bitcoind_cookie_path(&bitcoind_datadir, &network),
-                            );
-                            let bitcoind_config = BitcoindConfig {
-                                rpc_auth: cookie_file_auth,
-                                addr: internal_bitcoind_address(rpc_port),
-                            };
-                            // Use existing network conf if it exists as it may
-                            // have rpc_auth field set. This ensures an existing
-                            // wallet using username/password authentication
-                            // will continue to work.
-                            let mut network_conf =
-                                network_conf.unwrap_or(InternalBitcoindNetworkConfig {
-                                    rpc_port,
-                                    p2p_port,
-                                    prune: resources.prune_mb,
-                                    rpc_auth: None, // can be omitted for new bitcoin.conf entries
-                                });
-                            // Overwrite prune even for an existing datadir so
-                            // an edited target actually applies (keeping
-                            // ports/rpc_auth). The mempool cap is a global key
-                            // on the whole config.
-                            network_conf.prune = resources.prune_mb;
-                            conf.networks.insert(network, network_conf);
-                            conf.max_mempool_mb = resources.max_mempool_mb;
-                            // The file itself cannot say which flavour it is
-                            // for, so the ledger has to — recorded before the
-                            // write that would drop a legacy `consensusrules`
-                            // marker.
-                            crate::node::revalidate::ManagedNodeState::record_configured(
-                                &coincube_datadir,
-                                flavor,
-                            );
-                            Ok(((bitcoind_config, conf.clone()), Some(conf)))
-                        },
-                    );
-                    let (bitcoind_config, conf) = match written {
-                        Ok(outcome) => outcome.logged("writing the managed bitcoin.conf"),
-                        Err(e) => {
-                            self.error = Some(e.to_string());
-                            return Task::none();
-                        }
-                    };
-                    // Keep the step in sync with the flavour actually written,
-                    // so the download / executable / verification paths match
-                    // the conf.
-                    self.flavor = conf.flavor;
-                    // Default-ON inbound-over-Tor for a freshly set-up enforcing
-                    // (Knots) node on mainnet — see the settings path for
-                    // rationale; it's mainnet-only. Only write the sidecar when
-                    // the user hasn't already chosen, so an existing opt-out
-                    // survives.
-                    if matches!(self.flavor, NodeFlavor::Knots)
-                        && self.network == Network::Bitcoin
-                        && !crate::node::tor::InboundTorPreference::path(&self.coincube_datadir)
-                            .exists()
-                    {
-                        if let Err(e) = crate::node::tor::InboundTorPreference::default_enabled()
-                            .save(&self.coincube_datadir)
-                        {
-                            info!("could not write default inbound-tor preference: {e}");
-                        }
-                    }
-                    self.error = None;
-                    self.internal_bitcoind_config = Some(conf);
-                    self.bitcoind_config = Some(bitcoind_config);
-                    return Task::perform(async {}, |_| {
-                        Message::InternalBitcoind(message::InternalBitcoindMsg::Reload)
-                    });
-                }
-                message::InternalBitcoindMsg::Download => {
-                    if self.provider_mismatch() {
-                        return Task::none();
-                    }
-                    let flavor = self.flavor;
-                    if let Some(download) = &mut self.exe_download {
-                        if let DownloadState::Idle = download.state {
-                            info!(
-                                "Downloading {} version {}...",
-                                flavor.display_name(),
-                                flavor.version()
-                            );
-                            return download.start(flavor.download_url()).map(|update| {
-                                Message::InternalBitcoind(
-                                    message::InternalBitcoindMsg::DownloadProgressed(update),
-                                )
-                            });
-                        }
-                    }
-                }
+                message::InternalBitcoindMsg::DefineConfig => return self.write_selected_config(),
+                message::InternalBitcoindMsg::Download => return self.start_node_download(),
                 message::InternalBitcoindMsg::DownloadProgressed(update) => {
-                    if let Some(download) = self.exe_download.as_mut() {
-                        download.update(update);
-                        if let DownloadState::Finished(_) = &download.state {
-                            info!("Download of bitcoind complete.");
-                            // Fetch the release SHA256SUMS(+.asc) the archive is
-                            // verified against (Knots); a no-op for Core.
-                            let flavor = self.flavor;
-                            return Task::perform(
-                                async move {
-                                    crate::download::fetch_release_manifest(flavor)
-                                        .await
-                                        .map_err(|e| e.to_string())
-                                },
-                                |r| {
-                                    Message::InternalBitcoind(
-                                        message::InternalBitcoindMsg::ManifestFetched(r),
-                                    )
-                                },
-                            );
-                        }
-                    }
+                    return self.update_node_download(update)
                 }
-                message::InternalBitcoindMsg::ManifestFetched(res) => match res {
-                    Ok(manifest) => {
-                        self.manifest = manifest;
-                        return Task::perform(async {}, |_| {
-                            Message::InternalBitcoind(message::InternalBitcoindMsg::Install)
-                        });
-                    }
-                    Err(e) => {
-                        // Refuse to install a binary we can't verify.
-                        let msg = coincube_ui::localized_format!(
-                            "Failed to fetch release SHA256SUMS manifest: {e}",
-                            "No se pudo obtener el manifiesto SHA256SUMS de la versión: {e}"
-                        );
-                        self.install_state = Some(InstallState::Errored(
-                            InstallBitcoindError::MissingSignature,
-                        ));
-                        self.error = Some(msg);
-                        return Task::none();
-                    }
-                },
-                message::InternalBitcoindMsg::Install => {
-                    if self.provider_mismatch() {
-                        return Task::none();
-                    }
-                    let flavor = self.flavor;
-                    let verification =
-                        match DownloadVerification::for_flavor(flavor, self.manifest.clone()) {
-                            Some(v) => v,
-                            None => {
-                                let e = InstallBitcoindError::MissingSignature;
-                                self.install_state = Some(InstallState::Errored(e.clone()));
-                                self.error = Some(e.to_string());
-                                return Task::none();
-                            }
-                        };
-                    if let Some(download) = &self.exe_download {
-                        if let DownloadState::Finished(bytes) = &download.state {
-                            info!("Installing {}...", flavor.display_name());
-                            self.install_state = Some(InstallState::InProgress);
-                            match install_bitcoind(
-                                &bitcoind::internal_bitcoind_directory_for(
-                                    &self.coincube_datadir,
-                                    self.flavor.chain_family(),
-                                ),
-                                bytes,
-                                &verification,
-                            ) {
-                                Ok(_) => {
-                                    info!("Installation of bitcoind complete.");
-                                    self.install_state = Some(InstallState::Finished);
-                                    self.exe_path = Some(bitcoind::internal_bitcoind_exe_path_for(
-                                        &self.coincube_datadir,
-                                        flavor.chain_family(),
-                                        flavor.version(),
-                                    ));
-                                    return Task::perform(async {}, |_| {
-                                        Message::InternalBitcoind(
-                                            message::InternalBitcoindMsg::Start,
-                                        )
-                                    });
-                                }
-                                Err(e) => {
-                                    info!("Installation of bitcoind failed.");
-                                    self.install_state = Some(InstallState::Errored(e.clone()));
-                                    self.error = Some(e.to_string());
-                                    return Task::none();
-                                }
-                            };
-                        }
-                    }
+                // Results and follow-ups of an abandoned setup attempt.
+                message::InternalBitcoindMsg::ManifestFetched(attempt, _)
+                | message::InternalBitcoindMsg::Install(attempt)
+                | message::InternalBitcoindMsg::Start(attempt)
+                    if attempt != self.setup_attempt => {}
+                message::InternalBitcoindMsg::ManifestFetched(_, res) => {
+                    return self.handle_node_manifest(res)
                 }
-                message::InternalBitcoindMsg::Start => {
-                    if let Err(e) = self.bitcoind_datadir.canonicalize() {
-                        self.started = Some(Err(
-                            StartInternalBitcoindError::CouldNotCanonicalizeDataDir(e.to_string()),
-                        ));
-                        return Task::none();
-                    }
-                    let bitcoind_config = self
-                        .bitcoind_config
-                        .as_ref()
-                        .expect("already added")
-                        .clone();
-                    let lifecycle = match crate::node::bitcoind::ManagedNodeLifecycle::acquire(
-                        &self.coincube_datadir,
-                        crate::node::bitcoind::NodeChainFamily::from_chain(self.chain),
-                    ) {
-                        Ok(guard) => guard,
-                        Err(e) => {
-                            self.started = Some(Err(e));
-                            return Task::none();
-                        }
-                    };
-                    if self.chain.is_blake2b() {
-                        if let Err(e) = crate::node::tor::prepare_inbound_tor_for_chain_locked(
-                            &self.coincube_datadir,
-                            self.chain,
-                            &lifecycle,
-                        ) {
-                            // Record it as the start's outcome, like the other
-                            // refusals here: with `started` left unset, `load`
-                            // dispatched `Start` again on every reload and the
-                            // view never showed the start as failed.
-                            self.started = Some(Err(
-                                StartInternalBitcoindError::ConfigUnavailable(e.to_string()),
-                            ));
-                            return Task::none();
-                        }
-                    }
-                    match Bitcoind::maybe_start_for_chain_locked(
-                        self.chain,
-                        bitcoind_config,
-                        &self.coincube_datadir,
-                        &lifecycle,
-                    ) {
-                        Err(e) => {
-                            self.started =
-                                Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));
-                            return Task::none();
-                        }
-                        Ok(bitcoind) => {
-                            self.error = None;
-                            self.started = Some(Ok(()));
-                            self.internal_bitcoind = Some(bitcoind);
-                        }
-                    }
+                message::InternalBitcoindMsg::Install(_) => {
+                    return self.install_selected_bitcoind()
                 }
+                message::InternalBitcoindMsg::Start(_) => return self.start_selected_bitcoind(),
             }
         }
         Task::none()
@@ -1769,8 +1878,9 @@ impl Step for InternalBitcoindStep {
             }
         }
         if self.started.is_none() {
-            return Task::perform(async {}, |_| {
-                Message::InternalBitcoind(message::InternalBitcoindMsg::Start)
+            let attempt = self.setup_attempt;
+            return Task::perform(async {}, move |_| {
+                Message::InternalBitcoind(message::InternalBitcoindMsg::Start(attempt))
             });
         }
         Task::none()
@@ -2011,8 +2121,8 @@ mod tests {
         for operation in [
             message::InternalBitcoindMsg::DefineConfig,
             message::InternalBitcoindMsg::Download,
-            message::InternalBitcoindMsg::Install,
-            message::InternalBitcoindMsg::Start,
+            message::InternalBitcoindMsg::Install(step.setup_attempt),
+            message::InternalBitcoindMsg::Start(step.setup_attempt),
         ] {
             step.local_feature_revoked = false;
             drop(step.update(&mut hws, Message::InternalBitcoind(operation.clone())));
@@ -2162,7 +2272,7 @@ mod tests {
         let mut hws = HardwareWallets::new(dir.clone(), Network::Bitcoin);
         let _ = step.update(
             &mut hws,
-            Message::InternalBitcoind(message::InternalBitcoindMsg::Start),
+            Message::InternalBitcoind(message::InternalBitcoindMsg::Start(step.setup_attempt)),
         );
         assert!(
             matches!(
@@ -2899,7 +3009,7 @@ mod tests {
         for msg in [
             message::InternalBitcoindMsg::DefineConfig,
             message::InternalBitcoindMsg::Download,
-            message::InternalBitcoindMsg::Install,
+            message::InternalBitcoindMsg::Install(step.setup_attempt),
         ]
         .iter()
         .cloned()
@@ -3123,5 +3233,176 @@ mod tests {
             }
             let _ = fs::remove_dir_all(&base);
         }
+    }
+
+    // Re-confirming the picker after Back (e.g. Knots → Back → Core) drops the
+    // config the earlier attempt wrote, so `DefineConfig` runs again and the
+    // new flavour is what lands on disk — keeping the existing ports.
+    #[test]
+    fn reconfirmation_rewrites_the_config_for_the_new_flavor() {
+        let base = std::env::temp_dir().join(format!("reconfirm-{}", uuid::Uuid::new_v4()));
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        let send = |step: &mut InternalBitcoindStep,
+                    hws: &mut HardwareWallets,
+                    msg: message::InternalBitcoindMsg| {
+            drop(step.update(hws, Message::InternalBitcoind(msg)));
+        };
+
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::SelectFlavor(NodeFlavor::Knots),
+        );
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::ConfirmFlavor,
+        );
+        let first = define_config(&mut step);
+        assert_eq!(
+            step.internal_bitcoind_config.as_ref().map(|c| c.flavor),
+            Some(NodeFlavor::Knots)
+        );
+        assert_eq!(
+            crate::node::revalidate::ManagedNodeState::load(&datadir).configured_flavor,
+            Some(NodeFlavor::Knots)
+        );
+        let ports = {
+            let main = first.networks.get(&Network::Bitcoin).unwrap();
+            (main.rpc_port, main.p2p_port)
+        };
+
+        send(&mut step, &mut hws, message::InternalBitcoindMsg::Previous);
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::SelectFlavor(NodeFlavor::Core),
+        );
+        send(
+            &mut step,
+            &mut hws,
+            message::InternalBitcoindMsg::ConfirmFlavor,
+        );
+        assert!(step.flavor_confirmed);
+        assert!(
+            step.internal_bitcoind_config.is_none() && step.bitcoind_config.is_none(),
+            "the earlier attempt's config must not skip DefineConfig"
+        );
+
+        let second = define_config(&mut step);
+        assert_eq!(step.flavor, NodeFlavor::Core);
+        assert_eq!(
+            step.internal_bitcoind_config.as_ref().map(|c| c.flavor),
+            Some(NodeFlavor::Core)
+        );
+        let main = second.networks.get(&Network::Bitcoin).unwrap();
+        assert_eq!((main.rpc_port, main.p2p_port), ports);
+        assert_eq!(
+            crate::node::revalidate::ManagedNodeState::load(&datadir).configured_flavor,
+            Some(NodeFlavor::Core)
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Resource validation failing after confirm returns to the picker with the
+    // advanced controls open and the error kept; a valid value then proceeds.
+    #[test]
+    fn resource_validation_failure_returns_to_the_picker() {
+        let base = std::env::temp_dir().join(format!("reject-unconfirm-{}", uuid::Uuid::new_v4()));
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited("549".into())),
+        ));
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ConfirmFlavor),
+        ));
+        assert!(step.flavor_confirmed);
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::DefineConfig),
+        ));
+        assert!(
+            !step.flavor_confirmed,
+            "the resource fields must be editable"
+        );
+        assert!(step.show_advanced);
+        assert!(step.error.is_some());
+        assert!(!bitcoind::internal_bitcoind_config_path(&step.bitcoind_datadir).exists());
+
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::PruneEdited("550".into())),
+        ));
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ConfirmFlavor),
+        ));
+        assert!(step.flavor_confirmed);
+        let conf = define_config(&mut step);
+        assert_eq!(conf.networks.get(&Network::Bitcoin).unwrap().prune, 550);
+        assert!(step.flavor_confirmed);
+        assert!(step.error.is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // A manifest result, or an install/start it queued, from an attempt the
+    // user abandoned with Back is ignored; the active attempt's still applies.
+    #[test]
+    fn follow_ups_of_an_abandoned_setup_attempt_are_ignored() {
+        let base = std::env::temp_dir().join(format!("stale-attempt-{}", uuid::Uuid::new_v4()));
+        let datadir = CoincubeDirectory::new(base.clone());
+        let mut step = InternalBitcoindStep::new(&datadir);
+        let mut hws = HardwareWallets::new(datadir.clone(), Network::Bitcoin);
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ConfirmFlavor),
+        ));
+        let old = step.setup_attempt;
+        // The download finished, then the user went Back: the archive is kept.
+        step.exe_download = Some(Download {
+            state: DownloadState::Finished(b"not an archive".to_vec()),
+        });
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::Previous),
+        ));
+        assert_ne!(step.setup_attempt, old);
+        assert!(matches!(
+            step.exe_download.as_ref().map(|d| &d.state),
+            Some(DownloadState::Finished(_))
+        ));
+
+        let manifest = Some(("sums".to_string(), "asc".to_string()));
+        for msg in [
+            message::InternalBitcoindMsg::ManifestFetched(old, Ok(manifest.clone())),
+            message::InternalBitcoindMsg::Install(old),
+            message::InternalBitcoindMsg::Start(old),
+        ] {
+            drop(step.update(&mut hws, Message::InternalBitcoind(msg)));
+        }
+        assert!(step.manifest.is_none());
+        assert!(
+            step.install_state.is_none(),
+            "no install for a stale attempt"
+        );
+        assert!(step.started.is_none(), "no start for a stale attempt");
+        assert!(step.error.is_none());
+
+        // The active attempt's result is still handled.
+        drop(step.update(
+            &mut hws,
+            Message::InternalBitcoind(message::InternalBitcoindMsg::ManifestFetched(
+                step.setup_attempt,
+                Ok(manifest.clone()),
+            )),
+        ));
+        assert_eq!(step.manifest, manifest);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

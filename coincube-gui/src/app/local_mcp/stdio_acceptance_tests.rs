@@ -445,6 +445,21 @@ fn stdio_client_creation_reaches_native_review_on_every_chain() {
     });
 }
 
+async fn wait_for_synthetic_wallet(daemon: &(dyn Daemon + Send + Sync)) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let info = daemon.get_info().await.unwrap();
+        if info.sync == 1.0 && info.last_poll_timestamp.is_some() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "synthetic wallet did not become ready"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[test]
 #[ignore = "build coincube-mcp and set COINCUBE_MCP_TEST_ADAPTER; run explicitly in platform CI"]
 fn stdio_client_unsigned_transaction_reaches_native_review_on_every_chain() {
@@ -461,13 +476,7 @@ fn stdio_client_unsigned_transaction_reaches_native_review_on_every_chain() {
             eprintln!("MCP acceptance workflow=transaction chain={}", network.as_str());
             let chain: ChainId = network.as_str().parse().unwrap();
             let (root, wallet, daemon) = super::tests::fixture_on_chain(chain);
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-            loop {
-                let info = daemon.get_info().await.unwrap();
-                if info.sync == 1.0 && info.last_poll_timestamp.is_some() { break; }
-                assert!(tokio::time::Instant::now() < deadline, "synthetic wallet did not become ready");
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+            wait_for_synthetic_wallet(daemon.as_ref()).await;
             let cube = CubeSettings::new_with_raw_id(CUBE.into(), "Disposable".into(), chain);
             let (mut app, startup) = App::new_inner(crate::app::Cache::default(), wallet.clone(), None, None,
                 crate::app::Config::new(false), daemon.clone(), CoincubeDirectory::new(root.clone()), None, cube, None);

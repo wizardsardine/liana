@@ -133,43 +133,10 @@ pub fn order_filter_sidebar<'a>(
     .spacing(8);
 
     // --- Payment methods filter ---
-    let payment_methods_section: Element<'_, view::Message> =
-        if state.available_payment_methods.is_empty() {
-            column![
-                p2_bold("PAYMENT METHODS").style(theme::text::secondary),
-                p2_regular("No payment methods for current filters").style(theme::text::secondary),
-            ]
-            .spacing(8)
-            .into()
-        } else {
-            let chips = row(state.available_payment_methods.iter().map(|method| {
-                let is_selected = !state.deselected_payment_methods.contains(method);
-                let style: fn(&_, _) -> _ = if is_selected {
-                    theme::button::primary
-                } else {
-                    theme::button::transparent_border
-                };
-                button(
-                    container(p2_regular(method.clone()))
-                        .padding([4, 12])
-                        .align_x(iced::alignment::Horizontal::Center),
-                )
-                .style(style)
-                .on_press(view::Message::P2P(P2PMessage::FilterPaymentMethodToggled(
-                    method.clone(),
-                )))
-                .into()
-            }))
-            .spacing(6)
-            .wrap();
-
-            column![
-                p2_bold("PAYMENT METHODS").style(theme::text::secondary),
-                chips,
-            ]
-            .spacing(8)
-            .into()
-        };
+    let payment_methods_section = payment_methods_filter(
+        state.available_payment_methods,
+        state.deselected_payment_methods,
+    );
 
     // --- Reputation filter ---
     let rating_text = if state.min_rating == 0.0 {
@@ -267,6 +234,48 @@ pub fn order_filter_sidebar<'a>(
     } else {
         Length::Fixed(232.0)
     })
+}
+
+fn payment_methods_filter<'a>(
+    available_payment_methods: &'a [String],
+    deselected_payment_methods: &'a HashSet<String>,
+) -> Element<'a, view::Message> {
+    if available_payment_methods.is_empty() {
+        column![
+            p2_bold("PAYMENT METHODS").style(theme::text::secondary),
+            p2_regular("No payment methods for current filters").style(theme::text::secondary),
+        ]
+        .spacing(8)
+        .into()
+    } else {
+        let chips = row(available_payment_methods.iter().map(|method| {
+            let is_selected = !deselected_payment_methods.contains(method);
+            let style: fn(&_, _) -> _ = if is_selected {
+                theme::button::primary
+            } else {
+                theme::button::transparent_border
+            };
+            button(
+                container(p2_regular(method.clone()))
+                    .padding([4, 12])
+                    .align_x(iced::alignment::Horizontal::Center),
+            )
+            .style(style)
+            .on_press(view::Message::P2P(P2PMessage::FilterPaymentMethodToggled(
+                method.clone(),
+            )))
+            .into()
+        }))
+        .spacing(6)
+        .wrap();
+
+        column![
+            p2_bold("PAYMENT METHODS").style(theme::text::secondary),
+            chips,
+        ]
+        .spacing(8)
+        .into()
+    }
 }
 
 pub fn trade_status_filter<'a>(
