@@ -436,32 +436,7 @@ fn coin_list_view<'a>(
     } else {
         amount_with_unit(&coin.amount, bitcoin_unit).into()
     };
-    let status = if coin.spend_info.is_some() {
-        Some(badge::spent())
-    } else if coin.block_height.is_none() {
-        Some(badge::unconfirmed())
-    } else if let Some(timelock) = timelock {
-        Some(if recovery_timing_known(coin, blockheight) {
-            coin_sequence_label(
-                remaining_sequence(coin, blockheight, timelock),
-                timelock as u32,
-            )
-        } else {
-            badge::badge_pill(
-                coincube_ui::locale::copy("Recovery timing unavailable"),
-                coincube_ui::locale::copy(
-                    "The chain tip is not available yet. Recovery timing will appear after sync.",
-                ),
-            )
-        })
-    } else if !coin.is_immature {
-        Some(badge::badge_pill(
-            coincube_ui::locale::copy("Spendable"),
-            coincube_ui::locale::copy("This confirmed coin can use the primary spending path with its required signatures."),
-        ))
-    } else {
-        None
-    };
+    let status = coin_status_badge(coin, timelock, blockheight);
     let label = coin_label(coin, labels);
     let has_label = labels.get(&outpoint).is_some_and(|label| !label.is_empty());
     let label_trigger = Action::new(
@@ -591,203 +566,247 @@ fn coin_list_view<'a>(
                     Column::new()
                         .padding(10)
                         .spacing(5)
-                        .push(if coin.spend_info.is_none() {
-                            if let (Some(_), Some(timelock)) = (coin.block_height, timelock) {
-                                if !recovery_timing_known(coin, blockheight) {
-                                    Some(Container::new(
-                                        p1_regular(localized_copy("Recovery timing unavailable"))
-                                            .style(theme::text::secondary),
-                                    ))
-                                } else if remaining_sequence(coin, blockheight, timelock) == 0 {
-                                    Some(Container::new(
-                                        p1_bold(localized_copy("One or more recovery paths are available"))
-                                            .style(theme::text::error),
-                                    ))
-                                } else {
-                                    Some(Container::new(p1_bold(localized_format!(
-                                        "First recovery path will be available in {} blocks", "La primera ruta de recuperación estará disponible en bloques {}",
-                                        remaining_sequence(coin, blockheight, timelock)
-                                    ))))
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        })
-                        .push(
-                            Column::new()
-                                .push(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            p2_regular(localized_copy("Address label:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(if let Some(label) = labels.get(&address) {
-                                            p2_regular(label).style(theme::text::secondary)
-                                        } else {
-                                            p2_regular(localized_copy("No label")).style(theme::text::secondary)
-                                        })
-                                        .spacing(5),
-                                )
-                                .push(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            p2_regular(localized_copy("Address:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(
-                                            Row::new()
-                                                .align_y(Alignment::Center)
-                                                .push(
-                                                    p2_regular(address.clone())
-                                                        .style(theme::text::secondary),
-                                                )
-                                                .push(coin_copy(
-                                                    &outpoint,
-                                                    address.clone(),
-                                                    coincube_ui::locale::copy("Address"),
-                                                    "details",
-                                                )),
-                                        )
-                                        .spacing(5),
-                                )
-                                .push(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            p2_regular(localized_copy("Deposit transaction label:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(if let Some(label) = labels.get(&txid) {
-                                            p2_regular(label).style(theme::text::secondary)
-                                        } else {
-                                            p2_regular(localized_copy("No label")).style(theme::text::secondary)
-                                        })
-                                        .spacing(5),
-                                )
-                                .push(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .spacing(5)
-                                        .push(
-                                            p2_regular(localized_copy("Transaction ID:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(
-                                            p2_regular(txid.clone())
-                                                .style(theme::text::secondary)
-                                                .wrapping(
-                                                    iced::widget::text::Wrapping::WordOrGlyph,
-                                                ),
-                                        )
-                                        .push(coin_copy(
-                                            &outpoint,
-                                            txid.clone(),
-                                            coincube_ui::locale::copy("Transaction ID"),
-                                            "details",
-                                        )),
-                                )
-                                .push(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            p2_regular(localized_copy("Outpoint:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(
-                                            Row::new()
-                                                .align_y(Alignment::Center)
-                                                .push(
-                                                    p2_regular(format!("{}", coin.outpoint))
-                                                        .style(theme::text::secondary),
-                                                )
-                                                .push(coin_copy(
-                                                    &outpoint,
-                                                    outpoint.clone(),
-                                                    coincube_ui::locale::copy("Outpoint"),
-                                                    "details",
-                                                )),
-                                        )
-                                        .spacing(5),
-                                )
-                                .push(coin.block_height.map(|b| {
-                                    Row::new()
-                                        .push(
-                                            p2_regular(localized_copy("Block height:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(
-                                            p2_regular(format!("{}", b))
-                                                .style(theme::text::secondary),
-                                        )
-                                        .spacing(5)
-                                })),
-                        )
-                        .push(if let Some(info) = coin.spend_info {
-                            Column::new()
-                                .push(
-                                    Row::new()
-                                        .push(
-                                            p2_regular(localized_copy("Spend txid:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(p2_regular(format!("{}", info.txid)))
-                                        .spacing(5),
-                                )
-                                .push(if let Some(height) = info.height {
-                                    Row::new()
-                                        .push(
-                                            p2_regular(localized_copy("Spend block height:"))
-                                                .bold()
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(p2_regular(format!("{}", height)))
-                                        .spacing(5)
-                                } else {
-                                    Row::new().push(
-                                        p2_regular(localized_copy("Not in a block"))
-                                            .bold()
-                                            .style(theme::text::secondary),
-                                    )
-                                })
-                                .spacing(5)
-                        } else {
-                            Column::new().push(
-                                Row::new().push(Space::new().width(Length::Fill)).push({
-                                    let (icon, label) =
-                                        (Some(icon::arrow_repeat()), "Refresh coin");
-                                    let refresh_btn = if recovery_timing_known(coin, blockheight)
-                                        && timelock.is_some_and(|timelock| {
-                                            remaining_sequence(coin, blockheight, timelock) == 0
-                                        }) {
-                                        button::primary_compact(icon, label)
-                                    } else {
-                                        button::secondary_compact(icon, label)
-                                    };
-                                    refresh_btn.on_press(Message::Menu(Menu::Vault(
-                                        crate::app::menu::VaultSubMenu::Coins(Some(vec![
-                                            coin.outpoint,
-                                        ])),
-                                    )))
-                                }),
-                            )
-                        }),
+                        .push(coin_recovery_detail(coin, timelock, blockheight))
+                        .push(coin_identifiers(coin, labels, &outpoint, &address, &txid))
+                        .push(coin_spend_detail(coin, timelock, blockheight)),
                 )
             } else {
                 None
             }),
     )
     .width(Length::Fill)
+}
+
+fn coin_status_badge<'a>(
+    coin: &Coin,
+    timelock: Option<u16>,
+    blockheight: u32,
+) -> Option<Container<'a, Message>> {
+    if coin.spend_info.is_some() {
+        Some(badge::spent())
+    } else if coin.block_height.is_none() {
+        Some(badge::unconfirmed())
+    } else if let Some(timelock) = timelock {
+        Some(if recovery_timing_known(coin, blockheight) {
+            coin_sequence_label(
+                remaining_sequence(coin, blockheight, timelock),
+                timelock as u32,
+            )
+        } else {
+            badge::badge_pill(
+                coincube_ui::locale::copy("Recovery timing unavailable"),
+                coincube_ui::locale::copy(
+                    "The chain tip is not available yet. Recovery timing will appear after sync.",
+                ),
+            )
+        })
+    } else if !coin.is_immature {
+        Some(badge::badge_pill(
+            coincube_ui::locale::copy("Spendable"),
+            coincube_ui::locale::copy("This confirmed coin can use the primary spending path with its required signatures."),
+        ))
+    } else {
+        None
+    }
+}
+
+fn coin_recovery_detail<'a>(
+    coin: &Coin,
+    timelock: Option<u16>,
+    blockheight: u32,
+) -> Option<Container<'a, Message>> {
+    if coin.spend_info.is_none() {
+        if let (Some(_), Some(timelock)) = (coin.block_height, timelock) {
+            if !recovery_timing_known(coin, blockheight) {
+                Some(Container::new(
+                    p1_regular(localized_copy("Recovery timing unavailable"))
+                        .style(theme::text::secondary),
+                ))
+            } else if remaining_sequence(coin, blockheight, timelock) == 0 {
+                Some(Container::new(
+                    p1_bold(localized_copy("One or more recovery paths are available"))
+                        .style(theme::text::error),
+                ))
+            } else {
+                Some(Container::new(p1_bold(localized_format!(
+                    "First recovery path will be available in {} blocks",
+                    "La primera ruta de recuperación estará disponible en bloques {}",
+                    remaining_sequence(coin, blockheight, timelock)
+                ))))
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn coin_identifiers<'a>(
+    coin: &Coin,
+    labels: &'a HashMap<String, String>,
+    outpoint: &str,
+    address: &str,
+    txid: &str,
+) -> Column<'a, Message> {
+    Column::new()
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(localized_copy("Address label:"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+                .push(if let Some(label) = labels.get(address) {
+                    p2_regular(label).style(theme::text::secondary)
+                } else {
+                    p2_regular(localized_copy("No label")).style(theme::text::secondary)
+                })
+                .spacing(5),
+        )
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(localized_copy("Address:"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .push(p2_regular(address.to_owned()).style(theme::text::secondary))
+                        .push(coin_copy(
+                            outpoint,
+                            address.to_owned(),
+                            coincube_ui::locale::copy("Address"),
+                            "details",
+                        )),
+                )
+                .spacing(5),
+        )
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(localized_copy("Deposit transaction label:"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+                .push(if let Some(label) = labels.get(txid) {
+                    p2_regular(label).style(theme::text::secondary)
+                } else {
+                    p2_regular(localized_copy("No label")).style(theme::text::secondary)
+                })
+                .spacing(5),
+        )
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .spacing(5)
+                .push(
+                    p2_regular(localized_copy("Transaction ID:"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    p2_regular(txid.to_owned())
+                        .style(theme::text::secondary)
+                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                )
+                .push(coin_copy(
+                    outpoint,
+                    txid.to_owned(),
+                    coincube_ui::locale::copy("Transaction ID"),
+                    "details",
+                )),
+        )
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(localized_copy("Outpoint:"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .push(
+                            p2_regular(format!("{}", coin.outpoint)).style(theme::text::secondary),
+                        )
+                        .push(coin_copy(
+                            outpoint,
+                            outpoint.to_owned(),
+                            coincube_ui::locale::copy("Outpoint"),
+                            "details",
+                        )),
+                )
+                .spacing(5),
+        )
+        .push(coin.block_height.map(|b| {
+            Row::new()
+                .push(
+                    p2_regular(localized_copy("Block height:"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+                .push(p2_regular(format!("{}", b)).style(theme::text::secondary))
+                .spacing(5)
+        }))
+}
+
+fn coin_spend_detail<'a>(
+    coin: &Coin,
+    timelock: Option<u16>,
+    blockheight: u32,
+) -> Column<'a, Message> {
+    if let Some(info) = coin.spend_info {
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        p2_regular(localized_copy("Spend txid:"))
+                            .bold()
+                            .style(theme::text::secondary),
+                    )
+                    .push(p2_regular(format!("{}", info.txid)))
+                    .spacing(5),
+            )
+            .push(if let Some(height) = info.height {
+                Row::new()
+                    .push(
+                        p2_regular(localized_copy("Spend block height:"))
+                            .bold()
+                            .style(theme::text::secondary),
+                    )
+                    .push(p2_regular(format!("{}", height)))
+                    .spacing(5)
+            } else {
+                Row::new().push(
+                    p2_regular(localized_copy("Not in a block"))
+                        .bold()
+                        .style(theme::text::secondary),
+                )
+            })
+            .spacing(5)
+    } else {
+        Column::new().push(Row::new().push(Space::new().width(Length::Fill)).push({
+            let (icon, label) = (Some(icon::arrow_repeat()), "Refresh coin");
+            let refresh_btn = if recovery_timing_known(coin, blockheight)
+                && timelock
+                    .is_some_and(|timelock| remaining_sequence(coin, blockheight, timelock) == 0)
+            {
+                button::primary_compact(icon, label)
+            } else {
+                button::secondary_compact(icon, label)
+            };
+            refresh_btn.on_press(Message::Menu(Menu::Vault(
+                crate::app::menu::VaultSubMenu::Coins(Some(vec![coin.outpoint])),
+            )))
+        }))
+    }
 }
 
 pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, T> {
@@ -1527,6 +1546,61 @@ mod tests {
 
     #[test]
     fn label_popover_keeps_rows_still_fits_window_and_handles_keyboard_and_dismissal() {
+        for bytes in coincube_ui::font::load() {
+            iced::advanced::graphics::text::font_system()
+                .write()
+                .unwrap()
+                .load_font(bytes);
+        }
+        let mut second = confirmed_coin(101);
+        second.outpoint.vout = 1;
+        let coins = [confirmed_coin(100), second];
+        let cache = Cache::default();
+        let labels = HashMap::new();
+        let outpoint = coins[0].outpoint.to_string();
+        let editing = HashMap::from([(outpoint.clone(), form::Value::<String>::default())]);
+        let closed_editing = HashMap::new();
+        let page = |open| -> Element<'_, Message> {
+            scrollable(coins_view(
+                &cache,
+                &coins,
+                Some(1008),
+                &[0],
+                &labels,
+                if open { &editing } else { &closed_editing },
+                BitcoinDisplayUnit::Sats,
+                true,
+                CoinControl::default(),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        };
+
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            // 652px is the real content allocation in a minimum desktop window.
+            for (width, height) in [(652, 668), (1280, 900)] {
+                assert_label_popover_layout(
+                    &page,
+                    appearance,
+                    &theme,
+                    (width, height),
+                    std::slice::from_ref(&outpoint),
+                );
+            }
+        }
+    }
+
+    fn assert_label_popover_layout<'a>(
+        page: &impl Fn(bool) -> Element<'a, Message>,
+        appearance: &str,
+        theme: &theme::Theme,
+        dimensions: (u32, u32),
+        label_items: &[String],
+    ) {
         use iced::advanced::{
             layout, overlay,
             renderer::Headless,
@@ -1567,217 +1641,175 @@ mod tests {
                     .max_by(|a, b| a.height.total_cmp(&b.height))
             }
         }
-        for bytes in coincube_ui::font::load() {
-            iced::advanced::graphics::text::font_system()
-                .write()
-                .unwrap()
-                .load_font(bytes);
+        let (width, height) = dimensions;
+        let size = Size::new(width as f32, height as f32);
+        let viewport = Rectangle::with_size(size);
+        let limits = layout::Limits::new(Size::ZERO, size);
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut closed = page(false);
+        let mut closed_tree = Tree::new(closed.as_widget());
+        let closed_node = closed
+            .as_widget_mut()
+            .layout(&mut closed_tree, &renderer, &limits);
+        let mut before = Probe::default();
+        closed.as_widget_mut().operate(
+            &mut closed_tree,
+            Layout::new(&closed_node),
+            &renderer,
+            &mut before,
+        );
+        let mut element = page(true);
+        let mut tree = Tree::new(element.as_widget());
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        assert!(node.size().width <= size.width);
+        let mut after = Probe::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut after);
+        assert_eq!(after.horizontal_scroll, width < TABLE_MIN_WIDTH as u32);
+        for entry in &before.text {
+            assert!(
+                after.text.contains(entry),
+                "label editor moved table content: {:?}",
+                entry
+            );
         }
-        let mut second = confirmed_coin(101);
-        second.outpoint.vout = 1;
-        let coins = [confirmed_coin(100), second];
-        let cache = Cache::default();
-        let labels = HashMap::new();
-        let outpoint = coins[0].outpoint.to_string();
-        let editing = HashMap::from([(outpoint.clone(), form::Value::<String>::default())]);
-        let closed_editing = HashMap::new();
-        for (appearance, theme) in [
-            ("dark", theme::Theme::dark()),
-            ("light", theme::Theme::light()),
-        ] {
-            // 652px is the real content allocation in a minimum desktop window.
-            for (width, height) in [(652, 668), (1280, 900)] {
-                let size = Size::new(width as f32, height as f32);
-                let viewport = Rectangle::with_size(size);
-                let limits = layout::Limits::new(Size::ZERO, size);
-                let mut renderer =
-                    iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
-                        coincube_ui::font::REGULAR,
-                        iced::Pixels(14.0),
-                        Some("tiny-skia"),
-                    ))
-                    .unwrap();
-                let page = |open| -> Element<'_, Message> {
-                    scrollable(coins_view(
-                        &cache,
-                        &coins,
-                        Some(1008),
-                        &[0],
-                        &labels,
-                        if open { &editing } else { &closed_editing },
-                        BitcoinDisplayUnit::Sats,
-                        true,
-                        CoinControl::default(),
-                    ))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into()
-                };
-                let mut closed = page(false);
-                let mut closed_tree = Tree::new(closed.as_widget());
-                let closed_node =
-                    closed
-                        .as_widget_mut()
-                        .layout(&mut closed_tree, &renderer, &limits);
-                let mut before = Probe::default();
-                closed.as_widget_mut().operate(
-                    &mut closed_tree,
-                    Layout::new(&closed_node),
-                    &renderer,
-                    &mut before,
-                );
-                let mut element = page(true);
-                let mut tree = Tree::new(element.as_widget());
-                let node = element
-                    .as_widget_mut()
-                    .layout(&mut tree, &renderer, &limits);
-                assert!(node.size().width <= size.width);
-                let mut after = Probe::default();
-                element.as_widget_mut().operate(
+        let header = after
+            .text
+            .iter()
+            .find(|(text, _)| text == "Status")
+            .unwrap()
+            .1;
+        let status = after
+            .text
+            .iter()
+            .find(|(text, _)| text == "Recovery timing unavailable")
+            .unwrap()
+            .1;
+        assert!(
+            status.x >= header.x && status.x < header.x + STATUS_COLUMN_WIDTH,
+            "status belongs in its column"
+        );
+        let mut focus: Box<dyn Operation<()>> =
+            Box::new(focusable::focus(Id::from(COIN_LABEL_INPUT_ID)));
+        element.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut operation::black_box(focus.as_mut()),
+        );
+        let mut popover = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .map(overlay::Nested::new)
+            .unwrap();
+        let popup_node = popover.layout(&renderer, size);
+        let panel = panel_bounds(&popup_node, size.width).unwrap();
+        assert!(panel.width >= 300.0 && panel.width <= 320.0);
+        assert!(panel.x >= 0.0 && panel.x + panel.width <= size.width);
+        assert!(panel.y >= 0.0 && panel.y + panel.height <= size.height);
+        for key in [keyboard::key::Named::Enter, keyboard::key::Named::Escape] {
+            let mut messages = Vec::new();
+            let event = Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(key),
+                modified_key: keyboard::Key::Named(key),
+                physical_key: keyboard::key::Physical::Unidentified(
+                    keyboard::key::NativeCode::Unidentified,
+                ),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::default(),
+                text: None,
+                repeat: false,
+            });
+            popover.update(
+                &event,
+                Layout::new(&popup_node),
+                mouse::Cursor::Available(panel.center()),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut Shell::new(&mut messages),
+            );
+            assert!(messages.iter().any(|message| matches!(message, Message::Label(items, intent) if items == label_items && matches!((key, intent), (keyboard::key::Named::Enter, crate::app::view::LabelMessage::Confirm) | (keyboard::key::Named::Escape, crate::app::view::LabelMessage::Cancel)))));
+        }
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        popover.update(
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Layout::new(&popup_node),
+            mouse::Cursor::Available(Point::new(2.0, 2.0)),
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+        );
+        assert!(shell.is_event_captured());
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::Label(_, crate::app::view::LabelMessage::Cancel)]
+        ));
+        drop(popover);
+        if let Ok(directory) = std::env::var("R06A_CAPTURE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            iced::advanced::Renderer::reset(&mut renderer, viewport);
+            let style = iced::advanced::renderer::Style {
+                text_color: theme.colors.text.primary,
+            };
+            element.as_widget().draw(
+                &tree,
+                &mut renderer,
+                theme,
+                &style,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            if let Some(mut popup) = element
+                .as_widget_mut()
+                .overlay(
                     &mut tree,
                     Layout::new(&node),
                     &renderer,
-                    &mut after,
-                );
-                assert_eq!(after.horizontal_scroll, width < TABLE_MIN_WIDTH as u32);
-                for entry in &before.text {
-                    assert!(
-                        after.text.contains(entry),
-                        "label editor moved table content: {:?}",
-                        entry
-                    );
-                }
-                let header = after
-                    .text
-                    .iter()
-                    .find(|(text, _)| text == "Status")
-                    .unwrap()
-                    .1;
-                let status = after
-                    .text
-                    .iter()
-                    .find(|(text, _)| text == "Recovery timing unavailable")
-                    .unwrap()
-                    .1;
-                assert!(
-                    status.x >= header.x && status.x < header.x + STATUS_COLUMN_WIDTH,
-                    "status belongs in its column"
-                );
-                let mut focus: Box<dyn Operation<()>> =
-                    Box::new(focusable::focus(Id::from(COIN_LABEL_INPUT_ID)));
-                element.as_widget_mut().operate(
-                    &mut tree,
-                    Layout::new(&node),
-                    &renderer,
-                    &mut operation::black_box(focus.as_mut()),
-                );
-                let mut popover = element
-                    .as_widget_mut()
-                    .overlay(
-                        &mut tree,
-                        Layout::new(&node),
-                        &renderer,
-                        &viewport,
-                        Vector::ZERO,
-                    )
-                    .map(overlay::Nested::new)
-                    .unwrap();
-                let popup_node = popover.layout(&renderer, size);
-                let panel = panel_bounds(&popup_node, size.width).unwrap();
-                assert!(panel.width >= 300.0 && panel.width <= 320.0);
-                assert!(panel.x >= 0.0 && panel.x + panel.width <= size.width);
-                assert!(panel.y >= 0.0 && panel.y + panel.height <= size.height);
-                for key in [keyboard::key::Named::Enter, keyboard::key::Named::Escape] {
-                    let mut messages = Vec::new();
-                    let event = Event::Keyboard(keyboard::Event::KeyPressed {
-                        key: keyboard::Key::Named(key),
-                        modified_key: keyboard::Key::Named(key),
-                        physical_key: keyboard::key::Physical::Unidentified(
-                            keyboard::key::NativeCode::Unidentified,
-                        ),
-                        location: keyboard::Location::Standard,
-                        modifiers: keyboard::Modifiers::default(),
-                        text: None,
-                        repeat: false,
-                    });
-                    popover.update(
-                        &event,
-                        Layout::new(&popup_node),
-                        mouse::Cursor::Available(panel.center()),
-                        &renderer,
-                        &mut iced::advanced::clipboard::Null,
-                        &mut Shell::new(&mut messages),
-                    );
-                    assert!(messages.iter().any(|message| matches!(message, Message::Label(items, intent) if items == std::slice::from_ref(&outpoint) && matches!((key, intent), (keyboard::key::Named::Enter, crate::app::view::LabelMessage::Confirm) | (keyboard::key::Named::Escape, crate::app::view::LabelMessage::Cancel)))));
-                }
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                popover.update(
-                    &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    &viewport,
+                    Vector::ZERO,
+                )
+                .map(overlay::Nested::new)
+            {
+                let popup_node = popup.layout(&renderer, size);
+                popup.draw(
+                    &mut renderer,
+                    theme,
+                    &style,
                     Layout::new(&popup_node),
-                    mouse::Cursor::Available(Point::new(2.0, 2.0)),
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
+                    mouse::Cursor::Unavailable,
                 );
-                assert!(shell.is_event_captured());
-                assert!(matches!(
-                    messages.as_slice(),
-                    [Message::Label(_, crate::app::view::LabelMessage::Cancel)]
-                ));
-                drop(popover);
-                if let Ok(directory) = std::env::var("R06A_CAPTURE_DIR") {
-                    std::fs::create_dir_all(&directory).unwrap();
-                    iced::advanced::Renderer::reset(&mut renderer, viewport);
-                    let style = iced::advanced::renderer::Style {
-                        text_color: theme.colors.text.primary,
-                    };
-                    element.as_widget().draw(
-                        &tree,
-                        &mut renderer,
-                        &theme,
-                        &style,
-                        Layout::new(&node),
-                        mouse::Cursor::Unavailable,
-                        &viewport,
-                    );
-                    if let Some(mut popup) = element
-                        .as_widget_mut()
-                        .overlay(
-                            &mut tree,
-                            Layout::new(&node),
-                            &renderer,
-                            &viewport,
-                            Vector::ZERO,
-                        )
-                        .map(overlay::Nested::new)
-                    {
-                        let popup_node = popup.layout(&renderer, size);
-                        popup.draw(
-                            &mut renderer,
-                            &theme,
-                            &style,
-                            Layout::new(&popup_node),
-                            mouse::Cursor::Unavailable,
-                        );
-                    }
-                    let pixels = renderer.screenshot(
-                        Size::new(width, height),
-                        1.0,
-                        theme.colors.general.background,
-                    );
-                    image::save_buffer(
-                        std::path::Path::new(&directory).join(format!(
-                            "coin-label-popover-{appearance}-{width}x{height}-synthetic.png"
-                        )),
-                        &pixels,
-                        width,
-                        height,
-                        image::ColorType::Rgba8,
-                    )
-                    .unwrap();
-                }
             }
+            let pixels = renderer.screenshot(
+                Size::new(width, height),
+                1.0,
+                theme.colors.general.background,
+            );
+            image::save_buffer(
+                std::path::Path::new(&directory).join(format!(
+                    "coin-label-popover-{appearance}-{width}x{height}-synthetic.png"
+                )),
+                &pixels,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
         }
     }
 

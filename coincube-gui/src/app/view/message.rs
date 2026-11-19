@@ -2489,8 +2489,14 @@ pub enum ConnectCubeMessage {
     /// Terminal result of the manual SDK rebind retry kicked off by
     /// `RetryLightningAddressReregister`. `Ok` clears the
     /// re-registration prompt; `Err` keeps it surfaced with an
-    /// updated message.
-    LightningAddressReregistered(Result<coincube_spark_protocol::LightningAddressInfo, String>),
+    /// updated message. `address` is the DB-confirmed `user@domain` the
+    /// retry was issued for: a result for an address a rename has since
+    /// replaced is dropped rather than compared with the new one.
+    LightningAddressReregistered {
+        generation: u64,
+        address: String,
+        result: Result<coincube_spark_protocol::LightningAddressInfo, String>,
+    },
     /// Manual retry of the SDK side of a Lightning Address rebind
     /// when reconcile flagged `ln_reconcile_needs_reregister`. Performs
     /// SDK delete (idempotent) then register against the DB-confirmed
@@ -2505,8 +2511,13 @@ pub enum ConnectCubeMessage {
     /// [`crate::app::state::connect::cube::ReconcileOutcome`]
     /// payload distinguishes "already in sync / fixed it" from a
     /// transient query failure and from a persistent API↔SDK
-    /// divergence that needs the user's attention.
-    LightningAddressReconciled(crate::app::state::connect::cube::ReconcileOutcome),
+    /// divergence that needs the user's attention. `generation` stamps
+    /// the session the reconcile was issued under (see
+    /// `ConnectCubePanel::session_generation`).
+    LightningAddressReconciled {
+        generation: u64,
+        outcome: crate::app::state::connect::cube::ReconcileOutcome,
+    },
     /// Result of registering the cube with the backend (POST /connect/cubes).
     /// `generation` stamps the authenticated session the attempt was issued
     /// under, so a reply that outlives a sign-out can be discarded rather than
@@ -2571,8 +2582,13 @@ pub enum ConnectCubeMembersMessage {
 pub enum AvatarMessage {
     /// Enter the Avatar sub-menu — triggers GET /avatar load.
     Enter,
-    /// Result of GET /api/v1/connect/avatar.
-    Loaded(Result<crate::services::coincube::GetAvatarData, String>),
+    /// Result of GET /api/v1/connect/avatar. Every result variant carries
+    /// the `generation` of the session that issued the request (see
+    /// `ConnectCubePanel::session_generation`); stale ones are dropped.
+    Loaded {
+        generation: u64,
+        result: Result<crate::services::coincube::GetAvatarData, String>,
+    },
     /// Navigate to a specific avatar flow step.
     SetStep(crate::app::state::connect::AvatarFlowStep),
     // Questionnaire field changes
@@ -2586,15 +2602,25 @@ pub enum AvatarMessage {
     /// Submit the questionnaire — triggers POST /avatar/generate.
     Generate,
     /// Result of POST /api/v1/connect/avatar/generate.
-    GenerateComplete(Result<crate::services::coincube::AvatarGenerateData, String>),
+    GenerateComplete {
+        generation: u64,
+        result: Result<crate::services::coincube::AvatarGenerateData, String>,
+    },
     /// User picks a variant from the gallery.
     SelectVariant(u64),
     /// Result of POST /api/v1/connect/avatar/select.
-    VariantSelected(Result<crate::services::coincube::AvatarSelectData, String>),
+    VariantSelected {
+        generation: u64,
+        result: Result<crate::services::coincube::AvatarSelectData, String>,
+    },
     /// Result of GET /api/v1/connect/avatar/regenerations.
-    RegenerationsLoaded(Result<crate::services::coincube::RegenerationData, String>),
+    RegenerationsLoaded {
+        generation: u64,
+        result: Result<crate::services::coincube::RegenerationData, String>,
+    },
     /// PNG bytes fetched for a variant.
     ImageLoaded {
+        generation: u64,
         variant_id: u64,
         result: Result<Vec<u8>, String>,
     },
@@ -2944,7 +2970,8 @@ pub enum P2PMessage {
     CloseOrderDetail,
     CopyOrderId(String),
     CancelOrder(String),
-    CancelOrderResult(Result<(), String>),
+    /// `(order_id, result)` — the order the cancel was dispatched for.
+    CancelOrderResult(String, Result<(), String>),
     OrderSubmitResult(Result<super::p2p::mostro::OrderSubmitResponse, String>),
     TradeFilterChanged(super::p2p::components::TradeFilter),
     MostroTradesReceived(Vec<super::p2p::components::P2PTrade>),
@@ -3050,7 +3077,11 @@ pub enum P2PMessage {
     SubmitRating,
     CancelTrade,
     OpenDispute,
-    TradeActionResult(Result<super::p2p::mostro::TradeActionResponse, String>),
+    /// `(order_id, result)` — the trade the action was dispatched for.
+    TradeActionResult(
+        String,
+        Result<super::p2p::mostro::TradeActionResponse, String>,
+    ),
     // Real-time DM updates
     TradeUpdate {
         order_id: String,

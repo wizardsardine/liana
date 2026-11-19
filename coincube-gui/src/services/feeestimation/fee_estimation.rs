@@ -26,6 +26,17 @@ fn sanitize_feerate(fee: f64) -> Option<f64> {
     Some(fee.min(MAX_SANE_FEERATE))
 }
 
+fn add_sanitized_rates(
+    combined: &mut HashMap<BlockTarget, Vec<f64>>,
+    fees: HashMap<BlockTarget, f64>,
+) {
+    for (target, fee) in fees {
+        if let Some(v) = sanitize_feerate(fee) {
+            combined.get_mut(&target).unwrap().push(v);
+        }
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct FeeEstimator;
 
@@ -74,18 +85,10 @@ impl FeeEstimator {
         // the average. Non-finite/non-positive values are dropped; excessive
         // values are clamped to MAX_SANE_FEERATE.
         if let Ok(fees) = mempool_res {
-            for (target, fee) in fees {
-                if let Some(v) = sanitize_feerate(fee) {
-                    combined.get_mut(&target).unwrap().push(v);
-                }
-            }
+            add_sanitized_rates(&mut combined, fees);
         }
         if let Ok(fees) = esplora_res {
-            for (target, fee) in fees {
-                if let Some(v) = sanitize_feerate(fee) {
-                    combined.get_mut(&target).unwrap().push(v);
-                }
-            }
+            add_sanitized_rates(&mut combined, fees);
         }
 
         if combined.values().all(|v| v.is_empty()) {

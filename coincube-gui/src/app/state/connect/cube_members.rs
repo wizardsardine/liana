@@ -89,55 +89,11 @@ pub fn update(
     cube_id: Option<u64>,
 ) -> iced::Task<Message> {
     match msg {
-        ConnectCubeMembersMessage::Enter => {
-            // Skip if a load is already in flight — avoid piling duplicates
-            // on top of each other when the user taps quickly.
-            if state.loading {
-                return iced::Task::none();
-            }
-            // Retry when (a) no successful load has happened yet, or
-            // (b) the previous load failed. Gate on `load_error`
-            // specifically, not the generic `error` slot — a pending
-            // invite-validation message shouldn't trigger a reload.
-            // Once a successful load has landed — even for an empty
-            // cube — `loaded_once` is true and the Reload button is
-            // the explicit "force refresh" path.
-            let needs_load = state.load_error.is_some() || !state.loaded_once;
-            if needs_load {
-                return spawn_load(state, client, cube_id);
-            }
-            iced::Task::none()
-        }
+        ConnectCubeMembersMessage::Enter => enter_members_panel(state, client, cube_id),
 
         ConnectCubeMembersMessage::Reload => spawn_load(state, client, cube_id),
 
-        ConnectCubeMembersMessage::Loaded(result, gen) => {
-            if gen != state.load_generation {
-                return iced::Task::none();
-            }
-            state.loading = false;
-            match result {
-                Ok(cube) => {
-                    state.members = cube.members;
-                    state.pending_invites = cube.pending_invites;
-                    state.vault_created_at = cube.vault.as_ref().map(|v| v.created_at.clone());
-                    state.load_error = None;
-                    state.loaded_once = true;
-                }
-                Err(e) => {
-                    // Leave `loaded_once` alone — a failed load doesn't
-                    // count as loaded; the next `Enter` will retry.
-                    // Route to `load_error` so a standing validation
-                    // message in `error` isn't overwritten.
-                    // `members`, `pending_invites`, and `vault_created_at`
-                    // are all left intact so the panel keeps rendering the
-                    // last-good snapshot — including the "Joined after
-                    // Vault" badges — instead of a half-cleared view.
-                    state.load_error = Some(e);
-                }
-            }
-            iced::Task::none()
-        }
+        ConnectCubeMembersMessage::Loaded(result, gen) => apply_members_load(state, result, gen),
 
         ConnectCubeMembersMessage::InviteEmailChanged(email) => {
             state.invite_email = email;
@@ -183,35 +139,7 @@ pub fn update(
         }
 
         ConnectCubeMembersMessage::InviteResult(result) => {
-            state.invite_sending = false;
-            match result {
-                Ok(CubeInviteOrAddResult::Added(member)) => {
-                    state.invite_email.clear();
-                    state.error = None;
-                    state.error_return_id = None;
-                    if !state.members.iter().any(|m| m.id == member.id) {
-                        state.members.push(member);
-                    }
-                    spawn_load_silent(state, client, cube_id)
-                }
-                Ok(CubeInviteOrAddResult::Invited(invite)) => {
-                    state.invite_email.clear();
-                    state.error = None;
-                    state.error_return_id = None;
-                    if !state.pending_invites.iter().any(|i| i.id == invite.id) {
-                        state.pending_invites.push(invite);
-                    }
-                    iced::Task::none()
-                }
-                Err(e) => {
-                    state.error = Some(e);
-                    state.error_return_id =
-                        Some(super::super::view::connect::cube_members::add_action_id());
-                    iced::widget::operation::focus(
-                        super::super::view::connect::cube_members::ERROR_DISMISS_ID,
-                    )
-                }
-            }
+            apply_invite_result(state, result, client, cube_id)
         }
 
         ConnectCubeMembersMessage::RevokeInvite(invite_id) => {
@@ -269,38 +197,7 @@ pub fn update(
         }
 
         ConnectCubeMembersMessage::RemoveMemberResult(member_id, result) => {
-            match result {
-                Ok(()) => {
-                    state.members.retain(|m| m.id != member_id);
-                    state.error = None;
-                    state.error_return_id = None;
-                    state.remove_conflict = None;
-                    state.remove_conflict_member_id = None;
-                }
-                Err(e) => {
-                    // W4: stranded-vault 409 — surface it on the dedicated
-                    // conflict slot so the view can render a prominent
-                    // dialog. The backend's error envelope carries the
-                    // conflicting-vaults list; parsing that structured body
-                    // lands in a follow-up once W4 stabilises.
-                    if is_stranded_vault_conflict(&e) {
-                        state.remove_conflict = Some(e);
-                        state.remove_conflict_member_id = Some(member_id);
-                        return iced::widget::operation::focus(
-                            super::super::view::connect::cube_members::REMOVE_CONFLICT_DISMISS_ID,
-                        );
-                    } else {
-                        state.error = Some(e);
-                        state.error_return_id = Some(
-                            super::super::view::connect::cube_members::remove_action_id(member_id),
-                        );
-                        return iced::widget::operation::focus(
-                            super::super::view::connect::cube_members::ERROR_DISMISS_ID,
-                        );
-                    }
-                }
-            }
-            iced::Task::none()
+            apply_member_removal(state, member_id, result)
         }
 
         ConnectCubeMembersMessage::DismissError => {
@@ -331,6 +228,138 @@ pub fn update(
                 })
         }
     }
+}
+
+fn enter_members_panel(
+    state: &mut ConnectCubeMembersState,
+    client: Option<CoincubeClient>,
+    cube_id: Option<u64>,
+) -> iced::Task<Message> {
+    // Skip if a load is already in flight — avoid piling duplicates
+    // on top of each other when the user taps quickly.
+    if state.loading {
+        return iced::Task::none();
+    }
+    // Retry when (a) no successful load has happened yet, or
+    // (b) the previous load failed. Gate on `load_error`
+    // specifically, not the generic `error` slot — a pending
+    // invite-validation message shouldn't trigger a reload.
+    // Once a successful load has landed — even for an empty
+    // cube — `loaded_once` is true and the Reload button is
+    // the explicit "force refresh" path.
+    let needs_load = state.load_error.is_some() || !state.loaded_once;
+    if needs_load {
+        return spawn_load(state, client, cube_id);
+    }
+    iced::Task::none()
+}
+
+fn apply_members_load(
+    state: &mut ConnectCubeMembersState,
+    result: Result<CubeResponse, String>,
+    gen: u32,
+) -> iced::Task<Message> {
+    if gen != state.load_generation {
+        return iced::Task::none();
+    }
+    state.loading = false;
+    match result {
+        Ok(cube) => {
+            state.members = cube.members;
+            state.pending_invites = cube.pending_invites;
+            state.vault_created_at = cube.vault.as_ref().map(|v| v.created_at.clone());
+            state.load_error = None;
+            state.loaded_once = true;
+        }
+        Err(e) => {
+            // Leave `loaded_once` alone — a failed load doesn't
+            // count as loaded; the next `Enter` will retry.
+            // Route to `load_error` so a standing validation
+            // message in `error` isn't overwritten.
+            // `members`, `pending_invites`, and `vault_created_at`
+            // are all left intact so the panel keeps rendering the
+            // last-good snapshot — including the "Joined after
+            // Vault" badges — instead of a half-cleared view.
+            state.load_error = Some(e);
+        }
+    }
+    iced::Task::none()
+}
+
+fn apply_invite_result(
+    state: &mut ConnectCubeMembersState,
+    result: Result<CubeInviteOrAddResult, String>,
+    client: Option<CoincubeClient>,
+    cube_id: Option<u64>,
+) -> iced::Task<Message> {
+    state.invite_sending = false;
+    match result {
+        Ok(CubeInviteOrAddResult::Added(member)) => {
+            state.invite_email.clear();
+            state.error = None;
+            state.error_return_id = None;
+            if !state.members.iter().any(|m| m.id == member.id) {
+                state.members.push(member);
+            }
+            spawn_load_silent(state, client, cube_id)
+        }
+        Ok(CubeInviteOrAddResult::Invited(invite)) => {
+            state.invite_email.clear();
+            state.error = None;
+            state.error_return_id = None;
+            if !state.pending_invites.iter().any(|i| i.id == invite.id) {
+                state.pending_invites.push(invite);
+            }
+            iced::Task::none()
+        }
+        Err(e) => {
+            state.error = Some(e);
+            state.error_return_id =
+                Some(super::super::view::connect::cube_members::add_action_id());
+            iced::widget::operation::focus(
+                super::super::view::connect::cube_members::ERROR_DISMISS_ID,
+            )
+        }
+    }
+}
+
+fn apply_member_removal(
+    state: &mut ConnectCubeMembersState,
+    member_id: u64,
+    result: Result<(), String>,
+) -> iced::Task<Message> {
+    match result {
+        Ok(()) => {
+            state.members.retain(|m| m.id != member_id);
+            state.error = None;
+            state.error_return_id = None;
+            state.remove_conflict = None;
+            state.remove_conflict_member_id = None;
+        }
+        Err(e) => {
+            // W4: stranded-vault 409 — surface it on the dedicated
+            // conflict slot so the view can render a prominent
+            // dialog. The backend's error envelope carries the
+            // conflicting-vaults list; parsing that structured body
+            // lands in a follow-up once W4 stabilises.
+            if is_stranded_vault_conflict(&e) {
+                state.remove_conflict = Some(e);
+                state.remove_conflict_member_id = Some(member_id);
+                return iced::widget::operation::focus(
+                    super::super::view::connect::cube_members::REMOVE_CONFLICT_DISMISS_ID,
+                );
+            } else {
+                state.error = Some(e);
+                state.error_return_id = Some(
+                    super::super::view::connect::cube_members::remove_action_id(member_id),
+                );
+                return iced::widget::operation::focus(
+                    super::super::view::connect::cube_members::ERROR_DISMISS_ID,
+                );
+            }
+        }
+    }
+    iced::Task::none()
 }
 
 /// User-initiated load (Enter/Reload). Surfaces an error if the cube isn't

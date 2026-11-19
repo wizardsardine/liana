@@ -710,6 +710,149 @@ impl LocalSigningState {
         }
         self.refresh_phones_from(dir);
     }
+
+    fn pick_phone(&mut self, fp8: String, cache: &Cache) -> Task<Message> {
+        let Some(selected_key) = self
+            .selected_key
+            .clone()
+            .filter(|key| self.vault_keys.iter().any(|k| k.xpub == *key))
+        else {
+            self.flow = PairingFlow::Error(PairingError::InternalError(
+                "Select the exact vault key held by this phone before pairing.".into(),
+            ));
+            return Task::none();
+        };
+        let Some(fingerprint) = self.wallet_fingerprint else {
+            self.flow = PairingFlow::Error(PairingError::InternalError(
+                "No wallet loaded — pairing needs a wallet fingerprint.".into(),
+            ));
+            return Task::none();
+        };
+        // Look up the picked phone in whatever we last
+        // discovered. If the user picked from a stale list
+        // and the phone has since dropped, error out cleanly.
+        let Some(phone) = (match &self.flow {
+            PairingFlow::PhonePicker { discovered } => {
+                discovered.iter().find(|d| d.cert_fp8 == fp8).cloned()
+            }
+            _ => None,
+        }) else {
+            self.flow =
+                PairingFlow::Error(PairingError::InternalError(coincube_ui::localized_format!(
+                    "Phone {} no longer discoverable on the LAN.",
+                    "El teléfono {} ya no se puede encontrar en la red local.",
+                    fp8
+                )));
+            return Task::none();
+        };
+        let identity = match crate::phone_signer::identity::load_or_create(&cache.datadir_path) {
+            Ok(id) => id,
+            Err(e) => {
+                self.flow =
+                    PairingFlow::Error(PairingError::InternalError(format!("identity: {}", e)));
+                return Task::none();
+            }
+        };
+        let GeneratedOffer { offer } = crate::phone_signer::pairing::generate_offer(
+            fingerprint,
+            &identity,
+            phone.instance_name.clone(),
+            crate::phone_signer::pairing::OfferedKey {
+                signer_xpub: selected_key,
+                descriptor_sha256: self.descriptor_sha256.clone(),
+            },
+        );
+        // Build the QR up front and fail closed if it can't be
+        // rendered. Entering `Waiting` with `qr: None` would
+        // show the user a "scan this QR" prompt with no code
+        // and spawn the dial loop anyway — stranding them with
+        // no way to complete pairing. A typed error keeps the
+        // Try-Again path available instead.
+        let qr = match crate::phone_signer::pairing::encode_offer(&offer)
+            .ok()
+            .and_then(|s| qr_code::Data::new(&s).ok())
+        {
+            Some(qr) => qr,
+            None => {
+                self.flow = PairingFlow::Error(PairingError::InternalError(
+                    "Couldn't render the pairing QR code. Try again.".into(),
+                ));
+                return Task::none();
+            }
+        };
+        self.flow = PairingFlow::Waiting {
+            phone: phone.clone(),
+            offer: offer.clone(),
+            qr: Some(qr),
+        };
+        let expected_vault_id = fingerprint;
+        let signer_fps = self.wallet_signer_fingerprints.clone();
+        // Resolve the selected key's origin fingerprint from the
+        // local descriptor so the listener can require the phone to
+        // report that exact key, not merely some key in this vault.
+        // Fail closed if the descriptor has no origin for it: pairing
+        // without the binding is what we're trying to prevent.
+        let Some(expected_signer_fp) = self
+            .vault_key_fingerprints
+            .iter()
+            .find(|(xpub, _)| *xpub == offer.signer_xpub)
+            .map(|(_, fp)| *fp)
+        else {
+            self.flow = PairingFlow::Error(PairingError::InternalError(
+                "Couldn't identify the selected vault key; reload the wallet and try again.".into(),
+            ));
+            return Task::none();
+        };
+        let dir = cache.datadir_path.clone();
+        let run_id = self.start_pairing_run();
+        let run = self.pairing_run.clone();
+        Task::perform(
+            async move {
+                crate::phone_signer::pairing_listener::run_pairing(
+                    identity,
+                    offer,
+                    phone,
+                    expected_vault_id,
+                    signer_fps,
+                    expected_signer_fp,
+                    &dir,
+                    &run,
+                )
+                .await
+            },
+            move |res| {
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::LocalSigning(LocalSigningMessage::PairingCompleted(
+                        run_id, res,
+                    )),
+                ))
+            },
+        )
+    }
+
+    fn remove_reviewed_phone(&mut self, fp8: String, cache: &Cache) -> Task<Message> {
+        if self.pending_remove_phone.as_deref() != Some(fp8.as_str()) {
+            return Task::none();
+        }
+        self.pending_remove_phone = None;
+        let Some(reviewed_pin) = self.pending_remove_cert_pin.take() else {
+            return Task::none();
+        };
+        let Some(reviewed_descriptor) = self.pending_remove_descriptor.take() else {
+            return Task::none();
+        };
+        if self.current_descriptor_digest() != Some(reviewed_descriptor) {
+            return Task::none();
+        }
+        if self.unique_current_vault_phone(&fp8) != Some(reviewed_pin) {
+            return Task::none();
+        }
+        if !self.apply_remove_phone(&cache.datadir_path, &fp8) {
+            return Task::none();
+        }
+        // Tell the phone now if it's reachable.
+        self.start_sync(&cache.datadir_path)
+    }
 }
 
 impl State for LocalSigningState {
@@ -811,129 +954,7 @@ impl State for LocalSigningState {
                 };
                 Task::none()
             }
-            LocalSigningMessage::PickPhone(fp8) => {
-                let Some(selected_key) = self
-                    .selected_key
-                    .clone()
-                    .filter(|key| self.vault_keys.iter().any(|k| k.xpub == *key))
-                else {
-                    self.flow = PairingFlow::Error(PairingError::InternalError(
-                        "Select the exact vault key held by this phone before pairing.".into(),
-                    ));
-                    return Task::none();
-                };
-                let Some(fingerprint) = self.wallet_fingerprint else {
-                    self.flow = PairingFlow::Error(PairingError::InternalError(
-                        "No wallet loaded — pairing needs a wallet fingerprint.".into(),
-                    ));
-                    return Task::none();
-                };
-                // Look up the picked phone in whatever we last
-                // discovered. If the user picked from a stale list
-                // and the phone has since dropped, error out cleanly.
-                let Some(phone) = (match &self.flow {
-                    PairingFlow::PhonePicker { discovered } => {
-                        discovered.iter().find(|d| d.cert_fp8 == fp8).cloned()
-                    }
-                    _ => None,
-                }) else {
-                    self.flow = PairingFlow::Error(PairingError::InternalError(
-                        coincube_ui::localized_format!(
-                            "Phone {} no longer discoverable on the LAN.",
-                            "El teléfono {} ya no se puede encontrar en la red local.",
-                            fp8
-                        ),
-                    ));
-                    return Task::none();
-                };
-                let identity =
-                    match crate::phone_signer::identity::load_or_create(&cache.datadir_path) {
-                        Ok(id) => id,
-                        Err(e) => {
-                            self.flow = PairingFlow::Error(PairingError::InternalError(format!(
-                                "identity: {}",
-                                e
-                            )));
-                            return Task::none();
-                        }
-                    };
-                let GeneratedOffer { offer } = crate::phone_signer::pairing::generate_offer(
-                    fingerprint,
-                    &identity,
-                    phone.instance_name.clone(),
-                    crate::phone_signer::pairing::OfferedKey {
-                        signer_xpub: selected_key,
-                        descriptor_sha256: self.descriptor_sha256.clone(),
-                    },
-                );
-                // Build the QR up front and fail closed if it can't be
-                // rendered. Entering `Waiting` with `qr: None` would
-                // show the user a "scan this QR" prompt with no code
-                // and spawn the dial loop anyway — stranding them with
-                // no way to complete pairing. A typed error keeps the
-                // Try-Again path available instead.
-                let qr = match crate::phone_signer::pairing::encode_offer(&offer)
-                    .ok()
-                    .and_then(|s| qr_code::Data::new(&s).ok())
-                {
-                    Some(qr) => qr,
-                    None => {
-                        self.flow = PairingFlow::Error(PairingError::InternalError(
-                            "Couldn't render the pairing QR code. Try again.".into(),
-                        ));
-                        return Task::none();
-                    }
-                };
-                self.flow = PairingFlow::Waiting {
-                    phone: phone.clone(),
-                    offer: offer.clone(),
-                    qr: Some(qr),
-                };
-                let expected_vault_id = fingerprint;
-                let signer_fps = self.wallet_signer_fingerprints.clone();
-                // Resolve the selected key's origin fingerprint from the
-                // local descriptor so the listener can require the phone to
-                // report that exact key, not merely some key in this vault.
-                // Fail closed if the descriptor has no origin for it: pairing
-                // without the binding is what we're trying to prevent.
-                let Some(expected_signer_fp) = self
-                    .vault_key_fingerprints
-                    .iter()
-                    .find(|(xpub, _)| *xpub == offer.signer_xpub)
-                    .map(|(_, fp)| *fp)
-                else {
-                    self.flow = PairingFlow::Error(PairingError::InternalError(
-                        "Couldn't identify the selected vault key; reload the wallet and try again."
-                            .into(),
-                    ));
-                    return Task::none();
-                };
-                let dir = cache.datadir_path.clone();
-                let run_id = self.start_pairing_run();
-                let run = self.pairing_run.clone();
-                Task::perform(
-                    async move {
-                        crate::phone_signer::pairing_listener::run_pairing(
-                            identity,
-                            offer,
-                            phone,
-                            expected_vault_id,
-                            signer_fps,
-                            expected_signer_fp,
-                            &dir,
-                            &run,
-                        )
-                        .await
-                    },
-                    move |res| {
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::LocalSigning(
-                                LocalSigningMessage::PairingCompleted(run_id, res),
-                            ),
-                        ))
-                    },
-                )
-            }
+            LocalSigningMessage::PickPhone(fp8) => self.pick_phone(fp8, cache),
             LocalSigningMessage::Tick => {
                 self.apply_tick();
                 Task::none()
@@ -970,29 +991,7 @@ impl State for LocalSigningState {
                 self.pending_remove_descriptor = None;
                 Task::none()
             }
-            LocalSigningMessage::RemovePhone(fp8) => {
-                if self.pending_remove_phone.as_deref() != Some(fp8.as_str()) {
-                    return Task::none();
-                }
-                self.pending_remove_phone = None;
-                let Some(reviewed_pin) = self.pending_remove_cert_pin.take() else {
-                    return Task::none();
-                };
-                let Some(reviewed_descriptor) = self.pending_remove_descriptor.take() else {
-                    return Task::none();
-                };
-                if self.current_descriptor_digest() != Some(reviewed_descriptor) {
-                    return Task::none();
-                }
-                if self.unique_current_vault_phone(&fp8) != Some(reviewed_pin) {
-                    return Task::none();
-                }
-                if !self.apply_remove_phone(&cache.datadir_path, &fp8) {
-                    return Task::none();
-                }
-                // Tell the phone now if it's reachable.
-                self.start_sync(&cache.datadir_path)
-            }
+            LocalSigningMessage::RemovePhone(fp8) => self.remove_reviewed_phone(fp8, cache),
             LocalSigningMessage::SyncTick => self.start_sync(&cache.datadir_path),
             LocalSigningMessage::PairingsSynced(res) => {
                 self.apply_pairings_synced(&cache.datadir_path, res);

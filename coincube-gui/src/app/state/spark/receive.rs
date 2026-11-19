@@ -174,6 +174,611 @@ pub struct SparkReceive {
 }
 
 impl SparkReceive {
+    fn update_sideshift_flow(
+        &mut self,
+        cache: &Cache,
+        msg: &crate::app::view::SparkSideshiftReceiveMessage,
+    ) -> Task<Message> {
+        if let crate::app::view::SparkSideshiftReceiveMessage::Restore(record) = msg {
+            return self.restore_shift(record);
+        }
+        // Read before the flow is borrowed: whether the swap was already
+        // polling its settle txid when this message arrived.
+        let was_polling = self.swap_settle_txid_to_poll().is_some();
+        // A set-aside conversion still hears its polls and its arrival;
+        // only one flow exists to answer them when it is on screen.
+        let Some(flow) = self.sideshift_flow.as_mut().or(self.parked_shift.as_mut()) else {
+            return Task::none();
+        };
+        // `Back`/`Reset` from the flow's *entry* screen means "leave the
+        // bridge", so tear it down and fall back to the ordinary receive
+        // form. The arrived screen's "Done" button lands here too — once the
+        // bitcoin is in the wallet the swap is finished, so treat it the same
+        // way. The flow resets itself for any other phase.
+        let leaving = matches!(
+            msg,
+            crate::app::view::SparkSideshiftReceiveMessage::Back
+                | crate::app::view::SparkSideshiftReceiveMessage::Reset
+        ) && matches!(
+            flow.phase(),
+            super::sideshift_receive::SparkShiftPhase::Setup
+                | super::sideshift_receive::SparkShiftPhase::Arrived
+        );
+        if leaving {
+            // Only the on-screen flow has buttons to leave by.
+            self.sideshift_flow = None;
+            return Task::none();
+        }
+        let task = flow.update(msg);
+        // The status poll that reports the settle txid is the moment to
+        // read its confirmations, rather than one tick later.
+        if was_polling {
+            return task;
+        }
+        Task::batch([task, self.settle_confirmations_task(cache.network)])
+    }
+
+    fn open_receiver_picker(&mut self, cache: &Cache) -> Task<Message> {
+        // US Dollar exists where conversions run (mainnet); elsewhere
+        // Bitcoin is the only thing Spark receives, so nothing to pick.
+        if crate::app::state::spark::swap::swap_available(cache.network) {
+            self.sender_picker_open = false;
+            self.receiver_picker_open = true;
+        }
+        Task::none()
+    }
+
+    fn select_receive_as(&mut self, usd: bool) -> Task<Message> {
+        self.receiver_picker_open = false;
+        if self.auto_convert != Some(!usd) {
+            // Already that way, or not read yet.
+            return Task::none();
+        }
+        // The tile keeps the saved value: the shared save owner may
+        // drop this request (a save already running) or fail it, and
+        // `stable_balance_settled` updates the tile when it lands.
+        Task::done(Message::View(crate::app::view::Message::SparkSettings(
+            crate::app::view::SparkSettingsMessage::StableBalanceToggled(usd),
+        )))
+    }
+
+    fn request_new_onchain_address(&mut self) -> Task<Message> {
+        use crate::app::view::SparkReceiveMessage;
+
+        if self.method != SparkReceiveMethod::OnchainBitcoin {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        self.phase = SparkReceivePhase::Generating;
+        Task::perform(
+            async move { backend.receive_onchain(Some(true)).await },
+            |result| match result {
+                Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
+                    SparkReceiveMessage::GenerateSucceeded(ok),
+                )),
+                Err(e) => Message::View(crate::app::view::Message::SparkReceive(
+                    SparkReceiveMessage::GenerateFailed(e.to_string()),
+                )),
+            },
+        )
+    }
+
+    fn receive_from_asset(
+        &mut self,
+        cache: &Cache,
+        asset: coincube_spark_protocol::WalletAsset,
+    ) -> Task<Message> {
+        use crate::app::view::SparkReceiveMessage;
+
+        let method = match asset {
+            coincube_spark_protocol::WalletAsset::Usdb => SparkReceiveMethod::UsdbSpark,
+            coincube_spark_protocol::WalletAsset::Bitcoin
+                if self.method == SparkReceiveMethod::UsdbSpark =>
+            {
+                SparkReceiveMethod::Bolt11
+            }
+            // A Bitcoin rail (or a stablecoin swap) already set stays.
+            coincube_spark_protocol::WalletAsset::Bitcoin => return Task::none(),
+        };
+        self.update(
+            None,
+            cache,
+            Message::View(crate::app::view::Message::SparkReceive(
+                SparkReceiveMessage::SelectSenderRail(method),
+            )),
+        )
+    }
+
+    fn select_sender_rail(&mut self, cache: &Cache, method: SparkReceiveMethod) -> Task<Message> {
+        use crate::app::view::SparkReceiveMessage;
+
+        // A Bitcoin rail (or USDB on Spark): clear any cross-network
+        // flow, set the method, close the picker.
+        self.sender_picker_open = false;
+        // USDB exists where conversions run; the picker hides it
+        // elsewhere and this is the backstop.
+        if method == SparkReceiveMethod::UsdbSpark
+            && !crate::app::state::spark::swap::swap_available(cache.network)
+        {
+            return Task::none();
+        }
+        if method == SparkReceiveMethod::LightningAddress {
+            self.sync_lightning_address_qr(
+                cache
+                    .connect_authenticated
+                    .then_some(cache.lightning_address.as_deref())
+                    .flatten(),
+            );
+            // A signed-in Cube with no Lightning address gets a random
+            // one (the Connect Cube panel decides whether it may).
+            if let Some(assign) = auto_assign_lightning_address(cache) {
+                if self.sideshift_flow.is_some() || self.method != method {
+                    self.set_aside_sideshift_flow();
+                    self.method = method;
+                    self.phase = SparkReceivePhase::Idle;
+                    self.qr_data = None;
+                    self.displayed_invoice = None;
+                }
+                return assign;
+            }
+        }
+        if self.sideshift_flow.is_none() && self.method == method {
+            return Task::none();
+        }
+        self.set_aside_sideshift_flow();
+        self.method = method;
+        self.phase = SparkReceivePhase::Idle;
+        self.qr_data = None;
+        self.displayed_invoice = None;
+        // Spark and on-chain addresses are static and reusable, so
+        // there is nothing to configure: show the address straight
+        // away rather than behind a Generate button.
+        if auto_generates(method) {
+            return Task::done(Message::View(crate::app::view::Message::SparkReceive(
+                SparkReceiveMessage::GenerateRequested,
+            )));
+        }
+        Task::none()
+    }
+
+    fn select_sender_cross_network(&mut self, cache: &Cache, key: String) -> Task<Message> {
+        // A cross-network asset: hand off to the SideShift flow,
+        // pre-selected so it skips its own asset picker. Mainnet only —
+        // the picker hides these off mainnet; this is the backstop.
+        self.sender_picker_open = false;
+        if !crate::app::state::spark::cross_chain::supported_on(cache.network) {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let Some(option) = crate::services::sideshift::deposit_option_by_key(&key) else {
+            return Task::none();
+        };
+        // One conversion at a time: while one is live, picking any
+        // other network shows that one rather than replacing it, so its
+        // Shift ID and progress can't be lost to a stray click.
+        if self.parked_shift.is_some() {
+            self.show_parked_shift();
+            return Task::none();
+        }
+        if self
+            .sideshift_flow
+            .as_ref()
+            .is_some_and(|flow| keeps_running(flow.phase()))
+        {
+            return Task::none();
+        }
+        self.sideshift_flow = Some(SparkSideshiftReceiveFlow::new_preselected(backend, option));
+        Task::none()
+    }
+
+    fn generate_payment_request(&mut self) -> Task<Message> {
+        use crate::app::view::SparkReceiveMessage;
+
+        if self.method == SparkReceiveMethod::LightningAddress {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            self.phase = SparkReceivePhase::Error("Spark backend is not available.".to_string());
+            return Task::none();
+        };
+        self.phase = SparkReceivePhase::Generating;
+        match self.method {
+            SparkReceiveMethod::Bolt11 => self.generate_bolt11_payment_request(backend),
+            SparkReceiveMethod::OnchainBitcoin => Task::perform(
+                async move { backend.receive_onchain(None).await },
+                |result| match result {
+                    Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
+                        SparkReceiveMessage::GenerateSucceeded(ok),
+                    )),
+                    Err(e) => Message::View(crate::app::view::Message::SparkReceive(
+                        SparkReceiveMessage::GenerateFailed(e.to_string()),
+                    )),
+                },
+            ),
+            // USDB is sent to the same Spark address as bitcoin.
+            SparkReceiveMethod::Spark | SparkReceiveMethod::UsdbSpark => Task::perform(
+                async move { backend.receive_spark().await },
+                |result| match result {
+                    Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
+                        SparkReceiveMessage::GenerateSucceeded(ok),
+                    )),
+                    Err(e) => Message::View(crate::app::view::Message::SparkReceive(
+                        SparkReceiveMessage::GenerateFailed(e.to_string()),
+                    )),
+                },
+            ),
+            SparkReceiveMethod::LightningAddress => Task::none(),
+        }
+    }
+
+    fn generate_bolt11_payment_request(&mut self, backend: Arc<SparkBackend>) -> Task<Message> {
+        use crate::app::view::SparkReceiveMessage;
+
+        let amount_sat = if self.amount_input.trim().is_empty() {
+            None
+        } else {
+            match self.amount_input.trim().parse::<u64>() {
+                Ok(n) => Some(n),
+                Err(_) => {
+                    self.phase = SparkReceivePhase::Error(
+                        "Amount must be a whole number of sats.".to_string(),
+                    );
+                    return Task::none();
+                }
+            }
+        };
+        let description = self.description_input.clone();
+        Task::perform(
+            async move { backend.receive_bolt11(amount_sat, description, None).await },
+            |result| match result {
+                Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
+                    SparkReceiveMessage::GenerateSucceeded(ok),
+                )),
+                Err(e) => Message::View(crate::app::view::Message::SparkReceive(
+                    SparkReceiveMessage::GenerateFailed(e.to_string()),
+                )),
+            },
+        )
+    }
+
+    fn show_generated_payment_request(&mut self, ok: ReceivePaymentOk) -> Task<Message> {
+        // Encode the QR eagerly so the view renderer doesn't
+        // re-encode on every frame.
+        self.qr_data = qr_code::Data::new(&ok.payment_request).ok();
+        // Only capture the payment request for BOLT11 — it's
+        // the correlation key used by PaymentReceived to match
+        // the event's bolt11 field against the displayed
+        // invoice. For on-chain receives the payment_request
+        // is a Bitcoin address (no bolt11 on the event), so
+        // displayed_invoice stays None and the (None, _) =>
+        // true arm in the correlation check auto-advances on
+        // any incoming payment while the address is on screen.
+        self.displayed_invoice = if self.method == SparkReceiveMethod::Bolt11 {
+            Some(ok.payment_request.clone())
+        } else {
+            None
+        };
+        self.phase = SparkReceivePhase::Generated(ok);
+        Task::none()
+    }
+
+    fn on_payment_received(
+        &mut self,
+        payment_id: String,
+        amount_sat: i64,
+        bolt11: Option<String>,
+        token: Option<coincube_spark_protocol::PaymentToken>,
+    ) -> Task<Message> {
+        // Accept events while either showing an invoice
+        // (`Generated`) — first arrival — or already on the
+        // celebration screen (`Received`) — back-to-back
+        // deposits accumulate into the running total instead
+        // of being silently dropped. Idle / error / generating
+        // phases stay no-op.
+        let already_celebrating = matches!(self.phase, SparkReceivePhase::Received { .. });
+        if !already_celebrating && !matches!(self.phase, SparkReceivePhase::Generated(_)) {
+            return Task::none();
+        }
+
+        // Only incoming payments (positive amount) should
+        // trigger the celebration. Outgoing events with
+        // negative amounts are skipped.
+        let is_incoming = amount_sat > 0;
+        if !is_incoming {
+            return Task::none();
+        }
+        // USDB on Spark waits for USDB itself (by identifier, not
+        // ticker: any token can call itself USDB); every other method
+        // for bitcoin. A token's amount is in its own base units, so
+        // it can't be counted as sats (or the reverse), and another
+        // token arriving at the same address is not this payment.
+        let wanted = if self.method == SparkReceiveMethod::UsdbSpark {
+            token.as_ref().is_some_and(|token| token.usdb)
+        } else {
+            token.is_none()
+        };
+        if !wanted {
+            return Task::none();
+        }
+
+        let matches_invoice = self.matches_received_invoice(already_celebrating, bolt11.as_deref());
+        if !matches_invoice {
+            return Task::none();
+        }
+
+        self.qr_data = None;
+        self.displayed_invoice = None;
+        let (running_total, count) = match self.phase {
+            SparkReceivePhase::Received {
+                amount_sat: prev,
+                count,
+            } => (prev.saturating_add(amount_sat), count.saturating_add(1)),
+            _ => (amount_sat, 1),
+        };
+        // One payment's receipt carries its ID; a running total of
+        // several has no single ID to show.
+        self.received_payment_id = (count == 1 && !payment_id.is_empty()).then_some(payment_id);
+        // The receipt shows how many payments the total covers.
+        self.received_amount_display = match &token {
+            Some(token) => format!(
+                "{} {}",
+                crate::app::breez_spark::assets::format_token_display_u128(
+                    u128::from(running_total.unsigned_abs()),
+                    token.decimals,
+                ),
+                token.ticker
+            ),
+            None => format!(
+                "{} sats",
+                coincube_ui::component::amount::format_u64_as_string(
+                    running_total.unsigned_abs(),
+                    ","
+                )
+            ),
+        };
+        // Pick celebration image based on receive method.
+        // Only re-roll the quote on the first arrival so the
+        // imagery doesn't flicker when a follow-up deposit
+        // bumps the total.
+        if !already_celebrating {
+            let context = if self.method == SparkReceiveMethod::Bolt11 {
+                "lightning-receive"
+            } else {
+                "spark-receive"
+            };
+            self.received_celebration_context = context.to_string();
+            self.received_quote = coincube_ui::component::quote_display::random_quote(context);
+            self.received_image_handle =
+                coincube_ui::component::quote_display::image_handle_for_context(context);
+        }
+        self.phase = SparkReceivePhase::Received {
+            amount_sat: running_total,
+            count,
+        };
+        // Surface the just-received payment in the Last
+        // Transactions list the moment it arrives.
+        fetch_payments_task(self.backend.clone())
+    }
+
+    fn matches_received_invoice(&self, already_celebrating: bool, bolt11: Option<&str>) -> bool {
+        // Correlate the event with the currently displayed
+        // receive method so we only celebrate the payment the
+        // user is actually waiting for:
+        //
+        // - Bolt11 invoice displayed + matching bolt11 event:
+        //   the invoice was paid → advance.
+        // - Bolt11 invoice displayed + event without bolt11:
+        //   unrelated non-Lightning payment → skip.
+        // - No invoice displayed (on-chain flow) + event
+        //   without bolt11: on-chain deposit / Spark-native
+        //   transfer → advance.
+        // - No invoice displayed (on-chain flow) + event with
+        //   bolt11: unrelated Lightning payment → skip.
+        //
+        // BOLT11 comparison is case-insensitive — canonical
+        // form is lowercase but some SDKs hand back mixed case.
+        //
+        // For follow-ups during the celebration we only
+        // aggregate when the panel was generating an on-chain /
+        // Spark address AND the event has no bolt11 — a BOLT11
+        // invoice is single-use and unrelated Lightning
+        // activity that happens to settle while the on-chain
+        // celebration is on screen would otherwise inflate the
+        // running total. For BOLT11 celebrations we never
+        // aggregate: a second event after invoice settlement
+        // is by definition a different payment.
+        if already_celebrating {
+            self.method != SparkReceiveMethod::Bolt11 && bolt11.is_none()
+        } else {
+            match (&self.displayed_invoice, bolt11) {
+                (Some(displayed), Some(event_bolt11)) => {
+                    displayed.eq_ignore_ascii_case(event_bolt11)
+                }
+                (Some(_), None) => false,
+                (None, None) => true,
+                (None, Some(_)) => false,
+            }
+        }
+    }
+
+    fn show_pending_deposits(
+        &mut self,
+        cache: &Cache,
+        deposits: Vec<DepositInfo>,
+    ) -> Task<Message> {
+        self.pending_deposits = deposits;
+        self.claim_error = None;
+        // Drop confirmation entries for deposits that left
+        // the list (claimed or refunded), then kick off a
+        // fresh Esplora fetch for any immature deposit still
+        // in the list. Mature deposits skip the fetch — they
+        // already have a Claim button and the per-confirmation
+        // count is no longer useful.
+        let live_keys: std::collections::HashSet<(String, u32)> = self
+            .pending_deposits
+            .iter()
+            .map(|d| (d.txid.clone(), d.vout))
+            .collect();
+        // Keep every live deposit's deferral note across refreshes.
+        self.claim_notices.retain(|k, _| live_keys.contains(k));
+        self.pending_deposit_confirmations
+            .retain(|k, _| live_keys.contains(k));
+        self.remember_swap_confirmations();
+        refresh_confirmations_task(cache.network, &self.pending_deposits)
+    }
+
+    fn update_settle_confirmations(
+        &mut self,
+        txid: String,
+        confirmations: Option<u32>,
+    ) -> Task<Message> {
+        let Some(confirmations) = confirmations else {
+            return Task::none();
+        };
+        // Only while the swap still polls this txid: a late answer for
+        // a swap that has moved on (arrived, reset, another shift), or
+        // one landing after the wallet listed the deposit (whose own
+        // count then rules), is not this swap's count.
+        let ours = self
+            .swap_settle_txid_to_poll()
+            .is_some_and(|hash| hash.eq_ignore_ascii_case(&txid));
+        if !ours {
+            return Task::none();
+        }
+        let Some(flow) = self.sideshift_flow.as_mut() else {
+            return Task::none();
+        };
+        let previous = flow.last_settle_confirmations().unwrap_or(0);
+        flow.note_settle_confirmations(Some(confirmations));
+        // A new block may be what makes the SDK list the deposit (or
+        // mature it), so re-read the pending deposits when it lands.
+        if confirmations > previous {
+            fetch_deposits_task(self.backend.clone())
+        } else {
+            Task::none()
+        }
+    }
+
+    fn request_deposit_claim(&mut self, txid: String, vout: u32) -> Task<Message> {
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let deposit = (txid.clone(), vout);
+        self.claim_error = None;
+        // A note about another deposit stays on that row.
+        self.claim_notices.remove(&deposit);
+        self.claiming.insert(deposit);
+        let claimed_txid = txid.clone();
+        Task::perform(
+            async move { backend.claim_deposit(txid, vout).await },
+            move |result| {
+                let msg = match result {
+                    Ok(ok) => crate::app::view::SparkReceiveMessage::ClaimDepositSucceeded {
+                        txid: claimed_txid,
+                        vout,
+                        ok,
+                    },
+                    Err(e) => crate::app::view::SparkReceiveMessage::ClaimDepositFailed {
+                        txid: claimed_txid,
+                        vout,
+                        error: e.to_string(),
+                    },
+                };
+                Message::View(crate::app::view::Message::SparkReceive(msg))
+            },
+        )
+    }
+
+    fn on_deposit_claim_succeeded(
+        &mut self,
+        txid: String,
+        vout: u32,
+        ok: coincube_spark_protocol::ClaimDepositOk,
+    ) -> Task<Message> {
+        // Key everything by the deposit this result is for, not by
+        // whichever claim was started last.
+        let deposit = (txid, vout);
+        self.claiming.remove(&deposit);
+        self.claim_error = None;
+        if let Some(deferral) = &ok.deferred {
+            // Nothing changed: no splash, no refetch (a reload would
+            // not show anything new), and the row stays pending.
+            self.claim_notices
+                .insert(deposit, claim_deferral_notice(deferral));
+            return Task::none();
+        }
+        self.claim_notices.remove(&deposit);
+        let mut tasks = vec![
+            // Drop the claimed row from the pending-deposits list.
+            fetch_deposits_task(self.backend.clone()),
+            // Refresh "Last transactions" so the just-claimed deposit
+            // shows without navigating away and back — a claim fires only
+            // `DepositsChanged`, not a payment event, so nothing else
+            // repopulates the payments list here.
+            fetch_payments_task(self.backend.clone()),
+        ];
+        // The bitcoin just landed in the spendable balance — fire the
+        // global "received" splash, same as an auto-claimed swap. A
+        // pre-maturity claim (SDK 0.25.0+) settles asynchronously and
+        // carries no amount yet; its `PaymentSucceeded` fires the
+        // splash when the transfer lands instead.
+        if let Some(amount_sat) = ok.amount_sat {
+            tasks.push(Task::done(Message::ShowReceivedCelebration {
+                context: "spark-receive".to_string(),
+                amount_sat,
+                payment_id: ok.payment_id.clone(),
+            }));
+        }
+        Task::batch(tasks)
+    }
+
+    fn open_receive_transaction(&mut self, idx: usize) -> Task<Message> {
+        if let Some(payment) = self.recent_transactions.get(idx).cloned() {
+            Task::batch(vec![
+                redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+                Task::done(Message::View(crate::app::view::Message::SparkTransactions(
+                    crate::app::view::SparkTransactionsMessage::Preselect(payment),
+                ))),
+            ])
+        } else {
+            Task::none()
+        }
+    }
+
+    fn copy_payment_request(&mut self, cache: &Cache, text: String) -> Task<Message> {
+        if self.method == SparkReceiveMethod::LightningAddress
+            && (!cache.connect_authenticated
+                || cache.lightning_address.as_deref() != Some(text.as_str()))
+        {
+            return Task::none();
+        }
+        // Pair the clipboard write with the global toast overlay so
+        // the button gives the same feedback as every other Copy in
+        // the app. The label names the rail the request belongs to —
+        // an on-chain deposit address and a BOLT11 invoice look
+        // nothing alike, and the confirmation is a cheap way to say
+        // which one landed on the clipboard.
+        let label = match self.method {
+            SparkReceiveMethod::Bolt11 => "Copied Lightning invoice to clipboard",
+            SparkReceiveMethod::LightningAddress => "Copied Lightning address to clipboard",
+            SparkReceiveMethod::OnchainBitcoin => "Copied Bitcoin address to clipboard",
+            SparkReceiveMethod::Spark | SparkReceiveMethod::UsdbSpark => {
+                "Copied Spark address to clipboard"
+            }
+        };
+        Task::batch([
+            iced::clipboard::write(text),
+            Task::done(Message::View(crate::app::view::Message::ShowToast(
+                log::Level::Info,
+                label.to_string(),
+            ))),
+        ])
+    }
+
     /// Whether a static (Spark or on-chain) address should be fetched now:
     /// those methods show no button, only "Getting your address…".
     fn static_address_due(&self) -> bool {
@@ -504,43 +1109,7 @@ impl State for SparkReceive {
     ) -> Task<Message> {
         // Bridge-flow messages go to the flow, whenever it's up.
         if let Message::View(crate::app::view::Message::SparkSideshiftReceive(ref msg)) = message {
-            if let crate::app::view::SparkSideshiftReceiveMessage::Restore(record) = msg {
-                return self.restore_shift(record);
-            }
-            // Read before the flow is borrowed: whether the swap was already
-            // polling its settle txid when this message arrived.
-            let was_polling = self.swap_settle_txid_to_poll().is_some();
-            // A set-aside conversion still hears its polls and its arrival;
-            // only one flow exists to answer them when it is on screen.
-            let Some(flow) = self.sideshift_flow.as_mut().or(self.parked_shift.as_mut()) else {
-                return Task::none();
-            };
-            // `Back`/`Reset` from the flow's *entry* screen means "leave the
-            // bridge", so tear it down and fall back to the ordinary receive
-            // form. The arrived screen's "Done" button lands here too — once the
-            // bitcoin is in the wallet the swap is finished, so treat it the same
-            // way. The flow resets itself for any other phase.
-            let leaving = matches!(
-                msg,
-                crate::app::view::SparkSideshiftReceiveMessage::Back
-                    | crate::app::view::SparkSideshiftReceiveMessage::Reset
-            ) && matches!(
-                flow.phase(),
-                super::sideshift_receive::SparkShiftPhase::Setup
-                    | super::sideshift_receive::SparkShiftPhase::Arrived
-            );
-            if leaving {
-                // Only the on-screen flow has buttons to leave by.
-                self.sideshift_flow = None;
-                return Task::none();
-            }
-            let task = flow.update(msg);
-            // The status poll that reports the settle txid is the moment to
-            // read its confirmations, rather than one tick later.
-            if was_polling {
-                return task;
-            }
-            return Task::batch([task, self.settle_confirmations_task(cache.network)]);
+            return self.update_sideshift_flow(cache, msg);
         }
 
         let Message::View(crate::app::view::Message::SparkReceive(msg)) = message else {
@@ -590,161 +1159,27 @@ impl State for SparkReceive {
                 self.sender_picker_open = true;
                 Task::none()
             }
-            SparkReceiveMessage::OpenReceiverPicker => {
-                // US Dollar exists where conversions run (mainnet); elsewhere
-                // Bitcoin is the only thing Spark receives, so nothing to pick.
-                if crate::app::state::spark::swap::swap_available(cache.network) {
-                    self.sender_picker_open = false;
-                    self.receiver_picker_open = true;
-                }
-                Task::none()
-            }
+            SparkReceiveMessage::OpenReceiverPicker => self.open_receiver_picker(cache),
             SparkReceiveMessage::CloseReceiverPicker => {
                 self.receiver_picker_open = false;
                 Task::none()
             }
-            SparkReceiveMessage::SelectReceiveAs(usd) => {
-                self.receiver_picker_open = false;
-                if self.auto_convert != Some(!usd) {
-                    // Already that way, or not read yet.
-                    return Task::none();
-                }
-                // The tile keeps the saved value: the shared save owner may
-                // drop this request (a save already running) or fail it, and
-                // `stable_balance_settled` updates the tile when it lands.
-                Task::done(Message::View(crate::app::view::Message::SparkSettings(
-                    crate::app::view::SparkSettingsMessage::StableBalanceToggled(usd),
-                )))
-            }
+            SparkReceiveMessage::SelectReceiveAs(usd) => self.select_receive_as(usd),
             SparkReceiveMessage::AutoConvertLoaded(state) => {
                 if state.is_some() {
                     self.auto_convert = state;
                 }
                 Task::none()
             }
-            SparkReceiveMessage::NewOnchainAddress => {
-                if self.method != SparkReceiveMethod::OnchainBitcoin {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                self.phase = SparkReceivePhase::Generating;
-                Task::perform(
-                    async move { backend.receive_onchain(Some(true)).await },
-                    |result| match result {
-                        Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
-                            SparkReceiveMessage::GenerateSucceeded(ok),
-                        )),
-                        Err(e) => Message::View(crate::app::view::Message::SparkReceive(
-                            SparkReceiveMessage::GenerateFailed(e.to_string()),
-                        )),
-                    },
-                )
-            }
+            SparkReceiveMessage::NewOnchainAddress => self.request_new_onchain_address(),
             SparkReceiveMessage::CloseSenderPicker => {
                 self.sender_picker_open = false;
                 Task::none()
             }
-            SparkReceiveMessage::StartFrom(asset) => {
-                let method = match asset {
-                    coincube_spark_protocol::WalletAsset::Usdb => SparkReceiveMethod::UsdbSpark,
-                    coincube_spark_protocol::WalletAsset::Bitcoin
-                        if self.method == SparkReceiveMethod::UsdbSpark =>
-                    {
-                        SparkReceiveMethod::Bolt11
-                    }
-                    // A Bitcoin rail (or a stablecoin swap) already set stays.
-                    coincube_spark_protocol::WalletAsset::Bitcoin => return Task::none(),
-                };
-                self.update(
-                    None,
-                    cache,
-                    Message::View(crate::app::view::Message::SparkReceive(
-                        SparkReceiveMessage::SelectSenderRail(method),
-                    )),
-                )
-            }
-            SparkReceiveMessage::SelectSenderRail(method) => {
-                // A Bitcoin rail (or USDB on Spark): clear any cross-network
-                // flow, set the method, close the picker.
-                self.sender_picker_open = false;
-                // USDB exists where conversions run; the picker hides it
-                // elsewhere and this is the backstop.
-                if method == SparkReceiveMethod::UsdbSpark
-                    && !crate::app::state::spark::swap::swap_available(cache.network)
-                {
-                    return Task::none();
-                }
-                if method == SparkReceiveMethod::LightningAddress {
-                    self.sync_lightning_address_qr(
-                        cache
-                            .connect_authenticated
-                            .then_some(cache.lightning_address.as_deref())
-                            .flatten(),
-                    );
-                    // A signed-in Cube with no Lightning address gets a random
-                    // one (the Connect Cube panel decides whether it may).
-                    if let Some(assign) = auto_assign_lightning_address(cache) {
-                        if self.sideshift_flow.is_some() || self.method != method {
-                            self.set_aside_sideshift_flow();
-                            self.method = method;
-                            self.phase = SparkReceivePhase::Idle;
-                            self.qr_data = None;
-                            self.displayed_invoice = None;
-                        }
-                        return assign;
-                    }
-                }
-                if self.sideshift_flow.is_none() && self.method == method {
-                    return Task::none();
-                }
-                self.set_aside_sideshift_flow();
-                self.method = method;
-                self.phase = SparkReceivePhase::Idle;
-                self.qr_data = None;
-                self.displayed_invoice = None;
-                // Spark and on-chain addresses are static and reusable, so
-                // there is nothing to configure: show the address straight
-                // away rather than behind a Generate button.
-                if auto_generates(method) {
-                    return Task::done(Message::View(crate::app::view::Message::SparkReceive(
-                        SparkReceiveMessage::GenerateRequested,
-                    )));
-                }
-                Task::none()
-            }
+            SparkReceiveMessage::StartFrom(asset) => self.receive_from_asset(cache, asset),
+            SparkReceiveMessage::SelectSenderRail(method) => self.select_sender_rail(cache, method),
             SparkReceiveMessage::SelectSenderCrossNetwork(key) => {
-                // A cross-network asset: hand off to the SideShift flow,
-                // pre-selected so it skips its own asset picker. Mainnet only —
-                // the picker hides these off mainnet; this is the backstop.
-                self.sender_picker_open = false;
-                if !crate::app::state::spark::cross_chain::supported_on(cache.network) {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                let Some(option) = crate::services::sideshift::deposit_option_by_key(&key) else {
-                    return Task::none();
-                };
-                // One conversion at a time: while one is live, picking any
-                // other network shows that one rather than replacing it, so its
-                // Shift ID and progress can't be lost to a stray click.
-                if self.parked_shift.is_some() {
-                    self.show_parked_shift();
-                    return Task::none();
-                }
-                if self
-                    .sideshift_flow
-                    .as_ref()
-                    .is_some_and(|flow| keeps_running(flow.phase()))
-                {
-                    return Task::none();
-                }
-                self.sideshift_flow =
-                    Some(SparkSideshiftReceiveFlow::new_preselected(backend, option));
-                Task::none()
+                self.select_sender_cross_network(cache, key)
             }
             SparkReceiveMessage::ShowConversion => {
                 self.show_parked_shift();
@@ -764,91 +1199,8 @@ impl State for SparkReceive {
                 self.displayed_invoice = None;
                 Task::none()
             }
-            SparkReceiveMessage::GenerateRequested => {
-                if self.method == SparkReceiveMethod::LightningAddress {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    self.phase =
-                        SparkReceivePhase::Error("Spark backend is not available.".to_string());
-                    return Task::none();
-                };
-                self.phase = SparkReceivePhase::Generating;
-                match self.method {
-                    SparkReceiveMethod::Bolt11 => {
-                        let amount_sat = if self.amount_input.trim().is_empty() {
-                            None
-                        } else {
-                            match self.amount_input.trim().parse::<u64>() {
-                                Ok(n) => Some(n),
-                                Err(_) => {
-                                    self.phase = SparkReceivePhase::Error(
-                                        "Amount must be a whole number of sats.".to_string(),
-                                    );
-                                    return Task::none();
-                                }
-                            }
-                        };
-                        let description = self.description_input.clone();
-                        Task::perform(
-                            async move { backend.receive_bolt11(amount_sat, description, None).await },
-                            |result| match result {
-                                Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
-                                    SparkReceiveMessage::GenerateSucceeded(ok),
-                                )),
-                                Err(e) => Message::View(crate::app::view::Message::SparkReceive(
-                                    SparkReceiveMessage::GenerateFailed(e.to_string()),
-                                )),
-                            },
-                        )
-                    }
-                    SparkReceiveMethod::OnchainBitcoin => Task::perform(
-                        async move { backend.receive_onchain(None).await },
-                        |result| match result {
-                            Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
-                                SparkReceiveMessage::GenerateSucceeded(ok),
-                            )),
-                            Err(e) => Message::View(crate::app::view::Message::SparkReceive(
-                                SparkReceiveMessage::GenerateFailed(e.to_string()),
-                            )),
-                        },
-                    ),
-                    // USDB is sent to the same Spark address as bitcoin.
-                    SparkReceiveMethod::Spark | SparkReceiveMethod::UsdbSpark => {
-                        Task::perform(async move { backend.receive_spark().await }, |result| {
-                            match result {
-                                Ok(ok) => Message::View(crate::app::view::Message::SparkReceive(
-                                    SparkReceiveMessage::GenerateSucceeded(ok),
-                                )),
-                                Err(e) => Message::View(crate::app::view::Message::SparkReceive(
-                                    SparkReceiveMessage::GenerateFailed(e.to_string()),
-                                )),
-                            }
-                        })
-                    }
-                    SparkReceiveMethod::LightningAddress => Task::none(),
-                }
-            }
-            SparkReceiveMessage::GenerateSucceeded(ok) => {
-                // Encode the QR eagerly so the view renderer doesn't
-                // re-encode on every frame.
-                self.qr_data = qr_code::Data::new(&ok.payment_request).ok();
-                // Only capture the payment request for BOLT11 — it's
-                // the correlation key used by PaymentReceived to match
-                // the event's bolt11 field against the displayed
-                // invoice. For on-chain receives the payment_request
-                // is a Bitcoin address (no bolt11 on the event), so
-                // displayed_invoice stays None and the (None, _) =>
-                // true arm in the correlation check auto-advances on
-                // any incoming payment while the address is on screen.
-                self.displayed_invoice = if self.method == SparkReceiveMethod::Bolt11 {
-                    Some(ok.payment_request.clone())
-                } else {
-                    None
-                };
-                self.phase = SparkReceivePhase::Generated(ok);
-                Task::none()
-            }
+            SparkReceiveMessage::GenerateRequested => self.generate_payment_request(),
+            SparkReceiveMessage::GenerateSucceeded(ok) => self.show_generated_payment_request(ok),
             SparkReceiveMessage::GenerateFailed(err) => {
                 self.qr_data = None;
                 self.displayed_invoice = None;
@@ -860,156 +1212,9 @@ impl State for SparkReceive {
                 amount_sat,
                 bolt11,
                 token,
-            } => {
-                // Accept events while either showing an invoice
-                // (`Generated`) — first arrival — or already on the
-                // celebration screen (`Received`) — back-to-back
-                // deposits accumulate into the running total instead
-                // of being silently dropped. Idle / error / generating
-                // phases stay no-op.
-                let already_celebrating = matches!(self.phase, SparkReceivePhase::Received { .. });
-                if !already_celebrating && !matches!(self.phase, SparkReceivePhase::Generated(_)) {
-                    return Task::none();
-                }
-
-                // Only incoming payments (positive amount) should
-                // trigger the celebration. Outgoing events with
-                // negative amounts are skipped.
-                let is_incoming = amount_sat > 0;
-                if !is_incoming {
-                    return Task::none();
-                }
-                // USDB on Spark waits for USDB itself (by identifier, not
-                // ticker: any token can call itself USDB); every other method
-                // for bitcoin. A token's amount is in its own base units, so
-                // it can't be counted as sats (or the reverse), and another
-                // token arriving at the same address is not this payment.
-                let wanted = if self.method == SparkReceiveMethod::UsdbSpark {
-                    token.as_ref().is_some_and(|token| token.usdb)
-                } else {
-                    token.is_none()
-                };
-                if !wanted {
-                    return Task::none();
-                }
-
-                // Correlate the event with the currently displayed
-                // receive method so we only celebrate the payment the
-                // user is actually waiting for:
-                //
-                // - Bolt11 invoice displayed + matching bolt11 event:
-                //   the invoice was paid → advance.
-                // - Bolt11 invoice displayed + event without bolt11:
-                //   unrelated non-Lightning payment → skip.
-                // - No invoice displayed (on-chain flow) + event
-                //   without bolt11: on-chain deposit / Spark-native
-                //   transfer → advance.
-                // - No invoice displayed (on-chain flow) + event with
-                //   bolt11: unrelated Lightning payment → skip.
-                //
-                // BOLT11 comparison is case-insensitive — canonical
-                // form is lowercase but some SDKs hand back mixed case.
-                //
-                // For follow-ups during the celebration we only
-                // aggregate when the panel was generating an on-chain /
-                // Spark address AND the event has no bolt11 — a BOLT11
-                // invoice is single-use and unrelated Lightning
-                // activity that happens to settle while the on-chain
-                // celebration is on screen would otherwise inflate the
-                // running total. For BOLT11 celebrations we never
-                // aggregate: a second event after invoice settlement
-                // is by definition a different payment.
-                let matches_invoice = if already_celebrating {
-                    self.method != SparkReceiveMethod::Bolt11 && bolt11.is_none()
-                } else {
-                    match (&self.displayed_invoice, &bolt11) {
-                        (Some(displayed), Some(event_bolt11)) => {
-                            displayed.eq_ignore_ascii_case(event_bolt11)
-                        }
-                        (Some(_), None) => false,
-                        (None, None) => true,
-                        (None, Some(_)) => false,
-                    }
-                };
-                if !matches_invoice {
-                    return Task::none();
-                }
-
-                self.qr_data = None;
-                self.displayed_invoice = None;
-                let (running_total, count) = match self.phase {
-                    SparkReceivePhase::Received {
-                        amount_sat: prev,
-                        count,
-                    } => (prev.saturating_add(amount_sat), count.saturating_add(1)),
-                    _ => (amount_sat, 1),
-                };
-                // One payment's receipt carries its ID; a running total of
-                // several has no single ID to show.
-                self.received_payment_id =
-                    (count == 1 && !payment_id.is_empty()).then_some(payment_id);
-                // The receipt shows how many payments the total covers.
-                self.received_amount_display = match &token {
-                    Some(token) => format!(
-                        "{} {}",
-                        crate::app::breez_spark::assets::format_token_display_u128(
-                            u128::from(running_total.unsigned_abs()),
-                            token.decimals,
-                        ),
-                        token.ticker
-                    ),
-                    None => format!(
-                        "{} sats",
-                        coincube_ui::component::amount::format_u64_as_string(
-                            running_total.unsigned_abs(),
-                            ","
-                        )
-                    ),
-                };
-                // Pick celebration image based on receive method.
-                // Only re-roll the quote on the first arrival so the
-                // imagery doesn't flicker when a follow-up deposit
-                // bumps the total.
-                if !already_celebrating {
-                    let context = if self.method == SparkReceiveMethod::Bolt11 {
-                        "lightning-receive"
-                    } else {
-                        "spark-receive"
-                    };
-                    self.received_celebration_context = context.to_string();
-                    self.received_quote =
-                        coincube_ui::component::quote_display::random_quote(context);
-                    self.received_image_handle =
-                        coincube_ui::component::quote_display::image_handle_for_context(context);
-                }
-                self.phase = SparkReceivePhase::Received {
-                    amount_sat: running_total,
-                    count,
-                };
-                // Surface the just-received payment in the Last
-                // Transactions list the moment it arrives.
-                fetch_payments_task(self.backend.clone())
-            }
+            } => self.on_payment_received(payment_id, amount_sat, bolt11, token),
             SparkReceiveMessage::PendingDepositsLoaded(deposits) => {
-                self.pending_deposits = deposits;
-                self.claim_error = None;
-                // Drop confirmation entries for deposits that left
-                // the list (claimed or refunded), then kick off a
-                // fresh Esplora fetch for any immature deposit still
-                // in the list. Mature deposits skip the fetch — they
-                // already have a Claim button and the per-confirmation
-                // count is no longer useful.
-                let live_keys: std::collections::HashSet<(String, u32)> = self
-                    .pending_deposits
-                    .iter()
-                    .map(|d| (d.txid.clone(), d.vout))
-                    .collect();
-                // Keep every live deposit's deferral note across refreshes.
-                self.claim_notices.retain(|k, _| live_keys.contains(k));
-                self.pending_deposit_confirmations
-                    .retain(|k, _| live_keys.contains(k));
-                self.remember_swap_confirmations();
-                refresh_confirmations_task(cache.network, &self.pending_deposits)
+                self.show_pending_deposits(cache, deposits)
             }
             SparkReceiveMessage::PendingDepositsFailed(err) => {
                 tracing::warn!("Spark list_unclaimed_deposits failed: {}", err);
@@ -1054,100 +1259,12 @@ impl State for SparkReceive {
             SparkReceiveMessage::SettleConfirmationsUpdated {
                 txid,
                 confirmations,
-            } => {
-                let Some(confirmations) = confirmations else {
-                    return Task::none();
-                };
-                // Only while the swap still polls this txid: a late answer for
-                // a swap that has moved on (arrived, reset, another shift), or
-                // one landing after the wallet listed the deposit (whose own
-                // count then rules), is not this swap's count.
-                let ours = self
-                    .swap_settle_txid_to_poll()
-                    .is_some_and(|hash| hash.eq_ignore_ascii_case(&txid));
-                if !ours {
-                    return Task::none();
-                }
-                let Some(flow) = self.sideshift_flow.as_mut() else {
-                    return Task::none();
-                };
-                let previous = flow.last_settle_confirmations().unwrap_or(0);
-                flow.note_settle_confirmations(Some(confirmations));
-                // A new block may be what makes the SDK list the deposit (or
-                // mature it), so re-read the pending deposits when it lands.
-                if confirmations > previous {
-                    fetch_deposits_task(self.backend.clone())
-                } else {
-                    Task::none()
-                }
-            }
+            } => self.update_settle_confirmations(txid, confirmations),
             SparkReceiveMessage::ClaimDepositRequested { txid, vout } => {
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                let deposit = (txid.clone(), vout);
-                self.claim_error = None;
-                // A note about another deposit stays on that row.
-                self.claim_notices.remove(&deposit);
-                self.claiming.insert(deposit);
-                let claimed_txid = txid.clone();
-                Task::perform(
-                    async move { backend.claim_deposit(txid, vout).await },
-                    move |result| {
-                        let msg = match result {
-                            Ok(ok) => {
-                                crate::app::view::SparkReceiveMessage::ClaimDepositSucceeded {
-                                    txid: claimed_txid,
-                                    vout,
-                                    ok,
-                                }
-                            }
-                            Err(e) => crate::app::view::SparkReceiveMessage::ClaimDepositFailed {
-                                txid: claimed_txid,
-                                vout,
-                                error: e.to_string(),
-                            },
-                        };
-                        Message::View(crate::app::view::Message::SparkReceive(msg))
-                    },
-                )
+                self.request_deposit_claim(txid, vout)
             }
             SparkReceiveMessage::ClaimDepositSucceeded { txid, vout, ok } => {
-                // Key everything by the deposit this result is for, not by
-                // whichever claim was started last.
-                let deposit = (txid, vout);
-                self.claiming.remove(&deposit);
-                self.claim_error = None;
-                if let Some(deferral) = &ok.deferred {
-                    // Nothing changed: no splash, no refetch (a reload would
-                    // not show anything new), and the row stays pending.
-                    self.claim_notices
-                        .insert(deposit, claim_deferral_notice(deferral));
-                    return Task::none();
-                }
-                self.claim_notices.remove(&deposit);
-                let mut tasks = vec![
-                    // Drop the claimed row from the pending-deposits list.
-                    fetch_deposits_task(self.backend.clone()),
-                    // Refresh "Last transactions" so the just-claimed deposit
-                    // shows without navigating away and back — a claim fires only
-                    // `DepositsChanged`, not a payment event, so nothing else
-                    // repopulates the payments list here.
-                    fetch_payments_task(self.backend.clone()),
-                ];
-                // The bitcoin just landed in the spendable balance — fire the
-                // global "received" splash, same as an auto-claimed swap. A
-                // pre-maturity claim (SDK 0.25.0+) settles asynchronously and
-                // carries no amount yet; its `PaymentSucceeded` fires the
-                // splash when the transfer lands instead.
-                if let Some(amount_sat) = ok.amount_sat {
-                    tasks.push(Task::done(Message::ShowReceivedCelebration {
-                        context: "spark-receive".to_string(),
-                        amount_sat,
-                        payment_id: ok.payment_id.clone(),
-                    }));
-                }
-                Task::batch(tasks)
+                self.on_deposit_claim_succeeded(txid, vout, ok)
             }
             SparkReceiveMessage::ClaimDepositFailed { txid, vout, error } => {
                 let deposit = (txid, vout);
@@ -1195,48 +1312,9 @@ impl State for SparkReceive {
                 self.recent_transactions.clear();
                 Task::none()
             }
-            SparkReceiveMessage::SelectTransaction(idx) => {
-                if let Some(payment) = self.recent_transactions.get(idx).cloned() {
-                    Task::batch(vec![
-                        redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
-                        Task::done(Message::View(crate::app::view::Message::SparkTransactions(
-                            crate::app::view::SparkTransactionsMessage::Preselect(payment),
-                        ))),
-                    ])
-                } else {
-                    Task::none()
-                }
-            }
+            SparkReceiveMessage::SelectTransaction(idx) => self.open_receive_transaction(idx),
             SparkReceiveMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
-            SparkReceiveMessage::CopyPaymentRequest(text) => {
-                if self.method == SparkReceiveMethod::LightningAddress
-                    && (!cache.connect_authenticated
-                        || cache.lightning_address.as_deref() != Some(text.as_str()))
-                {
-                    return Task::none();
-                }
-                // Pair the clipboard write with the global toast overlay so
-                // the button gives the same feedback as every other Copy in
-                // the app. The label names the rail the request belongs to —
-                // an on-chain deposit address and a BOLT11 invoice look
-                // nothing alike, and the confirmation is a cheap way to say
-                // which one landed on the clipboard.
-                let label = match self.method {
-                    SparkReceiveMethod::Bolt11 => "Copied Lightning invoice to clipboard",
-                    SparkReceiveMethod::LightningAddress => "Copied Lightning address to clipboard",
-                    SparkReceiveMethod::OnchainBitcoin => "Copied Bitcoin address to clipboard",
-                    SparkReceiveMethod::Spark | SparkReceiveMethod::UsdbSpark => {
-                        "Copied Spark address to clipboard"
-                    }
-                };
-                Task::batch([
-                    iced::clipboard::write(text),
-                    Task::done(Message::View(crate::app::view::Message::ShowToast(
-                        log::Level::Info,
-                        label.to_string(),
-                    ))),
-                ])
-            }
+            SparkReceiveMessage::CopyPaymentRequest(text) => self.copy_payment_request(cache, text),
         }
     }
 }

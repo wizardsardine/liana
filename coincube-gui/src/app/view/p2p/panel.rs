@@ -98,6 +98,37 @@ fn is_countdown_action(action: &str) -> bool {
     )
 }
 
+/// Whether the Spark-pay session (if any) belongs to `order_id`. A cancel
+/// result for one order may reset Spark state only when this holds, so a
+/// payment in flight for another trade keeps its session.
+fn spark_session_owned_by(session_id: Option<&str>, order_id: &str) -> bool {
+    session_id.is_none_or(|id| id == order_id)
+}
+
+/// Put a failed chat message back into the input, unless the user has
+/// already typed a new draft. Returns `true` when the text was restored.
+fn restore_failed_draft(input: &mut String, failed_text: String) -> bool {
+    if input.trim().is_empty() {
+        *input = failed_text;
+        true
+    } else {
+        false
+    }
+}
+
+/// Error toast for a failed chat send. When the input already held a new
+/// draft, the failed message was not restored, so say so.
+fn chat_send_failed_message(kind: &str, error: &str, kept_draft: bool) -> String {
+    if kept_draft {
+        format!(
+            "{kind} send failed: {error}. Your new draft was kept; \
+             the unsent message was not restored."
+        )
+    } else {
+        format!("{kind} send failed: {error}")
+    }
+}
+
 /// A label–value row used in order confirmation and trade detail views.
 fn detail_row(label: impl ToString, value: impl ToString) -> Element<'static, view::Message> {
     row![
@@ -379,6 +410,8 @@ pub struct P2PPanel {
     selected_trade: Option<String>,
     trade_invoice_input: form::Value<String>,
     trade_action_loading: bool,
+    /// Trade whose action set `trade_action_loading`; its result alone clears it.
+    trade_action_order_id: Option<String>,
     trade_rating: u8, // 1-5 star rating for counterparty
     // Cached QR code for the hold invoice in the selected trade's detail view
     hold_invoice_qr: Option<qr_code::Data>,
@@ -424,6 +457,9 @@ pub struct P2PPanel {
     pub stream_error: Option<String>,
     /// Cached trade messages for the selected trade (avoids disk I/O per frame).
     cached_trade_messages: Vec<super::mostro::TradeMessage>,
+    /// Cached chat messages for every trade, keyed by order ID, so the Chat
+    /// list renders without reading the trade file per row per frame.
+    chat_history_cache: HashMap<String, Vec<super::mostro::TradeMessage>>,
     /// Cached chat identity info for the selected trade (avoids key-derivation per frame).
     cached_chat_identity: Option<super::mostro::ChatIdentityInfo>,
     /// Decrypted image cache, keyed by blossom URL.
@@ -529,6 +565,7 @@ impl P2PPanel {
             selected_trade: None,
             trade_invoice_input: Default::default(),
             trade_action_loading: false,
+            trade_action_order_id: None,
             trade_rating: 0,
             hold_invoice_qr: None,
             pending_payment_invoice: None,
@@ -554,6 +591,7 @@ impl P2PPanel {
             mostro_config_error,
             stream_error: None,
             cached_trade_messages: Vec::new(),
+            chat_history_cache: HashMap::new(),
             cached_chat_identity: None,
             image_cache: HashMap::new(),
             image_downloads_in_flight: HashSet::new(),
@@ -574,6 +612,7 @@ impl P2PPanel {
     /// `self.cached_trade_messages` / `self.cached_chat_identity` instead
     /// of hitting the disk on every frame.
     fn refresh_trade_cache(&mut self) {
+        self.refresh_chat_history_cache();
         let order_id = self.active_order_id();
         if let Some(order_id) = order_id {
             let cube_name = self.cube_name();
@@ -591,6 +630,7 @@ impl P2PPanel {
 
     /// Separate cache refresh for the Chat tab's selected trade.
     fn refresh_chat_trade_cache(&mut self) {
+        self.refresh_chat_history_cache();
         if let Some(ref order_id) = self.chat_selected_trade.clone() {
             let cube_name = self.cube_name();
             self.cached_trade_messages = super::mostro::get_trade_messages(&cube_name, order_id);
@@ -603,6 +643,11 @@ impl P2PPanel {
             self.cached_trade_messages = Vec::new();
             self.cached_chat_identity = None;
         }
+    }
+
+    /// Reload the Chat list's per-trade conversation cache (one disk read).
+    fn refresh_chat_history_cache(&mut self) {
+        self.chat_history_cache = super::mostro::get_chat_history(&self.cube_name());
     }
 
     /// The currently active order ID — prefers `chat_selected_trade` if set,
@@ -990,19 +1035,22 @@ impl P2PPanel {
             payment_method: payment_methods.join(","),
             cube_name: self.cube_name(),
             mnemonic: self.mnemonic.clone(),
-            buyer_invoice: if self.create_order_type == OrderType::Buy {
-                let addr = self.create_lightning_address.value.trim().to_string();
-                if addr.is_empty() {
-                    None
-                } else {
-                    Some(addr)
-                }
-            } else {
-                None
-            },
+            buyer_invoice: self.order_buyer_invoice(),
             expiry_days: 1,
             mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
             relay_urls: self.resolved_coordinator().relays,
+        }
+    }
+
+    fn order_buyer_invoice(&self) -> Option<String> {
+        if self.create_order_type != OrderType::Buy {
+            return None;
+        }
+        let addr = self.create_lightning_address.value.trim().to_string();
+        if addr.is_empty() {
+            None
+        } else {
+            Some(addr)
         }
     }
 
@@ -1106,77 +1154,14 @@ impl P2PPanel {
             v.amount = Some("Amount is too large");
         }
 
-        // --- Max amount (range — must be a positive integer greater than min) ---
         if is_range {
-            let max_amt: Option<i64> = self.create_max_amount.value.parse::<i64>().ok();
-            if max_amt.is_none() {
-                v.max_amount = Some("Enter a whole number");
-            } else if max_amt.unwrap_or(0) <= 0 {
-                v.max_amount = Some("Max must be greater than 0");
-            } else if max_amt.unwrap_or(0) > MAX_FIAT {
-                v.max_amount = Some("Max amount is too large");
-            } else if let (Some(min), Some(max)) = (min_amt, max_amt) {
-                if max <= min {
-                    v.max_amount = Some("Max must be greater than min");
-                }
-            }
+            v.max_amount = self.validate_order_max_amount(min_amt, MAX_FIAT);
         }
 
-        // --- Sats amount (fixed price — validated against node limits) ---
         if effective_pricing_fixed {
-            let node_min = self.node_min_order_sats;
-            let node_max = self.node_max_order_sats;
-
-            if self.create_sats_amount.value.is_empty() {
-                v.sats = Some("Sats amount is required for fixed price");
-            } else if let Ok(sats) = self.create_sats_amount.value.parse::<u64>() {
-                if sats == 0 {
-                    v.sats = Some("Sats must be greater than 0");
-                } else if node_min.is_none() || node_max.is_none() {
-                    // Node limits not loaded — block until we know the range
-                    v.sats = Some("Waiting for node limits...");
-                } else {
-                    if let Some(min) = node_min {
-                        if sats < min {
-                            v.sats_range = Some(format!(
-                                "Below minimum ({} sats)",
-                                super::components::format_with_separators(min),
-                            ));
-                        }
-                    }
-                    if v.sats_range.is_none() {
-                        if let Some(max) = node_max {
-                            if sats > max {
-                                v.sats_range = Some(format!(
-                                    "Above maximum ({} sats)",
-                                    super::components::format_with_separators(max),
-                                ));
-                            }
-                        }
-                    }
-                }
-            } else {
-                v.sats = Some("Enter a valid number");
-            }
-        }
-
-        // --- Market price: warn if node limits not loaded ---
-        if !effective_pricing_fixed
-            && (self.node_min_order_sats.is_none() || self.node_max_order_sats.is_none())
-            && !self.create_min_amount.value.is_empty()
-        {
-            v.node_limits_missing = true;
-        }
-
-        // --- Premium ---
-        if !effective_pricing_fixed && !self.create_premium.value.is_empty() {
-            if let Ok(p) = self.create_premium.value.parse::<i64>() {
-                if !(-100..=100).contains(&p) {
-                    v.premium = Some("Premium must be between -100 and 100");
-                }
-            } else {
-                v.premium = Some("Enter a valid number");
-            }
+            self.validate_fixed_order_sats(&mut v);
+        } else {
+            self.validate_market_order_pricing(&mut v);
         }
 
         // --- Payment methods ---
@@ -1194,6 +1179,78 @@ impl P2PPanel {
         }
 
         v
+    }
+
+    fn validate_order_max_amount(
+        &self,
+        min_amt: Option<i64>,
+        max_fiat: i64,
+    ) -> Option<&'static str> {
+        match self.create_max_amount.value.parse::<i64>() {
+            Err(_) => Some("Enter a whole number"),
+            Ok(max) if max <= 0 => Some("Max must be greater than 0"),
+            Ok(max) if max > max_fiat => Some("Max amount is too large"),
+            Ok(max) if min_amt.is_some_and(|min| max <= min) => {
+                Some("Max must be greater than min")
+            }
+            Ok(_) => None,
+        }
+    }
+
+    fn validate_fixed_order_sats(&self, v: &mut FormValidation) {
+        let node_min = self.node_min_order_sats;
+        let node_max = self.node_max_order_sats;
+
+        if self.create_sats_amount.value.is_empty() {
+            v.sats = Some("Sats amount is required for fixed price");
+            return;
+        }
+
+        let Ok(sats) = self.create_sats_amount.value.parse::<u64>() else {
+            v.sats = Some("Enter a valid number");
+            return;
+        };
+
+        if sats == 0 {
+            v.sats = Some("Sats must be greater than 0");
+            return;
+        }
+
+        let (Some(min), Some(max)) = (node_min, node_max) else {
+            // Node limits not loaded — block until we know the range.
+            v.sats = Some("Waiting for node limits...");
+            return;
+        };
+
+        if sats < min {
+            v.sats_range = Some(format!(
+                "Below minimum ({} sats)",
+                super::components::format_with_separators(min),
+            ));
+        } else if sats > max {
+            v.sats_range = Some(format!(
+                "Above maximum ({} sats)",
+                super::components::format_with_separators(max),
+            ));
+        }
+    }
+
+    fn validate_market_order_pricing(&self, v: &mut FormValidation) {
+        if (self.node_min_order_sats.is_none() || self.node_max_order_sats.is_none())
+            && !self.create_min_amount.value.is_empty()
+        {
+            v.node_limits_missing = true;
+        }
+
+        if !self.create_premium.value.is_empty() {
+            if let Ok(p) = self.create_premium.value.parse::<i64>() {
+                if !(-100..=100).contains(&p) {
+                    v.premium = Some("Premium must be between -100 and 100");
+                }
+            } else {
+                v.premium = Some("Enter a valid number");
+            }
+        }
     }
 
     /// Build a `TradeActionData` for the selected trade, dispatch the given async
@@ -1214,7 +1271,8 @@ impl P2PPanel {
             return Task::none();
         }
         self.trade_action_loading = true;
-        if let Some(ref order_id) = self.selected_trade {
+        if let Some(order_id) = self.selected_trade.clone() {
+            self.trade_action_order_id = Some(order_id.clone());
             let data = super::mostro::TradeActionData {
                 order_id: order_id.clone(),
                 cube_name: self.cube_name(),
@@ -1223,8 +1281,10 @@ impl P2PPanel {
                 mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
                 relay_urls: self.resolved_coordinator().relays,
             };
-            return Task::perform(action(data), |result| {
-                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
+            return Task::perform(action(data), move |result| {
+                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(
+                    order_id, result,
+                )))
             });
         } else {
             tracing::warn!("perform_trade_action called with no selected trade");
@@ -1331,417 +1391,12 @@ impl P2PPanel {
         // Form validation (computed each render — only show after user has typed something)
         let v = self.validate_order_form();
 
-        // Order type toggle
-        let buy_btn = if self.create_order_type == OrderType::Buy {
-            button::primary(None, localized_copy("Buy"))
-        } else {
-            button::secondary(None, localized_copy("Buy"))
-        }
-        .on_press(p2p(P2PMessage::OrderTypeSelected(OrderType::Buy)))
-        .width(Length::Fill);
-
-        let sell_btn = if self.create_order_type == OrderType::Sell {
-            button::primary(None, localized_copy("Sell"))
-        } else {
-            button::secondary(None, localized_copy("Sell"))
-        }
-        .on_press(p2p(P2PMessage::OrderTypeSelected(OrderType::Sell)))
-        .width(Length::Fill);
-
-        // Order type card
-        let order_type_card = container(row![buy_btn, sell_btn].spacing(8).width(Length::Fill))
-            .padding(4)
-            .width(Length::Fill)
-            .style(theme::container::foreground_rounded);
-
-        // Currency card
-        let currency_combo = combo_box(
-            &self.currency_combo_state,
-            "Search currency...",
-            Some(&self.create_fiat_currency),
-            |selected: String| view::Message::P2P(P2PMessage::FiatCurrencyEdited(selected)),
-        )
-        .padding(10)
-        .width(Length::Fill);
-
-        let currency_label = match self.create_order_type {
-            OrderType::Buy => "Select the fiat currency you will pay with",
-            OrderType::Sell => "Select the fiat currency you want to receive",
-        };
-
-        let currency_card = card::simple(
-            column![
-                p2_regular(currency_label).style(theme::text::secondary),
-                row![
-                    icon::dollar_icon().style(theme::text::warning),
-                    currency_combo,
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
-
-        // Amount card with Single / Range toggle
-        let amount_label = match (&self.create_order_type, is_range) {
-            (OrderType::Buy, false) => localized_copy("Enter amount you want to send"),
-            (OrderType::Buy, true) => localized_copy("Enter amount range you want to send"),
-            (OrderType::Sell, false) => localized_copy("Enter amount you want to receive"),
-            (OrderType::Sell, true) => localized_copy("Enter amount range you want to receive"),
-        };
-
-        let single_btn = if !is_range {
-            button::primary(None, localized_copy("Single"))
-        } else {
-            button::secondary(None, localized_copy("Single"))
-        }
-        .on_press(p2p(P2PMessage::RangeOrderToggled(false)))
-        .width(Length::Fill);
-
-        let range_btn = if is_range {
-            button::primary(None, localized_copy("Range"))
-        } else {
-            button::secondary(None, localized_copy("Range"))
-        }
-        .on_press(p2p(P2PMessage::RangeOrderToggled(true)))
-        .width(Length::Fill);
-
-        // Inline per-field validation. Only surface errors after the user has
-        // typed in the field, so an empty form doesn't render warnings.
-        let min_field_col = {
-            let placeholder = if is_range { "Min" } else { "Amount" };
-            let mut col =
-                column![
-                    form::Form::new_amount_sats(placeholder, &self.create_min_amount, |v| {
-                        view::Message::P2P(P2PMessage::MinAmountEdited(v))
-                    })
-                    .padding(10),
-                ]
-                .spacing(4)
-                .width(Length::Fill);
-            if !self.create_min_amount.value.is_empty() || self.submit_attempted {
-                if let Some(warn) = v.amount {
-                    col = col.push(caption(warn).style(theme::text::warning));
-                }
-            }
-            if let Ok(amt) = self.create_min_amount.value.parse::<i64>() {
-                if let Some(sats) = self.fiat_to_sats_estimate(amt, cache) {
-                    col = col.push(self.sats_preview_caption(sats));
-                }
-            }
-            col
-        };
-
-        let amount_inputs: Element<'a, view::Message> = if is_range {
-            let max_field_col = {
-                let mut col =
-                    column![
-                        form::Form::new_amount_sats("Max", &self.create_max_amount, |v| {
-                            view::Message::P2P(P2PMessage::MaxAmountEdited(v))
-                        })
-                        .padding(10),
-                    ]
-                    .spacing(4)
-                    .width(Length::Fill);
-                if !self.create_max_amount.value.is_empty() || self.submit_attempted {
-                    if let Some(warn) = v.max_amount {
-                        col = col.push(caption(warn).style(theme::text::warning));
-                    }
-                }
-                if let Ok(amt) = self.create_max_amount.value.parse::<i64>() {
-                    if let Some(sats) = self.fiat_to_sats_estimate(amt, cache) {
-                        col = col.push(self.sats_preview_caption(sats));
-                    }
-                }
-                col
-            };
-            row![
-                icon::coins_icon().style(theme::text::warning),
-                min_field_col,
-                max_field_col,
-            ]
-            .spacing(8)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
-        } else {
-            row![
-                icon::coins_icon().style(theme::text::warning),
-                min_field_col,
-            ]
-            .spacing(8)
-            .align_y(iced::alignment::Vertical::Top)
-            .into()
-        };
-
-        let mut amount_col = column![
-            p2_regular(amount_label).style(theme::text::secondary),
-            row![single_btn, range_btn].spacing(8).width(Length::Fill),
-            amount_inputs,
-        ]
-        .spacing(12);
-        // Show node order limits as a hint, or a warning if not loaded
-        if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
-            amount_col = amount_col.push(
-                caption(localized_format!(
-                    "Trade size must be between {} and {} sats",
-                    "El importe de la operación debe estar entre {} y {} sats",
-                    super::components::format_with_separators(min),
-                    super::components::format_with_separators(max),
-                ))
-                .style(theme::text::secondary),
-            );
-        } else if v.node_limits_missing {
-            amount_col = amount_col.push(
-                caption(localized_copy(
-                    "Node limits not loaded — order may be rejected",
-                ))
-                .style(theme::text::warning),
-            );
-        }
-        let amount_card = card::simple(amount_col).width(Length::Fill);
-
-        // Payment method card
-        let pm_combo = combo_box(
-            &self.payment_method_combo_state,
-            "Select payment methods",
-            None::<&String>,
-            |selected: String| view::Message::P2P(P2PMessage::PaymentMethodSelected(selected)),
-        )
-        .padding(10)
-        .width(Length::Fill);
-
-        let pm_tags: Element<'a, view::Message> = if self.create_payment_methods.is_empty() {
-            column![].into()
-        } else {
-            row(self.create_payment_methods.iter().map(|method| {
-                let method_clone = method.clone();
-                container(
-                    row![
-                        p2_regular(method.as_str()),
-                        button::secondary_compact(None, "x").on_press(view::Message::P2P(
-                            P2PMessage::PaymentMethodRemoved(method_clone,)
-                        )),
-                    ]
-                    .spacing(4)
-                    .align_y(iced::alignment::Vertical::Center),
-                )
-                .padding([4, 8])
-                .style(theme::pill::simple)
-                .into()
-            }))
-            .spacing(6)
-            .wrap()
-            .into()
-        };
-
-        let mut payment_col = column![
-            p2_regular("Payment methods for").style(theme::text::secondary),
-            row![icon::card_icon().style(theme::text::warning), pm_combo,]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-            pm_tags,
-            form::Form::new_trimmed(
-                "Enter custom payment method",
-                &self.create_custom_payment_method,
-                |v| { view::Message::P2P(P2PMessage::CustomPaymentMethodEdited(v)) }
-            )
-            .padding(10),
-            if self.create_custom_payment_method.value.is_empty() {
-                button::secondary(None, "Add Custom")
-            } else {
-                button::secondary(None, "Add Custom")
-                    .on_press(view::Message::P2P(P2PMessage::AddCustomPaymentMethod))
-            },
-        ]
-        .spacing(12);
-        if self.submit_attempted {
-            if let Some(warn) = v.payment {
-                payment_col = payment_col.push(caption(warn).style(theme::text::warning));
-            }
-        }
-        let payment_card = card::simple(payment_col).width(Length::Fill);
-
-        // Combined price type + pricing input card
-        let market_btn = if *effective_pricing_mode == PricingMode::Market {
-            button::primary(None, localized_copy("Market Rate"))
-        } else {
-            button::secondary(None, localized_copy("Market Rate"))
-        }
-        .on_press(p2p(P2PMessage::PricingModeSelected(PricingMode::Market)))
-        .width(Length::Fill);
-
-        let fixed_btn = if *effective_pricing_mode == PricingMode::Fixed {
-            button::primary(None, localized_copy("Fixed Price"))
-        } else {
-            button::secondary(None, localized_copy("Fixed Price"))
-        }
-        .width(Length::Fill);
-        let fixed_btn = if is_range {
-            fixed_btn
-        } else {
-            fixed_btn.on_press(p2p(P2PMessage::PricingModeSelected(PricingMode::Fixed)))
-        };
-
-        let pricing_input: Element<'a, view::Message> = if *effective_pricing_mode
-            == PricingMode::Fixed
-        {
-            let mut sats_col = column![
-                p2_regular("Sats Amount").style(theme::text::secondary),
-                row![
-                    icon::bitcoin_icon().style(theme::text::warning),
-                    form::Form::new_amount_sats(
-                        "Enter sats amount",
-                        &self.create_sats_amount,
-                        |v| { view::Message::P2P(P2PMessage::SatsAmountEdited(v)) }
-                    )
-                    .padding(10),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-            ]
-            .spacing(8);
-            if let Some(warn) = v.sats {
-                if !self.create_sats_amount.value.is_empty() || self.submit_attempted {
-                    sats_col = sats_col.push(caption(warn).style(theme::text::warning));
-                }
-            } else if let Some(warn) = v.sats_range.clone() {
-                sats_col = sats_col.push(caption(warn).style(theme::text::warning));
-            }
-            if let Ok(sats) = self.create_sats_amount.value.parse::<u64>() {
-                if let Some(fiat) = self.sats_to_fiat_estimate(sats, cache) {
-                    sats_col = sats_col.push(
-                        caption(format!("≈ {:.2} {}", fiat, self.create_fiat_currency))
-                            .style(theme::text::secondary),
-                    );
-                }
-            }
-            if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
-                sats_col = sats_col.push(
-                    caption(localized_format!(
-                        "Allowed: {} - {} sats",
-                        "Permitido: {} - sats {}",
-                        super::components::format_with_separators(min),
-                        super::components::format_with_separators(max),
-                    ))
-                    .style(theme::text::secondary),
-                );
-            }
-            sats_col.into()
-        } else {
-            let premium_val: f32 = self.create_premium.value.parse::<f32>().unwrap_or(0.0);
-            let slider_min: f32 = (-10.0f32).min(premium_val).max(-100.0);
-            let slider_max: f32 = (10.0f32).max(premium_val).min(100.0);
-            let premium_int = premium_val as i64;
-            let premium_label = if premium_int > 0 {
-                format!("+{}%", premium_int)
-            } else {
-                format!("{}%", premium_int)
-            };
-
-            let mut premium_col = column![
-                p2_regular("Premium").style(theme::text::secondary),
-                row![
-                    icon::coins_icon().style(theme::text::warning),
-                    form::Form::new_trimmed("e.g. 5 or -3", &self.create_premium, |v| {
-                        view::Message::P2P(P2PMessage::PremiumEdited(v))
-                    })
-                    .padding(10),
-                    p1_bold(premium_label),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-                slider(slider_min..=slider_max, premium_val, |v: f32| {
-                    view::Message::P2P(P2PMessage::PremiumEdited((v as i64).to_string()))
-                })
-                .step(1.0_f32),
-            ]
-            .spacing(8);
-            if !self.create_premium.value.is_empty() {
-                if let Some(warn) = v.premium {
-                    premium_col = premium_col.push(caption(warn).style(theme::text::warning));
-                }
-            }
-            premium_col.into()
-        };
-
-        let pricing_card = card::simple(
-            column![
-                p2_regular("Price type").style(theme::text::secondary),
-                row![market_btn, fixed_btn].spacing(8).width(Length::Fill),
-                pricing_input,
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
-
-        // Lightning address card (Buy orders only). When the cube has a
-        // registered address and the user hasn't edited the field, show it as
-        // static text with an "Edit" affordance; otherwise show the editable
-        // form. If the user is editing but a registered address is available,
-        // offer a way to revert.
-        let lightning_address_card: Element<'a, view::Message> = if self.create_order_type
-            == OrderType::Buy
-        {
-            let registered = cache.lightning_address.as_deref();
-            let value_matches_registered =
-                registered.is_some_and(|r| r == self.create_lightning_address.value);
-            let show_collapsed = !self.editing_lightning_address
-                && !self.lightning_address_user_edited
-                && value_matches_registered;
-
-            let body: Element<'a, view::Message> = if show_collapsed {
-                let addr = self.create_lightning_address.value.as_str();
-                row![
-                    icon::lightning_icon().style(theme::text::warning),
-                    p2_regular(addr),
-                    Space::new().width(Length::Fill),
-                    button::secondary_compact(None, "Use different Lightning Address or invoice")
-                        .on_press(p2p(P2PMessage::EditLightningAddress)),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center)
-                .into()
-            } else {
-                let mut col = column![row![
-                    icon::lightning_icon().style(theme::text::warning),
-                    form::Form::new_trimmed(
-                        "Enter lightning address or invoice",
-                        &self.create_lightning_address,
-                        |v| { view::Message::P2P(P2PMessage::LightningAddressEdited(v)) }
-                    )
-                    .padding(10),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),]
-                .spacing(8);
-                if registered.is_some() {
-                    col = col.push(
-                        row![
-                            Space::new().width(Length::Fill),
-                            button::secondary_compact(None, "Use registered address")
-                                .on_press(p2p(P2PMessage::UseRegisteredLightningAddress)),
-                        ]
-                        .align_y(iced::alignment::Vertical::Center),
-                    );
-                }
-                col.into()
-            };
-
-            let mut card_col = column![
-                p2_regular("Lightning Address or Invoice").style(theme::text::secondary),
-                body,
-            ]
-            .spacing(12);
-            if self.submit_attempted {
-                if let Some(warn) = v.lightning_address {
-                    card_col = card_col.push(caption(warn).style(theme::text::warning));
-                }
-            }
-            card::simple(card_col).width(Length::Fill).into()
-        } else {
-            column![].into()
-        };
+        let order_type_card = self.order_type_card();
+        let currency_card = self.order_currency_card();
+        let amount_card = self.order_amount_card(cache, is_range, &v);
+        let payment_card = self.order_payment_card(&v);
+        let pricing_card = self.order_pricing_card(cache, is_range, effective_pricing_mode, &v);
+        let lightning_address_card = self.order_lightning_address_card(cache, &v);
 
         // Expiry days
         // Error message
@@ -1797,6 +1452,454 @@ impl P2PPanel {
         .width(Length::Fill)
         .into()
     }
+
+    fn order_type_card(&self) -> Element<'_, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // Order type toggle
+        let buy_btn = if self.create_order_type == OrderType::Buy {
+            button::primary(None, localized_copy("Buy"))
+        } else {
+            button::secondary(None, localized_copy("Buy"))
+        }
+        .on_press(p2p(P2PMessage::OrderTypeSelected(OrderType::Buy)))
+        .width(Length::Fill);
+
+        let sell_btn = if self.create_order_type == OrderType::Sell {
+            button::primary(None, localized_copy("Sell"))
+        } else {
+            button::secondary(None, localized_copy("Sell"))
+        }
+        .on_press(p2p(P2PMessage::OrderTypeSelected(OrderType::Sell)))
+        .width(Length::Fill);
+
+        container(row![buy_btn, sell_btn].spacing(8).width(Length::Fill))
+            .padding(4)
+            .width(Length::Fill)
+            .style(theme::container::foreground_rounded)
+            .into()
+    }
+
+    fn order_currency_card(&self) -> Element<'_, view::Message> {
+        // Currency card
+        let currency_combo = combo_box(
+            &self.currency_combo_state,
+            "Search currency...",
+            Some(&self.create_fiat_currency),
+            |selected: String| view::Message::P2P(P2PMessage::FiatCurrencyEdited(selected)),
+        )
+        .padding(10)
+        .width(Length::Fill);
+
+        let currency_label = match self.create_order_type {
+            OrderType::Buy => "Select the fiat currency you will pay with",
+            OrderType::Sell => "Select the fiat currency you want to receive",
+        };
+
+        card::simple(
+            column![
+                p2_regular(currency_label).style(theme::text::secondary),
+                row![
+                    icon::dollar_icon().style(theme::text::warning),
+                    currency_combo,
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            ]
+            .spacing(12),
+        )
+        .width(Length::Fill)
+        .into()
+    }
+
+    fn order_amount_card(
+        &self,
+        cache: &Cache,
+        is_range: bool,
+        v: &FormValidation,
+    ) -> Element<'_, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // Amount card with Single / Range toggle
+        let amount_label = match (&self.create_order_type, is_range) {
+            (OrderType::Buy, false) => localized_copy("Enter amount you want to send"),
+            (OrderType::Buy, true) => localized_copy("Enter amount range you want to send"),
+            (OrderType::Sell, false) => localized_copy("Enter amount you want to receive"),
+            (OrderType::Sell, true) => localized_copy("Enter amount range you want to receive"),
+        };
+
+        let single_btn = if !is_range {
+            button::primary(None, localized_copy("Single"))
+        } else {
+            button::secondary(None, localized_copy("Single"))
+        }
+        .on_press(p2p(P2PMessage::RangeOrderToggled(false)))
+        .width(Length::Fill);
+
+        let range_btn = if is_range {
+            button::primary(None, localized_copy("Range"))
+        } else {
+            button::secondary(None, localized_copy("Range"))
+        }
+        .on_press(p2p(P2PMessage::RangeOrderToggled(true)))
+        .width(Length::Fill);
+
+        // Inline per-field validation. Only surface errors after the user has
+        // typed in the field, so an empty form doesn't render warnings.
+        let min_field_col = self.order_amount_field(
+            cache,
+            if is_range { "Min" } else { "Amount" },
+            &self.create_min_amount,
+            v.amount,
+            P2PMessage::MinAmountEdited,
+        );
+
+        let amount_inputs: Element<'_, view::Message> = if is_range {
+            let max_field_col = self.order_amount_field(
+                cache,
+                "Max",
+                &self.create_max_amount,
+                v.max_amount,
+                P2PMessage::MaxAmountEdited,
+            );
+            row![
+                icon::coins_icon().style(theme::text::warning),
+                min_field_col,
+                max_field_col,
+            ]
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Top)
+            .into()
+        } else {
+            row![
+                icon::coins_icon().style(theme::text::warning),
+                min_field_col,
+            ]
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Top)
+            .into()
+        };
+
+        let mut amount_col = column![
+            p2_regular(amount_label).style(theme::text::secondary),
+            row![single_btn, range_btn].spacing(8).width(Length::Fill),
+            amount_inputs,
+        ]
+        .spacing(12);
+        // Show node order limits as a hint, or a warning if not loaded
+        if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
+            amount_col = amount_col.push(
+                caption(localized_format!(
+                    "Trade size must be between {} and {} sats",
+                    "El importe de la operación debe estar entre {} y {} sats",
+                    super::components::format_with_separators(min),
+                    super::components::format_with_separators(max),
+                ))
+                .style(theme::text::secondary),
+            );
+        } else if v.node_limits_missing {
+            amount_col = amount_col.push(
+                caption(localized_copy(
+                    "Node limits not loaded — order may be rejected",
+                ))
+                .style(theme::text::warning),
+            );
+        }
+        card::simple(amount_col).width(Length::Fill).into()
+    }
+
+    fn order_amount_field<'a>(
+        &'a self,
+        cache: &Cache,
+        placeholder: &str,
+        amount: &'a form::Value<String>,
+        warning: Option<&'static str>,
+        on_edit: fn(String) -> P2PMessage,
+    ) -> Column<'a, view::Message> {
+        let mut col = column![form::Form::new_amount_sats(placeholder, amount, move |v| {
+            view::Message::P2P(on_edit(v))
+        })
+        .padding(10),]
+        .spacing(4)
+        .width(Length::Fill);
+        if !amount.value.is_empty() || self.submit_attempted {
+            if let Some(warn) = warning {
+                col = col.push(caption(warn).style(theme::text::warning));
+            }
+        }
+        if let Ok(amt) = amount.value.parse::<i64>() {
+            if let Some(sats) = self.fiat_to_sats_estimate(amt, cache) {
+                col = col.push(self.sats_preview_caption(sats));
+            }
+        }
+        col
+    }
+
+    fn order_payment_card(&self, v: &FormValidation) -> Element<'_, view::Message> {
+        // Payment method card
+        let pm_combo = combo_box(
+            &self.payment_method_combo_state,
+            "Select payment methods",
+            None::<&String>,
+            |selected: String| view::Message::P2P(P2PMessage::PaymentMethodSelected(selected)),
+        )
+        .padding(10)
+        .width(Length::Fill);
+
+        let pm_tags: Element<'_, view::Message> = if self.create_payment_methods.is_empty() {
+            column![].into()
+        } else {
+            row(self.create_payment_methods.iter().map(|method| {
+                let method_clone = method.clone();
+                container(
+                    row![
+                        p2_regular(method.as_str()),
+                        button::secondary_compact(None, "x").on_press(view::Message::P2P(
+                            P2PMessage::PaymentMethodRemoved(method_clone,)
+                        )),
+                    ]
+                    .spacing(4)
+                    .align_y(iced::alignment::Vertical::Center),
+                )
+                .padding([4, 8])
+                .style(theme::pill::simple)
+                .into()
+            }))
+            .spacing(6)
+            .wrap()
+            .into()
+        };
+
+        let mut payment_col = column![
+            p2_regular("Payment methods for").style(theme::text::secondary),
+            row![icon::card_icon().style(theme::text::warning), pm_combo,]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            pm_tags,
+            form::Form::new_trimmed(
+                "Enter custom payment method",
+                &self.create_custom_payment_method,
+                |v| { view::Message::P2P(P2PMessage::CustomPaymentMethodEdited(v)) }
+            )
+            .padding(10),
+            if self.create_custom_payment_method.value.is_empty() {
+                button::secondary(None, "Add Custom")
+            } else {
+                button::secondary(None, "Add Custom")
+                    .on_press(view::Message::P2P(P2PMessage::AddCustomPaymentMethod))
+            },
+        ]
+        .spacing(12);
+        if self.submit_attempted {
+            if let Some(warn) = v.payment {
+                payment_col = payment_col.push(caption(warn).style(theme::text::warning));
+            }
+        }
+        card::simple(payment_col).width(Length::Fill).into()
+    }
+
+    fn order_pricing_card(
+        &self,
+        cache: &Cache,
+        is_range: bool,
+        effective_pricing_mode: &PricingMode,
+        v: &FormValidation,
+    ) -> Element<'_, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // Combined price type + pricing input card
+        let market_btn = if *effective_pricing_mode == PricingMode::Market {
+            button::primary(None, localized_copy("Market Rate"))
+        } else {
+            button::secondary(None, localized_copy("Market Rate"))
+        }
+        .on_press(p2p(P2PMessage::PricingModeSelected(PricingMode::Market)))
+        .width(Length::Fill);
+
+        let fixed_btn = if *effective_pricing_mode == PricingMode::Fixed {
+            button::primary(None, localized_copy("Fixed Price"))
+        } else {
+            button::secondary(None, localized_copy("Fixed Price"))
+        }
+        .width(Length::Fill);
+        let fixed_btn = if is_range {
+            fixed_btn
+        } else {
+            fixed_btn.on_press(p2p(P2PMessage::PricingModeSelected(PricingMode::Fixed)))
+        };
+
+        let pricing_input = if *effective_pricing_mode == PricingMode::Fixed {
+            self.order_fixed_price_input(cache, v)
+        } else {
+            self.order_market_price_input(v)
+        };
+
+        card::simple(
+            column![
+                p2_regular("Price type").style(theme::text::secondary),
+                row![market_btn, fixed_btn].spacing(8).width(Length::Fill),
+                pricing_input,
+            ]
+            .spacing(12),
+        )
+        .width(Length::Fill)
+        .into()
+    }
+
+    fn order_fixed_price_input(
+        &self,
+        cache: &Cache,
+        v: &FormValidation,
+    ) -> Element<'_, view::Message> {
+        let mut sats_col = column![
+            p2_regular("Sats Amount").style(theme::text::secondary),
+            row![
+                icon::bitcoin_icon().style(theme::text::warning),
+                form::Form::new_amount_sats("Enter sats amount", &self.create_sats_amount, |v| {
+                    view::Message::P2P(P2PMessage::SatsAmountEdited(v))
+                })
+                .padding(10),
+            ]
+            .spacing(12)
+            .align_y(iced::alignment::Vertical::Center),
+        ]
+        .spacing(8);
+        if let Some(warn) = v.sats {
+            if !self.create_sats_amount.value.is_empty() || self.submit_attempted {
+                sats_col = sats_col.push(caption(warn).style(theme::text::warning));
+            }
+        } else if let Some(warn) = v.sats_range.clone() {
+            sats_col = sats_col.push(caption(warn).style(theme::text::warning));
+        }
+        if let Ok(sats) = self.create_sats_amount.value.parse::<u64>() {
+            if let Some(fiat) = self.sats_to_fiat_estimate(sats, cache) {
+                sats_col = sats_col.push(
+                    caption(format!("≈ {:.2} {}", fiat, self.create_fiat_currency))
+                        .style(theme::text::secondary),
+                );
+            }
+        }
+        if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
+            sats_col = sats_col.push(
+                caption(localized_format!(
+                    "Allowed: {} - {} sats",
+                    "Permitido: {} - sats {}",
+                    super::components::format_with_separators(min),
+                    super::components::format_with_separators(max),
+                ))
+                .style(theme::text::secondary),
+            );
+        }
+        sats_col.into()
+    }
+
+    fn order_market_price_input(&self, v: &FormValidation) -> Element<'_, view::Message> {
+        let premium_val: f32 = self.create_premium.value.parse::<f32>().unwrap_or(0.0);
+        let slider_min: f32 = (-10.0f32).min(premium_val).max(-100.0);
+        let slider_max: f32 = (10.0f32).max(premium_val).min(100.0);
+        let premium_int = premium_val as i64;
+        let premium_label = if premium_int > 0 {
+            format!("+{}%", premium_int)
+        } else {
+            format!("{}%", premium_int)
+        };
+
+        let mut premium_col = column![
+            p2_regular("Premium").style(theme::text::secondary),
+            row![
+                icon::coins_icon().style(theme::text::warning),
+                form::Form::new_trimmed("e.g. 5 or -3", &self.create_premium, |v| {
+                    view::Message::P2P(P2PMessage::PremiumEdited(v))
+                })
+                .padding(10),
+                p1_bold(premium_label),
+            ]
+            .spacing(12)
+            .align_y(iced::alignment::Vertical::Center),
+            slider(slider_min..=slider_max, premium_val, |v: f32| {
+                view::Message::P2P(P2PMessage::PremiumEdited((v as i64).to_string()))
+            })
+            .step(1.0_f32),
+        ]
+        .spacing(8);
+        if !self.create_premium.value.is_empty() {
+            if let Some(warn) = v.premium {
+                premium_col = premium_col.push(caption(warn).style(theme::text::warning));
+            }
+        }
+        premium_col.into()
+    }
+
+    fn order_lightning_address_card(
+        &self,
+        cache: &Cache,
+        v: &FormValidation,
+    ) -> Element<'_, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // Lightning address card (Buy orders only). When the cube has a
+        // registered address and the user hasn't edited the field, show it as
+        // static text with an "Edit" affordance; otherwise show the editable
+        // form. If the user is editing but a registered address is available,
+        // offer a way to revert.
+        if self.create_order_type != OrderType::Buy {
+            return column![].into();
+        }
+
+        let registered = cache.lightning_address.as_deref();
+        let value_matches_registered =
+            registered.is_some_and(|r| r == self.create_lightning_address.value);
+        let show_collapsed = !self.editing_lightning_address
+            && !self.lightning_address_user_edited
+            && value_matches_registered;
+
+        let body: Element<'_, view::Message> = if show_collapsed {
+            let addr = self.create_lightning_address.value.as_str();
+            row![
+                icon::lightning_icon().style(theme::text::warning),
+                p2_regular(addr),
+                Space::new().width(Length::Fill),
+                button::secondary_compact(None, "Use different Lightning Address or invoice")
+                    .on_press(p2p(P2PMessage::EditLightningAddress)),
+            ]
+            .spacing(12)
+            .align_y(iced::alignment::Vertical::Center)
+            .into()
+        } else {
+            let mut col = column![row![
+                icon::lightning_icon().style(theme::text::warning),
+                form::Form::new_trimmed(
+                    "Enter lightning address or invoice",
+                    &self.create_lightning_address,
+                    |v| { view::Message::P2P(P2PMessage::LightningAddressEdited(v)) }
+                )
+                .padding(10),
+            ]
+            .spacing(12)
+            .align_y(iced::alignment::Vertical::Center),]
+            .spacing(8);
+            if registered.is_some() {
+                col = col.push(
+                    row![
+                        Space::new().width(Length::Fill),
+                        button::secondary_compact(None, "Use registered address")
+                            .on_press(p2p(P2PMessage::UseRegisteredLightningAddress)),
+                    ]
+                    .align_y(iced::alignment::Vertical::Center),
+                );
+            }
+            col.into()
+        };
+
+        let mut card_col = column![
+            p2_regular("Lightning Address or Invoice").style(theme::text::secondary),
+            body,
+        ]
+        .spacing(12);
+        if self.submit_attempted {
+            if let Some(warn) = v.lightning_address {
+                card_col = card_col.push(caption(warn).style(theme::text::warning));
+            }
+        }
+        card::simple(card_col).width(Length::Fill).into()
+    }
+
     fn trade_detail_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
 
@@ -1867,27 +1970,7 @@ impl P2PPanel {
             )
             .width(Length::Fill);
 
-            let id_card = card::simple(
-                row![
-                    icon::clipboard_icon().style(theme::text::secondary),
-                    column![
-                        p2_regular("Order ID").style(theme::text::secondary),
-                        row![
-                            p2_regular(&trade.id).style(theme::text::secondary),
-                            Space::new().width(Length::Fill),
-                            button::secondary_compact(None, "Copy")
-                                .on_press(view::Message::Clipboard(trade.id.clone())),
-                        ]
-                        .spacing(8)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(4)
-                    .width(Length::Fill),
-                ]
-                .spacing(12)
-                .align_y(iced::alignment::Vertical::Center),
-            )
-            .width(Length::Fill);
+            let id_card = Self::trade_order_id_card(trade);
 
             let note = column![
                 p2_regular("This order will be published for 24 hours.")
@@ -1975,28 +2058,43 @@ impl P2PPanel {
         .width(Length::Fill);
 
         // Order ID card
-        let id_card = card::simple(
-            row![
-                icon::clipboard_icon().style(theme::text::secondary),
-                column![
-                    p2_regular("Order ID").style(theme::text::secondary),
-                    row![
-                        p2_regular(&trade.id).style(theme::text::secondary),
-                        Space::new().width(Length::Fill),
-                        button::secondary_compact(None, "Copy")
-                            .on_press(view::Message::Clipboard(trade.id.clone())),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::alignment::Vertical::Center),
-                ]
-                .spacing(4)
-                .width(Length::Fill),
-            ]
-            .spacing(12)
-            .align_y(iced::alignment::Vertical::Center),
-        )
-        .width(Length::Fill);
+        let id_card = Self::trade_order_id_card(trade);
 
+        let actions = self.trade_detail_actions(trade, is_buyer);
+
+        // ── Contact button ──
+        // Show contact/chat button for active trades only (not completed/canceled)
+        let chat_available = matches!(
+            trade.status,
+            TradeStatus::Active
+                | TradeStatus::FiatSent
+                | TradeStatus::SettledHoldInvoice
+                | TradeStatus::CooperativelyCanceled
+                | TradeStatus::Dispute
+                | TradeStatus::PaymentFailed
+        );
+
+        let mut content = column![info_card, id_card, actions]
+            .spacing(12)
+            .width(Length::Fill);
+
+        if chat_available {
+            content = content.push(
+                button::secondary(Some(icon::chat_icon()), localized_copy("Contact"))
+                    .on_press(p2p(P2PMessage::OpenChat))
+                    .width(Length::Fill),
+            );
+        }
+
+        content.into()
+    }
+
+    fn trade_detail_actions<'a>(
+        &'a self,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
         // Action buttons driven by last_dm_action (DM-driven), falling back to status (event-driven)
         let mut actions = column![].spacing(8);
         let loading = self.trade_action_loading;
@@ -2067,6 +2165,47 @@ impl P2PPanel {
             Some("DisputeInitiatedByYou" | "DisputeInitiatedByPeer" | "AdminTookDispute")
         ) || matches!(trade.status, TradeStatus::Dispute);
 
+        actions = Self::trade_countdown(actions, trade);
+
+        if !is_terminal {
+            actions = Self::trade_cancel_and_dispute_notices(
+                actions,
+                dm_action,
+                cancel_initiated_by_you,
+                cancel_initiated_by_peer,
+            );
+
+            // --- Primary trade action buttons (only if not in cooperative cancel or dispute) ---
+            // Button logic follows the Mostro protocol: Mostro sends different DM
+            // actions to buyer and seller, so we match on (dm_action, role) pairs.
+            if !in_cooperative_cancel && !dispute_initiated {
+                actions = self.trade_protocol_actions(actions, trade, is_buyer, loading, dm_action);
+            }
+
+            actions = Self::trade_action_footer(
+                actions,
+                trade,
+                loading,
+                dm_action,
+                cancel_initiated_by_you,
+                cancel_initiated_by_peer,
+                dispute_initiated,
+            );
+        } else {
+            // Terminal state — only Close
+            actions = actions.push(
+                button::secondary(None, localized_copy("Close"))
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+            );
+        }
+        actions
+    }
+
+    fn trade_countdown<'a>(
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+    ) -> Column<'a, view::Message> {
         // --- Countdown timer for time-limited states ---
         // Only show for PayInvoice/WaitingSellerToPay and AddInvoice/WaitingBuyerInvoice
         if let Some(start_ts) = trade.countdown_start_ts {
@@ -2105,710 +2244,676 @@ impl P2PPanel {
                 );
             }
         }
+        actions
+    }
 
-        if !is_terminal {
-            // --- Status message for cooperative cancel ---
-            if cancel_initiated_by_you {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Cancellation requested"),
-                            p2_regular(
-                                "You have initiated a cooperative cancel. \
-                                Waiting for your counterparty to accept. \
-                                If they don't respond, you can open a dispute.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
+    fn trade_cancel_and_dispute_notices<'a>(
+        mut actions: Column<'a, view::Message>,
+        dm_action: Option<&str>,
+        cancel_initiated_by_you: bool,
+        cancel_initiated_by_peer: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // --- Status message for cooperative cancel ---
+        if cancel_initiated_by_you {
+            actions = actions.push(Self::trade_notice_card(
+                "Cancellation requested",
+                "You have initiated a cooperative cancel. \
+                Waiting for your counterparty to accept. \
+                If they don't respond, you can open a dispute.",
+            ));
+        } else if cancel_initiated_by_peer {
+            actions = actions.push(Self::trade_notice_card(
+                "Cancel requested by counterparty",
+                "Your counterparty wants to cancel this order. \
+                If you agree, press Cancel. Otherwise, you can \
+                open a dispute.",
+            ));
+        }
+
+        // --- Status message for dispute ---
+        if matches!(dm_action, Some("DisputeInitiatedByYou")) {
+            actions = actions.push(Self::trade_notice_card(
+                "Dispute opened",
+                "You have initiated a dispute. A solver will be \
+                assigned soon to help resolve this.",
+            ));
+        } else if matches!(dm_action, Some("DisputeInitiatedByPeer")) {
+            actions = actions.push(Self::trade_notice_card(
+                "Dispute opened by counterparty",
+                "Your counterparty has opened a dispute. A solver will be \
+                assigned soon to help resolve this.",
+            ));
+        } else if matches!(dm_action, Some("AdminTookDispute")) {
+            actions = actions.push(Self::trade_notice_card(
+                "Admin reviewing dispute",
+                "A dispute resolver has been assigned to your case. \
+                Use the chat below to communicate with the admin.",
+            ));
+            // Chat with Admin button
+            actions = actions.push(
+                button::primary(Some(icon::chat_icon()), localized_copy("Chat with Admin"))
+                    .on_press(p2p(P2PMessage::OpenDisputeChat))
                     .width(Length::Fill),
-                );
-            } else if cancel_initiated_by_peer {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Cancel requested by counterparty"),
-                            p2_regular(
-                                "Your counterparty wants to cancel this order. \
-                                If you agree, press Cancel. Otherwise, you can \
-                                open a dispute.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-            }
-
-            // --- Status message for dispute ---
-            if matches!(dm_action, Some("DisputeInitiatedByYou")) {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Dispute opened"),
-                            p2_regular(
-                                "You have initiated a dispute. A solver will be \
-                                assigned soon to help resolve this.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-            } else if matches!(dm_action, Some("DisputeInitiatedByPeer")) {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Dispute opened by counterparty"),
-                            p2_regular(
-                                "Your counterparty has opened a dispute. A solver will be \
-                                assigned soon to help resolve this.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-            } else if matches!(dm_action, Some("AdminTookDispute")) {
-                actions = actions.push(
-                    card::simple(
-                        column![
-                            p1_bold("Admin reviewing dispute"),
-                            p2_regular(
-                                "A dispute resolver has been assigned to your case. \
-                                Use the chat below to communicate with the admin.",
-                            )
-                            .style(theme::text::secondary),
-                        ]
-                        .spacing(4),
-                    )
-                    .width(Length::Fill),
-                );
-                // Chat with Admin button
-                actions = actions.push(
-                    button::primary(Some(icon::chat_icon()), localized_copy("Chat with Admin"))
-                        .on_press(p2p(P2PMessage::OpenDisputeChat))
-                        .width(Length::Fill),
-                );
-            }
-
-            // --- Primary trade action buttons (only if not in cooperative cancel or dispute) ---
-            // Button logic follows the Mostro protocol: Mostro sends different DM
-            // actions to buyer and seller, so we match on (dm_action, role) pairs.
-            if !in_cooperative_cancel && !dispute_initiated {
-                match dm_action {
-                    // ── Seller must pay hold invoice ──
-                    Some("PayInvoice") | Some("WaitingSellerToPay") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for seller to lock the Bitcoin"),
-                                        p2_regular(
-                                            "The seller has been asked to lock the Bitcoin in \
-                                            escrow. Once it's locked, you'll be prompted to send \
-                                            the fiat payment. If the seller doesn't lock it in \
-                                            time, the trade will be canceled — you won't have \
-                                            paid anything yet.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        } else {
-                            let mut invoice_col = column![
-                                p1_bold("Pay the hold invoice"),
-                                p2_regular(
-                                    "Please pay the hold invoice to lock your sats \
-                                    and start the trade. If you don't pay in time, \
-                                    the trade will be canceled.",
-                                )
-                                .style(theme::text::secondary),
-                            ]
-                            .spacing(8);
-
-                            invoice_col = self.push_hold_invoice_elements(
-                                invoice_col,
-                                &trade.id,
-                                trade.hold_invoice.as_ref(),
-                                trade.sats_amount,
-                            );
-
-                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
-                        }
-                    }
-
-                    // ── Hold invoice paid / Trade active ──
-                    Some("HoldInvoicePaymentAccepted") | Some("BuyerInvoiceAccepted") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Send fiat payment"),
-                                        p2_regular(
-                                            "Contact the seller to arrange payment. \
-                                            Once you've sent the fiat money, \
-                                            press the button below to notify the seller.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                            actions = actions.push(if !loading {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .on_press(p2p(P2PMessage::ConfirmFiatSent))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .width(Length::Fill)
-                            });
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for fiat payment"),
-                                        p2_regular(
-                                            "Contact the buyer to inform them how to send \
-                                            the fiat payment. You'll be notified when \
-                                            the buyer confirms the payment.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-                    // BuyerTookOrder: seller is notified a buyer took their order.
-                    // If the payload included a hold invoice, show it immediately.
-                    Some("BuyerTookOrder") => {
-                        let mut took_col = column![p1_bold("Buyer took your order"),].spacing(8);
-
-                        if let Some(ref invoice) = trade.hold_invoice {
-                            took_col = took_col.push(
-                                p2_regular(localized_copy(
-                                    "Pay the hold invoice to lock your sats \
-                                    and start the trade. If you don't pay in time, \
-                                    the trade will be canceled.",
-                                ))
-                                .style(theme::text::secondary),
-                            );
-                            took_col = self.push_hold_invoice_elements(
-                                took_col,
-                                &trade.id,
-                                Some(invoice),
-                                trade.sats_amount,
-                            );
-                        } else {
-                            took_col = took_col.push(
-                                p2_regular(localized_copy(
-                                    "A buyer has taken your order. Please wait while \
-                                    they decide to proceed. If they accept, you'll \
-                                    be notified to complete your part.",
-                                ))
-                                .style(theme::text::secondary),
-                            );
-                        }
-
-                        actions = actions.push(card::simple(took_col).width(Length::Fill));
-                    }
-
-                    // ── Buyer must submit invoice ──
-                    Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
-                        if is_buyer {
-                            let mut invoice_col = column![
-                                p1_bold("Submit your invoice"),
-                                p2_regular(
-                                    "Please send a Lightning invoice or address \
-                                    where you'll receive the sats. If you don't \
-                                    provide one in time, the trade will be canceled.",
-                                )
-                                .style(theme::text::secondary),
-                            ]
-                            .spacing(8);
-
-                            if let Some(sats) = trade.sats_amount.filter(|&s| s > 0) {
-                                invoice_col = invoice_col.push(
-                                    caption(localized_format!(
-                                        "Expected amount: {} sats. Use a zero-amount invoice \
-                                        or one matching this amount exactly. Invoice must not \
-                                        expire within 1 hour.", "Cantidad esperada: {} sats. Utilice una factura de valor cero o una que coincida con esta cantidad exactamente. La factura no debe expirar dentro de 1 hora.",
-                                        super::components::format_with_separators(sats),
-                                    ))
-                                    .style(theme::text::warning),
-                                );
-                            } else {
-                                invoice_col = invoice_col.push(
-                                    caption(localized_copy(
-                                        "Use a zero-amount invoice or a Lightning address. \
-                                        Invoice must not expire within 1 hour.",
-                                    ))
-                                    .style(theme::text::warning),
-                                );
-                            }
-
-                            invoice_col = invoice_col.push(
-                                form::Form::new_trimmed(
-                                    localized_copy("Enter lightning invoice or address"),
-                                    &self.trade_invoice_input,
-                                    |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(v)),
-                                )
-                                .padding(10),
-                            );
-
-                            invoice_col = invoice_col.push(
-                                if !self.trade_invoice_input.value.is_empty() && !loading {
-                                    button::primary(None, localized_copy("Submit Invoice"))
-                                        .on_press(p2p(P2PMessage::SubmitInvoice))
-                                        .width(Length::Fill)
-                                } else {
-                                    button::primary(None, localized_copy("Submit Invoice"))
-                                        .width(Length::Fill)
-                                },
-                            );
-
-                            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for buyer invoice"),
-                                        p2_regular(
-                                            "Payment received! Your sats are now held. \
-                                            The buyer has been asked to provide an invoice. \
-                                            If they don't do so in time, your sats will be \
-                                            returned and the trade will be canceled.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Waiting for fiat payment (status-based fallback) ──
-                    Some("WaitingPayment") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Send fiat payment"),
-                                        p2_regular(
-                                            "Contact the seller to arrange payment. \
-                                            Once you've sent the fiat money, \
-                                            press the button below to notify the seller.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                            actions = actions.push(if !loading {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .on_press(p2p(P2PMessage::ConfirmFiatSent))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                    .width(Length::Fill)
-                            });
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Waiting for fiat payment"),
-                                        p2_regular(
-                                            "The buyer has been notified to send fiat. \
-                                            You'll be notified when they confirm.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Fiat sent / waiting for release ──
-                    Some("FiatSentOk") | Some("FiatSent") => {
-                        if !is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Buyer sent fiat"),
-                                        p2_regular(
-                                            "The buyer has confirmed sending the fiat payment. \
-                                            Once you've verified receipt, release the sats. \
-                                            This action cannot be undone.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                            actions = actions.push(if !loading {
-                                button::primary(None, localized_copy("Release Sats"))
-                                    .on_press(p2p(P2PMessage::ConfirmFiatReceived))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(None, localized_copy("Release Sats"))
-                                    .width(Length::Fill)
-                            });
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Fiat sent"),
-                                        p2_regular(
-                                            "The seller has been notified that you sent the fiat. \
-                                            Once the seller confirms receipt, they will release \
-                                            the sats. If they don't, you can open a dispute.",
-                                        )
-                                        .style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Released / settling ──
-                    Some("Released") | Some("Release") => {
-                        actions = actions.push(
-                            card::simple(
-                                column![
-                                    p1_bold("Sats released"),
-                                    p2_regular(if is_buyer {
-                                        "The seller has released the sats! Expect your \
-                                        invoice to be paid shortly. Make sure your wallet \
-                                        is online to receive via Lightning Network."
-                                    } else {
-                                        "You have released the sats. The payment is being \
-                                        processed to the buyer's invoice."
-                                    })
-                                    .style(theme::text::secondary),
-                                ]
-                                .spacing(4),
-                            )
-                            .width(Length::Fill),
-                        );
-                    }
-
-                    // ── Payment failed ──
-                    Some("PaymentFailed") => {
-                        if is_buyer {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Payment failed"),
-                                        p2_regular(
-                                            "The payment to your invoice could not be completed. \
-                                            Please submit a new invoice to receive the sats.",
-                                        )
-                                        .style(theme::text::warning),
-                                        form::Form::new_trimmed(
-                                            "Enter lightning invoice or address",
-                                            &self.trade_invoice_input,
-                                            |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
-                                                v
-                                            )),
-                                        )
-                                        .padding(10),
-                                        if !self.trade_invoice_input.value.is_empty() && !loading {
-                                            button::primary(None, "Submit Invoice")
-                                                .on_press(p2p(P2PMessage::SubmitInvoice))
-                                                .width(Length::Fill)
-                                        } else {
-                                            button::primary(None, "Submit Invoice")
-                                                .width(Length::Fill)
-                                        },
-                                    ]
-                                    .spacing(8),
-                                )
-                                .width(Length::Fill),
-                            );
-                        } else {
-                            actions = actions.push(
-                                card::simple(
-                                    column![
-                                        p1_bold("Payment failed"),
-                                        p2_regular(
-                                            "Payment to the buyer's invoice failed. \
-                                            Waiting for the buyer to submit a new invoice.",
-                                        )
-                                        .style(theme::text::warning),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // ── Trade completed — rate counterparty ──
-                    Some("HoldInvoicePaymentSettled")
-                    | Some("PurchaseCompleted")
-                    | Some("Rate") => {
-                        let selected = self.trade_rating;
-                        let star_buttons: Vec<Element<'_, view::Message>> = (1..=5u8)
-                            .map(|i| {
-                                let label = if i <= selected {
-                                    "\u{2605}"
-                                } else {
-                                    "\u{2606}"
-                                };
-                                iced::widget::button(iced::widget::text(label).size(28).style(
-                                    if i <= selected {
-                                        theme::text::primary
-                                    } else {
-                                        theme::text::secondary
-                                    },
-                                ))
-                                .on_press(p2p(P2PMessage::RatingSelected(i)))
-                                .style(theme::button::container)
-                                .into()
-                            })
-                            .collect();
-                        let stars = iced::widget::Row::with_children(star_buttons).spacing(4);
-
-                        actions = actions.push(
-                            card::simple(
-                                column![
-                                    p1_bold("Trade Complete!"),
-                                    p2_regular("Rate your counterparty")
-                                        .style(theme::text::secondary),
-                                    container(
-                                        column![
-                                            stars,
-                                            p2_regular(if selected > 0 {
-                                                format!("{} / 5", selected)
-                                            } else {
-                                                "Select a rating".to_string()
-                                            })
-                                            .style(theme::text::secondary),
-                                        ]
-                                        .spacing(4)
-                                        .align_x(Alignment::Center),
-                                    )
-                                    .width(Length::Fill)
-                                    .center_x(Length::Fill),
-                                    if selected > 0 && !loading {
-                                        button::primary(None, "Submit Rating")
-                                            .on_press(p2p(P2PMessage::SubmitRating))
-                                            .width(Length::Fill)
-                                    } else {
-                                        button::primary(None, "Submit Rating").width(Length::Fill)
-                                    },
-                                ]
-                                .spacing(12),
-                            )
-                            .width(Length::Fill),
-                        );
-                    }
-
-                    _ => {
-                        // No DM action or unrecognized — fall back to status-based buttons
-                        match trade.status {
-                            TradeStatus::WaitingBuyerInvoice if is_buyer => {
-                                actions = actions.push(
-                                    card::simple(
-                                        column![
-                                            p2_regular(
-                                                "Submit your Lightning invoice to receive sats"
-                                            )
-                                            .style(theme::text::secondary),
-                                            form::Form::new_trimmed(
-                                                "Enter lightning invoice or address",
-                                                &self.trade_invoice_input,
-                                                |v| view::Message::P2P(
-                                                    P2PMessage::TradeInvoiceEdited(v)
-                                                ),
-                                            )
-                                            .padding(10),
-                                            if !self.trade_invoice_input.value.is_empty()
-                                                && !loading
-                                            {
-                                                button::primary(None, "Submit Invoice")
-                                                    .on_press(p2p(P2PMessage::SubmitInvoice))
-                                                    .width(Length::Fill)
-                                            } else {
-                                                button::primary(None, "Submit Invoice")
-                                                    .width(Length::Fill)
-                                            },
-                                        ]
-                                        .spacing(8),
-                                    )
-                                    .width(Length::Fill),
-                                );
-                            }
-                            TradeStatus::Active if is_buyer => {
-                                actions = actions.push(if !loading {
-                                    button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                        .on_press(p2p(P2PMessage::ConfirmFiatSent))
-                                        .width(Length::Fill)
-                                } else {
-                                    button::primary(None, localized_copy("Confirm Fiat Sent"))
-                                        .width(Length::Fill)
-                                });
-                            }
-                            TradeStatus::FiatSent if !is_buyer => {
-                                actions = actions.push(if !loading {
-                                    button::primary(
-                                        None,
-                                        localized_copy("Release (Confirm Fiat Received)"),
-                                    )
-                                    .on_press(p2p(P2PMessage::ConfirmFiatReceived))
-                                    .width(Length::Fill)
-                                } else {
-                                    button::primary(
-                                        None,
-                                        localized_copy("Release (Confirm Fiat Received)"),
-                                    )
-                                    .width(Length::Fill)
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-
-            // --- Cancel / Dispute footer buttons ---
-            // Dispute only available once the trade is active (hold invoice paid)
-            let can_dispute = matches!(
-                trade.status,
-                TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
             );
-            // Hide once the trade is complete or past release
-            let trade_complete =
-                matches!(
-                    dm_action,
-                    Some(
-                        "Released"
-                            | "Release"
-                            | "HoldInvoicePaymentSettled"
-                            | "PurchaseCompleted"
-                            | "Rate"
-                            | "RateReceived"
-                            | "AdminSettled"
-                            | "AdminCanceled"
-                            | "CooperativeCancelAccepted"
-                    )
-                ) || matches!(trade.status, TradeStatus::Success | TradeStatus::Canceled);
-            if !loading && !trade_complete {
-                if cancel_initiated_by_peer {
-                    let mut btn_row = row![
-                        button::secondary(None, "Close")
-                            .on_press(p2p(P2PMessage::CloseTradeDetail))
-                            .width(Length::Fill),
-                        button::alert(None, "Accept Cancel")
-                            .on_press(p2p(P2PMessage::CancelTrade))
-                            .width(Length::Fill),
-                    ]
-                    .spacing(8);
-                    if can_dispute {
-                        btn_row = btn_row.push(
-                            button::alert(None, "Dispute")
-                                .on_press(p2p(P2PMessage::OpenDispute))
-                                .width(Length::Fill),
-                        );
-                    }
-                    actions = actions.push(btn_row);
-                } else if cancel_initiated_by_you {
-                    let mut btn_row = row![button::secondary(None, "Close")
-                        .on_press(p2p(P2PMessage::CloseTradeDetail))
-                        .width(Length::Fill),]
-                    .spacing(8);
-                    if can_dispute {
-                        btn_row = btn_row.push(
-                            button::alert(None, "Dispute")
-                                .on_press(p2p(P2PMessage::OpenDispute))
-                                .width(Length::Fill),
-                        );
-                    }
-                    actions = actions.push(btn_row);
-                } else if !dispute_initiated {
-                    let mut btn_row = row![
-                        button::secondary(None, "Close")
-                            .on_press(p2p(P2PMessage::CloseTradeDetail))
-                            .width(Length::Fill),
-                        button::secondary(None, "Cancel")
-                            .on_press(p2p(P2PMessage::CancelTrade))
-                            .width(Length::Fill),
-                    ]
-                    .spacing(8);
-                    if can_dispute {
-                        btn_row = btn_row.push(
-                            button::alert(None, "Dispute")
-                                .on_press(p2p(P2PMessage::OpenDispute))
-                                .width(Length::Fill),
-                        );
-                    }
-                    actions = actions.push(btn_row);
-                } else {
-                    // In dispute — only Close
-                    actions = actions.push(
-                        button::secondary(None, localized_copy("Close"))
-                            .on_press(p2p(P2PMessage::CloseTradeDetail))
-                            .width(Length::Fill),
-                    );
-                }
-            } else {
-                // Terminal / loading / past release — just Close
-                actions = actions.push(
-                    button::secondary(None, localized_copy("Close"))
-                        .on_press(p2p(P2PMessage::CloseTradeDetail))
-                        .width(Length::Fill),
+        }
+        actions
+    }
+
+    fn trade_protocol_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+        loading: bool,
+        dm_action: Option<&str>,
+    ) -> Column<'a, view::Message> {
+        match dm_action {
+            // ── Seller must pay hold invoice ──
+            Some("PayInvoice") | Some("WaitingSellerToPay") => {
+                actions = self.trade_hold_invoice_actions(actions, trade, is_buyer);
+            }
+
+            // ── Hold invoice paid / Trade active ──
+            Some("HoldInvoicePaymentAccepted") | Some("BuyerInvoiceAccepted") => {
+                actions = Self::trade_fiat_payment_actions(
+                    actions,
+                    is_buyer,
+                    loading,
+                    "Contact the buyer to inform them how to send \
+                    the fiat payment. You'll be notified when \
+                    the buyer confirms the payment.",
                 );
             }
+            // BuyerTookOrder: seller is notified a buyer took their order.
+            // If the payload included a hold invoice, show it immediately.
+            Some("BuyerTookOrder") => {
+                actions = self.trade_buyer_took_order_actions(actions, trade);
+            }
+
+            // ── Buyer must submit invoice ──
+            Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
+                actions = self.trade_receive_invoice_actions(actions, trade, is_buyer, loading);
+            }
+
+            // ── Waiting for fiat payment (status-based fallback) ──
+            Some("WaitingPayment") => {
+                actions = Self::trade_fiat_payment_actions(
+                    actions,
+                    is_buyer,
+                    loading,
+                    "The buyer has been notified to send fiat. \
+                    You'll be notified when they confirm.",
+                );
+            }
+
+            // ── Fiat sent / waiting for release ──
+            Some("FiatSentOk") | Some("FiatSent") => {
+                actions = Self::trade_fiat_sent_actions(actions, is_buyer, loading);
+            }
+
+            // ── Released / settling ──
+            Some("Released") | Some("Release") => {
+                actions = actions.push(
+                    card::simple(
+                        column![
+                            p1_bold("Sats released"),
+                            p2_regular(if is_buyer {
+                                "The seller has released the sats! Expect your \
+                                invoice to be paid shortly. Make sure your wallet \
+                                is online to receive via Lightning Network."
+                            } else {
+                                "You have released the sats. The payment is being \
+                                processed to the buyer's invoice."
+                            })
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4),
+                    )
+                    .width(Length::Fill),
+                );
+            }
+
+            // ── Payment failed ──
+            Some("PaymentFailed") => {
+                actions = self.trade_payment_failed_actions(actions, is_buyer, loading);
+            }
+
+            // ── Trade completed — rate counterparty ──
+            Some("HoldInvoicePaymentSettled") | Some("PurchaseCompleted") | Some("Rate") => {
+                actions = self.trade_rating_actions(actions, loading);
+            }
+
+            _ => {
+                actions = self.trade_status_actions(actions, trade, is_buyer, loading);
+            }
+        }
+        actions
+    }
+
+    fn trade_hold_invoice_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            actions = actions.push(Self::trade_notice_card(
+                "Waiting for seller to lock the Bitcoin",
+                "The seller has been asked to lock the Bitcoin in \
+                escrow. Once it's locked, you'll be prompted to send \
+                the fiat payment. If the seller doesn't lock it in \
+                time, the trade will be canceled — you won't have \
+                paid anything yet.",
+            ));
         } else {
-            // Terminal state — only Close
+            let mut invoice_col = column![
+                p1_bold("Pay the hold invoice"),
+                p2_regular(
+                    "Please pay the hold invoice to lock your sats \
+                    and start the trade. If you don't pay in time, \
+                    the trade will be canceled.",
+                )
+                .style(theme::text::secondary),
+            ]
+            .spacing(8);
+
+            invoice_col = self.push_hold_invoice_elements(
+                invoice_col,
+                &trade.id,
+                trade.hold_invoice.as_ref(),
+                trade.sats_amount,
+            );
+
+            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
+        }
+        actions
+    }
+
+    fn trade_fiat_payment_actions<'a>(
+        mut actions: Column<'a, view::Message>,
+        is_buyer: bool,
+        loading: bool,
+        seller_hint: &'static str,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            actions = actions.push(Self::trade_notice_card(
+                "Send fiat payment",
+                "Contact the seller to arrange payment. \
+                Once you've sent the fiat money, \
+                press the button below to notify the seller.",
+            ));
+            actions = actions.push(Self::trade_action_button(
+                !loading,
+                localized_copy("Confirm Fiat Sent"),
+                P2PMessage::ConfirmFiatSent,
+            ));
+        } else {
+            actions = actions.push(Self::trade_notice_card(
+                "Waiting for fiat payment",
+                seller_hint,
+            ));
+        }
+        actions
+    }
+
+    fn trade_buyer_took_order_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+    ) -> Column<'a, view::Message> {
+        let mut took_col = column![p1_bold("Buyer took your order"),].spacing(8);
+
+        if let Some(ref invoice) = trade.hold_invoice {
+            took_col = took_col.push(
+                p2_regular(localized_copy(
+                    "Pay the hold invoice to lock your sats \
+                    and start the trade. If you don't pay in time, \
+                    the trade will be canceled.",
+                ))
+                .style(theme::text::secondary),
+            );
+            took_col = self.push_hold_invoice_elements(
+                took_col,
+                &trade.id,
+                Some(invoice),
+                trade.sats_amount,
+            );
+        } else {
+            took_col = took_col.push(
+                p2_regular(localized_copy(
+                    "A buyer has taken your order. Please wait while \
+                    they decide to proceed. If they accept, you'll \
+                    be notified to complete your part.",
+                ))
+                .style(theme::text::secondary),
+            );
+        }
+
+        actions = actions.push(card::simple(took_col).width(Length::Fill));
+        actions
+    }
+
+    fn trade_receive_invoice_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            let mut invoice_col = column![
+                p1_bold("Submit your invoice"),
+                p2_regular(
+                    "Please send a Lightning invoice or address \
+                    where you'll receive the sats. If you don't \
+                    provide one in time, the trade will be canceled.",
+                )
+                .style(theme::text::secondary),
+            ]
+            .spacing(8);
+
+            if let Some(sats) = trade.sats_amount.filter(|&s| s > 0) {
+                invoice_col = invoice_col.push(
+                    caption(localized_format!(
+                        "Expected amount: {} sats. Use a zero-amount invoice \
+                        or one matching this amount exactly. Invoice must not \
+                        expire within 1 hour.", "Cantidad esperada: {} sats. Utilice una factura de valor cero o una que coincida con esta cantidad exactamente. La factura no debe expirar dentro de 1 hora.",
+                        super::components::format_with_separators(sats),
+                    ))
+                    .style(theme::text::warning),
+                );
+            } else {
+                invoice_col = invoice_col.push(
+                    caption(localized_copy(
+                        "Use a zero-amount invoice or a Lightning address. \
+                        Invoice must not expire within 1 hour.",
+                    ))
+                    .style(theme::text::warning),
+                );
+            }
+
+            invoice_col = invoice_col.push(
+                self.trade_invoice_entry(localized_copy("Enter lightning invoice or address")),
+            );
+
+            invoice_col = invoice_col.push(Self::trade_action_button(
+                !self.trade_invoice_input.value.is_empty() && !loading,
+                localized_copy("Submit Invoice"),
+                P2PMessage::SubmitInvoice,
+            ));
+
+            actions = actions.push(card::simple(invoice_col).width(Length::Fill));
+        } else {
+            actions = actions.push(Self::trade_notice_card(
+                "Waiting for buyer invoice",
+                "Payment received! Your sats are now held. \
+                The buyer has been asked to provide an invoice. \
+                If they don't do so in time, your sats will be \
+                returned and the trade will be canceled.",
+            ));
+        }
+        actions
+    }
+
+    fn trade_fiat_sent_actions<'a>(
+        mut actions: Column<'a, view::Message>,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        if !is_buyer {
+            actions = actions.push(Self::trade_notice_card(
+                "Buyer sent fiat",
+                "The buyer has confirmed sending the fiat payment. \
+                Once you've verified receipt, release the sats. \
+                This action cannot be undone.",
+            ));
+            actions = actions.push(Self::trade_action_button(
+                !loading,
+                localized_copy("Release Sats"),
+                P2PMessage::ConfirmFiatReceived,
+            ));
+        } else {
+            actions = actions.push(Self::trade_notice_card(
+                "Fiat sent",
+                "The seller has been notified that you sent the fiat. \
+                Once the seller confirms receipt, they will release \
+                the sats. If they don't, you can open a dispute.",
+            ));
+        }
+        actions
+    }
+
+    fn trade_payment_failed_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        if is_buyer {
+            actions = actions.push(
+                card::simple(
+                    column![
+                        p1_bold("Payment failed"),
+                        p2_regular(
+                            "The payment to your invoice could not be completed. \
+                            Please submit a new invoice to receive the sats.",
+                        )
+                        .style(theme::text::warning),
+                        self.trade_invoice_entry("Enter lightning invoice or address"),
+                        Self::trade_action_button(
+                            !self.trade_invoice_input.value.is_empty() && !loading,
+                            "Submit Invoice",
+                            P2PMessage::SubmitInvoice
+                        ),
+                    ]
+                    .spacing(8),
+                )
+                .width(Length::Fill),
+            );
+        } else {
+            actions = actions.push(
+                card::simple(
+                    column![
+                        p1_bold("Payment failed"),
+                        p2_regular(
+                            "Payment to the buyer's invoice failed. \
+                            Waiting for the buyer to submit a new invoice.",
+                        )
+                        .style(theme::text::warning),
+                    ]
+                    .spacing(4),
+                )
+                .width(Length::Fill),
+            );
+        }
+        actions
+    }
+
+    fn trade_rating_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        let selected = self.trade_rating;
+        let star_buttons: Vec<Element<'_, view::Message>> = (1..=5u8)
+            .map(|i| {
+                let label = if i <= selected {
+                    "\u{2605}"
+                } else {
+                    "\u{2606}"
+                };
+                iced::widget::button(iced::widget::text(label).size(28).style(if i <= selected {
+                    theme::text::primary
+                } else {
+                    theme::text::secondary
+                }))
+                .on_press(p2p(P2PMessage::RatingSelected(i)))
+                .style(theme::button::container)
+                .into()
+            })
+            .collect();
+        let stars = iced::widget::Row::with_children(star_buttons).spacing(4);
+
+        actions = actions.push(
+            card::simple(
+                column![
+                    p1_bold("Trade Complete!"),
+                    p2_regular("Rate your counterparty").style(theme::text::secondary),
+                    container(
+                        column![
+                            stars,
+                            p2_regular(if selected > 0 {
+                                format!("{} / 5", selected)
+                            } else {
+                                "Select a rating".to_string()
+                            })
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4)
+                        .align_x(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+                    if selected > 0 && !loading {
+                        button::primary(None, "Submit Rating")
+                            .on_press(p2p(P2PMessage::SubmitRating))
+                            .width(Length::Fill)
+                    } else {
+                        button::primary(None, "Submit Rating").width(Length::Fill)
+                    },
+                ]
+                .spacing(12),
+            )
+            .width(Length::Fill),
+        );
+        actions
+    }
+
+    fn trade_status_actions<'a>(
+        &'a self,
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        is_buyer: bool,
+        loading: bool,
+    ) -> Column<'a, view::Message> {
+        // No DM action or unrecognized — fall back to status-based buttons
+        match trade.status {
+            TradeStatus::WaitingBuyerInvoice if is_buyer => {
+                actions = actions.push(
+                    card::simple(
+                        column![
+                            p2_regular("Submit your Lightning invoice to receive sats")
+                                .style(theme::text::secondary),
+                            self.trade_invoice_entry("Enter lightning invoice or address"),
+                            Self::trade_action_button(
+                                !self.trade_invoice_input.value.is_empty() && !loading,
+                                "Submit Invoice",
+                                P2PMessage::SubmitInvoice
+                            ),
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill),
+                );
+            }
+            TradeStatus::Active if is_buyer => {
+                actions = actions.push(Self::trade_action_button(
+                    !loading,
+                    localized_copy("Confirm Fiat Sent"),
+                    P2PMessage::ConfirmFiatSent,
+                ));
+            }
+            TradeStatus::FiatSent if !is_buyer => {
+                actions = actions.push(Self::trade_action_button(
+                    !loading,
+                    localized_copy("Release (Confirm Fiat Received)"),
+                    P2PMessage::ConfirmFiatReceived,
+                ));
+            }
+            _ => {}
+        }
+        actions
+    }
+
+    fn trade_action_footer<'a>(
+        mut actions: Column<'a, view::Message>,
+        trade: &'a P2PTrade,
+        loading: bool,
+        dm_action: Option<&str>,
+        cancel_initiated_by_you: bool,
+        cancel_initiated_by_peer: bool,
+        dispute_initiated: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // --- Cancel / Dispute footer buttons ---
+        // Dispute only available once the trade is active (hold invoice paid)
+        let can_dispute = matches!(
+            trade.status,
+            TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::CooperativelyCanceled
+        );
+        // Hide once the trade is complete or past release
+        let trade_complete =
+            matches!(
+                dm_action,
+                Some(
+                    "Released"
+                        | "Release"
+                        | "HoldInvoicePaymentSettled"
+                        | "PurchaseCompleted"
+                        | "Rate"
+                        | "RateReceived"
+                        | "AdminSettled"
+                        | "AdminCanceled"
+                        | "CooperativeCancelAccepted"
+                )
+            ) || matches!(trade.status, TradeStatus::Success | TradeStatus::Canceled);
+        if !loading && !trade_complete {
+            actions = Self::trade_open_footer(
+                actions,
+                cancel_initiated_by_you,
+                cancel_initiated_by_peer,
+                dispute_initiated,
+                can_dispute,
+            );
+        } else {
+            // Terminal / loading / past release — just Close
             actions = actions.push(
                 button::secondary(None, localized_copy("Close"))
                     .on_press(p2p(P2PMessage::CloseTradeDetail))
                     .width(Length::Fill),
             );
         }
+        actions
+    }
 
-        // ── Contact button ──
-        // Show contact/chat button for active trades only (not completed/canceled)
-        let chat_available = matches!(
-            trade.status,
-            TradeStatus::Active
-                | TradeStatus::FiatSent
-                | TradeStatus::SettledHoldInvoice
-                | TradeStatus::CooperativelyCanceled
-                | TradeStatus::Dispute
-                | TradeStatus::PaymentFailed
-        );
-
-        let mut content = column![info_card, id_card, actions]
-            .spacing(12)
-            .width(Length::Fill);
-
-        if chat_available {
-            content = content.push(
-                button::secondary(Some(icon::chat_icon()), localized_copy("Contact"))
-                    .on_press(p2p(P2PMessage::OpenChat))
+    fn trade_open_footer<'a>(
+        mut actions: Column<'a, view::Message>,
+        cancel_initiated_by_you: bool,
+        cancel_initiated_by_peer: bool,
+        dispute_initiated: bool,
+        can_dispute: bool,
+    ) -> Column<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        if cancel_initiated_by_peer {
+            let mut btn_row = row![
+                button::secondary(None, "Close")
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+                button::alert(None, "Accept Cancel")
+                    .on_press(p2p(P2PMessage::CancelTrade))
+                    .width(Length::Fill),
+            ]
+            .spacing(8);
+            if can_dispute {
+                btn_row = btn_row.push(
+                    button::alert(None, "Dispute")
+                        .on_press(p2p(P2PMessage::OpenDispute))
+                        .width(Length::Fill),
+                );
+            }
+            actions = actions.push(btn_row);
+        } else if cancel_initiated_by_you {
+            let mut btn_row = row![button::secondary(None, "Close")
+                .on_press(p2p(P2PMessage::CloseTradeDetail))
+                .width(Length::Fill),]
+            .spacing(8);
+            if can_dispute {
+                btn_row = btn_row.push(
+                    button::alert(None, "Dispute")
+                        .on_press(p2p(P2PMessage::OpenDispute))
+                        .width(Length::Fill),
+                );
+            }
+            actions = actions.push(btn_row);
+        } else if !dispute_initiated {
+            let mut btn_row = row![
+                button::secondary(None, "Close")
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+                button::secondary(None, "Cancel")
+                    .on_press(p2p(P2PMessage::CancelTrade))
+                    .width(Length::Fill),
+            ]
+            .spacing(8);
+            if can_dispute {
+                btn_row = btn_row.push(
+                    button::alert(None, "Dispute")
+                        .on_press(p2p(P2PMessage::OpenDispute))
+                        .width(Length::Fill),
+                );
+            }
+            actions = actions.push(btn_row);
+        } else {
+            // In dispute — only Close
+            actions = actions.push(
+                button::secondary(None, localized_copy("Close"))
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
                     .width(Length::Fill),
             );
         }
+        actions
+    }
 
-        content.into()
+    fn trade_order_id_card(trade: &P2PTrade) -> Container<'_, view::Message> {
+        card::simple(
+            row![
+                icon::clipboard_icon().style(theme::text::secondary),
+                column![
+                    p2_regular("Order ID").style(theme::text::secondary),
+                    row![
+                        p2_regular(&trade.id).style(theme::text::secondary),
+                        Space::new().width(Length::Fill),
+                        button::secondary_compact(None, "Copy")
+                            .on_press(view::Message::Clipboard(trade.id.clone())),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::alignment::Vertical::Center),
+                ]
+                .spacing(4)
+                .width(Length::Fill),
+            ]
+            .spacing(12)
+            .align_y(iced::alignment::Vertical::Center),
+        )
+        .width(Length::Fill)
+    }
+
+    fn trade_notice_card<'a>(
+        heading: &'static str,
+        details: &'static str,
+    ) -> Container<'a, view::Message> {
+        card::simple(
+            column![
+                p1_bold(heading),
+                p2_regular(details).style(theme::text::secondary),
+            ]
+            .spacing(4),
+        )
+        .width(Length::Fill)
+    }
+
+    fn trade_action_button<'a>(
+        enabled: bool,
+        label: &'static str,
+        action: P2PMessage,
+    ) -> Button<'a, view::Message> {
+        let button = button::primary(None, label);
+        if enabled {
+            button
+                .on_press(view::Message::P2P(action))
+                .width(Length::Fill)
+        } else {
+            button.width(Length::Fill)
+        }
+    }
+
+    fn trade_invoice_entry(&self, prompt: &str) -> form::Form<'_, view::Message> {
+        form::Form::new_trimmed(prompt, &self.trade_invoice_input, |value| {
+            view::Message::P2P(P2PMessage::TradeInvoiceEdited(value))
+        })
+        .padding(10)
     }
 
     fn chat_view<'a>(&'a self, trade: &'a P2PTrade) -> Element<'a, view::Message> {
@@ -2830,39 +2935,7 @@ impl P2PPanel {
             .unwrap_or_else(|| "Peer".to_string());
 
         // ── Accordion tab buttons (Trade Information / User Information) ──
-        let trade_info_btn = if self.chat_show_trade_info {
-            button::primary(
-                Some(icon::receipt_icon()),
-                localized_copy("Trade Information"),
-            )
-            .on_press(p2p(P2PMessage::ToggleChatTradeInfo))
-            .width(Length::Fill)
-        } else {
-            button::secondary(
-                Some(icon::receipt_icon()),
-                localized_copy("Trade Information"),
-            )
-            .on_press(p2p(P2PMessage::ToggleChatTradeInfo))
-            .width(Length::Fill)
-        };
-        let user_info_btn = if self.chat_show_user_info {
-            button::primary(
-                Some(icon::person_icon()),
-                localized_copy("User Information"),
-            )
-            .on_press(p2p(P2PMessage::ToggleChatUserInfo))
-            .width(Length::Fill)
-        } else {
-            button::secondary(
-                Some(icon::person_icon()),
-                localized_copy("User Information"),
-            )
-            .on_press(p2p(P2PMessage::ToggleChatUserInfo))
-            .width(Length::Fill)
-        };
-        let tab_row = container(row![trade_info_btn, user_info_btn].spacing(8))
-            .padding([12, 16])
-            .width(Length::Fill);
+        let tab_row = self.chat_information_tabs();
 
         // ── Trade Information panel (expandable) ──
         let order_short = &trade.id[..8.min(trade.id.len())];
@@ -3048,166 +3121,7 @@ impl P2PPanel {
                 .into();
 
         // ── Message list ──
-        let mut msg_col = column![].spacing(10).padding([12, 16]);
-
-        if chat_messages.is_empty() {
-            msg_col = msg_col.push(
-                container(
-                    column![
-                        icon::chat_icon().size(40.0).style(theme::text::secondary),
-                        p1_regular("No messages yet").style(theme::text::secondary),
-                        p2_regular("Send a message to start the conversation")
-                            .style(theme::text::secondary),
-                    ]
-                    .spacing(8)
-                    .align_x(iced::alignment::Horizontal::Center),
-                )
-                .padding(60)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-            );
-        } else {
-            for msg in &chat_messages {
-                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
-                    .unwrap_or_default()
-                    .with_timezone(&chrono::Local);
-                let time_str = ts.format("%H:%M").to_string();
-
-                // Check if this is an attachment (image or file)
-                let content: Element<'_, view::Message> = if let Some(meta) =
-                    super::mostro::parse_attachment_metadata(&msg.payload_json)
-                {
-                    let filename_label = meta.filename().to_string();
-                    let blossom_url = meta.blossom_url().to_string();
-                    match &meta {
-                        super::mostro::AttachmentMeta::Image(img_meta) => {
-                            match self.image_cache.get(&blossom_url) {
-                                Some(ImageCacheEntry::Ready(handle)) => {
-                                    let display_width = (img_meta.width).min(360);
-                                    // Image with filename overlaid at bottom
-                                    let img_widget = iced::widget::image(handle.clone())
-                                        .width(display_width as f32);
-                                    let overlay_label = container(
-                                        caption(filename_label).style(theme::text::secondary),
-                                    )
-                                    .padding([4, 8]);
-                                    column![img_widget, overlay_label].spacing(0).into()
-                                }
-                                Some(ImageCacheEntry::Loading) => container(
-                                    column![
-                                        p2_regular("Loading image...")
-                                            .style(theme::text::secondary),
-                                        caption(filename_label).style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .padding([16, 20])
-                                .width(Length::Fixed(200.0))
-                                .into(),
-                                Some(ImageCacheEntry::Failed(e)) => container(
-                                    column![
-                                        p2_regular(format!("Failed: {e}"))
-                                            .style(theme::text::warning),
-                                        caption(filename_label).style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .padding([16, 20])
-                                .into(),
-                                None => container(
-                                    column![
-                                        p2_regular("Loading image...")
-                                            .style(theme::text::secondary),
-                                        caption(filename_label).style(theme::text::secondary),
-                                    ]
-                                    .spacing(4),
-                                )
-                                .padding([16, 20])
-                                .width(Length::Fixed(200.0))
-                                .into(),
-                            }
-                        }
-                        super::mostro::AttachmentMeta::File(file_meta) => {
-                            let size_label = if file_meta.original_size < 1024 {
-                                format!("{} B", file_meta.original_size)
-                            } else if file_meta.original_size < 1024 * 1024 {
-                                format!("{:.1} KB", file_meta.original_size as f64 / 1024.0)
-                            } else {
-                                format!(
-                                    "{:.1} MB",
-                                    file_meta.original_size as f64 / (1024.0 * 1024.0)
-                                )
-                            };
-                            let save_url = file_meta.blossom_url.clone();
-                            let save_name = file_meta.filename.clone();
-                            // File card with info + download button (like mobile)
-                            let info_row = row![
-                                icon::tooltip_icon().size(32).style(theme::text::secondary),
-                                column![
-                                    p1_bold(filename_label),
-                                    caption(format!("{} · Encrypted", size_label))
-                                        .style(theme::text::secondary),
-                                ]
-                                .spacing(2),
-                            ]
-                            .spacing(10)
-                            .align_y(iced::alignment::Vertical::Center);
-
-                            let download_btn = button::secondary(None, localized_copy("Download"))
-                                .on_press(p2p(P2PMessage::SaveFile {
-                                    blossom_url: save_url,
-                                    filename: save_name,
-                                }))
-                                .width(Length::Fill);
-
-                            column![info_row, download_btn]
-                                .spacing(8)
-                                .width(Length::Fixed(260.0))
-                                .into()
-                        }
-                    }
-                } else {
-                    let text = extract_chat_text(&msg.payload_json);
-                    p1_regular(text).into()
-                };
-
-                if msg.is_own {
-                    msg_col = msg_col.push(
-                        column![
-                            container(caption("You").style(theme::text::secondary))
-                                .width(Length::Fill)
-                                .align_right(Length::Fill),
-                            row![
-                                Space::new().width(Length::FillPortion(3)),
-                                container(content)
-                                    .padding([10, 16])
-                                    .style(chat_bubble_own as fn(&_) -> _)
-                                    .max_width(480),
-                            ],
-                            container(caption(time_str).style(theme::text::secondary))
-                                .width(Length::Fill)
-                                .align_right(Length::Fill),
-                        ]
-                        .spacing(2),
-                    );
-                } else {
-                    msg_col = msg_col.push(
-                        column![
-                            caption(peer_nick.clone()).style(theme::text::primary),
-                            row![
-                                container(content)
-                                    .padding([10, 16])
-                                    .style(chat_bubble_peer as fn(&_) -> _)
-                                    .max_width(480),
-                                Space::new().width(Length::FillPortion(3)),
-                            ],
-                            caption(time_str).style(theme::text::secondary),
-                        ]
-                        .spacing(2),
-                    );
-                }
-            }
-        }
+        let mut msg_col = self.chat_message_list(&chat_messages, &peer_nick);
 
         // Show "Sending image..." indicator while upload is in progress
         if self.attachment_sending {
@@ -3288,6 +3202,232 @@ impl P2PPanel {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+    }
+
+    fn chat_information_tabs(&self) -> Container<'_, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        let trade_info_btn = if self.chat_show_trade_info {
+            button::primary(
+                Some(icon::receipt_icon()),
+                localized_copy("Trade Information"),
+            )
+            .on_press(p2p(P2PMessage::ToggleChatTradeInfo))
+            .width(Length::Fill)
+        } else {
+            button::secondary(
+                Some(icon::receipt_icon()),
+                localized_copy("Trade Information"),
+            )
+            .on_press(p2p(P2PMessage::ToggleChatTradeInfo))
+            .width(Length::Fill)
+        };
+        let user_info_btn = if self.chat_show_user_info {
+            button::primary(
+                Some(icon::person_icon()),
+                localized_copy("User Information"),
+            )
+            .on_press(p2p(P2PMessage::ToggleChatUserInfo))
+            .width(Length::Fill)
+        } else {
+            button::secondary(
+                Some(icon::person_icon()),
+                localized_copy("User Information"),
+            )
+            .on_press(p2p(P2PMessage::ToggleChatUserInfo))
+            .width(Length::Fill)
+        };
+        container(row![trade_info_btn, user_info_btn].spacing(8))
+            .padding([12, 16])
+            .width(Length::Fill)
+    }
+
+    fn chat_message_list<'a>(
+        &'a self,
+        chat_messages: &[&super::mostro::TradeMessage],
+        peer_nick: &str,
+    ) -> Column<'a, view::Message> {
+        let mut msg_col = column![].spacing(10).padding([12, 16]);
+
+        if chat_messages.is_empty() {
+            msg_col = msg_col.push(Self::empty_chat_messages(
+                icon::chat_icon(),
+                "No messages yet",
+                "Send a message to start the conversation",
+            ));
+        } else {
+            for msg in chat_messages {
+                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local);
+                let time_str = ts.format("%H:%M").to_string();
+
+                // Check if this is an attachment (image or file)
+                let content = self.chat_message_content(msg);
+
+                msg_col = msg_col.push(Self::chat_message_bubble(
+                    msg.is_own,
+                    time_str,
+                    || caption(peer_nick.to_owned()),
+                    || content,
+                ));
+            }
+        }
+        msg_col
+    }
+
+    fn empty_chat_messages<'a>(
+        icon: coincube_ui::widget::Text<'a>,
+        title: &'static str,
+        hint: &'static str,
+    ) -> Container<'a, view::Message> {
+        container(
+            column![
+                icon.size(40.0).style(theme::text::secondary),
+                p1_regular(title).style(theme::text::secondary),
+                p2_regular(hint).style(theme::text::secondary),
+            ]
+            .spacing(8)
+            .align_x(iced::alignment::Horizontal::Center),
+        )
+        .padding(60)
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+    }
+
+    fn chat_message_bubble<'a>(
+        is_own: bool,
+        time_str: String,
+        peer_caption: impl FnOnce() -> coincube_ui::widget::Text<'a>,
+        content: impl FnOnce() -> Element<'a, view::Message>,
+    ) -> Column<'a, view::Message> {
+        if is_own {
+            column![
+                container(caption("You").style(theme::text::secondary))
+                    .width(Length::Fill)
+                    .align_right(Length::Fill),
+                row![
+                    Space::new().width(Length::FillPortion(3)),
+                    container(content())
+                        .padding([10, 16])
+                        .style(chat_bubble_own as fn(&_) -> _)
+                        .max_width(480),
+                ],
+                container(caption(time_str).style(theme::text::secondary))
+                    .width(Length::Fill)
+                    .align_right(Length::Fill),
+            ]
+            .spacing(2)
+        } else {
+            column![
+                peer_caption().style(theme::text::primary),
+                row![
+                    container(content())
+                        .padding([10, 16])
+                        .style(chat_bubble_peer as fn(&_) -> _)
+                        .max_width(480),
+                    Space::new().width(Length::FillPortion(3)),
+                ],
+                caption(time_str).style(theme::text::secondary),
+            ]
+            .spacing(2)
+        }
+    }
+
+    fn chat_message_content<'a>(
+        &'a self,
+        msg: &super::mostro::TradeMessage,
+    ) -> Element<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        if let Some(meta) = super::mostro::parse_attachment_metadata(&msg.payload_json) {
+            let filename_label = meta.filename().to_string();
+            let blossom_url = meta.blossom_url().to_string();
+            match &meta {
+                super::mostro::AttachmentMeta::Image(img_meta) => {
+                    match self.image_cache.get(&blossom_url) {
+                        Some(ImageCacheEntry::Ready(handle)) => {
+                            let display_width = (img_meta.width).min(360);
+                            // Image with filename overlaid at bottom
+                            let img_widget =
+                                iced::widget::image(handle.clone()).width(display_width as f32);
+                            let overlay_label =
+                                container(caption(filename_label).style(theme::text::secondary))
+                                    .padding([4, 8]);
+                            column![img_widget, overlay_label].spacing(0).into()
+                        }
+                        Some(ImageCacheEntry::Loading) => container(
+                            column![
+                                p2_regular("Loading image...").style(theme::text::secondary),
+                                caption(filename_label).style(theme::text::secondary),
+                            ]
+                            .spacing(4),
+                        )
+                        .padding([16, 20])
+                        .width(Length::Fixed(200.0))
+                        .into(),
+                        Some(ImageCacheEntry::Failed(e)) => container(
+                            column![
+                                p2_regular(format!("Failed: {e}")).style(theme::text::warning),
+                                caption(filename_label).style(theme::text::secondary),
+                            ]
+                            .spacing(4),
+                        )
+                        .padding([16, 20])
+                        .into(),
+                        None => container(
+                            column![
+                                p2_regular("Loading image...").style(theme::text::secondary),
+                                caption(filename_label).style(theme::text::secondary),
+                            ]
+                            .spacing(4),
+                        )
+                        .padding([16, 20])
+                        .width(Length::Fixed(200.0))
+                        .into(),
+                    }
+                }
+                super::mostro::AttachmentMeta::File(file_meta) => {
+                    let size_label = if file_meta.original_size < 1024 {
+                        format!("{} B", file_meta.original_size)
+                    } else if file_meta.original_size < 1024 * 1024 {
+                        format!("{:.1} KB", file_meta.original_size as f64 / 1024.0)
+                    } else {
+                        format!(
+                            "{:.1} MB",
+                            file_meta.original_size as f64 / (1024.0 * 1024.0)
+                        )
+                    };
+                    let save_url = file_meta.blossom_url.clone();
+                    let save_name = file_meta.filename.clone();
+                    // File card with info + download button (like mobile)
+                    let info_row = row![
+                        icon::tooltip_icon().size(32).style(theme::text::secondary),
+                        column![
+                            p1_bold(filename_label),
+                            caption(format!("{} · Encrypted", size_label))
+                                .style(theme::text::secondary),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::alignment::Vertical::Center);
+
+                    let download_btn = button::secondary(None, localized_copy("Download"))
+                        .on_press(p2p(P2PMessage::SaveFile {
+                            blossom_url: save_url,
+                            filename: save_name,
+                        }))
+                        .width(Length::Fill);
+
+                    column![info_row, download_btn]
+                        .spacing(8)
+                        .width(Length::Fixed(260.0))
+                        .into()
+                }
+            }
+        } else {
+            let text = extract_chat_text(&msg.payload_json);
+            p1_regular(text).into()
+        }
     }
 
     /// Build the `Task` that fetches the Spark wallet's spendable balance
@@ -3755,85 +3895,7 @@ impl P2PPanel {
             .collect();
 
         // Message list
-        let mut msg_col = column![].spacing(10).padding([12, 16]);
-
-        if !chat_enabled && admin_messages.is_empty() {
-            msg_col = msg_col.push(
-                container(
-                    column![
-                        icon::lock_icon().size(40.0).style(theme::text::secondary),
-                        p1_regular("Waiting for admin assignment").style(theme::text::secondary),
-                        p2_regular("An admin will be assigned to review your dispute")
-                            .style(theme::text::secondary),
-                    ]
-                    .spacing(8)
-                    .align_x(iced::alignment::Horizontal::Center),
-                )
-                .padding(60)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-            );
-        } else if admin_messages.is_empty() {
-            msg_col = msg_col.push(
-                container(
-                    column![
-                        icon::chat_icon().size(40.0).style(theme::text::secondary),
-                        p1_regular("Admin assigned").style(theme::text::secondary),
-                        p2_regular("Send a message to describe your issue")
-                            .style(theme::text::secondary),
-                    ]
-                    .spacing(8)
-                    .align_x(iced::alignment::Horizontal::Center),
-                )
-                .padding(60)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-            );
-        } else {
-            for msg in &admin_messages {
-                let text = extract_chat_text(&msg.payload_json);
-                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
-                    .unwrap_or_default()
-                    .with_timezone(&chrono::Local);
-                let time_str = ts.format("%H:%M").to_string();
-
-                if msg.is_own {
-                    msg_col = msg_col.push(
-                        column![
-                            container(caption("You").style(theme::text::secondary))
-                                .width(Length::Fill)
-                                .align_right(Length::Fill),
-                            row![
-                                Space::new().width(Length::FillPortion(3)),
-                                container(p1_regular(text))
-                                    .padding([10, 16])
-                                    .style(chat_bubble_own as fn(&_) -> _)
-                                    .max_width(480),
-                            ],
-                            container(caption(time_str).style(theme::text::secondary))
-                                .width(Length::Fill)
-                                .align_right(Length::Fill),
-                        ]
-                        .spacing(2),
-                    );
-                } else {
-                    msg_col = msg_col.push(
-                        column![
-                            caption("Admin").style(theme::text::primary),
-                            row![
-                                container(p1_regular(text))
-                                    .padding([10, 16])
-                                    .style(chat_bubble_peer as fn(&_) -> _)
-                                    .max_width(480),
-                                Space::new().width(Length::FillPortion(3)),
-                            ],
-                            caption(time_str).style(theme::text::secondary),
-                        ]
-                        .spacing(2),
-                    );
-                }
-            }
-        }
+        let msg_col = Self::dispute_message_list(&admin_messages, chat_enabled);
 
         let chat_scroll = iced::widget::scrollable(msg_col)
             .height(Length::Fill)
@@ -3883,6 +3945,43 @@ impl P2PPanel {
         )
         .width(Length::Fixed(450.0))
         .into()
+    }
+
+    fn dispute_message_list<'a>(
+        admin_messages: &[&super::mostro::TradeMessage],
+        chat_enabled: bool,
+    ) -> Column<'a, view::Message> {
+        let mut msg_col = column![].spacing(10).padding([12, 16]);
+
+        if !chat_enabled && admin_messages.is_empty() {
+            msg_col = msg_col.push(Self::empty_chat_messages(
+                icon::lock_icon(),
+                "Waiting for admin assignment",
+                "An admin will be assigned to review your dispute",
+            ));
+        } else if admin_messages.is_empty() {
+            msg_col = msg_col.push(Self::empty_chat_messages(
+                icon::chat_icon(),
+                "Admin assigned",
+                "Send a message to describe your issue",
+            ));
+        } else {
+            for msg in admin_messages {
+                let text = extract_chat_text(&msg.payload_json);
+                let ts = chrono::DateTime::from_timestamp(msg.timestamp as i64, 0)
+                    .unwrap_or_default()
+                    .with_timezone(&chrono::Local);
+                let time_str = ts.format("%H:%M").to_string();
+
+                msg_col = msg_col.push(Self::chat_message_bubble(
+                    msg.is_own,
+                    time_str,
+                    || caption("Admin"),
+                    || p1_regular(text).into(),
+                ));
+            }
+        }
+        msg_col
     }
 
     /// Coordinator + relays to use on this cube's network, with a safe
@@ -4175,44 +4274,7 @@ impl P2PPanel {
             &["SendDm"]
         };
 
-        // Collect trades that have matching chat messages
-        let cube_name = self.cube_name();
-        let mut chat_entries: Vec<(&P2PTrade, String, u64)> = Vec::new();
-        for trade in &self.trades {
-            let messages = super::mostro::get_trade_messages(&cube_name, &trade.id);
-            let chat_msgs: Vec<_> = messages
-                .iter()
-                .filter(|m| action_filter.contains(&m.action.as_str()))
-                .collect();
-            if !chat_msgs.is_empty() {
-                let last_msg = chat_msgs.last().unwrap();
-                let preview = if let Some(meta) =
-                    super::mostro::parse_attachment_metadata(&last_msg.payload_json)
-                {
-                    match meta {
-                        super::mostro::AttachmentMeta::Image(_) => "Image".to_string(),
-                        super::mostro::AttachmentMeta::File(f) => f.filename.clone(),
-                    }
-                } else {
-                    let text = extract_chat_text(&last_msg.payload_json);
-                    if text.chars().count() > 50 {
-                        let truncated: String = text.chars().take(50).collect();
-                        format!("{truncated}...")
-                    } else {
-                        text
-                    }
-                };
-                let prefix = if last_msg.is_own {
-                    format!("You: {preview}")
-                } else {
-                    preview
-                };
-                chat_entries.push((trade, prefix, last_msg.timestamp));
-            }
-        }
-
-        // Sort by last message timestamp, newest first
-        chat_entries.sort_by_key(|e| std::cmp::Reverse(e.2));
+        let chat_entries = self.chat_list_entries(action_filter);
 
         let list_content: Element<'_, view::Message> = if chat_entries.is_empty() {
             let (empty_label, empty_hint) = if is_disputes {
@@ -4245,84 +4307,2147 @@ impl P2PPanel {
             .center_x(Length::Fill)
             .into()
         } else {
-            // Pre-build owned data for each entry to avoid lifetime issues
-            let entries: Vec<_> = chat_entries
-                .iter()
-                .map(|(trade, preview, last_ts)| {
-                    let nick = if is_disputes {
-                        "Admin / Solver".to_string()
-                    } else {
-                        trade
-                            .counterparty_pubkey
-                            .as_deref()
-                            .map(super::mostro::nickname_from_pubkey)
-                            .unwrap_or_else(|| "Peer".to_string())
-                    };
-                    let order_short = trade.id[..8.min(trade.id.len())].to_string();
-                    let action_label = match trade.order_type {
-                        OrderType::Buy => localized_format!(
-                            "You are buying from {}",
-                            "Usted está comprando de {}",
-                            nick
-                        ),
-                        OrderType::Sell => localized_format!(
-                            "You are selling to {}",
-                            "Usted está vendiendo a {}",
-                            nick
-                        ),
-                    };
-                    let time_str = {
-                        let dt = chrono::DateTime::from_timestamp(*last_ts as i64, 0)
-                            .unwrap_or_default()
-                            .with_timezone(&chrono::Local);
-                        let today = chrono::Local::now().date_naive();
-                        if dt.date_naive() == today {
-                            dt.format("%H:%M").to_string()
-                        } else {
-                            dt.format(&coincube_ui::locale::date_pattern("%b %d, %H:%M", &dt))
-                                .to_string()
-                        }
-                    };
-                    let subtitle = format!("{} · {}", action_label, order_short);
-                    (trade.id.clone(), nick, subtitle, preview.clone(), time_str)
-                })
-                .collect();
-
-            let mut list_col = column![].spacing(8).width(Length::Fill);
-            for (trade_id, nick, subtitle, preview, time_str) in entries {
-                let entry_content = card::simple(
-                    row![
-                        column![
-                            p1_bold(nick),
-                            p2_regular(subtitle).style(theme::text::secondary),
-                            p2_regular(preview).style(theme::text::secondary),
-                        ]
-                        .spacing(4)
-                        .width(Length::Fill),
-                        caption(time_str).style(theme::text::secondary),
-                    ]
-                    .spacing(12)
-                    .align_y(iced::alignment::Vertical::Center),
-                )
-                .width(Length::Fill);
-
-                let on_press = if is_disputes {
-                    p2p(P2PMessage::OpenDisputeChatForTrade(trade_id))
-                } else {
-                    p2p(P2PMessage::OpenChatForTrade(trade_id))
-                };
-
-                let entry = iced::widget::button(entry_content)
-                    .on_press(on_press)
-                    .width(Length::Fill)
-                    .style(theme::button::transparent);
-
-                list_col = list_col.push(entry);
-            }
-            list_col.into()
+            Self::chat_conversation_rows(&chat_entries, is_disputes)
         };
 
         column![tabs, list_content].spacing(16).into()
+    }
+
+    fn chat_list_entries<'a>(&'a self, action_filter: &[&str]) -> Vec<(&'a P2PTrade, String, u64)> {
+        // Collect trades that have matching chat messages (from the state
+        // cache — the view must not hit the disk per row per frame).
+        let mut chat_entries: Vec<(&P2PTrade, String, u64)> = Vec::new();
+        for trade in &self.trades {
+            let Some(messages) = self.chat_history_cache.get(&trade.id) else {
+                continue;
+            };
+            let chat_msgs: Vec<_> = messages
+                .iter()
+                .filter(|m| action_filter.contains(&m.action.as_str()))
+                .collect();
+            if !chat_msgs.is_empty() {
+                let last_msg = chat_msgs.last().unwrap();
+                let preview = Self::chat_message_preview(last_msg);
+                let prefix = if last_msg.is_own {
+                    format!("You: {preview}")
+                } else {
+                    preview
+                };
+                chat_entries.push((trade, prefix, last_msg.timestamp));
+            }
+        }
+
+        // Sort by last message timestamp, newest first
+        chat_entries.sort_by_key(|e| std::cmp::Reverse(e.2));
+        chat_entries
+    }
+
+    fn chat_message_preview(last_msg: &super::mostro::TradeMessage) -> String {
+        if let Some(meta) = super::mostro::parse_attachment_metadata(&last_msg.payload_json) {
+            match meta {
+                super::mostro::AttachmentMeta::Image(_) => "Image".to_string(),
+                super::mostro::AttachmentMeta::File(f) => f.filename.clone(),
+            }
+        } else {
+            let text = extract_chat_text(&last_msg.payload_json);
+            if text.chars().count() > 50 {
+                let truncated: String = text.chars().take(50).collect();
+                format!("{truncated}...")
+            } else {
+                text
+            }
+        }
+    }
+
+    fn chat_conversation_rows<'a>(
+        chat_entries: &[(&P2PTrade, String, u64)],
+        is_disputes: bool,
+    ) -> Element<'a, view::Message> {
+        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
+        // Pre-build owned data for each entry to avoid lifetime issues
+        let entries: Vec<_> = chat_entries
+            .iter()
+            .map(|(trade, preview, last_ts)| {
+                let nick = if is_disputes {
+                    "Admin / Solver".to_string()
+                } else {
+                    trade
+                        .counterparty_pubkey
+                        .as_deref()
+                        .map(super::mostro::nickname_from_pubkey)
+                        .unwrap_or_else(|| "Peer".to_string())
+                };
+                let order_short = trade.id[..8.min(trade.id.len())].to_string();
+                let action_label = match trade.order_type {
+                    OrderType::Buy => localized_format!(
+                        "You are buying from {}",
+                        "Usted está comprando de {}",
+                        nick
+                    ),
+                    OrderType::Sell => localized_format!(
+                        "You are selling to {}",
+                        "Usted está vendiendo a {}",
+                        nick
+                    ),
+                };
+                let time_str = {
+                    let dt = chrono::DateTime::from_timestamp(*last_ts as i64, 0)
+                        .unwrap_or_default()
+                        .with_timezone(&chrono::Local);
+                    let today = chrono::Local::now().date_naive();
+                    if dt.date_naive() == today {
+                        dt.format("%H:%M").to_string()
+                    } else {
+                        dt.format(&coincube_ui::locale::date_pattern("%b %d, %H:%M", &dt))
+                            .to_string()
+                    }
+                };
+                let subtitle = format!("{} · {}", action_label, order_short);
+                (trade.id.clone(), nick, subtitle, preview.clone(), time_str)
+            })
+            .collect();
+
+        let mut list_col = column![].spacing(8).width(Length::Fill);
+        for (trade_id, nick, subtitle, preview, time_str) in entries {
+            let entry_content = card::simple(
+                row![
+                    column![
+                        p1_bold(nick),
+                        p2_regular(subtitle).style(theme::text::secondary),
+                        p2_regular(preview).style(theme::text::secondary),
+                    ]
+                    .spacing(4)
+                    .width(Length::Fill),
+                    caption(time_str).style(theme::text::secondary),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            )
+            .width(Length::Fill);
+
+            let on_press = if is_disputes {
+                p2p(P2PMessage::OpenDisputeChatForTrade(trade_id))
+            } else {
+                p2p(P2PMessage::OpenChatForTrade(trade_id))
+            };
+
+            let entry = iced::widget::button(entry_content)
+                .on_press(on_press)
+                .width(Length::Fill)
+                .style(theme::button::transparent);
+
+            list_col = list_col.push(entry);
+        }
+        list_col.into()
+    }
+
+    fn order_book_page<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+    ) -> Element<'a, view::Message> {
+        // If an order is selected, show its detail view
+        // Built separately (not inside dashboard's scrollable) to avoid
+        // first-click issues when switching from the order list.
+        // The page head is pinned above that scrollable, as the
+        // headed dashboards pin theirs.
+        if let Some(ref selected_id) = self.selected_order {
+            if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
+                let take_state = if self.taking_order {
+                    Some(TakeOrderState {
+                        amount: &self.take_order_amount,
+                        invoice: &self.take_order_invoice,
+                        submitting: self.take_order_submitting,
+                    })
+                } else {
+                    None
+                };
+                let detail_content = iced::widget::scrollable(
+                    view::page(
+                        column![
+                            p2_regular("View order information")
+                                .style(theme::text::secondary)
+                                .width(Length::Fill),
+                            container(order_detail(order, take_state)).width(Length::Fill),
+                        ]
+                        .spacing(16)
+                        .width(Length::Fill),
+                        PageWidth::Reading,
+                    )
+                    .vertical(BODY_TOP, PAGE_BOTTOM),
+                );
+
+                return view::dashboard_shell(
+                    menu,
+                    cache,
+                    iced::widget::Column::new()
+                        .push(view::warn(None))
+                        .push(view::page_head(cache, "Order Details").view(view::page_gutter))
+                        .push(
+                            container(detail_content)
+                                .width(Length::Fill)
+                                .style(theme::container::background)
+                                .height(Length::Fill),
+                        )
+                        .width(Length::Fill),
+                );
+            }
+        }
+
+        // --- Header ---
+        // The title is in the page head.
+        let mut overview_col =
+            column![
+                p2_regular("Browse and take P2P trading orders from the Mostro network")
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
+            ]
+            .spacing(16);
+
+        // Stream error banner
+        if let Some(ref err) = self.stream_error {
+            overview_col = overview_col.push(
+                container(p2_regular(err.as_str()).style(theme::text::warning)).width(Length::Fill),
+            );
+        }
+
+        overview_col = overview_col.push(self.book_view());
+        overview_col = overview_col.push(Space::new().height(Length::Fixed(40.0)));
+
+        let overview_content: Element<'_, view::Message> = view::dashboard_headed(
+            menu,
+            cache,
+            view::page_head(cache, "P2P Order Book"),
+            overview_col,
+        );
+
+        // Show payment invoice modal if seller took a buy order
+        if let Some((ref oid, ref inv, amt, ref qr_data)) = self.pending_payment_invoice {
+            coincube_ui::widget::modal::Modal::new(
+                overview_content,
+                self.payment_invoice_modal_view(oid, inv, amt, qr_data),
+            )
+            .on_blur(Some(view::Message::P2P(P2PMessage::DismissPaymentInvoice)))
+            .into()
+        } else {
+            overview_content
+        }
+    }
+
+    fn my_trades_page<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+    ) -> Element<'a, view::Message> {
+        // If a trade is selected, show its detail or chat view
+        if let Some(ref selected_id) = self.selected_trade {
+            if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
+                if self.active_chat == ActiveChat::Peer {
+                    // Separate chat view — built without dashboard()
+                    // to avoid nested scrollables.
+                    return self.peer_trade_chat_page(menu, cache, trade);
+                } else if self.active_chat == ActiveChat::Dispute {
+                    // Dispute chat view
+                    return self.dispute_trade_chat_page(
+                        menu,
+                        cache,
+                        trade,
+                        P2PMessage::CloseDisputeChat,
+                        12,
+                    );
+                }
+                return view::dashboard_headed(
+                    menu,
+                    cache,
+                    view::page_head(cache, "Trade Details"),
+                    column![
+                        p2_regular("View trade information and take actions")
+                            .style(theme::text::secondary)
+                            .width(Length::Fill),
+                        container(self.trade_detail_view(trade)).width(Length::Fill),
+                        Space::new().height(Length::Fixed(40.0)),
+                    ]
+                    .spacing(16),
+                );
+            }
+        }
+
+        let filtered = self.filtered_trades();
+        let shown_count = filtered.len();
+
+        view::dashboard_headed(
+            menu,
+            cache,
+            view::page_head(cache, "My Trades"),
+            column![
+                p2_regular("Your active and completed P2P trades")
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
+                // Trade status filter
+                container(trade_status_filter(&self.trade_filters, shown_count,))
+                    .width(Length::Fill),
+                // Trade list
+                if filtered.is_empty() {
+                    Element::from(
+                        container(p1_bold("No trades yet"))
+                            .padding(40)
+                            .align_x(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                } else {
+                    Element::from(
+                        column(
+                            filtered.iter().map(|trade| {
+                                trade_card(trade, cache.balance_amounts_masked()).into()
+                            }),
+                        )
+                        .spacing(16)
+                        .width(Length::Fill),
+                    )
+                },
+                Space::new().height(Length::Fixed(40.0)),
+            ]
+            .spacing(16),
+        )
+    }
+
+    fn chat_page<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        // If a trade is selected from the chat list, show the chat view
+        if let Some(ref selected_id) = self.chat_selected_trade {
+            if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
+                if self.active_chat == ActiveChat::Peer {
+                    return self.peer_trade_chat_page(menu, cache, trade);
+                } else if self.active_chat == ActiveChat::Dispute {
+                    return self.dispute_trade_chat_page(
+                        menu,
+                        cache,
+                        trade,
+                        P2PMessage::CloseChat,
+                        [16, 20],
+                    );
+                }
+            }
+        }
+
+        // Default: show chat list
+        view::dashboard_headed(
+            menu,
+            cache,
+            view::page_head(cache, "Chat"),
+            column![
+                p2_regular("Your P2P trade conversations")
+                    .style(theme::text::secondary)
+                    .width(Length::Fill),
+                container(self.chat_list_view()).width(Length::Fill),
+                Space::new().height(Length::Fixed(40.0)),
+            ]
+            .spacing(16),
+        )
+    }
+
+    fn peer_trade_chat_page<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+        trade: &'a P2PTrade,
+    ) -> Element<'a, view::Message> {
+        let order_short = &trade.id[..8.min(trade.id.len())];
+        let trade_type_label = match trade.order_type {
+            OrderType::Buy => "BUY",
+            OrderType::Sell => "SELL",
+        };
+        let peer_nick = trade
+            .counterparty_pubkey
+            .as_deref()
+            .map(super::mostro::nickname_from_pubkey)
+            .unwrap_or_else(|| "Peer".to_string());
+
+        Self::trade_chat_shell(
+            menu,
+            cache,
+            P2PMessage::CloseChat,
+            peer_nick,
+            || format!("{} Order {}", trade_type_label, order_short),
+            [16, 20],
+            || self.chat_view(trade),
+        )
+    }
+
+    fn dispute_trade_chat_page<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+        trade: &'a P2PTrade,
+        back: P2PMessage,
+        padding: impl Into<iced::Padding>,
+    ) -> Element<'a, view::Message> {
+        let order_short = &trade.id[..8.min(trade.id.len())];
+        Self::trade_chat_shell(
+            menu,
+            cache,
+            back,
+            "Dispute Chat",
+            || format!("Order {}", order_short),
+            padding,
+            || self.dispute_chat_view(trade),
+        )
+    }
+
+    fn trade_chat_shell<'a>(
+        menu: &'a Menu,
+        cache: &'a Cache,
+        back: P2PMessage,
+        title: impl iced::widget::text::IntoFragment<'a>,
+        subtitle: impl FnOnce() -> String,
+        padding: impl Into<iced::Padding>,
+        content: impl FnOnce() -> Element<'a, view::Message>,
+    ) -> Element<'a, view::Message> {
+        let header = container(
+            row![
+                button::secondary(Some(icon::previous_icon()), "Back",)
+                    .on_press(view::Message::P2P(back)),
+                Space::new().width(Length::Fill),
+                column![
+                    p1_bold(title),
+                    p2_regular(subtitle()).style(theme::text::secondary),
+                ]
+                .spacing(2)
+                .align_x(iced::alignment::Horizontal::Center),
+                Space::new().width(Length::Fill),
+                Space::new().width(Length::Fixed(80.0)),
+            ]
+            .align_y(iced::alignment::Vertical::Center),
+        )
+        .padding(padding)
+        .width(Length::Fill)
+        .style(theme::container::foreground);
+
+        view::dashboard_shell(
+            menu,
+            cache,
+            iced::widget::Column::new()
+                .push(view::warn(None))
+                .push(header)
+                .push(
+                    container(content())
+                        .padding(20)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(theme::container::background),
+                )
+                .width(Length::Fill),
+        )
+    }
+
+    fn add_selected_payment_method(&mut self, v: String) {
+        if !self.create_payment_methods.contains(&v) {
+            self.create_payment_methods.push(v);
+            self.rebuild_payment_method_combo();
+        }
+    }
+
+    fn add_custom_payment_method(&mut self) {
+        let custom = self.create_custom_payment_method.value.trim().to_string();
+        if !custom.is_empty() && !self.create_payment_methods.contains(&custom) {
+            self.create_payment_methods.push(custom);
+            self.create_custom_payment_method = Default::default();
+            self.rebuild_payment_method_combo();
+        }
+    }
+
+    fn set_range_order_mode(&mut self, on: bool) {
+        self.range_order_mode = on;
+        if on {
+            // Range orders only support market pricing.
+            self.create_pricing_mode = PricingMode::Market;
+        } else {
+            self.create_max_amount = Default::default();
+        }
+    }
+
+    fn use_registered_lightning_address(&mut self, cache: &Cache) {
+        self.editing_lightning_address = false;
+        self.lightning_address_user_edited = false;
+        self.create_lightning_address = Default::default();
+        if let Some(addr) = cache.lightning_address.as_ref() {
+            self.create_lightning_address.value = addr.clone();
+        }
+    }
+
+    fn request_order_confirmation(&mut self) -> Option<Task<Message>> {
+        self.submit_attempted = true;
+        // Hard-block: never escrow against a coordinator whose
+        // network doesn't match the wallet's (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.order_submit_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Some(Task::none());
+        }
+        // Double-check validation before showing confirmation
+        if self.validate_order_form().has_errors() {
+            return Some(Task::none());
+        }
+        self.order_submit_error = None;
+        self.confirming_order = true;
+        None
+    }
+
+    fn confirm_order_submission(&mut self) -> Task<Message> {
+        // Hard-block chokepoint: refuse to escrow on a
+        // coordinator/network mismatch (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.confirming_order = false;
+            self.order_submit_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Task::none();
+        }
+        // Final validation gate before sending to network
+        if self.validate_order_form().has_errors() {
+            self.confirming_order = false;
+            return Task::none();
+        }
+        self.confirming_order = false;
+        self.order_submitting = true;
+        self.order_submit_error = None;
+
+        let form = self.build_order_form();
+
+        Task::perform(super::mostro::submit_order(form), |result| {
+            Message::View(view::Message::P2P(P2PMessage::OrderSubmitResult(result)))
+        })
+    }
+
+    fn apply_coordinator_limits(
+        &mut self,
+        currencies: Vec<String>,
+        min_order_sats: Option<u64>,
+        max_order_sats: Option<u64>,
+    ) {
+        if !currencies.is_empty() {
+            self.node_currencies = currencies;
+            self.rebuild_currency_combo();
+            // Reset selected currency if no longer supported by this node
+            if !self.node_currencies.contains(&self.create_fiat_currency) {
+                self.create_fiat_currency = self
+                    .node_currencies
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "USD".to_string());
+                self.create_payment_methods.clear();
+                self.rebuild_payment_method_combo();
+            }
+            // Reset filter currency if no longer supported (unless "All")
+            if self.filter_currency != "All"
+                && !self.node_currencies.contains(&self.filter_currency)
+            {
+                self.filter_currency = "All".to_string();
+                self.filter_deselected_payment_methods.clear();
+                self.recompute_available_payment_methods();
+            }
+        }
+        self.node_min_order_sats = min_order_sats;
+        self.node_max_order_sats = max_order_sats;
+    }
+
+    fn apply_order_book_update(&mut self, mut orders: Vec<P2POrder>) {
+        // Patch is_mine for orders we created locally (handles race where
+        // the subscription delivers the event before the session is persisted)
+        for order in &mut orders {
+            if self.my_created_order_ids.contains(&order.id) {
+                order.is_mine = true;
+            }
+        }
+        self.orders = orders;
+        self.recompute_available_payment_methods();
+        // Clear transient stream/relay errors — data is flowing successfully.
+        // Preserve restore failure messages (they require user attention).
+        if self
+            .stream_error
+            .as_ref()
+            .is_none_or(|e| !e.contains("restore"))
+        {
+            self.stream_error = None;
+        }
+    }
+
+    fn apply_trade_list_update(&mut self, trades: Vec<P2PTrade>) {
+        // Mostro can drop a session entirely (e.g. after the
+        // hold-invoice timer expires it cancels the order and
+        // eventually stops surfacing it). For trades we just
+        // paid out of Spark, that would leave the user with a
+        // Pending Spark HTLC and no trade record to explain
+        // it. Carry forward any Spark-funded trade that the
+        // new payload doesn't include — preserves whatever
+        // status it last had (typically Canceled/Expired) so
+        // the user can still find it in My Trades.
+        let mut retained: Vec<P2PTrade> = self
+            .trades
+            .iter()
+            .filter(|t| {
+                self.spark_funded_order_ids.contains(&t.id) && !trades.iter().any(|n| n.id == t.id)
+            })
+            .cloned()
+            .collect();
+        self.trades = trades;
+        self.trades.append(&mut retained);
+        self.refresh_chat_history_cache();
+        // Recompute QR cache if the selected trade now has a hold invoice
+        if let Some(ref sel_id) = self.selected_trade {
+            if self.hold_invoice_qr.is_none() {
+                self.hold_invoice_qr = self
+                    .trades
+                    .iter()
+                    .find(|t| t.id == *sel_id)
+                    .and_then(|t| t.hold_invoice.as_ref())
+                    .and_then(|inv| qr_code::Data::new(inv).ok());
+            }
+        }
+    }
+
+    fn toggle_trade_filter(&mut self, filter: TradeFilter) {
+        if filter == TradeFilter::All {
+            // "All" is exclusive — toggle it alone
+            if self.trade_filters.contains(&TradeFilter::All) {
+                // Already showing all, do nothing
+            } else {
+                self.trade_filters = vec![TradeFilter::All];
+            }
+        } else if self.trade_filters.contains(&filter) {
+            // Deselect this filter
+            self.trade_filters.retain(|f| f != &filter);
+            if self.trade_filters.is_empty() {
+                self.trade_filters = vec![TradeFilter::All];
+            }
+        } else {
+            // Select this filter, remove "All" if present
+            self.trade_filters.retain(|f| f != &TradeFilter::All);
+            self.trade_filters.push(filter);
+        }
+    }
+
+    fn focus_selected_order(&mut self, id: String) -> Option<Task<Message>> {
+        if let Some(focus_id) = self.select_order_for_detail(id) {
+            return Some(Task::done(Message::View(view::Message::FocusAction(
+                focus_id,
+            ))));
+        }
+        None
+    }
+
+    fn restore_order_book_focus(&mut self) -> Option<Task<Message>> {
+        if let Some(return_to) = self.close_order_detail_view() {
+            return Some(Task::done(Message::View(view::Message::FocusAction(
+                return_to,
+            ))));
+        }
+        None
+    }
+
+    fn cancel_order(&mut self, order_id: String) -> Task<Message> {
+        // Hard-block: cancel is a coordinator RPC too, so keep it off
+        // a wrong-network coordinator (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Task::none();
+        }
+        self.dispatch_order_cancellation(order_id)
+    }
+
+    fn finish_order_cancellation(
+        &mut self,
+        order_id: String,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                if self.selected_order.as_deref() == Some(order_id.as_str()) {
+                    self.selected_order = None;
+                }
+                if self
+                    .pending_payment_invoice
+                    .as_ref()
+                    .is_some_and(|(id, ..)| *id == order_id)
+                {
+                    self.pending_payment_invoice = None;
+                    self.invoice_copied = false;
+                }
+                // Mirror the modal-dismissal reset used by
+                // `DismissPaymentInvoice` and `SparkPaySent` so a
+                // subsequent SelectTrade/TakeOrderResult doesn't
+                // inherit stale Spark-pay state — but only when the
+                // Spark session belongs to the canceled order. A
+                // payment in flight for another trade must keep its
+                // session, or its result would be dropped as stale.
+                if spark_session_owned_by(self.spark_pay_session_id.as_deref(), &order_id) {
+                    self.spark_balance_sat = None;
+                    self.spark_pay_amount_sat = None;
+                    self.spark_pay_attempt = None;
+                    self.spark_pay_phase = SparkPayPhase::Idle;
+                    self.show_qr_fallback = false;
+                    self.spark_pay_session_id = None;
+                }
+                Task::done(Message::View(view::Message::ShowSuccess(
+                    "Order canceled".to_string(),
+                )))
+            }
+            Err(e) => Task::done(Message::View(view::Message::ShowError(format!(
+                "Cancel failed: {}",
+                e
+            )))),
+        }
+    }
+
+    fn finish_order_submission(
+        &mut self,
+        result: Result<super::mostro::OrderSubmitResponse, String>,
+    ) -> Option<Task<Message>> {
+        self.order_submitting = false;
+        match result {
+            Ok(resp) => {
+                let super::mostro::OrderSubmitResponse::Success { order_id } = resp;
+                tracing::info!("Order created: {}", order_id);
+                // Track this order ID so we always mark it as ours, even if
+                // the subscription delivered the event before the session was saved.
+                self.my_created_order_ids.insert(order_id.clone());
+                if let Some(order) = self.orders.iter_mut().find(|o| o.id == order_id) {
+                    order.is_mine = true;
+                }
+                self.clear_create_form();
+                return Some(Task::done(Message::View(view::Message::ShowSuccess(
+                    format!("Order created successfully ({})", order_id),
+                ))));
+            }
+            Err(e) => {
+                self.order_submit_error = Some(e);
+            }
+        }
+        None
+    }
+
+    fn add_coordinator_relay(&mut self) {
+        let url = self.new_relay_input.value.trim().to_string();
+        let parsed = nostr_sdk::Url::parse(&url);
+        let scheme_ok = url.starts_with("wss://") || url.starts_with("ws://");
+        let has_host = parsed.as_ref().ok().and_then(|u| u.host()).is_some();
+        if !scheme_ok {
+            self.new_relay_input.valid = false;
+            self.new_relay_input.warning = Some("URL must start with wss:// or ws://");
+        } else if !has_host {
+            self.new_relay_input.valid = false;
+            self.new_relay_input.warning = Some("Invalid relay URL — missing host");
+        } else if self
+            .mostro_config
+            .settings_relays(self.network)
+            .contains(&url)
+        {
+            self.new_relay_input.valid = false;
+            self.new_relay_input.warning = Some("Relay already exists");
+        } else {
+            let mut trial = self.mostro_config.clone();
+            trial.settings_relays_mut(self.network).push(url);
+            match save_mostro_config(&trial) {
+                Ok(()) => {
+                    self.mostro_config = trial;
+                    self.new_relay_input = Default::default();
+                    self.mostro_config_error = None;
+                }
+                Err(_) => {
+                    self.new_relay_input.valid = false;
+                    self.new_relay_input.warning = Some("Failed to save config");
+                }
+            }
+        }
+    }
+
+    fn remove_coordinator_relay(&mut self, url: String) {
+        let mut trial = self.mostro_config.clone();
+        trial
+            .settings_relays_mut(self.network)
+            .retain(|r| r != &url);
+        trial.ensure_defaults();
+        match save_mostro_config(&trial) {
+            Ok(()) => {
+                self.mostro_config = trial;
+                self.mostro_config_error = None;
+            }
+            Err(_) => {
+                self.mostro_config_error = Some("Failed to save config");
+            }
+        }
+    }
+
+    fn add_coordinator_node(&mut self) {
+        let name = self.new_node_name_input.value.trim().to_string();
+        let pubkey = self.new_node_pubkey_input.value.trim().to_string();
+        if name.is_empty() {
+            self.new_node_name_input.valid = false;
+            self.new_node_name_input.warning = Some("Node name is required");
+        } else if nostr_sdk::PublicKey::from_hex(&pubkey).is_err() {
+            self.new_node_pubkey_input.valid = false;
+            self.new_node_pubkey_input.warning = Some("Invalid hex pubkey");
+        } else if self
+            .mostro_config
+            .nodes
+            .iter()
+            .any(|n| n.pubkey_hex == pubkey)
+        {
+            self.new_node_pubkey_input.valid = false;
+            self.new_node_pubkey_input.warning = Some("Node with this pubkey already exists");
+        } else {
+            let mut trial = self.mostro_config.clone();
+            trial.nodes.push(MostroNode {
+                name,
+                pubkey_hex: pubkey,
+                network: if self.new_node_is_test {
+                    NetworkKind::Test
+                } else {
+                    NetworkKind::Mainnet
+                },
+            });
+            match save_mostro_config(&trial) {
+                Ok(()) => {
+                    self.mostro_config = trial;
+                    self.new_node_name_input = Default::default();
+                    self.new_node_pubkey_input = Default::default();
+                    self.new_node_is_test = false;
+                    self.mostro_config_error = None;
+                }
+                Err(_) => {
+                    self.new_node_pubkey_input.valid = false;
+                    self.new_node_pubkey_input.warning = Some("Failed to save config");
+                }
+            }
+        }
+    }
+
+    fn remove_coordinator_node(&mut self, pubkey: String) {
+        let mut trial = self.mostro_config.clone();
+        trial.nodes.retain(|n| n.pubkey_hex != pubkey);
+        trial.ensure_defaults();
+        // `ensure_defaults` reselects `nodes[0]` network-blind (often
+        // the mainnet coordinator); re-pin to a node that matches this
+        // cube's network so removing the active test node doesn't leave
+        // a mainnet selection (mismatch hard-block) when another test
+        // node is still available.
+        trial.select_default_for(self.network);
+        match save_mostro_config(&trial) {
+            Ok(()) => {
+                self.mostro_config = trial;
+                self.mostro_config_error = None;
+            }
+            Err(_) => {
+                self.mostro_config_error = Some("Failed to save config");
+            }
+        }
+    }
+
+    fn select_coordinator_node(&mut self, pubkey: String) {
+        let mut trial = self.mostro_config.clone();
+        trial.active_node_pubkey = pubkey;
+        match save_mostro_config(&trial) {
+            Ok(()) => {
+                self.mostro_config = trial;
+                self.mostro_config_error = None;
+            }
+            Err(_) => {
+                self.mostro_config_error = Some("Failed to save config");
+            }
+        }
+    }
+
+    fn start_taking_order(
+        &mut self,
+        daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Option<Task<Message>> {
+        // Hard-block: don't open the take flow when the active
+        // coordinator's network doesn't match the wallet (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Some(Task::none());
+        }
+        // Check if this order needs user input before confirming.
+        // Non-range orders where user is selling don't need any input,
+        // so skip straight to confirmation to avoid an invisible intermediate state.
+        let needs_input = self
+            .selected_order
+            .as_ref()
+            .and_then(|id| self.orders.iter().find(|o| o.id == *id))
+            .map(|order| {
+                let is_buying = order.order_type == OrderType::Sell;
+                order.is_range_order() || is_buying
+            })
+            .unwrap_or(true);
+
+        let first_input = self.first_take_input_id();
+
+        if needs_input {
+            self.taking_order = true;
+            self.take_order_amount = Default::default();
+            self.take_order_invoice = Default::default();
+            self.take_order_submitting = false;
+            if let Some(first_input) = first_input {
+                return Some(Task::done(Message::View(view::Message::FocusAction(
+                    first_input,
+                ))));
+            }
+        } else {
+            // No input needed — proceed directly
+            self.taking_order = true;
+            return Some(self.update(
+                daemon,
+                cache,
+                Message::View(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
+            ));
+        }
+        None
+    }
+
+    fn confirm_taking_order(&mut self) -> Option<Task<Message>> {
+        // Hard-block chokepoint: refuse to escrow on a
+        // coordinator/network mismatch (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Some(Task::none());
+        }
+        if let Some(ref selected_id) = self.selected_order {
+            if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
+                let amount = match self.take_order_amount(order) {
+                    Ok(amount) => amount,
+                    Err(()) => return Some(Task::none()),
+                };
+
+                self.take_order_submitting = true;
+                let invoice = {
+                    let v = self.take_order_invoice.value.trim().to_string();
+                    if v.is_empty() {
+                        None
+                    } else {
+                        Some(v)
+                    }
+                };
+
+                let data = super::mostro::TakeOrderData {
+                    order_id: order.id.clone(),
+                    order_type: order.order_type.clone(),
+                    cube_name: self.cube_name(),
+                    mnemonic: self.mnemonic.clone(),
+                    amount,
+                    lightning_invoice: invoice,
+                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                    relay_urls: self.resolved_coordinator().relays,
+                    fiat_code: Some(order.fiat_currency.clone()),
+                    fiat_amount: Some(amount.unwrap_or(order.fiat_amount as i64)),
+                    payment_method: Some(order.payment_methods.join(",")),
+                    premium: order.premium_percent.map(|p| p.trunc() as i64),
+                    sats_amount: order.sats_amount.and_then(|s| i64::try_from(s).ok()),
+                    min_amount: order.min_amount.map(|m| m.trunc() as i64),
+                    max_amount: order.max_amount.map(|m| m.trunc() as i64),
+                };
+
+                return Some(Task::perform(super::mostro::take_order(data), |result| {
+                    Message::View(view::Message::P2P(P2PMessage::TakeOrderResult(result)))
+                }));
+            }
+        }
+        self.take_order_submitting = false;
+        None
+    }
+
+    fn finish_taking_order(
+        &mut self,
+        result: Result<super::mostro::TakeOrderResponse, String>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        self.take_order_submitting = false;
+        self.taking_order = false;
+        match result {
+            Ok(super::mostro::TakeOrderResponse::Success { order_id, .. }) => {
+                tracing::info!("Order taken: {}", order_id);
+
+                self.selected_order = None;
+                Task::done(Message::View(view::Message::ShowSuccess(format!(
+                    "Order taken successfully ({})",
+                    order_id
+                ))))
+            }
+            Ok(super::mostro::TakeOrderResponse::PaymentRequired {
+                order_id,
+                invoice,
+                amount_sats,
+                ..
+            }) => {
+                tracing::info!("Order taken, payment required: {}", order_id);
+
+                self.selected_order = None;
+                // Reset Spark-pay state for the new modal session.
+                self.spark_balance_sat = None;
+                self.spark_pay_amount_sat = None;
+                self.spark_pay_attempt = None;
+                self.spark_pay_phase = SparkPayPhase::Idle;
+                self.show_qr_fallback = false;
+                self.spark_pay_session_id = Some(order_id.clone());
+                match qr_code::Data::new(&invoice) {
+                    Ok(qr_data) => {
+                        self.pending_payment_invoice =
+                            Some((order_id.clone(), invoice.clone(), amount_sats, qr_data));
+                        // Kick off a balance lookup and an
+                        // invoice parse in parallel. The
+                        // modal renders QR-only until the
+                        // balance lands; the parsed amount
+                        // populates the Spark-pay summary.
+                        let balance = self.spark_balance_fetch_task(cache, order_id.clone());
+                        let parse =
+                            self.spark_parse_invoice_task(order_id.clone(), invoice.clone());
+                        match (balance, parse) {
+                            (Some(b), Some(p)) => Task::batch([b, p]),
+                            (Some(b), None) => b,
+                            (None, Some(p)) => p,
+                            (None, None) => Task::none(),
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to generate QR code: {e}");
+                        Task::done(Message::View(view::Message::ShowError(
+                            "Invoice too long for QR code display".to_string(),
+                        )))
+                    }
+                }
+            }
+            Err(e) => Task::done(Message::View(view::Message::ShowError(e))),
+        }
+    }
+
+    fn dismiss_payment_invoice(&mut self) -> Option<Task<Message>> {
+        // Same race-protection as `CancelPaymentInvoice` / `CancelTrade`:
+        // an on_blur during an in-flight prepare/send would drop the
+        // session id, causing the eventual SparkPaySent to be discarded
+        // as stale and leaving the user unaware the payment succeeded.
+        if matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending
+        ) {
+            return Some(Task::none());
+        }
+        self.pending_payment_invoice = None;
+        self.invoice_copied = false;
+        self.spark_balance_sat = None;
+        self.spark_pay_amount_sat = None;
+        self.spark_pay_attempt = None;
+        self.spark_pay_phase = SparkPayPhase::Idle;
+        self.show_qr_fallback = false;
+        self.spark_pay_session_id = None;
+        None
+    }
+
+    fn apply_spark_payment_balance(
+        &mut self,
+        order_id: String,
+        balance_sat: u64,
+    ) -> Option<Task<Message>> {
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::info!(
+                target: "p2p::spark_pay",
+                "Ignoring stale SparkBalanceLoaded(balance={}) for order {} \
+                 (current session={:?})",
+                balance_sat,
+                order_id,
+                self.spark_pay_session_id,
+            );
+            return Some(Task::none());
+        }
+        tracing::info!(
+            target: "p2p::spark_pay",
+            "SparkBalanceLoaded for order {}: balance={} sats",
+            order_id,
+            balance_sat,
+        );
+        self.spark_balance_sat = Some(balance_sat);
+        None
+    }
+
+    fn record_spark_balance_failure(
+        &mut self,
+        order_id: String,
+        err: String,
+    ) -> Option<Task<Message>> {
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::info!(
+                target: "p2p::spark_pay",
+                "Ignoring stale SparkBalanceFailed for order {} (err={}, current session={:?})",
+                order_id,
+                err,
+                self.spark_pay_session_id,
+            );
+            return Some(Task::none());
+        }
+        tracing::warn!(
+            target: "p2p::spark_pay",
+            "Spark balance lookup failed for order {}: {}",
+            order_id,
+            err,
+        );
+        self.spark_balance_sat = None;
+        None
+    }
+
+    fn apply_spark_invoice_amount(
+        &mut self,
+        order_id: String,
+        amount_sat: Option<u64>,
+    ) -> Option<Task<Message>> {
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::debug!(
+                target: "p2p::spark_pay",
+                "Ignoring stale SparkInvoiceAmountParsed for order {} (current session={:?})",
+                order_id,
+                self.spark_pay_session_id,
+            );
+            return Some(Task::none());
+        }
+        tracing::info!(
+            target: "p2p::spark_pay",
+            "SparkInvoiceAmountParsed for order {}: amount_sat={:?}",
+            order_id,
+            amount_sat,
+        );
+        self.spark_pay_amount_sat = amount_sat;
+        None
+    }
+
+    fn prepare_spark_payment(&mut self, order_id: String, invoice: String) -> Task<Message> {
+        // Only honor "Pay from Spark" for the currently active
+        // session. A button press that races with a session
+        // change (modal dismiss + new take) would otherwise
+        // kick off `prepare_send` against a freshly-opened
+        // modal's invoice — using stale view state.
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::debug!("Ignoring stale SparkPayPrepare for order {}", order_id);
+            return Task::none();
+        }
+        let Some(spark) = self.spark_backend.clone() else {
+            self.spark_pay_phase =
+                SparkPayPhase::Error("Spark wallet is not available.".to_string());
+            return Task::none();
+        };
+        self.spark_pay_phase = SparkPayPhase::Preparing;
+        // Track this prepare attempt so a transient failure
+        // can be auto-retried once without bothering the user.
+        self.spark_pay_attempt = Some((order_id.clone(), invoice.clone(), false));
+        let session_id = order_id;
+        Task::perform(
+            async move { spark.prepare_send(invoice, None).await },
+            move |result| match result {
+                Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPayPrepared {
+                    order_id: session_id.clone(),
+                    ok,
+                })),
+                Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed {
+                    order_id: session_id.clone(),
+                    err: e.to_string(),
+                })),
+            },
+        )
+    }
+
+    fn apply_prepared_spark_payment(
+        &mut self,
+        order_id: String,
+        ok: coincube_spark_protocol::PrepareSendOk,
+    ) -> Option<Task<Message>> {
+        // Reject stale prepares so a `SparkPayConfirm` in a
+        // fresh session can't reuse a previous session's
+        // single-use `handle`.
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::debug!("Ignoring stale SparkPayPrepared for order {}", order_id);
+            return Some(Task::none());
+        }
+        // We're past the prepare phase — clear the attempt so a
+        // later `send_payment` failure can't satisfy the
+        // `retry_in_prepare_phase` check and re-fire `prepare_send`.
+        // A timed-out send may have actually delivered the
+        // payment; re-preparing risks double-paying the hold invoice.
+        self.spark_pay_attempt = None;
+        self.spark_pay_phase = SparkPayPhase::Prepared(ok);
+        None
+    }
+
+    fn confirm_spark_payment(&mut self) -> Task<Message> {
+        let Some(spark) = self.spark_backend.clone() else {
+            self.spark_pay_phase =
+                SparkPayPhase::Error("Spark wallet is not available.".to_string());
+            return Task::none();
+        };
+        let SparkPayPhase::Prepared(ref prepared) = self.spark_pay_phase else {
+            return Task::none();
+        };
+        let Some(session_id) = self.spark_pay_session_id.clone() else {
+            // No active session — the view shouldn't expose
+            // this button here, but bail rather than fire an
+            // unattributed send.
+            return Task::none();
+        };
+        let handle = prepared.handle.clone();
+        self.spark_pay_phase = SparkPayPhase::Sending;
+        Task::perform(
+            async move { spark.send_payment(handle, None).await },
+            move |result| match result {
+                Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPaySent {
+                    order_id: session_id.clone(),
+                    ok,
+                })),
+                Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed {
+                    order_id: session_id.clone(),
+                    err: e.to_string(),
+                })),
+            },
+        )
+    }
+
+    fn finish_spark_payment(
+        &mut self,
+        order_id: String,
+        ok: coincube_spark_protocol::SendPaymentOk,
+    ) -> Option<Task<Message>> {
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::warn!(
+                "Ignoring SparkPaySent for old session {} (payment id={}, \
+                 amount={}, fee={}) — the active session has moved on. \
+                 Mostro will receive its hold-invoice settlement via the \
+                 normal DM channel regardless.",
+                order_id,
+                ok.payment_id,
+                ok.amount_sat,
+                ok.fee_sat
+            );
+            return Some(Task::none());
+        }
+        tracing::info!(
+            "Spark payment for hold invoice succeeded: id={}, amount={}, fee={}",
+            ok.payment_id,
+            ok.amount_sat,
+            ok.fee_sat
+        );
+        // Remember that this order's hold invoice was paid via
+        // Spark. If Mostro later cancels/expires it (e.g. our
+        // payment was too late), the trade would otherwise
+        // disappear from My Trades while the Lightning HTLC
+        // is still settling. Keeping the id in this set
+        // overrides the default "hide canceled creator
+        // trades" filter so the user can see the trade
+        // resolve to Success or refund.
+        self.spark_funded_order_ids.insert(order_id);
+        self.pending_payment_invoice = None;
+        self.invoice_copied = false;
+        self.spark_balance_sat = None;
+        self.spark_pay_amount_sat = None;
+        self.spark_pay_attempt = None;
+        self.spark_pay_phase = SparkPayPhase::Idle;
+        self.show_qr_fallback = false;
+        self.spark_pay_session_id = None;
+        None
+    }
+
+    fn handle_spark_payment_failure(
+        &mut self,
+        order_id: String,
+        err: String,
+    ) -> Option<Task<Message>> {
+        if self.spark_pay_session_id.as_deref() != Some(&order_id) {
+            tracing::debug!(
+                "Ignoring stale SparkPayFailed for order {}: {}",
+                order_id,
+                err
+            );
+            return Some(Task::none());
+        }
+        // Auto-retry once when a `prepare_send` blew up on a
+        // transient error (LSP TLS close_notify, network EOF,
+        // timeout). These resolve immediately on a second try
+        // and were surfacing as a scary "Try again" prompt
+        // even though the underlying state was recoverable.
+        // We only retry the prepare path — send_payment
+        // failures consume the prepared handle and can't be
+        // retried with the same data.
+        let retry_in_prepare_phase = matches!(
+            self.spark_pay_attempt.as_ref(),
+            Some((sid, _, false)) if sid == &order_id,
+        );
+        if retry_in_prepare_phase && is_transient_spark_error(&err) {
+            if let Some(spark) = self.spark_backend.clone() {
+                let invoice = self
+                    .spark_pay_attempt
+                    .as_ref()
+                    .map(|(_, inv, _)| inv.clone())
+                    .expect("retry_in_prepare_phase implies Some attempt");
+                if let Some(attempt) = self.spark_pay_attempt.as_mut() {
+                    attempt.2 = true;
+                }
+                tracing::info!(
+                    target: "p2p::spark_pay",
+                    "Auto-retrying Spark prepare for {} after transient error: {}",
+                    order_id,
+                    err,
+                );
+                // Stay in Preparing so the spinner stays up —
+                // the user doesn't see the retry happen.
+                let session_id = order_id;
+                return Some(Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                        spark.prepare_send(invoice, None).await
+                    },
+                    move |result| match result {
+                        Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPayPrepared {
+                            order_id: session_id.clone(),
+                            ok,
+                        })),
+                        Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed {
+                            order_id: session_id.clone(),
+                            err: e.to_string(),
+                        })),
+                    },
+                ));
+            }
+        }
+        tracing::warn!(
+            target: "p2p::spark_pay",
+            "Spark pay failed for {}: {}",
+            order_id,
+            err,
+        );
+        self.spark_pay_attempt = None;
+        self.spark_pay_phase = SparkPayPhase::Error(friendly_spark_pay_error(&err));
+        None
+    }
+
+    fn set_payment_qr_fallback(&mut self, show: bool) {
+        // Ignore while a Spark RPC is in flight — the view freezes
+        // these controls during Preparing/Sending, but stale events
+        // (keyboard, mouse, hooks) could still arrive.
+        if !matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending
+        ) {
+            self.show_qr_fallback = show;
+        }
+    }
+
+    fn cancel_payment_invoice(&mut self, order_id: String) -> Task<Message> {
+        // Hard-block: keep this cancel RPC off a wrong-network
+        // coordinator (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Task::none();
+        }
+        // Block cancel while a Spark RPC is in flight. If the
+        // prepare/send completes after we fire `cancel_trade`,
+        // Mostro and Spark disagree on the order state and the
+        // seller's sats can end up locked against a cancelled
+        // trade. The view hides the button during these phases,
+        // but guard the dispatch too for safety.
+        if matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending
+        ) {
+            return Task::none();
+        }
+        self.dispatch_order_cancellation(order_id)
+    }
+
+    fn select_trade(&mut self, id: String, cache: &Cache) -> Task<Message> {
+        // Same race-protection as `DismissPaymentInvoice` /
+        // `CancelPaymentInvoice` / `CancelTrade`: navigating to
+        // another trade while a Spark RPC is in flight would
+        // drop the session id, causing the eventual SparkPaySent
+        // to be filtered as stale — losing the
+        // `spark_funded_order_ids` entry that prevents the
+        // trade from vanishing if Mostro cancels post-payment.
+        if matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending
+        ) {
+            return Task::none();
+        }
+        // Cache QR code for the hold invoice if this trade has one
+        let trade_has_hold_invoice = self
+            .trades
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.hold_invoice.as_ref())
+            .is_some();
+        self.hold_invoice_qr = self
+            .trades
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.hold_invoice.as_ref())
+            .and_then(|inv| qr_code::Data::new(inv).ok());
+        self.selected_trade = Some(id.clone());
+        self.chat_selected_trade = None; // clear Chat tab context
+        self.trade_invoice_input = Default::default();
+        self.trade_action_loading = false;
+        self.trade_rating = 0;
+        self.active_chat = ActiveChat::None;
+        self.chat_input = Default::default();
+        // Reset Spark-pay state so a stale Error/Prepared from a
+        // previous trade doesn't bleed into this view. Re-fetch
+        // the balance only if this trade has a hold invoice the
+        // user might pay from Spark; skip the RPC otherwise.
+        self.spark_pay_phase = SparkPayPhase::Idle;
+        self.show_qr_fallback = false;
+        self.spark_pay_amount_sat = None;
+        self.spark_pay_attempt = None;
+        let balance_task = if trade_has_hold_invoice {
+            self.spark_pay_session_id = Some(id.clone());
+            self.spark_balance_sat = None;
+            let invoice = self
+                .trades
+                .iter()
+                .find(|t| t.id == id)
+                .and_then(|t| t.hold_invoice.clone());
+            let session_id = id.clone();
+            let balance = self.spark_balance_fetch_task(cache, session_id.clone());
+            let parse =
+                invoice.and_then(|inv| self.spark_parse_invoice_task(session_id.clone(), inv));
+            match (balance, parse) {
+                (Some(b), Some(p)) => {
+                    tracing::info!(
+                        target: "p2p::spark_pay",
+                        "SelectTrade: kicking off balance fetch + invoice parse for order {}",
+                        session_id,
+                    );
+                    Some(Task::batch([b, p]))
+                }
+                (Some(b), None) => {
+                    tracing::info!(
+                        target: "p2p::spark_pay",
+                        "SelectTrade: kicking off balance fetch for order {} (no invoice to parse)",
+                        session_id,
+                    );
+                    Some(b)
+                }
+                (None, _) => {
+                    tracing::info!(
+                        target: "p2p::spark_pay",
+                        "SelectTrade: trade {} has hold invoice but Spark backend is None",
+                        id,
+                    );
+                    None
+                }
+            }
+        } else {
+            tracing::info!(
+                target: "p2p::spark_pay",
+                "SelectTrade: trade {} has no hold invoice yet, skipping balance fetch",
+                id,
+            );
+            self.spark_pay_session_id = None;
+            None
+        };
+        self.refresh_trade_cache();
+        // Clear image cache from previous trade and trigger downloads for new one
+        self.image_cache.clear();
+        self.image_downloads_in_flight.clear();
+        let image_task = self.trigger_image_downloads();
+        match balance_task {
+            Some(bt) => Task::batch([bt, image_task]),
+            None => image_task,
+        }
+    }
+
+    fn close_trade_detail(&mut self) -> Option<Task<Message>> {
+        // Same race-protection as `SelectTrade`: closing while a
+        // Spark RPC is in flight drops the session id and
+        // discards the eventual SparkPaySent as stale, losing
+        // the `spark_funded_order_ids` tracking.
+        if matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending
+        ) {
+            return Some(Task::none());
+        }
+        self.selected_trade = None;
+        self.trade_invoice_input = Default::default();
+        self.trade_rating = 0;
+        self.trade_action_loading = false;
+        self.hold_invoice_qr = None;
+        self.active_chat = ActiveChat::None;
+        self.chat_input = Default::default();
+        self.spark_pay_phase = SparkPayPhase::Idle;
+        self.show_qr_fallback = false;
+        self.spark_pay_session_id = None;
+        self.spark_pay_amount_sat = None;
+        self.spark_pay_attempt = None;
+        self.refresh_trade_cache();
+        self.image_cache.clear();
+        self.image_downloads_in_flight.clear();
+        None
+    }
+
+    fn submit_trade_rating(&mut self) -> Task<Message> {
+        // Hard-block: rating is a coordinator RPC too, so keep it off a
+        // wrong-network coordinator like the other trade actions
+        // (COIN-371 Q4).
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Task::none();
+        }
+        let rating = self.trade_rating;
+        if rating == 0 {
+            return Task::none();
+        }
+        let Some(order_id) = self.selected_trade.clone() else {
+            return Task::none();
+        };
+        self.trade_action_loading = true;
+        self.trade_action_order_id = Some(order_id.clone());
+        let data = super::mostro::TradeActionData {
+            order_id: order_id.clone(),
+            cube_name: self.cube_name(),
+            mnemonic: self.mnemonic.clone(),
+            invoice: None,
+            mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+            relay_urls: self.resolved_coordinator().relays,
+        };
+        Task::perform(
+            super::mostro::rate_counterparty(data, rating),
+            move |result| {
+                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(
+                    order_id, result,
+                )))
+            },
+        )
+    }
+
+    fn cancel_active_trade(&mut self) -> Task<Message> {
+        // Same race-protection as `CancelPaymentInvoice`: don't
+        // dispatch `cancel_trade` while a Spark RPC is in flight,
+        // or Mostro and Spark end up disagreeing on whether sats
+        // are locked.
+        if matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending
+        ) {
+            return Task::none();
+        }
+        self.perform_trade_action(None, super::mostro::cancel_trade)
+    }
+
+    fn finish_trade_action(
+        &mut self,
+        order_id: String,
+        result: Result<super::mostro::TradeActionResponse, String>,
+    ) -> Task<Message> {
+        // Only the operation that set the loading state may clear it: a late
+        // result for trade A must not unlock an action in flight for trade B.
+        if self.trade_action_order_id.as_deref() == Some(order_id.as_str()) {
+            self.trade_action_order_id = None;
+            self.trade_action_loading = false;
+            self.trade_rating = 0;
+        }
+        match result {
+            Ok(resp) => {
+                let super::mostro::TradeActionResponse::Success { new_status } = resp;
+                tracing::info!("Trade action succeeded for {}: {}", order_id, new_status);
+
+                // Update last_dm_action, timestamp, and status on the originating
+                // trade — not whichever trade happens to be selected now.
+                if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    trade.last_dm_action = Some(new_status.clone());
+                    if is_countdown_action(&new_status) {
+                        trade.countdown_start_ts = Some(ts);
+                    } else {
+                        trade.countdown_start_ts = None;
+                    }
+                    if let Some(s) = super::mostro::dm_action_to_status(&new_status) {
+                        trade.status = s;
+                    }
+                }
+                let cube_name = self.cube_name();
+                super::mostro::append_trade_message(
+                    &cube_name,
+                    &order_id,
+                    super::mostro::TradeMessage {
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        action: new_status.clone(),
+                        payload_json: String::new(),
+                        is_own: false,
+                    },
+                );
+                if self.active_order_id().as_deref() == Some(order_id.as_str()) {
+                    self.refresh_trade_cache();
+                }
+
+                Task::done(Message::View(view::Message::ShowSuccess(format!(
+                    "Action completed: {}",
+                    new_status
+                ))))
+            }
+            Err(e) => Task::done(Message::View(view::Message::ShowError(e))),
+        }
+    }
+
+    fn send_dispute_chat(&mut self) -> Option<Task<Message>> {
+        // Hard-block: don't send to a coordinator whose network doesn't
+        // match the wallet (the subscription is also paused in that
+        // state, so replies wouldn't arrive). COIN-371 Q4.
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Some(Task::none());
+        }
+        let text = self.dispute_chat_input.value.trim().to_string();
+        if text.is_empty() || self.pending_dispute_chat_message.is_some() {
+            return Some(Task::none());
+        }
+        if let Some(ref order_id) = self.active_order_id() {
+            let cube_name = self.cube_name();
+            self.pending_dispute_chat_message =
+                Some(Self::pending_chat_record(order_id, &cube_name, &text));
+            self.dispute_chat_input = Default::default();
+            let data = super::mostro::TradeActionData {
+                order_id: order_id.clone(),
+                cube_name,
+                mnemonic: self.mnemonic.clone(),
+                invoice: Some(text),
+                mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                relay_urls: self.resolved_coordinator().relays,
+            };
+            return Some(Task::perform(
+                super::mostro::send_admin_chat_message(data),
+                |result| {
+                    Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
+                        result,
+                    )))
+                },
+            ));
+        }
+        None
+    }
+
+    fn finish_dispute_chat_send(&mut self, result: Result<(), String>) -> Option<Task<Message>> {
+        if let Some(pending) = self.pending_dispute_chat_message.take() {
+            match result {
+                Ok(()) => {
+                    self.record_acknowledged_chat(pending, "AdminDm");
+                }
+                Err(e) => {
+                    // Only restore input if the user is still viewing the same
+                    // trade and has not started a new draft meanwhile.
+                    let kept_draft = self.active_order_id().as_deref() == Some(&pending.order_id)
+                        && !restore_failed_draft(
+                            &mut self.dispute_chat_input.value,
+                            pending.original_text,
+                        );
+                    return Some(Task::done(Message::View(view::Message::ShowError(
+                        chat_send_failed_message("Dispute chat", &e, kept_draft),
+                    ))));
+                }
+            }
+        }
+        None
+    }
+
+    fn send_peer_chat(&mut self) -> Option<Task<Message>> {
+        // Hard-block: don't send to a coordinator whose network doesn't
+        // match the wallet (the subscription is also paused in that
+        // state, so replies wouldn't arrive). COIN-371 Q4.
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Some(Task::none());
+        }
+        let text = self.chat_input.value.trim().to_string();
+        if text.is_empty() || self.pending_chat_message.is_some() {
+            return Some(Task::none());
+        }
+        if let Some(ref order_id) = self.active_order_id() {
+            let cube_name = self.cube_name();
+
+            // Build payload but defer persisting until send succeeds
+            self.pending_chat_message =
+                Some(Self::pending_chat_record(order_id, &cube_name, &text));
+
+            self.chat_input = Default::default();
+
+            // Fire async send
+            let data = super::mostro::TradeActionData {
+                order_id: order_id.clone(),
+                cube_name,
+                mnemonic: self.mnemonic.clone(),
+                invoice: Some(text),
+                mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+                relay_urls: self.resolved_coordinator().relays,
+            };
+            return Some(Task::perform(
+                super::mostro::send_chat_message(data),
+                |result| Message::View(view::Message::P2P(P2PMessage::ChatMessageSent(result))),
+            ));
+        }
+        None
+    }
+
+    fn finish_peer_chat_send(&mut self, result: Result<(), String>) -> Option<Task<Message>> {
+        if let Some(pending) = self.pending_chat_message.take() {
+            match result {
+                Ok(()) => {
+                    self.record_acknowledged_chat(pending, "SendDm");
+                }
+                Err(e) => {
+                    // Only restore input if the user is still viewing the same
+                    // trade and has not started a new draft meanwhile.
+                    let kept_draft = self.active_order_id().as_deref() == Some(&pending.order_id)
+                        && !restore_failed_draft(&mut self.chat_input.value, pending.original_text);
+                    return Some(Task::done(Message::View(view::Message::ShowError(
+                        chat_send_failed_message("Chat", &e, kept_draft),
+                    ))));
+                }
+            }
+        }
+        None
+    }
+
+    fn apply_trade_update(
+        &mut self,
+        order_id: String,
+        action: String,
+        payload_json: String,
+        cache: &Cache,
+    ) -> Task<Message> {
+        tracing::info!("Trade update for {}: {}", order_id, action);
+
+        let is_chat = action == "SendDm" || action == "AdminDm";
+
+        // Update last_dm_action and status on the matching in-memory trade
+        // (skip for chat messages — they don't change trade status)
+        if !is_chat {
+            if let Some(task) = self.update_protocol_trade(&order_id, &action, &payload_json, cache)
+            {
+                return task;
+            }
+        }
+
+        // Every `TradeUpdate` comes from the relay handler
+        // (`persist_and_notify`), which has already persisted the message
+        // with its original rumor timestamp. Persisting it again here with
+        // the current time would store a second copy that can sort after
+        // later actions, so only refresh the caches.
+        if is_chat {
+            self.refresh_chat_history_cache();
+            if self.active_order_id().as_deref() == Some(&order_id) {
+                self.refresh_trade_cache();
+                return self.trigger_image_downloads();
+            }
+            return Task::none();
+        }
+        // Refresh cache when this update belongs to the active trade
+        if self.active_order_id().as_deref() == Some(&order_id) {
+            self.refresh_trade_cache();
+        }
+
+        Task::done(Message::View(view::Message::ShowSuccess(format!(
+            "Trade update: {} ({})",
+            action,
+            &order_id[..8.min(order_id.len())]
+        ))))
+    }
+
+    fn choose_chat_attachment(&mut self) -> Task<Message> {
+        if self.attachment_sending || self.pending_chat_message.is_some() {
+            return Task::none();
+        }
+        // Open file picker — attachment_sending is NOT set yet
+        Task::perform(
+            async move {
+                let dialog = rfd::AsyncFileDialog::new()
+                    .set_title("Send File")
+                    .add_filter(
+                        "All supported",
+                        &[
+                            "png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "avi", "pdf", "doc",
+                            "docx",
+                        ],
+                    )
+                    .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
+                    .add_filter("Videos", &["mp4", "mov", "avi"])
+                    .add_filter("Documents", &["pdf", "doc", "docx"]);
+                dialog.pick_file().await
+            },
+            |file| {
+                if let Some(file) = file {
+                    Message::View(view::Message::P2P(P2PMessage::FileSelected(
+                        file.path().to_path_buf(),
+                    )))
+                } else {
+                    // User cancelled — no-op
+                    Message::View(view::Message::P2P(P2PMessage::AttachmentSent(Err(
+                        "cancelled".to_string(),
+                    ))))
+                }
+            },
+        )
+    }
+
+    fn upload_chat_attachment(&mut self, path: std::path::PathBuf) -> Option<Task<Message>> {
+        // Hard-block: don't send to a coordinator whose network doesn't
+        // match the wallet (the subscription is also paused in that
+        // state, so replies wouldn't arrive). COIN-371 Q4.
+        if !self.coordinator_network_matches() {
+            self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
+            return Some(Task::none());
+        }
+        if let Some(ref order_id) = self.active_order_id() {
+            let order_id = order_id.clone();
+            let oid_for_result = order_id.clone();
+            let cube_name = self.cube_name();
+            let mnemonic = self.mnemonic.clone();
+            let coordinator = self.resolved_coordinator();
+            let mostro_pubkey_hex = coordinator.pubkey_hex;
+            let relay_urls = coordinator.relays;
+
+            self.attachment_sending = true;
+            return Some(Task::perform(
+                super::mostro::send_attachment(super::mostro::AttachmentData {
+                    file_path: path,
+                    order_id,
+                    cube_name,
+                    mnemonic,
+                    mostro_pubkey_hex,
+                    relay_urls,
+                }),
+                move |result| {
+                    Message::View(view::Message::P2P(P2PMessage::AttachmentSent(
+                        result.map(|meta| (oid_for_result, meta)),
+                    )))
+                },
+            ));
+        }
+        None
+    }
+
+    fn finish_attachment_upload(
+        &mut self,
+        result: Result<(String, String), String>,
+    ) -> Option<Task<Message>> {
+        self.attachment_sending = false;
+        match result {
+            Ok((order_id, metadata_json)) => {
+                let payload = serde_json::to_string(&Some(
+                    mostro_core::message::Payload::TextMessage(metadata_json),
+                ))
+                .unwrap_or_default();
+                super::mostro::append_trade_message(
+                    &self.cube_name(),
+                    &order_id,
+                    super::mostro::TradeMessage {
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        action: "SendDm".to_string(),
+                        payload_json: payload,
+                        is_own: true,
+                    },
+                );
+                self.refresh_trade_cache();
+                let dl = self.trigger_image_downloads();
+                return Some(dl);
+            }
+            Err(e) => {
+                if e != "cancelled" {
+                    return Some(Task::done(Message::View(view::Message::ShowError(
+                        format!("Image send failed: {e}"),
+                    ))));
+                }
+            }
+        }
+        None
+    }
+
+    fn apply_attachment_download(
+        &mut self,
+        order_id: String,
+        blossom_url: String,
+        data: Result<Vec<u8>, String>,
+    ) {
+        self.image_downloads_in_flight.remove(&blossom_url);
+        match data {
+            Ok(bytes) => {
+                let handle = iced::widget::image::Handle::from_bytes(bytes);
+                self.image_cache
+                    .insert(blossom_url, ImageCacheEntry::Ready(handle));
+            }
+            Err(e) => {
+                if !blossom_url.is_empty() {
+                    self.image_cache
+                        .insert(blossom_url, ImageCacheEntry::Failed(e));
+                } else {
+                    tracing::warn!("Image download failed: {e}");
+                }
+            }
+        }
+        let _ = order_id; // used for future scoping if needed
+    }
+
+    fn save_chat_attachment(
+        &mut self,
+        blossom_url: String,
+        filename: String,
+    ) -> Option<Task<Message>> {
+        if let Some(order_id) = self.active_order_id() {
+            let cube_name = self.cube_name();
+            let mnemonic = self.mnemonic.clone();
+            return Some(Task::perform(
+                super::mostro::download_and_save_file(
+                    blossom_url,
+                    filename,
+                    order_id,
+                    cube_name,
+                    mnemonic,
+                ),
+                |result| Message::View(view::Message::P2P(P2PMessage::FileSaved(result))),
+            ));
+        }
+        None
+    }
+
+    fn finish_attachment_save(result: Result<(), String>) -> Option<Task<Message>> {
+        match result {
+            Ok(()) => {
+                return Some(Task::done(Message::View(view::Message::ShowSuccess(
+                    "File saved".to_string(),
+                ))));
+            }
+            Err(e) => {
+                if e != "cancelled" {
+                    return Some(Task::done(Message::View(view::Message::ShowError(
+                        format!("File save failed: {e}",),
+                    ))));
+                }
+            }
+        }
+        None
+    }
+
+    fn prefill_order_lightning_address(&mut self, cache: &Cache) {
+        if !self.lightning_address_user_edited && self.create_lightning_address.value.is_empty() {
+            if let Some(addr) = cache.lightning_address.as_ref() {
+                self.create_lightning_address.value = addr.clone();
+            }
+        }
+    }
+
+    fn take_order_amount(&self, order: &P2POrder) -> Result<Option<i64>, ()> {
+        if order.is_range_order() {
+            match self.take_order_amount.value.parse::<i64>() {
+                Ok(v) => {
+                    let min = order.min_amount.unwrap_or(0.0) as i64;
+                    let max = order.max_amount.unwrap_or(i64::MAX as f64) as i64;
+                    if v < min || v > max {
+                        return Err(());
+                    }
+                    Ok(Some(v))
+                }
+                Err(_) => Err(()),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn store_protocol_hold_invoice(
+        trade: &mut P2PTrade,
+        action: &str,
+        payload_json: &str,
+    ) -> Option<String> {
+        if (action == "PayInvoice" || action == "WaitingSellerToPay" || action == "BuyerTookOrder")
+            && trade.hold_invoice.is_none()
+        {
+            if let Ok(Some(mostro_core::message::Payload::PaymentRequest(_, invoice, _))) =
+                serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
+            {
+                trade.hold_invoice = Some(invoice.clone());
+                return Some(invoice);
+            }
+        }
+        None
+    }
+
+    fn start_spark_for_active_hold_invoice(
+        &mut self,
+        order_id: &str,
+        invoice: String,
+        cache: &Cache,
+    ) -> Option<Task<Message>> {
+        if matches!(
+            self.spark_pay_phase,
+            SparkPayPhase::Preparing | SparkPayPhase::Sending,
+        ) {
+            tracing::info!(
+                target: "p2p::spark_pay",
+                "TradeUpdate({}): hold-invoice DM arrived during \
+                 {:?} — skipping Spark-state reset to protect \
+                 in-flight RPC",
+                order_id,
+                self.spark_pay_phase,
+            );
+            // Consume `invoice` so the binding isn't
+            // flagged as unused. The relay handler has
+            // already persisted the DM.
+            let _ = invoice;
+        } else {
+            self.spark_pay_phase = SparkPayPhase::Idle;
+            self.show_qr_fallback = false;
+            self.spark_pay_session_id = Some(order_id.to_owned());
+            self.spark_balance_sat = None;
+            self.spark_pay_amount_sat = None;
+            self.spark_pay_attempt = None;
+            let balance = self.spark_balance_fetch_task(cache, order_id.to_owned());
+            let parse = self.spark_parse_invoice_task(order_id.to_owned(), invoice);
+            // The PayInvoice/WaitingSellerToPay/BuyerTookOrder
+            // DM is already on disk: the relay handler
+            // (`persist_and_notify`) stores it with its rumor
+            // timestamp before emitting the TradeUpdate.
+            match (balance, parse) {
+                (Some(b), Some(p)) => {
+                    tracing::info!(
+                        target: "p2p::spark_pay",
+                        "TradeUpdate({}): hold invoice landed on active trade — \
+                         kicking off balance fetch + invoice parse",
+                        order_id,
+                    );
+                    return Some(Task::batch([b, p]));
+                }
+                (Some(b), None) => {
+                    tracing::info!(
+                        target: "p2p::spark_pay",
+                        "TradeUpdate({}): hold invoice landed on active trade — \
+                         kicking off balance fetch",
+                        order_id,
+                    );
+                    return Some(b);
+                }
+                (None, _) => {
+                    tracing::info!(
+                        target: "p2p::spark_pay",
+                        "TradeUpdate({}): hold invoice landed but Spark backend is None",
+                        order_id,
+                    );
+                }
+            }
+        }
+        None
+    }
+
+    fn update_protocol_trade(
+        &mut self,
+        order_id: &str,
+        action: &str,
+        payload_json: &str,
+        cache: &Cache,
+    ) -> Option<Task<Message>> {
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
+            trade.last_dm_action = Some(action.to_owned());
+            if is_countdown_action(action) {
+                trade.countdown_start_ts = Some(now_ts);
+            } else {
+                trade.countdown_start_ts = None;
+            }
+            if let Some(new_status) = super::mostro::dm_action_to_status(action) {
+                trade.status = new_status;
+            }
+            // Extract hold invoice from PayInvoice or BuyerTookOrder DM payload
+            let mut active_invoice_just_arrived: Option<String> = None;
+            if let Some(invoice) = Self::store_protocol_hold_invoice(trade, action, payload_json) {
+                let is_active = self.active_order_id().as_deref() == Some(order_id);
+                if is_active {
+                    self.hold_invoice_qr = qr_code::Data::new(&invoice).ok();
+                    active_invoice_just_arrived = Some(invoice);
+                }
+            }
+            // If the user is sitting on the trade detail when
+            // the hold-invoice DM lands, `SelectTrade`'s
+            // earlier balance fetch was skipped (no invoice
+            // at that point). Kick one off now so the
+            // Spark-pay gate can flip without requiring the
+            // user to navigate away and back.
+            //
+            // Skip the Spark-state reset entirely when a
+            // prepare/send RPC is in flight: swapping the
+            // session id or flipping the phase would cause
+            // the eventual SparkPaySent to be filtered as
+            // stale, losing the `spark_funded_order_ids`
+            // entry that keeps the trade visible if Mostro
+            // later cancels it. The relay handler has
+            // already written the DM to disk.
+            if let Some(invoice) = active_invoice_just_arrived {
+                return self.start_spark_for_active_hold_invoice(order_id, invoice, cache);
+            } else if action == "PayInvoice"
+                || action == "WaitingSellerToPay"
+                || action == "BuyerTookOrder"
+            {
+                tracing::info!(
+                    target: "p2p::spark_pay",
+                    "TradeUpdate({}): DM action={} did not produce an \
+                     active-trade invoice arrival (active_order_id={:?}, \
+                     trade.hold_invoice already set?={})",
+                    order_id,
+                    action,
+                    self.active_order_id(),
+                    self.trades.iter().find(|t| t.id == order_id)
+                        .map(|t| t.hold_invoice.is_some())
+                        .unwrap_or(false),
+                );
+            }
+        }
+        None
+    }
+
+    fn dispatch_order_cancellation(&self, order_id: String) -> Task<Message> {
+        let data = super::mostro::TradeActionData {
+            order_id,
+            cube_name: self.cube_name(),
+            mnemonic: self.mnemonic.clone(),
+            invoice: None,
+            mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
+            relay_urls: self.resolved_coordinator().relays,
+        };
+        let canceled_id = data.order_id.clone();
+        Task::perform(super::mostro::cancel_trade(data), move |result| {
+            Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
+                canceled_id,
+                result.map(|_| ()),
+            )))
+        })
+    }
+
+    fn pending_chat_record(order_id: &str, cube_name: &str, text: &str) -> PendingChatMessage {
+        let payload = serde_json::to_string(&Some(mostro_core::message::Payload::TextMessage(
+            text.to_owned(),
+        )))
+        .unwrap_or_default();
+        PendingChatMessage {
+            order_id: order_id.to_owned(),
+            cube_name: cube_name.to_owned(),
+            payload,
+            timestamp: chrono::Utc::now().timestamp() as u64,
+            original_text: text.to_owned(),
+        }
+    }
+
+    fn record_acknowledged_chat(&mut self, pending: PendingChatMessage, action: &str) {
+        super::mostro::append_trade_message(
+            &pending.cube_name,
+            &pending.order_id,
+            super::mostro::TradeMessage {
+                timestamp: pending.timestamp,
+                action: action.to_string(),
+                payload_json: pending.payload,
+                is_own: true,
+            },
+        );
+        self.refresh_trade_cache();
     }
 }
 
@@ -4330,364 +6455,9 @@ impl State for P2PPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Menu::Marketplace(MarketplaceSubMenu::P2P(submenu)) = menu {
             match submenu {
-                P2PSubMenu::Overview => {
-                    // If an order is selected, show its detail view
-                    // Built separately (not inside dashboard's scrollable) to avoid
-                    // first-click issues when switching from the order list.
-                    // The page head is pinned above that scrollable, as the
-                    // headed dashboards pin theirs.
-                    if let Some(ref selected_id) = self.selected_order {
-                        if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
-                            let take_state = if self.taking_order {
-                                Some(TakeOrderState {
-                                    amount: &self.take_order_amount,
-                                    invoice: &self.take_order_invoice,
-                                    submitting: self.take_order_submitting,
-                                })
-                            } else {
-                                None
-                            };
-                            let detail_content = iced::widget::scrollable(
-                                view::page(
-                                    column![
-                                        p2_regular("View order information")
-                                            .style(theme::text::secondary)
-                                            .width(Length::Fill),
-                                        container(order_detail(order, take_state))
-                                            .width(Length::Fill),
-                                    ]
-                                    .spacing(16)
-                                    .width(Length::Fill),
-                                    PageWidth::Reading,
-                                )
-                                .vertical(BODY_TOP, PAGE_BOTTOM),
-                            );
-
-                            return view::dashboard_shell(
-                                menu,
-                                cache,
-                                iced::widget::Column::new()
-                                    .push(view::warn(None))
-                                    .push(
-                                        view::page_head(cache, "Order Details")
-                                            .view(view::page_gutter),
-                                    )
-                                    .push(
-                                        container(detail_content)
-                                            .width(Length::Fill)
-                                            .style(theme::container::background)
-                                            .height(Length::Fill),
-                                    )
-                                    .width(Length::Fill),
-                            );
-                        }
-                    }
-
-                    // --- Header ---
-                    // The title is in the page head.
-                    let mut overview_col = column![p2_regular(
-                        "Browse and take P2P trading orders from the Mostro network"
-                    )
-                    .style(theme::text::secondary)
-                    .width(Length::Fill),]
-                    .spacing(16);
-
-                    // Stream error banner
-                    if let Some(ref err) = self.stream_error {
-                        overview_col = overview_col.push(
-                            container(p2_regular(err.as_str()).style(theme::text::warning))
-                                .width(Length::Fill),
-                        );
-                    }
-
-                    overview_col = overview_col.push(self.book_view());
-                    overview_col = overview_col.push(Space::new().height(Length::Fixed(40.0)));
-
-                    let overview_content: Element<'_, view::Message> = view::dashboard_headed(
-                        menu,
-                        cache,
-                        view::page_head(cache, "P2P Order Book"),
-                        overview_col,
-                    );
-
-                    // Show payment invoice modal if seller took a buy order
-                    if let Some((ref oid, ref inv, amt, ref qr_data)) = self.pending_payment_invoice
-                    {
-                        coincube_ui::widget::modal::Modal::new(
-                            overview_content,
-                            self.payment_invoice_modal_view(oid, inv, amt, qr_data),
-                        )
-                        .on_blur(Some(view::Message::P2P(P2PMessage::DismissPaymentInvoice)))
-                        .into()
-                    } else {
-                        overview_content
-                    }
-                }
-                P2PSubMenu::MyTrades => {
-                    // If a trade is selected, show its detail or chat view
-                    if let Some(ref selected_id) = self.selected_trade {
-                        if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
-                            if self.active_chat == ActiveChat::Peer {
-                                // Separate chat view — built without dashboard()
-                                // to avoid nested scrollables.
-                                let order_short = &trade.id[..8.min(trade.id.len())];
-                                let trade_type_label = match trade.order_type {
-                                    OrderType::Buy => "BUY",
-                                    OrderType::Sell => "SELL",
-                                };
-                                let peer_nick = trade
-                                    .counterparty_pubkey
-                                    .as_deref()
-                                    .map(super::mostro::nickname_from_pubkey)
-                                    .unwrap_or_else(|| "Peer".to_string());
-
-                                // Header bar
-                                let header = container(
-                                    row![
-                                        button::secondary(Some(icon::previous_icon()), "Back",)
-                                            .on_press(view::Message::P2P(P2PMessage::CloseChat)),
-                                        Space::new().width(Length::Fill),
-                                        column![
-                                            p1_bold(peer_nick),
-                                            p2_regular(format!(
-                                                "{} Order {}",
-                                                trade_type_label, order_short
-                                            ))
-                                            .style(theme::text::secondary),
-                                        ]
-                                        .spacing(2)
-                                        .align_x(iced::alignment::Horizontal::Center),
-                                        Space::new().width(Length::Fill),
-                                        // Spacer to balance the Back button
-                                        Space::new().width(Length::Fixed(80.0)),
-                                    ]
-                                    .align_y(iced::alignment::Vertical::Center),
-                                )
-                                .padding([16, 20])
-                                .width(Length::Fill)
-                                .style(theme::container::foreground);
-
-                                return view::dashboard_shell(
-                                    menu,
-                                    cache,
-                                    iced::widget::Column::new()
-                                        .push(view::warn(None))
-                                        .push(header)
-                                        .push(
-                                            container(self.chat_view(trade))
-                                                .padding(20)
-                                                .width(Length::Fill)
-                                                .height(Length::Fill)
-                                                .style(theme::container::background),
-                                        )
-                                        .width(Length::Fill),
-                                );
-                            } else if self.active_chat == ActiveChat::Dispute {
-                                // Dispute chat view
-                                let order_short = &trade.id[..8.min(trade.id.len())];
-                                let header = container(
-                                    row![
-                                        button::secondary(Some(icon::previous_icon()), "Back",)
-                                            .on_press(view::Message::P2P(
-                                                P2PMessage::CloseDisputeChat,
-                                            )),
-                                        Space::new().width(Length::Fill),
-                                        column![
-                                            p1_bold("Dispute Chat"),
-                                            p2_regular(format!("Order {}", order_short))
-                                                .style(theme::text::secondary),
-                                        ]
-                                        .spacing(2)
-                                        .align_x(iced::alignment::Horizontal::Center),
-                                        Space::new().width(Length::Fill),
-                                        Space::new().width(Length::Fixed(80.0)),
-                                    ]
-                                    .align_y(iced::alignment::Vertical::Center),
-                                )
-                                .padding(12)
-                                .width(Length::Fill)
-                                .style(theme::container::foreground);
-
-                                return view::dashboard_shell(
-                                    menu,
-                                    cache,
-                                    iced::widget::Column::new()
-                                        .push(view::warn(None))
-                                        .push(header)
-                                        .push(
-                                            container(self.dispute_chat_view(trade))
-                                                .padding(20)
-                                                .width(Length::Fill)
-                                                .height(Length::Fill)
-                                                .style(theme::container::background),
-                                        )
-                                        .width(Length::Fill),
-                                );
-                            }
-                            return view::dashboard_headed(
-                                menu,
-                                cache,
-                                view::page_head(cache, "Trade Details"),
-                                column![
-                                    p2_regular("View trade information and take actions")
-                                        .style(theme::text::secondary)
-                                        .width(Length::Fill),
-                                    container(self.trade_detail_view(trade)).width(Length::Fill),
-                                    Space::new().height(Length::Fixed(40.0)),
-                                ]
-                                .spacing(16),
-                            );
-                        }
-                    }
-
-                    let filtered = self.filtered_trades();
-                    let shown_count = filtered.len();
-
-                    view::dashboard_headed(
-                        menu,
-                        cache,
-                        view::page_head(cache, "My Trades"),
-                        column![
-                            p2_regular("Your active and completed P2P trades")
-                                .style(theme::text::secondary)
-                                .width(Length::Fill),
-                            // Trade status filter
-                            container(trade_status_filter(&self.trade_filters, shown_count,))
-                                .width(Length::Fill),
-                            // Trade list
-                            if filtered.is_empty() {
-                                Element::from(
-                                    container(p1_bold("No trades yet"))
-                                        .padding(40)
-                                        .align_x(Alignment::Center)
-                                        .width(Length::Fill),
-                                )
-                            } else {
-                                Element::from(
-                                    column(filtered.iter().map(|trade| {
-                                        trade_card(trade, cache.balance_amounts_masked()).into()
-                                    }))
-                                    .spacing(16)
-                                    .width(Length::Fill),
-                                )
-                            },
-                            Space::new().height(Length::Fixed(40.0)),
-                        ]
-                        .spacing(16),
-                    )
-                }
-                P2PSubMenu::Chat => {
-                    // If a trade is selected from the chat list, show the chat view
-                    if let Some(ref selected_id) = self.chat_selected_trade {
-                        if let Some(trade) = self.trades.iter().find(|t| t.id == *selected_id) {
-                            if self.active_chat == ActiveChat::Peer {
-                                let order_short = &trade.id[..8.min(trade.id.len())];
-                                let trade_type_label = match trade.order_type {
-                                    OrderType::Buy => "BUY",
-                                    OrderType::Sell => "SELL",
-                                };
-                                let peer_nick = trade
-                                    .counterparty_pubkey
-                                    .as_deref()
-                                    .map(super::mostro::nickname_from_pubkey)
-                                    .unwrap_or_else(|| "Peer".to_string());
-
-                                let header = container(
-                                    row![
-                                        button::secondary(Some(icon::previous_icon()), "Back")
-                                            .on_press(view::Message::P2P(P2PMessage::CloseChat)),
-                                        Space::new().width(Length::Fill),
-                                        column![
-                                            p1_bold(peer_nick),
-                                            p2_regular(format!(
-                                                "{} Order {}",
-                                                trade_type_label, order_short
-                                            ))
-                                            .style(theme::text::secondary),
-                                        ]
-                                        .spacing(2)
-                                        .align_x(iced::alignment::Horizontal::Center),
-                                        Space::new().width(Length::Fill),
-                                        Space::new().width(Length::Fixed(80.0)),
-                                    ]
-                                    .align_y(iced::alignment::Vertical::Center),
-                                )
-                                .padding([16, 20])
-                                .width(Length::Fill)
-                                .style(theme::container::foreground);
-
-                                return view::dashboard_shell(
-                                    menu,
-                                    cache,
-                                    iced::widget::Column::new()
-                                        .push(view::warn(None))
-                                        .push(header)
-                                        .push(
-                                            container(self.chat_view(trade))
-                                                .padding(20)
-                                                .width(Length::Fill)
-                                                .height(Length::Fill)
-                                                .style(theme::container::background),
-                                        )
-                                        .width(Length::Fill),
-                                );
-                            } else if self.active_chat == ActiveChat::Dispute {
-                                let order_short = &trade.id[..8.min(trade.id.len())];
-                                let header = container(
-                                    row![
-                                        button::secondary(Some(icon::previous_icon()), "Back")
-                                            .on_press(view::Message::P2P(P2PMessage::CloseChat)),
-                                        Space::new().width(Length::Fill),
-                                        column![
-                                            p1_bold("Dispute Chat"),
-                                            p2_regular(format!("Order {}", order_short))
-                                                .style(theme::text::secondary),
-                                        ]
-                                        .spacing(2)
-                                        .align_x(iced::alignment::Horizontal::Center),
-                                        Space::new().width(Length::Fill),
-                                        Space::new().width(Length::Fixed(80.0)),
-                                    ]
-                                    .align_y(iced::alignment::Vertical::Center),
-                                )
-                                .padding([16, 20])
-                                .width(Length::Fill)
-                                .style(theme::container::foreground);
-
-                                return view::dashboard_shell(
-                                    menu,
-                                    cache,
-                                    iced::widget::Column::new()
-                                        .push(view::warn(None))
-                                        .push(header)
-                                        .push(
-                                            container(self.dispute_chat_view(trade))
-                                                .padding(20)
-                                                .width(Length::Fill)
-                                                .height(Length::Fill)
-                                                .style(theme::container::background),
-                                        )
-                                        .width(Length::Fill),
-                                );
-                            }
-                        }
-                    }
-
-                    // Default: show chat list
-                    view::dashboard_headed(
-                        menu,
-                        cache,
-                        view::page_head(cache, "Chat"),
-                        column![
-                            p2_regular("Your P2P trade conversations")
-                                .style(theme::text::secondary)
-                                .width(Length::Fill),
-                            container(self.chat_list_view()).width(Length::Fill),
-                            Space::new().height(Length::Fixed(40.0)),
-                        ]
-                        .spacing(16),
-                    )
-                }
+                P2PSubMenu::Overview => self.order_book_page(menu, cache),
+                P2PSubMenu::MyTrades => self.my_trades_page(menu, cache),
+                P2PSubMenu::Chat => self.chat_page(menu, cache),
                 P2PSubMenu::CreateOrder => {
                     let content: Element<'_, view::Message> = view::dashboard_headed(
                         menu,
@@ -4786,7 +6556,7 @@ impl State for P2PPanel {
 
     fn update(
         &mut self,
-        _daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        daemon: Option<Arc<dyn crate::daemon::Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -4809,11 +6579,7 @@ impl State for P2PPanel {
         if !cache.marketplace_flags.p2p_on() {
             return Task::none();
         }
-        if !self.lightning_address_user_edited && self.create_lightning_address.value.is_empty() {
-            if let Some(addr) = cache.lightning_address.as_ref() {
-                self.create_lightning_address.value = addr.clone();
-            }
-        }
+        self.prefill_order_lightning_address(cache);
         match msg {
             P2PMessage::OrderTypeSelected(t) => self.create_order_type = t,
             P2PMessage::PricingModeSelected(m) => self.create_pricing_mode = m,
@@ -4830,12 +6596,7 @@ impl State for P2PPanel {
                     self.create_premium.value = v;
                 }
             }
-            P2PMessage::PaymentMethodSelected(v) => {
-                if !self.create_payment_methods.contains(&v) {
-                    self.create_payment_methods.push(v);
-                    self.rebuild_payment_method_combo();
-                }
-            }
+            P2PMessage::PaymentMethodSelected(v) => self.add_selected_payment_method(v),
             P2PMessage::PaymentMethodRemoved(v) => {
                 self.create_payment_methods.retain(|m| m != &v);
                 self.rebuild_payment_method_combo();
@@ -4843,29 +6604,14 @@ impl State for P2PPanel {
             P2PMessage::CustomPaymentMethodEdited(v) => {
                 self.create_custom_payment_method.value = v;
             }
-            P2PMessage::AddCustomPaymentMethod => {
-                let custom = self.create_custom_payment_method.value.trim().to_string();
-                if !custom.is_empty() && !self.create_payment_methods.contains(&custom) {
-                    self.create_payment_methods.push(custom);
-                    self.create_custom_payment_method = Default::default();
-                    self.rebuild_payment_method_combo();
-                }
-            }
+            P2PMessage::AddCustomPaymentMethod => self.add_custom_payment_method(),
             P2PMessage::MinAmountEdited(v) => {
                 self.create_min_amount.value = v;
             }
             P2PMessage::MaxAmountEdited(v) => {
                 self.create_max_amount.value = v;
             }
-            P2PMessage::RangeOrderToggled(on) => {
-                self.range_order_mode = on;
-                if on {
-                    // Range orders only support market pricing.
-                    self.create_pricing_mode = PricingMode::Market;
-                } else {
-                    self.create_max_amount = Default::default();
-                }
-            }
+            P2PMessage::RangeOrderToggled(on) => self.set_range_order_mode(on),
             P2PMessage::LightningAddressEdited(v) => {
                 self.create_lightning_address.value = v;
                 self.lightning_address_user_edited = true;
@@ -4874,138 +6620,23 @@ impl State for P2PPanel {
                 self.editing_lightning_address = true;
             }
             P2PMessage::UseRegisteredLightningAddress => {
-                self.editing_lightning_address = false;
-                self.lightning_address_user_edited = false;
-                self.create_lightning_address = Default::default();
-                if let Some(addr) = cache.lightning_address.as_ref() {
-                    self.create_lightning_address.value = addr.clone();
-                }
+                self.use_registered_lightning_address(cache)
             }
             P2PMessage::SubmitOrder => {
-                self.submit_attempted = true;
-                // Hard-block: never escrow against a coordinator whose
-                // network doesn't match the wallet's (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.order_submit_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                // Double-check validation before showing confirmation
-                if self.validate_order_form().has_errors() {
-                    return Task::none();
-                }
-                self.order_submit_error = None;
-                self.confirming_order = true;
+                return self.request_order_confirmation().unwrap_or_else(Task::none)
             }
             P2PMessage::CancelConfirmation => {
                 self.confirming_order = false;
             }
-            P2PMessage::ConfirmOrder => {
-                // Hard-block chokepoint: refuse to escrow on a
-                // coordinator/network mismatch (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.confirming_order = false;
-                    self.order_submit_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                // Final validation gate before sending to network
-                if self.validate_order_form().has_errors() {
-                    self.confirming_order = false;
-                    return Task::none();
-                }
-                self.confirming_order = false;
-                self.order_submitting = true;
-                self.order_submit_error = None;
-
-                let form = self.build_order_form();
-
-                return Task::perform(super::mostro::submit_order(form), |result| {
-                    Message::View(view::Message::P2P(P2PMessage::OrderSubmitResult(result)))
-                });
-            }
+            P2PMessage::ConfirmOrder => return self.confirm_order_submission(),
             P2PMessage::ClearForm => self.clear_create_form(),
             P2PMessage::MostroNodeInfoReceived {
                 currencies,
                 min_order_sats,
                 max_order_sats,
-            } => {
-                if !currencies.is_empty() {
-                    self.node_currencies = currencies;
-                    self.rebuild_currency_combo();
-                    // Reset selected currency if no longer supported by this node
-                    if !self.node_currencies.contains(&self.create_fiat_currency) {
-                        self.create_fiat_currency = self
-                            .node_currencies
-                            .first()
-                            .cloned()
-                            .unwrap_or_else(|| "USD".to_string());
-                        self.create_payment_methods.clear();
-                        self.rebuild_payment_method_combo();
-                    }
-                    // Reset filter currency if no longer supported (unless "All")
-                    if self.filter_currency != "All"
-                        && !self.node_currencies.contains(&self.filter_currency)
-                    {
-                        self.filter_currency = "All".to_string();
-                        self.filter_deselected_payment_methods.clear();
-                        self.recompute_available_payment_methods();
-                    }
-                }
-                self.node_min_order_sats = min_order_sats;
-                self.node_max_order_sats = max_order_sats;
-            }
-            P2PMessage::MostroOrdersReceived(mut orders) => {
-                // Patch is_mine for orders we created locally (handles race where
-                // the subscription delivers the event before the session is persisted)
-                for order in &mut orders {
-                    if self.my_created_order_ids.contains(&order.id) {
-                        order.is_mine = true;
-                    }
-                }
-                self.orders = orders;
-                self.recompute_available_payment_methods();
-                // Clear transient stream/relay errors — data is flowing successfully.
-                // Preserve restore failure messages (they require user attention).
-                if self
-                    .stream_error
-                    .as_ref()
-                    .is_none_or(|e| !e.contains("restore"))
-                {
-                    self.stream_error = None;
-                }
-            }
-            P2PMessage::MostroTradesReceived(trades) => {
-                // Mostro can drop a session entirely (e.g. after the
-                // hold-invoice timer expires it cancels the order and
-                // eventually stops surfacing it). For trades we just
-                // paid out of Spark, that would leave the user with a
-                // Pending Spark HTLC and no trade record to explain
-                // it. Carry forward any Spark-funded trade that the
-                // new payload doesn't include — preserves whatever
-                // status it last had (typically Canceled/Expired) so
-                // the user can still find it in My Trades.
-                let mut retained: Vec<P2PTrade> = self
-                    .trades
-                    .iter()
-                    .filter(|t| {
-                        self.spark_funded_order_ids.contains(&t.id)
-                            && !trades.iter().any(|n| n.id == t.id)
-                    })
-                    .cloned()
-                    .collect();
-                self.trades = trades;
-                self.trades.append(&mut retained);
-                // Recompute QR cache if the selected trade now has a hold invoice
-                if let Some(ref sel_id) = self.selected_trade {
-                    if self.hold_invoice_qr.is_none() {
-                        self.hold_invoice_qr = self
-                            .trades
-                            .iter()
-                            .find(|t| t.id == *sel_id)
-                            .and_then(|t| t.hold_invoice.as_ref())
-                            .and_then(|inv| qr_code::Data::new(inv).ok());
-                    }
-                }
-            }
+            } => self.apply_coordinator_limits(currencies, min_order_sats, max_order_sats),
+            P2PMessage::MostroOrdersReceived(orders) => self.apply_order_book_update(orders),
+            P2PMessage::MostroTradesReceived(trades) => self.apply_trade_list_update(trades),
             P2PMessage::BuySellFilterChanged(filter) => {
                 self.buy_sell_filter = filter;
                 self.filter_deselected_payment_methods.clear();
@@ -5027,108 +6658,24 @@ impl State for P2PPanel {
             P2PMessage::FilterMinDaysActiveChanged(v) => {
                 self.filter_min_days_active = v;
             }
-            P2PMessage::TradeFilterChanged(filter) => {
-                if filter == TradeFilter::All {
-                    // "All" is exclusive — toggle it alone
-                    if self.trade_filters.contains(&TradeFilter::All) {
-                        // Already showing all, do nothing
-                    } else {
-                        self.trade_filters = vec![TradeFilter::All];
-                    }
-                } else if self.trade_filters.contains(&filter) {
-                    // Deselect this filter
-                    self.trade_filters.retain(|f| f != &filter);
-                    if self.trade_filters.is_empty() {
-                        self.trade_filters = vec![TradeFilter::All];
-                    }
-                } else {
-                    // Select this filter, remove "All" if present
-                    self.trade_filters.retain(|f| f != &TradeFilter::All);
-                    self.trade_filters.push(filter);
-                }
-            }
+            P2PMessage::TradeFilterChanged(filter) => self.toggle_trade_filter(filter),
             P2PMessage::SelectOrder(id) => {
-                if let Some(focus_id) = self.select_order_for_detail(id) {
-                    return Task::done(Message::View(view::Message::FocusAction(focus_id)));
-                }
+                return self.focus_selected_order(id).unwrap_or_else(Task::none)
             }
             P2PMessage::CloseOrderDetail => {
-                if let Some(return_to) = self.close_order_detail_view() {
-                    return Task::done(Message::View(view::Message::FocusAction(return_to)));
-                }
+                return self.restore_order_book_focus().unwrap_or_else(Task::none)
             }
             P2PMessage::CopyOrderId(id) => {
                 return Task::done(Message::View(view::Message::Clipboard(id)));
             }
-            P2PMessage::CancelOrder(order_id) => {
-                // Hard-block: cancel is a coordinator RPC too, so keep it off
-                // a wrong-network coordinator (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                let data = super::mostro::TradeActionData {
-                    order_id,
-                    cube_name: self.cube_name(),
-                    mnemonic: self.mnemonic.clone(),
-                    invoice: None,
-                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                    relay_urls: self.resolved_coordinator().relays,
-                };
-                return Task::perform(super::mostro::cancel_trade(data), |result| {
-                    Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
-                        result.map(|_| ()),
-                    )))
-                });
+            P2PMessage::CancelOrder(order_id) => return self.cancel_order(order_id),
+            P2PMessage::CancelOrderResult(order_id, result) => {
+                return self.finish_order_cancellation(order_id, result)
             }
-            P2PMessage::CancelOrderResult(result) => match result {
-                Ok(()) => {
-                    self.selected_order = None;
-                    // Mirror the modal-dismissal reset used by
-                    // `DismissPaymentInvoice` and `SparkPaySent` so a
-                    // subsequent SelectTrade/TakeOrderResult doesn't
-                    // inherit stale Spark-pay state.
-                    self.pending_payment_invoice = None;
-                    self.invoice_copied = false;
-                    self.spark_balance_sat = None;
-                    self.spark_pay_amount_sat = None;
-                    self.spark_pay_attempt = None;
-                    self.spark_pay_phase = SparkPayPhase::Idle;
-                    self.show_qr_fallback = false;
-                    self.spark_pay_session_id = None;
-                    return Task::done(Message::View(view::Message::ShowSuccess(
-                        "Order canceled".to_string(),
-                    )));
-                }
-                Err(e) => {
-                    return Task::done(Message::View(view::Message::ShowError(format!(
-                        "Cancel failed: {}",
-                        e
-                    ))));
-                }
-            },
             P2PMessage::OrderSubmitResult(result) => {
-                self.order_submitting = false;
-                match result {
-                    Ok(resp) => {
-                        let super::mostro::OrderSubmitResponse::Success { order_id } = resp;
-                        tracing::info!("Order created: {}", order_id);
-                        // Track this order ID so we always mark it as ours, even if
-                        // the subscription delivered the event before the session was saved.
-                        self.my_created_order_ids.insert(order_id.clone());
-                        if let Some(order) = self.orders.iter_mut().find(|o| o.id == order_id) {
-                            order.is_mine = true;
-                        }
-                        self.clear_create_form();
-                        return Task::done(Message::View(view::Message::ShowSuccess(format!(
-                            "Order created successfully ({})",
-                            order_id
-                        ))));
-                    }
-                    Err(e) => {
-                        self.order_submit_error = Some(e);
-                    }
-                }
+                return self
+                    .finish_order_submission(result)
+                    .unwrap_or_else(Task::none)
             }
             // Mostro settings
             P2PMessage::MostroRelayInputEdited(v) => {
@@ -5136,56 +6683,8 @@ impl State for P2PPanel {
                 self.new_relay_input.warning = None;
                 self.new_relay_input.valid = true;
             }
-            P2PMessage::MostroAddRelay => {
-                let url = self.new_relay_input.value.trim().to_string();
-                let parsed = nostr_sdk::Url::parse(&url);
-                let scheme_ok = url.starts_with("wss://") || url.starts_with("ws://");
-                let has_host = parsed.as_ref().ok().and_then(|u| u.host()).is_some();
-                if !scheme_ok {
-                    self.new_relay_input.valid = false;
-                    self.new_relay_input.warning = Some("URL must start with wss:// or ws://");
-                } else if !has_host {
-                    self.new_relay_input.valid = false;
-                    self.new_relay_input.warning = Some("Invalid relay URL — missing host");
-                } else if self
-                    .mostro_config
-                    .settings_relays(self.network)
-                    .contains(&url)
-                {
-                    self.new_relay_input.valid = false;
-                    self.new_relay_input.warning = Some("Relay already exists");
-                } else {
-                    let mut trial = self.mostro_config.clone();
-                    trial.settings_relays_mut(self.network).push(url);
-                    match save_mostro_config(&trial) {
-                        Ok(()) => {
-                            self.mostro_config = trial;
-                            self.new_relay_input = Default::default();
-                            self.mostro_config_error = None;
-                        }
-                        Err(_) => {
-                            self.new_relay_input.valid = false;
-                            self.new_relay_input.warning = Some("Failed to save config");
-                        }
-                    }
-                }
-            }
-            P2PMessage::MostroRemoveRelay(url) => {
-                let mut trial = self.mostro_config.clone();
-                trial
-                    .settings_relays_mut(self.network)
-                    .retain(|r| r != &url);
-                trial.ensure_defaults();
-                match save_mostro_config(&trial) {
-                    Ok(()) => {
-                        self.mostro_config = trial;
-                        self.mostro_config_error = None;
-                    }
-                    Err(_) => {
-                        self.mostro_config_error = Some("Failed to save config");
-                    }
-                }
-            }
+            P2PMessage::MostroAddRelay => self.add_coordinator_relay(),
+            P2PMessage::MostroRemoveRelay(url) => self.remove_coordinator_relay(url),
             P2PMessage::MostroNodeNameInputEdited(v) => {
                 self.new_node_name_input.value = v;
                 self.new_node_name_input.warning = None;
@@ -5199,123 +6698,14 @@ impl State for P2PPanel {
             P2PMessage::MostroNodeNetworkToggled(is_test) => {
                 self.new_node_is_test = is_test;
             }
-            P2PMessage::MostroAddNode => {
-                let name = self.new_node_name_input.value.trim().to_string();
-                let pubkey = self.new_node_pubkey_input.value.trim().to_string();
-                if name.is_empty() {
-                    self.new_node_name_input.valid = false;
-                    self.new_node_name_input.warning = Some("Node name is required");
-                } else if nostr_sdk::PublicKey::from_hex(&pubkey).is_err() {
-                    self.new_node_pubkey_input.valid = false;
-                    self.new_node_pubkey_input.warning = Some("Invalid hex pubkey");
-                } else if self
-                    .mostro_config
-                    .nodes
-                    .iter()
-                    .any(|n| n.pubkey_hex == pubkey)
-                {
-                    self.new_node_pubkey_input.valid = false;
-                    self.new_node_pubkey_input.warning =
-                        Some("Node with this pubkey already exists");
-                } else {
-                    let mut trial = self.mostro_config.clone();
-                    trial.nodes.push(MostroNode {
-                        name,
-                        pubkey_hex: pubkey,
-                        network: if self.new_node_is_test {
-                            NetworkKind::Test
-                        } else {
-                            NetworkKind::Mainnet
-                        },
-                    });
-                    match save_mostro_config(&trial) {
-                        Ok(()) => {
-                            self.mostro_config = trial;
-                            self.new_node_name_input = Default::default();
-                            self.new_node_pubkey_input = Default::default();
-                            self.new_node_is_test = false;
-                            self.mostro_config_error = None;
-                        }
-                        Err(_) => {
-                            self.new_node_pubkey_input.valid = false;
-                            self.new_node_pubkey_input.warning = Some("Failed to save config");
-                        }
-                    }
-                }
-            }
-            P2PMessage::MostroRemoveNode(pubkey) => {
-                let mut trial = self.mostro_config.clone();
-                trial.nodes.retain(|n| n.pubkey_hex != pubkey);
-                trial.ensure_defaults();
-                // `ensure_defaults` reselects `nodes[0]` network-blind (often
-                // the mainnet coordinator); re-pin to a node that matches this
-                // cube's network so removing the active test node doesn't leave
-                // a mainnet selection (mismatch hard-block) when another test
-                // node is still available.
-                trial.select_default_for(self.network);
-                match save_mostro_config(&trial) {
-                    Ok(()) => {
-                        self.mostro_config = trial;
-                        self.mostro_config_error = None;
-                    }
-                    Err(_) => {
-                        self.mostro_config_error = Some("Failed to save config");
-                    }
-                }
-            }
-            P2PMessage::MostroSelectActiveNode(pubkey) => {
-                let mut trial = self.mostro_config.clone();
-                trial.active_node_pubkey = pubkey;
-                match save_mostro_config(&trial) {
-                    Ok(()) => {
-                        self.mostro_config = trial;
-                        self.mostro_config_error = None;
-                    }
-                    Err(_) => {
-                        self.mostro_config_error = Some("Failed to save config");
-                    }
-                }
-            }
+            P2PMessage::MostroAddNode => self.add_coordinator_node(),
+            P2PMessage::MostroRemoveNode(pubkey) => self.remove_coordinator_node(pubkey),
+            P2PMessage::MostroSelectActiveNode(pubkey) => self.select_coordinator_node(pubkey),
             // Take order flow
             P2PMessage::TakeOrder => {
-                // Hard-block: don't open the take flow when the active
-                // coordinator's network doesn't match the wallet (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                // Check if this order needs user input before confirming.
-                // Non-range orders where user is selling don't need any input,
-                // so skip straight to confirmation to avoid an invisible intermediate state.
-                let needs_input = self
-                    .selected_order
-                    .as_ref()
-                    .and_then(|id| self.orders.iter().find(|o| o.id == *id))
-                    .map(|order| {
-                        let is_buying = order.order_type == OrderType::Sell;
-                        order.is_range_order() || is_buying
-                    })
-                    .unwrap_or(true);
-
-                let first_input = self.first_take_input_id();
-
-                if needs_input {
-                    self.taking_order = true;
-                    self.take_order_amount = Default::default();
-                    self.take_order_invoice = Default::default();
-                    self.take_order_submitting = false;
-                    if let Some(first_input) = first_input {
-                        return Task::done(Message::View(view::Message::FocusAction(first_input)));
-                    }
-                } else {
-                    // No input needed — proceed directly
-                    self.taking_order = true;
-                    return self.update(
-                        _daemon,
-                        cache,
-                        Message::View(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
-                    );
-                }
+                return self
+                    .start_taking_order(daemon, cache)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::TakeOrderAmountEdited(v) => {
                 self.take_order_amount.value = v;
@@ -5330,414 +6720,56 @@ impl State for P2PPanel {
                 self.take_order_submitting = false;
             }
             P2PMessage::ConfirmTakeOrder => {
-                // Hard-block chokepoint: refuse to escrow on a
-                // coordinator/network mismatch (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                if let Some(ref selected_id) = self.selected_order {
-                    if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
-                        let amount = if order.is_range_order() {
-                            match self.take_order_amount.value.parse::<i64>() {
-                                Ok(v) => {
-                                    let min = order.min_amount.unwrap_or(0.0) as i64;
-                                    let max = order.max_amount.unwrap_or(i64::MAX as f64) as i64;
-                                    if v < min || v > max {
-                                        return Task::none();
-                                    }
-                                    Some(v)
-                                }
-                                Err(_) => return Task::none(),
-                            }
-                        } else {
-                            None
-                        };
-
-                        self.take_order_submitting = true;
-                        let invoice = {
-                            let v = self.take_order_invoice.value.trim().to_string();
-                            if v.is_empty() {
-                                None
-                            } else {
-                                Some(v)
-                            }
-                        };
-
-                        let data = super::mostro::TakeOrderData {
-                            order_id: order.id.clone(),
-                            order_type: order.order_type.clone(),
-                            cube_name: self.cube_name(),
-                            mnemonic: self.mnemonic.clone(),
-                            amount,
-                            lightning_invoice: invoice,
-                            mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                            relay_urls: self.resolved_coordinator().relays,
-                            fiat_code: Some(order.fiat_currency.clone()),
-                            fiat_amount: Some(amount.unwrap_or(order.fiat_amount as i64)),
-                            payment_method: Some(order.payment_methods.join(",")),
-                            premium: order.premium_percent.map(|p| p.trunc() as i64),
-                            sats_amount: order.sats_amount.and_then(|s| i64::try_from(s).ok()),
-                            min_amount: order.min_amount.map(|m| m.trunc() as i64),
-                            max_amount: order.max_amount.map(|m| m.trunc() as i64),
-                        };
-
-                        return Task::perform(super::mostro::take_order(data), |result| {
-                            Message::View(view::Message::P2P(P2PMessage::TakeOrderResult(result)))
-                        });
-                    }
-                }
-                self.take_order_submitting = false;
+                return self.confirm_taking_order().unwrap_or_else(Task::none)
             }
-            P2PMessage::TakeOrderResult(result) => {
-                self.take_order_submitting = false;
-                self.taking_order = false;
-                match result {
-                    Ok(super::mostro::TakeOrderResponse::Success { order_id, .. }) => {
-                        tracing::info!("Order taken: {}", order_id);
-
-                        self.selected_order = None;
-                        return Task::done(Message::View(view::Message::ShowSuccess(format!(
-                            "Order taken successfully ({})",
-                            order_id
-                        ))));
-                    }
-                    Ok(super::mostro::TakeOrderResponse::PaymentRequired {
-                        order_id,
-                        invoice,
-                        amount_sats,
-                        ..
-                    }) => {
-                        tracing::info!("Order taken, payment required: {}", order_id);
-
-                        self.selected_order = None;
-                        // Reset Spark-pay state for the new modal session.
-                        self.spark_balance_sat = None;
-                        self.spark_pay_amount_sat = None;
-                        self.spark_pay_attempt = None;
-                        self.spark_pay_phase = SparkPayPhase::Idle;
-                        self.show_qr_fallback = false;
-                        self.spark_pay_session_id = Some(order_id.clone());
-                        match qr_code::Data::new(&invoice) {
-                            Ok(qr_data) => {
-                                self.pending_payment_invoice =
-                                    Some((order_id.clone(), invoice.clone(), amount_sats, qr_data));
-                                // Kick off a balance lookup and an
-                                // invoice parse in parallel. The
-                                // modal renders QR-only until the
-                                // balance lands; the parsed amount
-                                // populates the Spark-pay summary.
-                                let balance =
-                                    self.spark_balance_fetch_task(cache, order_id.clone());
-                                let parse = self
-                                    .spark_parse_invoice_task(order_id.clone(), invoice.clone());
-                                return match (balance, parse) {
-                                    (Some(b), Some(p)) => Task::batch([b, p]),
-                                    (Some(b), None) => b,
-                                    (None, Some(p)) => p,
-                                    (None, None) => Task::none(),
-                                };
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to generate QR code: {e}");
-                                return Task::done(Message::View(view::Message::ShowError(
-                                    "Invoice too long for QR code display".to_string(),
-                                )));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Task::done(Message::View(view::Message::ShowError(e)));
-                    }
-                }
-            }
+            P2PMessage::TakeOrderResult(result) => return self.finish_taking_order(result, cache),
             P2PMessage::DismissPaymentInvoice => {
-                // Same race-protection as `CancelPaymentInvoice` / `CancelTrade`:
-                // an on_blur during an in-flight prepare/send would drop the
-                // session id, causing the eventual SparkPaySent to be discarded
-                // as stale and leaving the user unaware the payment succeeded.
-                if matches!(
-                    self.spark_pay_phase,
-                    SparkPayPhase::Preparing | SparkPayPhase::Sending
-                ) {
-                    return Task::none();
-                }
-                self.pending_payment_invoice = None;
-                self.invoice_copied = false;
-                self.spark_balance_sat = None;
-                self.spark_pay_amount_sat = None;
-                self.spark_pay_attempt = None;
-                self.spark_pay_phase = SparkPayPhase::Idle;
-                self.show_qr_fallback = false;
-                self.spark_pay_session_id = None;
+                return self.dismiss_payment_invoice().unwrap_or_else(Task::none)
             }
             P2PMessage::SparkBalanceLoaded {
                 order_id,
                 balance_sat,
             } => {
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::info!(
-                        target: "p2p::spark_pay",
-                        "Ignoring stale SparkBalanceLoaded(balance={}) for order {} \
-                         (current session={:?})",
-                        balance_sat,
-                        order_id,
-                        self.spark_pay_session_id,
-                    );
-                    return Task::none();
-                }
-                tracing::info!(
-                    target: "p2p::spark_pay",
-                    "SparkBalanceLoaded for order {}: balance={} sats",
-                    order_id,
-                    balance_sat,
-                );
-                self.spark_balance_sat = Some(balance_sat);
+                return self
+                    .apply_spark_payment_balance(order_id, balance_sat)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::SparkBalanceFailed { order_id, err } => {
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::info!(
-                        target: "p2p::spark_pay",
-                        "Ignoring stale SparkBalanceFailed for order {} (err={}, current session={:?})",
-                        order_id,
-                        err,
-                        self.spark_pay_session_id,
-                    );
-                    return Task::none();
-                }
-                tracing::warn!(
-                    target: "p2p::spark_pay",
-                    "Spark balance lookup failed for order {}: {}",
-                    order_id,
-                    err,
-                );
-                self.spark_balance_sat = None;
+                return self
+                    .record_spark_balance_failure(order_id, err)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::SparkInvoiceAmountParsed {
                 order_id,
                 amount_sat,
             } => {
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::debug!(
-                        target: "p2p::spark_pay",
-                        "Ignoring stale SparkInvoiceAmountParsed for order {} (current session={:?})",
-                        order_id,
-                        self.spark_pay_session_id,
-                    );
-                    return Task::none();
-                }
-                tracing::info!(
-                    target: "p2p::spark_pay",
-                    "SparkInvoiceAmountParsed for order {}: amount_sat={:?}",
-                    order_id,
-                    amount_sat,
-                );
-                self.spark_pay_amount_sat = amount_sat;
+                return self
+                    .apply_spark_invoice_amount(order_id, amount_sat)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::SparkPayPrepare { order_id, invoice } => {
-                // Only honor "Pay from Spark" for the currently active
-                // session. A button press that races with a session
-                // change (modal dismiss + new take) would otherwise
-                // kick off `prepare_send` against a freshly-opened
-                // modal's invoice — using stale view state.
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::debug!("Ignoring stale SparkPayPrepare for order {}", order_id);
-                    return Task::none();
-                }
-                let Some(spark) = self.spark_backend.clone() else {
-                    self.spark_pay_phase =
-                        SparkPayPhase::Error("Spark wallet is not available.".to_string());
-                    return Task::none();
-                };
-                self.spark_pay_phase = SparkPayPhase::Preparing;
-                // Track this prepare attempt so a transient failure
-                // can be auto-retried once without bothering the user.
-                self.spark_pay_attempt = Some((order_id.clone(), invoice.clone(), false));
-                let session_id = order_id;
-                return Task::perform(
-                    async move { spark.prepare_send(invoice, None).await },
-                    move |result| match result {
-                        Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPayPrepared {
-                            order_id: session_id.clone(),
-                            ok,
-                        })),
-                        Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed {
-                            order_id: session_id.clone(),
-                            err: e.to_string(),
-                        })),
-                    },
-                );
+                return self.prepare_spark_payment(order_id, invoice)
             }
             P2PMessage::SparkPayPrepared { order_id, ok } => {
-                // Reject stale prepares so a `SparkPayConfirm` in a
-                // fresh session can't reuse a previous session's
-                // single-use `handle`.
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::debug!("Ignoring stale SparkPayPrepared for order {}", order_id);
-                    return Task::none();
-                }
-                // We're past the prepare phase — clear the attempt so a
-                // later `send_payment` failure can't satisfy the
-                // `retry_in_prepare_phase` check and re-fire `prepare_send`.
-                // A timed-out send may have actually delivered the
-                // payment; re-preparing risks double-paying the hold invoice.
-                self.spark_pay_attempt = None;
-                self.spark_pay_phase = SparkPayPhase::Prepared(ok);
+                return self
+                    .apply_prepared_spark_payment(order_id, ok)
+                    .unwrap_or_else(Task::none)
             }
-            P2PMessage::SparkPayConfirm => {
-                let Some(spark) = self.spark_backend.clone() else {
-                    self.spark_pay_phase =
-                        SparkPayPhase::Error("Spark wallet is not available.".to_string());
-                    return Task::none();
-                };
-                let SparkPayPhase::Prepared(ref prepared) = self.spark_pay_phase else {
-                    return Task::none();
-                };
-                let Some(session_id) = self.spark_pay_session_id.clone() else {
-                    // No active session — the view shouldn't expose
-                    // this button here, but bail rather than fire an
-                    // unattributed send.
-                    return Task::none();
-                };
-                let handle = prepared.handle.clone();
-                self.spark_pay_phase = SparkPayPhase::Sending;
-                return Task::perform(
-                    async move { spark.send_payment(handle, None).await },
-                    move |result| match result {
-                        Ok(ok) => Message::View(view::Message::P2P(P2PMessage::SparkPaySent {
-                            order_id: session_id.clone(),
-                            ok,
-                        })),
-                        Err(e) => Message::View(view::Message::P2P(P2PMessage::SparkPayFailed {
-                            order_id: session_id.clone(),
-                            err: e.to_string(),
-                        })),
-                    },
-                );
-            }
+            P2PMessage::SparkPayConfirm => return self.confirm_spark_payment(),
             P2PMessage::SparkPaySent { order_id, ok } => {
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::warn!(
-                        "Ignoring SparkPaySent for old session {} (payment id={}, \
-                         amount={}, fee={}) — the active session has moved on. \
-                         Mostro will receive its hold-invoice settlement via the \
-                         normal DM channel regardless.",
-                        order_id,
-                        ok.payment_id,
-                        ok.amount_sat,
-                        ok.fee_sat
-                    );
-                    return Task::none();
-                }
-                tracing::info!(
-                    "Spark payment for hold invoice succeeded: id={}, amount={}, fee={}",
-                    ok.payment_id,
-                    ok.amount_sat,
-                    ok.fee_sat
-                );
-                // Remember that this order's hold invoice was paid via
-                // Spark. If Mostro later cancels/expires it (e.g. our
-                // payment was too late), the trade would otherwise
-                // disappear from My Trades while the Lightning HTLC
-                // is still settling. Keeping the id in this set
-                // overrides the default "hide canceled creator
-                // trades" filter so the user can see the trade
-                // resolve to Success or refund.
-                self.spark_funded_order_ids.insert(order_id);
-                self.pending_payment_invoice = None;
-                self.invoice_copied = false;
-                self.spark_balance_sat = None;
-                self.spark_pay_amount_sat = None;
-                self.spark_pay_attempt = None;
-                self.spark_pay_phase = SparkPayPhase::Idle;
-                self.show_qr_fallback = false;
-                self.spark_pay_session_id = None;
+                return self
+                    .finish_spark_payment(order_id, ok)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::SparkPayFailed { order_id, err } => {
-                if self.spark_pay_session_id.as_deref() != Some(&order_id) {
-                    tracing::debug!(
-                        "Ignoring stale SparkPayFailed for order {}: {}",
-                        order_id,
-                        err
-                    );
-                    return Task::none();
-                }
-                // Auto-retry once when a `prepare_send` blew up on a
-                // transient error (LSP TLS close_notify, network EOF,
-                // timeout). These resolve immediately on a second try
-                // and were surfacing as a scary "Try again" prompt
-                // even though the underlying state was recoverable.
-                // We only retry the prepare path — send_payment
-                // failures consume the prepared handle and can't be
-                // retried with the same data.
-                let retry_in_prepare_phase = matches!(
-                    self.spark_pay_attempt.as_ref(),
-                    Some((sid, _, false)) if sid == &order_id,
-                );
-                if retry_in_prepare_phase && is_transient_spark_error(&err) {
-                    if let Some(spark) = self.spark_backend.clone() {
-                        let invoice = self
-                            .spark_pay_attempt
-                            .as_ref()
-                            .map(|(_, inv, _)| inv.clone())
-                            .expect("retry_in_prepare_phase implies Some attempt");
-                        if let Some(attempt) = self.spark_pay_attempt.as_mut() {
-                            attempt.2 = true;
-                        }
-                        tracing::info!(
-                            target: "p2p::spark_pay",
-                            "Auto-retrying Spark prepare for {} after transient error: {}",
-                            order_id,
-                            err,
-                        );
-                        // Stay in Preparing so the spinner stays up —
-                        // the user doesn't see the retry happen.
-                        let session_id = order_id;
-                        return Task::perform(
-                            async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                                spark.prepare_send(invoice, None).await
-                            },
-                            move |result| match result {
-                                Ok(ok) => Message::View(view::Message::P2P(
-                                    P2PMessage::SparkPayPrepared {
-                                        order_id: session_id.clone(),
-                                        ok,
-                                    },
-                                )),
-                                Err(e) => {
-                                    Message::View(view::Message::P2P(P2PMessage::SparkPayFailed {
-                                        order_id: session_id.clone(),
-                                        err: e.to_string(),
-                                    }))
-                                }
-                            },
-                        );
-                    }
-                }
-                tracing::warn!(
-                    target: "p2p::spark_pay",
-                    "Spark pay failed for {}: {}",
-                    order_id,
-                    err,
-                );
-                self.spark_pay_attempt = None;
-                self.spark_pay_phase = SparkPayPhase::Error(friendly_spark_pay_error(&err));
+                return self
+                    .handle_spark_payment_failure(order_id, err)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::SparkPayCancel => {
                 self.spark_pay_phase = SparkPayPhase::Idle;
             }
-            P2PMessage::ToggleQrFallback(show) => {
-                // Ignore while a Spark RPC is in flight — the view freezes
-                // these controls during Preparing/Sending, but stale events
-                // (keyboard, mouse, hooks) could still arrive.
-                if !matches!(
-                    self.spark_pay_phase,
-                    SparkPayPhase::Preparing | SparkPayPhase::Sending
-                ) {
-                    self.show_qr_fallback = show;
-                }
-            }
+            P2PMessage::ToggleQrFallback(show) => self.set_payment_qr_fallback(show),
             P2PMessage::CopyPaymentInvoice(invoice) => {
                 self.invoice_copied = true;
                 return Task::batch([
@@ -5752,164 +6784,12 @@ impl State for P2PPanel {
                 self.invoice_copied = false;
             }
             P2PMessage::CancelPaymentInvoice(order_id) => {
-                // Hard-block: keep this cancel RPC off a wrong-network
-                // coordinator (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                // Block cancel while a Spark RPC is in flight. If the
-                // prepare/send completes after we fire `cancel_trade`,
-                // Mostro and Spark disagree on the order state and the
-                // seller's sats can end up locked against a cancelled
-                // trade. The view hides the button during these phases,
-                // but guard the dispatch too for safety.
-                if matches!(
-                    self.spark_pay_phase,
-                    SparkPayPhase::Preparing | SparkPayPhase::Sending
-                ) {
-                    return Task::none();
-                }
-                let data = super::mostro::TradeActionData {
-                    order_id,
-                    cube_name: self.cube_name(),
-                    mnemonic: self.mnemonic.clone(),
-                    invoice: None,
-                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                    relay_urls: self.resolved_coordinator().relays,
-                };
-                return Task::perform(super::mostro::cancel_trade(data), |result| {
-                    Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
-                        result.map(|_| ()),
-                    )))
-                });
+                return self.cancel_payment_invoice(order_id)
             }
             // Trade detail
-            P2PMessage::SelectTrade(id) => {
-                // Same race-protection as `DismissPaymentInvoice` /
-                // `CancelPaymentInvoice` / `CancelTrade`: navigating to
-                // another trade while a Spark RPC is in flight would
-                // drop the session id, causing the eventual SparkPaySent
-                // to be filtered as stale — losing the
-                // `spark_funded_order_ids` entry that prevents the
-                // trade from vanishing if Mostro cancels post-payment.
-                if matches!(
-                    self.spark_pay_phase,
-                    SparkPayPhase::Preparing | SparkPayPhase::Sending
-                ) {
-                    return Task::none();
-                }
-                // Cache QR code for the hold invoice if this trade has one
-                let trade_has_hold_invoice = self
-                    .trades
-                    .iter()
-                    .find(|t| t.id == id)
-                    .and_then(|t| t.hold_invoice.as_ref())
-                    .is_some();
-                self.hold_invoice_qr = self
-                    .trades
-                    .iter()
-                    .find(|t| t.id == id)
-                    .and_then(|t| t.hold_invoice.as_ref())
-                    .and_then(|inv| qr_code::Data::new(inv).ok());
-                self.selected_trade = Some(id.clone());
-                self.chat_selected_trade = None; // clear Chat tab context
-                self.trade_invoice_input = Default::default();
-                self.trade_action_loading = false;
-                self.trade_rating = 0;
-                self.active_chat = ActiveChat::None;
-                self.chat_input = Default::default();
-                // Reset Spark-pay state so a stale Error/Prepared from a
-                // previous trade doesn't bleed into this view. Re-fetch
-                // the balance only if this trade has a hold invoice the
-                // user might pay from Spark; skip the RPC otherwise.
-                self.spark_pay_phase = SparkPayPhase::Idle;
-                self.show_qr_fallback = false;
-                self.spark_pay_amount_sat = None;
-                self.spark_pay_attempt = None;
-                let balance_task = if trade_has_hold_invoice {
-                    self.spark_pay_session_id = Some(id.clone());
-                    self.spark_balance_sat = None;
-                    let invoice = self
-                        .trades
-                        .iter()
-                        .find(|t| t.id == id)
-                        .and_then(|t| t.hold_invoice.clone());
-                    let session_id = id.clone();
-                    let balance = self.spark_balance_fetch_task(cache, session_id.clone());
-                    let parse = invoice
-                        .and_then(|inv| self.spark_parse_invoice_task(session_id.clone(), inv));
-                    match (balance, parse) {
-                        (Some(b), Some(p)) => {
-                            tracing::info!(
-                                target: "p2p::spark_pay",
-                                "SelectTrade: kicking off balance fetch + invoice parse for order {}",
-                                session_id,
-                            );
-                            Some(Task::batch([b, p]))
-                        }
-                        (Some(b), None) => {
-                            tracing::info!(
-                                target: "p2p::spark_pay",
-                                "SelectTrade: kicking off balance fetch for order {} (no invoice to parse)",
-                                session_id,
-                            );
-                            Some(b)
-                        }
-                        (None, _) => {
-                            tracing::info!(
-                                target: "p2p::spark_pay",
-                                "SelectTrade: trade {} has hold invoice but Spark backend is None",
-                                id,
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    tracing::info!(
-                        target: "p2p::spark_pay",
-                        "SelectTrade: trade {} has no hold invoice yet, skipping balance fetch",
-                        id,
-                    );
-                    self.spark_pay_session_id = None;
-                    None
-                };
-                self.refresh_trade_cache();
-                // Clear image cache from previous trade and trigger downloads for new one
-                self.image_cache.clear();
-                self.image_downloads_in_flight.clear();
-                let image_task = self.trigger_image_downloads();
-                return match balance_task {
-                    Some(bt) => Task::batch([bt, image_task]),
-                    None => image_task,
-                };
-            }
+            P2PMessage::SelectTrade(id) => return self.select_trade(id, cache),
             P2PMessage::CloseTradeDetail => {
-                // Same race-protection as `SelectTrade`: closing while a
-                // Spark RPC is in flight drops the session id and
-                // discards the eventual SparkPaySent as stale, losing
-                // the `spark_funded_order_ids` tracking.
-                if matches!(
-                    self.spark_pay_phase,
-                    SparkPayPhase::Preparing | SparkPayPhase::Sending
-                ) {
-                    return Task::none();
-                }
-                self.selected_trade = None;
-                self.trade_invoice_input = Default::default();
-                self.trade_rating = 0;
-                self.trade_action_loading = false;
-                self.hold_invoice_qr = None;
-                self.active_chat = ActiveChat::None;
-                self.chat_input = Default::default();
-                self.spark_pay_phase = SparkPayPhase::Idle;
-                self.show_qr_fallback = false;
-                self.spark_pay_session_id = None;
-                self.spark_pay_amount_sat = None;
-                self.spark_pay_attempt = None;
-                self.refresh_trade_cache();
-                self.image_cache.clear();
-                self.image_downloads_in_flight.clear();
+                return self.close_trade_detail().unwrap_or_else(Task::none)
             }
             // Trade actions
             P2PMessage::TradeInvoiceEdited(v) => {
@@ -5928,99 +6808,13 @@ impl State for P2PPanel {
             P2PMessage::RatingSelected(rating) => {
                 self.trade_rating = rating;
             }
-            P2PMessage::SubmitRating => {
-                // Hard-block: rating is a coordinator RPC too, so keep it off a
-                // wrong-network coordinator like the other trade actions
-                // (COIN-371 Q4).
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                let rating = self.trade_rating;
-                if rating == 0 {
-                    return Task::none();
-                }
-                let Some(ref order_id) = self.selected_trade else {
-                    return Task::none();
-                };
-                self.trade_action_loading = true;
-                let data = super::mostro::TradeActionData {
-                    order_id: order_id.clone(),
-                    cube_name: self.cube_name(),
-                    mnemonic: self.mnemonic.clone(),
-                    invoice: None,
-                    mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                    relay_urls: self.resolved_coordinator().relays,
-                };
-                return Task::perform(super::mostro::rate_counterparty(data, rating), |result| {
-                    Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-                });
-            }
-            P2PMessage::CancelTrade => {
-                // Same race-protection as `CancelPaymentInvoice`: don't
-                // dispatch `cancel_trade` while a Spark RPC is in flight,
-                // or Mostro and Spark end up disagreeing on whether sats
-                // are locked.
-                if matches!(
-                    self.spark_pay_phase,
-                    SparkPayPhase::Preparing | SparkPayPhase::Sending
-                ) {
-                    return Task::none();
-                }
-                return self.perform_trade_action(None, super::mostro::cancel_trade);
-            }
+            P2PMessage::SubmitRating => return self.submit_trade_rating(),
+            P2PMessage::CancelTrade => return self.cancel_active_trade(),
             P2PMessage::OpenDispute => {
                 return self.perform_trade_action(None, super::mostro::open_dispute);
             }
-            P2PMessage::TradeActionResult(result) => {
-                self.trade_action_loading = false;
-                self.trade_rating = 0;
-                match result {
-                    Ok(resp) => {
-                        let super::mostro::TradeActionResponse::Success { new_status } = resp;
-                        tracing::info!("Trade action succeeded: {}", new_status);
-
-                        // Update last_dm_action, timestamp, and status on the matching in-memory trade
-                        if let Some(ref order_id) = self.selected_trade {
-                            if let Some(trade) = self.trades.iter_mut().find(|t| t.id == *order_id)
-                            {
-                                let ts = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs())
-                                    .unwrap_or(0);
-                                trade.last_dm_action = Some(new_status.clone());
-                                if is_countdown_action(&new_status) {
-                                    trade.countdown_start_ts = Some(ts);
-                                } else {
-                                    trade.countdown_start_ts = None;
-                                }
-                                if let Some(s) = super::mostro::dm_action_to_status(&new_status) {
-                                    trade.status = s;
-                                }
-                            }
-                            let cube_name = self.cube_name();
-                            super::mostro::append_trade_message(
-                                &cube_name,
-                                order_id,
-                                super::mostro::TradeMessage {
-                                    timestamp: chrono::Utc::now().timestamp() as u64,
-                                    action: new_status.clone(),
-                                    payload_json: String::new(),
-                                    is_own: false,
-                                },
-                            );
-                            self.refresh_trade_cache();
-                        }
-
-                        return Task::done(Message::View(view::Message::ShowSuccess(format!(
-                            "Action completed: {}",
-                            new_status
-                        ))));
-                    }
-                    Err(e) => {
-                        return Task::done(Message::View(view::Message::ShowError(e)));
-                    }
-                }
+            P2PMessage::TradeActionResult(order_id, result) => {
+                return self.finish_trade_action(order_id, result)
             }
             // Chat
             P2PMessage::OpenChat => {
@@ -6044,9 +6838,11 @@ impl State for P2PPanel {
             }
             P2PMessage::ChatListTabMessages => {
                 self.chat_list_tab = ChatListTab::Messages;
+                self.refresh_chat_history_cache();
             }
             P2PMessage::ChatListTabDisputes => {
                 self.chat_list_tab = ChatListTab::Disputes;
+                self.refresh_chat_history_cache();
             }
             P2PMessage::OpenDisputeChatForTrade(trade_id) => {
                 self.chat_selected_trade = Some(trade_id);
@@ -6084,148 +6880,18 @@ impl State for P2PPanel {
                 self.dispute_chat_input.value = v;
             }
             P2PMessage::SendDisputeChatMessage => {
-                // Hard-block: don't send to a coordinator whose network doesn't
-                // match the wallet (the subscription is also paused in that
-                // state, so replies wouldn't arrive). COIN-371 Q4.
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                let text = self.dispute_chat_input.value.trim().to_string();
-                if text.is_empty() || self.pending_dispute_chat_message.is_some() {
-                    return Task::none();
-                }
-                if let Some(ref order_id) = self.active_order_id() {
-                    let cube_name = self.cube_name();
-                    let payload = serde_json::to_string(&Some(
-                        mostro_core::message::Payload::TextMessage(text.clone()),
-                    ))
-                    .unwrap_or_default();
-                    self.pending_dispute_chat_message = Some(PendingChatMessage {
-                        order_id: order_id.clone(),
-                        cube_name: cube_name.clone(),
-                        payload,
-                        timestamp: chrono::Utc::now().timestamp() as u64,
-                        original_text: text.clone(),
-                    });
-                    self.dispute_chat_input = Default::default();
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name,
-                        mnemonic: self.mnemonic.clone(),
-                        invoice: Some(text),
-                        mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                        relay_urls: self.resolved_coordinator().relays,
-                    };
-                    return Task::perform(super::mostro::send_admin_chat_message(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::DisputeChatMessageSent(
-                            result,
-                        )))
-                    });
-                }
+                return self.send_dispute_chat().unwrap_or_else(Task::none)
             }
             P2PMessage::DisputeChatMessageSent(result) => {
-                if let Some(pending) = self.pending_dispute_chat_message.take() {
-                    match result {
-                        Ok(()) => {
-                            super::mostro::append_trade_message(
-                                &pending.cube_name,
-                                &pending.order_id,
-                                super::mostro::TradeMessage {
-                                    timestamp: pending.timestamp,
-                                    action: "AdminDm".to_string(),
-                                    payload_json: pending.payload,
-                                    is_own: true,
-                                },
-                            );
-                            self.refresh_trade_cache();
-                        }
-                        Err(e) => {
-                            // Only restore input if the user is still viewing the same trade
-                            if self.active_order_id().as_deref() == Some(&pending.order_id) {
-                                self.dispute_chat_input.value = pending.original_text;
-                            }
-                            return Task::done(Message::View(view::Message::ShowError(format!(
-                                "Dispute chat send failed: {}",
-                                e
-                            ))));
-                        }
-                    }
-                }
+                return self
+                    .finish_dispute_chat_send(result)
+                    .unwrap_or_else(Task::none)
             }
-            P2PMessage::SendChatMessage => {
-                // Hard-block: don't send to a coordinator whose network doesn't
-                // match the wallet (the subscription is also paused in that
-                // state, so replies wouldn't arrive). COIN-371 Q4.
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                let text = self.chat_input.value.trim().to_string();
-                if text.is_empty() || self.pending_chat_message.is_some() {
-                    return Task::none();
-                }
-                if let Some(ref order_id) = self.active_order_id() {
-                    let cube_name = self.cube_name();
-
-                    // Build payload but defer persisting until send succeeds
-                    let payload = serde_json::to_string(&Some(
-                        mostro_core::message::Payload::TextMessage(text.clone()),
-                    ))
-                    .unwrap_or_default();
-
-                    self.pending_chat_message = Some(PendingChatMessage {
-                        order_id: order_id.clone(),
-                        cube_name: cube_name.clone(),
-                        payload,
-                        timestamp: chrono::Utc::now().timestamp() as u64,
-                        original_text: text.clone(),
-                    });
-
-                    self.chat_input = Default::default();
-
-                    // Fire async send
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name,
-                        mnemonic: self.mnemonic.clone(),
-                        invoice: Some(text),
-                        mostro_pubkey_hex: self.resolved_coordinator().pubkey_hex,
-                        relay_urls: self.resolved_coordinator().relays,
-                    };
-                    return Task::perform(super::mostro::send_chat_message(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::ChatMessageSent(result)))
-                    });
-                }
-            }
+            P2PMessage::SendChatMessage => return self.send_peer_chat().unwrap_or_else(Task::none),
             P2PMessage::ChatMessageSent(result) => {
-                if let Some(pending) = self.pending_chat_message.take() {
-                    match result {
-                        Ok(()) => {
-                            super::mostro::append_trade_message(
-                                &pending.cube_name,
-                                &pending.order_id,
-                                super::mostro::TradeMessage {
-                                    timestamp: pending.timestamp,
-                                    action: "SendDm".to_string(),
-                                    payload_json: pending.payload,
-                                    is_own: true,
-                                },
-                            );
-                            self.refresh_trade_cache();
-                        }
-                        Err(e) => {
-                            // Only restore input if the user is still viewing the same trade
-                            if self.active_order_id().as_deref() == Some(&pending.order_id) {
-                                self.chat_input.value = pending.original_text;
-                            }
-                            return Task::done(Message::View(view::Message::ShowError(format!(
-                                "Chat send failed: {}",
-                                e
-                            ))));
-                        }
-                    }
-                }
+                return self
+                    .finish_peer_chat_send(result)
+                    .unwrap_or_else(Task::none)
             }
             // Timer tick — no-op; re-render happens automatically
             P2PMessage::TradeTimerTick => {}
@@ -6234,360 +6900,36 @@ impl State for P2PPanel {
                 order_id,
                 action,
                 payload_json,
-            } => {
-                tracing::info!("Trade update for {}: {}", order_id, action);
-
-                let is_chat = action == "SendDm" || action == "AdminDm";
-
-                // Update last_dm_action and status on the matching in-memory trade
-                // (skip for chat messages — they don't change trade status)
-                if !is_chat {
-                    let now_ts = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
-                        trade.last_dm_action = Some(action.clone());
-                        if is_countdown_action(&action) {
-                            trade.countdown_start_ts = Some(now_ts);
-                        } else {
-                            trade.countdown_start_ts = None;
-                        }
-                        if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
-                            trade.status = new_status;
-                        }
-                        // Extract hold invoice from PayInvoice or BuyerTookOrder DM payload
-                        let mut active_invoice_just_arrived: Option<String> = None;
-                        if (action == "PayInvoice"
-                            || action == "WaitingSellerToPay"
-                            || action == "BuyerTookOrder")
-                            && trade.hold_invoice.is_none()
-                        {
-                            if let Ok(Some(mostro_core::message::Payload::PaymentRequest(
-                                _,
-                                ref invoice,
-                                _,
-                            ))) = serde_json::from_str::<Option<mostro_core::message::Payload>>(
-                                &payload_json,
-                            ) {
-                                trade.hold_invoice = Some(invoice.clone());
-                                let is_active =
-                                    self.active_order_id().as_deref() == Some(&order_id);
-                                if is_active {
-                                    self.hold_invoice_qr = qr_code::Data::new(invoice).ok();
-                                    active_invoice_just_arrived = Some(invoice.clone());
-                                }
-                            }
-                        }
-                        // If the user is sitting on the trade detail when
-                        // the hold-invoice DM lands, `SelectTrade`'s
-                        // earlier balance fetch was skipped (no invoice
-                        // at that point). Kick one off now so the
-                        // Spark-pay gate can flip without requiring the
-                        // user to navigate away and back.
-                        //
-                        // Skip the Spark-state reset entirely when a
-                        // prepare/send RPC is in flight: swapping the
-                        // session id or flipping the phase would cause
-                        // the eventual SparkPaySent to be filtered as
-                        // stale, losing the `spark_funded_order_ids`
-                        // entry that keeps the trade visible if Mostro
-                        // later cancels it. The shared non-chat
-                        // persistence path below still writes the DM
-                        // to disk.
-                        if let Some(invoice) = active_invoice_just_arrived {
-                            if matches!(
-                                self.spark_pay_phase,
-                                SparkPayPhase::Preparing | SparkPayPhase::Sending,
-                            ) {
-                                tracing::info!(
-                                    target: "p2p::spark_pay",
-                                    "TradeUpdate({}): hold-invoice DM arrived during \
-                                     {:?} — skipping Spark-state reset to protect \
-                                     in-flight RPC",
-                                    order_id,
-                                    self.spark_pay_phase,
-                                );
-                                // Fall through to the shared persistence
-                                // path; consume `invoice` so the binding
-                                // isn't flagged as unused.
-                                let _ = invoice;
-                            } else {
-                                self.spark_pay_phase = SparkPayPhase::Idle;
-                                self.show_qr_fallback = false;
-                                self.spark_pay_session_id = Some(order_id.clone());
-                                self.spark_balance_sat = None;
-                                self.spark_pay_amount_sat = None;
-                                self.spark_pay_attempt = None;
-                                let balance =
-                                    self.spark_balance_fetch_task(cache, order_id.clone());
-                                let parse =
-                                    self.spark_parse_invoice_task(order_id.clone(), invoice);
-                                // Persist before any Spark early-return — the
-                                // shared non-chat persistence path below is
-                                // bypassed by `return Task::batch(...)` / `return b`,
-                                // and losing the PayInvoice/WaitingSellerToPay/
-                                // BuyerTookOrder DM means the trade can't be
-                                // rebuilt from disk after a restart. The
-                                // `(None, _)` arm falls through and lets the
-                                // shared path persist instead.
-                                let persist_hold_invoice_dm = |this: &Self| {
-                                    super::mostro::append_trade_message(
-                                        &this.cube_name(),
-                                        &order_id,
-                                        super::mostro::TradeMessage {
-                                            timestamp: chrono::Utc::now().timestamp() as u64,
-                                            action: action.clone(),
-                                            payload_json: payload_json.clone(),
-                                            is_own: false,
-                                        },
-                                    );
-                                };
-                                match (balance, parse) {
-                                    (Some(b), Some(p)) => {
-                                        tracing::info!(
-                                            target: "p2p::spark_pay",
-                                            "TradeUpdate({}): hold invoice landed on active trade — \
-                                             kicking off balance fetch + invoice parse",
-                                            order_id,
-                                        );
-                                        persist_hold_invoice_dm(self);
-                                        return Task::batch([b, p]);
-                                    }
-                                    (Some(b), None) => {
-                                        tracing::info!(
-                                            target: "p2p::spark_pay",
-                                            "TradeUpdate({}): hold invoice landed on active trade — \
-                                             kicking off balance fetch",
-                                            order_id,
-                                        );
-                                        persist_hold_invoice_dm(self);
-                                        return b;
-                                    }
-                                    (None, _) => {
-                                        tracing::info!(
-                                            target: "p2p::spark_pay",
-                                            "TradeUpdate({}): hold invoice landed but Spark backend is None",
-                                            order_id,
-                                        );
-                                    }
-                                }
-                            }
-                        } else if action == "PayInvoice"
-                            || action == "WaitingSellerToPay"
-                            || action == "BuyerTookOrder"
-                        {
-                            tracing::info!(
-                                target: "p2p::spark_pay",
-                                "TradeUpdate({}): DM action={} did not produce an \
-                                 active-trade invoice arrival (active_order_id={:?}, \
-                                 trade.hold_invoice already set?={})",
-                                order_id,
-                                action,
-                                self.active_order_id(),
-                                self.trades.iter().find(|t| t.id == order_id)
-                                    .map(|t| t.hold_invoice.is_some())
-                                    .unwrap_or(false),
-                            );
-                        }
-                    }
-                }
-
-                // Chat messages are already persisted by process_dm_notifications.
-                // Still refresh the cache so the view picks up the new message.
-                if is_chat {
-                    if self.active_order_id().as_deref() == Some(&order_id) {
-                        self.refresh_trade_cache();
-                        return self.trigger_image_downloads();
-                    }
-                    return Task::none();
-                }
-
-                // Persist non-chat protocol messages to disk
-                let cube_name = self.cube_name();
-                super::mostro::append_trade_message(
-                    &cube_name,
-                    &order_id,
-                    super::mostro::TradeMessage {
-                        timestamp: chrono::Utc::now().timestamp() as u64,
-                        action: action.clone(),
-                        payload_json,
-                        is_own: false,
-                    },
-                );
-
-                // Refresh cache when this update belongs to the active trade
-                if self.active_order_id().as_deref() == Some(&order_id) {
-                    self.refresh_trade_cache();
-                }
-
-                return Task::done(Message::View(view::Message::ShowSuccess(format!(
-                    "Trade update: {} ({})",
-                    action,
-                    &order_id[..8.min(order_id.len())]
-                ))));
-            }
+            } => return self.apply_trade_update(order_id, action, payload_json, cache),
             P2PMessage::StreamError(msg) => {
                 self.stream_error = Some(msg);
             }
             // ── Image attachment messages ──
-            P2PMessage::AttachFile => {
-                if self.attachment_sending || self.pending_chat_message.is_some() {
-                    return Task::none();
-                }
-                // Open file picker — attachment_sending is NOT set yet
-                return Task::perform(
-                    async move {
-                        let dialog = rfd::AsyncFileDialog::new()
-                            .set_title("Send File")
-                            .add_filter(
-                                "All supported",
-                                &[
-                                    "png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "avi",
-                                    "pdf", "doc", "docx",
-                                ],
-                            )
-                            .add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"])
-                            .add_filter("Videos", &["mp4", "mov", "avi"])
-                            .add_filter("Documents", &["pdf", "doc", "docx"]);
-                        dialog.pick_file().await
-                    },
-                    |file| {
-                        if let Some(file) = file {
-                            Message::View(view::Message::P2P(P2PMessage::FileSelected(
-                                file.path().to_path_buf(),
-                            )))
-                        } else {
-                            // User cancelled — no-op
-                            Message::View(view::Message::P2P(P2PMessage::AttachmentSent(Err(
-                                "cancelled".to_string(),
-                            ))))
-                        }
-                    },
-                );
-            }
+            P2PMessage::AttachFile => return self.choose_chat_attachment(),
             P2PMessage::FileSelected(path) => {
-                // Hard-block: don't send to a coordinator whose network doesn't
-                // match the wallet (the subscription is also paused in that
-                // state, so replies wouldn't arrive). COIN-371 Q4.
-                if !self.coordinator_network_matches() {
-                    self.stream_error = Some(COORDINATOR_MISMATCH_MSG.to_string());
-                    return Task::none();
-                }
-                if let Some(ref order_id) = self.active_order_id() {
-                    let order_id = order_id.clone();
-                    let oid_for_result = order_id.clone();
-                    let cube_name = self.cube_name();
-                    let mnemonic = self.mnemonic.clone();
-                    let coordinator = self.resolved_coordinator();
-                    let mostro_pubkey_hex = coordinator.pubkey_hex;
-                    let relay_urls = coordinator.relays;
-
-                    self.attachment_sending = true;
-                    return Task::perform(
-                        super::mostro::send_attachment(super::mostro::AttachmentData {
-                            file_path: path,
-                            order_id,
-                            cube_name,
-                            mnemonic,
-                            mostro_pubkey_hex,
-                            relay_urls,
-                        }),
-                        move |result| {
-                            Message::View(view::Message::P2P(P2PMessage::AttachmentSent(
-                                result.map(|meta| (oid_for_result, meta)),
-                            )))
-                        },
-                    );
-                }
+                return self.upload_chat_attachment(path).unwrap_or_else(Task::none)
             }
             P2PMessage::AttachmentSent(result) => {
-                self.attachment_sending = false;
-                match result {
-                    Ok((order_id, metadata_json)) => {
-                        let payload = serde_json::to_string(&Some(
-                            mostro_core::message::Payload::TextMessage(metadata_json),
-                        ))
-                        .unwrap_or_default();
-                        super::mostro::append_trade_message(
-                            &self.cube_name(),
-                            &order_id,
-                            super::mostro::TradeMessage {
-                                timestamp: chrono::Utc::now().timestamp() as u64,
-                                action: "SendDm".to_string(),
-                                payload_json: payload,
-                                is_own: true,
-                            },
-                        );
-                        self.refresh_trade_cache();
-                        let dl = self.trigger_image_downloads();
-                        return dl;
-                    }
-                    Err(e) => {
-                        if e != "cancelled" {
-                            return Task::done(Message::View(view::Message::ShowError(format!(
-                                "Image send failed: {e}"
-                            ))));
-                        }
-                    }
-                }
+                return self
+                    .finish_attachment_upload(result)
+                    .unwrap_or_else(Task::none)
             }
             P2PMessage::AttachmentDownloaded {
                 order_id,
                 blossom_url,
                 data,
-            } => {
-                self.image_downloads_in_flight.remove(&blossom_url);
-                match data {
-                    Ok(bytes) => {
-                        let handle = iced::widget::image::Handle::from_bytes(bytes);
-                        self.image_cache
-                            .insert(blossom_url, ImageCacheEntry::Ready(handle));
-                    }
-                    Err(e) => {
-                        if !blossom_url.is_empty() {
-                            self.image_cache
-                                .insert(blossom_url, ImageCacheEntry::Failed(e));
-                        } else {
-                            tracing::warn!("Image download failed: {e}");
-                        }
-                    }
-                }
-                let _ = order_id; // used for future scoping if needed
-            }
+            } => self.apply_attachment_download(order_id, blossom_url, data),
             P2PMessage::SaveFile {
                 blossom_url,
                 filename,
             } => {
-                if let Some(order_id) = self.active_order_id() {
-                    let cube_name = self.cube_name();
-                    let mnemonic = self.mnemonic.clone();
-                    return Task::perform(
-                        super::mostro::download_and_save_file(
-                            blossom_url,
-                            filename,
-                            order_id,
-                            cube_name,
-                            mnemonic,
-                        ),
-                        |result| Message::View(view::Message::P2P(P2PMessage::FileSaved(result))),
-                    );
-                }
+                return self
+                    .save_chat_attachment(blossom_url, filename)
+                    .unwrap_or_else(Task::none)
             }
-            P2PMessage::FileSaved(result) => match result {
-                Ok(()) => {
-                    return Task::done(Message::View(view::Message::ShowSuccess(
-                        "File saved".to_string(),
-                    )));
-                }
-                Err(e) => {
-                    if e != "cancelled" {
-                        return Task::done(Message::View(view::Message::ShowError(format!(
-                            "File save failed: {e}",
-                        ))));
-                    }
-                }
-            },
+            P2PMessage::FileSaved(result) => {
+                return Self::finish_attachment_save(result).unwrap_or_else(Task::none)
+            }
         }
         Task::none()
     }
@@ -6864,27 +7206,7 @@ mod book_filter_tests {
                 assert!(inspection.contains("Bank Transfer, Cash App, M-Pesa"));
                 assert_eq!(inspection.contains("Creator Reputation"), size.0 == 1440);
                 if size.0 == 1440 {
-                    for label in [
-                        "Payment Method",
-                        "Bank Transfer, Cash App, M-Pesa",
-                        "YOU ARE SELLING",
-                        "50,000 – 200,000 NGN",
-                        "10,000 – 50,000 KES",
-                        "Fixed · 450,000 sats",
-                    ] {
-                        let bounds = inspection
-                            .text
-                            .iter()
-                            .find(|(value, _)| value == label)
-                            .expect("realistic book value")
-                            .1;
-                        assert!(
-                            bounds.height < 25.0,
-                            "{label} wrapped at 1440: {bounds:?}",
-                            label = label,
-                            bounds = bounds
-                        );
-                    }
+                    assert_wide_order_values(&inspection);
                 }
                 if size.0 == 1024 {
                     let side = inspection
@@ -6943,5 +7265,29 @@ mod book_filter_tests {
             space.as_slice(),
             [view::Message::P2P(P2PMessage::SelectOrder(id))] if id == "synthetic-1"
         ));
+    }
+
+    fn assert_wide_order_values(inspection: &capture::Inspection) {
+        for label in [
+            "Payment Method",
+            "Bank Transfer, Cash App, M-Pesa",
+            "YOU ARE SELLING",
+            "50,000 – 200,000 NGN",
+            "10,000 – 50,000 KES",
+            "Fixed · 450,000 sats",
+        ] {
+            let bounds = inspection
+                .text
+                .iter()
+                .find(|(value, _)| value == label)
+                .expect("realistic book value")
+                .1;
+            assert!(
+                bounds.height < 25.0,
+                "{label} wrapped at 1440: {bounds:?}",
+                label = label,
+                bounds = bounds
+            );
+        }
     }
 }

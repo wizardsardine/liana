@@ -289,78 +289,7 @@ pub fn order_detail<'a>(
     order: &'a P2POrder,
     take_state: Option<TakeOrderState<'a>>,
 ) -> Container<'a, view::Message> {
-    let badge_style = match order.order_type {
-        OrderType::Buy => theme::pill::success as fn(&_) -> _,
-        OrderType::Sell => theme::pill::warning as fn(&_) -> _,
-    };
-
-    let heading = if order.is_mine {
-        match order.order_type {
-            OrderType::Buy => localized_copy("You are buying"),
-            OrderType::Sell => localized_copy("You are selling"),
-        }
-    } else {
-        match order.order_type {
-            OrderType::Buy => localized_copy("Someone is buying"),
-            OrderType::Sell => localized_copy("Someone is selling"),
-        }
-    };
-
-    // Colored premium
-    let premium_style = match order.premium_percent {
-        Some(p) if p > 0.0 => theme::text::success as fn(&_) -> _,
-        Some(p) if p < 0.0 => theme::text::warning as fn(&_) -> _,
-        _ => theme::text::secondary as fn(&_) -> _,
-    };
-
-    // Amount section
-    let amount_card = card::simple(
-        column![
-            container(p2_regular(order.order_type_label()))
-                .padding([4, 12])
-                .style(badge_style),
-            p2_regular(heading).style(theme::text::secondary),
-            if order.is_range_order() {
-                row!(
-                    h1(format!(
-                        "{} - {}",
-                        format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
-                        format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false)
-                    ))
-                    .style(theme::text::primary),
-                    h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
-                )
-                .spacing(8)
-                .align_y(iced::alignment::Vertical::Center)
-            } else {
-                row!(
-                    h1(format_f64_as_string(order.fiat_amount, ",", 2, false))
-                        .style(theme::text::primary),
-                    h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
-                )
-                .spacing(8)
-                .align_y(iced::alignment::Vertical::Center)
-            },
-            if order.is_fixed_price() {
-                row![
-                    p2_regular("for").style(theme::text::secondary),
-                    p2_bold(format!(
-                        "{} sats",
-                        format_with_separators(order.sats_amount.unwrap_or(0))
-                    ))
-                ]
-                .spacing(8)
-            } else {
-                row![
-                    p2_regular("Market Price").style(theme::text::secondary),
-                    p2_bold(order.premium_text()).style(premium_style)
-                ]
-                .spacing(8)
-            },
-        ]
-        .spacing(8),
-    )
-    .width(Length::Fill);
+    let amount_card = order_amount_card(order);
 
     // Payment method section with icon
     let payment_card = card::simple(
@@ -560,104 +489,7 @@ pub fn order_detail<'a>(
         let is_buying = order.order_type == OrderType::Sell;
 
         if let Some(state) = take_state {
-            // Inline take order fields
-            if order.is_range_order() {
-                let prior_amount = state.amount.value.clone();
-                detail_col = detail_col.push(
-                    column![
-                        p2_regular(format!(
-                            "Enter fiat amount ({} - {} {})",
-                            format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
-                            format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false),
-                            order.fiat_currency
-                        ))
-                        .style(theme::text::secondary),
-                        coincube_ui::widget::text_input::TextInput::new(
-                            "Fiat amount",
-                            &state.amount.value,
-                        )
-                        .id(detail_input_id(&order.id, "amount"))
-                        .on_input(move |value| {
-                            // Preserve the Form's non-negative decimal input rule.
-                            let trimmed = value.trim_end_matches('.');
-                            let valid = value.is_empty()
-                                || (!value.starts_with('-')
-                                    && (trimmed.is_empty() || trimmed.parse::<f64>().is_ok())
-                                    && value.chars().all(|c| c.is_ascii_digit() || c == '.')
-                                    && value.matches('.').count() <= 1);
-                            view::Message::P2P(P2PMessage::TakeOrderAmountEdited(if valid {
-                                value
-                            } else {
-                                prior_amount.clone()
-                            }))
-                        })
-                        .padding(10),
-                    ]
-                    .spacing(8),
-                );
-            }
-
-            if is_buying {
-                detail_col = detail_col.push(
-                    column![
-                        p2_regular("Lightning invoice or address (optional)")
-                            .style(theme::text::secondary),
-                        coincube_ui::widget::text_input::TextInput::new(
-                            "Enter lightning invoice or address",
-                            &state.invoice.value,
-                        )
-                        .id(detail_input_id(&order.id, "invoice"))
-                        .on_input(|value| {
-                            view::Message::P2P(P2PMessage::TakeOrderInvoiceEdited(
-                                value.trim().to_string(),
-                            ))
-                        })
-                        .padding(10),
-                    ]
-                    .spacing(8),
-                );
-            }
-
-            let can_confirm = if order.is_range_order() {
-                state
-                    .amount
-                    .value
-                    .parse::<f64>()
-                    .map(|v| {
-                        let min = order.min_amount.unwrap_or(0.0);
-                        let max = order.max_amount.unwrap_or(f64::MAX);
-                        v >= min && v <= max
-                    })
-                    .unwrap_or(false)
-            } else {
-                true
-            };
-
-            let action_label = if is_buying { "Buy" } else { "Sell" };
-            let confirm_btn = detail_button(
-                &order.id,
-                "confirm",
-                action_label,
-                theme::button::primary,
-                Length::Fill,
-                (can_confirm && !state.submitting)
-                    .then_some(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
-            );
-
-            detail_col = detail_col.push(
-                row![
-                    detail_button(
-                        &order.id,
-                        "close",
-                        "Close",
-                        theme::button::secondary,
-                        Length::Fill,
-                        Some(view::Message::P2P(P2PMessage::CloseOrderDetail)),
-                    ),
-                    confirm_btn,
-                ]
-                .spacing(8),
-            );
+            detail_col = append_take_order_form(detail_col, order, state, is_buying);
         } else {
             // Initial state: show Buy/Sell button that activates take order fields
             let close_btn = detail_button(
@@ -682,6 +514,185 @@ pub fn order_detail<'a>(
     }
 
     container(detail_col).width(Length::Fill)
+}
+
+fn order_amount_card<'a>(order: &'a P2POrder) -> Container<'a, view::Message> {
+    let badge_style = match order.order_type {
+        OrderType::Buy => theme::pill::success as fn(&_) -> _,
+        OrderType::Sell => theme::pill::warning as fn(&_) -> _,
+    };
+
+    let heading = if order.is_mine {
+        match order.order_type {
+            OrderType::Buy => localized_copy("You are buying"),
+            OrderType::Sell => localized_copy("You are selling"),
+        }
+    } else {
+        match order.order_type {
+            OrderType::Buy => localized_copy("Someone is buying"),
+            OrderType::Sell => localized_copy("Someone is selling"),
+        }
+    };
+
+    // Colored premium
+    let premium_style = match order.premium_percent {
+        Some(p) if p > 0.0 => theme::text::success as fn(&_) -> _,
+        Some(p) if p < 0.0 => theme::text::warning as fn(&_) -> _,
+        _ => theme::text::secondary as fn(&_) -> _,
+    };
+
+    // Amount section
+    card::simple(
+        column![
+            container(p2_regular(order.order_type_label()))
+                .padding([4, 12])
+                .style(badge_style),
+            p2_regular(heading).style(theme::text::secondary),
+            if order.is_range_order() {
+                row!(
+                    h1(format!(
+                        "{} - {}",
+                        format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
+                        format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false)
+                    ))
+                    .style(theme::text::primary),
+                    h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
+                )
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+            } else {
+                row!(
+                    h1(format_f64_as_string(order.fiat_amount, ",", 2, false))
+                        .style(theme::text::primary),
+                    h3(format!(" {}", order.fiat_currency)).style(theme::text::secondary)
+                )
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+            },
+            if order.is_fixed_price() {
+                row![
+                    p2_regular("for").style(theme::text::secondary),
+                    p2_bold(format!(
+                        "{} sats",
+                        format_with_separators(order.sats_amount.unwrap_or(0))
+                    ))
+                ]
+                .spacing(8)
+            } else {
+                row![
+                    p2_regular("Market Price").style(theme::text::secondary),
+                    p2_bold(order.premium_text()).style(premium_style)
+                ]
+                .spacing(8)
+            },
+        ]
+        .spacing(8),
+    )
+    .width(Length::Fill)
+}
+
+fn append_take_order_form<'a>(
+    mut detail_col: Column<'a, view::Message>,
+    order: &'a P2POrder,
+    state: TakeOrderState<'a>,
+    is_buying: bool,
+) -> Column<'a, view::Message> {
+    // Inline take order fields
+    if order.is_range_order() {
+        let prior_amount = state.amount.value.clone();
+        detail_col = detail_col.push(
+            column![
+                p2_regular(format!(
+                    "Enter fiat amount ({} - {} {})",
+                    format_f64_as_string(order.min_amount.unwrap_or(0.0), ",", 0, false),
+                    format_f64_as_string(order.max_amount.unwrap_or(0.0), ",", 0, false),
+                    order.fiat_currency
+                ))
+                .style(theme::text::secondary),
+                coincube_ui::widget::text_input::TextInput::new(
+                    "Fiat amount",
+                    &state.amount.value,
+                )
+                .id(detail_input_id(&order.id, "amount"))
+                .on_input(move |value| {
+                    // Preserve the Form's non-negative decimal input rule.
+                    let trimmed = value.trim_end_matches('.');
+                    let valid = value.is_empty()
+                        || (!value.starts_with('-')
+                            && (trimmed.is_empty() || trimmed.parse::<f64>().is_ok())
+                            && value.chars().all(|c| c.is_ascii_digit() || c == '.')
+                            && value.matches('.').count() <= 1);
+                    view::Message::P2P(P2PMessage::TakeOrderAmountEdited(if valid {
+                        value
+                    } else {
+                        prior_amount.clone()
+                    }))
+                })
+                .padding(10),
+            ]
+            .spacing(8),
+        );
+    }
+
+    if is_buying {
+        detail_col = detail_col.push(
+            column![
+                p2_regular("Lightning invoice or address (optional)").style(theme::text::secondary),
+                coincube_ui::widget::text_input::TextInput::new(
+                    "Enter lightning invoice or address",
+                    &state.invoice.value,
+                )
+                .id(detail_input_id(&order.id, "invoice"))
+                .on_input(|value| {
+                    view::Message::P2P(P2PMessage::TakeOrderInvoiceEdited(value.trim().to_string()))
+                })
+                .padding(10),
+            ]
+            .spacing(8),
+        );
+    }
+
+    let can_confirm = if order.is_range_order() {
+        state
+            .amount
+            .value
+            .parse::<f64>()
+            .map(|v| {
+                let min = order.min_amount.unwrap_or(0.0);
+                let max = order.max_amount.unwrap_or(f64::MAX);
+                v >= min && v <= max
+            })
+            .unwrap_or(false)
+    } else {
+        true
+    };
+
+    let action_label = if is_buying { "Buy" } else { "Sell" };
+    let confirm_btn = detail_button(
+        &order.id,
+        "confirm",
+        action_label,
+        theme::button::primary,
+        Length::Fill,
+        (can_confirm && !state.submitting)
+            .then_some(view::Message::P2P(P2PMessage::ConfirmTakeOrder)),
+    );
+
+    detail_col = detail_col.push(
+        row![
+            detail_button(
+                &order.id,
+                "close",
+                "Close",
+                theme::button::secondary,
+                Length::Fill,
+                Some(view::Message::P2P(P2PMessage::CloseOrderDetail)),
+            ),
+            confirm_btn,
+        ]
+        .spacing(8),
+    );
+    detail_col
 }
 
 #[cfg(test)]

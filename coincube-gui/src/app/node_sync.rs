@@ -121,81 +121,88 @@ impl App {
                 if subversion.is_some() {
                     self.cache.node_bitcoind_subversion = subversion;
                 }
-                // Auto-switch to the pending node once it's synced, but
-                // only if the user *adopted* it (`auto_switch_to_pending`).
-                // This fires even for a node that reused an existing
-                // chainstate and was therefore never observed in IBD —
-                // while never reverting a node merely parked by a
-                // switch-to-Connect or a Bitcoind-failure fallback (those
-                // clear the flag). Skip while a switch is already in
-                // flight, so we don't spawn overlapping switches every
-                // tick (which raced to load — and corrupted — the wallet).
-                if !ibd
-                    && !self.daemon_switch_in_progress
-                    && !self.auto_switch_suppressed
-                    && (!self.cache.node_history_switch_requested
-                        || self.cache.node_history.reconciled)
-                    && !self.node_history_in_progress
-                    && !self.cache.node_history.job.as_ref().is_some_and(|job| {
-                        !matches!(
-                            job.phase,
-                            crate::node::history::Phase::Complete
-                                | crate::node::history::Phase::Cancelled
-                        )
-                    })
-                {
-                    let switch = self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
-                        // Promote unless the node was explicitly parked
-                        // (`Some(false)`). An absent flag (`None`) is a
-                        // legacy adopted node — the old build promoted it
-                        // on sync with no flag — so it must promote too.
-                        if c.auto_switch_to_pending == Some(false)
-                            && !self.cache.node_history_switch_requested
-                        {
-                            return None;
-                        }
-                        let pending = c.pending_bitcoind.clone()?;
-                        // Preserve the current Connect config as the new fallback.
-                        let old_esplora = match &c.bitcoin_backend {
-                            Some(coincubed::config::BitcoinBackend::Esplora(e)) => Some(e.clone()),
-                            _ => None,
-                        };
-                        let mut new_cfg = c.clone();
-                        new_cfg.bitcoin_backend =
-                            Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
-                        new_cfg.pending_bitcoind = None;
-                        new_cfg.auto_switch_to_pending = Some(false);
-                        new_cfg.fallback_esplora = old_esplora;
-                        if new_cfg.bitcoin_config.chain.is_blake2b() {
-                            new_cfg.bitcoin_config.poll_interval_secs = Duration::from_secs(
-                                coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS,
-                            );
-                        }
-                        Some(new_cfg)
-                    });
-                    if let Some(new_cfg) = switch {
-                        // Not while the Vault is scanning (the switch
-                        // would throw the scan away), and never to a
-                        // local wallet missing history it cannot rescan.
-                        // Deferred, not dropped: every probe re-asks.
-                        let hold = local_switch::auto_switch_hold(
-                            self.running_vault_scan(),
-                            pruning,
-                            self.cache.local_switch_history,
-                        );
-                        if hold != self.local_switch_hold {
-                            log_local_switch_hold(hold);
-                        }
-                        self.local_switch_hold = hold;
-                        if hold.is_none() {
-                            info!("Switching to local Bitcoind — node synced");
-                            return self.spawn_daemon_switch(new_cfg);
-                        }
-                    }
+                if let Some(task) = self.promote_synced_bitcoind(ibd, pruning) {
+                    return task;
                 }
             }
         }
         Task::none()
+    }
+    fn promote_synced_bitcoind(
+        &mut self,
+        ibd: bool,
+        pruning: Option<local_switch::NodePruning>,
+    ) -> Option<Task<Message>> {
+        // Auto-switch to the pending node once it's synced, but
+        // only if the user *adopted* it (`auto_switch_to_pending`).
+        // This fires even for a node that reused an existing
+        // chainstate and was therefore never observed in IBD —
+        // while never reverting a node merely parked by a
+        // switch-to-Connect or a Bitcoind-failure fallback (those
+        // clear the flag). Skip while a switch is already in
+        // flight, so we don't spawn overlapping switches every
+        // tick (which raced to load — and corrupted — the wallet).
+        if !ibd
+            && !self.daemon_switch_in_progress
+            && !self.auto_switch_suppressed
+            && (!self.cache.node_history_switch_requested || self.cache.node_history.reconciled)
+            && !self.node_history_in_progress
+            && !self.cache.node_history.job.as_ref().is_some_and(|job| {
+                !matches!(
+                    job.phase,
+                    crate::node::history::Phase::Complete | crate::node::history::Phase::Cancelled
+                )
+            })
+        {
+            let switch = self.synced_bitcoind_config();
+            if let Some(new_cfg) = switch {
+                // Not while the Vault is scanning (the switch
+                // would throw the scan away), and never to a
+                // local wallet missing history it cannot rescan.
+                // Deferred, not dropped: every probe re-asks.
+                let hold = local_switch::auto_switch_hold(
+                    self.running_vault_scan(),
+                    pruning,
+                    self.cache.local_switch_history,
+                );
+                if hold != self.local_switch_hold {
+                    log_local_switch_hold(hold);
+                }
+                self.local_switch_hold = hold;
+                if hold.is_none() {
+                    info!("Switching to local Bitcoind — node synced");
+                    return Some(self.spawn_daemon_switch(new_cfg));
+                }
+            }
+        }
+        None
+    }
+
+    fn synced_bitcoind_config(&self) -> Option<DaemonConfig> {
+        let c = self.daemon.as_ref().and_then(|d| d.config())?;
+        // Promote unless the node was explicitly parked
+        // (`Some(false)`). An absent flag (`None`) is a
+        // legacy adopted node — the old build promoted it
+        // on sync with no flag — so it must promote too.
+        if c.auto_switch_to_pending == Some(false) && !self.cache.node_history_switch_requested {
+            return None;
+        }
+        let pending = c.pending_bitcoind.clone()?;
+        // Preserve the current Connect config as the new fallback.
+        let old_esplora = match &c.bitcoin_backend {
+            Some(coincubed::config::BitcoinBackend::Esplora(e)) => Some(e.clone()),
+            _ => None,
+        };
+        let mut new_cfg = c.clone();
+        new_cfg.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
+        new_cfg.pending_bitcoind = None;
+        new_cfg.auto_switch_to_pending = Some(false);
+        new_cfg.fallback_esplora = old_esplora;
+        if new_cfg.bitcoin_config.chain.is_blake2b() {
+            new_cfg.bitcoin_config.poll_interval_secs =
+                Duration::from_secs(coincubed::config::LOCAL_BACKEND_POLL_INTERVAL_SECS);
+        }
+        Some(new_cfg)
     }
 }
 
