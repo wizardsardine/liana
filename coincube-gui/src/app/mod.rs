@@ -8245,6 +8245,10 @@ impl App {
         Task::none()
     }
 
+    // Vault → Settings → Node "Switch to COINCUBE | Connect". The
+    // canonical Connect session lives in `panels.connect.account`; we
+    // either reuse its JWT for an immediate switch, or send the user
+    // to the Connect tab to sign in and auto-return on success.
     fn route_switch_to_connect(&mut self) -> Task<Message> {
         let existing_jwt = self
             .panels
@@ -9164,10 +9168,6 @@ impl App {
                     .update(self.daemon.clone(), &self.cache, msg);
             }
 
-            // Vault → Settings → Node "Switch to COINCUBE | Connect". The
-            // canonical Connect session lives in `panels.connect.account`; we
-            // either reuse its JWT for an immediate switch, or send the user
-            // to the Connect tab to sign in and auto-return on success.
             // Cube Recovery Kit dispatch. Handled at App level because
             // the handler needs the authenticated CoincubeClient, the
             // Connect numeric cube id, and the live Wallet — none of
