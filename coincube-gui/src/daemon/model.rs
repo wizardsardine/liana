@@ -69,6 +69,61 @@ pub enum SpendStatus {
     Deprecated,
 }
 
+fn spend_coins_and_status(
+    coins: Vec<Coin>,
+    unsigned_txid: Txid,
+    broadcast_txid: Option<Txid>,
+) -> (HashMap<OutPoint, Coin>, SpendStatus) {
+    let mut status = SpendStatus::Pending;
+    let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
+    for coin in coins {
+        if let Some(info) = coin.spend_info {
+            if info.txid == unsigned_txid || Some(info.txid) == broadcast_txid {
+                if info.height.is_some() {
+                    status = SpendStatus::Spent
+                } else {
+                    status = SpendStatus::Broadcast
+                }
+            // The txid will be different if this PSBT is to replace another transaction
+            // that is currently spending the coin.
+            // The PSBT status should remain as Pending so that it can be signed and broadcast.
+            // Once the replacement transaction has been confirmed, the PSBT for the
+            // transaction currently spending this coin will be shown as Deprecated.
+            } else if info.height.is_some() {
+                status = SpendStatus::Deprecated
+            }
+        }
+        coins_map.insert(coin.outpoint, coin);
+    }
+    (coins_map, status)
+}
+
+fn spend_inputs_amount(psbt: &Psbt, coins_map: &HashMap<OutPoint, Coin>) -> Option<Amount> {
+    let mut inputs_amount = Amount::from_sat(0);
+    for (i, input) in psbt.inputs.iter().enumerate() {
+        if let Some(utxo) = &input.witness_utxo {
+            inputs_amount += utxo.value;
+        // we try to have it from the coin
+        } else if let Some(coin) = psbt
+            .unsigned_tx
+            .input
+            .get(i)
+            .and_then(|inpt| coins_map.get(&inpt.previous_output))
+        {
+            inputs_amount += coin.amount;
+        // Information is missing, it is better to set inputs_amount to None.
+        } else {
+            inputs_amount = Amount::from_sat(0);
+            break;
+        }
+    }
+    if inputs_amount.to_sat() == 0 {
+        None
+    } else {
+        Some(inputs_amount)
+    }
+}
+
 impl SpendTx {
     pub fn new(
         updated_at: Option<u32>,
@@ -140,54 +195,9 @@ impl SpendTx {
             },
         );
 
-        let mut status = SpendStatus::Pending;
         let unsigned_txid = psbt.unsigned_tx.compute_txid();
-        let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());
-        for coin in coins {
-            if let Some(info) = coin.spend_info {
-                if info.txid == unsigned_txid || Some(info.txid) == broadcast_txid {
-                    if info.height.is_some() {
-                        status = SpendStatus::Spent
-                    } else {
-                        status = SpendStatus::Broadcast
-                    }
-                // The txid will be different if this PSBT is to replace another transaction
-                // that is currently spending the coin.
-                // The PSBT status should remain as Pending so that it can be signed and broadcast.
-                // Once the replacement transaction has been confirmed, the PSBT for the
-                // transaction currently spending this coin will be shown as Deprecated.
-                } else if info.height.is_some() {
-                    status = SpendStatus::Deprecated
-                }
-            }
-            coins_map.insert(coin.outpoint, coin);
-        }
-
-        let inputs_amount = {
-            let mut inputs_amount = Amount::from_sat(0);
-            for (i, input) in psbt.inputs.iter().enumerate() {
-                if let Some(utxo) = &input.witness_utxo {
-                    inputs_amount += utxo.value;
-                // we try to have it from the coin
-                } else if let Some(coin) = psbt
-                    .unsigned_tx
-                    .input
-                    .get(i)
-                    .and_then(|inpt| coins_map.get(&inpt.previous_output))
-                {
-                    inputs_amount += coin.amount;
-                // Information is missing, it is better to set inputs_amount to None.
-                } else {
-                    inputs_amount = Amount::from_sat(0);
-                    break;
-                }
-            }
-            if inputs_amount.to_sat() == 0 {
-                None
-            } else {
-                Some(inputs_amount)
-            }
-        };
+        let (coins_map, mut status) = spend_coins_and_status(coins, unsigned_txid, broadcast_txid);
+        let inputs_amount = spend_inputs_amount(&psbt, &coins_map);
 
         // One input coin is missing, the psbt is deprecated for now.
         if coins_map.len() != psbt.inputs.len() {
@@ -341,6 +351,55 @@ pub struct HistoryTransaction {
     pub kind: TransactionKind,
 }
 
+fn history_transaction_kind(
+    tx: &Transaction,
+    is_external: bool,
+    change_indexes: &[usize],
+    outgoing_amount: Amount,
+) -> TransactionKind {
+    if is_external {
+        if change_indexes.len() == 1 {
+            TransactionKind::IncomingSinglePayment(OutPoint {
+                txid: tx.compute_txid(),
+                vout: change_indexes[0] as u32,
+            })
+        } else {
+            TransactionKind::IncomingPaymentBatch(
+                change_indexes
+                    .iter()
+                    .map(|i| OutPoint {
+                        txid: tx.compute_txid(),
+                        vout: *i as u32,
+                    })
+                    .collect(),
+            )
+        }
+    } else if outgoing_amount == Amount::from_sat(0) {
+        TransactionKind::SendToSelf
+    } else {
+        let outpoints: Vec<OutPoint> = tx
+            .output
+            .iter()
+            .enumerate()
+            .filter_map(|(i, _)| {
+                if !change_indexes.contains(&i) {
+                    Some(OutPoint {
+                        txid: tx.compute_txid(),
+                        vout: i as u32,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if outpoints.len() == 1 {
+            TransactionKind::OutgoingSinglePayment(outpoints[0])
+        } else {
+            TransactionKind::OutgoingPaymentBatch(outpoints)
+        }
+    }
+}
+
 impl HistoryTransaction {
     pub fn new(
         tx: Transaction,
@@ -361,47 +420,8 @@ impl HistoryTransaction {
             },
         );
 
-        let kind = if coins.is_empty() {
-            if change_indexes.len() == 1 {
-                TransactionKind::IncomingSinglePayment(OutPoint {
-                    txid: tx.compute_txid(),
-                    vout: change_indexes[0] as u32,
-                })
-            } else {
-                TransactionKind::IncomingPaymentBatch(
-                    change_indexes
-                        .iter()
-                        .map(|i| OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: *i as u32,
-                        })
-                        .collect(),
-                )
-            }
-        } else if outgoing_amount == Amount::from_sat(0) {
-            TransactionKind::SendToSelf
-        } else {
-            let outpoints: Vec<OutPoint> = tx
-                .output
-                .iter()
-                .enumerate()
-                .filter_map(|(i, _)| {
-                    if !change_indexes.contains(&i) {
-                        Some(OutPoint {
-                            txid: tx.compute_txid(),
-                            vout: i as u32,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if outpoints.len() == 1 {
-                TransactionKind::OutgoingSinglePayment(outpoints[0])
-            } else {
-                TransactionKind::OutgoingPaymentBatch(outpoints)
-            }
-        };
+        let kind =
+            history_transaction_kind(&tx, coins.is_empty(), &change_indexes, outgoing_amount);
 
         let mut inputs_amount = Amount::from_sat(0);
         let mut coins_map = HashMap::<OutPoint, Coin>::with_capacity(coins.len());

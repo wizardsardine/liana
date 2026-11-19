@@ -735,6 +735,70 @@ mod tests {
         .is_err());
     }
 
+    /// A sweep recipient is a payment, not change. It is paid at the payment
+    /// minimum even when that amount would be uneconomical as a change output,
+    /// and one sat below the minimum is refused.
+    #[test]
+    fn imported_sweep_pays_the_dust_minimum_instead_of_the_change_threshold() {
+        let (wallet, _, ordinary) = draft("wpkh");
+        let previous = ordinary.psbt.inputs[0].non_witness_utxo.clone().unwrap();
+        let (key, _) = account(99, "m/86h/1h/0h");
+        let secp = secp256k1::Secp256k1::new();
+        let (key, _) =
+            secp256k1::PublicKey::from_secret_key(&secp, &key.private_key).x_only_public_key();
+        let recipient = SpendOutputAddress {
+            addr: Address::p2tr(&secp, key, None, Network::Regtest),
+            info: None,
+        };
+        // High enough that an output of `DUST_OUTPUT_SATS` is uneconomical
+        // change, and still a legal feerate.
+        let feerate = 200;
+        let build = |sats| {
+            let mut previous = previous.clone();
+            let amount = Amount::from_sat(sats);
+            previous.output[0].value = amount;
+            let candidate = CandidateCoin {
+                outpoint: OutPoint::new(previous.compute_txid(), 0),
+                amount,
+                deriv_index: ChildNumber::Normal { index: 0 },
+                is_change: false,
+                must_select: true,
+                sequence: None,
+                ancestor_info: None,
+            };
+            create_imported_spend(
+                &wallet,
+                &secp256k1::Secp256k1::verification_only(),
+                &mut OneTx(previous),
+                &[],
+                &[candidate],
+                SpendTxFees::Regular(feerate),
+                recipient.clone(),
+                LockTime::ZERO,
+            )
+        };
+
+        let large = build(150_000).unwrap();
+        let fee = large.psbt.fee().unwrap().to_sat();
+        let minimum = spend::DUST_OUTPUT_SATS;
+        let paid = build(fee + minimum).unwrap();
+        assert_eq!(
+            paid.psbt.unsigned_tx.output,
+            [TxOut {
+                value: Amount::from_sat(minimum),
+                script_pubkey: recipient.addr.script_pubkey(),
+            }]
+        );
+        assert!(paid.psbt.outputs[0].bip32_derivation.is_empty());
+        assert!(paid.warnings.is_empty());
+        assert_eq!(paid.psbt.fee().unwrap().to_sat(), fee);
+
+        assert!(matches!(
+            build(fee + minimum - 1),
+            Err(SpendCreationError::CoinSelection(_))
+        ));
+    }
+
     /// A Bitcoin Blake2b imported wallet spends like a Bitcoin one: Bitcoin
     /// Blake2b keeps Bitcoin's transactions and signatures, so every shape
     /// builds, passes the pre-broadcast check and finalises with its signers'

@@ -591,31 +591,7 @@ fn phase_body<'a>(view: &SparkSendView<'a>) -> Element<'a, Message> {
         // whether a retry can double-pay — see `RetryPolicy`. When it can, the
         // user gets "check status", never "try again".
         SparkSendPhase::CrossChainFailed { message, policy } => {
-            let mut actions = Row::new().spacing(10);
-            if policy.may_retry() {
-                actions = actions.push(
-                    // Not `ConfirmRequested` (that only fires from `Prepared`).
-                    // `CrossChainRetryRequested` re-sends the same retained quote
-                    // — same swap id, so the BTC leg can't pay twice — or, once
-                    // the quote has expired, downgrades to "check status".
-                    button::primary(None, localized_copy("Try again"))
-                        .on_press(Message::SparkSend(
-                            SparkSendMessage::CrossChainRetryRequested,
-                        ))
-                        .width(Length::Fixed(160.0)),
-                );
-            } else {
-                actions = actions.push(
-                    button::primary(None, localized_copy("Check status"))
-                        .on_press(Message::SparkSend(SparkSendMessage::History))
-                        .width(Length::Fixed(160.0)),
-                );
-            }
-            actions = actions.push(
-                button::transparent_border(None, localized_copy("Start over"))
-                    .on_press(Message::SparkSend(SparkSendMessage::Reset))
-                    .width(Length::Fixed(140.0)),
-            );
+            let actions = cross_chain_failure_actions(policy);
 
             Container::new(
                 Column::new()
@@ -742,6 +718,34 @@ fn phase_body<'a>(view: &SparkSendView<'a>) -> Element<'a, Message> {
         .style(theme::card::simple)
         .into(),
     }
+}
+
+fn cross_chain_failure_actions<'a>(policy: &cross_chain::RetryPolicy) -> Row<'a, Message> {
+    let mut actions = Row::new().spacing(10);
+    if policy.may_retry() {
+        actions = actions.push(
+            // Not `ConfirmRequested` (that only fires from `Prepared`).
+            // `CrossChainRetryRequested` re-sends the same retained quote
+            // — same swap id, so the BTC leg can't pay twice — or, once
+            // the quote has expired, downgrades to "check status".
+            button::primary(None, localized_copy("Try again"))
+                .on_press(Message::SparkSend(
+                    SparkSendMessage::CrossChainRetryRequested,
+                ))
+                .width(Length::Fixed(160.0)),
+        );
+    } else {
+        actions = actions.push(
+            button::primary(None, localized_copy("Check status"))
+                .on_press(Message::SparkSend(SparkSendMessage::History))
+                .width(Length::Fixed(160.0)),
+        );
+    }
+    actions.push(
+        button::transparent_border(None, localized_copy("Start over"))
+            .on_press(Message::SparkSend(SparkSendMessage::Reset))
+            .width(Length::Fixed(140.0)),
+    )
 }
 
 /// The cross-chain conversion fee for the preview: the fee in the destination
