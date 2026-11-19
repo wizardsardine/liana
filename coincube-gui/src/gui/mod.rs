@@ -3586,6 +3586,178 @@ impl GUI {
         Task::none()
     }
 
+    fn handle_launcher_message(
+        &mut self,
+        p: pane_grid::Pane,
+        t: usize,
+        msg: home::Message,
+    ) -> Task<Message> {
+        let mut tasks = Vec::new();
+        let public_exit = matches!(
+            msg,
+            home::Message::Run(..)
+                | home::Message::RunFromFloor(..)
+                | home::Message::RunToRecovery(..)
+                | home::Message::Install(..)
+        );
+        if public_exit {
+            let admission = self
+                .panes
+                .get(p)
+                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == t))
+                .map_or_else(
+                    || Err("The Launcher destination closed.".to_string()),
+                    |tab| tab.validate_home_exit(&msg),
+                );
+            if let Err(error) = admission {
+                if let Some(tab::State::Home(home)) = self
+                    .panes
+                    .get_mut(p)
+                    .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == t))
+                    .map(|tab| &mut tab.state)
+                {
+                    home.set_error(error);
+                }
+                return Task::none();
+            }
+        }
+        if let Some(task) = self.resume_live_launcher_cube(&msg) {
+            return task;
+        }
+        if public_exit {
+            self.retire_public_owners();
+        }
+        if let home::Message::View(home::ViewMessage::DeleteCube(
+            home::DeleteCubeMessage::Confirm(..),
+        )) = &msg
+        {
+            self.retire_public_owners();
+            self.close_deleted_cube_surfaces(&mut tasks);
+        }
+
+        if let Some(pane) = self.panes.get_mut(p) {
+            tasks.push(
+                pane.update(
+                    pane::Message::tab(t, tab::Message::Launch(msg)),
+                    &self.config,
+                )
+                .map(move |msg| Message::Pane(p, msg)),
+            );
+        }
+
+        Task::batch(tasks)
+    }
+
+    fn resume_live_launcher_cube(&mut self, msg: &home::Message) -> Option<Task<Message>> {
+        let (root, chain, cube) = match msg {
+            home::Message::Run(root, _, chain, cube)
+            | home::Message::RunFromFloor(root, _, chain, cube, _)
+            | home::Message::RunToRecovery(root, _, chain, cube) => (root, chain, cube),
+            _ => return None,
+        };
+        // Opening the same Cube from the Launcher resumes its live
+        // App. In particular this must not ask for its PIN again.
+        let secret_owners = self
+            .panes
+            .iter()
+            .flat_map(|(_, pane)| pane.tabs.iter())
+            .filter(|tab| {
+                matches!(
+                    tab.state,
+                    tab::State::App(_)
+                        | tab::State::Loader(_)
+                        | tab::State::Installer(_)
+                        | tab::State::PinEntry(_)
+                        | tab::State::PasskeyUnlock(_)
+                )
+            })
+            .count();
+        // A retained App can resume only while it is the sole
+        // public owner of the exact live process session. Legacy
+        // duplicate tabs, or an App outliving its session, go
+        // through the normal close-then-unlock admission instead.
+        let existing = (secret_owners == 1
+            && crate::app::session::current_cube_id().as_deref() == Some(cube.id.as_str()))
+        .then(|| {
+            self.panes.iter().find_map(|(&pane_id, pane)| {
+                pane.tabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, tab)| match &tab.state {
+                        tab::State::App(app)
+                            if app.datadir() == root
+                                && app.cube_settings().network == *chain
+                                && app.cube_settings().id == cube.id =>
+                        {
+                            Some((pane_id, index))
+                        }
+                        _ => None,
+                    })
+            })
+        })
+        .flatten();
+        if let Some((pane_id, index)) = existing {
+            self.focus = Some(pane_id);
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                if matches!(msg, home::Message::RunToRecovery(..)) {
+                    let tab_id = pane.tabs[index].id;
+                    let focus = pane
+                        .update(
+                            pane::Message::View(pane::ViewMessage::FocusTab(index)),
+                            &self.config,
+                        )
+                        .map(move |message| Message::Pane(pane_id, message));
+                    let recovery = pane.tabs[index]
+                        .emit_app_task(Task::done(AppMessage::View(
+                            crate::app::view::Message::Menu(crate::app::menu::Menu::Cube(
+                                crate::app::menu::CubeSubMenu::Settings(
+                                    crate::app::menu::CubeSettingsOption::Recovery,
+                                ),
+                            )),
+                        )))
+                        .map(move |message| {
+                            Message::Pane(pane_id, pane::Message::tab(tab_id, message))
+                        });
+                    return Some(Task::batch([focus, recovery]));
+                }
+                return Some(
+                    pane.update(
+                        pane::Message::View(pane::ViewMessage::FocusTab(index)),
+                        &self.config,
+                    )
+                    .map(move |message| Message::Pane(pane_id, message)),
+                );
+            }
+        }
+        None
+    }
+
+    fn close_deleted_cube_surfaces(&mut self, tasks: &mut Vec<Task<Message>>) {
+        // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
+        let mut panes_to_close = Vec::<pane_grid::Pane>::new();
+        for (id, pane) in self.panes.iter_mut() {
+            pane.close_tabs_matching(|tab| {
+                matches!(tab.state, tab::State::App(_) | tab::State::Loader(_))
+            });
+            if pane.tabs.is_empty() {
+                panes_to_close.push(*id);
+            }
+        }
+        for id in panes_to_close {
+            self.panes.close(id);
+        }
+        for (&id, pane) in self.panes.iter() {
+            for tab in &pane.tabs {
+                if let tab::State::Home(l) = &tab.state {
+                    let tab_id = tab.id;
+                    tasks.push(l.reload().map(move |msg| {
+                        Message::Pane(id, pane::Message::tab(tab_id, tab::Message::Launch(msg)))
+                    }));
+                }
+            }
+        }
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3837,167 +4009,7 @@ impl GUI {
                 let tab::Message::Launch(msg) = *inner else {
                     unreachable!();
                 };
-                let mut tasks = Vec::new();
-                let public_exit = matches!(
-                    msg,
-                    home::Message::Run(..)
-                        | home::Message::RunFromFloor(..)
-                        | home::Message::RunToRecovery(..)
-                        | home::Message::Install(..)
-                );
-                if public_exit {
-                    let admission = self
-                        .panes
-                        .get(p)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == t))
-                        .map_or_else(
-                            || Err("The Launcher destination closed.".to_string()),
-                            |tab| tab.validate_home_exit(&msg),
-                        );
-                    if let Err(error) = admission {
-                        if let Some(tab::State::Home(home)) = self
-                            .panes
-                            .get_mut(p)
-                            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == t))
-                            .map(|tab| &mut tab.state)
-                        {
-                            home.set_error(error);
-                        }
-                        return Task::none();
-                    }
-                }
-                if let Some((root, chain, cube)) = match &msg {
-                    home::Message::Run(root, _, chain, cube)
-                    | home::Message::RunFromFloor(root, _, chain, cube, _)
-                    | home::Message::RunToRecovery(root, _, chain, cube) => {
-                        Some((root, chain, cube))
-                    }
-                    _ => None,
-                } {
-                    // Opening the same Cube from the Launcher resumes its live
-                    // App. In particular this must not ask for its PIN again.
-                    let secret_owners = self
-                        .panes
-                        .iter()
-                        .flat_map(|(_, pane)| pane.tabs.iter())
-                        .filter(|tab| {
-                            matches!(
-                                tab.state,
-                                tab::State::App(_)
-                                    | tab::State::Loader(_)
-                                    | tab::State::Installer(_)
-                                    | tab::State::PinEntry(_)
-                                    | tab::State::PasskeyUnlock(_)
-                            )
-                        })
-                        .count();
-                    // A retained App can resume only while it is the sole
-                    // public owner of the exact live process session. Legacy
-                    // duplicate tabs, or an App outliving its session, go
-                    // through the normal close-then-unlock admission instead.
-                    let existing = (secret_owners == 1
-                        && crate::app::session::current_cube_id().as_deref()
-                            == Some(cube.id.as_str()))
-                    .then(|| {
-                        self.panes.iter().find_map(|(&pane_id, pane)| {
-                            pane.tabs
-                                .iter()
-                                .enumerate()
-                                .find_map(|(index, tab)| match &tab.state {
-                                    tab::State::App(app)
-                                        if app.datadir() == root
-                                            && app.cube_settings().network == *chain
-                                            && app.cube_settings().id == cube.id =>
-                                    {
-                                        Some((pane_id, index))
-                                    }
-                                    _ => None,
-                                })
-                        })
-                    })
-                    .flatten();
-                    if let Some((pane_id, index)) = existing {
-                        self.focus = Some(pane_id);
-                        if let Some(pane) = self.panes.get_mut(pane_id) {
-                            if matches!(&msg, home::Message::RunToRecovery(..)) {
-                                let tab_id = pane.tabs[index].id;
-                                let focus = pane
-                                    .update(
-                                        pane::Message::View(pane::ViewMessage::FocusTab(index)),
-                                        &self.config,
-                                    )
-                                    .map(move |message| Message::Pane(pane_id, message));
-                                let recovery = pane.tabs[index]
-                                    .emit_app_task(Task::done(AppMessage::View(
-                                        crate::app::view::Message::Menu(
-                                            crate::app::menu::Menu::Cube(
-                                                crate::app::menu::CubeSubMenu::Settings(
-                                                    crate::app::menu::CubeSettingsOption::Recovery,
-                                                ),
-                                            ),
-                                        ),
-                                    )))
-                                    .map(move |message| {
-                                        Message::Pane(pane_id, pane::Message::tab(tab_id, message))
-                                    });
-                                return Task::batch([focus, recovery]);
-                            }
-                            return pane
-                                .update(
-                                    pane::Message::View(pane::ViewMessage::FocusTab(index)),
-                                    &self.config,
-                                )
-                                .map(move |message| Message::Pane(pane_id, message));
-                        }
-                    }
-                }
-                if public_exit {
-                    self.retire_public_owners();
-                }
-                if let home::Message::View(home::ViewMessage::DeleteCube(
-                    home::DeleteCubeMessage::Confirm(..),
-                )) = &msg
-                {
-                    self.retire_public_owners();
-                    // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
-                    let mut panes_to_close = Vec::<pane_grid::Pane>::new();
-                    for (id, pane) in self.panes.iter_mut() {
-                        pane.close_tabs_matching(|tab| {
-                            matches!(tab.state, tab::State::App(_) | tab::State::Loader(_))
-                        });
-                        if pane.tabs.is_empty() {
-                            panes_to_close.push(*id);
-                        }
-                    }
-                    for id in panes_to_close {
-                        self.panes.close(id);
-                    }
-                    for (&id, pane) in self.panes.iter() {
-                        for tab in &pane.tabs {
-                            if let tab::State::Home(l) = &tab.state {
-                                let tab_id = tab.id;
-                                tasks.push(l.reload().map(move |msg| {
-                                    Message::Pane(
-                                        id,
-                                        pane::Message::tab(tab_id, tab::Message::Launch(msg)),
-                                    )
-                                }));
-                            }
-                        }
-                    }
-                }
-
-                if let Some(pane) = self.panes.get_mut(p) {
-                    tasks.push(
-                        pane.update(
-                            pane::Message::tab(t, tab::Message::Launch(msg)),
-                            &self.config,
-                        )
-                        .map(move |msg| Message::Pane(p, msg)),
-                    );
-                }
-
-                Task::batch(tasks)
+                self.handle_launcher_message(p, t, msg)
             }
             Message::Pane(i, msg) => {
                 match msg {
