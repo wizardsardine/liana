@@ -482,22 +482,7 @@ pub(super) fn current_plan_status(
             Some(d) => format!("Renewal payment due {d}"),
             None => "Renewal payment due".to_string(),
         })),
-        _ if card && plan.pending_plan.is_some() => {
-            let pending = plan.pending_plan.as_ref().expect("checked");
-            let at = plan
-                .pending_plan_at
-                .as_deref()
-                .map(format_date)
-                .or(date.clone());
-            let then = match plan.pending_billing_cycle {
-                Some(c) => format!("{pending} · {}", cycle_label(c)),
-                None => pending.to_string(),
-            };
-            Some(match at {
-                Some(d) => format!("{} until {d}, then {then}", plan.tier()),
-                None => format!("Then {then}"),
-            })
-        }
+        _ if card && plan.pending_plan.is_some() => pending_card_status_line(plan, &date),
         _ if card && plan.auto_renew == Some(false) => Some(match &date {
             Some(d) => format!("Active until {d} · auto-renewal off"),
             None => "Auto-renewal off".to_string(),
@@ -515,12 +500,7 @@ pub(super) fn current_plan_status(
             promo_until.map(|d| format!("Promotional access until {d}"))
         }
         (PlanLifecycle::Free, _) => Some("Free features · no payment".to_string()),
-        _ => match (date, cycle) {
-            (Some(d), Some(c)) => Some(format!("Paid through {d} · {c}")),
-            (Some(d), None) => Some(format!("Paid through {d}")),
-            (None, Some(c)) => Some(c.to_string()),
-            (None, None) => None,
-        },
+        _ => paid_period_status_line(date, cycle),
     };
     // A card's scheduled change is already in its line.
     let pending = pending.filter(|_| !card);
@@ -776,25 +756,7 @@ pub(super) fn account_feature_rows(state: &ConnectAccountPanel) -> Vec<(String, 
         },
     )];
     let mut coming_soon = Vec::new();
-    if let Some(info) = plan_info(state, tier) {
-        for feature in &info.features {
-            let Some((name, value)) = launch_feature_copy(feature) else {
-                continue;
-            };
-            let name = recovery_kit_copy(&name, ent.cube_limit).unwrap_or(name);
-            if rows
-                .iter()
-                .chain(coming_soon.iter())
-                .any(|(n, _)| n == &name)
-            {
-                continue;
-            }
-            match value {
-                FeatureValue::ComingSoon => coming_soon.push((name, value)),
-                value => rows.push((name, value)),
-            }
-        }
-    }
+    append_catalog_feature_rows(state, tier, &ent, &mut rows, &mut coming_soon);
     // Recovery alerts are on every tier (decision 10); inheritance escrow is
     // Estate's. Both are entitlements, so list them even when the catalog's
     // bullets don't.
@@ -1056,33 +1018,7 @@ fn billing_management_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg>
             "Your plan is cancelled. Connect services stay on until the access date.",
         )));
     }
-    let mut actions: Vec<Element<'a, Msg>> = vec![sheet_button(
-        if cancelled {
-            localized_copy("Resubscribe…")
-        } else {
-            localized_copy("Change plan…")
-        },
-        ActionKind::Secondary,
-        true,
-    )
-    .on_press(Msg::ComparePlans(true))
-    .into()];
-    if let Some(plan) = card_plan.filter(|_| state.card_payments_enabled()) {
-        let busy = state.card_request_busy;
-        if plan.auto_renew == Some(false) {
-            actions.push(
-                sheet_link(localized_copy("Turn auto-renewal back on"))
-                    .on_press_maybe((!busy).then_some(Msg::SetAutoRenew(true)))
-                    .into(),
-            );
-        } else if !state.confirm_auto_renew_off {
-            actions.push(
-                sheet_link(localized_copy("Turn off auto-renewal"))
-                    .on_press_maybe((!busy).then_some(Msg::ShowAutoRenewOff(true)))
-                    .into(),
-            );
-        }
-    }
+    let actions = management_plan_actions(state, card_plan, cancelled);
     col = col.push(space(12.0)).push(actions_row({
         let mut items = actions;
         items.push(
@@ -1115,58 +1051,8 @@ fn billing_management_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg>
         col = col.push(space(20.0)).push(purchasing_unavailable_note());
     }
 
-    col = col
-        .push(space(32.0))
-        .push(group_title(localized_copy("Features on this account")))
-        .push(space(8.0));
-    let rows = account_feature_rows(state);
-    if state.plan.is_none() {
-        col = col.push(lead(localized_copy("Checking your current plan…")));
-    } else if state.features.is_none() && rows.len() <= 1 {
-        col = col.push(lead(localized_copy(
-            "Current plan features are unavailable. Try again when Connect is online.",
-        )));
-    } else {
-        col = col.push(ruled_list(rows.into_iter().map(|(name, value)| {
-            Row::new()
-                .spacing(16)
-                .align_y(Alignment::Center)
-                .push(tenshu_text::label(name).width(Length::Fill))
-                .push(feature_value_line(&value))
-                .into()
-        })));
-    }
-
-    col = col
-        .push(space(32.0))
-        .push(group_title(localized_copy("Billing history")))
-        .push(space(8.0));
-    match &state.billing_history {
-        Some(entries) if !entries.is_empty() => {
-            col = col.push(ruled_list(entries.iter().take(3).map(history_row)));
-        }
-        Some(_) => {
-            col = col.push(lead(localized_copy("No payments yet.")));
-        }
-        None => {}
-    }
-    col.push(space(12.0))
-        .push(
-            sheet_link(localized_copy("View all billing history"))
-                .on_press(Msg::ToggleBillingHistory),
-        )
-        .push(space(12.0))
-        .push(footnote(if card_ui {
-            localized_copy(
-                "Card payments are processed by Stripe; card details are never stored in \
-                 Coincube. Bitcoin payments use BTCPay.",
-            )
-        } else {
-            localized_copy(
-                "Payments use Lightning or on-chain bitcoin. Renewal reminders are sent by email.",
-            )
-        }))
-        .into()
+    col = management_feature_section(state, col);
+    management_history_footer(state, col, card_ui)
 }
 
 /// "then Pro · Annual from Mar 14, 2027" for a scheduled lower tier.
@@ -1327,122 +1213,21 @@ pub(super) fn change_plan_cta(
         );
     }
     if let Some(card) = plan.filter(|p| p.is_card()) {
-        let renews = card.auto_renew == Some(true);
-        let higher = rank(selected) > rank(&current);
-        // A card that starts after a paid period (trialing; the API sends no
-        // cycle then) can't change until it starts.
-        if card.billing_cycle.is_none() && (renews || higher) {
-            return blocked(
-                "Continue to review".to_string(),
-                "Your card subscription starts when your paid period ends; the plan can change \
-                 after that.",
-            );
-        }
-        if matches!(state.plan_lifecycle(), PlanLifecycle::PastDue { .. }) && *selected != current {
-            return blocked(
-                "Continue to review".to_string(),
-                "Update your card first: the plan can change once the renewal is paid. You can \
-                 renew this plan with bitcoin.",
-            );
-        }
-        if !state.card_payments_enabled() && (renews || higher) {
-            return blocked(
-                "Continue to review".to_string(),
-                "Card plan changes are unavailable right now.",
-            );
+        if let Some(decision) = card_plan_change_blocker(state, selected, &current, card, &blocked)
+        {
+            return decision;
         }
     }
     if let Some(card) = plan.filter(|_| state.card_change_route(selected, cycle)) {
-        // Through the card subscription (B3): a higher tier or monthly →
-        // annual now, prorated; anything else at the period end.
-        let current_cycle = card.billing_cycle;
-        if *selected == current && current_cycle.is_none_or(|c| c == cycle) {
-            return blocked(
-                "Continue to review".to_string(),
-                "This is your current plan; it renews automatically by card.",
-            );
-        }
-        let upgrade = rank(selected) > rank(&current)
-            || (*selected == current
-                && cycle == BillingCycle::Annual
-                && current_cycle == Some(BillingCycle::Monthly));
-        if !upgrade {
-            if let Some(pending) = card.pending_plan.as_ref() {
-                return blocked(
-                    format!("Review change to {selected} · {}", cycle_label(cycle)),
-                    &format!("A change to {pending} is already scheduled. Keep your plan first to pick another."),
-                );
-            }
-        }
-        return (
-            if upgrade {
-                format!("Review upgrade to {selected}")
-            } else {
-                format!("Review change to {selected} · {}", cycle_label(cycle))
-            },
-            if upgrade {
-                "You’ll see what’s due today, with credit for unused time, before your card is charged."
-                    .to_string()
-            } else {
-                "The change starts when this period ends. Nothing is charged or refunded today."
-                    .to_string()
-            },
-            true,
-        );
+        return card_plan_change_cta(selected, cycle, &current, card, &blocked);
     }
     let sats_note =
         "You’ll see the amount in sats and choose Lightning or on-chain before anything is charged.";
     if *selected == current {
-        // Buying the current tier again adds a period after this one (the
-        // API stacks same-tier purchases), whatever the cycle.
-        let until = paid_until(plan).map(short_date);
-        let in_grace = plan.is_some_and(|p| matches!(p.status, PlanStatus::PastDue));
-        if in_grace {
-            return (
-                format!("Review renewal · {selected} · {}", cycle_label(cycle)),
-                format!(
-                    "Pays for a new {} period starting today. {sats_note}",
-                    cycle_label(cycle).to_lowercase()
-                ),
-                true,
-            );
-        }
-        return (
-            format!("Review renewal · {selected} · {}", cycle_label(cycle)),
-            match until {
-                Some(date) => format!(
-                    "Adds a {} period after your current one ends on {date}. {sats_note}",
-                    cycle_label(cycle).to_lowercase()
-                ),
-                None => sats_note.to_string(),
-            },
-            true,
-        );
+        return renewal_plan_cta(selected, cycle, plan, sats_note);
     }
     if rank(selected) < rank(&current) {
-        if let Some(pending) = plan.and_then(|p| p.pending_plan.as_ref()) {
-            let date = plan
-                .and_then(|p| p.pending_plan_at.as_deref())
-                .map(format_date)
-                .unwrap_or_else(|| "the end of this period".to_string());
-            return (
-                format!("Review switch to {selected} · {}", cycle_label(cycle)),
-                format!("A change to {pending} is already scheduled for {date}."),
-                false,
-            );
-        }
-        if paid_until(plan).is_none() {
-            return blocked(
-                format!("Review switch to {selected} · {}", cycle_label(cycle)),
-                "A lower plan starts when your current paid period ends, and this plan has no \
-                 end date to follow.",
-            );
-        }
-        return (
-            format!("Review switch to {selected} · {}", cycle_label(cycle)),
-            format!("{selected} starts when your current period ends. {sats_note}"),
-            true,
-        );
+        return lower_plan_cta(selected, cycle, plan, sats_note, &blocked);
     }
     (
         format!("Review upgrade to {selected}"),
@@ -1591,28 +1376,7 @@ fn change_plan_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg> {
         .selected_plan_tier
         .clone()
         .unwrap_or_else(|| current.clone());
-    let lead_text = match (state.plan.as_ref(), state.plan_lifecycle()) {
-        (Some(plan), PlanLifecycle::Active | PlanLifecycle::RenewalDue { .. }) => {
-            match (
-                plan.billing_cycle,
-                plan.renewal_at.as_deref().map(format_date),
-            ) {
-                (Some(c), Some(d)) => format!(
-                    "You're on {} · {}, paid through {d}. Nothing is charged until you confirm \
-                     the amount on the next screen.",
-                    plan.tier(),
-                    cycle_label(c)
-                ),
-                _ => format!(
-                    "You're on {}. Nothing is charged until you confirm the amount on the next \
-                     screen.",
-                    plan.tier()
-                ),
-            }
-        }
-        _ => "You're on Free. Nothing is charged until you confirm the amount on the next screen."
-            .to_string(),
-    };
+    let lead_text = change_plan_lead(state.plan.as_ref(), state.plan_lifecycle());
     let mut col = Column::new()
         .width(Length::Fill)
         .push(back_link(
@@ -1634,90 +1398,7 @@ fn change_plan_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, Msg> {
 
     let priced = TIERS.iter().any(|t| plan_info(state, t).is_some());
     if priced {
-        let cycle_note = match cycle {
-            BillingCycle::Annual => "Paid once a year, upfront.",
-            BillingCycle::Monthly => "Paid each month, upfront. No auto-renewal.",
-        };
-        col = col.push(space(20.0)).push(
-            Row::new()
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .push(
-                    tenshu::segmented(
-                        [
-                            tenshu::segment(
-                                "tenshu.connect.billing.cycle.monthly",
-                                BillingCycle::Monthly,
-                                localized_copy("Monthly"),
-                            ),
-                            tenshu::segment(
-                                "tenshu.connect.billing.cycle.annual",
-                                BillingCycle::Annual,
-                                localized_copy("Annual"),
-                            ),
-                        ],
-                        Some(cycle),
-                        Msg::FocusAction,
-                    )
-                    .size(tenshu::SegmentSize::Compact)
-                    .plain()
-                    .on_select(Msg::BillingCycleSelected),
-                )
-                .push(lead(localized_copy(cycle_note))),
-        );
-        let rows: Vec<PlanRow> = TIERS
-            .iter()
-            .filter(|tier| plan_info(state, tier).is_some())
-            .map(|tier| PlanRow {
-                tier: tier.clone(),
-                description: plan_description(tier),
-                price: price_for(state, tier, cycle),
-            })
-            .collect();
-        let per = match cycle {
-            BillingCycle::Monthly => "per month",
-            BillingCycle::Annual => "per year",
-        };
-        let mut list = Column::new().push(space(16.0)).push(horizontal_rule());
-        for row in rows {
-            let id = match row.tier {
-                PlanTier::Free => "tenshu.connect.billing.plan.free",
-                PlanTier::Pro => "tenshu.connect.billing.plan.pro",
-                PlanTier::Estate => "tenshu.connect.billing.plan.estate",
-            };
-            let price = match (row.price, &row.tier) {
-                (Some(amount), _) => (format!("${amount}"), per),
-                (None, PlanTier::Free) => ("Free".to_string(), "No payment"),
-                // A paid tier without a price in the catalog is never "Free".
-                (None, _) => ("—".to_string(), "Price unavailable"),
-            };
-            list = list
-                .push(choice_row(
-                    id,
-                    row.tier.to_string(),
-                    is_current(state, &row.tier, cycle).then_some(("Current", true)),
-                    row.description.to_string(),
-                    Some(price),
-                    row.tier == selected,
-                    true,
-                    Some(Msg::SelectPlanTier(row.tier.clone())),
-                ))
-                .push(horizontal_rule());
-        }
-        col = col.push(list);
-        let (label, conseq, can_continue) = change_plan_cta(state, &selected, cycle);
-        col = col
-            .push(space(20.0))
-            .push(actions_row(vec![
-                sheet_button(label, ActionKind::Primary, false)
-                    .on_press_maybe(can_continue.then(|| Msg::ReviewPlanChange(selected.clone())))
-                    .into(),
-                sheet_button(localized_copy("Cancel"), ActionKind::Secondary, false)
-                    .on_press(Msg::ComparePlans(false))
-                    .into(),
-            ]))
-            .push(space(8.0))
-            .push(lead(conseq));
+        col = priced_plan_selection(state, &selected, cycle, col);
     } else {
         col = col.push(space(20.0)).push(billing_notice(
             exclamation_circle_icon(),
@@ -1818,21 +1499,7 @@ pub(super) fn review_facts(
         None
     };
     let pending = plan.and_then(|p| p.pending_plan.clone());
-    let mut notes = Vec::new();
-    if current != PlanTier::Free && rank(tier) > rank(&current) {
-        if let Some(until) = renewal {
-            notes.push(format!(
-                "{tier} starts today. Your remaining {current} time (until {}) isn’t credited.",
-                short_date(until)
-            ));
-        }
-        if let Some(pending) = &pending {
-            notes.push(format!(
-                "Your scheduled change to {pending} stays scheduled and starts when this new \
-                 period ends."
-            ));
-        }
-    }
+    let notes = upgrade_review_notes(&current, tier, renewal, &pending);
     if *tier == PlanTier::Free {
         return ReviewFacts {
             plan: "Free".to_string(),
@@ -1867,67 +1534,7 @@ fn review_ux<'a>(state: &'a ConnectAccountPanel, checkout: &'a CheckoutState) ->
     let facts = review_facts(state, checkout, checkout.opened_at);
     let to_free = checkout.tier == PlanTier::Free;
     let paying_card = checkout.pay_with == PayWith::Card && card_offered(state, checkout);
-    let mut plan_main = Column::new().push(tenshu_text::label(facts.plan.clone()));
-    if let Some(replaces) = facts.replaces.clone() {
-        plan_main = plan_main.push(lead(replaces));
-    }
-    let mut amount_main = Column::new().push(tenshu_text::label(
-        facts
-            .amount
-            .clone()
-            .unwrap_or_else(|| "Shown on the invoice".to_string()),
-    ));
-    if paying_card {
-        amount_main = amount_main.push(lead(match checkout.cycle {
-            BillingCycle::Annual => localized_copy("Charged to your card, then every year"),
-            BillingCycle::Monthly => localized_copy("Charged to your card, then every month"),
-        }));
-    } else if !to_free {
-        amount_main = amount_main.push(lead(localized_copy(
-            "In sats at today’s rate, fixed for this invoice",
-        )));
-    }
-    // Card dates follow the card subscription: it starts when a paid
-    // period ends (or today) and then renews.
-    let covers_text = if paying_card {
-        let start = card_start_at(checkout).unwrap_or(checkout.opened_at);
-        format!(
-            "{} – {}, then renews",
-            short_date(start),
-            short_date(add_cycle(start, checkout.cycle))
-        )
-    } else {
-        facts.covers.clone().unwrap_or_else(|| "—".to_string())
-    };
-    let mut covers_main = Column::new().push(tenshu_text::label(covers_text));
-    let starts_line = if paying_card {
-        card_start(checkout)
-    } else {
-        facts.starts.clone()
-    };
-    if let (Some(date), false) = (&starts_line, to_free) {
-        covers_main = covers_main.push(lead(format!("Starts {date}")));
-    }
-    let list = ruled_list([
-        summary_row(localized_copy("Plan"), plan_main.into(), None),
-        summary_row(localized_copy("Amount"), amount_main.into(), None),
-        summary_row(localized_copy("Covers"), covers_main.into(), None),
-        summary_row(
-            localized_copy("Status"),
-            iced::widget::Space::new().into(),
-            Some(status_line(
-                dash_circle_icon(),
-                if to_free {
-                    localized_copy("Nothing to pay")
-                } else if paying_card {
-                    localized_copy("Not charged yet")
-                } else {
-                    localized_copy("Not invoiced yet")
-                },
-                Tone::Muted,
-            )),
-        ),
-    ]);
+    let list = review_summary_list(checkout, &facts, to_free, paying_card);
     let col = Column::new()
         .width(Length::Fill)
         .push(back_link(
@@ -2020,94 +1627,7 @@ fn review_ux<'a>(state: &'a ConnectAccountPanel, checkout: &'a CheckoutState) ->
             .into();
     }
 
-    let methods = Column::new()
-        .push(horizontal_rule())
-        .push(choice_row(
-            "tenshu.connect.billing.pay.bitcoin",
-            "Bitcoin".to_string(),
-            None,
-            match checkout.cycle {
-                BillingCycle::Annual => "Lightning or on-chain, through BTCPay. One payment covers the year, and we email you before it ends. No auto-renewal.",
-                BillingCycle::Monthly => "Lightning or on-chain, through BTCPay. One payment covers the month, and we email you before it ends. No auto-renewal.",
-            }
-            .to_string(),
-            None,
-            checkout.pay_with == PayWith::Bitcoin,
-            true,
-            Some(Msg::SelectPayWith(PayWith::Bitcoin)),
-        ))
-        .push(horizontal_rule())
-        .push(card_choice(state, checkout, &facts))
-        .push(horizontal_rule());
-
-    let purchasing = state.purchasing_enabled();
-    let card = checkout.pay_with == PayWith::Card && card_offered(state, checkout);
-    col.push(space(24.0))
-        .push(
-            Row::new()
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .push(group_title(localized_copy("Billing period")).width(Length::Fill))
-                .push(
-                    tenshu::segmented(
-                        [
-                            tenshu::segment(
-                                "tenshu.connect.billing.review.monthly",
-                                BillingCycle::Monthly,
-                                localized_copy("Monthly"),
-                            ),
-                            tenshu::segment(
-                                "tenshu.connect.billing.review.annual",
-                                BillingCycle::Annual,
-                                localized_copy("Annual"),
-                            ),
-                        ],
-                        Some(checkout.cycle),
-                        Msg::FocusAction,
-                    )
-                    .size(tenshu::SegmentSize::Compact)
-                    .plain()
-                    .on_select(Msg::SetReviewCycle),
-                ),
-        )
-        .push(space(24.0))
-        .push(group_title(localized_copy("Pay with")))
-        .push(space(8.0))
-        .push(methods)
-        .push(space(20.0))
-        .push(actions_row(vec![
-            if card {
-                sheet_button(
-                    localized_copy("Continue to secure checkout"),
-                    ActionKind::Primary,
-                    false,
-                )
-                .on_press_maybe(purchasing.then_some(Msg::StartCardCheckout))
-                .into()
-            } else {
-                sheet_button(localized_copy("Create invoice"), ActionKind::Primary, false)
-                    .on_press_maybe(purchasing.then(|| Msg::StartCheckout(checkout.tier.clone())))
-                    .into()
-            },
-            sheet_button(localized_copy("Back"), ActionKind::Secondary, false)
-                .on_press(Msg::ComparePlans(true))
-                .into(),
-        ]))
-        .push(space(8.0))
-        .push(lead(if purchasing && card {
-            localized_copy(
-                "Opens Stripe Checkout in your browser. You enter card details there, never in \
-                 Coincube.",
-            )
-        } else if purchasing {
-            localized_copy(
-                "Creates a BTCPay invoice you can pay with Lightning or on-chain. It shows when \
-                 it expires.",
-            )
-        } else {
-            localized_copy("Purchasing is paused, so an invoice can’t be created right now.")
-        }))
-        .into()
+    review_payment_choices(state, checkout, &facts, col)
 }
 
 /// Card is selectable on Review when Connect offers it and the plan isn't
@@ -2261,68 +1781,8 @@ fn card_phase_ux<'a>(
         .and_then(|p| p.renewal_at.as_deref())
         .map(format_date);
 
-    let (heading, lead_text) = match &checkout.phase {
-        CheckoutPhase::CardOpening | CheckoutPhase::CardInBrowser => (
-            format!("Pay for {tier}"),
-            "Finish checkout on Stripe’s page.".to_string(),
-        ),
-        CheckoutPhase::CardActive => match &starts {
-            Some(date) => (
-                "Card subscription set up".to_string(),
-                format!("{tier} starts on {date}, when your current period ends."),
-            ),
-            None => (
-                "Plan changed".to_string(),
-                "Your new plan is active and renews automatically.".to_string(),
-            ),
-        },
-        CheckoutPhase::CardCancelled => (
-            "Review plan change".to_string(),
-            "Checkout didn’t finish.".to_string(),
-        ),
-        CheckoutPhase::CardFailed { .. } => (
-            "Review plan change".to_string(),
-            "Stripe checkout couldn’t be opened.".to_string(),
-        ),
-        CheckoutPhase::ChangeDone { scheduled: true } => (
-            format!("Change to {tier} scheduled"),
-            "You keep your current plan until this period ends.".to_string(),
-        ),
-        CheckoutPhase::ChangeDone { scheduled: false } => (
-            "Plan changed".to_string(),
-            match preview
-                .and_then(|p| p.renewal_at.as_deref())
-                .map(format_date)
-            {
-                Some(d) => format!("{tier} is active now and renews on {d}."),
-                None => format!("{tier} is active now."),
-            },
-        ),
-        CheckoutPhase::ChangeUnconfirmed { .. } => (
-            if upgrade {
-                format!("Upgrade to {tier}")
-            } else {
-                format!("Change to {tier}")
-            },
-            format!(
-                "COINCUBE Desktop couldn’t confirm whether the change to {tier} went through. Check Plan \
-                 & billing before you try again."
-            ),
-        ),
-        _ if upgrade => (
-            format!("Upgrade to {tier}"),
-            format!(
-                "{tier} starts as soon as you confirm. You pay only the difference for the rest \
-                 of this period."
-            ),
-        ),
-        _ => (
-            format!("Change to {tier}"),
-            format!(
-                "You keep {current} until this period ends. Nothing is charged or refunded today."
-            ),
-        ),
-    };
+    let (heading, lead_text) =
+        card_checkout_heading(checkout, tier, &starts, preview, upgrade, &current);
 
     // Summary list.
     let card_label = checkout
@@ -2330,100 +1790,15 @@ fn card_phase_ux<'a>(
         .as_ref()
         .and_then(|p| p.card_label())
         .unwrap_or_else(|| "Card".to_string());
-    let (amount_main, amount_sub, covers) = match (&checkout.phase, preview) {
-        // A change that got no clear answer: say what was asked for, never
-        // that it was (or wasn't) charged.
-        (CheckoutPhase::ChangeUnconfirmed { .. }, _) => (
-            "Not confirmed".to_string(),
-            match preview {
-                Some(p) if p.is_upgrade() => format!(
-                    "${} was due today if the change went through",
-                    format_usd(p.amount_due_today)
-                ),
-                Some(_) => "Nothing was due today for this change".to_string(),
-                None => "Check Plan & billing for what was charged".to_string(),
-            },
-            "Unknown until Plan & billing shows the result".to_string(),
-        ),
-        (
-            CheckoutPhase::ChangePreviewing
-            | CheckoutPhase::ChangeReview
-            | CheckoutPhase::ChangeApplying
-            | CheckoutPhase::ChangeInBrowser
-            | CheckoutPhase::ChangeDone { .. }
-            | CheckoutPhase::ChangeFailed { .. },
-            Some(p),
-        ) => {
-            let next = format_usd(p.next_charge_amount);
-            let per = match checkout.cycle {
-                BillingCycle::Annual => "a year",
-                BillingCycle::Monthly => "a month",
-            };
-            if p.is_upgrade() {
-                let renew = p.renewal_at.as_deref().map(format_date).or(renewal.clone());
-                (
-                    format!("${} USD today", format_usd(p.amount_due_today)),
-                    match &renew {
-                        Some(d) => format!("Prorated, then ${next} {per} from {d}"),
-                        None => format!("Prorated, then ${next} {per}"),
-                    },
-                    match &renew {
-                        Some(d) => format!("Today – {d}, then renews"),
-                        None => "From today, then renews".to_string(),
-                    },
-                )
-            } else {
-                let from = p
-                    .effective_at
-                    .as_deref()
-                    .map(format_date)
-                    .or(renewal.clone());
-                (
-                    "$0.00 today".to_string(),
-                    match &from {
-                        Some(d) => format!("${next} {per} from {d}"),
-                        None => format!("${next} {per}"),
-                    },
-                    match &from {
-                        Some(d) => format!("{tier} from {d}, then renews"),
-                        None => format!("{tier} at the end of this period"),
-                    },
-                )
-            }
-        }
-        _ => (
-            price
-                .map(|usd| match checkout.cycle {
-                    BillingCycle::Annual => format!("${usd} USD per year"),
-                    BillingCycle::Monthly => format!("${usd} USD per month"),
-                })
-                .unwrap_or_default(),
-            match &starts {
-                Some(d) => format!("First charged on {d}, then each period"),
-                None => "Charged to your card today and each period".to_string(),
-            },
-            match &starts {
-                Some(d) => format!("From {d}, then renews"),
-                None => "From today, then renews".to_string(),
-            },
-        ),
-    };
+    let (amount_main, amount_sub, covers) =
+        card_checkout_amounts(checkout, tier, price, &starts, preview, &renewal);
     let (status_text, tone) = match (&checkout.phase, &starts) {
         (CheckoutPhase::CardActive, Some(date)) => {
             (format!("Starts {date} · auto-renews"), Tone::Good)
         }
         _ => checkout_status(checkout),
     };
-    let mut plan_main = Column::new().push(tenshu_text::label(format!("{tier} · {cycle}")));
-    if current != PlanTier::Free {
-        if let Some(p) = checkout.plan.as_ref() {
-            let paid_by = if p.is_card() { ", paid by card" } else { "" };
-            plan_main = plan_main.push(lead(match p.billing_cycle {
-                Some(c) => format!("Replaces {} · {}{paid_by}", p.tier(), cycle_label(c)),
-                None => format!("Replaces {}{paid_by}", p.tier()),
-            }));
-        }
-    }
+    let plan_main = card_checkout_plan_summary(checkout, tier, cycle, &current);
     let list = ruled_list([
         summary_row(localized_copy("Plan"), plan_main.into(), None),
         summary_row(
@@ -2478,37 +1853,7 @@ fn card_phase_ux<'a>(
                     .into(),
             ])),
         ),
-        CheckoutPhase::CardActive => {
-            let charge = price.map(|usd| format!("${usd}")).unwrap_or_default();
-            let body = match (&starts, state.plan.as_ref().and_then(|p| p.card_label())) {
-                (Some(date), Some(card)) => format!(
-                    "{card} is charged {charge} on {date}, when your paid period ends, then each \
-                     period. You can turn auto-renewal off in Plan & billing."
-                ),
-                (None, Some(card)) => format!(
-                    "Charged {charge} to {card}. Renews automatically; you can turn this off in \
-                     Plan & billing."
-                ),
-                _ => "Your card subscription is set up. You can turn auto-renewal off in Plan & \
-                      billing."
-                    .to_string(),
-            };
-            billing_notice(
-                check_circle_icon(),
-                Tone::Good,
-                if starts.is_some() {
-                    format!("{tier} starts on your card later")
-                } else {
-                    format!("You're on {tier}")
-                },
-                body,
-                Some(
-                    sheet_button(localized_copy("Done"), ActionKind::Primary, true)
-                        .on_press(Msg::DismissCheckout)
-                        .into(),
-                ),
-            )
-        }
+        CheckoutPhase::CardActive => active_card_checkout(state, tier, price, &starts),
         CheckoutPhase::CardCancelled => billing_notice(
             dash_circle_icon(),
             Tone::Muted,
@@ -2529,175 +1874,16 @@ fn card_phase_ux<'a>(
                 .into(),
             ])),
         ),
-        CheckoutPhase::CardFailed { message, refused } => billing_notice(
-            exclamation_circle_icon(),
-            Tone::Bad,
-            if *refused {
-                localized_copy("Connect didn’t accept this card checkout")
-            } else {
-                localized_copy("Couldn’t open checkout")
-            },
-            if *refused {
-                format!("{message}. Nothing was charged.")
-            } else {
-                format!(
-                    "Connect didn’t respond. Nothing was charged. Check your connection and try \
-                     again. ({message})"
-                )
-            },
-            Some(actions_row(vec![
-                if *refused {
-                    sheet_button(localized_copy("Change plan"), ActionKind::Primary, true)
-                        .on_press(Msg::ComparePlans(true))
-                        .into()
-                } else {
-                    sheet_button(localized_copy("Try again"), ActionKind::Primary, true)
-                        .on_press(Msg::StartCardCheckout)
-                        .into()
-                },
-                sheet_button(
-                    localized_copy("Pay with bitcoin instead"),
-                    ActionKind::Secondary,
-                    true,
-                )
-                .on_press(Msg::BackToReview {
-                    pay_with: PayWith::Bitcoin,
-                })
-                .into(),
-            ])),
+        CheckoutPhase::CardFailed { message, refused } => failed_card_checkout(message, *refused),
+        CheckoutPhase::ChangeReview | CheckoutPhase::ChangeApplying => card_change_review(
+            state,
+            checkout,
+            tier,
+            &current,
+            &renewal,
+            &card_label,
+            preview,
         ),
-        CheckoutPhase::ChangeReview | CheckoutPhase::ChangeApplying => {
-            let applying = checkout.phase == CheckoutPhase::ChangeApplying;
-            let p = preview.expect("ChangeReview carries a preview");
-            let line = |label: String, amount: String, strong: bool| -> Element<'a, Msg> {
-                let text = |t: String| {
-                    if strong {
-                        tenshu_text::label(t)
-                    } else {
-                        lead(t)
-                    }
-                };
-                Row::new()
-                    .spacing(16)
-                    .align_y(Alignment::Center)
-                    .push(text(label).width(Length::Fill))
-                    .push(text(amount))
-                    .into()
-            };
-            let renew = p.renewal_at.as_deref().map(format_date).or(renewal.clone());
-            let lines: Vec<Element<'a, Msg>> = if p.is_upgrade() {
-                vec![
-                    line(
-                        format!(
-                            "{tier} for the rest of this period{}",
-                            renew
-                                .as_ref()
-                                .map(|d| format!(" (until {d})"))
-                                .unwrap_or_default()
-                        ),
-                        format!("${}", format_usd(p.amount_due_today + p.credit)),
-                        false,
-                    ),
-                    line(
-                        format!("Credit for unused {current} time"),
-                        format!("−${}", format_usd(p.credit)),
-                        false,
-                    ),
-                    line(
-                        "Due today".to_string(),
-                        format!("${}", format_usd(p.amount_due_today)),
-                        true,
-                    ),
-                ]
-            } else {
-                let per = match checkout.cycle {
-                    BillingCycle::Annual => "a year",
-                    BillingCycle::Monthly => "a month",
-                };
-                let from = p
-                    .effective_at
-                    .as_deref()
-                    .map(format_date)
-                    .or(renewal.clone());
-                vec![
-                    line(
-                        format!("{current} stays on until"),
-                        from.clone()
-                            .unwrap_or_else(|| "the end of this period".to_string()),
-                        false,
-                    ),
-                    line(
-                        format!("Then {tier} renews at"),
-                        format!("${} {per}", format_usd(p.next_charge_amount)),
-                        false,
-                    ),
-                    line("Due today".to_string(), "$0.00".to_string(), true),
-                ]
-            };
-            let limit = entitlements_for(state, tier).cube_limit;
-            let note = if p.is_upgrade() {
-                format!(
-                    "{}If your bank asks you to confirm the payment, Stripe opens in your browser.",
-                    renew
-                        .as_ref()
-                        .map(|d| format!("{tier} renews on {d}. "))
-                        .unwrap_or_default()
-                )
-            } else {
-                format!(
-                    "{tier} allows {limit} Cubes per network. If you have more then, every Cube \
-                     keeps working, but only {limit} per network keep Connect features. You can \
-                     undo this in Plan & billing before then."
-                )
-            };
-            let cta = if p.is_upgrade() {
-                format!("Upgrade and pay ${}", format_usd(p.amount_due_today))
-            } else {
-                format!("Schedule change to {tier}")
-            };
-            Column::new()
-                .push(group_title(if p.is_upgrade() {
-                    localized_copy("Due today")
-                } else {
-                    localized_copy("What changes")
-                }))
-                .push(space(8.0))
-                .push(ruled_list(lines))
-                .push(space(20.0))
-                .push(ruled_list([summary_row(
-                    localized_copy("Pay with"),
-                    Column::new()
-                        .push(
-                            Row::new()
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .push(tenshu_text::label(card_label.clone()))
-                                .push(row_tag("Stripe", false)),
-                        )
-                        .push(lead(if p.is_upgrade() {
-                            "Card on file · charged when you confirm".to_string()
-                        } else {
-                            "Card on file · charged when the new plan starts".to_string()
-                        }))
-                        .into(),
-                    None,
-                )]))
-                .push(space(20.0))
-                .push(actions_row(vec![
-                    sheet_button(cta, ActionKind::Primary, false)
-                        .on_press_maybe((!applying).then_some(Msg::ConfirmPlanChange))
-                        .into(),
-                    sheet_button(localized_copy("Back"), ActionKind::Secondary, false)
-                        .on_press_maybe((!applying).then_some(Msg::ComparePlans(true)))
-                        .into(),
-                    sheet_link(localized_copy("Back to Plan & billing"))
-                        .on_press_maybe((!applying).then_some(Msg::DismissCheckout))
-                        .into(),
-                ]))
-                .push(space(8.0))
-                .push(lead(note))
-                .into()
-        }
         CheckoutPhase::ChangeInBrowser => billing_notice(
             clock_icon(),
             Tone::Warn,
@@ -2721,54 +1907,12 @@ fn card_phase_ux<'a>(
                     .into(),
             ])),
         ),
-        CheckoutPhase::ChangeDone { scheduled } => billing_notice(
-            check_circle_icon(),
-            Tone::Good,
-            if *scheduled {
-                format!("{tier} starts when this period ends")
-            } else {
-                format!("You're on {tier}")
-            },
-            if *scheduled {
-                "Nothing was charged today. Plan & billing shows the change, and you can keep \
-                 your current plan before then."
-                    .to_string()
-            } else {
-                format!(
-                    "Charged to {card_label}. The receipt is in your billing history{}.",
-                    preview
-                        .and_then(|p| p.renewal_at.as_deref())
-                        .map(format_date)
-                        .or(renewal.clone())
-                        .map(|d| format!("; {tier} renews on {d}"))
-                        .unwrap_or_default()
-                )
-            },
-            Some(
-                sheet_button(localized_copy("Done"), ActionKind::Primary, true)
-                    .on_press(Msg::DismissCheckout)
-                    .into(),
-            ),
-        ),
-        CheckoutPhase::ChangeUnconfirmed { message, refresh } => billing_notice(
-            exclamation_circle_icon(),
-            Tone::Warn,
-            localized_copy("We couldn’t confirm the plan change"),
-            format!(
-                "{message}. The change may or may not have gone through, and your card may have \
-                 been charged. {} Check Plan & billing before trying again.",
-                unconfirmed_refresh_line(refresh)
-            ),
-            Some(match refresh {
-                PlanRefresh::Failed => actions_row(vec![
-                    sheet_button(localized_copy("Refresh plan"), ActionKind::Primary, true)
-                        .on_press(Msg::RetryPlanRefresh)
-                        .into(),
-                    back_to_billing(),
-                ]),
-                _ => back_to_billing(),
-            }),
-        ),
+        CheckoutPhase::ChangeDone { scheduled } => {
+            completed_card_plan_change(tier, *scheduled, &card_label, preview, &renewal)
+        }
+        CheckoutPhase::ChangeUnconfirmed { message, refresh } => {
+            unconfirmed_card_plan_change(message, refresh)
+        }
         CheckoutPhase::ChangeFailed { message, refused } => billing_notice(
             exclamation_circle_icon(),
             Tone::Bad,
@@ -3105,39 +2249,7 @@ fn checkout_phase_ux<'a>(
     // Connect sends no startsAt).
     let paid_start = starts.clone().or_else(|| facts.starts.clone());
     let renewal = effective_tier(checkout.plan.as_ref()) == *tier;
-    let (heading, lead_text) = match &checkout.phase {
-        CheckoutPhase::Creating => (
-            format!("Pay for {tier}"),
-            "Preparing a Bitcoin invoice for the amount above.".to_string(),
-        ),
-        CheckoutPhase::Paid { .. } => match &paid_start {
-            Some(date) if renewal => (
-                "Plan renewed".to_string(),
-                format!("Your {tier} plan continues. The new period starts on {date}."),
-            ),
-            Some(date) => (
-                "Plan change scheduled".to_string(),
-                format!("{tier} starts on {date}, when your current period ends."),
-            ),
-            None => (
-                "Plan changed".to_string(),
-                "Your new plan is active on this account.".to_string(),
-            ),
-        },
-        CheckoutPhase::NeedsSupport { .. } => (
-            format!("Pay for {tier}"),
-            "There is a problem with this payment.".to_string(),
-        ),
-        CheckoutPhase::Failed { .. } => (
-            "Review plan change".to_string(),
-            "The invoice couldn’t be created.".to_string(),
-        ),
-        _ => (
-            format!("Pay for {tier}"),
-            "Pay from any Bitcoin wallet. This screen updates by itself when the payment arrives."
-                .to_string(),
-        ),
-    };
+    let (heading, lead_text) = bitcoin_checkout_heading(checkout, tier, &paid_start, renewal);
 
     let resp = checkout.checkout.as_ref();
     let amount_main = match resp {
@@ -3267,41 +2379,7 @@ fn checkout_phase_ux<'a>(
             Some(back_to_billing()),
         ),
         CheckoutPhase::Paid { overpaid_sats } => {
-            let mut body = match (&paid_start, facts.covers.as_deref()) {
-                (Some(date), _) if renewal => format!(
-                    "The new {tier} period starts on {date}, when the current one ends. The \
-                     receipt is in your billing history."
-                ),
-                (Some(date), _) => format!(
-                    "{tier} starts on {date}. Until then you keep your current plan. The receipt \
-                     is in your billing history."
-                ),
-                (None, Some(covers)) => {
-                    format!("Covers {covers}. The receipt is in your billing history.")
-                }
-                (None, None) => "The receipt is in your billing history.".to_string(),
-            };
-            if *overpaid_sats > 0 {
-                body.push_str(&format!(
-                    " You overpaid by {} sats; contact support for the difference.",
-                    group_sats(*overpaid_sats)
-                ));
-            }
-            billing_notice(
-                check_circle_icon(),
-                Tone::Good,
-                match &paid_start {
-                    Some(_) if renewal => format!("{tier} renewed"),
-                    Some(_) => format!("{tier} is paid for"),
-                    None => format!("You're on {tier}"),
-                },
-                body,
-                Some(
-                    sheet_button(localized_copy("Done"), ActionKind::Primary, true)
-                        .on_press(Msg::DismissCheckout)
-                        .into(),
-                ),
-            )
+            paid_bitcoin_checkout(tier, &paid_start, &facts, renewal, overpaid_sats)
         }
         CheckoutPhase::Expired => billing_notice(
             dash_circle_icon(),
@@ -3327,46 +2405,7 @@ fn checkout_phase_ux<'a>(
         CheckoutPhase::NeedsSupport {
             invoice_id,
             received_sats,
-        } => {
-            let late = checkout
-                .last_status
-                .as_ref()
-                .and_then(|s| s.additional_status.as_deref())
-                .is_some_and(|a| a.eq_ignore_ascii_case("PaidLate"));
-            let received = if *received_sats > 0 {
-                format!("BTCPay received {} sats", group_sats(*received_sats))
-            } else {
-                "BTCPay received a payment".to_string()
-            };
-            billing_notice(
-                exclamation_circle_icon(),
-                Tone::Bad,
-                if late {
-                    localized_copy("Payment arrived after the invoice expired")
-                } else {
-                    localized_copy("This payment needs support")
-                },
-                format!(
-                    "{received}, but it can’t be applied to your plan automatically. Your plan \
-                     hasn't changed. Contact support with the invoice ID below."
-                ),
-                Some(
-                    Column::new()
-                        .spacing(12)
-                        .push(
-                            tenshu::copy_field(
-                                "tenshu.connect.billing.copy.invoice-id",
-                                localized_copy("Invoice ID"),
-                                invoice_id.as_str(),
-                                Msg::FocusAction,
-                            )
-                            .on_copy(Msg::CopyToClipboard(invoice_id.clone())),
-                        )
-                        .push(back_to_billing())
-                        .into(),
-                ),
-            )
-        }
+        } => support_bitcoin_checkout(checkout, invoice_id.as_str(), received_sats),
         CheckoutPhase::Failed { message, refused } if *refused => billing_notice(
             exclamation_circle_icon(),
             Tone::Bad,
@@ -3432,4 +2471,1222 @@ fn checkout_phase_ux<'a>(
         .push(space(24.0))
         .push(body)
         .into()
+}
+
+fn pending_card_status_line(plan: &ConnectPlan, date: &Option<String>) -> Option<String> {
+    let pending = plan.pending_plan.as_ref().expect("checked");
+    let at = plan
+        .pending_plan_at
+        .as_deref()
+        .map(format_date)
+        .or(date.clone());
+    let then = match plan.pending_billing_cycle {
+        Some(c) => format!("{pending} · {}", cycle_label(c)),
+        None => pending.to_string(),
+    };
+    Some(match at {
+        Some(d) => format!("{} until {d}, then {then}", plan.tier()),
+        None => format!("Then {then}"),
+    })
+}
+
+fn paid_period_status_line(date: Option<String>, cycle: Option<&'static str>) -> Option<String> {
+    match (date, cycle) {
+        (Some(d), Some(c)) => Some(format!("Paid through {d} · {c}")),
+        (Some(d), None) => Some(format!("Paid through {d}")),
+        (None, Some(c)) => Some(c.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn append_catalog_feature_rows(
+    state: &ConnectAccountPanel,
+    tier: &PlanTier,
+    ent: &PlanEntitlements,
+    rows: &mut Vec<(String, FeatureValue)>,
+    coming_soon: &mut Vec<(String, FeatureValue)>,
+) {
+    if let Some(info) = plan_info(state, tier) {
+        for feature in &info.features {
+            let Some((name, value)) = launch_feature_copy(feature) else {
+                continue;
+            };
+            let name = recovery_kit_copy(&name, ent.cube_limit).unwrap_or(name);
+            if rows
+                .iter()
+                .chain(coming_soon.iter())
+                .any(|(n, _)| n == &name)
+            {
+                continue;
+            }
+            match value {
+                FeatureValue::ComingSoon => coming_soon.push((name, value)),
+                value => rows.push((name, value)),
+            }
+        }
+    }
+}
+
+fn management_plan_actions<'a>(
+    state: &'a ConnectAccountPanel,
+    card_plan: Option<&ConnectPlan>,
+    cancelled: bool,
+) -> Vec<Element<'a, Msg>> {
+    let mut actions: Vec<Element<'a, Msg>> = vec![sheet_button(
+        if cancelled {
+            localized_copy("Resubscribe…")
+        } else {
+            localized_copy("Change plan…")
+        },
+        ActionKind::Secondary,
+        true,
+    )
+    .on_press(Msg::ComparePlans(true))
+    .into()];
+    if let Some(plan) = card_plan.filter(|_| state.card_payments_enabled()) {
+        let busy = state.card_request_busy;
+        if plan.auto_renew == Some(false) {
+            actions.push(
+                sheet_link(localized_copy("Turn auto-renewal back on"))
+                    .on_press_maybe((!busy).then_some(Msg::SetAutoRenew(true)))
+                    .into(),
+            );
+        } else if !state.confirm_auto_renew_off {
+            actions.push(
+                sheet_link(localized_copy("Turn off auto-renewal"))
+                    .on_press_maybe((!busy).then_some(Msg::ShowAutoRenewOff(true)))
+                    .into(),
+            );
+        }
+    }
+
+    actions
+}
+
+fn management_feature_section<'a>(
+    state: &'a ConnectAccountPanel,
+    mut col: Column<'a, Msg>,
+) -> Column<'a, Msg> {
+    col = col
+        .push(space(32.0))
+        .push(group_title(localized_copy("Features on this account")))
+        .push(space(8.0));
+    let rows = account_feature_rows(state);
+    if state.plan.is_none() {
+        col = col.push(lead(localized_copy("Checking your current plan…")));
+    } else if state.features.is_none() && rows.len() <= 1 {
+        col = col.push(lead(localized_copy(
+            "Current plan features are unavailable. Try again when Connect is online.",
+        )));
+    } else {
+        col = col.push(ruled_list(rows.into_iter().map(|(name, value)| {
+            Row::new()
+                .spacing(16)
+                .align_y(Alignment::Center)
+                .push(tenshu_text::label(name).width(Length::Fill))
+                .push(feature_value_line(&value))
+                .into()
+        })));
+    }
+
+    col
+}
+
+fn management_history_footer<'a>(
+    state: &'a ConnectAccountPanel,
+    mut col: Column<'a, Msg>,
+    card_ui: bool,
+) -> Element<'a, Msg> {
+    col = col
+        .push(space(32.0))
+        .push(group_title(localized_copy("Billing history")))
+        .push(space(8.0));
+    match &state.billing_history {
+        Some(entries) if !entries.is_empty() => {
+            col = col.push(ruled_list(entries.iter().take(3).map(history_row)));
+        }
+        Some(_) => {
+            col = col.push(lead(localized_copy("No payments yet.")));
+        }
+        None => {}
+    }
+    col.push(space(12.0))
+        .push(
+            sheet_link(localized_copy("View all billing history"))
+                .on_press(Msg::ToggleBillingHistory),
+        )
+        .push(space(12.0))
+        .push(footnote(if card_ui {
+            localized_copy(
+                "Card payments are processed by Stripe; card details are never stored in \
+                 Coincube. Bitcoin payments use BTCPay.",
+            )
+        } else {
+            localized_copy(
+                "Payments use Lightning or on-chain bitcoin. Renewal reminders are sent by email.",
+            )
+        }))
+        .into()
+}
+
+fn card_plan_change_blocker(
+    state: &ConnectAccountPanel,
+    selected: &PlanTier,
+    current: &PlanTier,
+    card: &ConnectPlan,
+    blocked: &impl Fn(String, &str) -> (String, String, bool),
+) -> Option<(String, String, bool)> {
+    let renews = card.auto_renew == Some(true);
+    let higher = rank(selected) > rank(current);
+    // A card that starts after a paid period (trialing; the API sends no
+    // cycle then) can't change until it starts.
+    if card.billing_cycle.is_none() && (renews || higher) {
+        return Some(blocked(
+            "Continue to review".to_string(),
+            "Your card subscription starts when your paid period ends; the plan can change \
+                 after that.",
+        ));
+    }
+    if matches!(state.plan_lifecycle(), PlanLifecycle::PastDue { .. }) && *selected != *current {
+        return Some(blocked(
+            "Continue to review".to_string(),
+            "Update your card first: the plan can change once the renewal is paid. You can \
+                 renew this plan with bitcoin.",
+        ));
+    }
+    if !state.card_payments_enabled() && (renews || higher) {
+        return Some(blocked(
+            "Continue to review".to_string(),
+            "Card plan changes are unavailable right now.",
+        ));
+    }
+
+    None
+}
+
+fn card_plan_change_cta(
+    selected: &PlanTier,
+    cycle: BillingCycle,
+    current: &PlanTier,
+    card: &ConnectPlan,
+    blocked: &impl Fn(String, &str) -> (String, String, bool),
+) -> (String, String, bool) {
+    // Through the card subscription (B3): a higher tier or monthly →
+    // annual now, prorated; anything else at the period end.
+    let current_cycle = card.billing_cycle;
+    if *selected == *current && current_cycle.is_none_or(|c| c == cycle) {
+        return blocked(
+            "Continue to review".to_string(),
+            "This is your current plan; it renews automatically by card.",
+        );
+    }
+    let upgrade = rank(selected) > rank(current)
+        || (*selected == *current
+            && cycle == BillingCycle::Annual
+            && current_cycle == Some(BillingCycle::Monthly));
+    if !upgrade {
+        if let Some(pending) = card.pending_plan.as_ref() {
+            return blocked(
+                    format!("Review change to {selected} · {}", cycle_label(cycle)),
+                    &format!("A change to {pending} is already scheduled. Keep your plan first to pick another."),
+                );
+        }
+    }
+    (
+        if upgrade {
+            format!("Review upgrade to {selected}")
+        } else {
+            format!("Review change to {selected} · {}", cycle_label(cycle))
+        },
+        if upgrade {
+            "You’ll see what’s due today, with credit for unused time, before your card is charged."
+                .to_string()
+        } else {
+            "The change starts when this period ends. Nothing is charged or refunded today."
+                .to_string()
+        },
+        true,
+    )
+}
+
+fn renewal_plan_cta(
+    selected: &PlanTier,
+    cycle: BillingCycle,
+    plan: Option<&ConnectPlan>,
+    sats_note: &str,
+) -> (String, String, bool) {
+    // Buying the current tier again adds a period after this one (the
+    // API stacks same-tier purchases), whatever the cycle.
+    let until = paid_until(plan).map(short_date);
+    let in_grace = plan.is_some_and(|p| matches!(p.status, PlanStatus::PastDue));
+    if in_grace {
+        return (
+            format!("Review renewal · {selected} · {}", cycle_label(cycle)),
+            format!(
+                "Pays for a new {} period starting today. {sats_note}",
+                cycle_label(cycle).to_lowercase()
+            ),
+            true,
+        );
+    }
+    (
+        format!("Review renewal · {selected} · {}", cycle_label(cycle)),
+        match until {
+            Some(date) => format!(
+                "Adds a {} period after your current one ends on {date}. {sats_note}",
+                cycle_label(cycle).to_lowercase()
+            ),
+            None => sats_note.to_string(),
+        },
+        true,
+    )
+}
+
+fn lower_plan_cta(
+    selected: &PlanTier,
+    cycle: BillingCycle,
+    plan: Option<&ConnectPlan>,
+    sats_note: &str,
+    blocked: &impl Fn(String, &str) -> (String, String, bool),
+) -> (String, String, bool) {
+    if let Some(pending) = plan.and_then(|p| p.pending_plan.as_ref()) {
+        let date = plan
+            .and_then(|p| p.pending_plan_at.as_deref())
+            .map(format_date)
+            .unwrap_or_else(|| "the end of this period".to_string());
+        return (
+            format!("Review switch to {selected} · {}", cycle_label(cycle)),
+            format!("A change to {pending} is already scheduled for {date}."),
+            false,
+        );
+    }
+    if paid_until(plan).is_none() {
+        return blocked(
+            format!("Review switch to {selected} · {}", cycle_label(cycle)),
+            "A lower plan starts when your current paid period ends, and this plan has no \
+                 end date to follow.",
+        );
+    }
+    (
+        format!("Review switch to {selected} · {}", cycle_label(cycle)),
+        format!("{selected} starts when your current period ends. {sats_note}"),
+        true,
+    )
+}
+
+fn change_plan_lead(plan: Option<&ConnectPlan>, lifecycle: PlanLifecycle) -> String {
+    match (plan, lifecycle) {
+        (Some(plan), PlanLifecycle::Active | PlanLifecycle::RenewalDue { .. }) => {
+            match (
+                plan.billing_cycle,
+                plan.renewal_at.as_deref().map(format_date),
+            ) {
+                (Some(c), Some(d)) => format!(
+                    "You're on {} · {}, paid through {d}. Nothing is charged until you confirm \
+                     the amount on the next screen.",
+                    plan.tier(),
+                    cycle_label(c)
+                ),
+                _ => format!(
+                    "You're on {}. Nothing is charged until you confirm the amount on the next \
+                     screen.",
+                    plan.tier()
+                ),
+            }
+        }
+        _ => "You're on Free. Nothing is charged until you confirm the amount on the next screen."
+            .to_string(),
+    }
+}
+
+fn priced_plan_selection<'a>(
+    state: &'a ConnectAccountPanel,
+    selected: &PlanTier,
+    cycle: BillingCycle,
+    mut col: Column<'a, Msg>,
+) -> Column<'a, Msg> {
+    let cycle_note = match cycle {
+        BillingCycle::Annual => "Paid once a year, upfront.",
+        BillingCycle::Monthly => "Paid each month, upfront. No auto-renewal.",
+    };
+    col = col.push(space(20.0)).push(
+        Row::new()
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .push(
+                tenshu::segmented(
+                    [
+                        tenshu::segment(
+                            "tenshu.connect.billing.cycle.monthly",
+                            BillingCycle::Monthly,
+                            localized_copy("Monthly"),
+                        ),
+                        tenshu::segment(
+                            "tenshu.connect.billing.cycle.annual",
+                            BillingCycle::Annual,
+                            localized_copy("Annual"),
+                        ),
+                    ],
+                    Some(cycle),
+                    Msg::FocusAction,
+                )
+                .size(tenshu::SegmentSize::Compact)
+                .plain()
+                .on_select(Msg::BillingCycleSelected),
+            )
+            .push(lead(localized_copy(cycle_note))),
+    );
+    let rows: Vec<PlanRow> = TIERS
+        .iter()
+        .filter(|tier| plan_info(state, tier).is_some())
+        .map(|tier| PlanRow {
+            tier: tier.clone(),
+            description: plan_description(tier),
+            price: price_for(state, tier, cycle),
+        })
+        .collect();
+    let per = match cycle {
+        BillingCycle::Monthly => "per month",
+        BillingCycle::Annual => "per year",
+    };
+    let mut list = Column::new().push(space(16.0)).push(horizontal_rule());
+    for row in rows {
+        let id = match row.tier {
+            PlanTier::Free => "tenshu.connect.billing.plan.free",
+            PlanTier::Pro => "tenshu.connect.billing.plan.pro",
+            PlanTier::Estate => "tenshu.connect.billing.plan.estate",
+        };
+        let price = match (row.price, &row.tier) {
+            (Some(amount), _) => (format!("${amount}"), per),
+            (None, PlanTier::Free) => ("Free".to_string(), "No payment"),
+            // A paid tier without a price in the catalog is never "Free".
+            (None, _) => ("—".to_string(), "Price unavailable"),
+        };
+        list = list
+            .push(choice_row(
+                id,
+                row.tier.to_string(),
+                is_current(state, &row.tier, cycle).then_some(("Current", true)),
+                row.description.to_string(),
+                Some(price),
+                row.tier == *selected,
+                true,
+                Some(Msg::SelectPlanTier(row.tier.clone())),
+            ))
+            .push(horizontal_rule());
+    }
+    col = col.push(list);
+    let (label, conseq, can_continue) = change_plan_cta(state, selected, cycle);
+    col = col
+        .push(space(20.0))
+        .push(actions_row(vec![
+            sheet_button(label, ActionKind::Primary, false)
+                .on_press_maybe(can_continue.then(|| Msg::ReviewPlanChange(selected.clone())))
+                .into(),
+            sheet_button(localized_copy("Cancel"), ActionKind::Secondary, false)
+                .on_press(Msg::ComparePlans(false))
+                .into(),
+        ]))
+        .push(space(8.0))
+        .push(lead(conseq));
+
+    col
+}
+
+fn upgrade_review_notes(
+    current: &PlanTier,
+    tier: &PlanTier,
+    renewal: Option<chrono::DateTime<chrono::Utc>>,
+    pending: &Option<PlanTier>,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    if *current != PlanTier::Free && rank(tier) > rank(current) {
+        if let Some(until) = renewal {
+            notes.push(format!(
+                "{tier} starts today. Your remaining {current} time (until {}) isn’t credited.",
+                short_date(until)
+            ));
+        }
+        if let Some(pending) = pending {
+            notes.push(format!(
+                "Your scheduled change to {pending} stays scheduled and starts when this new \
+                 period ends."
+            ));
+        }
+    }
+
+    notes
+}
+
+fn review_summary_list<'a>(
+    checkout: &'a CheckoutState,
+    facts: &ReviewFacts,
+    to_free: bool,
+    paying_card: bool,
+) -> Element<'a, Msg> {
+    let mut plan_main = Column::new().push(tenshu_text::label(facts.plan.clone()));
+    if let Some(replaces) = facts.replaces.clone() {
+        plan_main = plan_main.push(lead(replaces));
+    }
+    let mut amount_main = Column::new().push(tenshu_text::label(
+        facts
+            .amount
+            .clone()
+            .unwrap_or_else(|| "Shown on the invoice".to_string()),
+    ));
+    if paying_card {
+        amount_main = amount_main.push(lead(match checkout.cycle {
+            BillingCycle::Annual => localized_copy("Charged to your card, then every year"),
+            BillingCycle::Monthly => localized_copy("Charged to your card, then every month"),
+        }));
+    } else if !to_free {
+        amount_main = amount_main.push(lead(localized_copy(
+            "In sats at today’s rate, fixed for this invoice",
+        )));
+    }
+    // Card dates follow the card subscription: it starts when a paid
+    // period ends (or today) and then renews.
+    let covers_text = if paying_card {
+        let start = card_start_at(checkout).unwrap_or(checkout.opened_at);
+        format!(
+            "{} – {}, then renews",
+            short_date(start),
+            short_date(add_cycle(start, checkout.cycle))
+        )
+    } else {
+        facts.covers.clone().unwrap_or_else(|| "—".to_string())
+    };
+    let mut covers_main = Column::new().push(tenshu_text::label(covers_text));
+    let starts_line = if paying_card {
+        card_start(checkout)
+    } else {
+        facts.starts.clone()
+    };
+    if let (Some(date), false) = (&starts_line, to_free) {
+        covers_main = covers_main.push(lead(format!("Starts {date}")));
+    }
+    let list = ruled_list([
+        summary_row(localized_copy("Plan"), plan_main.into(), None),
+        summary_row(localized_copy("Amount"), amount_main.into(), None),
+        summary_row(localized_copy("Covers"), covers_main.into(), None),
+        summary_row(
+            localized_copy("Status"),
+            iced::widget::Space::new().into(),
+            Some(status_line(
+                dash_circle_icon(),
+                if to_free {
+                    localized_copy("Nothing to pay")
+                } else if paying_card {
+                    localized_copy("Not charged yet")
+                } else {
+                    localized_copy("Not invoiced yet")
+                },
+                Tone::Muted,
+            )),
+        ),
+    ]);
+
+    list
+}
+
+fn review_payment_choices<'a>(
+    state: &'a ConnectAccountPanel,
+    checkout: &'a CheckoutState,
+    facts: &ReviewFacts,
+    col: Column<'a, Msg>,
+) -> Element<'a, Msg> {
+    let methods = Column::new()
+        .push(horizontal_rule())
+        .push(choice_row(
+            "tenshu.connect.billing.pay.bitcoin",
+            "Bitcoin".to_string(),
+            None,
+            match checkout.cycle {
+                BillingCycle::Annual => "Lightning or on-chain, through BTCPay. One payment covers the year, and we email you before it ends. No auto-renewal.",
+                BillingCycle::Monthly => "Lightning or on-chain, through BTCPay. One payment covers the month, and we email you before it ends. No auto-renewal.",
+            }
+            .to_string(),
+            None,
+            checkout.pay_with == PayWith::Bitcoin,
+            true,
+            Some(Msg::SelectPayWith(PayWith::Bitcoin)),
+        ))
+        .push(horizontal_rule())
+        .push(card_choice(state, checkout, facts))
+        .push(horizontal_rule());
+
+    let purchasing = state.purchasing_enabled();
+    let card = checkout.pay_with == PayWith::Card && card_offered(state, checkout);
+    col.push(space(24.0))
+        .push(
+            Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(group_title(localized_copy("Billing period")).width(Length::Fill))
+                .push(
+                    tenshu::segmented(
+                        [
+                            tenshu::segment(
+                                "tenshu.connect.billing.review.monthly",
+                                BillingCycle::Monthly,
+                                localized_copy("Monthly"),
+                            ),
+                            tenshu::segment(
+                                "tenshu.connect.billing.review.annual",
+                                BillingCycle::Annual,
+                                localized_copy("Annual"),
+                            ),
+                        ],
+                        Some(checkout.cycle),
+                        Msg::FocusAction,
+                    )
+                    .size(tenshu::SegmentSize::Compact)
+                    .plain()
+                    .on_select(Msg::SetReviewCycle),
+                ),
+        )
+        .push(space(24.0))
+        .push(group_title(localized_copy("Pay with")))
+        .push(space(8.0))
+        .push(methods)
+        .push(space(20.0))
+        .push(actions_row(vec![
+            if card {
+                sheet_button(
+                    localized_copy("Continue to secure checkout"),
+                    ActionKind::Primary,
+                    false,
+                )
+                .on_press_maybe(purchasing.then_some(Msg::StartCardCheckout))
+                .into()
+            } else {
+                sheet_button(localized_copy("Create invoice"), ActionKind::Primary, false)
+                    .on_press_maybe(purchasing.then(|| Msg::StartCheckout(checkout.tier.clone())))
+                    .into()
+            },
+            sheet_button(localized_copy("Back"), ActionKind::Secondary, false)
+                .on_press(Msg::ComparePlans(true))
+                .into(),
+        ]))
+        .push(space(8.0))
+        .push(lead(if purchasing && card {
+            localized_copy(
+                "Opens Stripe Checkout in your browser. You enter card details there, never in \
+                 Coincube.",
+            )
+        } else if purchasing {
+            localized_copy(
+                "Creates a BTCPay invoice you can pay with Lightning or on-chain. It shows when \
+                 it expires.",
+            )
+        } else {
+            localized_copy("Purchasing is paused, so an invoice can’t be created right now.")
+        }))
+        .into()
+}
+
+fn card_checkout_heading(
+    checkout: &CheckoutState,
+    tier: &PlanTier,
+    starts: &Option<String>,
+    preview: Option<&crate::services::coincube::PlanChangePreview>,
+    upgrade: bool,
+    current: &PlanTier,
+) -> (String, String) {
+    match &checkout.phase {
+        CheckoutPhase::CardOpening | CheckoutPhase::CardInBrowser => (
+            format!("Pay for {tier}"),
+            "Finish checkout on Stripe’s page.".to_string(),
+        ),
+        CheckoutPhase::CardActive => match starts {
+            Some(date) => (
+                "Card subscription set up".to_string(),
+                format!("{tier} starts on {date}, when your current period ends."),
+            ),
+            None => (
+                "Plan changed".to_string(),
+                "Your new plan is active and renews automatically.".to_string(),
+            ),
+        },
+        CheckoutPhase::CardCancelled => (
+            "Review plan change".to_string(),
+            "Checkout didn’t finish.".to_string(),
+        ),
+        CheckoutPhase::CardFailed { .. } => (
+            "Review plan change".to_string(),
+            "Stripe checkout couldn’t be opened.".to_string(),
+        ),
+        CheckoutPhase::ChangeDone { scheduled: true } => (
+            format!("Change to {tier} scheduled"),
+            "You keep your current plan until this period ends.".to_string(),
+        ),
+        CheckoutPhase::ChangeDone { scheduled: false } => (
+            "Plan changed".to_string(),
+            match preview
+                .and_then(|p| p.renewal_at.as_deref())
+                .map(format_date)
+            {
+                Some(d) => format!("{tier} is active now and renews on {d}."),
+                None => format!("{tier} is active now."),
+            },
+        ),
+        CheckoutPhase::ChangeUnconfirmed { .. } => (
+            if upgrade {
+                format!("Upgrade to {tier}")
+            } else {
+                format!("Change to {tier}")
+            },
+            format!(
+                "COINCUBE Desktop couldn’t confirm whether the change to {tier} went through. Check Plan \
+                 & billing before you try again."
+            ),
+        ),
+        _ if upgrade => (
+            format!("Upgrade to {tier}"),
+            format!(
+                "{tier} starts as soon as you confirm. You pay only the difference for the rest \
+                 of this period."
+            ),
+        ),
+        _ => (
+            format!("Change to {tier}"),
+            format!(
+                "You keep {current} until this period ends. Nothing is charged or refunded today."
+            ),
+        ),
+    }
+}
+
+fn card_checkout_amounts(
+    checkout: &CheckoutState,
+    tier: &PlanTier,
+    price: Option<u32>,
+    starts: &Option<String>,
+    preview: Option<&crate::services::coincube::PlanChangePreview>,
+    renewal: &Option<String>,
+) -> (String, String, String) {
+    match (&checkout.phase, preview) {
+        // A change that got no clear answer: say what was asked for, never
+        // that it was (or wasn't) charged.
+        (CheckoutPhase::ChangeUnconfirmed { .. }, _) => (
+            "Not confirmed".to_string(),
+            match preview {
+                Some(p) if p.is_upgrade() => format!(
+                    "${} was due today if the change went through",
+                    format_usd(p.amount_due_today)
+                ),
+                Some(_) => "Nothing was due today for this change".to_string(),
+                None => "Check Plan & billing for what was charged".to_string(),
+            },
+            "Unknown until Plan & billing shows the result".to_string(),
+        ),
+        (
+            CheckoutPhase::ChangePreviewing
+            | CheckoutPhase::ChangeReview
+            | CheckoutPhase::ChangeApplying
+            | CheckoutPhase::ChangeInBrowser
+            | CheckoutPhase::ChangeDone { .. }
+            | CheckoutPhase::ChangeFailed { .. },
+            Some(p),
+        ) => card_checkout_change_amounts(checkout, tier, p, renewal),
+        _ => (
+            price
+                .map(|usd| match checkout.cycle {
+                    BillingCycle::Annual => format!("${usd} USD per year"),
+                    BillingCycle::Monthly => format!("${usd} USD per month"),
+                })
+                .unwrap_or_default(),
+            match starts {
+                Some(d) => format!("First charged on {d}, then each period"),
+                None => "Charged to your card today and each period".to_string(),
+            },
+            match starts {
+                Some(d) => format!("From {d}, then renews"),
+                None => "From today, then renews".to_string(),
+            },
+        ),
+    }
+}
+
+fn active_card_checkout<'a>(
+    state: &'a ConnectAccountPanel,
+    tier: &PlanTier,
+    price: Option<u32>,
+    starts: &Option<String>,
+) -> Element<'a, Msg> {
+    let charge = price.map(|usd| format!("${usd}")).unwrap_or_default();
+    let body = match (starts, state.plan.as_ref().and_then(|p| p.card_label())) {
+        (Some(date), Some(card)) => format!(
+            "{card} is charged {charge} on {date}, when your paid period ends, then each \
+                     period. You can turn auto-renewal off in Plan & billing."
+        ),
+        (None, Some(card)) => format!(
+            "Charged {charge} to {card}. Renews automatically; you can turn this off in \
+                     Plan & billing."
+        ),
+        _ => "Your card subscription is set up. You can turn auto-renewal off in Plan & \
+                      billing."
+            .to_string(),
+    };
+    billing_notice(
+        check_circle_icon(),
+        Tone::Good,
+        if starts.is_some() {
+            format!("{tier} starts on your card later")
+        } else {
+            format!("You're on {tier}")
+        },
+        body,
+        Some(
+            sheet_button(localized_copy("Done"), ActionKind::Primary, true)
+                .on_press(Msg::DismissCheckout)
+                .into(),
+        ),
+    )
+}
+
+fn failed_card_checkout<'a>(message: &str, refused: bool) -> Element<'a, Msg> {
+    billing_notice(
+        exclamation_circle_icon(),
+        Tone::Bad,
+        if refused {
+            localized_copy("Connect didn’t accept this card checkout")
+        } else {
+            localized_copy("Couldn’t open checkout")
+        },
+        if refused {
+            format!("{message}. Nothing was charged.")
+        } else {
+            format!(
+                "Connect didn’t respond. Nothing was charged. Check your connection and try \
+                     again. ({message})"
+            )
+        },
+        Some(actions_row(vec![
+            if refused {
+                sheet_button(localized_copy("Change plan"), ActionKind::Primary, true)
+                    .on_press(Msg::ComparePlans(true))
+                    .into()
+            } else {
+                sheet_button(localized_copy("Try again"), ActionKind::Primary, true)
+                    .on_press(Msg::StartCardCheckout)
+                    .into()
+            },
+            sheet_button(
+                localized_copy("Pay with bitcoin instead"),
+                ActionKind::Secondary,
+                true,
+            )
+            .on_press(Msg::BackToReview {
+                pay_with: PayWith::Bitcoin,
+            })
+            .into(),
+        ])),
+    )
+}
+
+fn card_change_review<'a>(
+    state: &'a ConnectAccountPanel,
+    checkout: &'a CheckoutState,
+    tier: &PlanTier,
+    current: &PlanTier,
+    renewal: &Option<String>,
+    card_label: &str,
+    preview: Option<&crate::services::coincube::PlanChangePreview>,
+) -> Element<'a, Msg> {
+    let applying = checkout.phase == CheckoutPhase::ChangeApplying;
+    let p = preview.expect("ChangeReview carries a preview");
+    let renew = p.renewal_at.as_deref().map(format_date).or(renewal.clone());
+    let lines: Vec<Element<'a, Msg>> = if p.is_upgrade() {
+        vec![
+            card_change_amount_row(
+                format!(
+                    "{tier} for the rest of this period{}",
+                    renew
+                        .as_ref()
+                        .map(|d| format!(" (until {d})"))
+                        .unwrap_or_default()
+                ),
+                format!("${}", format_usd(p.amount_due_today + p.credit)),
+                false,
+            ),
+            card_change_amount_row(
+                format!("Credit for unused {current} time"),
+                format!("−${}", format_usd(p.credit)),
+                false,
+            ),
+            card_change_amount_row(
+                "Due today".to_string(),
+                format!("${}", format_usd(p.amount_due_today)),
+                true,
+            ),
+        ]
+    } else {
+        let per = match checkout.cycle {
+            BillingCycle::Annual => "a year",
+            BillingCycle::Monthly => "a month",
+        };
+        let from = p
+            .effective_at
+            .as_deref()
+            .map(format_date)
+            .or(renewal.clone());
+        vec![
+            card_change_amount_row(
+                format!("{current} stays on until"),
+                from.clone()
+                    .unwrap_or_else(|| "the end of this period".to_string()),
+                false,
+            ),
+            card_change_amount_row(
+                format!("Then {tier} renews at"),
+                format!("${} {per}", format_usd(p.next_charge_amount)),
+                false,
+            ),
+            card_change_amount_row("Due today".to_string(), "$0.00".to_string(), true),
+        ]
+    };
+    let limit = entitlements_for(state, tier).cube_limit;
+    let note = if p.is_upgrade() {
+        format!(
+            "{}If your bank asks you to confirm the payment, Stripe opens in your browser.",
+            renew
+                .as_ref()
+                .map(|d| format!("{tier} renews on {d}. "))
+                .unwrap_or_default()
+        )
+    } else {
+        format!(
+            "{tier} allows {limit} Cubes per network. If you have more then, every Cube \
+                     keeps working, but only {limit} per network keep Connect features. You can \
+                     undo this in Plan & billing before then."
+        )
+    };
+    let cta = if p.is_upgrade() {
+        format!("Upgrade and pay ${}", format_usd(p.amount_due_today))
+    } else {
+        format!("Schedule change to {tier}")
+    };
+    card_change_review_footer(lines, p, card_label, cta, note, applying)
+}
+
+fn card_change_amount_row<'a>(label: String, amount: String, strong: bool) -> Element<'a, Msg> {
+    let text = |t: String| {
+        if strong {
+            tenshu_text::label(t)
+        } else {
+            lead(t)
+        }
+    };
+    Row::new()
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .push(text(label).width(Length::Fill))
+        .push(text(amount))
+        .into()
+}
+
+fn card_change_review_footer<'a>(
+    lines: Vec<Element<'a, Msg>>,
+    p: &crate::services::coincube::PlanChangePreview,
+    card_label: &str,
+    cta: String,
+    note: String,
+    applying: bool,
+) -> Element<'a, Msg> {
+    Column::new()
+        .push(group_title(if p.is_upgrade() {
+            localized_copy("Due today")
+        } else {
+            localized_copy("What changes")
+        }))
+        .push(space(8.0))
+        .push(ruled_list(lines))
+        .push(space(20.0))
+        .push(ruled_list([summary_row(
+            localized_copy("Pay with"),
+            Column::new()
+                .push(
+                    Row::new()
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .push(tenshu_text::label(card_label.to_owned()))
+                        .push(row_tag("Stripe", false)),
+                )
+                .push(lead(if p.is_upgrade() {
+                    "Card on file · charged when you confirm".to_string()
+                } else {
+                    "Card on file · charged when the new plan starts".to_string()
+                }))
+                .into(),
+            None,
+        )]))
+        .push(space(20.0))
+        .push(actions_row(vec![
+            sheet_button(cta, ActionKind::Primary, false)
+                .on_press_maybe((!applying).then_some(Msg::ConfirmPlanChange))
+                .into(),
+            sheet_button(localized_copy("Back"), ActionKind::Secondary, false)
+                .on_press_maybe((!applying).then_some(Msg::ComparePlans(true)))
+                .into(),
+            sheet_link(localized_copy("Back to Plan & billing"))
+                .on_press_maybe((!applying).then_some(Msg::DismissCheckout))
+                .into(),
+        ]))
+        .push(space(8.0))
+        .push(lead(note))
+        .into()
+}
+
+fn completed_card_plan_change<'a>(
+    tier: &PlanTier,
+    scheduled: bool,
+    card_label: &str,
+    preview: Option<&crate::services::coincube::PlanChangePreview>,
+    renewal: &Option<String>,
+) -> Element<'a, Msg> {
+    billing_notice(
+        check_circle_icon(),
+        Tone::Good,
+        if scheduled {
+            format!("{tier} starts when this period ends")
+        } else {
+            format!("You're on {tier}")
+        },
+        if scheduled {
+            "Nothing was charged today. Plan & billing shows the change, and you can keep \
+                 your current plan before then."
+                .to_string()
+        } else {
+            format!(
+                "Charged to {card_label}. The receipt is in your billing history{}.",
+                preview
+                    .and_then(|p| p.renewal_at.as_deref())
+                    .map(format_date)
+                    .or(renewal.clone())
+                    .map(|d| format!("; {tier} renews on {d}"))
+                    .unwrap_or_default()
+            )
+        },
+        Some(
+            sheet_button(localized_copy("Done"), ActionKind::Primary, true)
+                .on_press(Msg::DismissCheckout)
+                .into(),
+        ),
+    )
+}
+
+fn unconfirmed_card_plan_change<'a>(message: &str, refresh: &PlanRefresh) -> Element<'a, Msg> {
+    billing_notice(
+        exclamation_circle_icon(),
+        Tone::Warn,
+        localized_copy("We couldn’t confirm the plan change"),
+        format!(
+            "{message}. The change may or may not have gone through, and your card may have \
+                 been charged. {} Check Plan & billing before trying again.",
+            unconfirmed_refresh_line(refresh)
+        ),
+        Some(match refresh {
+            PlanRefresh::Failed => actions_row(vec![
+                sheet_button(localized_copy("Refresh plan"), ActionKind::Primary, true)
+                    .on_press(Msg::RetryPlanRefresh)
+                    .into(),
+                back_to_billing(),
+            ]),
+            _ => back_to_billing(),
+        }),
+    )
+}
+
+fn bitcoin_checkout_heading(
+    checkout: &CheckoutState,
+    tier: &PlanTier,
+    paid_start: &Option<String>,
+    renewal: bool,
+) -> (String, String) {
+    match &checkout.phase {
+        CheckoutPhase::Creating => (
+            format!("Pay for {tier}"),
+            "Preparing a Bitcoin invoice for the amount above.".to_string(),
+        ),
+        CheckoutPhase::Paid { .. } => match &paid_start {
+            Some(date) if renewal => (
+                "Plan renewed".to_string(),
+                format!("Your {tier} plan continues. The new period starts on {date}."),
+            ),
+            Some(date) => (
+                "Plan change scheduled".to_string(),
+                format!("{tier} starts on {date}, when your current period ends."),
+            ),
+            None => (
+                "Plan changed".to_string(),
+                "Your new plan is active on this account.".to_string(),
+            ),
+        },
+        CheckoutPhase::NeedsSupport { .. } => (
+            format!("Pay for {tier}"),
+            "There is a problem with this payment.".to_string(),
+        ),
+        CheckoutPhase::Failed { .. } => (
+            "Review plan change".to_string(),
+            "The invoice couldn’t be created.".to_string(),
+        ),
+        _ => (
+            format!("Pay for {tier}"),
+            "Pay from any Bitcoin wallet. This screen updates by itself when the payment arrives."
+                .to_string(),
+        ),
+    }
+}
+
+fn paid_bitcoin_checkout<'a>(
+    tier: &PlanTier,
+    paid_start: &Option<String>,
+    facts: &ReviewFacts,
+    renewal: bool,
+    overpaid_sats: &u64,
+) -> Element<'a, Msg> {
+    let mut body = match (paid_start, facts.covers.as_deref()) {
+        (Some(date), _) if renewal => format!(
+            "The new {tier} period starts on {date}, when the current one ends. The \
+                     receipt is in your billing history."
+        ),
+        (Some(date), _) => format!(
+            "{tier} starts on {date}. Until then you keep your current plan. The receipt \
+                     is in your billing history."
+        ),
+        (None, Some(covers)) => {
+            format!("Covers {covers}. The receipt is in your billing history.")
+        }
+        (None, None) => "The receipt is in your billing history.".to_string(),
+    };
+    if *overpaid_sats > 0 {
+        body.push_str(&format!(
+            " You overpaid by {} sats; contact support for the difference.",
+            group_sats(*overpaid_sats)
+        ));
+    }
+    billing_notice(
+        check_circle_icon(),
+        Tone::Good,
+        match paid_start {
+            Some(_) if renewal => format!("{tier} renewed"),
+            Some(_) => format!("{tier} is paid for"),
+            None => format!("You're on {tier}"),
+        },
+        body,
+        Some(
+            sheet_button(localized_copy("Done"), ActionKind::Primary, true)
+                .on_press(Msg::DismissCheckout)
+                .into(),
+        ),
+    )
+}
+
+fn support_bitcoin_checkout<'a>(
+    checkout: &'a CheckoutState,
+    invoice_id: &'a str,
+    received_sats: &u64,
+) -> Element<'a, Msg> {
+    let late = checkout
+        .last_status
+        .as_ref()
+        .and_then(|s| s.additional_status.as_deref())
+        .is_some_and(|a| a.eq_ignore_ascii_case("PaidLate"));
+    let received = if *received_sats > 0 {
+        format!("BTCPay received {} sats", group_sats(*received_sats))
+    } else {
+        "BTCPay received a payment".to_string()
+    };
+    billing_notice(
+        exclamation_circle_icon(),
+        Tone::Bad,
+        if late {
+            localized_copy("Payment arrived after the invoice expired")
+        } else {
+            localized_copy("This payment needs support")
+        },
+        format!(
+            "{received}, but it can’t be applied to your plan automatically. Your plan \
+                     hasn't changed. Contact support with the invoice ID below."
+        ),
+        Some(
+            Column::new()
+                .spacing(12)
+                .push(
+                    tenshu::copy_field(
+                        "tenshu.connect.billing.copy.invoice-id",
+                        localized_copy("Invoice ID"),
+                        invoice_id,
+                        Msg::FocusAction,
+                    )
+                    .on_copy(Msg::CopyToClipboard(invoice_id.to_owned())),
+                )
+                .push(back_to_billing())
+                .into(),
+        ),
+    )
+}
+
+fn card_checkout_plan_summary<'a>(
+    checkout: &CheckoutState,
+    tier: &PlanTier,
+    cycle: &str,
+    current: &PlanTier,
+) -> Column<'a, Msg> {
+    let mut plan_main = Column::new().push(tenshu_text::label(format!("{tier} · {cycle}")));
+    if *current != PlanTier::Free {
+        if let Some(p) = checkout.plan.as_ref() {
+            let paid_by = if p.is_card() { ", paid by card" } else { "" };
+            plan_main = plan_main.push(lead(match p.billing_cycle {
+                Some(c) => format!("Replaces {} · {}{paid_by}", p.tier(), cycle_label(c)),
+                None => format!("Replaces {}{paid_by}", p.tier()),
+            }));
+        }
+    }
+    plan_main
+}
+
+fn card_checkout_change_amounts(
+    checkout: &CheckoutState,
+    tier: &PlanTier,
+    p: &crate::services::coincube::PlanChangePreview,
+    renewal: &Option<String>,
+) -> (String, String, String) {
+    let next = format_usd(p.next_charge_amount);
+    let per = match checkout.cycle {
+        BillingCycle::Annual => "a year",
+        BillingCycle::Monthly => "a month",
+    };
+    if p.is_upgrade() {
+        let renew = p.renewal_at.as_deref().map(format_date).or(renewal.clone());
+        (
+            format!("${} USD today", format_usd(p.amount_due_today)),
+            match &renew {
+                Some(d) => format!("Prorated, then ${next} {per} from {d}"),
+                None => format!("Prorated, then ${next} {per}"),
+            },
+            match &renew {
+                Some(d) => format!("Today – {d}, then renews"),
+                None => "From today, then renews".to_string(),
+            },
+        )
+    } else {
+        let from = p
+            .effective_at
+            .as_deref()
+            .map(format_date)
+            .or(renewal.clone());
+        (
+            "$0.00 today".to_string(),
+            match &from {
+                Some(d) => format!("${next} {per} from {d}"),
+                None => format!("${next} {per}"),
+            },
+            match &from {
+                Some(d) => format!("{tier} from {d}, then renews"),
+                None => format!("{tier} at the end of this period"),
+            },
+        )
+    }
 }

@@ -1835,58 +1835,14 @@ mod tests {
                     Ok(s) => s,
                     Err(_) => break,
                 };
-                let _ = stream.set_write_timeout(Some(MOCK_READ_SLICE));
-                // One absolute deadline per connection, spanning the head read
-                // and — if it is refused — the drain before close.
-                let deadline = Instant::now() + MOCK_REQUEST_DEADLINE;
-                let Some(head) = read_request_head(&mut stream, &stopping, deadline) else {
-                    refuse_and_close(&mut stream, &stopping, deadline);
-                    continue;
-                };
-                let path = head
-                    .lines()
-                    .next()
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .unwrap_or("")
-                    .to_string();
-                seen_heads.lock().unwrap().push(head);
-                seen.lock().unwrap().push(path.clone());
-                let paced_out = if path.starts_with("/scripthash/") {
-                    pacing.as_ref().is_some_and(|(minimum, times)| {
-                        let now = Instant::now();
-                        let mut times = times.lock().unwrap();
-                        let too_fast = times
-                            .last()
-                            .is_some_and(|last| now.duration_since(*last) < *minimum);
-                        times.push(now);
-                        too_fast
-                    })
-                } else {
-                    false
-                };
-                let (mut status, mut body) = routes
-                    .get(path.as_str())
-                    .cloned()
-                    .unwrap_or((404, "not found".to_string()));
-                if paced_out {
-                    status = 429;
-                    body = "unit rate limit".into();
-                }
-                let reason = match status {
-                    200 => "OK",
-                    429 => "Too Many Requests",
-                    500 => "Internal Server Error",
-                    _ => "Not Found",
-                };
-                let response = format!(
-                    "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    status,
-                    reason,
-                    body.len(),
-                    body
+                serve_mock_esplora_connection(
+                    &mut stream,
+                    &stopping,
+                    &routes,
+                    &pacing,
+                    &seen,
+                    &seen_heads,
                 );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = stream.flush();
             }
         });
         MockEsplora {
@@ -1897,6 +1853,68 @@ mod tests {
             stop,
             thread: Some(thread),
         }
+    }
+
+    fn serve_mock_esplora_connection(
+        stream: &mut std::net::TcpStream,
+        stopping: &AtomicBool,
+        routes: &StdHashMap<&'static str, (u16, String)>,
+        pacing: &Option<MockPacing>,
+        seen: &Mutex<Vec<String>>,
+        seen_heads: &Mutex<Vec<String>>,
+    ) {
+        let _ = stream.set_write_timeout(Some(MOCK_READ_SLICE));
+        // One absolute deadline per connection, spanning the head read
+        // and — if it is refused — the drain before close.
+        let deadline = Instant::now() + MOCK_REQUEST_DEADLINE;
+        let Some(head) = read_request_head(stream, stopping, deadline) else {
+            refuse_and_close(stream, stopping, deadline);
+            return;
+        };
+        let path = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .unwrap_or("")
+            .to_string();
+        seen_heads.lock().unwrap().push(head);
+        seen.lock().unwrap().push(path.clone());
+        let paced_out = if path.starts_with("/scripthash/") {
+            pacing.as_ref().is_some_and(|(minimum, times)| {
+                let now = Instant::now();
+                let mut times = times.lock().unwrap();
+                let too_fast = times
+                    .last()
+                    .is_some_and(|last| now.duration_since(*last) < *minimum);
+                times.push(now);
+                too_fast
+            })
+        } else {
+            false
+        };
+        let (mut status, mut body) = routes
+            .get(path.as_str())
+            .cloned()
+            .unwrap_or((404, "not found".to_string()));
+        if paced_out {
+            status = 429;
+            body = "unit rate limit".into();
+        }
+        let reason = match status {
+            200 => "OK",
+            429 => "Too Many Requests",
+            500 => "Internal Server Error",
+            _ => "Not Found",
+        };
+        let response = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status,
+            reason,
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.flush();
     }
 
     impl MockEsplora {
