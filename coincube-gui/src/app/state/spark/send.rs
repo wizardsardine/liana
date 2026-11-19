@@ -2721,6 +2721,53 @@ impl PrepareBackend for SparkBackend {
     }
 }
 
+async fn prepare_spark_usd<B: PrepareBackend>(
+    backend: &B,
+    input: String,
+    usd_amount: Option<u128>,
+    parsed: ParseInputOk,
+) -> Result<PreparedSend, String> {
+    match parsed.kind {
+        ParseInputKind::SparkAddress => {
+            let amount = usd_amount.ok_or_else(|| {
+                coincube_ui::locale::copy("Enter how many US Dollars to send.").to_string()
+            })?;
+            backend
+                .prepare_usdb_send(input, amount)
+                .await
+                .map(PreparedSend::from)
+                .map_err(|e| format_prepare_error("prepare_send", &e.to_string()))
+        }
+        ParseInputKind::SparkInvoice if parsed.usdb_invoice => backend
+            .prepare_send_from(input, None, WalletAsset::Usdb)
+            .await
+            .map(PreparedSend::from)
+            .map_err(|e| format_prepare_error("prepare_send", &e.to_string())),
+        _ => Err(coincube_ui::locale::copy(
+            "US Dollar can be sent to a Spark address or to a Spark invoice that asks for \
+             US Dollar. To send bitcoin, pick Bitcoin for what they receive.",
+        )
+        .to_string()),
+    }
+}
+
+async fn reject_cross_chain_destination<B: PrepareBackend>(
+    backend: &B,
+    input: &str,
+) -> Result<(), String> {
+    if let Ok(routes) = backend.get_cross_chain_routes(input.to_owned()).await {
+        if let Some(addr) = routes.address {
+            return Err(format!(
+                "This looks like {}, which can't receive bitcoin. Choose USDt or \
+                 USDC for what they receive to send there, or paste a Bitcoin \
+                 destination.",
+                cross_chain_family_label(&addr.family),
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn resolve_and_prepare<B: PrepareBackend>(
     backend: Arc<B>,
     input: String,
@@ -2762,44 +2809,14 @@ async fn resolve_and_prepare<B: PrepareBackend>(
     // it fail cryptically at prepare. A genuine `Other` (BOLT12) has no
     // cross-chain address and falls through to the normal prepare below.
     if matches!(parsed.kind, ParseInputKind::Other) {
-        if let Ok(routes) = backend.get_cross_chain_routes(input.clone()).await {
-            if let Some(addr) = routes.address {
-                return Err(format!(
-                    "This looks like {}, which can't receive bitcoin. Choose USDt or \
-                     USDC for what they receive to send there, or paste a Bitcoin \
-                     destination.",
-                    cross_chain_family_label(&addr.family),
-                ));
-            }
-        }
+        reject_cross_chain_destination(backend.as_ref(), &input).await?;
     }
 
     // US Dollar over Spark moves the US Dollar balance itself, with no
     // conversion: to a Spark address for the amount typed in US Dollars, or
     // to a Spark invoice that asks for US Dollar and names its own amount.
     if target == SparkSendTarget::SparkUsd {
-        return match parsed.kind {
-            ParseInputKind::SparkAddress => {
-                let amount = usd_amount.ok_or_else(|| {
-                    coincube_ui::locale::copy("Enter how many US Dollars to send.").to_string()
-                })?;
-                backend
-                    .prepare_usdb_send(input, amount)
-                    .await
-                    .map(PreparedSend::from)
-                    .map_err(|e| format_prepare_error("prepare_send", &e.to_string()))
-            }
-            ParseInputKind::SparkInvoice if parsed.usdb_invoice => backend
-                .prepare_send_from(input, None, WalletAsset::Usdb)
-                .await
-                .map(PreparedSend::from)
-                .map_err(|e| format_prepare_error("prepare_send", &e.to_string())),
-            _ => Err(coincube_ui::locale::copy(
-                "US Dollar can be sent to a Spark address or to a Spark invoice that asks for \
-                 US Dollar. To send bitcoin, pick Bitcoin for what they receive.",
-            )
-            .to_string()),
-        };
+        return prepare_spark_usd(backend.as_ref(), input, usd_amount, parsed).await;
     }
 
     match parsed.kind {
