@@ -116,7 +116,12 @@ pub enum Message {
     /// An imported Vault's Bitcoin Blake2b copy (its paired Cube) was
     /// created, or why not. Carries the attempt it answers, so a result
     /// from a predecessor `App` in the same tab is ignored.
-    ImportedCopyCreated(crate::app::cache::AppGeneration, Result<(), String>),
+    /// `Ok(Some(reason))`: the copy exists but its stored recovery words
+    /// weren't copied.
+    ImportedCopyCreated(
+        crate::app::cache::AppGeneration,
+        Result<Option<String>, String>,
+    ),
     /// Terminal no-op for the fire-and-forget push of a Spark Stable Balance
     /// decision to the Cube's Connect record
     /// (`ConnectCubePanel::report_spark_stable_balance`). Logged inside the

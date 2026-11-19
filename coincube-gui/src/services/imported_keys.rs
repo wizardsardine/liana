@@ -1182,11 +1182,23 @@ impl<'a> LocalKeyRepository<'a> {
     /// Only a provably empty, live operation can acquire its first authority.
     /// A populated #830 repository needs an explicit owner-approved migration.
     fn provision_empty(&self) -> Result<(), String> {
+        self.provision_empty_with(|| {
+            #[cfg(not(test))]
+            self.check_active()?;
+            Ok(())
+        })
+    }
+
+    /// [`Self::provision_empty`] authorized by `authorize` instead of this
+    /// repository's own session check.
+    fn provision_empty_with(
+        &self,
+        authorize: impl Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
         if anchor::load(&self.anchor_scope())?.is_some() {
             return Ok(());
         }
-        #[cfg(not(test))]
-        self.check_active()?;
+        authorize()?;
         let empty = self.manifest(vec![]);
         let bytes = serde_json::to_vec(&empty).map_err(|_| "Cannot encode key manifest.")?;
         let path = self.root().join(MANIFEST);
@@ -1430,6 +1442,170 @@ impl<'a> LocalKeyRepository<'a> {
         Ok(key)
     }
 
+    /// Copy every stored key into `target`, this wallet's Bitcoin Blake2b
+    /// copy: the paired Cube with the same seed, unlocked the same way, so its
+    /// key credential is this Cube's. Runs in this Cube's session. Each key is
+    /// opened here with every usual check, re-verified against the copy's
+    /// descriptor, and admitted there in one generation. An empty inventory
+    /// copies nothing; a copy that already holds exactly these keys is
+    /// returned as is.
+    pub fn copy_to_pair(
+        &self,
+        target: &LocalKeyRepository<'_>,
+        is_current: impl Fn() -> bool,
+    ) -> Result<Vec<LocalKeyRecord>, String> {
+        if !is_current() {
+            return Err("Copying imported keys was cancelled.".into());
+        }
+        // No recovery words were ever stored for this wallet.
+        if !self.root().exists() {
+            return Ok(Vec::new());
+        }
+        match fs::symlink_metadata(restore::restore_intent_path(
+            self.directory,
+            self.operation_id,
+        )) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            _ => return Err("Finish the imported key restore before copying keys.".into()),
+        }
+        let credential = self.check_active()?;
+        target.check_pair_of(self)?;
+        let entries = {
+            let lock = self.lock()?;
+            let manifest = self.read_manifest_recoverable(&lock)?;
+            if manifest
+                .restored
+                .as_ref()
+                .is_some_and(|binding| !binding.ready)
+            {
+                return Err("Restored imported keys require current Connect authorization.".into());
+            }
+            if manifest.records.is_empty() {
+                return Ok(Vec::new());
+            }
+            let device = self.device(false)?;
+            self.copy_entries_locked(
+                &manifest,
+                &target.attachment.descriptor,
+                &credential,
+                &device,
+            )?
+        };
+        // The copy can't pass its own session check while this Cube is the
+        // one unlocked, so every write to it is authorized as this wallet's
+        // pair instead, under this session's credential.
+        let authorize = || {
+            target.check_pair_of(self)?;
+            self.check_active().map(|_| ())
+        };
+        let _restore_operation_lock = target.lock_unrestored_admission()?;
+        let _lock = target.lock()?;
+        target.provision_empty_with(authorize)?;
+        target.discard_proven_uncommitted_stage_with(
+            || authorize().map(|()| credential.clone()),
+            || target.device(false),
+        )?;
+        let manifest = target.read_manifest()?;
+        let device = target.device(manifest.records.is_empty())?;
+        target.admit_new_batch_locked_with(
+            manifest,
+            entries,
+            &credential,
+            &device,
+            || authorize().is_ok() && is_current(),
+            authorize,
+        )
+    }
+
+    /// Open each record and check it signs for both this wallet and the
+    /// copy's descriptor (the same keys on the other chain).
+    fn copy_entries_locked(
+        &self,
+        manifest: &Manifest,
+        copy: &coincube_core::wallet_descriptor::ImportedWalletDescriptor,
+        credential: &str,
+        device: &coincube_core::seed_crypt::DeviceSecret,
+    ) -> Result<Vec<(ImportedAccount, ImportedKeySecret)>, String> {
+        let mut entries = Vec::with_capacity(manifest.records.len());
+        for record in &manifest.records {
+            let account = record.account()?;
+            let bytes = read_key_frame(&self.root().join(record.file_name()))?;
+            if bytes[imported_key_crypt::MARKER.len()] != DEVICE_BOUND_FORMAT_VERSION {
+                return Err("Imported key protection was downgraded.".into());
+            }
+            let secret =
+                imported_key_crypt::open(&bytes, credential, &self.binding(record)?, Some(device))
+                    .map_err(|_| "Imported key record could not be authenticated.")?;
+            let (words, passphrase) = secret.into_parts();
+            for descriptor in [&self.attachment.descriptor, copy] {
+                let key = verify_imported_account(
+                    descriptor,
+                    &account.origin,
+                    words.clone(),
+                    passphrase.clone(),
+                )
+                .map_err(|_| "Imported key does not match the copy's wallet.")?;
+                if key.account() != &account {
+                    return Err("Imported key account identity changed.".into());
+                }
+            }
+            let secret = ImportedKeySecret::new(words, passphrase)
+                .map_err(|_| "Imported key record could not be copied.")?;
+            entries.push((account, secret));
+        }
+        Ok(entries)
+    }
+
+    /// This repository is `source`'s Bitcoin Blake2b copy: a live, validated
+    /// pair of the Cube unlocked in this session. Stands in for
+    /// [`Self::check_active`]'s session check, which the copy can't pass while
+    /// its source is open; removal, import identity and Duress still apply.
+    fn check_pair_of(&self, source: &LocalKeyRepository<'_>) -> Result<(), String> {
+        if self.is_removed()? {
+            return Err("This imported key operation was removed.".into());
+        }
+        let settings = Settings::from_file(self.directory)
+            .map_err(|_| "Cannot verify the Bitcoin Blake2b copy.")?;
+        let live = settings
+            .cubes
+            .iter()
+            .find(|cube| cube.id == self.cube.id)
+            .ok_or("The Bitcoin Blake2b copy no longer exists.")?;
+        if live.bitcoin_import.as_ref().is_none_or(|import| {
+            import.operation_id != self.operation_id || import.attachment() != Some(self.attachment)
+        }) {
+            return Err("The Bitcoin Blake2b copy changed; its keys were not copied.".into());
+        }
+        crate::services::bitcoin_import::pairing::validate_target_record(live)?;
+        let binding = live
+            .imported_claim_source
+            .as_deref()
+            .ok_or("This Cube is not a Bitcoin Blake2b copy.")?;
+        if binding.source_cube_id != source.cube.id
+            || Some(&binding.source_wallet)
+                != source
+                    .cube
+                    .bitcoin_import
+                    .as_ref()
+                    .and_then(|i| i.attachment())
+            || live.master_signer_fingerprint != source.cube.master_signer_fingerprint
+            || live.passkey_metadata != source.cube.passkey_metadata
+            || app::session::current_cube_id().as_deref() != Some(&source.cube.id)
+        {
+            return Err("This Cube is not this wallet's Bitcoin Blake2b copy.".into());
+        }
+        let root = self
+            .directory
+            .path()
+            .parent()
+            .ok_or("Missing Cube data root.")?;
+        let duress = DuressLocalState::load(root).map_err(|_| "Cannot check Duress Mode.")?;
+        if duress.enrolled || duress.arming || duress.active {
+            return Err("Imported keys are unavailable during Duress Mode.".into());
+        }
+        Ok(())
+    }
+
     /// Ordinary key admission must serialize with password-v3 Restore and
     /// revocation. The Restore intent is durable before its signer inventory
     /// is bound, so an empty manifest alone cannot authorize new records.
@@ -1505,6 +1681,24 @@ impl<'a> LocalKeyRepository<'a> {
         device: &coincube_core::seed_crypt::DeviceSecret,
         is_current: impl Fn() -> bool,
     ) -> Result<Vec<LocalKeyRecord>, String> {
+        self.admit_new_batch_locked_with(manifest, entries, credential, device, is_current, || {
+            #[cfg(not(test))]
+            self.check_active().map(|_| ())?;
+            Ok(())
+        })
+    }
+
+    /// [`Self::admit_new_batch_locked`] authorized by `authorize` instead of
+    /// this repository's own session check.
+    fn admit_new_batch_locked_with(
+        &self,
+        manifest: Manifest,
+        entries: Vec<(ImportedAccount, ImportedKeySecret)>,
+        credential: &str,
+        device: &coincube_core::seed_crypt::DeviceSecret,
+        is_current: impl Fn() -> bool,
+        authorize: impl Fn() -> Result<(), String>,
+    ) -> Result<Vec<LocalKeyRecord>, String> {
         checkpoint::ensure_unbound(&manifest)?;
         if entries.is_empty() || entries.len() > MAX_RECORDS {
             return Err("Imported key batch has an invalid size.".into());
@@ -1573,11 +1767,7 @@ impl<'a> LocalKeyRepository<'a> {
             credential,
             device,
             is_current,
-            || {
-                #[cfg(not(test))]
-                self.check_active().map(|_| ())?;
-                Ok(())
-            },
+            authorize,
             true,
             || {
                 for (record, ciphertext) in records.iter().zip(ciphertexts.iter()) {
@@ -2488,8 +2678,12 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
+            Self::on(ChainId::Regtest)
+        }
+
+        fn on(chain: ChainId) -> Self {
             let root = std::env::temp_dir().join(format!("imported-keys-{}", Uuid::new_v4()));
-            let directory = NetworkDirectory::new(root.join("regtest"));
+            let directory = NetworkDirectory::new(root.join(chain.dir_name()));
             directory.init().unwrap();
             let secp = Secp256k1::new();
             let path = DerivationPath::from_str("m/48h/1h/0h/2h").unwrap();
@@ -2521,8 +2715,7 @@ mod tests {
                 )
             };
             let wallet =
-                ImportedWalletDescriptor::parse(&branch(0), Some(&branch(1)), ChainId::Regtest)
-                    .unwrap();
+                ImportedWalletDescriptor::parse(&branch(0), Some(&branch(1)), chain).unwrap();
             let accounts = phrases
                 .iter()
                 .map(|phrase| {
@@ -2537,9 +2730,8 @@ mod tests {
                     .clone()
                 })
                 .collect();
-            let attachment =
-                ImportedWalletAttachment::new(wallet, ChainId::Regtest, 0, 100).unwrap();
-            let mut cube = CubeSettings::new("Synthetic".into(), ChainId::Regtest);
+            let attachment = ImportedWalletAttachment::new(wallet, chain, 0, 100).unwrap();
+            let mut cube = CubeSettings::new("Synthetic".into(), chain);
             cube.bitcoin_import = Some(Box::new(BitcoinImport {
                 operation_id: Uuid::new_v4(),
                 stage: BitcoinImportStage::Ready {
@@ -2612,6 +2804,134 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    /// Stored recovery words copy into the Bitcoin Blake2b copy of the
+    /// wallet: the same accounts, sealed under the copy's own scope and device
+    /// secret, readable there. Words that don't sign for the copy's
+    /// descriptor, or a wrong credential, copy nothing.
+    #[test]
+    fn stored_words_copy_into_the_bitcoin_blake2b_copy() {
+        let source = Fixture::on(ChainId::Testnet4);
+        let copy = Fixture::on(ChainId::BitcoinBlake2bTestnet4);
+        assert_eq!(
+            copy.attachment.descriptor,
+            source.attachment.descriptor.paired_blake2b().unwrap()
+        );
+        let device = Zeroizing::new([31u8; 32]);
+        let copy_device = Zeroizing::new([47u8; 32]);
+        let from = source.repository();
+        let entries = (0..3)
+            .map(|index| {
+                (
+                    source.accounts[index].clone(),
+                    ImportedKeySecret::new(
+                        Zeroizing::new(source.phrases[index].clone()),
+                        Zeroizing::new(String::new()),
+                    )
+                    .unwrap(),
+                )
+            })
+            .collect();
+        from.admit_new_batch_locked(
+            from.read_manifest().unwrap(),
+            entries,
+            "synthetic unlock",
+            &device,
+            || true,
+        )
+        .unwrap();
+        let manifest = from.read_manifest().unwrap();
+
+        assert!(from
+            .copy_entries_locked(
+                &manifest,
+                &copy.attachment.descriptor,
+                "wrong unlock",
+                &device
+            )
+            .is_err());
+        let unrelated = crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::SHAPES[0],
+        );
+        assert!(from
+            .copy_entries_locked(
+                &manifest,
+                unrelated.main_descriptor.as_imported().unwrap(),
+                "synthetic unlock",
+                &device,
+            )
+            .is_err());
+
+        let entries = from
+            .copy_entries_locked(
+                &manifest,
+                &copy.attachment.descriptor,
+                "synthetic unlock",
+                &device,
+            )
+            .unwrap();
+        let to = copy.repository();
+        // The copy is written while its source Cube is the one unlocked, so
+        // its own session check fails: only the pair check the copy passes in
+        // (`check_pair_of` in `copy_to_pair`) may authorize the write, and a
+        // refusal there writes nothing.
+        assert!(to.check_active().is_err());
+        assert!(to
+            .admit_new_batch_locked_with(
+                to.read_manifest().unwrap(),
+                from.copy_entries_locked(
+                    &manifest,
+                    &copy.attachment.descriptor,
+                    "synthetic unlock",
+                    &device,
+                )
+                .unwrap(),
+                "synthetic unlock",
+                &copy_device,
+                || true,
+                || Err("not this wallet's pair".into()),
+            )
+            .is_err());
+        assert!(to.read_manifest().unwrap().records.is_empty());
+        let records = to
+            .admit_new_batch_locked_with(
+                to.read_manifest().unwrap(),
+                entries,
+                "synthetic unlock",
+                &copy_device,
+                || true,
+                || Ok(()),
+            )
+            .unwrap();
+        assert_eq!(records.len(), 3);
+        for record in &records {
+            let account = record.account().unwrap();
+            assert!(source.accounts.contains(&account));
+            assert_eq!(
+                to.read_key(record, "synthetic unlock", &copy_device)
+                    .unwrap()
+                    .account(),
+                &account
+            );
+        }
+        // Sealed for the copy: the source's device secret can't open them.
+        assert!(to
+            .read_key(&records[0], "synthetic unlock", &device)
+            .is_err());
+    }
+
+    /// With no recovery words ever stored, there is nothing to copy.
+    #[test]
+    fn a_wallet_without_stored_words_copies_nothing() {
+        let source = Fixture::on(ChainId::Testnet4);
+        let copy = Fixture::on(ChainId::BitcoinBlake2bTestnet4);
+        let from = source.repository();
+        fs::remove_dir_all(from.root()).unwrap();
+        assert!(from
+            .copy_to_pair(&copy.repository(), || true)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

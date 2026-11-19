@@ -3330,6 +3330,32 @@ pub(crate) fn claim_target_exists(datadir: &CoincubeDirectory, descriptor_checks
     claim_targets(datadir).contains_key(descriptor_checksum)
 }
 
+/// Copy the recovery words stored for `source`'s imported wallet into its
+/// Bitcoin Blake2b `copy`, so the copy signs with them too. Runs in the
+/// source Cube's session.
+fn copy_stored_words(
+    root: &CoincubeDirectory,
+    source: &settings::CubeSettings,
+    copy: &settings::CubeSettings,
+) -> Result<usize, String> {
+    use crate::services::imported_keys::LocalKeyRepository;
+    let source_wallet = source
+        .bitcoin_import
+        .as_deref()
+        .and_then(settings::BitcoinImport::active_attachment)
+        .ok_or("The source imported wallet is not installed.")?;
+    let copy_wallet = copy
+        .bitcoin_import
+        .as_deref()
+        .and_then(settings::BitcoinImport::attachment)
+        .ok_or("The paired Cube is no longer available.")?;
+    let source_dir = root.network_directory(source.network);
+    let copy_dir = root.network_directory(copy.network);
+    let from = LocalKeyRepository::new(&source_dir, source, source_wallet)?;
+    let to = LocalKeyRepository::new(&copy_dir, copy, copy_wallet)?;
+    from.copy_to_pair(&to, || true).map(|records| records.len())
+}
+
 /// Whether this Bitcoin Cube's Vault has a Bitcoin Blake2b copy: a claimed
 /// Vault, or for an imported Vault the paired Cube holding the same imported
 /// wallet on Bitcoin Blake2b. Only a Bitcoin Cube has a copy.
@@ -5182,15 +5208,15 @@ impl App {
         self.imported_copy_in_flight = Some(attempt);
         Task::perform(
             async move {
-                crate::services::bitcoin_import::pairing::install_pair(
+                let copy = crate::services::bitcoin_import::pairing::install_pair(
                     &root,
                     &source,
                     &signer,
                     &seed_password,
                     backend,
                 )
-                .await
-                .map(|_| ())
+                .await?;
+                Ok(copy_stored_words(&root, &source, &copy).err())
             },
             move |result| Message::ImportedCopyCreated(attempt, result),
         )
@@ -7583,13 +7609,29 @@ impl App {
                 self.imported_copy_in_flight = None;
                 self.refresh_copy_exists();
                 return match result {
-                    Ok(()) => Task::done(Message::View(view::Message::ShowToast(
-                        log::Level::Info,
-                        coincube_ui::locale::copy(
-                            "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
-                        )
-                        .to_string(),
-                    ))),
+                    Ok(words_not_copied) => {
+                        let created = Task::done(Message::View(view::Message::ShowToast(
+                            log::Level::Info,
+                            coincube_ui::locale::copy(
+                                "Bitcoin Blake2b copy created. Open it from the Cube switcher.",
+                            )
+                            .to_string(),
+                        )));
+                        match words_not_copied {
+                            None => created,
+                            Some(reason) => Task::batch([
+                                created,
+                                Task::done(Message::View(view::Message::ShowToast(
+                                    log::Level::Warn,
+                                    coincube_ui::localized_format!(
+                                        "This wallet's recovery words weren't copied: {} Add them in the copy.",
+                                        "Las palabras de recuperación de esta cartera no se copiaron: {} Agrégalas en la copia.",
+                                        coincube_ui::locale::copy(&reason)
+                                    ),
+                                ))),
+                            ]),
+                        }
+                    }
                     // Pairing errors are English; show them in the window's language.
                     Err(error) => Task::done(Message::View(view::Message::ShowError(
                         coincube_ui::locale::copy(&error).to_string(),
