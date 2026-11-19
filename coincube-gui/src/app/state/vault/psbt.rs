@@ -1009,6 +1009,123 @@ impl PsbtState {
         }
     }
 
+    fn open_psbt_export(&mut self) -> Task<Message> {
+        if self.modal.is_none() {
+            if let Err(reason) = enforce_legacy_signature_policy(
+                uses_unified_signatures(&self.wallet),
+                &self.tx.psbt,
+            ) {
+                let message = replay::unsafe_legacy_policy_copy(&reason)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        crate::user_error::report(&Error::Unexpected(reason.to_string()))
+                    });
+                let error = Error::Unexpected(reason.to_string());
+                self.warning = Some(error);
+                return Task::done(Message::View(view::Message::ShowError(message)));
+            }
+            let psbt_str = self.tx.psbt.to_string();
+            let modal = VaultExportModal::new(None, ImportExportType::ExportPsbt(psbt_str));
+            let launch = modal.launch(true);
+            self.modal = Some(PsbtModal::Export(modal));
+            return launch;
+        }
+        Task::none()
+    }
+
+    fn open_psbt_import(&mut self, daemon: &Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        if self.modal.is_none() {
+            let modal = VaultExportModal::new(
+                Some(daemon.clone()),
+                ImportExportType::ImportPsbt(Some(self.tx.psbt.unsigned_tx.compute_txid())),
+            );
+            let launch = modal.launch(false);
+            self.modal = Some(PsbtModal::Export(modal));
+            return launch;
+        }
+        Task::none()
+    }
+
+    fn dismiss_psbt_modal(&mut self) -> Task<Message> {
+        // Dismissing the unified signing picker. A local
+        // hardware/master/border op in flight just hides the picker
+        // (keeping the device-confirmation state). Otherwise cancel
+        // any in-flight Keychain sessions server-side — otherwise
+        // signers keep seeing the request until its 24h TTL elapses.
+        // `cancel_all()` cancels sessions that already have an id;
+        // entries whose `CreateSigningSession` RPC is still in flight
+        // are cancelled later once their `SessionCreated` lands, which
+        // needs the picker to stay mounted. So when sessions are still
+        // undrained we keep the picker mounted-but-hidden — it
+        // self-closes via `Message::Updated(Ok)` once they all reach a
+        // terminal state (see `should_close_after_dismiss`).
+        if let Some(PsbtModal::Sign(sign)) = &mut self.modal {
+            if sign.is_signing() {
+                // A local device op is awaiting confirmation — just
+                // hide the picker, keeping it mounted so the op's
+                // result still lands. Any keychain sessions keep
+                // running and are drained on the next close.
+                sign.display_modal = false;
+                return Task::none();
+            }
+            let (cancel, keep) = sign.begin_dismiss();
+            if !keep {
+                self.modal = None;
+            }
+            return cancel;
+        }
+
+        // Any other modal (save / broadcast / export / keychain
+        // unavailable): dismissing just closes it.
+        self.modal = None;
+        // After a successful broadcast we keep the user on the
+        // PSBT detail page rather than reloading back to the
+        // list: the daemon derives `SpendStatus::Broadcast` from
+        // `coin.spend_info` (filled in by its mempool poller),
+        // so an immediate reload would overwrite our optimistic
+        // `Broadcast` status with stale `Pending` and re-expose
+        // the Broadcast button. The list view stays consistent
+        // because `BroadcastModal` calls `Wallet::record_broadcast`
+        // on RPC success, and `PsbtsPanel`'s `SpendTxs` handler
+        // runs `Wallet::apply_spend_tx_overrides` on every
+        // refresh to promote matching Pending entries to
+        // Broadcast.
+        Task::none()
+    }
+
+    fn open_signer_picker(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
+            *display_modal = true;
+            return Task::none();
+        }
+        self.signer_focus_return = false;
+
+        // Build (and launch) the nested Keychain flow up front when
+        // Connect is ready, so keychain rows populate with friendly
+        // labels by the time the user reads the picker. When Connect
+        // isn't ready this is `None` and the picker shows keychain
+        // rows derived from the descriptor, disabled with a hint.
+        let (keychain, kc_launch) = build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
+        let modal = SignModal::new(
+            self.tx.signers(),
+            self.wallet.clone(),
+            cache.datadir_path.clone(),
+            cache.network,
+            self.saved,
+            self.tx.recovery_timelock(),
+            keychain,
+            true,
+        )
+        .with_connect_account(ConnectAccountStatus::from_cache(cache));
+        let cmd = modal.load(daemon);
+        self.modal = Some(PsbtModal::Sign(modal));
+        Task::batch([cmd, kc_launch])
+    }
+
     fn update_inner(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -1037,39 +1154,8 @@ impl PsbtState {
             return Task::none();
         }
         match message {
-            Message::View(view::Message::ExportPsbt) => {
-                if self.modal.is_none() {
-                    if let Err(reason) = enforce_legacy_signature_policy(
-                        uses_unified_signatures(&self.wallet),
-                        &self.tx.psbt,
-                    ) {
-                        let message = replay::unsafe_legacy_policy_copy(&reason)
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| {
-                                crate::user_error::report(&Error::Unexpected(reason.to_string()))
-                            });
-                        let error = Error::Unexpected(reason.to_string());
-                        self.warning = Some(error);
-                        return Task::done(Message::View(view::Message::ShowError(message)));
-                    }
-                    let psbt_str = self.tx.psbt.to_string();
-                    let modal = VaultExportModal::new(None, ImportExportType::ExportPsbt(psbt_str));
-                    let launch = modal.launch(true);
-                    self.modal = Some(PsbtModal::Export(modal));
-                    return launch;
-                }
-            }
-            Message::View(view::Message::ImportPsbt) => {
-                if self.modal.is_none() {
-                    let modal = VaultExportModal::new(
-                        Some(daemon.clone()),
-                        ImportExportType::ImportPsbt(Some(self.tx.psbt.unsigned_tx.compute_txid())),
-                    );
-                    let launch = modal.launch(false);
-                    self.modal = Some(PsbtModal::Export(modal));
-                    return launch;
-                }
-            }
+            Message::View(view::Message::ExportPsbt) => return self.open_psbt_export(),
+            Message::View(view::Message::ImportPsbt) => return self.open_psbt_import(&daemon),
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 if matches!(self.modal, Some(PsbtModal::Export(_))) {
                     self.modal = None;
@@ -1081,50 +1167,7 @@ impl PsbtState {
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
-                // Dismissing the unified signing picker. A local
-                // hardware/master/border op in flight just hides the picker
-                // (keeping the device-confirmation state). Otherwise cancel
-                // any in-flight Keychain sessions server-side — otherwise
-                // signers keep seeing the request until its 24h TTL elapses.
-                // `cancel_all()` cancels sessions that already have an id;
-                // entries whose `CreateSigningSession` RPC is still in flight
-                // are cancelled later once their `SessionCreated` lands, which
-                // needs the picker to stay mounted. So when sessions are still
-                // undrained we keep the picker mounted-but-hidden — it
-                // self-closes via `Message::Updated(Ok)` once they all reach a
-                // terminal state (see `should_close_after_dismiss`).
-                if let Some(PsbtModal::Sign(sign)) = &mut self.modal {
-                    if sign.is_signing() {
-                        // A local device op is awaiting confirmation — just
-                        // hide the picker, keeping it mounted so the op's
-                        // result still lands. Any keychain sessions keep
-                        // running and are drained on the next close.
-                        sign.display_modal = false;
-                        return Task::none();
-                    }
-                    let (cancel, keep) = sign.begin_dismiss();
-                    if !keep {
-                        self.modal = None;
-                    }
-                    return cancel;
-                }
-
-                // Any other modal (save / broadcast / export / keychain
-                // unavailable): dismissing just closes it.
-                self.modal = None;
-                // After a successful broadcast we keep the user on the
-                // PSBT detail page rather than reloading back to the
-                // list: the daemon derives `SpendStatus::Broadcast` from
-                // `coin.spend_info` (filled in by its mempool poller),
-                // so an immediate reload would overwrite our optimistic
-                // `Broadcast` status with stale `Pending` and re-expose
-                // the Broadcast button. The list view stays consistent
-                // because `BroadcastModal` calls `Wallet::record_broadcast`
-                // on RPC success, and `PsbtsPanel`'s `SpendTxs` handler
-                // runs `Wallet::apply_spend_tx_overrides` on every
-                // refresh to promote matching Pending entries to
-                // Broadcast.
-                return Task::none();
+                return self.dismiss_psbt_modal()
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::KeychainConnectSignIn)) => {
                 // From the "Keychain needs Connect" modal: close it and
@@ -1155,33 +1198,7 @@ impl PsbtState {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
-                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
-                    *display_modal = true;
-                    return Task::none();
-                }
-                self.signer_focus_return = false;
-
-                // Build (and launch) the nested Keychain flow up front when
-                // Connect is ready, so keychain rows populate with friendly
-                // labels by the time the user reads the picker. When Connect
-                // isn't ready this is `None` and the picker shows keychain
-                // rows derived from the descriptor, disabled with a hint.
-                let (keychain, kc_launch) =
-                    build_keychain_if_ready(cache, &self.wallet, &self.tx.psbt);
-                let modal = SignModal::new(
-                    self.tx.signers(),
-                    self.wallet.clone(),
-                    cache.datadir_path.clone(),
-                    cache.network,
-                    self.saved,
-                    self.tx.recovery_timelock(),
-                    keychain,
-                    true,
-                )
-                .with_connect_account(ConnectAccountStatus::from_cache(cache));
-                let cmd = modal.load(daemon);
-                self.modal = Some(PsbtModal::Sign(modal));
-                return Task::batch([cmd, kc_launch]);
+                return self.open_signer_picker(daemon, cache)
             }
             Message::View(view::Message::Spend(
                 view::SpendTxMessage::SelectKeychainSigner(_)
