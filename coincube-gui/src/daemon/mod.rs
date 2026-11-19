@@ -352,18 +352,7 @@ pub trait Daemon: Debug {
             .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Spending], &[])
             .await?
             .coins;
-        let mut txids: Vec<Txid> = Vec::new();
-        for coin in &coins {
-            if coin.block_height.is_none() && !txids.contains(&coin.outpoint.txid) {
-                txids.push(coin.outpoint.txid);
-            }
-
-            if let Some(spend) = coin.spend_info {
-                if !txids.contains(&spend.txid) {
-                    txids.push(spend.txid);
-                }
-            }
-        }
+        let txids = pending_transaction_ids(&coins);
 
         if txids.is_empty() {
             return Ok(Vec::new());
@@ -431,6 +420,22 @@ pub trait Daemon: Debug {
 
         Ok(events)
     }
+}
+
+fn pending_transaction_ids(coins: &[model::Coin]) -> Vec<Txid> {
+    let mut txids: Vec<Txid> = Vec::new();
+    for coin in coins {
+        if coin.block_height.is_none() && !txids.contains(&coin.outpoint.txid) {
+            txids.push(coin.outpoint.txid);
+        }
+
+        if let Some(spend) = coin.spend_info {
+            if !txids.contains(&spend.txid) {
+                txids.push(spend.txid);
+            }
+        }
+    }
+    txids
 }
 
 async fn load_labels<T: model::Labelled + model::LabelsLoader, D: Daemon + ?Sized>(
