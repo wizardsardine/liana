@@ -96,95 +96,98 @@ pub fn worldview_hero<'a, M: 'a>(
     arranged(
         children,
         Size::new(Length::Fill, Length::Shrink),
-        |children: &mut [Element<'a, M>],
-         trees: &mut [Tree],
-         renderer: &Renderer,
-         limits: &layout::Limits| {
-            let max = limits.max();
-            let width = if max.width.is_finite() {
-                max.width
-            } else {
-                WIDE_MIN_WIDTH
-            };
-            let free = layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
-            let mut lay = |index: usize, limits: &layout::Limits| {
-                children[index]
-                    .as_widget_mut()
-                    .layout(&mut trees[index], renderer, limits)
-            };
-            // The worldview at its own widths: the lines are no wider than
-            // their maximum and the art is square.
-            let wide_line = lay(1, &free);
-            let narrow_line = lay(2, &free);
-            let wide_art = lay(4, &free);
-            let narrow_art = lay(5, &free);
-            let side = |line: &layout::Node, art: &layout::Node| {
-                if line.size().width > 0.0 {
-                    line.size().width + ART_GAP + art.size().width
-                } else {
-                    art.size().width
-                }
-            };
-            let hidden = || layout::Node::new(Size::ZERO);
-            let (nodes, height) = match hero_layout(
-                width,
-                side(&wide_line, &wide_art),
-                side(&narrow_line, &narrow_art),
-            ) {
-                arrangement @ (HeroLayout::Wide | HeroLayout::Narrow) => {
-                    let (line, art) = if arrangement == HeroLayout::Wide {
-                        (wide_line, wide_art)
-                    } else {
-                        (narrow_line, narrow_art)
-                    };
-                    let column = width - COLUMN_GAP - side(&line, &art);
-                    let balance = lay(
-                        0,
-                        &layout::Limits::new(Size::ZERO, Size::new(column, f32::INFINITY)),
-                    );
-                    let (balance_size, line_size, art_size) =
-                        (balance.size(), line.size(), art.size());
-                    let height = balance_size
-                        .height
-                        .max(art_size.height)
-                        .max(line_size.height + LINE_BOTTOM);
-                    let balance = balance.move_to((0.0, height - balance_size.height));
-                    let art = art.move_to((width - art_size.width, height - art_size.height));
-                    let line = line.move_to((
-                        width - art_size.width - ART_GAP - line_size.width,
-                        height - LINE_BOTTOM - line_size.height,
-                    ));
-                    let nodes = if arrangement == HeroLayout::Wide {
-                        vec![balance, line, hidden(), hidden(), art, hidden()]
-                    } else {
-                        vec![balance, hidden(), line, hidden(), hidden(), art]
-                    };
-                    (nodes, height)
-                }
-                HeroLayout::Stacked => {
-                    let balance = lay(0, &free);
-                    let stacked = lay(3, &free);
-                    let balance_height = balance.size().height;
-                    let (stacked, height) = if stacked.size().width > 0.0 {
-                        let height = stacked.size().height;
-                        (
-                            stacked.move_to((0.0, balance_height + STACK_GAP)),
-                            balance_height + STACK_GAP + height,
-                        )
-                    } else {
-                        (hidden(), balance_height)
-                    };
-                    (
-                        vec![balance, hidden(), hidden(), stacked, hidden(), hidden()],
-                        height,
-                    )
-                }
-            };
-            layout::Node::with_children(Size::new(width, height), nodes)
-        },
+        layout_hero,
     )
     .skip_empty()
     .into()
+}
+
+fn layout_hero<'a, M: 'a>(
+    children: &mut [Element<'a, M>],
+    trees: &mut [Tree],
+    renderer: &Renderer,
+    limits: &layout::Limits,
+) -> layout::Node {
+    let max = limits.max();
+    let width = if max.width.is_finite() {
+        max.width
+    } else {
+        WIDE_MIN_WIDTH
+    };
+    let free = layout::Limits::new(Size::ZERO, Size::new(width, f32::INFINITY));
+    let mut lay = |index: usize, limits: &layout::Limits| {
+        children[index]
+            .as_widget_mut()
+            .layout(&mut trees[index], renderer, limits)
+    };
+    // The worldview at its own widths: the lines are no wider than
+    // their maximum and the art is square.
+    let wide_line = lay(1, &free);
+    let narrow_line = lay(2, &free);
+    let wide_art = lay(4, &free);
+    let narrow_art = lay(5, &free);
+    let side = |line: &layout::Node, art: &layout::Node| {
+        if line.size().width > 0.0 {
+            line.size().width + ART_GAP + art.size().width
+        } else {
+            art.size().width
+        }
+    };
+    let hidden = || layout::Node::new(Size::ZERO);
+    let (nodes, height) = match hero_layout(
+        width,
+        side(&wide_line, &wide_art),
+        side(&narrow_line, &narrow_art),
+    ) {
+        arrangement @ (HeroLayout::Wide | HeroLayout::Narrow) => {
+            let (line, art) = if arrangement == HeroLayout::Wide {
+                (wide_line, wide_art)
+            } else {
+                (narrow_line, narrow_art)
+            };
+            let column = width - COLUMN_GAP - side(&line, &art);
+            let balance = lay(
+                0,
+                &layout::Limits::new(Size::ZERO, Size::new(column, f32::INFINITY)),
+            );
+            let (balance_size, line_size, art_size) = (balance.size(), line.size(), art.size());
+            let height = balance_size
+                .height
+                .max(art_size.height)
+                .max(line_size.height + LINE_BOTTOM);
+            let balance = balance.move_to((0.0, height - balance_size.height));
+            let art = art.move_to((width - art_size.width, height - art_size.height));
+            let line = line.move_to((
+                width - art_size.width - ART_GAP - line_size.width,
+                height - LINE_BOTTOM - line_size.height,
+            ));
+            let nodes = if arrangement == HeroLayout::Wide {
+                vec![balance, line, hidden(), hidden(), art, hidden()]
+            } else {
+                vec![balance, hidden(), line, hidden(), hidden(), art]
+            };
+            (nodes, height)
+        }
+        HeroLayout::Stacked => {
+            let balance = lay(0, &free);
+            let stacked = lay(3, &free);
+            let balance_height = balance.size().height;
+            let (stacked, height) = if stacked.size().width > 0.0 {
+                let height = stacked.size().height;
+                (
+                    stacked.move_to((0.0, balance_height + STACK_GAP)),
+                    balance_height + STACK_GAP + height,
+                )
+            } else {
+                (hidden(), balance_height)
+            };
+            (
+                vec![balance, hidden(), hidden(), stacked, hidden(), hidden()],
+                height,
+            )
+        }
+    };
+    layout::Node::with_children(Size::new(width, height), nodes)
 }
 
 /// `.line`: the mode's 28px rule over the italic voice line, both aligned to

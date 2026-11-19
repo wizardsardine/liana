@@ -1007,26 +1007,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    // Pre-rename failures leave the destination byte-identical and no staging
-    // file; the staging file is private while it exists; a post-rename
-    // durability failure leaves the complete new bytes and says so.
-    #[test]
-    fn atomic_write_failures_are_classified_by_which_side_of_the_rename() {
-        let (base, _datadir) = temp_datadir("atomic-fail");
-        let path = base.join("bitcoin.conf");
-        write_conf_atomically(&path, b"old\n").unwrap();
-        let old = std::fs::read(&path).unwrap();
-        let no_staging = |dir: &Path| {
-            assert!(
-                !std::fs::read_dir(dir).unwrap().any(|e| e
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .ends_with(".tmp")),
-                "a staging file was left behind"
-            );
-        };
-
+    fn assert_pre_rename_failures(
+        base: &Path,
+        path: &Path,
+        old: &[u8],
+        no_staging: &impl Fn(&Path),
+    ) {
         for failing in [
             ConfWriteStep::StageWrite,
             ConfWriteStep::StageSync,
@@ -1053,7 +1039,7 @@ mod tests {
                         Ok(())
                     }
                 },
-                || write_conf_atomically(&path, b"new\n"),
+                || write_conf_atomically(path, b"new\n"),
             );
             match result {
                 Err(ConfWriteError::NotReplaced(e)) => {
@@ -1062,12 +1048,12 @@ mod tests {
                 other => panic!("{:?}: expected NotReplaced, got {:?}", failing, other),
             }
             assert_eq!(
-                std::fs::read(&path).unwrap(),
+                std::fs::read(path).unwrap(),
                 old,
                 "{:?}: destination changed",
                 failing
             );
-            no_staging(&base);
+            no_staging(base);
             #[cfg(unix)]
             assert_eq!(
                 *seen_mode.lock().unwrap(),
@@ -1076,6 +1062,29 @@ mod tests {
                 failing
             );
         }
+    }
+
+    // Pre-rename failures leave the destination byte-identical and no staging
+    // file; the staging file is private while it exists; a post-rename
+    // durability failure leaves the complete new bytes and says so.
+    #[test]
+    fn atomic_write_failures_are_classified_by_which_side_of_the_rename() {
+        let (base, _datadir) = temp_datadir("atomic-fail");
+        let path = base.join("bitcoin.conf");
+        write_conf_atomically(&path, b"old\n").unwrap();
+        let old = std::fs::read(&path).unwrap();
+        let no_staging = |dir: &Path| {
+            assert!(
+                !std::fs::read_dir(dir).unwrap().any(|e| e
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")),
+                "a staging file was left behind"
+            );
+        };
+
+        assert_pre_rename_failures(&base, &path, &old, &no_staging);
 
         // Post-rename: the directory flush fails, but the file is already new.
         let result = with_write_hook(

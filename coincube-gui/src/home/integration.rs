@@ -168,36 +168,44 @@ fn initialize_fresh_qa_preferences(root: &CoincubeDirectory) -> Result<(), &'sta
         Err(_) => return Err("qa_preferences_unreadable"),
     }
     for chain in ChainId::ALL {
-        let directory = root.network_directory(chain);
-        match std::fs::symlink_metadata(directory.path()) {
-            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => (),
-            Ok(_) => return Err("qa_profile_not_unused"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => return Err("qa_profile_unreadable"),
-        }
-        match settings::Settings::from_file(&directory) {
-            // Fresh QA initialization does not adopt even an apparently empty
-            // existing settings file. Its schema may contain unknown state.
-            Ok(_) => return Err("qa_profile_not_unused"),
-            Err(settings::SettingsError::NotFound) => (),
-            Err(_) => return Err("qa_profile_unreadable"),
-        }
-        for entry in std::fs::read_dir(directory.path()).map_err(|_| "qa_profile_unreadable")? {
-            let entry = entry.map_err(|_| "qa_profile_unreadable")?;
-            let name = entry.file_name();
-            let allowed = chain == ChainId::Testnet4
-                && matches!(
-                    name.to_str(),
-                    Some("connect.json" | "connect_transport_key")
-                );
-            let metadata =
-                std::fs::symlink_metadata(entry.path()).map_err(|_| "qa_profile_unreadable")?;
-            if !allowed || !metadata.is_file() || metadata.file_type().is_symlink() {
-                return Err("qa_profile_not_unused");
-            }
-        }
+        validate_fresh_qa_network_directory(root, chain)?;
     }
     GlobalSettings::update_developer_mode(&path, true).map_err(|_| "qa_preferences_write")
+}
+
+fn validate_fresh_qa_network_directory(
+    root: &CoincubeDirectory,
+    chain: ChainId,
+) -> Result<(), &'static str> {
+    let directory = root.network_directory(chain);
+    match std::fs::symlink_metadata(directory.path()) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => (),
+        Ok(_) => return Err("qa_profile_not_unused"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err("qa_profile_unreadable"),
+    }
+    match settings::Settings::from_file(&directory) {
+        // Fresh QA initialization does not adopt even an apparently empty
+        // existing settings file. Its schema may contain unknown state.
+        Ok(_) => return Err("qa_profile_not_unused"),
+        Err(settings::SettingsError::NotFound) => (),
+        Err(_) => return Err("qa_profile_unreadable"),
+    }
+    for entry in std::fs::read_dir(directory.path()).map_err(|_| "qa_profile_unreadable")? {
+        let entry = entry.map_err(|_| "qa_profile_unreadable")?;
+        let name = entry.file_name();
+        let allowed = chain == ChainId::Testnet4
+            && matches!(
+                name.to_str(),
+                Some("connect.json" | "connect_transport_key")
+            );
+        let metadata =
+            std::fs::symlink_metadata(entry.path()).map_err(|_| "qa_profile_unreadable")?;
+        if !allowed || !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err("qa_profile_not_unused");
+        }
+    }
+    Ok(())
 }
 
 /// Persist a run-owned Cube through Home's real validation/backup/finalization.

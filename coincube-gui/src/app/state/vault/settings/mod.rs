@@ -215,6 +215,63 @@ macro_rules! launch {
     };
 }
 
+impl ImportExportSettingsState {
+    fn export_encrypted_descriptor(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Task<Message> {
+        if self.modal.is_none() {
+            let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
+                return Task::none();
+            };
+            let modal = VaultExportModal::new(
+                Some(daemon),
+                ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
+            );
+            launch!(self, modal, true);
+        }
+        Task::none()
+    }
+
+    fn export_plaintext_descriptor(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Task<Message> {
+        if self.plaintext_export_review && self.modal.is_none() {
+            self.plaintext_export_review = false;
+            let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
+                return Task::none();
+            };
+            let modal =
+                VaultExportModal::new(Some(daemon), ImportExportType::Descriptor(descriptor));
+            launch!(self, modal, true);
+        }
+        Task::none()
+    }
+
+    fn export_wallet_backup(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        if !self.wallet.supports_inheritance() {
+            return Task::none();
+        }
+        if self.modal.is_none() {
+            let datadir = cache.datadir_path.clone();
+            let config = self.config.clone();
+            let wallet = self.wallet.clone();
+            let daemon_clone = daemon.clone();
+            let modal = VaultExportModal::new(
+                Some(daemon_clone),
+                ImportExportType::ExportProcessBackup(datadir, config, wallet),
+            );
+            launch!(self, modal, true);
+        }
+        Task::none()
+    }
+}
+
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let content =
@@ -299,31 +356,12 @@ impl State for ImportExportSettingsState {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ExportEncryptedDescriptor,
             )) => {
-                if self.modal.is_none() {
-                    let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
-                        return Task::none();
-                    };
-                    let modal = VaultExportModal::new(
-                        Some(daemon),
-                        ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
-                    );
-                    launch!(self, modal, true);
-                }
+                return self.export_encrypted_descriptor(daemon);
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ExportPlaintextDescriptor,
             )) => {
-                if self.plaintext_export_review && self.modal.is_none() {
-                    self.plaintext_export_review = false;
-                    let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
-                        return Task::none();
-                    };
-                    let modal = VaultExportModal::new(
-                        Some(daemon),
-                        ImportExportType::Descriptor(descriptor),
-                    );
-                    launch!(self, modal, true);
-                }
+                return self.export_plaintext_descriptor(daemon);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportTransactions)) => {
                 if self.modal.is_none() {
@@ -338,20 +376,7 @@ impl State for ImportExportSettingsState {
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
-                if !self.wallet.supports_inheritance() {
-                    return Task::none();
-                }
-                if self.modal.is_none() {
-                    let datadir = cache.datadir_path.clone();
-                    let config = self.config.clone();
-                    let wallet = self.wallet.clone();
-                    let daemon_clone = daemon.clone();
-                    let modal = VaultExportModal::new(
-                        Some(daemon_clone),
-                        ImportExportType::ExportProcessBackup(datadir, config, wallet),
-                    );
-                    launch!(self, modal, true);
-                }
+                return self.export_wallet_backup(daemon, cache);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet))
                 if self.modal.is_none() && self.wallet.supports_inheritance() =>

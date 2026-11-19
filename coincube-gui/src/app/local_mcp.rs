@@ -177,6 +177,16 @@ pub(crate) struct PairingContext<'a> {
     /// not synced until a later poll completes.
     pub last_poll_at_startup: Option<u32>,
 }
+
+struct PairingEndpointContext<'a> {
+    chain: crate::chain::ChainId,
+    wallet: &'a Option<Arc<Wallet>>,
+    daemon: &'a Option<Arc<dyn Daemon + Send + Sync>>,
+    supported: bool,
+    proposal_supported: bool,
+    last_poll_at_startup: Option<u32>,
+}
+
 impl Settings {
     /// Where keyboard focus goes after an action removed its own control.
     pub(crate) fn focus_after(&self, after: FocusAfter) -> Option<iced::advanced::widget::Id> {
@@ -318,44 +328,9 @@ impl Settings {
             last_poll_at_startup,
         } = context;
         self.last_poll_at_startup = last_poll_at_startup;
-        if super::session::generation_for(cube_id).is_none() || self.pairing_poisoned {
-            return;
-        }
-        let Some(generation) = super::session::generation_for(cube_id) else {
+        let Some(generation) = self.restore_pairing_context(root, chain, cube_id) else {
             return;
         };
-        if self.pairing_generation != Some(generation) {
-            self.paired.clear();
-            self.pairing_generation = Some(generation);
-        }
-        if self
-            .pairing_location
-            .as_ref()
-            .is_some_and(|v| !v.matches(root, chain, cube_id))
-        {
-            self.revoke();
-            self.pairing_poisoned = true;
-            self.pairing_error = Some("Pairing context changed. No client access was restored.");
-            return;
-        }
-        if self.pairing_location.is_none() {
-            let Ok(location) = pairings::Location::new(root, chain, cube_id) else {
-                return;
-            };
-            if location.exists() {
-                match location.open(false) {
-                    Ok(store) => {
-                        self.enabled = store.enabled();
-                        self.pairing_store = Some(store);
-                    }
-                    Err(_) => {
-                        self.pairing_error = Some("Stored client pairing is unavailable or invalid. No client access was restored.");
-                        self.pairing_poisoned = true;
-                    }
-                }
-            }
-            self.pairing_location = Some(location);
-        }
         if self.pairing_poisoned || !self.enabled {
             return;
         }
@@ -365,6 +340,14 @@ impl Settings {
         if !store.enabled() {
             return;
         }
+        let endpoint_context = PairingEndpointContext {
+            chain,
+            wallet: &wallet,
+            daemon: &daemon,
+            supported,
+            proposal_supported,
+            last_poll_at_startup,
+        };
         self.paired
             .retain(|runtime| store.clients().iter().any(|client| client.id == runtime.id));
         for client in store.clients() {
@@ -384,126 +367,15 @@ impl Settings {
             .map(|network| Arc::new(wire::proposal::Store::for_chain(network)));
             #[cfg(feature = "mcp-transactions")]
             let mut transactions = None;
-            let built: Option<(Arc<dyn wire::Reader>, wire::ipc::Grant)> = match &client.scope {
-                pairings::Scope::Read {
-                    wallet: expected_wallet,
-                    descriptor,
-                    opaque,
-                    capabilities,
-                } if supported => match (&wallet, &daemon) {
-                    (Some(wallet), Some(daemon))
-                        if wallet.id().to_string() == *expected_wallet
-                            && pairings::descriptor_identity(wallet) == *descriptor
-                            && wallet.chain == chain
-                            && wallet.main_descriptor.as_vault().is_some()
-                            && daemon.backend().is_embedded() =>
-                    {
-                        wire::ipc::Grant::paired(
-                            opaque.clone(),
-                            *capabilities,
-                            client.credential.clone(),
-                            guard,
-                        )
-                        .ok()
-                        .map(|grant| {
-                            let reader: Arc<dyn wire::Reader> = Arc::new(VaultReader {
-                                read_slots: Arc::new(tokio::sync::Semaphore::new(2)),
-                                descriptor: wallet
-                                    .main_descriptor
-                                    .as_vault()
-                                    .expect("checked Vault")
-                                    .clone(),
-                                chain,
-                                daemon: daemon.clone(),
-                                wallet_id: opaque.clone(),
-                                activity_key: new_activity_key(),
-                                last_poll_at_startup,
-                            });
-                            (reader, grant)
-                        })
-                    }
-                    _ => None,
-                },
+            let built = Self::build_paired_endpoint(
+                &endpoint_context,
+                client,
+                guard,
+                #[cfg(feature = "mcp-proposals")]
+                &proposals,
                 #[cfg(feature = "mcp-transactions")]
-                pairings::Scope::TransactionPreparation {
-                    wallet: expected_wallet,
-                    descriptor,
-                    opaque,
-                } if supported && transactions::supported_chain(chain) => {
-                    match (&wallet, &daemon) {
-                        (Some(wallet), Some(daemon))
-                            if wallet.id().to_string() == *expected_wallet
-                                && pairings::descriptor_identity(wallet) == *descriptor
-                                && wallet.chain == chain
-                                && wallet.main_descriptor.as_vault().is_some()
-                                && daemon.backend().is_embedded() =>
-                        {
-                            wire::ipc::Grant::paired_transactions(
-                                opaque.clone(),
-                                client.credential.clone(),
-                                guard,
-                            )
-                            .ok()
-                            .map(|grant| {
-                                let service = Arc::new(transactions::Service::new(
-                                    chain,
-                                    wallet
-                                        .main_descriptor
-                                        .as_vault()
-                                        .expect("checked Vault")
-                                        .clone(),
-                                    daemon.clone(),
-                                    opaque.clone(),
-                                    last_poll_at_startup,
-                                ));
-                                let reader: Arc<dyn wire::Reader> = service.clone();
-                                transactions = Some(service);
-                                (reader, grant)
-                            })
-                        }
-                        _ => None,
-                    }
-                }
-                pairings::Scope::Proposal
-                    if proposal_supported && chain.dir_name().parse::<wire::Chain>().is_ok() =>
-                {
-                    #[cfg(feature = "mcp-proposals")]
-                    {
-                        wire::ipc::Grant::paired_proposals(client.credential.clone(), guard)
-                            .ok()
-                            .map(|grant| {
-                                let reader: Arc<dyn wire::Reader> =
-                                    proposals.as_ref().expect("proposal store").clone();
-                                (reader, grant)
-                            })
-                    }
-                    #[cfg(not(feature = "mcp-proposals"))]
-                    {
-                        None
-                    }
-                }
-                pairings::Scope::WalletCreation
-                    if proposal_supported && chain.dir_name().parse::<wire::Chain>().is_ok() =>
-                {
-                    #[cfg(feature = "mcp-proposals")]
-                    {
-                        wire::ipc::Grant::paired_creation(client.credential.clone(), guard)
-                            .ok()
-                            .map(|grant| {
-                                let reader: Arc<dyn wire::Reader> =
-                                    Arc::new(crate::installer::creation::CreationReader::new(
-                                        proposals.as_ref().expect("creation store").clone(),
-                                    ));
-                                (reader, grant)
-                            })
-                    }
-                    #[cfg(not(feature = "mcp-proposals"))]
-                    {
-                        None
-                    }
-                }
-                _ => None,
-            };
+                &mut transactions,
+            );
             let Some((reader, grant)) = built else {
                 continue;
             };
@@ -531,6 +403,186 @@ impl Settings {
             }
         }
     }
+    fn restore_pairing_context(
+        &mut self,
+        root: &std::path::Path,
+        chain: crate::chain::ChainId,
+        cube_id: &str,
+    ) -> Option<u64> {
+        if super::session::generation_for(cube_id).is_none() || self.pairing_poisoned {
+            return None;
+        }
+        let generation = super::session::generation_for(cube_id)?;
+        if self.pairing_generation != Some(generation) {
+            self.paired.clear();
+            self.pairing_generation = Some(generation);
+        }
+        if self
+            .pairing_location
+            .as_ref()
+            .is_some_and(|v| !v.matches(root, chain, cube_id))
+        {
+            self.revoke();
+            self.pairing_poisoned = true;
+            self.pairing_error = Some("Pairing context changed. No client access was restored.");
+            return None;
+        }
+        if self.pairing_location.is_none() {
+            let Ok(location) = pairings::Location::new(root, chain, cube_id) else {
+                return None;
+            };
+            if location.exists() {
+                match location.open(false) {
+                    Ok(store) => {
+                        self.enabled = store.enabled();
+                        self.pairing_store = Some(store);
+                    }
+                    Err(_) => {
+                        self.pairing_error = Some("Stored client pairing is unavailable or invalid. No client access was restored.");
+                        self.pairing_poisoned = true;
+                    }
+                }
+            }
+            self.pairing_location = Some(location);
+        }
+        Some(generation)
+    }
+
+    fn build_paired_endpoint(
+        context: &PairingEndpointContext<'_>,
+        client: &pairings::Client,
+        guard: impl Fn() -> bool + Send + Sync + 'static,
+        #[cfg(feature = "mcp-proposals")] proposals: &Option<Arc<wire::proposal::Store>>,
+        #[cfg(feature = "mcp-transactions")] transactions: &mut Option<Arc<transactions::Service>>,
+    ) -> Option<(Arc<dyn wire::Reader>, wire::ipc::Grant)> {
+        let PairingEndpointContext {
+            chain,
+            wallet,
+            daemon,
+            supported,
+            proposal_supported,
+            last_poll_at_startup,
+        } = *context;
+        match &client.scope {
+            pairings::Scope::Read {
+                wallet: expected_wallet,
+                descriptor,
+                opaque,
+                capabilities,
+            } if supported => match (wallet, daemon) {
+                (Some(wallet), Some(daemon))
+                    if wallet.id().to_string() == *expected_wallet
+                        && pairings::descriptor_identity(wallet) == *descriptor
+                        && wallet.chain == chain
+                        && wallet.main_descriptor.as_vault().is_some()
+                        && daemon.backend().is_embedded() =>
+                {
+                    wire::ipc::Grant::paired(
+                        opaque.clone(),
+                        *capabilities,
+                        client.credential.clone(),
+                        guard,
+                    )
+                    .ok()
+                    .map(|grant| {
+                        let reader: Arc<dyn wire::Reader> = Arc::new(VaultReader {
+                            read_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+                            descriptor: wallet
+                                .main_descriptor
+                                .as_vault()
+                                .expect("checked Vault")
+                                .clone(),
+                            chain,
+                            daemon: daemon.clone(),
+                            wallet_id: opaque.clone(),
+                            activity_key: new_activity_key(),
+                            last_poll_at_startup,
+                        });
+                        (reader, grant)
+                    })
+                }
+                _ => None,
+            },
+            #[cfg(feature = "mcp-transactions")]
+            pairings::Scope::TransactionPreparation {
+                wallet: expected_wallet,
+                descriptor,
+                opaque,
+            } if supported && transactions::supported_chain(chain) => match (wallet, daemon) {
+                (Some(wallet), Some(daemon))
+                    if wallet.id().to_string() == *expected_wallet
+                        && pairings::descriptor_identity(wallet) == *descriptor
+                        && wallet.chain == chain
+                        && wallet.main_descriptor.as_vault().is_some()
+                        && daemon.backend().is_embedded() =>
+                {
+                    wire::ipc::Grant::paired_transactions(
+                        opaque.clone(),
+                        client.credential.clone(),
+                        guard,
+                    )
+                    .ok()
+                    .map(|grant| {
+                        let service = Arc::new(transactions::Service::new(
+                            chain,
+                            wallet
+                                .main_descriptor
+                                .as_vault()
+                                .expect("checked Vault")
+                                .clone(),
+                            daemon.clone(),
+                            opaque.clone(),
+                            last_poll_at_startup,
+                        ));
+                        let reader: Arc<dyn wire::Reader> = service.clone();
+                        *transactions = Some(service);
+                        (reader, grant)
+                    })
+                }
+                _ => None,
+            },
+            pairings::Scope::Proposal
+                if proposal_supported && chain.dir_name().parse::<wire::Chain>().is_ok() =>
+            {
+                #[cfg(feature = "mcp-proposals")]
+                {
+                    wire::ipc::Grant::paired_proposals(client.credential.clone(), guard)
+                        .ok()
+                        .map(|grant| {
+                            let reader: Arc<dyn wire::Reader> =
+                                proposals.as_ref().expect("proposal store").clone();
+                            (reader, grant)
+                        })
+                }
+                #[cfg(not(feature = "mcp-proposals"))]
+                {
+                    None
+                }
+            }
+            pairings::Scope::WalletCreation
+                if proposal_supported && chain.dir_name().parse::<wire::Chain>().is_ok() =>
+            {
+                #[cfg(feature = "mcp-proposals")]
+                {
+                    wire::ipc::Grant::paired_creation(client.credential.clone(), guard)
+                        .ok()
+                        .map(|grant| {
+                            let reader: Arc<dyn wire::Reader> =
+                                Arc::new(crate::installer::creation::CreationReader::new(
+                                    proposals.as_ref().expect("creation store").clone(),
+                                ));
+                            (reader, grant)
+                        })
+                }
+                #[cfg(not(feature = "mcp-proposals"))]
+                {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn pair_client(
         &mut self,
         wallet: Option<Arc<Wallet>>,
@@ -699,16 +751,7 @@ impl Settings {
                 return self.update(Message::Enable(true), wallet, daemon, supported, cube_id);
             }
             Message::Enable(value) => {
-                self.copied = None;
-                self.revoke();
-                self.clear_pairing_selection();
-                self.client_name.clear();
-                self.enabled = value && cfg!(any(unix, windows));
-                if let Some(store) = &mut self.pairing_store {
-                    if store.set_enabled(self.enabled).is_err() {
-                        self.persistence_failed();
-                    }
-                }
+                self.set_enabled(value);
             }
             Message::Wallet(value) => {
                 self.revoke_legacy();
@@ -720,16 +763,7 @@ impl Settings {
                 self.clear_other_scopes();
             }
             Message::Capability(index, value) if index < 3 => {
-                self.revoke_legacy();
-                self.capabilities[index] = value;
-                if value {
-                    self.read_chosen = true;
-                    self.clear_other_scopes();
-                }
-                #[cfg(feature = "mcp-transactions")]
-                if value {
-                    self.transactions_allowed = false;
-                }
+                self.set_read_capability(index, value);
             }
             Message::ClientName(value) => {
                 self.revoke_legacy();
@@ -767,18 +801,7 @@ impl Settings {
                 return None;
             }
             Message::RevokePair(id) => {
-                if self.revoke_confirmation.as_deref() != Some(id.as_str()) {
-                    return None;
-                }
-                self.revoke_confirmation = None;
-                self.copied = None;
-                self.paired.retain(|runtime| runtime.id != id);
-                if let Some(store) = &mut self.pairing_store {
-                    if store.remove(&id).is_err() {
-                        self.persistence_failed();
-                    }
-                }
-                return None;
+                return self.revoke_pair(id);
             }
             Message::RequestRevokePair(id) => {
                 // Keep the client's controls open so focus can return to its
@@ -800,112 +823,10 @@ impl Settings {
                 return None;
             }
             Message::CopyPair(id) => {
-                let generation = super::session::generation_for(cube_id)?;
-                if self.pairing_poisoned
-                    || !self.enabled
-                    || self.pairing_generation != Some(generation)
-                    || !self
-                        .pairing_location
-                        .as_ref()
-                        .is_some_and(|location| location.cube_matches(cube_id))
-                    || !self
-                        .paired
-                        .iter()
-                        .any(|runtime| runtime.id == id && runtime.server.grant.active())
-                {
-                    return None;
-                }
-                let store = self.pairing_store.as_ref()?;
-                let client = store.clients().iter().find(|client| client.id == id)?;
-                let executable = std::env::current_exe()
-                    .ok()?
-                    .parent()?
-                    .join(format!("coincube-mcp{}", std::env::consts::EXE_SUFFIX));
-                let config = serde_json::to_string_pretty(&serde_json::json!({"mcpServers": {"tenshu": {
-                    "command": executable,
-                    "env": {"COINCUBE_MCP_PAIRING": store.location.locator(&id), "COINCUBE_MCP_CREDENTIAL": client.credential}
-                }}})).ok();
-                if config.is_some() {
-                    self.copied = Some(id);
-                }
-                return config;
+                return self.copy_pair(id, cube_id);
             }
             Message::Approve => {
-                self.revoke_legacy();
-                self.failed = false;
-                #[cfg(feature = "mcp-proposals")]
-                if supported
-                    && wallet.is_none()
-                    && daemon.is_none()
-                    && self.enabled
-                    && self.proposals_allowed
-                    && !self.client_name.trim().is_empty()
-                {
-                    let generation = super::session::generation_for(cube_id)?;
-                    let cube_id = cube_id.to_owned();
-                    let chain = self.pairing_location.as_ref()?.chain()?;
-                    let store = Arc::new(wire::proposal::Store::for_chain(
-                        chain.dir_name().parse().ok()?,
-                    ));
-                    let grant =
-                        wire::ipc::Grant::for_proposals(Duration::from_secs(3600), move || {
-                            super::session::generation_for(&cube_id) == Some(generation)
-                        });
-                    match wire::ipc::Server::start(store.clone(), grant) {
-                        Ok(server) => {
-                            self.server = Some(server);
-                            self.proposals = Some(store);
-                            self.approved_name = self.client_name.clone();
-                        }
-                        Err(_) => self.failed = true,
-                    }
-                    return None;
-                }
-                if !supported
-                    || !self.enabled
-                    || !self.wallet_allowed
-                    || self.client_name.trim().is_empty()
-                    || !self.capabilities.iter().any(|v| *v)
-                {
-                    return None;
-                }
-                #[cfg(any(unix, windows))]
-                if let (Some(wallet), Some(daemon)) = (wallet, daemon) {
-                    if wallet.main_descriptor.as_vault().is_none()
-                        || !daemon.backend().is_embedded()
-                    {
-                        return None;
-                    }
-                    let generation = super::session::generation_for(cube_id)?;
-                    let cube_id = cube_id.to_owned();
-                    let wallet_id = uuid::Uuid::new_v4().to_string();
-                    let grant = wire::ipc::Grant::new(
-                        wallet_id.clone(),
-                        self.capabilities,
-                        Duration::from_secs(3600),
-                    )
-                    .with_session_guard(move || {
-                        super::session::generation_for(&cube_id) == Some(generation)
-                    });
-                    let reader = Arc::new(VaultReader {
-                        read_slots: Arc::new(tokio::sync::Semaphore::new(2)),
-                        descriptor: wallet.main_descriptor.as_vault()?.clone(),
-                        chain: wallet.chain,
-                        daemon,
-                        wallet_id,
-                        activity_key: new_activity_key(),
-                        last_poll_at_startup: self.last_poll_at_startup,
-                    });
-                    match wire::ipc::Server::start(reader, grant) {
-                        Ok(server) => {
-                            self.server = Some(server);
-                            self.approved_name = self.client_name.clone();
-                        }
-                        Err(_) => self.failed = true,
-                    }
-                }
-                #[cfg(not(any(unix, windows)))]
-                let _ = (wallet, daemon, cube_id);
+                return self.approve(wallet, daemon, supported, cube_id);
             }
             Message::CopyConfig => {
                 #[cfg(any(unix, windows))]
@@ -924,6 +845,166 @@ impl Settings {
         }
         None
     }
+    fn set_enabled(&mut self, value: bool) {
+        self.copied = None;
+        self.revoke();
+        self.clear_pairing_selection();
+        self.client_name.clear();
+        self.enabled = value && cfg!(any(unix, windows));
+        if let Some(store) = &mut self.pairing_store {
+            if store.set_enabled(self.enabled).is_err() {
+                self.persistence_failed();
+            }
+        }
+    }
+
+    fn set_read_capability(&mut self, index: usize, value: bool) {
+        self.revoke_legacy();
+        self.capabilities[index] = value;
+        if value {
+            self.read_chosen = true;
+            self.clear_other_scopes();
+        }
+        #[cfg(feature = "mcp-transactions")]
+        if value {
+            self.transactions_allowed = false;
+        }
+    }
+
+    fn revoke_pair(&mut self, id: String) -> Option<String> {
+        if self.revoke_confirmation.as_deref() != Some(id.as_str()) {
+            return None;
+        }
+        self.revoke_confirmation = None;
+        self.copied = None;
+        self.paired.retain(|runtime| runtime.id != id);
+        if let Some(store) = &mut self.pairing_store {
+            if store.remove(&id).is_err() {
+                self.persistence_failed();
+            }
+        }
+        None
+    }
+
+    fn copy_pair(&mut self, id: String, cube_id: &str) -> Option<String> {
+        let generation = super::session::generation_for(cube_id)?;
+        if self.pairing_poisoned
+            || !self.enabled
+            || self.pairing_generation != Some(generation)
+            || !self
+                .pairing_location
+                .as_ref()
+                .is_some_and(|location| location.cube_matches(cube_id))
+            || !self
+                .paired
+                .iter()
+                .any(|runtime| runtime.id == id && runtime.server.grant.active())
+        {
+            return None;
+        }
+        let store = self.pairing_store.as_ref()?;
+        let client = store.clients().iter().find(|client| client.id == id)?;
+        let executable = std::env::current_exe()
+            .ok()?
+            .parent()?
+            .join(format!("coincube-mcp{}", std::env::consts::EXE_SUFFIX));
+        let config = serde_json::to_string_pretty(&serde_json::json!({"mcpServers": {"tenshu": {
+            "command": executable,
+            "env": {"COINCUBE_MCP_PAIRING": store.location.locator(&id), "COINCUBE_MCP_CREDENTIAL": client.credential}
+        }}})).ok();
+        if config.is_some() {
+            self.copied = Some(id);
+        }
+        config
+    }
+
+    fn approve(
+        &mut self,
+        wallet: Option<Arc<Wallet>>,
+        daemon: Option<Arc<dyn Daemon + Send + Sync>>,
+        supported: bool,
+        cube_id: &str,
+    ) -> Option<String> {
+        self.revoke_legacy();
+        self.failed = false;
+        #[cfg(feature = "mcp-proposals")]
+        if supported
+            && wallet.is_none()
+            && daemon.is_none()
+            && self.enabled
+            && self.proposals_allowed
+            && !self.client_name.trim().is_empty()
+        {
+            return self.approve_proposal(cube_id);
+        }
+        if !supported
+            || !self.enabled
+            || !self.wallet_allowed
+            || self.client_name.trim().is_empty()
+            || !self.capabilities.iter().any(|v| *v)
+        {
+            return None;
+        }
+        #[cfg(any(unix, windows))]
+        if let (Some(wallet), Some(daemon)) = (wallet, daemon) {
+            if wallet.main_descriptor.as_vault().is_none() || !daemon.backend().is_embedded() {
+                return None;
+            }
+            let generation = super::session::generation_for(cube_id)?;
+            let cube_id = cube_id.to_owned();
+            let wallet_id = uuid::Uuid::new_v4().to_string();
+            let grant = wire::ipc::Grant::new(
+                wallet_id.clone(),
+                self.capabilities,
+                Duration::from_secs(3600),
+            )
+            .with_session_guard(move || {
+                super::session::generation_for(&cube_id) == Some(generation)
+            });
+            let reader = Arc::new(VaultReader {
+                read_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+                descriptor: wallet.main_descriptor.as_vault()?.clone(),
+                chain: wallet.chain,
+                daemon,
+                wallet_id,
+                activity_key: new_activity_key(),
+                last_poll_at_startup: self.last_poll_at_startup,
+            });
+            match wire::ipc::Server::start(reader, grant) {
+                Ok(server) => {
+                    self.server = Some(server);
+                    self.approved_name = self.client_name.clone();
+                }
+                Err(_) => self.failed = true,
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        let _ = (wallet, daemon, cube_id);
+        None
+    }
+
+    #[cfg(feature = "mcp-proposals")]
+    fn approve_proposal(&mut self, cube_id: &str) -> Option<String> {
+        let generation = super::session::generation_for(cube_id)?;
+        let cube_id = cube_id.to_owned();
+        let chain = self.pairing_location.as_ref()?.chain()?;
+        let store = Arc::new(wire::proposal::Store::for_chain(
+            chain.dir_name().parse().ok()?,
+        ));
+        let grant = wire::ipc::Grant::for_proposals(Duration::from_secs(3600), move || {
+            super::session::generation_for(&cube_id) == Some(generation)
+        });
+        match wire::ipc::Server::start(store.clone(), grant) {
+            Ok(server) => {
+                self.server = Some(server);
+                self.proposals = Some(store);
+                self.approved_name = self.client_name.clone();
+            }
+            Err(_) => self.failed = true,
+        }
+        None
+    }
+
     /// Native handoff consumes Settings ownership, preserving only this session.
     #[cfg(feature = "mcp-proposals")]
     pub(crate) fn proposal_session(
@@ -1183,45 +1264,7 @@ impl VaultReader {
                     wallet_type: "vault".into(),
                 }],
             })),
-            wire::Request::Summary(_) => {
-                let coins = self
-                    .daemon
-                    .list_coins(&[], &[])
-                    .await
-                    .map_err(|_| wire::Error::Unavailable)?
-                    .coins;
-                // Either endpoint of the read may be unhealthy; a scan finishing
-                // during the read must not make older coins look complete.
-                let after = self.wallet_info().await?;
-                let states = [self.sync_state(&info), self.sync_state(&after)];
-                let sync_state = if states.contains(&"sync_failing") {
-                    "sync_failing"
-                } else if states.contains(&"syncing") {
-                    "syncing"
-                } else {
-                    "synced"
-                }
-                .to_owned();
-                let unspent = || coins.iter().filter(|c| c.spend_info.is_none());
-                Ok(wire::Response::Summary(wire::Summary {
-                    wallet_id: self.wallet_id.clone(),
-                    network: self.chain.to_string(),
-                    wallet_type: "vault".into(),
-                    confirmed_sats: unspent()
-                        .filter(|c| c.block_height.is_some())
-                        .map(|c| c.amount.to_sat())
-                        .sum(),
-                    unconfirmed_sats: unspent()
-                        .filter(|c| c.block_height.is_none())
-                        .map(|c| c.amount.to_sat())
-                        .sum(),
-                    available_sats: unspent()
-                        .filter(|c| !c.is_immature && crate::daemon::model::coin_is_owned(c))
-                        .map(|c| c.amount.to_sat())
-                        .sum(),
-                    sync_state,
-                }))
-            }
+            wire::Request::Summary(_) => self.wallet_summary(&info).await,
             wire::Request::History(input) => {
                 // History has no completeness field. Never return an empty or
                 // partial list as authoritative while synchronization is unsafe.
@@ -1288,6 +1331,48 @@ impl VaultReader {
                 }))
             }
         }
+    }
+    async fn wallet_summary(
+        &self,
+        info: &crate::daemon::model::GetInfoResult,
+    ) -> Result<wire::Response, wire::Error> {
+        let coins = self
+            .daemon
+            .list_coins(&[], &[])
+            .await
+            .map_err(|_| wire::Error::Unavailable)?
+            .coins;
+        // Either endpoint of the read may be unhealthy; a scan finishing
+        // during the read must not make older coins look complete.
+        let after = self.wallet_info().await?;
+        let states = [self.sync_state(info), self.sync_state(&after)];
+        let sync_state = if states.contains(&"sync_failing") {
+            "sync_failing"
+        } else if states.contains(&"syncing") {
+            "syncing"
+        } else {
+            "synced"
+        }
+        .to_owned();
+        let unspent = || coins.iter().filter(|c| c.spend_info.is_none());
+        Ok(wire::Response::Summary(wire::Summary {
+            wallet_id: self.wallet_id.clone(),
+            network: self.chain.to_string(),
+            wallet_type: "vault".into(),
+            confirmed_sats: unspent()
+                .filter(|c| c.block_height.is_some())
+                .map(|c| c.amount.to_sat())
+                .sum(),
+            unconfirmed_sats: unspent()
+                .filter(|c| c.block_height.is_none())
+                .map(|c| c.amount.to_sat())
+                .sum(),
+            available_sats: unspent()
+                .filter(|c| !c.is_immature && crate::daemon::model::coin_is_owned(c))
+                .map(|c| c.amount.to_sat())
+                .sum(),
+            sync_state,
+        }))
     }
 }
 
@@ -1368,21 +1453,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn ai_access_revoke_dialog_retains_merged_safety_focus() {
-        use crate::app::menu::{CubeSettingsOption, CubeSubMenu, Menu};
-        use coincube_ui::{font, theme, widget::Renderer};
-        use iced::advanced::{
-            renderer::Headless,
-            widget::{operation, operation::focusable, operation::Focusable, Id, Operation},
+    mod revoke_dialog_probe {
+        use super::super::super::Message as AppMessage;
+        use coincube_ui::{theme, widget::Renderer};
+        use iced::advanced::widget::{
+            operation, operation::focusable, operation::Focusable, Id, Operation,
         };
-        use iced::{keyboard, mouse, Event, Rectangle, Size};
-        use iced_runtime::user_interface::{Cache as UiCache, UserInterface};
+        use iced::{keyboard, Event, Rectangle};
+        use iced_runtime::user_interface::UserInterface;
 
         #[derive(Default)]
-        struct Probe {
-            text: Vec<(String, Rectangle)>,
-            focus: Vec<(Id, Rectangle)>,
+        pub(super) struct Probe {
+            pub(super) text: Vec<(String, Rectangle)>,
+            pub(super) focus: Vec<(Id, Rectangle)>,
         }
         impl Operation for Probe {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
@@ -1397,8 +1480,8 @@ mod tests {
                 }
             }
         }
-        fn focused(
-            ui: &mut UserInterface<'_, super::super::Message, theme::Theme, Renderer>,
+        pub(super) fn focused(
+            ui: &mut UserInterface<'_, AppMessage, theme::Theme, Renderer>,
             renderer: &Renderer,
         ) -> Option<Id> {
             use std::sync::{Arc, Mutex};
@@ -1418,8 +1501,8 @@ mod tests {
             drop(op);
             Arc::try_unwrap(result).unwrap().into_inner().unwrap()
         }
-        fn apply(
-            ui: &mut UserInterface<'_, super::super::Message, theme::Theme, Renderer>,
+        pub(super) fn apply(
+            ui: &mut UserInterface<'_, AppMessage, theme::Theme, Renderer>,
             renderer: &Renderer,
             operation: impl Operation<()> + 'static,
         ) {
@@ -1432,10 +1515,10 @@ mod tests {
                 }
             }
         }
-        fn apply_task(
-            ui: &mut UserInterface<'_, super::super::Message, theme::Theme, Renderer>,
+        pub(super) fn apply_task(
+            ui: &mut UserInterface<'_, AppMessage, theme::Theme, Renderer>,
             renderer: &Renderer,
-            task: iced::Task<super::super::Message>,
+            task: iced::Task<AppMessage>,
         ) {
             use iced::futures::StreamExt;
             let stream = iced_runtime::task::into_stream(task).expect("focus task stream");
@@ -1452,7 +1535,7 @@ mod tests {
                 }
             }
         }
-        fn escape() -> Event {
+        pub(super) fn escape() -> Event {
             let key = keyboard::Key::Named(keyboard::key::Named::Escape);
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: key.clone(),
@@ -1464,6 +1547,19 @@ mod tests {
                 repeat: false,
             })
         }
+    }
+
+    #[test]
+    fn ai_access_revoke_dialog_retains_merged_safety_focus() {
+        use self::revoke_dialog_probe::{apply, apply_task, escape, focused, Probe};
+        use crate::app::menu::{CubeSettingsOption, CubeSubMenu, Menu};
+        use coincube_ui::{font, theme, widget::Renderer};
+        use iced::advanced::{
+            renderer::Headless,
+            widget::{operation, operation::focusable, Id},
+        };
+        use iced::{mouse, Size};
+        use iced_runtime::user_interface::{Cache as UiCache, UserInterface};
 
         let _guard = super::super::session::test_guard();
         let root = std::env::temp_dir().join(format!("mcp-modal-{}", uuid::Uuid::new_v4()));
@@ -2246,100 +2342,15 @@ mod tests {
 
     #[test]
     fn ai_access_revoke_dialog_is_mounted_over_dashboard_and_confines_focus() {
+        use self::revoke_dialog_probe::{apply, apply_task, escape, focused, Probe};
         use crate::app::menu::{CubeSettingsOption, CubeSubMenu, Menu};
-        use coincube_ui::{font, theme, widget::Renderer};
+        use coincube_ui::{font, widget::Renderer};
         use iced::advanced::{
             renderer::Headless,
-            widget::{operation, operation::focusable, operation::Focusable, Id, Operation},
+            widget::{operation, operation::focusable, Id},
         };
-        use iced::{keyboard, mouse, Event, Rectangle, Size};
+        use iced::{mouse, Size};
         use iced_runtime::user_interface::{Cache as UiCache, UserInterface};
-
-        #[derive(Default)]
-        struct Probe {
-            text: Vec<(String, Rectangle)>,
-            focus: Vec<(Id, Rectangle)>,
-        }
-        impl Operation for Probe {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _: Option<&Id>, bounds: Rectangle, value: &str) {
-                self.text.push((value.to_owned(), bounds));
-            }
-            fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, _: &mut dyn Focusable) {
-                if let Some(id) = id {
-                    self.focus.push((id.clone(), bounds));
-                }
-            }
-        }
-        fn focused(
-            ui: &mut UserInterface<'_, super::super::Message, theme::Theme, Renderer>,
-            renderer: &Renderer,
-        ) -> Option<Id> {
-            use std::sync::{Arc, Mutex};
-            let result = Arc::new(Mutex::new(None));
-            let output = Arc::clone(&result);
-            let mut op: Box<dyn Operation<()>> =
-                Box::new(operation::map(focusable::find_focused(), move |value| {
-                    *output.lock().unwrap() = Some(value)
-                }));
-            loop {
-                ui.operate(renderer, &mut operation::black_box(op.as_mut()));
-                match op.finish() {
-                    operation::Outcome::None | operation::Outcome::Some(()) => break,
-                    operation::Outcome::Chain(next) => op = next,
-                }
-            }
-            drop(op);
-            Arc::try_unwrap(result).unwrap().into_inner().unwrap()
-        }
-        fn apply(
-            ui: &mut UserInterface<'_, super::super::Message, theme::Theme, Renderer>,
-            renderer: &Renderer,
-            operation: impl Operation<()> + 'static,
-        ) {
-            let mut operation: Box<dyn Operation<()>> = Box::new(operation);
-            loop {
-                ui.operate(renderer, &mut operation::black_box(operation.as_mut()));
-                match operation.finish() {
-                    operation::Outcome::None | operation::Outcome::Some(()) => break,
-                    operation::Outcome::Chain(next) => operation = next,
-                }
-            }
-        }
-        fn apply_task(
-            ui: &mut UserInterface<'_, super::super::Message, theme::Theme, Renderer>,
-            renderer: &Renderer,
-            task: iced::Task<super::super::Message>,
-        ) {
-            use iced::futures::StreamExt;
-            let stream = iced_runtime::task::into_stream(task).expect("focus task stream");
-            let actions = iced::futures::executor::block_on(stream.collect::<Vec<_>>());
-            for action in actions {
-                if let iced_runtime::Action::Widget(mut operation) = action {
-                    loop {
-                        ui.operate(renderer, &mut operation::black_box(operation.as_mut()));
-                        match operation.finish() {
-                            operation::Outcome::None | operation::Outcome::Some(()) => break,
-                            operation::Outcome::Chain(next) => operation = next,
-                        }
-                    }
-                }
-            }
-        }
-        fn escape() -> Event {
-            let key = keyboard::Key::Named(keyboard::key::Named::Escape);
-            Event::Keyboard(keyboard::Event::KeyPressed {
-                key: key.clone(),
-                modified_key: key,
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
-                location: keyboard::Location::Standard,
-                modifiers: keyboard::Modifiers::empty(),
-                text: None,
-                repeat: false,
-            })
-        }
 
         let _guard = super::super::session::test_guard();
         let root = std::env::temp_dir().join(format!("mcp-modal-{}", uuid::Uuid::new_v4()));

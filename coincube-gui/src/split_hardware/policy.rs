@@ -206,33 +206,37 @@ mod tests {
         SplitSource::new(desc(external), internal.map(desc)).unwrap()
     }
 
+    fn expected_split_policy(shape: Shape) -> (PolicyShape, usize) {
+        match shape {
+            Shape::Wpkh => (PolicyShape::Singlesig(SinglesigScript::Wpkh), 1),
+            Shape::ShWpkh => (PolicyShape::Singlesig(SinglesigScript::ShWpkh), 1),
+            Shape::Pkh => (PolicyShape::Singlesig(SinglesigScript::Pkh), 1),
+            Shape::WshSortedMulti => (
+                PolicyShape::Multisig {
+                    k: 2,
+                    n: 3,
+                    sorted: true,
+                },
+                3,
+            ),
+            Shape::WshMulti => (
+                PolicyShape::Multisig {
+                    k: 2,
+                    n: 3,
+                    sorted: false,
+                },
+                3,
+            ),
+        }
+    }
+
     #[test]
     fn split_policy_merges_branches_and_refuses_missing_origins() {
         for shape in SHAPES {
             let wallet = fixture::wallet(shape);
             let paired = split_source(&wallet.external, Some(&wallet.internal)).unwrap();
             let receive_only = split_source(&wallet.external, None).unwrap();
-            let (expected, keys) = match shape {
-                Shape::Wpkh => (PolicyShape::Singlesig(SinglesigScript::Wpkh), 1),
-                Shape::ShWpkh => (PolicyShape::Singlesig(SinglesigScript::ShWpkh), 1),
-                Shape::Pkh => (PolicyShape::Singlesig(SinglesigScript::Pkh), 1),
-                Shape::WshSortedMulti => (
-                    PolicyShape::Multisig {
-                        k: 2,
-                        n: 3,
-                        sorted: true,
-                    },
-                    3,
-                ),
-                Shape::WshMulti => (
-                    PolicyShape::Multisig {
-                        k: 2,
-                        n: 3,
-                        sorted: false,
-                    },
-                    3,
-                ),
-            };
+            let (expected, keys) = expected_split_policy(shape);
             for src in [&paired, &receive_only] {
                 let merged = split_descriptor(src).unwrap();
                 // Every key is origin-tagged and carries exactly the two

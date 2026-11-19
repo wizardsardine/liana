@@ -803,16 +803,7 @@ async fn require_unfunded_config(
                 // scan is genuine fresh work, not persisted historical state.
                 after_generation = Some(0);
             }
-            if after_generation.is_none()
-                && info.sync.is_finite()
-                && info.sync >= 1.0
-                && info.last_poll_timestamp.is_some_and(|t| t >= started)
-                && info.rescan_progress.is_none()
-                && !info.history_sync.full_scan_in_progress
-                && info.history_sync.last_failure.is_none()
-                && info.refused_reorg_depth.is_none()
-                && !info.chain_divergence
-            {
+            if oracle_can_start_rescan(&info, started, after_generation) {
                 let at = chrono::Utc::now().timestamp() as u32;
                 let bounds = daemon
                     .integration_rescan_time_bounds()
@@ -894,6 +885,22 @@ async fn require_unfunded_config(
     let proof = result?;
     stopped?;
     Ok(proof)
+}
+
+fn oracle_can_start_rescan(
+    info: &coincubed::commands::GetInfoResult,
+    started: u32,
+    after_generation: Option<u64>,
+) -> bool {
+    after_generation.is_none()
+        && info.sync.is_finite()
+        && info.sync >= 1.0
+        && info.last_poll_timestamp.is_some_and(|t| t >= started)
+        && info.rescan_progress.is_none()
+        && !info.history_sync.full_scan_in_progress
+        && info.history_sync.last_failure.is_none()
+        && info.refused_reorg_depth.is_none()
+        && !info.chain_divergence
 }
 
 fn unlock_admitted(

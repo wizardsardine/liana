@@ -115,6 +115,23 @@ impl SettingsState {
         }
     }
 
+    fn reload_saved_display_settings(&mut self, cache: &Cache) {
+        let chain = if cache.fiat_chain.is_blake2b() {
+            cache.fiat_chain
+        } else {
+            cache.network.into()
+        };
+        let network_dir = cache.datadir_path.network_directory(chain);
+        if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+            if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
+                self.current_unit_setting = cube.unit_setting.clone();
+                if let Some(price_setting) = cube.fiat_price.clone() {
+                    self.current_price_setting = price_setting;
+                }
+            }
+        }
+    }
+
     fn switch_section(
         &mut self,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
@@ -228,23 +245,7 @@ impl SettingsState {
                     .unwrap_or_else(Task::none)
             }
             Message::SettingsSaved => {
-                // Update tracked price and unit settings when saved
-                if let Ok(settings) = crate::app::settings::Settings::from_file(
-                    &cache
-                        .datadir_path
-                        .network_directory(if cache.fiat_chain.is_blake2b() {
-                            cache.fiat_chain
-                        } else {
-                            cache.network.into()
-                        }),
-                ) {
-                    if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
-                        self.current_unit_setting = cube.unit_setting.clone();
-                        if let Some(price_setting) = cube.fiat_price.clone() {
-                            self.current_price_setting = price_setting;
-                        }
-                    }
-                }
+                self.reload_saved_display_settings(cache);
                 self.setting
                     .as_mut()
                     .map(|s| s.update(daemon, cache, message))
