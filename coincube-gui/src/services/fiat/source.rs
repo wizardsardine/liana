@@ -263,7 +263,9 @@ mod tests {
                     source.parse_price_data(Currency::USD, &payload),
                     Err(PriceApiError::CannotParseData(_))
                 ),
-                "{source} accepted {payload}"
+                "{} accepted {}",
+                source,
+                payload
             );
         }
     }
