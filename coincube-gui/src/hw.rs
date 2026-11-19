@@ -691,46 +691,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
 
         scan_lan_phones(&mut state, &mut hws, &mut still).await;
 
-        if let Some(wallet) = &state.wallet {
-            let wallet_keys = wallet.descriptor_keys();
-            for hw in &mut hws {
-                if let HardwareWallet::Supported {
-                    fingerprint,
-                    id,
-                    kind,
-                    version,
-                    ..
-                } = &hw
-                {
-                    if !wallet_keys.contains(fingerprint) {
-                        *hw = HardwareWallet::Unsupported {
-                            id: id.clone(),
-                            kind: *kind,
-                            version: version.clone(),
-                            reason: UnsupportedReason::NotPartOfWallet(*fingerprint),
-                        };
-                    }
-                }
-            }
-        }
-
-        state.connected_supported_hws = still
-            .iter()
-            .chain(hws.iter().filter_map(|hw| match hw {
-                HardwareWallet::Locked { id, .. } => Some(id),
-                HardwareWallet::Supported { id, .. } => Some(id),
-                HardwareWallet::Unsupported { .. } => None,
-            }))
-            .cloned()
-            .collect();
-        // Drop phone handles whose ids didn't survive into the
-        // rebuilt list (offline, wallet-fp mismatch, removed from
-        // store). Without this we'd keep dead `Arc<PhoneSigner>`
-        // entries growing forever across reconnects.
-        let surviving_ids = state.connected_supported_hws.clone();
-        state
-            .phone_signers
-            .retain(|id, _| surviving_ids.contains(id));
+        finish_hardware_refresh(&mut state, &still, &mut hws);
         let _ = output
             .send(HardwareWalletMessage::List(ConnectedList {
                 new: hws,
@@ -1081,6 +1042,49 @@ fn accept_lan_phone(
         registered: Some(true),
         alias: Some(paired.name.clone()),
     });
+}
+
+fn finish_hardware_refresh(state: &mut State, still: &[String], hws: &mut [HardwareWallet]) {
+    if let Some(wallet) = &state.wallet {
+        let wallet_keys = wallet.descriptor_keys();
+        for hw in &mut *hws {
+            if let HardwareWallet::Supported {
+                fingerprint,
+                id,
+                kind,
+                version,
+                ..
+            } = &hw
+            {
+                if !wallet_keys.contains(fingerprint) {
+                    *hw = HardwareWallet::Unsupported {
+                        id: id.clone(),
+                        kind: *kind,
+                        version: version.clone(),
+                        reason: UnsupportedReason::NotPartOfWallet(*fingerprint),
+                    };
+                }
+            }
+        }
+    }
+
+    state.connected_supported_hws = still
+        .iter()
+        .chain(hws.iter().filter_map(|hw| match hw {
+            HardwareWallet::Locked { id, .. } => Some(id),
+            HardwareWallet::Supported { id, .. } => Some(id),
+            HardwareWallet::Unsupported { .. } => None,
+        }))
+        .cloned()
+        .collect();
+    // Drop phone handles whose ids didn't survive into the
+    // rebuilt list (offline, wallet-fp mismatch, removed from
+    // store). Without this we'd keep dead `Arc<PhoneSigner>`
+    // entries growing forever across reconnects.
+    let surviving_ids = state.connected_supported_hws.clone();
+    state
+        .phone_signers
+        .retain(|id, _| surviving_ids.contains(id));
 }
 
 struct PhysicalDiscovery<'a> {
