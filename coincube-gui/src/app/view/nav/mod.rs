@@ -554,6 +554,24 @@ mod shell_tests {
         }
     }
 
+    fn assert_compact_switcher_labels(labels: &Labels, confirmation: bool) {
+        for required in ["All Cubes", "Settings", "Cancel"] {
+            if required == "Cancel" && !confirmation {
+                continue;
+            }
+            assert!(labels.0.iter().any(|(label, _)| label == required));
+        }
+        assert!(labels
+            .0
+            .iter()
+            .any(|(label, _)| label.starts_with("Family household") && label.ends_with('…')));
+        if confirmation {
+            assert!(labels.0.iter().any(|(label, _)| label == "Lock"));
+        } else {
+            assert!(labels.0.iter().any(|(label, _)| label == "Lock Cube"));
+        }
+    }
+
     #[tokio::test]
     async fn long_name_switcher_and_lock_review_fit_compact_shell() {
         load_fonts();
@@ -606,20 +624,7 @@ mod shell_tests {
                     &renderer,
                     &mut labels,
                 );
-                for required in ["All Cubes", "Settings", "Cancel"] {
-                    if required == "Cancel" && !confirmation {
-                        continue;
-                    }
-                    assert!(labels.0.iter().any(|(label, _)| label == required));
-                }
-                assert!(labels.0.iter().any(
-                    |(label, _)| label.starts_with("Family household") && label.ends_with('…')
-                ));
-                if confirmation {
-                    assert!(labels.0.iter().any(|(label, _)| label == "Lock"));
-                } else {
-                    assert!(labels.0.iter().any(|(label, _)| label == "Lock Cube"));
-                }
+                assert_compact_switcher_labels(&labels, confirmation);
                 if let Ok(directory) = std::env::var("SIDEBAR_PREVIEW_DIR") {
                     redraw(&mut element, &mut tree, &node, &renderer, size);
                     std::fs::create_dir_all(&directory).unwrap();
