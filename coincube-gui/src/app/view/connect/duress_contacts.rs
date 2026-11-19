@@ -435,11 +435,7 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         )
         .is_ok();
     // Submit is enabled only when the form is minimally valid.
-    let name_ok = !dc.form_name.trim().is_empty();
-    let reachable = phone_present || email_present;
-    let any_channel = ((dc.form_ch_sms || dc.form_ch_whatsapp) && phone_present)
-        || (dc.form_ch_email && email_present);
-    let can_submit = !dc.submitting && name_ok && reachable && phone_ok && email_ok && any_channel;
+    let can_submit = contact_can_submit(dc, phone_present, email_present, phone_ok, email_ok);
 
     // Name field.
     let name_field = Column::new()
@@ -572,6 +568,20 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     }
 
     form.into()
+}
+
+fn contact_can_submit(
+    dc: &DuressContactsState,
+    phone_present: bool,
+    email_present: bool,
+    phone_ok: bool,
+    email_ok: bool,
+) -> bool {
+    let name_ok = !dc.form_name.trim().is_empty();
+    let reachable = phone_present || email_present;
+    let any_channel = ((dc.form_ch_sms || dc.form_ch_whatsapp) && phone_present)
+        || (dc.form_ch_email && email_present);
+    !dc.submitting && name_ok && reachable && phone_ok && email_ok && any_channel
 }
 
 fn contact_submit<'a>(

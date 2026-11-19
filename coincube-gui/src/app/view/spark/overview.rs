@@ -608,27 +608,8 @@ fn connected_view<'a>(
             }
         });
     }
-    // The Lightning address sits beside the total while both fit at their
-    // own widths, else on its own line below it (`fit_row`).
-    let total_row: Element<'a, SparkOverviewMessage> =
-        match lightning_address_button(cube_id, lightning_address, lightning_share.is_some()) {
-            Some(button) => fit_row(total_col, button).gap(16.0).into(),
-            None => total_col.into(),
-        };
-    // The share popover hangs from the button's trailing edge and covers the
-    // rows below it rather than pushing them down.
-    let total_row: Element<'a, SparkOverviewMessage> = match lightning_share {
-        Some((address, qr)) => Column::new()
-            .push(total_row)
-            .push(
-                Floating::new(lightning_share_panel(cube_id, address, qr))
-                    .align_x(iced::alignment::Horizontal::Right)
-                    .gap(8.0)
-                    .on_dismiss(SparkOverviewMessage::CloseLightningShare),
-            )
-            .into(),
-        None => total_row,
-    };
+    let total_row =
+        overview_lightning_share_row(total_col, cube_id, lightning_address, lightning_share);
     let balance_section = landing_balance_section(
         Column::new()
             .spacing(16)
@@ -654,6 +635,35 @@ fn connected_view<'a>(
     content = content.push(iced::widget::Space::new().height(Length::Fixed(20.0)));
 
     content.into()
+}
+
+fn overview_lightning_share_row<'a>(
+    total_col: coincube_ui::widget::Column<'a, SparkOverviewMessage>,
+    cube_id: &str,
+    lightning_address: &SparkLightningAddress,
+    lightning_share: Option<(&'a str, Option<&'a qr_code::Data>)>,
+) -> Element<'a, SparkOverviewMessage> {
+    // The Lightning address sits beside the total while both fit at their
+    // own widths, else on its own line below it (`fit_row`).
+    let total_row: Element<'a, SparkOverviewMessage> =
+        match lightning_address_button(cube_id, lightning_address, lightning_share.is_some()) {
+            Some(button) => fit_row(total_col, button).gap(16.0).into(),
+            None => total_col.into(),
+        };
+    // The share popover hangs from the button's trailing edge and covers the
+    // rows below it rather than pushing them down.
+    match lightning_share {
+        Some((address, qr)) => Column::new()
+            .push(total_row)
+            .push(
+                Floating::new(lightning_share_panel(cube_id, address, qr))
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .gap(8.0)
+                    .on_dismiss(SparkOverviewMessage::CloseLightningShare),
+            )
+            .into(),
+        None => total_row,
+    }
 }
 
 fn pending_btc_sats(recent: &[SparkRecentTransaction]) -> (u64, u64) {
@@ -967,11 +977,6 @@ mod tests {
 
     #[test]
     fn lightning_share_hangs_under_the_address_button() {
-        use iced::advanced::{
-            clipboard::Null, layout, overlay, renderer::Headless, widget::Tree, Layout, Shell,
-        };
-        use iced::{keyboard, mouse, Event, Point, Rectangle, Size, Vector};
-
         for bytes in coincube_ui::font::load() {
             iced::advanced::graphics::text::font_system()
                 .write()
@@ -1006,178 +1011,190 @@ mod tests {
             ("light", theme::Theme::light()),
         ] {
             for (width, height) in [(1024, 768), (1440, 900)] {
-                let size = Size::new(width as f32, height as f32);
-                let viewport = Rectangle::with_size(size);
-                let mut renderer =
-                    iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
-                        coincube_ui::font::REGULAR,
-                        iced::Pixels(14.0),
-                        Some("tiny-skia"),
-                    ))
-                    .expect("software renderer");
-                let limits = layout::Limits::new(Size::ZERO, size);
+                check_lightning_share_layout(&page, appearance, &theme, width, height);
+            }
+        }
+    }
 
-                // The closed page, for the layout the popover must not move.
-                let mut closed = page(false);
-                let mut closed_tree = Tree::new(closed.as_widget());
-                let closed_node =
-                    closed
-                        .as_widget_mut()
-                        .layout(&mut closed_tree, &renderer, &limits);
-                let closed_text =
-                    capture_text(&mut closed, &mut closed_tree, &closed_node, &renderer);
+    fn check_lightning_share_layout<'a>(
+        page: &impl Fn(bool) -> Element<'a, SparkOverviewMessage>,
+        appearance: &str,
+        theme: &theme::Theme,
+        width: u32,
+        height: u32,
+    ) {
+        use iced::advanced::{
+            clipboard::Null, layout, overlay, renderer::Headless, widget::Tree, Layout, Shell,
+        };
+        use iced::{keyboard, mouse, Event, Point, Rectangle, Size, Vector};
 
-                let mut element = page(true);
-                let mut tree = Tree::new(element.as_widget());
-                let node = element
-                    .as_widget_mut()
-                    .layout(&mut tree, &renderer, &limits);
-                let open_text = capture_text(&mut element, &mut tree, &node, &renderer);
-                for entry in &closed_text {
-                    assert!(
-                        open_text.contains(entry),
-                        "the popover moves nothing on the page: {:?}",
-                        entry
-                    );
-                }
+        let size = Size::new(width as f32, height as f32);
+        let viewport = Rectangle::with_size(size);
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .expect("software renderer");
+        let limits = layout::Limits::new(Size::ZERO, size);
 
-                let button = closed_text
-                    .iter()
-                    .find(|(text, _)| text == "Share")
-                    .map(|(_, bounds)| *bounds)
-                    .expect("Share on the address button");
-                let mut popover = element
-                    .as_widget_mut()
-                    .overlay(
-                        &mut tree,
-                        Layout::new(&node),
-                        &renderer,
-                        &viewport,
-                        Vector::ZERO,
-                    )
-                    .map(overlay::Nested::new)
-                    .expect("share popover overlay");
-                let overlay_node = popover.layout(&renderer, size);
-                // Overlays from several widgets come back as one page-wide
-                // group; the popover is the tallest node narrower than it.
-                fn narrow_nodes(node: &layout::Node, width: f32, found: &mut Vec<Rectangle>) {
-                    if node.bounds().width < width {
-                        found.push(node.bounds());
-                    } else {
-                        for child in node.children() {
-                            narrow_nodes(child, width, found);
-                        }
-                    }
-                }
-                let mut narrow = Vec::new();
-                narrow_nodes(&overlay_node, size.width, &mut narrow);
-                let panel = narrow
-                    .into_iter()
-                    .max_by(|a, b| a.height.total_cmp(&b.height))
-                    .expect("popover node");
-                assert_eq!(panel.width, 380.0, "the popover keeps its own width");
-                assert!(panel.height < size.height / 1.2, "not a whole-page scrim");
-                assert!(panel.y > button.y + button.height, "hangs below the button");
-                assert!(panel.y < button.y + button.height + 40.0, "close under it");
-                assert!(
-                    (panel.x + panel.width) > button.x + button.width
-                        && (panel.x + panel.width) <= size.width,
-                    "trailing edge under the button's: {:?} {:?}",
-                    panel,
-                    button
-                );
+        // The closed page, for the layout the popover must not move.
+        let mut closed = page(false);
+        let mut closed_tree = Tree::new(closed.as_widget());
+        let closed_node = closed
+            .as_widget_mut()
+            .layout(&mut closed_tree, &renderer, &limits);
+        let closed_text = capture_text(&mut closed, &mut closed_tree, &closed_node, &renderer);
 
-                let mut send = |event: Event, at: Point| {
-                    let mut messages = Vec::new();
-                    let mut shell = Shell::new(&mut messages);
-                    popover.update(
-                        &event,
-                        Layout::new(&overlay_node),
-                        mouse::Cursor::Available(at),
-                        &renderer,
-                        &mut Null,
-                        &mut shell,
-                    );
-                    let captured = shell.is_event_captured();
-                    (messages, captured)
-                };
-                let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
-                let (inside, _) = send(press.clone(), panel.center());
-                assert!(inside.is_empty(), "{:?}", inside);
-                let (outside, captured) = send(press, Point::new(10.0, size.height - 10.0));
-                assert!(captured, "a dismissing press goes no further");
-                assert!(matches!(
-                    outside.as_slice(),
-                    [SparkOverviewMessage::CloseLightningShare]
-                ));
-                let escape = Event::Keyboard(keyboard::Event::KeyPressed {
-                    key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                    modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                    physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
-                    location: keyboard::Location::Standard,
-                    modifiers: keyboard::Modifiers::default(),
-                    text: None,
-                    repeat: false,
-                });
-                let (escaped, _) = send(escape, panel.center());
-                assert!(matches!(
-                    escaped.as_slice(),
-                    [SparkOverviewMessage::CloseLightningShare]
-                ));
-                drop(popover);
+        let mut element = page(true);
+        let mut tree = Tree::new(element.as_widget());
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let open_text = capture_text(&mut element, &mut tree, &node, &renderer);
+        for entry in &closed_text {
+            assert!(
+                open_text.contains(entry),
+                "the popover moves nothing on the page: {:?}",
+                entry
+            );
+        }
 
-                if let Ok(directory) = std::env::var("R06A_CAPTURE_DIR") {
-                    std::fs::create_dir_all(&directory).expect("capture directory");
-                    iced::advanced::Renderer::reset(&mut renderer, viewport);
-                    let style = iced::advanced::renderer::Style {
-                        text_color: theme.colors.text.primary,
-                    };
-                    element.as_widget().draw(
-                        &tree,
-                        &mut renderer,
-                        &theme,
-                        &style,
-                        Layout::new(&node),
-                        mouse::Cursor::Unavailable,
-                        &viewport,
-                    );
-                    if let Some(mut popover) = element
-                        .as_widget_mut()
-                        .overlay(
-                            &mut tree,
-                            Layout::new(&node),
-                            &renderer,
-                            &viewport,
-                            Vector::ZERO,
-                        )
-                        .map(overlay::Nested::new)
-                    {
-                        let overlay_node = popover.layout(&renderer, size);
-                        popover.draw(
-                            &mut renderer,
-                            &theme,
-                            &style,
-                            Layout::new(&overlay_node),
-                            mouse::Cursor::Unavailable,
-                        );
-                    }
-                    let pixels = renderer.screenshot(
-                        Size::new(width, height),
-                        1.0,
-                        theme.colors.general.background,
-                    );
-                    image::save_buffer(
-                        std::path::Path::new(&directory).join(format!(
-                            "spark-share-popover-{appearance}-{width}x{height}-synthetic.png"
-                        )),
-                        &pixels,
-                        width,
-                        height,
-                        image::ColorType::Rgba8,
-                    )
-                    .expect("save popover capture");
+        let button = closed_text
+            .iter()
+            .find(|(text, _)| text == "Share")
+            .map(|(_, bounds)| *bounds)
+            .expect("Share on the address button");
+        let mut popover = element
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                Vector::ZERO,
+            )
+            .map(overlay::Nested::new)
+            .expect("share popover overlay");
+        let overlay_node = popover.layout(&renderer, size);
+        // Overlays from several widgets come back as one page-wide
+        // group; the popover is the tallest node narrower than it.
+        fn narrow_nodes(node: &layout::Node, width: f32, found: &mut Vec<Rectangle>) {
+            if node.bounds().width < width {
+                found.push(node.bounds());
+            } else {
+                for child in node.children() {
+                    narrow_nodes(child, width, found);
                 }
             }
+        }
+        let mut narrow = Vec::new();
+        narrow_nodes(&overlay_node, size.width, &mut narrow);
+        let panel = narrow
+            .into_iter()
+            .max_by(|a, b| a.height.total_cmp(&b.height))
+            .expect("popover node");
+        assert_eq!(panel.width, 380.0, "the popover keeps its own width");
+        assert!(panel.height < size.height / 1.2, "not a whole-page scrim");
+        assert!(panel.y > button.y + button.height, "hangs below the button");
+        assert!(panel.y < button.y + button.height + 40.0, "close under it");
+        assert!(
+            (panel.x + panel.width) > button.x + button.width
+                && (panel.x + panel.width) <= size.width,
+            "trailing edge under the button's: {:?} {:?}",
+            panel,
+            button
+        );
+
+        let mut send = |event: Event, at: Point| {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            popover.update(
+                &event,
+                Layout::new(&overlay_node),
+                mouse::Cursor::Available(at),
+                &renderer,
+                &mut Null,
+                &mut shell,
+            );
+            let captured = shell.is_event_captured();
+            (messages, captured)
+        };
+        let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let (inside, _) = send(press.clone(), panel.center());
+        assert!(inside.is_empty(), "{:?}", inside);
+        let (outside, captured) = send(press, Point::new(10.0, size.height - 10.0));
+        assert!(captured, "a dismissing press goes no further");
+        assert!(matches!(
+            outside.as_slice(),
+            [SparkOverviewMessage::CloseLightningShare]
+        ));
+        let escape = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::default(),
+            text: None,
+            repeat: false,
+        });
+        let (escaped, _) = send(escape, panel.center());
+        assert!(matches!(
+            escaped.as_slice(),
+            [SparkOverviewMessage::CloseLightningShare]
+        ));
+        drop(popover);
+
+        if let Ok(directory) = std::env::var("R06A_CAPTURE_DIR") {
+            std::fs::create_dir_all(&directory).expect("capture directory");
+            iced::advanced::Renderer::reset(&mut renderer, viewport);
+            let style = iced::advanced::renderer::Style {
+                text_color: theme.colors.text.primary,
+            };
+            element.as_widget().draw(
+                &tree,
+                &mut renderer,
+                theme,
+                &style,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            if let Some(mut popover) = element
+                .as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &viewport,
+                    Vector::ZERO,
+                )
+                .map(overlay::Nested::new)
+            {
+                let overlay_node = popover.layout(&renderer, size);
+                popover.draw(
+                    &mut renderer,
+                    theme,
+                    &style,
+                    Layout::new(&overlay_node),
+                    mouse::Cursor::Unavailable,
+                );
+            }
+            let pixels = renderer.screenshot(
+                Size::new(width, height),
+                1.0,
+                theme.colors.general.background,
+            );
+            image::save_buffer(
+                std::path::Path::new(&directory).join(format!(
+                    "spark-share-popover-{appearance}-{width}x{height}-synthetic.png"
+                )),
+                &pixels,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
+            .expect("save popover capture");
         }
     }
 
