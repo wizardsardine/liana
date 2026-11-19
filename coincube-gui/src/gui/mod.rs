@@ -6342,180 +6342,32 @@ mod fork_auth_dispatch_tests {
                 let _enter = runtime.enter();
                 let server = httpmock::MockServer::start();
                 let user = server.mock(|when, then| {
-                    when.method(httpmock::Method::GET).path("/api/v1/user")
+                    when.method(httpmock::Method::GET)
+                        .path("/api/v1/user")
                         .header("authorization", "Bearer direct-session");
                     then.status(200).json_body(serde_json::json!({
                         "id":8,"email":"other@example.invalid","email_verified":true
                     }));
                 });
                 let feature = server.mock(|when, then| {
-                    when.method(httpmock::Method::GET).path("/api/v1/connect/features");
-                    then.status(200).json_body(serde_json::json!({"data":{"plans":[],"bitcoin_blake2b_enabled":true}}));
+                    when.method(httpmock::Method::GET)
+                        .path("/api/v1/connect/features");
+                    then.status(200).json_body(
+                        serde_json::json!({"data":{"plans":[],"bitcoin_blake2b_enabled":true}}),
+                    );
                 });
                 let provider_url = server.base_url();
                 for case in [
-                    "direct", "checking", "active", "same",
+                    "direct",
+                    "checking",
+                    "active",
+                    "same",
                     "wrong-root",
                     "wrong-provider",
                     "account-conflict",
                     "token-conflict",
                 ] {
-                    let path = std::env::temp_dir()
-                        .join(format!("cold-home-pin-{}", uuid::Uuid::new_v4()));
-                    let root = CoincubeDirectory::new(path.clone());
-                    std::fs::create_dir_all(&path).unwrap();
-                    crate::app::settings::global::GlobalSettings::update_bitcoin_blake2b_beta(
-                        &crate::app::settings::global::GlobalSettings::path(&root),
-                        true,
-                    )
-                    .unwrap();
-                    let provider = provider_url.as_str();
-                    let ready =
-                        |source_root: CoincubeDirectory, provider: &str, id: u32, token: &str| {
-                            let (mut home, task) = home::Home::new_for_chain(source_root, None);
-                            drop(task);
-                            home.connect_account.client =
-                                crate::services::coincube::CoincubeClient::for_test(provider);
-                            home.connect_account.client.set_token(token);
-                            home.connect_account.user = Some(User {
-                                id,
-                                email: "fixture@example.invalid".into(),
-                                email_verified: Some(true),
-                            });
-                            home.connect_account.step =
-                                crate::app::state::connect::account::ConnectFlowStep::Dashboard;
-                            home
-                        };
-                    let source_root = if case == "wrong-root" {
-                        CoincubeDirectory::new(path.join("other"))
-                    } else {
-                        root.clone()
-                    };
-                    let source_provider = if case == "wrong-provider" {
-                        "http://127.0.0.1:2"
-                    } else {
-                        provider
-                    };
-                    let first = ready(source_root, source_provider, 7, "current-session");
-                    let (mut cold, task) =
-                        home::Home::new_for_chain(root.clone(), Some(ChainId::BitcoinBlake2b));
-                    drop(task);
-                    cold.connect_account.client =
-                        crate::services::coincube::CoincubeClient::for_test(provider);
-                    drop(cold.update(home::Message::GlobalFeatureLoaded(0, true)));
-                    if matches!(case, "direct" | "checking" | "active") {
-                        cold.connect_account.client.set_token("direct-session");
-                        cold.connect_account.user = Some(User {
-                            id:7,email:"fixture@example.invalid".into(),email_verified:Some(true),
-                        });
-                        cold.connect_account.step = match case {
-                            "direct" => crate::app::state::connect::account::ConnectFlowStep::Dashboard,
-                            "checking" => crate::app::state::connect::account::ConnectFlowStep::CheckingDuress {
-                                status: crate::app::state::connect::account::DuressGateStatus::Checking,
-                            },
-                            _ => crate::app::state::connect::account::ConnectFlowStep::DuressRecovery {
-                                unlock_at:None,passphrase:String::new(),submitting:false,cleared:false,
-                            },
-                        };
-                        assert!(cold.connect_account.authenticated_client().is_some(),
-                            "raw client presence is not completed account admission");
-                    }
-
-                    let mut pane = pane::Pane::new_with_tab(tab::State::Home(first));
-                    pane.tabs.push(tab::Tab::new(2, tab::State::Home(cold)));
-                    if case.ends_with("conflict") {
-                        pane.tabs.push(tab::Tab::new(
-                            3,
-                            tab::State::Home(ready(
-                                root.clone(),
-                                provider,
-                                if case == "account-conflict" { 8 } else { 7 },
-                                "other-session",
-                            )),
-                        ));
-                    }
-                    let (panes, pane_id) = pane_grid::State::new(pane);
-                    let mut gui = GUI {
-                        panes,
-                        focus: Some(pane_id),
-                        config: Config::new(root.clone(), None),
-                        window_id: None,
-                        window_init: None,
-                        window_config: None,
-                        global_cache: GlobalCache::default(),
-                        theme_mode: Default::default(),
-            system_theme: None,
-            system_reduces_motion: None,
-            preferences_sheet: None,
-            connect_sheet: None,
-            preferences: unresolved_test_preferences(),
-            zoom: ZoomState::default(),
-                worldview_sharing: worldview::Sharing::default(),
-                    };
-                    let mut cube = crate::app::settings::CubeSettings::new(
-                        "Cold fork".into(),
-                        ChainId::BitcoinBlake2b,
-                    );
-                    cube.created_at = 0;
-                    drop(gui.update(Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            2,
-                            tab::Message::Launch(home::Message::Run(
-                                root,
-                                crate::app::Config::new(false),
-                                ChainId::BitcoinBlake2b,
-                                cube,
-                            )),
-                        ),
-                    )));
-                    let pending = &mut gui.panes.get_mut(pane_id).unwrap().tabs[1];
-                    let tab::State::PinEntry(pin) = &mut pending.state else {
-                        panic!("{} must reach PIN", case)
-                    };
-                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
-                        &pin.on_success;
-                    assert_eq!(
-                        connect_client.as_ref().and_then(|client| client.token()),
-                        if case == "direct" {
-                            Some("direct-session")
-                        } else if case == "same" {
-                            Some("current-session")
-                        } else {
-                            None
-                        },
-                        "{}",
-                        case
-                    );
-                    assert!(pin.take_fork_signer().is_none());
-                    if case == "direct" {
-                        // Exercise the actual Home -> PIN candidate. A changed
-                        // server identity must be refused before feature/decrypt work.
-                        assert_eq!(user.hits(), 0);
-                        for (index, digit) in "1234".chars().enumerate() {
-                            drop(pin.update(crate::pin_entry::Message::PinInput(
-                                crate::pin_input::Message::DigitChanged(index,digit.to_string()))));
-                        }
-                        let task = pin.update(crate::pin_entry::Message::Submit);
-                        let messages = runtime.block_on(async {
-                            use iced::futures::StreamExt;
-                            let mut messages = Vec::new();
-                            if let Some(mut stream) = iced_runtime::task::into_stream(task) {
-                                while let Some(action) = stream.next().await {
-                                    if let iced_runtime::Action::Output(message) = action {
-                                        messages.push(message);
-                                    }
-                                }
-                            }
-                            messages
-                        });
-                        for message in messages { drop(pin.update(message)); }
-                        user.assert_hits(1);
-                        feature.assert_hits(0);
-                        assert!(pin.take_fork_signer().is_none());
-                    }
-                    drop(gui);
-                    std::fs::remove_dir_all(path).unwrap();
+                    assert_scoped_home_unlock(&runtime, &provider_url, &user, &feature, case);
                 }
             })
             .unwrap()
@@ -6523,6 +6375,185 @@ mod fork_auth_dispatch_tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    fn assert_scoped_home_unlock(
+        runtime: &tokio::runtime::Runtime,
+        provider: &str,
+        user: &httpmock::Mock<'_>,
+        feature: &httpmock::Mock<'_>,
+        case: &str,
+    ) {
+        let path = std::env::temp_dir().join(format!("cold-home-pin-{}", uuid::Uuid::new_v4()));
+        let root = CoincubeDirectory::new(path.clone());
+        std::fs::create_dir_all(&path).unwrap();
+        crate::app::settings::global::GlobalSettings::update_bitcoin_blake2b_beta(
+            &crate::app::settings::global::GlobalSettings::path(&root),
+            true,
+        )
+        .unwrap();
+        let ready = |source_root: CoincubeDirectory, provider: &str, id: u32, token: &str| {
+            let (mut home, task) = home::Home::new_for_chain(source_root, None);
+            drop(task);
+            home.connect_account.client =
+                crate::services::coincube::CoincubeClient::for_test(provider);
+            home.connect_account.client.set_token(token);
+            home.connect_account.user = Some(User {
+                id,
+                email: "fixture@example.invalid".into(),
+                email_verified: Some(true),
+            });
+            home.connect_account.step =
+                crate::app::state::connect::account::ConnectFlowStep::Dashboard;
+            home
+        };
+        let source_root = if case == "wrong-root" {
+            CoincubeDirectory::new(path.join("other"))
+        } else {
+            root.clone()
+        };
+        let source_provider = if case == "wrong-provider" {
+            "http://127.0.0.1:2"
+        } else {
+            provider
+        };
+        let first = ready(source_root, source_provider, 7, "current-session");
+        let (mut cold, task) =
+            home::Home::new_for_chain(root.clone(), Some(ChainId::BitcoinBlake2b));
+        drop(task);
+        cold.connect_account.client = crate::services::coincube::CoincubeClient::for_test(provider);
+        drop(cold.update(home::Message::GlobalFeatureLoaded(0, true)));
+        if matches!(case, "direct" | "checking" | "active") {
+            cold.connect_account.client.set_token("direct-session");
+            cold.connect_account.user = Some(User {
+                id: 7,
+                email: "fixture@example.invalid".into(),
+                email_verified: Some(true),
+            });
+            cold.connect_account.step = match case {
+                "direct" => crate::app::state::connect::account::ConnectFlowStep::Dashboard,
+                "checking" => {
+                    crate::app::state::connect::account::ConnectFlowStep::CheckingDuress {
+                        status: crate::app::state::connect::account::DuressGateStatus::Checking,
+                    }
+                }
+                _ => crate::app::state::connect::account::ConnectFlowStep::DuressRecovery {
+                    unlock_at: None,
+                    passphrase: String::new(),
+                    submitting: false,
+                    cleared: false,
+                },
+            };
+            assert!(
+                cold.connect_account.authenticated_client().is_some(),
+                "raw client presence is not completed account admission"
+            );
+        }
+
+        let mut pane = pane::Pane::new_with_tab(tab::State::Home(first));
+        pane.tabs.push(tab::Tab::new(2, tab::State::Home(cold)));
+        if case.ends_with("conflict") {
+            pane.tabs.push(tab::Tab::new(
+                3,
+                tab::State::Home(ready(
+                    root.clone(),
+                    provider,
+                    if case == "account-conflict" { 8 } else { 7 },
+                    "other-session",
+                )),
+            ));
+        }
+        let (panes, pane_id) = pane_grid::State::new(pane);
+        let mut gui = GUI {
+            panes,
+            focus: Some(pane_id),
+            config: Config::new(root.clone(), None),
+            window_id: None,
+            window_init: None,
+            window_config: None,
+            global_cache: GlobalCache::default(),
+            theme_mode: Default::default(),
+            system_theme: None,
+            system_reduces_motion: None,
+            preferences_sheet: None,
+            connect_sheet: None,
+            preferences: unresolved_test_preferences(),
+            zoom: ZoomState::default(),
+            worldview_sharing: worldview::Sharing::default(),
+        };
+        let mut cube =
+            crate::app::settings::CubeSettings::new("Cold fork".into(), ChainId::BitcoinBlake2b);
+        cube.created_at = 0;
+        drop(gui.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(
+                2,
+                tab::Message::Launch(home::Message::Run(
+                    root,
+                    crate::app::Config::new(false),
+                    ChainId::BitcoinBlake2b,
+                    cube,
+                )),
+            ),
+        )));
+        let pending = &mut gui.panes.get_mut(pane_id).unwrap().tabs[1];
+        let tab::State::PinEntry(pin) = &mut pending.state else {
+            panic!("{} must reach PIN", case)
+        };
+        let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } = &pin.on_success;
+        assert_eq!(
+            connect_client.as_ref().and_then(|client| client.token()),
+            if case == "direct" {
+                Some("direct-session")
+            } else if case == "same" {
+                Some("current-session")
+            } else {
+                None
+            },
+            "{}",
+            case
+        );
+        assert!(pin.take_fork_signer().is_none());
+        if case == "direct" {
+            assert_changed_user_is_refused(runtime, user, feature, pin);
+        }
+        drop(gui);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    fn assert_changed_user_is_refused(
+        runtime: &tokio::runtime::Runtime,
+        user: &httpmock::Mock<'_>,
+        feature: &httpmock::Mock<'_>,
+        pin: &mut crate::pin_entry::PinEntry,
+    ) {
+        // Exercise the actual Home -> PIN candidate. A changed
+        // server identity must be refused before feature/decrypt work.
+        assert_eq!(user.hits(), 0);
+        for (index, digit) in "1234".chars().enumerate() {
+            drop(pin.update(crate::pin_entry::Message::PinInput(
+                crate::pin_input::Message::DigitChanged(index, digit.to_string()),
+            )));
+        }
+        let task = pin.update(crate::pin_entry::Message::Submit);
+        let messages = runtime.block_on(async {
+            use iced::futures::StreamExt;
+            let mut messages = Vec::new();
+            if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+                while let Some(action) = stream.next().await {
+                    if let iced_runtime::Action::Output(message) = action {
+                        messages.push(message);
+                    }
+                }
+            }
+            messages
+        });
+        for message in messages {
+            drop(pin.update(message));
+        }
+        user.assert_hits(1);
+        feature.assert_hits(0);
+        assert!(pin.take_fork_signer().is_none());
     }
 
     #[test]
