@@ -174,6 +174,165 @@ impl SparkTransactions {
             })
             .collect();
     }
+
+    fn update_transactions(
+        &mut self,
+        cache: &Cache,
+        message: view::SparkTransactionsMessage,
+    ) -> Task<Message> {
+        match message {
+            view::SparkTransactionsMessage::DataLoaded(token, mut payments) => {
+                // Discard a stale response: a newer fetch (reload or
+                // another Prev/Next) has since been dispatched, so
+                // applying this page would show wrong-page data.
+                if token != self.fetch_token {
+                    return Task::none();
+                }
+                self.loading = false;
+                self.processing = false;
+                // Commit the page navigation now that the fetch
+                // succeeded. `pending_page` is `None` for a reload, where
+                // `current_page` was already set to 0 by `reload`.
+                if let Some(page) = self.pending_page.take() {
+                    self.current_page = page;
+                }
+                // `fetch_page` over-fetches one probe row: receiving more
+                // than `PAGE_SIZE` means a further page exists. Trim the
+                // probe row off before display. Because Next is only
+                // offered when the probe row was returned, a committed
+                // non-zero page always has at least one real row.
+                self.is_last_page = (payments.len() as u32) <= PAGE_SIZE;
+                payments.truncate(PAGE_SIZE as usize);
+                self.payments = payments;
+                self.error = None;
+                self.rebuild_rows(cache);
+                self.refresh_selected_payment();
+            }
+            view::SparkTransactionsMessage::Error(token, err) => {
+                // Stale error from a superseded fetch — ignore it so it
+                // can't clear `pending_page` for the newer in-flight
+                // fetch or surface a spurious error.
+                if token != self.fetch_token {
+                    return Task::none();
+                }
+                self.loading = false;
+                self.processing = false;
+                // Discard the in-flight navigation: `current_page` stays
+                // on the page whose data is still displayed.
+                self.pending_page = None;
+                self.error = Some(err);
+            }
+            view::SparkTransactionsMessage::PrevPage => {
+                if self.current_page > 0 && !self.processing {
+                    let target = self.current_page - 1;
+                    self.pending_page = Some(target);
+                    self.processing = true;
+                    return self.fetch_page(target);
+                }
+            }
+            view::SparkTransactionsMessage::NextPage => {
+                if !self.is_last_page && !self.processing {
+                    let target = self.current_page + 1;
+                    self.pending_page = Some(target);
+                    self.processing = true;
+                    return self.fetch_page(target);
+                }
+            }
+            view::SparkTransactionsMessage::Select(idx) => {
+                self.selected_payment = self.recent_transactions.get(idx).cloned();
+            }
+            view::SparkTransactionsMessage::Preselect(payment) => {
+                self.selected_payment = Some(payment);
+            }
+            view::SparkTransactionsMessage::SendBtc => {
+                return redirect(Menu::Spark(SparkSubMenu::Send));
+            }
+            view::SparkTransactionsMessage::ReceiveBtc => {
+                return redirect(Menu::Spark(SparkSubMenu::Receive));
+            }
+        }
+        Task::none()
+    }
+
+    fn update_export(&mut self, message: ImportExportMessage) -> Task<Message> {
+        match message {
+            // Export flow. Mirrors the Liquid transactions handler:
+            // Open → prompt for path → run export → show modal →
+            // user closes.
+            ImportExportMessage::Open => {
+                if matches!(self.modal, SparkTransactionsModal::None) {
+                    return Task::perform(
+                        crate::export::get_path(
+                            format!(
+                                "coincube-spark-txs-{}.csv",
+                                chrono::Local::now().format("%Y-%m-%dT%H-%M-%S")
+                            ),
+                            true,
+                        ),
+                        |path| {
+                            Message::View(view::Message::ImportExport(ImportExportMessage::Path(
+                                path,
+                            )))
+                        },
+                    );
+                }
+            }
+            ImportExportMessage::Path(Some(path)) => {
+                // Only run the export if the user actually opened it
+                // from the Spark panel. If the Liquid panel opened a
+                // modal concurrently it'll have its own handler — but
+                // panels only receive messages while active so this is
+                // safe in practice.
+                let Some(backend) = self.backend.clone() else {
+                    return Task::none();
+                };
+                self.modal = SparkTransactionsModal::Export {
+                    state: ImportExportState::Started,
+                };
+                return Task::perform(
+                    async move {
+                        crate::export::export_spark_payments(
+                            &tokio::sync::mpsc::unbounded_channel().0,
+                            backend,
+                            path,
+                        )
+                        .await
+                    },
+                    |result| {
+                        Message::View(view::Message::ImportExport(ImportExportMessage::Progress(
+                            match result {
+                                Ok(_) => crate::export::Progress::Ended,
+                                Err(e) => crate::export::Progress::Error(e),
+                            },
+                        )))
+                    },
+                );
+            }
+            ImportExportMessage::Path(None) => {
+                self.modal = SparkTransactionsModal::None;
+            }
+            ImportExportMessage::Progress(crate::export::Progress::Ended) => {
+                if matches!(self.modal, SparkTransactionsModal::Export { .. }) {
+                    self.modal = SparkTransactionsModal::Export {
+                        state: ImportExportState::Ended,
+                    };
+                }
+            }
+            ImportExportMessage::Progress(crate::export::Progress::Error(e)) => {
+                if matches!(self.modal, SparkTransactionsModal::Export { .. }) {
+                    self.modal = SparkTransactionsModal::None;
+                    return Task::done(Message::View(view::Message::ShowError(
+                        crate::user_error::report_export(&e),
+                    )));
+                }
+            }
+            ImportExportMessage::Close => {
+                self.modal = SparkTransactionsModal::None;
+            }
+            _ => {}
+        }
+        Task::none()
+    }
 }
 
 impl State for SparkTransactions {
@@ -299,159 +458,15 @@ impl State for SparkTransactions {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::SparkTransactions(msg)) => match msg {
-                view::SparkTransactionsMessage::DataLoaded(token, mut payments) => {
-                    // Discard a stale response: a newer fetch (reload or
-                    // another Prev/Next) has since been dispatched, so
-                    // applying this page would show wrong-page data.
-                    if token != self.fetch_token {
-                        return Task::none();
-                    }
-                    self.loading = false;
-                    self.processing = false;
-                    // Commit the page navigation now that the fetch
-                    // succeeded. `pending_page` is `None` for a reload, where
-                    // `current_page` was already set to 0 by `reload`.
-                    if let Some(page) = self.pending_page.take() {
-                        self.current_page = page;
-                    }
-                    // `fetch_page` over-fetches one probe row: receiving more
-                    // than `PAGE_SIZE` means a further page exists. Trim the
-                    // probe row off before display. Because Next is only
-                    // offered when the probe row was returned, a committed
-                    // non-zero page always has at least one real row.
-                    self.is_last_page = (payments.len() as u32) <= PAGE_SIZE;
-                    payments.truncate(PAGE_SIZE as usize);
-                    self.payments = payments;
-                    self.error = None;
-                    self.rebuild_rows(cache);
-                    self.refresh_selected_payment();
-                }
-                view::SparkTransactionsMessage::Error(token, err) => {
-                    // Stale error from a superseded fetch — ignore it so it
-                    // can't clear `pending_page` for the newer in-flight
-                    // fetch or surface a spurious error.
-                    if token != self.fetch_token {
-                        return Task::none();
-                    }
-                    self.loading = false;
-                    self.processing = false;
-                    // Discard the in-flight navigation: `current_page` stays
-                    // on the page whose data is still displayed.
-                    self.pending_page = None;
-                    self.error = Some(err);
-                }
-                view::SparkTransactionsMessage::PrevPage => {
-                    if self.current_page > 0 && !self.processing {
-                        let target = self.current_page - 1;
-                        self.pending_page = Some(target);
-                        self.processing = true;
-                        return self.fetch_page(target);
-                    }
-                }
-                view::SparkTransactionsMessage::NextPage => {
-                    if !self.is_last_page && !self.processing {
-                        let target = self.current_page + 1;
-                        self.pending_page = Some(target);
-                        self.processing = true;
-                        return self.fetch_page(target);
-                    }
-                }
-                view::SparkTransactionsMessage::Select(idx) => {
-                    self.selected_payment = self.recent_transactions.get(idx).cloned();
-                }
-                view::SparkTransactionsMessage::Preselect(payment) => {
-                    self.selected_payment = Some(payment);
-                }
-                view::SparkTransactionsMessage::SendBtc => {
-                    return redirect(Menu::Spark(SparkSubMenu::Send));
-                }
-                view::SparkTransactionsMessage::ReceiveBtc => {
-                    return redirect(Menu::Spark(SparkSubMenu::Receive));
-                }
-            },
+            Message::View(view::Message::SparkTransactions(msg)) => {
+                return self.update_transactions(cache, msg);
+            }
             // Detail pane's back button emits `Message::Close`. Clear
             // the selection so the next render falls back to the list.
             Message::View(view::Message::Close) => {
                 self.selected_payment = None;
             }
-            // Export flow. Mirrors the Liquid transactions handler:
-            // Open → prompt for path → run export → show modal →
-            // user closes.
-            Message::View(view::Message::ImportExport(ImportExportMessage::Open)) => {
-                if matches!(self.modal, SparkTransactionsModal::None) {
-                    return Task::perform(
-                        crate::export::get_path(
-                            format!(
-                                "coincube-spark-txs-{}.csv",
-                                chrono::Local::now().format("%Y-%m-%dT%H-%M-%S")
-                            ),
-                            true,
-                        ),
-                        |path| {
-                            Message::View(view::Message::ImportExport(ImportExportMessage::Path(
-                                path,
-                            )))
-                        },
-                    );
-                }
-            }
-            Message::View(view::Message::ImportExport(ImportExportMessage::Path(Some(path)))) => {
-                // Only run the export if the user actually opened it
-                // from the Spark panel. If the Liquid panel opened a
-                // modal concurrently it'll have its own handler — but
-                // panels only receive messages while active so this is
-                // safe in practice.
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                self.modal = SparkTransactionsModal::Export {
-                    state: ImportExportState::Started,
-                };
-                return Task::perform(
-                    async move {
-                        crate::export::export_spark_payments(
-                            &tokio::sync::mpsc::unbounded_channel().0,
-                            backend,
-                            path,
-                        )
-                        .await
-                    },
-                    |result| {
-                        Message::View(view::Message::ImportExport(ImportExportMessage::Progress(
-                            match result {
-                                Ok(_) => crate::export::Progress::Ended,
-                                Err(e) => crate::export::Progress::Error(e),
-                            },
-                        )))
-                    },
-                );
-            }
-            Message::View(view::Message::ImportExport(ImportExportMessage::Path(None))) => {
-                self.modal = SparkTransactionsModal::None;
-            }
-            Message::View(view::Message::ImportExport(ImportExportMessage::Progress(
-                crate::export::Progress::Ended,
-            ))) => {
-                if matches!(self.modal, SparkTransactionsModal::Export { .. }) {
-                    self.modal = SparkTransactionsModal::Export {
-                        state: ImportExportState::Ended,
-                    };
-                }
-            }
-            Message::View(view::Message::ImportExport(ImportExportMessage::Progress(
-                crate::export::Progress::Error(e),
-            ))) => {
-                if matches!(self.modal, SparkTransactionsModal::Export { .. }) {
-                    self.modal = SparkTransactionsModal::None;
-                    return Task::done(Message::View(view::Message::ShowError(
-                        crate::user_error::report_export(&e),
-                    )));
-                }
-            }
-            Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
-                self.modal = SparkTransactionsModal::None;
-            }
+            Message::View(view::Message::ImportExport(msg)) => return self.update_export(msg),
             _ => {}
         }
         Task::none()
