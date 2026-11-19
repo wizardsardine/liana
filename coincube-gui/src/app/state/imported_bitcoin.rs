@@ -2471,6 +2471,16 @@ impl ImportedBitcoinPanel {
         {
             return Task::none();
         }
+        let due = self.next_automatic_device_check(device_for);
+        due.map_or_else(Task::none, |index| self.check_device(index))
+    }
+
+    fn next_automatic_device_check<'a>(
+        &mut self,
+        device_for: impl Fn(
+            coincube_core::miniscript::bitcoin::bip32::Fingerprint,
+        ) -> Option<&'a String>,
+    ) -> Option<usize> {
         // Past the threshold a key is not needed: its device is checked
         // only on Check device, so Review stays open.
         let enough = self
@@ -2480,25 +2490,24 @@ impl ImportedBitcoinPanel {
         // One check at a time, so a device never has two requests waiting
         // on it; the next starts when this one lands.
         let busy = self.keys.as_ref().is_some_and(KeysState::checking);
-        let mut due = None;
-        if let Some(keys) = &mut self.keys {
-            for (index, slot) in keys.slots.iter_mut().enumerate() {
-                let device = device_for(slot.account.fingerprint);
-                // A failed check is tried again only on a fresh connection.
-                let waiting = slot.status == KeyStatus::Missing
-                    || (matches!(slot.status, KeyStatus::Failed(_)) && slot.auto_checked.is_none());
-                if slot.source != KeySource::Hardware || !waiting {
-                    continue;
-                }
-                if let Some(id) = device {
-                    if !busy && !enough && due.is_none() && slot.auto_checked.as_ref() != Some(id) {
-                        slot.auto_checked = Some(id.clone());
-                        due = Some(index);
-                    }
-                }
+        if busy || enough {
+            return None;
+        }
+        let keys = self.keys.as_mut()?;
+        for (index, slot) in keys.slots.iter_mut().enumerate() {
+            let device = device_for(slot.account.fingerprint);
+            // A failed check is tried again only on a fresh connection.
+            let waiting = slot.status == KeyStatus::Missing
+                || (matches!(slot.status, KeyStatus::Failed(_)) && slot.auto_checked.is_none());
+            if slot.source != KeySource::Hardware || !waiting {
+                continue;
+            }
+            if let Some(id) = device.filter(|id| slot.auto_checked.as_ref() != Some(*id)) {
+                slot.auto_checked = Some(id.clone());
+                return Some(index);
             }
         }
-        due.map_or_else(Task::none, |index| self.check_device(index))
+        None
     }
 
     /// The device list for the Keys step, before the wallet is installed.
