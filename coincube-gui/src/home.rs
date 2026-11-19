@@ -7,7 +7,11 @@ use iced::{
     Alignment, Length, Subscription, Task,
 };
 
-use coincube_core::{bip39, miniscript::bitcoin::Network};
+use coincube_core::{
+    bip39,
+    miniscript::bitcoin::{secp256k1, Network},
+    seed_crypt::DeviceSecret,
+};
 use coincube_ui::{
     component::{button, card, notification, spinner, text::*},
     icon, image, theme,
@@ -3142,16 +3146,7 @@ impl Home {
             async move {
                 // Same device-secret mint + refusal as the
                 // non-recovery path above.
-                let device_secret = match unlock::device_secret::capability() {
-                    unlock::device_secret::Capability::Available => Some(
-                        unlock::device_secret::get_or_create(
-                            datadir_path.path(),
-                            &cube_id.to_string(),
-                        )
-                        .map_err(|e| e.to_string())?,
-                    ),
-                    unlock::device_secret::Capability::Unavailable(why) => return Err(why),
-                };
+                let device_secret = Self::require_pin_cube_device_secret(&datadir_path, cube_id)?;
 
                 // Restore MasterSigner from recovery mnemonic
                 let master_signer =
@@ -3170,21 +3165,15 @@ impl Home {
 
                 // One timestamp for the seed file and the Cube
                 // — see the note on the non-recovery path (X7).
-                let timestamp = chrono::Utc::now().timestamp();
-                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                // Store master seed mnemonic encrypted with PIN (always required)
-                master_signer
-                    .store_encrypted_for_chain(
-                        datadir_path.path(),
-                        network,
-                        &secp,
-                        Some((master_checksum, timestamp)),
-                        &pin,
-                        &cube_id.to_string(),
-                        device_secret.as_ref(),
-                    )
-                    .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+                let timestamp = Self::store_pin_cube_master_seed(
+                    &master_signer,
+                    &datadir_path,
+                    network,
+                    &secp,
+                    &pin,
+                    cube_id,
+                    &device_secret,
+                )?;
 
                 tracing::info!(
                     "Master signer created and stored (encrypted with PIN) with fingerprint: {}",
@@ -3201,17 +3190,14 @@ impl Home {
                 cube.created_at = timestamp;
                 // The Cube's second slot, written at creation —
                 // see the note on the non-recovery path (6b).
-                let slot_name = unlock::marker::new_file_name(timestamp);
-                match unlock::marker::write_decoy(
-                    datadir_path.path(),
+                Self::write_pin_cube_decoy(
+                    &mut cube,
+                    &datadir_path,
                     network,
-                    &cube_id.to_string(),
-                    &slot_name,
-                    device_secret.as_ref(),
-                ) {
-                    Ok(()) => cube.duress_slot_file = Some(slot_name),
-                    Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
-                }
+                    cube_id,
+                    timestamp,
+                    &device_secret,
+                );
                 // Reaching here means the user typed all twelve
                 // words of this seed back into the app and they
                 // passed the BIP39 checksum. That *is* the
@@ -5390,16 +5376,7 @@ impl Home {
                 // to PIN-only. A user who believes they have
                 // two-factor protection and has one factor is worse
                 // off than a user who was told the truth (I7).
-                let device_secret = match unlock::device_secret::capability() {
-                    unlock::device_secret::Capability::Available => Some(
-                        unlock::device_secret::get_or_create(
-                            datadir_path.path(),
-                            &cube_id.to_string(),
-                        )
-                        .map_err(|e| e.to_string())?,
-                    ),
-                    unlock::device_secret::Capability::Unavailable(why) => return Err(why),
-                };
+                let device_secret = Self::require_pin_cube_device_secret(&datadir_path, cube_id)?;
 
                 // Rebuild the signer from the phrase the user was just shown.
                 // Same call the recovery path makes, so "what the user wrote
@@ -5441,21 +5418,15 @@ impl Home {
                 //
                 // Taking it once removes both. `cube.created_at` is overwritten
                 // with this value below.
-                let timestamp = chrono::Utc::now().timestamp();
-                let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
-
-                // Store master seed mnemonic encrypted with PIN
-                master_signer
-                    .store_encrypted_for_chain(
-                        datadir_path.path(),
-                        network,
-                        &secp,
-                        Some((master_checksum, timestamp)),
-                        &pin,
-                        &cube_id.to_string(),
-                        device_secret.as_ref(),
-                    )
-                    .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+                let timestamp = Self::store_pin_cube_master_seed(
+                    &master_signer,
+                    &datadir_path,
+                    network,
+                    &secp,
+                    &pin,
+                    cube_id,
+                    &device_secret,
+                )?;
 
                 tracing::info!(
                     "Master signer created and stored (encrypted with PIN) \
@@ -5490,17 +5461,14 @@ impl Home {
                 // surfaced — telling the user "the duress decoy failed" on a
                 // machine with no duress enrolled would leak more than the
                 // missing file does.
-                let slot_name = unlock::marker::new_file_name(timestamp);
-                match unlock::marker::write_decoy(
-                    datadir_path.path(),
+                Self::write_pin_cube_decoy(
+                    &mut cube,
+                    &datadir_path,
                     network,
-                    &cube_id.to_string(),
-                    &slot_name,
-                    device_secret.as_ref(),
-                ) {
-                    Ok(()) => cube.duress_slot_file = Some(slot_name),
-                    Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
-                }
+                    cube_id,
+                    timestamp,
+                    &device_secret,
+                );
                 // The outcome of the backup step above. `backed_up` is the
                 // same flag Settings → Backup Master Seed sets, and it is what
                 // satisfies `creation_gate::evaluate`.
@@ -5539,6 +5507,65 @@ impl Home {
             },
             Message::CubeCreated,
         )
+    }
+
+    fn require_pin_cube_device_secret(
+        datadir_path: &CoincubeDirectory,
+        cube_id: uuid::Uuid,
+    ) -> Result<DeviceSecret, String> {
+        match unlock::device_secret::capability() {
+            unlock::device_secret::Capability::Available => {
+                unlock::device_secret::get_or_create(datadir_path.path(), &cube_id.to_string())
+                    .map_err(|e| e.to_string())
+            }
+            unlock::device_secret::Capability::Unavailable(why) => Err(why),
+        }
+    }
+
+    fn store_pin_cube_master_seed(
+        master_signer: &MasterSigner,
+        datadir_path: &CoincubeDirectory,
+        network: ChainId,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        pin: &str,
+        cube_id: uuid::Uuid,
+        device_secret: &DeviceSecret,
+    ) -> Result<i64, String> {
+        let timestamp = chrono::Utc::now().timestamp();
+        let master_checksum = format!("{}{}", MASTER_SEED_LABEL, timestamp);
+        master_signer
+            .store_encrypted_for_chain(
+                datadir_path.path(),
+                network,
+                secp,
+                Some((master_checksum, timestamp)),
+                pin,
+                &cube_id.to_string(),
+                Some(device_secret),
+            )
+            .map_err(|e| format!("Failed to store master seed mnemonic: {}", e))?;
+        Ok(timestamp)
+    }
+
+    fn write_pin_cube_decoy(
+        cube: &mut CubeSettings,
+        datadir_path: &CoincubeDirectory,
+        network: ChainId,
+        cube_id: uuid::Uuid,
+        timestamp: i64,
+        device_secret: &DeviceSecret,
+    ) {
+        let slot_name = unlock::marker::new_file_name(timestamp);
+        match unlock::marker::write_decoy(
+            datadir_path.path(),
+            network,
+            &cube_id.to_string(),
+            &slot_name,
+            Some(device_secret),
+        ) {
+            Ok(()) => cube.duress_slot_file = Some(slot_name),
+            Err(e) => tracing::warn!("could not write the Cube's second slot: {}", e),
+        }
     }
 
     fn creation_form(&self, submit_in_form: bool) -> Element<ViewMessage> {
