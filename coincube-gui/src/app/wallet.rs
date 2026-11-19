@@ -629,19 +629,23 @@ impl Wallet {
                 }
             }
         } else {
-            self.main_descriptor
-                .receive_descriptor()
-                .as_descriptor()
-                .for_each_key(|key| {
-                    if let DescriptorPublicKey::XPub(xpub) = key {
-                        if let Some((fingerprint, _)) = &xpub.origin {
-                            descriptor_keys.insert(*fingerprint);
-                        }
-                    }
-                    true
-                });
+            self.collect_receive_descriptor_keys(&mut descriptor_keys);
         }
         descriptor_keys
+    }
+
+    fn collect_receive_descriptor_keys(&self, descriptor_keys: &mut HashSet<Fingerprint>) {
+        self.main_descriptor
+            .receive_descriptor()
+            .as_descriptor()
+            .for_each_key(|key| {
+                if let DescriptorPublicKey::XPub(xpub) = key {
+                    if let Some((fingerprint, _)) = &xpub.origin {
+                        descriptor_keys.insert(*fingerprint);
+                    }
+                }
+                true
+            });
     }
 
     pub fn load_from_settings(self, wallet_settings: WalletSettings) -> Result<Self, WalletError> {
