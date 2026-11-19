@@ -1080,7 +1080,7 @@ impl State for GlobalHome {
                     }
                     HomeMessage::ContinueWithCube => self.continue_to_other_cube_unlock(cache),
                     HomeMessage::PickOtherCubeWallet(cube_id, kind) => {
-                        self.pick_other_cube_wallet(&daemon, cache, cube_id, kind)
+                        self.pick_other_cube_wallet(cache, cube_id, kind)
                     }
                     HomeMessage::OtherCubePin(message) => self.update_other_cube_pin(message),
                     HomeMessage::UnlockOtherCube => self.begin_other_cube_pin(cache),
@@ -3223,7 +3223,6 @@ impl GlobalHome {
 
     fn pick_other_cube_wallet(
         &mut self,
-        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         cube_id: String,
         kind: WalletKind,
@@ -3271,11 +3270,7 @@ impl GlobalHome {
         self.transfer_page = TransferPage::OtherCube;
         self.other_cube_selected = Some(cube_id);
         self.select_other_wallet(kind, cache);
-        self.update(
-            daemon.clone(),
-            cache,
-            Message::View(view::Message::Home(HomeMessage::ContinueWithCube)),
-        )
+        self.continue_to_other_cube_unlock(cache)
     }
 
     fn leave_transfer(
