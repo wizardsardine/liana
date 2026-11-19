@@ -310,152 +310,7 @@ mod seed_export_duress_gui_tests {
                 let _enter = runtime.enter();
                 let _guard = crate::app::session::test_guard();
                 for reopen in [false, true] {
-                    crate::app::session::close();
-                    let path = std::env::temp_dir().join(format!(
-                        "delayed-unlock-duress-{}-{}",
-                        reopen,
-                        uuid::Uuid::new_v4()
-                    ));
-                    let (source, _) = crate::app::shell_tests::bitcoin_app(&path);
-                    let cube = source.cube_settings().clone();
-                    let root = source.datadir().clone();
-                    let (home, startup) = home::Home::new_for_chain(root.clone(), None);
-                    drop(startup);
-                    let (mut gui, pane_id) = GUI::reviewer_split_app_home_gui(source, home);
-                    let sibling_pane = gui.focus.unwrap();
-                    let pin = crate::pin_entry::PinEntry::new(
-                        cube.clone(),
-                        path.clone(),
-                        crate::pin_entry::PinEntrySuccess::LoadApp {
-                            datadir: root.clone(),
-                            config: crate::app::Config::new(false),
-                            network: bitcoin::Network::Bitcoin,
-                            internal_bitcoind: None,
-                            backup: None,
-                            wallet_settings: None,
-                            connect_client: None,
-                        },
-                        None,
-                    );
-                    let old_generation = pin.reviewer_trial_generation();
-                    gui.panes.get_mut(pane_id).unwrap().tabs[0].state = tab::State::PinEntry(pin);
-
-                    let (mut revealing, _) = crate::app::shell_tests::bitcoin_app(&path);
-                    revealing.reviewer_show_seed_phrase_for_test();
-                    let pane = gui.panes.get_mut(sibling_pane).unwrap();
-                    pane.tabs.push(tab::Tab::new(3, tab::State::App(revealing)));
-                    pane.focused_tab = 1;
-                    crate::app::session::open(
-                        "foreground-seed-reveal",
-                        zeroize::Zeroizing::new("2468".into()),
-                    );
-
-                    let proof = crate::pin_entry::VerifiedUnlockDuress::for_test(
-                        path.clone(),
-                        cube.id.clone(),
-                        cube.network,
-                    );
-                    let (release, delayed) = tokio::sync::oneshot::channel();
-                    let pending_classifier =
-                        Task::perform(async move { delayed.await.unwrap() }, move |proof| {
-                            Message::Pane(
-                                pane_id,
-                                pane::Message::tab(
-                                    1,
-                                    tab::Message::PinEntry(crate::pin_entry::Message::Classified(
-                                        old_generation,
-                                        Ok(crate::pin_entry::Verdict::Duress(proof)),
-                                    )),
-                                ),
-                            )
-                        });
-                    drop(gui.update(Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            1,
-                            tab::Message::PinEntry(crate::pin_entry::Message::Back),
-                        ),
-                    )));
-                    assert!(matches!(
-                        gui.panes.get(pane_id).unwrap().tabs[0].state,
-                        tab::State::Home(_)
-                    ));
-
-                    if reopen {
-                        let mut new_cube = cube.clone();
-                        new_cube.id = "reopened-different-cube".into();
-                        let mut reopened = crate::pin_entry::PinEntry::new(
-                            new_cube,
-                            path.clone(),
-                            crate::pin_entry::PinEntrySuccess::LoadApp {
-                                datadir: root,
-                                config: crate::app::Config::new(false),
-                                network: bitcoin::Network::Bitcoin,
-                                internal_bitcoind: None,
-                                backup: None,
-                                wallet_settings: None,
-                                connect_client: None,
-                            },
-                            None,
-                        );
-                        assert_ne!(reopened.reviewer_trial_generation(), old_generation);
-                        for (index, digit) in "1234".chars().enumerate() {
-                            drop(reopened.update(crate::pin_entry::Message::PinInput(
-                                crate::pin_input::Message::DigitChanged(index, digit.to_string()),
-                            )));
-                        }
-                        drop(reopened.update(crate::pin_entry::Message::Submit));
-                        assert!(reopened.is_loading());
-                        gui.panes.get_mut(pane_id).unwrap().tabs[0].state =
-                            tab::State::PinEntry(reopened);
-                    }
-
-                    // An old ordinary Unlock cannot advance the new PinEntry
-                    // or write a signer into the foreground Cube's session.
-                    drop(gui.update(Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            1,
-                            tab::Message::PinEntry(crate::pin_entry::Message::Classified(
-                                old_generation,
-                                Ok(crate::pin_entry::Verdict::Unlock),
-                            )),
-                        ),
-                    )));
-                    if reopen {
-                        let tab::State::PinEntry(pin) =
-                            &gui.panes.get(pane_id).unwrap().tabs[0].state
-                        else {
-                            panic!("old ordinary verdict changed the new PIN entry")
-                        };
-                        assert!(pin.is_loading());
-                    }
-                    assert_eq!(
-                        crate::app::session::current_cube_id().as_deref(),
-                        Some("foreground-seed-reveal")
-                    );
-
-                    release.send(proof).unwrap();
-                    let delivered = runtime.block_on(async {
-                        let mut stream =
-                            iced_runtime::task::into_stream(pending_classifier).unwrap();
-                        while let Some(action) = stream.next().await {
-                            if let iced_runtime::Action::Output(message) = action {
-                                return message;
-                            }
-                        }
-                        panic!("held classifier did not deliver")
-                    });
-                    let pending_activation = gui.update(delivered);
-                    let pane = gui.panes.get(pane_id).unwrap();
-                    assert_eq!(pane.tabs.len(), 1);
-                    assert!(matches!(pane.tabs[0].state, tab::State::DuressActive(_)));
-                    assert_eq!(gui.focus, Some(pane_id));
-                    assert_eq!(gui.panes.iter().count(), 1);
-                    assert!(!crate::app::session::is_open());
-                    drop(pending_activation);
-                    drop(gui);
-                    std::fs::remove_dir_all(path).ok();
+                    assert_delayed_classifier_duress(&runtime, reopen);
                 }
             })
             .unwrap()
@@ -463,6 +318,148 @@ mod seed_export_duress_gui_tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    fn assert_delayed_classifier_duress(runtime: &tokio::runtime::Runtime, reopen: bool) {
+        crate::app::session::close();
+        let path = std::env::temp_dir().join(format!(
+            "delayed-unlock-duress-{}-{}",
+            reopen,
+            uuid::Uuid::new_v4()
+        ));
+        let (source, _) = crate::app::shell_tests::bitcoin_app(&path);
+        let cube = source.cube_settings().clone();
+        let root = source.datadir().clone();
+        let (home, startup) = home::Home::new_for_chain(root.clone(), None);
+        drop(startup);
+        let (mut gui, pane_id) = GUI::reviewer_split_app_home_gui(source, home);
+        let sibling_pane = gui.focus.unwrap();
+        let pin = crate::pin_entry::PinEntry::new(
+            cube.clone(),
+            path.clone(),
+            crate::pin_entry::PinEntrySuccess::LoadApp {
+                datadir: root.clone(),
+                config: crate::app::Config::new(false),
+                network: bitcoin::Network::Bitcoin,
+                internal_bitcoind: None,
+                backup: None,
+                wallet_settings: None,
+                connect_client: None,
+            },
+            None,
+        );
+        let old_generation = pin.reviewer_trial_generation();
+        gui.panes.get_mut(pane_id).unwrap().tabs[0].state = tab::State::PinEntry(pin);
+
+        let (mut revealing, _) = crate::app::shell_tests::bitcoin_app(&path);
+        revealing.reviewer_show_seed_phrase_for_test();
+        let pane = gui.panes.get_mut(sibling_pane).unwrap();
+        pane.tabs.push(tab::Tab::new(3, tab::State::App(revealing)));
+        pane.focused_tab = 1;
+        crate::app::session::open(
+            "foreground-seed-reveal",
+            zeroize::Zeroizing::new("2468".into()),
+        );
+
+        let proof = crate::pin_entry::VerifiedUnlockDuress::for_test(
+            path.clone(),
+            cube.id.clone(),
+            cube.network,
+        );
+        let (release, delayed) = tokio::sync::oneshot::channel();
+        let pending_classifier =
+            Task::perform(async move { delayed.await.unwrap() }, move |proof| {
+                Message::Pane(
+                    pane_id,
+                    pane::Message::tab(
+                        1,
+                        tab::Message::PinEntry(crate::pin_entry::Message::Classified(
+                            old_generation,
+                            Ok(crate::pin_entry::Verdict::Duress(proof)),
+                        )),
+                    ),
+                )
+            });
+        drop(gui.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(1, tab::Message::PinEntry(crate::pin_entry::Message::Back)),
+        )));
+        assert!(matches!(
+            gui.panes.get(pane_id).unwrap().tabs[0].state,
+            tab::State::Home(_)
+        ));
+
+        if reopen {
+            let mut new_cube = cube.clone();
+            new_cube.id = "reopened-different-cube".into();
+            let mut reopened = crate::pin_entry::PinEntry::new(
+                new_cube,
+                path.clone(),
+                crate::pin_entry::PinEntrySuccess::LoadApp {
+                    datadir: root,
+                    config: crate::app::Config::new(false),
+                    network: bitcoin::Network::Bitcoin,
+                    internal_bitcoind: None,
+                    backup: None,
+                    wallet_settings: None,
+                    connect_client: None,
+                },
+                None,
+            );
+            assert_ne!(reopened.reviewer_trial_generation(), old_generation);
+            for (index, digit) in "1234".chars().enumerate() {
+                drop(reopened.update(crate::pin_entry::Message::PinInput(
+                    crate::pin_input::Message::DigitChanged(index, digit.to_string()),
+                )));
+            }
+            drop(reopened.update(crate::pin_entry::Message::Submit));
+            assert!(reopened.is_loading());
+            gui.panes.get_mut(pane_id).unwrap().tabs[0].state = tab::State::PinEntry(reopened);
+        }
+
+        // An old ordinary Unlock cannot advance the new PinEntry
+        // or write a signer into the foreground Cube's session.
+        drop(gui.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(
+                1,
+                tab::Message::PinEntry(crate::pin_entry::Message::Classified(
+                    old_generation,
+                    Ok(crate::pin_entry::Verdict::Unlock),
+                )),
+            ),
+        )));
+        if reopen {
+            let tab::State::PinEntry(pin) = &gui.panes.get(pane_id).unwrap().tabs[0].state else {
+                panic!("old ordinary verdict changed the new PIN entry")
+            };
+            assert!(pin.is_loading());
+        }
+        assert_eq!(
+            crate::app::session::current_cube_id().as_deref(),
+            Some("foreground-seed-reveal")
+        );
+
+        release.send(proof).unwrap();
+        let delivered = runtime.block_on(async {
+            let mut stream = iced_runtime::task::into_stream(pending_classifier).unwrap();
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    return message;
+                }
+            }
+            panic!("held classifier did not deliver")
+        });
+        let pending_activation = gui.update(delivered);
+        let pane = gui.panes.get(pane_id).unwrap();
+        assert_eq!(pane.tabs.len(), 1);
+        assert!(matches!(pane.tabs[0].state, tab::State::DuressActive(_)));
+        assert_eq!(gui.focus, Some(pane_id));
+        assert_eq!(gui.panes.iter().count(), 1);
+        assert!(!crate::app::session::is_open());
+        drop(pending_activation);
+        drop(gui);
+        std::fs::remove_dir_all(path).ok();
     }
 
     #[test]
@@ -1796,96 +1793,116 @@ impl GUI {
                 self.close_connect_sheet()
             }
             ConnectSheetMessage::SelectSection(section) => {
-                let origin = sheet.origin.clone();
-                let was_duress = matches!(
-                    sheet.page,
-                    ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                );
-                let section = if section == ConnectSheetSection::Duress
-                    && !self
-                        .connect_panel(&origin)
-                        .is_some_and(|account| account.is_authenticated() && account.show_duress())
-                {
-                    ConnectSheetSection::Account
-                } else {
-                    section
-                };
-                if was_duress && section != ConnectSheetSection::Duress {
-                    self.scrub_connect_sheet_duress(&origin);
-                }
-                if let Some(sheet) = &mut self.connect_sheet {
-                    sheet.page = ConnectSheetPage::Sections(section);
-                }
-                self.load_connect_section(&origin, section)
+                let (origin, was_duress) = Self::connect_sheet_route(sheet);
+                self.select_connect_sheet_section(origin, was_duress, section)
             }
             ConnectSheetMessage::OpenAuthentication { create_account } => {
-                if matches!(
-                    sheet.page,
-                    ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                ) {
-                    let origin = sheet.origin.clone();
-                    self.scrub_connect_sheet_duress(&origin);
-                }
-                if let Some(sheet) = &mut self.connect_sheet {
-                    sheet.page = ConnectSheetPage::Authentication;
-                }
-                let update =
-                    self.connect_sheet_message(ConnectSheetMessage::Account(if create_account {
-                        crate::app::view::ConnectAccountMessage::CreateAccount
-                    } else {
-                        crate::app::view::ConnectAccountMessage::Init
-                    }));
-                Task::batch([
-                    update,
-                    iced_runtime::task::widget(
-                        iced::advanced::widget::operation::focusable::focus(
-                            iced::advanced::widget::Id::new(
-                                crate::app::view::connect::EMAIL_INPUT_ID,
-                            ),
-                        ),
-                    ),
-                ])
+                let (origin, was_duress) = Self::connect_sheet_route(sheet);
+                self.open_connect_sheet_authentication(origin, was_duress, create_account)
             }
             ConnectSheetMessage::Account(message) => {
-                let origin = sheet.origin.clone();
-                let plan_navigation = matches!(
-                    &message,
-                    crate::app::view::ConnectAccountMessage::OpenPlanBilling
-                        | crate::app::view::ConnectAccountMessage::ComparePlans(_)
-                        | crate::app::view::ConnectAccountMessage::RenewCurrentPlan
-                );
-                if plan_navigation
-                    && matches!(
-                        sheet.page,
-                        ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                    )
-                {
-                    self.scrub_connect_sheet_duress(&origin);
-                }
-                let inner = match origin.source {
-                    tab::PreferencesSource::Home => {
-                        tab::Message::Launch(home::Message::View(if plan_navigation {
-                            home::ViewMessage::ConnectSheetAccount(message)
-                        } else {
-                            home::ViewMessage::ConnectAccount(message)
-                        }))
-                    }
-                    tab::PreferencesSource::App(_) => tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::ConnectAccount(message),
-                    )),
-                };
-                let task = self.update(Message::Pane(
-                    origin.pane,
-                    pane::Message::tab(origin.tab_id, inner),
-                ));
-                if plan_navigation && self.overlay_origin_is_current(&origin) {
-                    if let Some(sheet) = &mut self.connect_sheet {
-                        sheet.page = ConnectSheetPage::Sections(ConnectSheetSection::PlanBilling);
-                    }
-                }
-                task
+                let (origin, was_duress) = Self::connect_sheet_route(sheet);
+                self.dispatch_connect_sheet_account(origin, was_duress, message)
             }
         }
+    }
+
+    fn connect_sheet_route(sheet: &ConnectSheet) -> (OverlayOrigin, bool) {
+        (
+            sheet.origin.clone(),
+            matches!(
+                sheet.page,
+                ConnectSheetPage::Sections(ConnectSheetSection::Duress)
+            ),
+        )
+    }
+
+    fn select_connect_sheet_section(
+        &mut self,
+        origin: OverlayOrigin,
+        was_duress: bool,
+        section: ConnectSheetSection,
+    ) -> Task<Message> {
+        let section = if section == ConnectSheetSection::Duress
+            && !self
+                .connect_panel(&origin)
+                .is_some_and(|account| account.is_authenticated() && account.show_duress())
+        {
+            ConnectSheetSection::Account
+        } else {
+            section
+        };
+        if was_duress && section != ConnectSheetSection::Duress {
+            self.scrub_connect_sheet_duress(&origin);
+        }
+        if let Some(sheet) = &mut self.connect_sheet {
+            sheet.page = ConnectSheetPage::Sections(section);
+        }
+        self.load_connect_section(&origin, section)
+    }
+
+    fn open_connect_sheet_authentication(
+        &mut self,
+        origin: OverlayOrigin,
+        was_duress: bool,
+        create_account: bool,
+    ) -> Task<Message> {
+        if was_duress {
+            self.scrub_connect_sheet_duress(&origin);
+        }
+        if let Some(sheet) = &mut self.connect_sheet {
+            sheet.page = ConnectSheetPage::Authentication;
+        }
+        let update = self.connect_sheet_message(ConnectSheetMessage::Account(if create_account {
+            crate::app::view::ConnectAccountMessage::CreateAccount
+        } else {
+            crate::app::view::ConnectAccountMessage::Init
+        }));
+        Task::batch([
+            update,
+            iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(
+                iced::advanced::widget::Id::new(crate::app::view::connect::EMAIL_INPUT_ID),
+            )),
+        ])
+    }
+
+    fn dispatch_connect_sheet_account(
+        &mut self,
+        origin: OverlayOrigin,
+        was_duress: bool,
+        message: crate::app::view::ConnectAccountMessage,
+    ) -> Task<Message> {
+        let plan_navigation = matches!(
+            &message,
+            crate::app::view::ConnectAccountMessage::OpenPlanBilling
+                | crate::app::view::ConnectAccountMessage::ComparePlans(_)
+                | crate::app::view::ConnectAccountMessage::RenewCurrentPlan
+        );
+        if plan_navigation && was_duress {
+            self.scrub_connect_sheet_duress(&origin);
+        }
+        let inner = match origin.source {
+            tab::PreferencesSource::Home => {
+                tab::Message::Launch(home::Message::View(if plan_navigation {
+                    home::ViewMessage::ConnectSheetAccount(message)
+                } else {
+                    home::ViewMessage::ConnectAccount(message)
+                }))
+            }
+            tab::PreferencesSource::App(_) => tab::Message::Run(AppMessage::View(
+                crate::app::view::Message::ConnectAccount(message),
+            )),
+        };
+        let task = self.update(Message::Pane(
+            origin.pane,
+            pane::Message::tab(origin.tab_id, inner),
+        ));
+        if plan_navigation && self.overlay_origin_is_current(&origin) {
+            if let Some(sheet) = &mut self.connect_sheet {
+                sheet.page = ConnectSheetPage::Sections(ConnectSheetSection::PlanBilling);
+            }
+        }
+        task
     }
 
     fn scrub_connect_sheet_duress(&mut self, origin: &OverlayOrigin) {
@@ -2015,6 +2032,16 @@ impl GUI {
         task.map(move |message| Message::Pane(pane_id, pane::Message::tab(tab_id, message)))
     }
 
+    fn select_preferences_section(&mut self, section: PreferencesSection) -> Task<Message> {
+        if let Some(sheet) = &mut self.preferences_sheet {
+            sheet.page.select(section);
+        }
+        if section == PreferencesSection::About {
+            return self.load_about_versions();
+        }
+        Task::none()
+    }
+
     fn preferences_sheet_message(&mut self, message: preferences_view::Message) -> Task<Message> {
         if !self
             .preferences_sheet
@@ -2028,15 +2055,7 @@ impl GUI {
             ViewMessage::FocusAction(id) => {
                 iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(id))
             }
-            ViewMessage::SelectSection(section) => {
-                if let Some(sheet) = &mut self.preferences_sheet {
-                    sheet.page.select(section);
-                }
-                if section == PreferencesSection::About {
-                    return self.load_about_versions();
-                }
-                Task::none()
-            }
+            ViewMessage::SelectSection(section) => self.select_preferences_section(section),
             ViewMessage::BackToAbout => {
                 if let Some(sheet) = &mut self.preferences_sheet {
                     sheet.page.open_about_page(AboutPage::Main);
@@ -2315,129 +2334,77 @@ impl GUI {
         })
     }
 
-    fn update_in_language(&mut self, message: Message) -> Task<Message> {
-        if self
-            .preferences_sheet
-            .as_ref()
-            .is_some_and(|sheet| !self.overlay_origin_is_current(&sheet.origin))
-        {
-            self.preferences_sheet = None;
-            self.publish_preferences_sheet();
-        }
-        if self
-            .connect_sheet
-            .as_ref()
-            .is_some_and(|sheet| !self.overlay_origin_is_current(&sheet.origin))
-        {
-            if let Some(sheet) = self.connect_sheet.take() {
-                if matches!(
-                    sheet.page,
-                    ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                ) {
-                    self.scrub_connect_sheet_duress(&sheet.origin);
-                }
-            }
-        }
-        // A completed classifier is an emergency even if Back closed its
-        // PinEntry or a different Cube reopened at the same tab id. The proof
-        // was minted by the captured trial, and carries no seed into Iced.
-        if matches!(
-            &message,
-            Message::Pane(_, pane::Message::Tab(_, inner))
-                if matches!(
-                    inner.as_ref(),
-                    tab::Message::PinEntry(
-                        crate::pin_entry::Message::Classified(_, Ok(crate::pin_entry::Verdict::Duress(_)))
-                            | crate::pin_entry::Message::ForkClassified(_, Ok(crate::pin_entry::Verdict::Duress(_)))
-                    )
-                )
-        ) {
-            let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = message else {
-                unreachable!()
-            };
-            let tab::Message::PinEntry(classified) = *inner else {
-                unreachable!()
-            };
-            let proof = match classified {
-                crate::pin_entry::Message::Classified(
-                    _,
-                    Ok(crate::pin_entry::Verdict::Duress(proof)),
-                )
-                | crate::pin_entry::Message::ForkClassified(
-                    _,
-                    Ok(crate::pin_entry::Verdict::Duress(proof)),
-                ) => proof,
-                _ => unreachable!(),
-            };
-            return self.route_verified_unlock_duress(pane_id, tab_id, proof);
-        }
+    fn intercept_device_preference(&mut self, message: &Message) -> Option<Task<Message>> {
         // Intercept before stripping AppAsync/ForkAsync so a queued eye press
         // from a closed or replaced Cube cannot mutate device preferences.
-        if let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = &message {
+        if let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = message {
             let tab = self
                 .panes
                 .get(*pane_id)
                 .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id));
             if let Some((change, current)) = balance_privacy_eye_change(tab, inner) {
-                return if current {
+                return Some(if current {
                     self.change_balance_privacy(change)
                 } else {
                     Task::none()
-                };
+                });
             }
             if let tab::Message::HomeDevicePreference(change) = inner.as_ref() {
-                return if launcher_change_is_current(tab, change) {
+                return Some(if launcher_change_is_current(tab, change) {
                     self.change_preference(*change)
                 } else {
                     Task::none()
-                };
+                });
             }
         }
-        // Validate session-tagged App callbacks before inspecting global auth
-        // actions. A queued event from an old App cannot affect a reopened one.
-        let message = match message {
+        None
+    }
+
+    fn discard_stale_tab_callback(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        message: tab::Message,
+    ) -> Task<Message> {
+        let closed_trial_finished = is_seed_export_trial_result(&message);
+        tab::discard_closed_loader_result(message);
+        if closed_trial_finished {
+            if let Some(tab) = self
+                .panes
+                .get_mut(pane_id)
+                .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
+            {
+                tab.finish_stale_seed_export_trial();
+                Task::none()
+            } else {
+                self.finish_closed_seed_export_trial(pane_id, tab_id)
+            }
+        } else {
+            Task::none()
+        }
+    }
+
+    // Validate session-tagged App callbacks before inspecting global auth
+    // actions. A queued event from an old App cannot affect a reopened one.
+    fn route_tab_callback(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+        match message {
             Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
                 if matches!(tab_message.as_ref(), tab::Message::AppAsync(..)) =>
             {
                 let tab::Message::AppAsync(generation, message) = *tab_message else {
                     unreachable!();
                 };
-                if let tab::Message::Run(AppMessage::View(
-                    crate::app::view::Message::DuressActivateLocal(_),
-                )) = message.as_ref()
-                {
-                    let tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::DuressActivateLocal(proof),
-                    )) = *message
-                    else {
-                        unreachable!()
-                    };
-                    return self.route_verified_seed_export_duress(pane_id, tab_id, proof);
-                }
-                let current = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .is_some_and(|tab| tab.accepts_app_generation(generation));
-                if !current {
-                    let closed_trial_finished = is_seed_export_trial_result(message.as_ref());
-                    tab::discard_closed_loader_result(*message);
-                    return if closed_trial_finished {
-                        if let Some(tab) = self
-                            .panes
-                            .get_mut(pane_id)
-                            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
-                        {
-                            tab.finish_stale_seed_export_trial();
-                            Task::none()
-                        } else {
-                            self.finish_closed_seed_export_trial(pane_id, tab_id)
-                        }
-                    } else {
-                        Task::none()
-                    };
-                }
-                route_guarded_tab_result(pane_id, tab_id, *message)
+                self.route_session_callback(
+                    pane_id,
+                    tab_id,
+                    generation,
+                    message,
+                    tab::Tab::accepts_app_generation,
+                )
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
                 if matches!(tab_message.as_ref(), tab::Message::ForkAsync(..)) =>
@@ -2445,42 +2412,13 @@ impl GUI {
                 let tab::Message::ForkAsync(generation, message) = *tab_message else {
                     unreachable!();
                 };
-                if let tab::Message::Run(AppMessage::View(
-                    crate::app::view::Message::DuressActivateLocal(_),
-                )) = message.as_ref()
-                {
-                    let tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::DuressActivateLocal(proof),
-                    )) = *message
-                    else {
-                        unreachable!()
-                    };
-                    return self.route_verified_seed_export_duress(pane_id, tab_id, proof);
-                }
-                let current = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .is_some_and(|tab| tab.accepts_fork_generation(generation));
-                if !current {
-                    let closed_trial_finished = is_seed_export_trial_result(message.as_ref());
-                    tab::discard_closed_loader_result(*message);
-                    return if closed_trial_finished {
-                        if let Some(tab) = self
-                            .panes
-                            .get_mut(pane_id)
-                            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
-                        {
-                            tab.finish_stale_seed_export_trial();
-                            Task::none()
-                        } else {
-                            self.finish_closed_seed_export_trial(pane_id, tab_id)
-                        }
-                    } else {
-                        Task::none()
-                    };
-                }
-                route_guarded_tab_result(pane_id, tab_id, *message)
+                self.route_session_callback(
+                    pane_id,
+                    tab_id,
+                    generation,
+                    message,
+                    tab::Tab::accepts_fork_generation,
+                )
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, tab_message))
                 if !self
@@ -2489,14 +2427,52 @@ impl GUI {
                     .is_some_and(|pane| pane.tabs.iter().any(|tab| tab.id == tab_id)) =>
             {
                 tab::discard_closed_loader_result(*tab_message);
-                return Task::none();
+                Break(Task::none())
             }
-            message => message,
-        };
-        // Every hosted fork PIN starts with a completed, scoped account
-        // candidate. A cold Home can borrow one unambiguous verified sibling;
-        // an account still being checked cannot bypass its gate that way.
-        let opening_pin = match &message {
+            message => Continue(message),
+        }
+    }
+
+    fn route_session_callback(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        generation: u64,
+        message: Box<tab::Message>,
+        accepts_generation: fn(&tab::Tab, u64) -> bool,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+        if let tab::Message::Run(AppMessage::View(
+            crate::app::view::Message::DuressActivateLocal(_),
+        )) = message.as_ref()
+        {
+            let tab::Message::Run(AppMessage::View(
+                crate::app::view::Message::DuressActivateLocal(proof),
+            )) = *message
+            else {
+                unreachable!()
+            };
+            return Break(self.route_verified_seed_export_duress(pane_id, tab_id, proof));
+        }
+        let current = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .is_some_and(|tab| accepts_generation(tab, generation));
+        if !current {
+            return Break(self.discard_stale_tab_callback(pane_id, tab_id, *message));
+        }
+        Continue(route_guarded_tab_result(pane_id, tab_id, *message))
+    }
+
+    // Every hosted fork PIN starts with a completed, scoped account
+    // candidate. A cold Home can borrow one unambiguous verified sibling;
+    // an account still being checked cannot bypass its gate that way.
+    fn fork_pin_candidate(
+        &self,
+        message: &Message,
+    ) -> Option<(pane_grid::Pane, usize, ForkUnlockCandidate)> {
+        match message {
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match inner.as_ref() {
                 tab::Message::Launch(
                     home::Message::Run(root, _, chain, _)
@@ -2528,25 +2504,14 @@ impl GUI {
                 _ => None,
             },
             _ => None,
-        };
-        // Shared-client restore reaches readiness without SetSession. Capture
-        // its exact current origin before Pane converts this to an originless intent.
-        let ready_unlock = match &message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
-                if matches!(
-                    inner.as_ref(),
-                    tab::Message::Launch(home::Message::ConnectSignedInBubble)
-                        | tab::Message::ConnectSignedIn
-                ) =>
-            {
-                self.verified_unlock_origin(*pane_id, *tab_id)
-            }
-            _ => None,
-        };
-        // Reuse a sibling session when opening Home or a Bitcoin Cube. Separate
-        // keyring refreshes race token rotation and can leave older Cubes with
-        // an unauthenticated account panel. Each adopter still checks /user.
-        let session_init = match &message {
+        }
+    }
+
+    // Reuse a sibling session when opening Home or a Bitcoin Cube. Separate
+    // keyring refreshes race token rotation and can leave older Cubes with
+    // an unauthenticated account panel. Each adopter still checks /user.
+    fn adopt_sibling_session_on_init(&mut self, message: &Message) -> Option<Task<Message>> {
+        let (origin_pane, origin_tab) = match message {
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
                     inner.as_ref(),
@@ -2562,235 +2527,243 @@ impl GUI {
                 Some((*pane_id, *tab_id))
             }
             _ => None,
-        };
-        if let Some((origin_pane, origin_tab)) = session_init {
-            let active_client = self.panes.iter().find_map(|(&pane_id, pane)| {
-                pane.tabs.iter().find_map(|tab| {
-                    if pane_id == origin_pane && tab.id == origin_tab {
-                        return None;
-                    }
-                    (match &tab.state {
-                        tab::State::App(app) => app.shareable_connect_client(),
-                        tab::State::Home(home) => home.connect_account.authenticated_client(),
-                        _ => None,
-                    })
-                    .filter(|client| client.token().is_some_and(|token| !token.is_empty()))
+        }?;
+        let client = self.panes.iter().find_map(|(&pane_id, pane)| {
+            pane.tabs.iter().find_map(|tab| {
+                if pane_id == origin_pane && tab.id == origin_tab {
+                    return None;
+                }
+                (match &tab.state {
+                    tab::State::App(app) => app.shareable_connect_client(),
+                    tab::State::Home(home) => home.connect_account.authenticated_client(),
+                    _ => None,
                 })
+                .filter(|client| client.token().is_some_and(|token| !token.is_empty()))
+            })
+        })?;
+        let tab = self
+            .panes
+            .get_mut(origin_pane)
+            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == origin_tab))?;
+        let task = match &mut tab.state {
+            tab::State::Home(home) if home.connect_account.can_adopt_shared_session() => {
+                Some(home.adopt_connect_client(client).map(tab::Message::Launch))
+            }
+            tab::State::App(app) if app.can_adopt_shared_connect_session() => {
+                let task = app.adopt_shared_connect_client(client);
+                Some(tab.emit_app_task(task))
+            }
+            _ => None,
+        }?;
+        Some(task.map(move |message| {
+            Message::Pane(origin_pane, pane::Message::tab(origin_tab, message))
+        }))
+    }
+
+    // A log-out or a sign-in from any tab reaches every tab, with its kind
+    // and where it came from (`Tab::invalidate_fork_session`). A
+    // `SetSession` counts as a sign-in only if the tab it came from will
+    // accept it: its account panel drops a completion of an operation
+    // begun before that tab's last auth invalidation
+    // (`ConnectAccountPanel::stale_completion`), and a completion the
+    // panel is about to drop must not tell the other tabs anything — this
+    // is the first reader of the variant, ahead of that dispatch.
+    fn tab_auth_change(
+        &self,
+        message: &Message,
+    ) -> Option<(tab::AuthChange, pane_grid::Pane, usize)> {
+        let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = message else {
+            return None;
+        };
+        let (pane_id, tab_id) = (*pane_id, *tab_id);
+        let msg = connect_account_message(inner)?;
+        match msg {
+            crate::app::view::ConnectAccountMessage::LogOut => {
+                Some((tab::AuthChange::LogOut, pane_id, tab_id))
+            }
+            crate::app::view::ConnectAccountMessage::SetSession(login, epoch)
+            | crate::app::view::ConnectAccountMessage::OtpVerified(login, epoch, _)
+            | crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                crate::services::coincube::TwoFactorLogin { login, .. },
+                epoch,
+                _,
+            )
+            | crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
+                login,
+                epoch,
+                refreshed: false,
+            } => {
+                let origin_is_home = self
+                    .panes
+                    .get(pane_id)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+                    .is_some_and(|tab| matches!(&tab.state, tab::State::Home(_)));
+                // A Home panel adopts a verified login directly; an
+                // App panel commits it first and announces it with
+                // `AuthCommitAccepted`. The authenticator step
+                // finishes a login the same way the email code does.
+                let eligible = !matches!(
+                    msg,
+                    crate::app::view::ConnectAccountMessage::OtpVerified(..)
+                        | crate::app::view::ConnectAccountMessage::TwoFactorVerified(..)
+                ) || origin_is_home;
+                let origin_epoch = self
+                    .panes
+                    .get(pane_id)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+                    .and_then(|tab| match &tab.state {
+                        tab::State::App(app) => Some(app.connect_auth_epoch()),
+                        tab::State::Home(home) => Some(home.connect_account.auth_epoch()),
+                        _ => None,
+                    });
+                let same_fork_session = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .is_some_and(|tab| {
+                matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
             });
-            if let Some(client) = active_client {
-                if let Some(tab) = self
-                    .panes
-                    .get_mut(origin_pane)
-                    .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == origin_tab))
-                {
-                    let adopted = match &mut tab.state {
-                        tab::State::Home(home)
-                            if home.connect_account.can_adopt_shared_session() =>
-                        {
-                            Some(home.adopt_connect_client(client).map(tab::Message::Launch))
-                        }
-                        tab::State::App(app) if app.can_adopt_shared_connect_session() => {
-                            let task = app.adopt_shared_connect_client(client);
-                            Some(tab.emit_app_task(task))
-                        }
-                        _ => None,
-                    };
-                    if let Some(task) = adopted {
-                        return task.map(move |message| {
-                            Message::Pane(origin_pane, pane::Message::tab(origin_tab, message))
-                        });
-                    }
-                }
-            }
-        }
-        // The signed-out-by-Connect notice is one notice for the whole app
-        // (L3): whichever tab learns it, or dismisses it, every tab follows.
-        if let Message::Pane(_, pane::Message::Tab(_, inner)) = &message {
-            let relay = match inner.as_ref() {
-                tab::Message::Run(AppMessage::ConnectSignedOutBy(reason))
-                | tab::Message::Launch(home::Message::ConnectSignedOutBy(reason)) => {
-                    Some(Some(*reason))
-                }
-                tab::Message::Run(AppMessage::View(
-                    crate::app::view::Message::DismissConnectSignOut,
-                ))
-                | tab::Message::Launch(home::Message::View(
-                    home::ViewMessage::DismissConnectSignOut,
-                )) => Some(None),
-                _ => None,
-            };
-            if let Some(reason) = relay {
-                self.relay_connect_signed_out_by(reason);
-            }
-        }
-        // A log-out or a sign-in from any tab reaches every tab, with its kind
-        // and where it came from (`Tab::invalidate_fork_session`). A
-        // `SetSession` counts as a sign-in only if the tab it came from will
-        // accept it: its account panel drops a completion of an operation
-        // begun before that tab's last auth invalidation
-        // (`ConnectAccountPanel::stale_completion`), and a completion the
-        // panel is about to drop must not tell the other tabs anything — this
-        // is the first reader of the variant, ahead of that dispatch.
-        let auth_change = match &message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => {
-                match connect_account_message(inner) {
-                    Some(msg) => match msg {
-                        crate::app::view::ConnectAccountMessage::LogOut => {
-                            Some((tab::AuthChange::LogOut, *pane_id, *tab_id))
-                        }
-                        crate::app::view::ConnectAccountMessage::SetSession(login, epoch)
-                        | crate::app::view::ConnectAccountMessage::OtpVerified(login, epoch, _)
-                        | crate::app::view::ConnectAccountMessage::TwoFactorVerified(
-                            crate::services::coincube::TwoFactorLogin { login, .. },
-                            epoch,
-                            _,
-                        )
-                        | crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
-                            login,
-                            epoch,
-                            refreshed: false,
-                        } => {
-                            let origin_is_home = self
-                                .panes
-                                .get(*pane_id)
-                                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                                .is_some_and(|tab| matches!(&tab.state, tab::State::Home(_)));
-                            // A Home panel adopts a verified login directly; an
-                            // App panel commits it first and announces it with
-                            // `AuthCommitAccepted`. The authenticator step
-                            // finishes a login the same way the email code does.
-                            let eligible =
-                                !matches!(
-                                msg,
-                                crate::app::view::ConnectAccountMessage::OtpVerified(..)
-                                    | crate::app::view::ConnectAccountMessage::TwoFactorVerified(..)
-                            ) || origin_is_home;
-                            let origin_epoch = self
-                                .panes
-                                .get(*pane_id)
-                                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                                .and_then(|tab| match &tab.state {
-                                    tab::State::App(app) => Some(app.connect_auth_epoch()),
-                                    tab::State::Home(home) => {
-                                        Some(home.connect_account.auth_epoch())
-                                    }
-                                    _ => None,
-                                });
-                            let same_fork_session = self
-                        .panes
-                        .get(*pane_id)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                        .is_some_and(|tab| {
-                            matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
-                        });
-                            match origin_epoch {
-                                Some(current)
-                                    if *epoch >= current && !same_fork_session && eligible =>
-                                {
-                                    Some((
-                                        tab::AuthChange::SignIn {
-                                            user_id: login.user.id,
-                                            token: zeroize::Zeroizing::new(login.token.clone()),
-                                        },
-                                        *pane_id,
-                                        *tab_id,
-                                    ))
-                                }
-                                // Stale for its own tab (dropped there on dispatch), or
-                                // no account panel to judge it: not a sign-in.
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    },
-                    None => None,
-                }
-            }
-            _ => None,
-        };
-        let auth_from_fork_app = if auth_change.is_some() {
-            match &message {
-                Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) => self
-                    .panes
-                    .get(*pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                    .is_some_and(
-                        |tab| matches!(&tab.state, tab::State::App(app) if app.requires_connect()),
-                    ),
-                _ => false,
-            }
-        } else {
-            false
-        };
-        let completed_login = match &message {
-            Message::Pane(_, pane::Message::Tab(_, inner)) => {
-                match connect_account_message(inner) {
-                    Some(crate::app::view::ConnectAccountMessage::SetSession(login, _))
-                    | Some(crate::app::view::ConnectAccountMessage::OtpVerified(login, _, _))
-                    | Some(crate::app::view::ConnectAccountMessage::TwoFactorVerified(
-                        crate::services::coincube::TwoFactorLogin { login, .. },
-                        _,
-                        _,
-                    ))
-                    | Some(crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
-                        login,
-                        refreshed: false,
-                        ..
-                    }) => Some(login.clone()),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        let accepted_before = auth_change.as_ref().and_then(|(_, pane_id, tab_id)| {
-            self.panes
-                .get(*pane_id)
-                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                .and_then(|tab| match &tab.state {
-                    tab::State::App(app) => {
-                        Some(app.connect_sheet_account().accepted_auth_revision())
-                    }
-                    tab::State::Home(home) => Some(home.connect_account.accepted_auth_revision()),
-                    _ => None,
-                })
-        });
-        let mut auth_tasks = Vec::new();
-        // The old fork App is gone. Apply its auth operation to the replacement
-        // Home so logout clears saved login state instead of being discarded.
-        let message = if auth_from_fork_app {
-            match message {
-                Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match *inner {
-                    tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::ConnectAccount(msg),
-                    )) => Message::Pane(
+                match origin_epoch {
+                    Some(current) if *epoch >= current && !same_fork_session && eligible => Some((
+                        tab::AuthChange::SignIn {
+                            user_id: login.user.id,
+                            token: zeroize::Zeroizing::new(login.token.clone()),
+                        },
                         pane_id,
-                        pane::Message::tab(
-                            tab_id,
-                            tab::Message::Launch(home::Message::View(
-                                home::ViewMessage::ConnectAccount(msg),
-                            )),
-                        ),
-                    ),
-                    other => Message::Pane(pane_id, pane::Message::tab(tab_id, other)),
-                },
-                message => message,
+                        tab_id,
+                    )),
+                    // Stale for its own tab (dropped there on dispatch), or
+                    // no account panel to judge it: not a sign-in.
+                    _ => None,
+                }
             }
-        } else {
-            message
-        };
-        // Both the scoped seed-export proof and the existing Cube-unlock PIN
-        // verdict enter Duress before their async wipe task runs. The unlock
-        // verdict has no private proof object, so its live PinEntry and exact
-        // data root are the GUI admission boundary for the global surface seal.
-        let unlock_duress_message = matches!(
+            _ => None,
+        }
+    }
+
+    fn reconcile_overlay_origins(&mut self) {
+        if self
+            .preferences_sheet
+            .as_ref()
+            .is_some_and(|sheet| !self.overlay_origin_is_current(&sheet.origin))
+        {
+            self.preferences_sheet = None;
+            self.publish_preferences_sheet();
+        }
+        if self
+            .connect_sheet
+            .as_ref()
+            .is_some_and(|sheet| !self.overlay_origin_is_current(&sheet.origin))
+        {
+            if let Some(sheet) = self.connect_sheet.take() {
+                if matches!(
+                    sheet.page,
+                    ConnectSheetPage::Sections(ConnectSheetSection::Duress)
+                ) {
+                    self.scrub_connect_sheet_duress(&sheet.origin);
+                }
+            }
+        }
+    }
+
+    fn intercept_verified_unlock_duress(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        // A completed classifier is an emergency even if Back closed its
+        // PinEntry or a different Cube reopened at the same tab id. The proof
+        // was minted by the captured trial, and carries no seed into Iced.
+        if matches!(
             &message,
             Message::Pane(_, pane::Message::Tab(_, inner))
                 if matches!(
                     inner.as_ref(),
-                    tab::Message::PinEntry(crate::pin_entry::Message::DuressDetected { .. })
+                    tab::Message::PinEntry(
+                        crate::pin_entry::Message::Classified(_, Ok(crate::pin_entry::Verdict::Duress(_)))
+                            | crate::pin_entry::Message::ForkClassified(_, Ok(crate::pin_entry::Verdict::Duress(_)))
+                    )
                 )
-        );
-        let unlock_duress_target = match &message {
+        ) {
+            let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = message else {
+                unreachable!()
+            };
+            let tab::Message::PinEntry(classified) = *inner else {
+                unreachable!()
+            };
+            let proof = match classified {
+                crate::pin_entry::Message::Classified(
+                    _,
+                    Ok(crate::pin_entry::Verdict::Duress(proof)),
+                )
+                | crate::pin_entry::Message::ForkClassified(
+                    _,
+                    Ok(crate::pin_entry::Verdict::Duress(proof)),
+                ) => proof,
+                _ => unreachable!(),
+            };
+            return Break(self.route_verified_unlock_duress(pane_id, tab_id, proof));
+        }
+        Continue(message)
+    }
+
+    fn accepted_tab_auth_revision(&self, pane_id: pane_grid::Pane, tab_id: usize) -> Option<u64> {
+        self.panes
+            .get(pane_id)?
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| match &tab.state {
+                tab::State::App(app) => Some(app.connect_sheet_account().accepted_auth_revision()),
+                tab::State::Home(home) => Some(home.connect_account.accepted_auth_revision()),
+                _ => None,
+            })
+    }
+
+    fn broadcast_accepted_auth_change(
+        &mut self,
+        auth_tasks: &mut Vec<Task<Message>>,
+        change: tab::AuthChange,
+        origin_pane: pane_grid::Pane,
+        origin_tab: usize,
+        accepted_before: Option<u64>,
+        completed_login: Option<&crate::services::coincube::LoginResponse>,
+    ) {
+        let accepted = match &change {
+            tab::AuthChange::SignIn { .. } => accepted_before.is_some_and(|before| {
+                self.accepted_tab_auth_revision(origin_pane, origin_tab)
+                    .is_some_and(|after| after != before)
+            }),
+            tab::AuthChange::LogOut => true,
+        };
+        if accepted && matches!(change, tab::AuthChange::SignIn { .. }) {
+            // A sign-in anywhere ends the signed-out notice everywhere.
+            self.relay_connect_signed_out_by(None);
+        }
+        if accepted {
+            for (&pane_id, pane) in self.panes.iter_mut() {
+                for tab in &mut pane.tabs {
+                    if completed_login.is_some_and(|login| {
+                        matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
+                    }) {
+                        continue;
+                    }
+                    let tab_id = tab.id;
+                    let originated = pane_id == origin_pane && tab_id == origin_tab;
+                    auth_tasks.push(
+                        tab.invalidate_fork_session(change.clone(), originated)
+                            .map(move |msg| {
+                                Message::Pane(pane_id, pane::Message::tab(tab_id, msg))
+                            }),
+                    );
+                }
+            }
+        }
+    }
+
+    fn unlock_duress_target(&self, message: &Message) -> Option<(pane_grid::Pane, usize)> {
+        match message {
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
                     inner.as_ref(),
@@ -2814,60 +2787,14 @@ impl GUI {
                     })
             }
             _ => None,
-        };
-        if unlock_duress_message && unlock_duress_target.is_none() {
-            return Task::none();
         }
-        // Dispatch may return early (notably for in-App account messages).
-        // Keep those returns inside the helper so invalidation tasks always run.
-        let routed = self.update_message(message);
-        self.reconcile_connect_sheet_duress();
-        if let Some((change, origin_pane, origin_tab)) = auth_change {
-            let accepted = match &change {
-                tab::AuthChange::SignIn { .. } => accepted_before.is_some_and(|before| {
-                    self.panes
-                        .get(origin_pane)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == origin_tab))
-                        .and_then(|tab| match &tab.state {
-                            tab::State::App(app) => {
-                                Some(app.connect_sheet_account().accepted_auth_revision())
-                            }
-                            tab::State::Home(home) => {
-                                Some(home.connect_account.accepted_auth_revision())
-                            }
-                            _ => None,
-                        })
-                        .is_some_and(|after| after != before)
-                }),
-                tab::AuthChange::LogOut => true,
-            };
-            if accepted && matches!(change, tab::AuthChange::SignIn { .. }) {
-                // A sign-in anywhere ends the signed-out notice everywhere.
-                self.relay_connect_signed_out_by(None);
-            }
-            if accepted {
-                for (&pane_id, pane) in self.panes.iter_mut() {
-                    for tab in &mut pane.tabs {
-                        if completed_login.as_ref().is_some_and(|login| {
-                            matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
-                        }) {
-                            continue;
-                        }
-                        let tab_id = tab.id;
-                        let originated = pane_id == origin_pane && tab_id == origin_tab;
-                        auth_tasks.push(
-                            tab.invalidate_fork_session(change.clone(), originated).map(
-                                move |msg| Message::Pane(pane_id, pane::Message::tab(tab_id, msg)),
-                            ),
-                        );
-                    }
-                }
-            }
-        }
-        if let Some((pane_id, tab_id)) = unlock_duress_target {
-            self.seal_verified_seed_export_duress_surface(pane_id, tab_id);
-        }
-        auth_tasks.push(routed);
+    }
+
+    fn adopt_pending_unlock_candidates(
+        &mut self,
+        ready_unlock: Option<ForkUnlockCandidate>,
+        opening_pin: Option<(pane_grid::Pane, usize, ForkUnlockCandidate)>,
+    ) {
         if let Some(candidate) = ready_unlock {
             for (_, pane) in self.panes.iter_mut() {
                 for tab in &mut pane.tabs {
@@ -2894,7 +2821,166 @@ impl GUI {
                 pin.adopt_connect_candidate(&candidate.root, candidate.client, candidate.user_id);
             }
         }
+    }
 
+    // Shared-client restore reaches readiness without SetSession. Capture
+    // its exact current origin before Pane converts this to an originless intent.
+    fn ready_unlock_candidate(&self, message: &Message) -> Option<ForkUnlockCandidate> {
+        match message {
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
+                if matches!(
+                    inner.as_ref(),
+                    tab::Message::Launch(home::Message::ConnectSignedInBubble)
+                        | tab::Message::ConnectSignedIn
+                ) =>
+            {
+                self.verified_unlock_origin(*pane_id, *tab_id)
+            }
+            _ => None,
+        }
+    }
+
+    fn completed_tab_login(message: &Message) -> Option<crate::services::coincube::LoginResponse> {
+        match message {
+            Message::Pane(_, pane::Message::Tab(_, inner)) => {
+                match connect_account_message(inner) {
+                    Some(crate::app::view::ConnectAccountMessage::SetSession(login, _))
+                    | Some(crate::app::view::ConnectAccountMessage::OtpVerified(login, _, _))
+                    | Some(crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                        crate::services::coincube::TwoFactorLogin { login, .. },
+                        _,
+                        _,
+                    ))
+                    | Some(crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
+                        login,
+                        refreshed: false,
+                        ..
+                    }) => Some(login.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn relay_tab_sign_out_notice(&mut self, message: &Message) {
+        // The signed-out-by-Connect notice is one notice for the whole app
+        // (L3): whichever tab learns it, or dismisses it, every tab follows.
+        if let Message::Pane(_, pane::Message::Tab(_, inner)) = message {
+            let relay = match inner.as_ref() {
+                tab::Message::Run(AppMessage::ConnectSignedOutBy(reason))
+                | tab::Message::Launch(home::Message::ConnectSignedOutBy(reason)) => {
+                    Some(Some(*reason))
+                }
+                tab::Message::Run(AppMessage::View(
+                    crate::app::view::Message::DismissConnectSignOut,
+                ))
+                | tab::Message::Launch(home::Message::View(
+                    home::ViewMessage::DismissConnectSignOut,
+                )) => Some(None),
+                _ => None,
+            };
+            if let Some(reason) = relay {
+                self.relay_connect_signed_out_by(reason);
+            }
+        }
+    }
+
+    // The old fork App is gone. Apply its auth operation to the replacement
+    // Home so logout clears saved login state instead of being discarded.
+    fn route_fork_app_auth_to_home(message: Message, auth_from_fork_app: bool) -> Message {
+        if auth_from_fork_app {
+            match message {
+                Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match *inner {
+                    tab::Message::Run(AppMessage::View(
+                        crate::app::view::Message::ConnectAccount(msg),
+                    )) => Message::Pane(
+                        pane_id,
+                        pane::Message::tab(
+                            tab_id,
+                            tab::Message::Launch(home::Message::View(
+                                home::ViewMessage::ConnectAccount(msg),
+                            )),
+                        ),
+                    ),
+                    other => Message::Pane(pane_id, pane::Message::tab(tab_id, other)),
+                },
+                message => message,
+            }
+        } else {
+            message
+        }
+    }
+
+    fn update_in_language(&mut self, message: Message) -> Task<Message> {
+        self.reconcile_overlay_origins();
+        let message = match self.intercept_verified_unlock_duress(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
+        };
+        if let Some(task) = self.intercept_device_preference(&message) {
+            return task;
+        }
+        let message = match self.route_tab_callback(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
+        };
+        let opening_pin = self.fork_pin_candidate(&message);
+        let ready_unlock = self.ready_unlock_candidate(&message);
+        if let Some(task) = self.adopt_sibling_session_on_init(&message) {
+            return task;
+        }
+        self.relay_tab_sign_out_notice(&message);
+        let auth_change = self.tab_auth_change(&message);
+        let auth_from_fork_app = auth_change.as_ref().is_some_and(|(_, pane_id, tab_id)| {
+            self.panes
+                .get(*pane_id)
+                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
+                .is_some_and(
+                    |tab| matches!(&tab.state, tab::State::App(app) if app.requires_connect()),
+                )
+        });
+        let completed_login = Self::completed_tab_login(&message);
+        let accepted_before = auth_change
+            .as_ref()
+            .and_then(|(_, pane_id, tab_id)| self.accepted_tab_auth_revision(*pane_id, *tab_id));
+        let mut auth_tasks = Vec::new();
+        let message = Self::route_fork_app_auth_to_home(message, auth_from_fork_app);
+        // Both the scoped seed-export proof and the existing Cube-unlock PIN
+        // verdict enter Duress before their async wipe task runs. The unlock
+        // verdict has no private proof object, so its live PinEntry and exact
+        // data root are the GUI admission boundary for the global surface seal.
+        let unlock_duress_message = matches!(
+            &message,
+            Message::Pane(_, pane::Message::Tab(_, inner))
+                if matches!(
+                    inner.as_ref(),
+                    tab::Message::PinEntry(crate::pin_entry::Message::DuressDetected { .. })
+                )
+        );
+        let unlock_duress_target = self.unlock_duress_target(&message);
+        if unlock_duress_message && unlock_duress_target.is_none() {
+            return Task::none();
+        }
+        // Dispatch may return early (notably for in-App account messages).
+        // Keep those returns inside the helper so invalidation tasks always run.
+        let routed = self.update_message(message);
+        self.reconcile_connect_sheet_duress();
+        if let Some((change, origin_pane, origin_tab)) = auth_change {
+            self.broadcast_accepted_auth_change(
+                &mut auth_tasks,
+                change,
+                origin_pane,
+                origin_tab,
+                accepted_before,
+                completed_login.as_ref(),
+            );
+        }
+        if let Some((pane_id, tab_id)) = unlock_duress_target {
+            self.seal_verified_seed_export_duress_surface(pane_id, tab_id);
+        }
+        auth_tasks.push(routed);
+        self.adopt_pending_unlock_candidates(ready_unlock, opening_pin);
         self.refresh_sidebar_session_status();
         auth_tasks.push(self.sync_min_window_size());
         Task::batch(auth_tasks)
@@ -2939,41 +3025,39 @@ impl GUI {
         provider: &str,
     ) -> Option<ForkUnlockCandidate> {
         let mut selected: Option<ForkUnlockCandidate> = None;
-        for (_, pane) in self.panes.iter() {
-            for tab in &pane.tabs {
-                let identity = match &tab.state {
-                    tab::State::Home(home) if home.connect_account.is_authenticated() => {
-                        home.connect_account.user.as_ref().and_then(|user| {
-                            home.connect_account
-                                .authenticated_client()
-                                .map(|client| (home.datadir_path.clone(), user.id, client))
-                        })
-                    }
-                    tab::State::App(app) => app
-                        .shareable_connect_identity()
-                        .map(|(user_id, client)| (app.datadir().clone(), user_id, client)),
-                    _ => None,
-                };
-                let Some((source_root, user_id, client)) = identity else {
-                    continue;
-                };
-                if !crate::chain::same_path(root.path(), source_root.path())
-                    || provider.trim_end_matches('/') != client.base_url.trim_end_matches('/')
-                    || client.token().is_none_or(|token| token.trim().is_empty())
-                {
-                    continue;
+        for tab in self.panes.iter().flat_map(|(_, pane)| pane.tabs.iter()) {
+            let identity = match &tab.state {
+                tab::State::Home(home) if home.connect_account.is_authenticated() => {
+                    home.connect_account.user.as_ref().and_then(|user| {
+                        home.connect_account
+                            .authenticated_client()
+                            .map(|client| (home.datadir_path.clone(), user.id, client))
+                    })
                 }
-                if let Some(previous) = &selected {
-                    if previous.user_id != user_id || previous.client.token() != client.token() {
-                        return None;
-                    }
-                } else {
-                    selected = Some(ForkUnlockCandidate {
-                        root: source_root,
-                        client,
-                        user_id,
-                    });
+                tab::State::App(app) => app
+                    .shareable_connect_identity()
+                    .map(|(user_id, client)| (app.datadir().clone(), user_id, client)),
+                _ => None,
+            };
+            let Some((source_root, user_id, client)) = identity else {
+                continue;
+            };
+            if !crate::chain::same_path(root.path(), source_root.path())
+                || provider.trim_end_matches('/') != client.base_url.trim_end_matches('/')
+                || client.token().is_none_or(|token| token.trim().is_empty())
+            {
+                continue;
+            }
+            if let Some(previous) = &selected {
+                if previous.user_id != user_id || previous.client.token() != client.token() {
+                    return None;
                 }
+            } else {
+                selected = Some(ForkUnlockCandidate {
+                    root: source_root,
+                    client,
+                    user_id,
+                });
             }
         }
         selected
@@ -3000,240 +3084,1113 @@ impl GUI {
         }
     }
 
-    fn update_message(&mut self, message: Message) -> Task<Message> {
-        match message {
-            // we get this message only once at startup
-            Message::Window(id) => {
-                self.window_id = id;
-                let screen = self.query_screen_size();
-                // Common case: if there is an already saved screen size we reuse it
-                let size = if let (Some(id), Some(WindowConfig { width, height })) =
-                    (id, &self.window_config)
-                {
-                    window::resize(
-                        id,
-                        self.zoomed(Size {
-                            width: *width,
-                            height: *height,
-                        }),
-                    )
-                // Initial startup: we maximize the screen in order to know the max usable screen area
-                } else if let Some(id) = &self.window_id {
-                    window::maximize(*id, true)
+    fn initialize_window(&mut self, id: Option<Id>) -> Task<Message> {
+        self.window_id = id;
+        let screen = self.query_screen_size();
+        // Common case: if there is an already saved screen size we reuse it
+        let size =
+            if let (Some(id), Some(WindowConfig { width, height })) = (id, &self.window_config) {
+                window::resize(
+                    id,
+                    self.zoomed(Size {
+                        width: *width,
+                        height: *height,
+                    }),
+                )
+            // Initial startup: we maximize the screen in order to know the max usable screen area
+            } else if let Some(id) = &self.window_id {
+                window::maximize(*id, true)
+            } else {
+                Task::none()
+            };
+        Task::batch([screen, size])
+    }
+
+    fn apply_screen_size(&mut self, size: Option<Size>, zoom: Zoom) -> Task<Message> {
+        // Iced measures the answer at the zoom in effect when it runs
+        // the query, after the rest of its batch. If the zoom changed
+        // since it was asked, the tag no longer scales it: ask again.
+        if zoom != self.current_zoom() {
+            return self.query_screen_size();
+        }
+        if let Some(size) = size {
+            // Rounded: f32 scaling puts a 1536-point screen at 1535.9999.
+            self.zoom.screen_width = Some((size.width * zoom.factor()).round());
+        }
+        Task::none()
+    }
+
+    fn apply_window_size(&mut self, monitor_size: Size) -> Task<Message> {
+        // Iced reports the size in zoomed units; record it at 100% so
+        // a zoom change between launches keeps the window's size.
+        let monitor_size = monitor_size * self.current_zoom().factor();
+        // A resize can come from a move to another screen.
+        let screen = self.query_screen_size();
+        let cloned_cfg = self.window_config.clone();
+        let resized = match (cloned_cfg, &self.window_init, &self.window_id) {
+            // no previous screen size recorded && window maximized
+            (None, Some(false), Some(id)) => {
+                self.window_init = Some(true);
+                let mut batch = vec![window::maximize(*id, false)];
+                let new_size = if monitor_size.height >= 1200.0 {
+                    let size = Size {
+                        width: 1200.0,
+                        height: 950.0,
+                    };
+                    batch.push(window::resize(*id, self.zoomed(size)));
+                    size
                 } else {
-                    Task::none()
+                    batch.push(window::resize(
+                        *id,
+                        self.zoomed(iced::window::Settings::default().size),
+                    ));
+                    iced::window::Settings::default().size
                 };
-                Task::batch([screen, size])
+                self.window_config = Some(WindowConfig {
+                    width: new_size.width,
+                    height: new_size.height,
+                });
+                Task::batch(batch)
             }
-            Message::ScreenSize(size, zoom) => {
-                // Iced measures the answer at the zoom in effect when it runs
-                // the query, after the rest of its batch. If the zoom changed
-                // since it was asked, the tag no longer scales it: ask again.
-                if zoom != self.current_zoom() {
-                    return self.query_screen_size();
-                }
-                if let Some(size) = size {
-                    // Rounded: f32 scaling puts a 1536-point screen at 1535.9999.
-                    self.zoom.screen_width = Some((size.width * zoom.factor()).round());
+            // we already have a record of the last window size and we update it
+            (Some(WindowConfig { width, height }), _, _) => {
+                if width != monitor_size.width || height != monitor_size.height {
+                    if let Some(cfg) = &mut self.window_config {
+                        cfg.width = monitor_size.width;
+                        cfg.height = monitor_size.height;
+                    }
                 }
                 Task::none()
             }
-            Message::WindowSize(monitor_size) => {
-                // Iced reports the size in zoomed units; record it at 100% so
-                // a zoom change between launches keeps the window's size.
-                let monitor_size = monitor_size * self.current_zoom().factor();
-                // A resize can come from a move to another screen.
-                let screen = self.query_screen_size();
-                let cloned_cfg = self.window_config.clone();
-                let resized = match (cloned_cfg, &self.window_init, &self.window_id) {
-                    // no previous screen size recorded && window maximized
-                    (None, Some(false), Some(id)) => {
-                        self.window_init = Some(true);
-                        let mut batch = vec![window::maximize(*id, false)];
-                        let new_size = if monitor_size.height >= 1200.0 {
-                            let size = Size {
-                                width: 1200.0,
-                                height: 950.0,
-                            };
-                            batch.push(window::resize(*id, self.zoomed(size)));
-                            size
-                        } else {
-                            batch.push(window::resize(
-                                *id,
-                                self.zoomed(iced::window::Settings::default().size),
-                            ));
-                            iced::window::Settings::default().size
-                        };
-                        self.window_config = Some(WindowConfig {
-                            width: new_size.width,
-                            height: new_size.height,
-                        });
-                        Task::batch(batch)
-                    }
-                    // we already have a record of the last window size and we update it
-                    (Some(WindowConfig { width, height }), _, _) => {
-                        if width != monitor_size.width || height != monitor_size.height {
-                            if let Some(cfg) = &mut self.window_config {
-                                cfg.width = monitor_size.width;
-                                cfg.height = monitor_size.height;
-                            }
-                        }
-                        Task::none()
-                    }
-                    // we ignore the first notification about initial window size it will always be
-                    // the default one
-                    _ => {
-                        if self.window_init.is_none() {
-                            self.window_init = Some(false);
-                        }
-                        Task::none()
-                    }
-                };
-                Task::batch([screen, resized])
+            // we ignore the first notification about initial window size it will always be
+            // the default one
+            _ => {
+                if self.window_init.is_none() {
+                    self.window_init = Some(false);
+                }
+                Task::none()
             }
-            Message::WindowMoved => self.query_screen_size(),
-            Message::CtrlC
-            | Message::Event(iced::Event::Window(iced::window::Event::CloseRequested)) => {
-                for (_, pane) in self.panes.iter_mut() {
-                    pane.stop();
-                }
-                if let Some(window_config) = &self.window_config {
-                    let path = GlobalSettings::path(&self.config.coincube_directory);
-                    if let Err(e) = GlobalSettings::update_window_config(&path, window_config) {
-                        tracing::error!("Failed to update the window config: {e}");
-                    }
-                }
-                iced::window::latest().and_then(iced::window::close)
+        };
+        Task::batch([screen, resized])
+    }
+
+    fn close_window(&mut self) -> Task<Message> {
+        for (_, pane) in self.panes.iter_mut() {
+            pane.stop();
+        }
+        if let Some(window_config) = &self.window_config {
+            let path = GlobalSettings::path(&self.config.coincube_directory);
+            if let Err(e) = GlobalSettings::update_window_config(&path, window_config) {
+                tracing::error!("Failed to update the window config: {e}");
             }
-            Message::KeyPressed(Key::Tab(shift)) => {
-                if self.preferences_sheet.is_some() {
-                    return if shift {
-                        action::focus_previous_visible(preferences_view::CONTENT_SCROLL_ID)
-                    } else {
-                        action::focus_next_visible(preferences_view::CONTENT_SCROLL_ID)
-                    };
-                }
-                if self.connect_sheet.is_some() {
-                    return if shift {
-                        action::focus_previous_visible(CONTENT_SCROLL_ID)
-                    } else {
-                        action::focus_next_visible(CONTENT_SCROLL_ID)
-                    };
-                }
-                log::debug!("Tab pressed!");
-                let focus = if shift {
-                    action::focus_previous_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
-                } else {
-                    action::focus_next_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
-                };
-                // The Border Wallet grid has its own clipped viewport. Revealing
-                // focus there is a no-op for every other screen.
-                let focus = focus.chain(action::reveal_focused(
-                    crate::installer::step::descriptor::editor::border_wallet_wizard::BORDER_WALLET_GRID_SCROLL_ID,
-                ));
-                // The Create form scrolls inside its card while its footer stays
-                // fixed. Reveal keyboard focus for controls below that viewport.
-                let focus = focus.chain(action::reveal_focused(crate::home::CREATE_BODY_SCROLL_ID));
-                #[cfg(feature = "mcp-proposals")]
-                let focus = focus.chain(action::reveal_focused(
-                    crate::installer::proposal_handoff::SCROLL_ID,
-                ));
-                // The RBF warning has its own clipped descendant list. Tab can
-                // reach every copy action, including those below its viewport.
-                focus.chain(action::reveal_focused(
-                    crate::app::view::vault::transactions::RBF_DESCENDANTS_SCROLL_ID,
-                ))
+        }
+        iced::window::latest().and_then(iced::window::close)
+    }
+
+    fn move_keyboard_focus(&mut self, shift: bool) -> Task<Message> {
+        if self.preferences_sheet.is_some() {
+            return if shift {
+                action::focus_previous_visible(preferences_view::CONTENT_SCROLL_ID)
+            } else {
+                action::focus_next_visible(preferences_view::CONTENT_SCROLL_ID)
+            };
+        }
+        if self.connect_sheet.is_some() {
+            return if shift {
+                action::focus_previous_visible(CONTENT_SCROLL_ID)
+            } else {
+                action::focus_next_visible(CONTENT_SCROLL_ID)
+            };
+        }
+        log::debug!("Tab pressed!");
+        let focus = if shift {
+            action::focus_previous_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
+        } else {
+            action::focus_next_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
+        };
+        // The Border Wallet grid has its own clipped viewport. Revealing
+        // focus there is a no-op for every other screen.
+        let focus = focus.chain(action::reveal_focused(
+            crate::installer::step::descriptor::editor::border_wallet_wizard::BORDER_WALLET_GRID_SCROLL_ID,
+        ));
+        // The Create form scrolls inside its card while its footer stays
+        // fixed. Reveal keyboard focus for controls below that viewport.
+        let focus = focus.chain(action::reveal_focused(crate::home::CREATE_BODY_SCROLL_ID));
+        #[cfg(feature = "mcp-proposals")]
+        let focus = focus.chain(action::reveal_focused(
+            crate::installer::proposal_handoff::SCROLL_ID,
+        ));
+        // The RBF warning has its own clipped descendant list. Tab can
+        // reach every copy action, including those below its viewport.
+        focus.chain(action::reveal_focused(
+            crate::app::view::vault::transactions::RBF_DESCENDANTS_SCROLL_ID,
+        ))
+    }
+
+    fn apply_zoom_shortcut(&mut self, step: ZoomStep) -> Task<Message> {
+        let current = self.current_zoom();
+        let next = match step {
+            ZoomStep::In => current.zoomed_in().filter(|next| *next <= self.max_zoom()),
+            ZoomStep::Out => current.zoomed_out(),
+            ZoomStep::ActualSize => Some(Zoom::ACTUAL_SIZE),
+        };
+        // The pill also shows at the first and last step, so a press
+        // that changes nothing still says where the zoom is.
+        self.zoom.notice_until = Some(Instant::now() + ZOOM_NOTICE);
+        match next.filter(|next| *next != current) {
+            Some(next) => {
+                self.zoom.pending = Some(next);
+                self.save_pending_zoom()
             }
-            Message::KeyPressed(Key::Zoom(step)) => {
-                let current = self.current_zoom();
-                let next = match step {
-                    ZoomStep::In => current.zoomed_in().filter(|next| *next <= self.max_zoom()),
-                    ZoomStep::Out => current.zoomed_out(),
-                    ZoomStep::ActualSize => Some(Zoom::ACTUAL_SIZE),
-                };
-                // The pill also shows at the first and last step, so a press
-                // that changes nothing still says where the zoom is.
-                self.zoom.notice_until = Some(Instant::now() + ZOOM_NOTICE);
-                match next.filter(|next| *next != current) {
-                    Some(next) => {
-                        self.zoom.pending = Some(next);
-                        self.save_pending_zoom()
-                    }
-                    None => Task::none(),
+            None => Task::none(),
+        }
+    }
+
+    fn apply_escape_shortcut(&mut self) -> Task<Message> {
+        if self.preferences_sheet.is_some() {
+            return self.close_preferences_sheet();
+        }
+        if self.connect_sheet.is_some() {
+            return self.close_connect_sheet();
+        }
+        let Some((pane_id, tab_id, generation, intent)) = self.focus.and_then(|pane_id| {
+            let pane = self.panes.get(pane_id)?;
+            let tab = pane.tabs.get(pane.focused_tab)?;
+            let tab::State::App(app) = &tab.state else {
+                return None;
+            };
+            Some((
+                pane_id,
+                tab.id,
+                tab.app_generation_token()?,
+                app.shell_escape_intent()?,
+            ))
+        }) else {
+            return Task::none();
+        };
+        self.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(
+                tab_id,
+                tab::Message::AppAsync(
+                    generation,
+                    Box::new(tab::Message::Run(AppMessage::View(intent))),
+                ),
+            ),
+        ))
+    }
+
+    fn apply_fiat_price_result(&mut self, price: FiatPrice) -> Task<Message> {
+        if price.request.origin.is_some() {
+            return Task::none();
+        }
+        if self
+            .global_cache
+            .pending_fiat_price_request(price.source(), price.currency())
+            != Some(&price.request)
+        {
+            tracing::debug!(
+                "Ignoring fiat price result for {} from {} as it is not the last request",
+                price.currency(),
+                price.source(),
+            );
+            return Task::none();
+        }
+        match price.res.as_ref() {
+            Ok(res) => {
+                tracing::debug!(
+                    "Fiat price request for {} from {} completed successfully: {:?}",
+                    price.currency(),
+                    price.source(),
+                    res,
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Fiat price request for {} from {} returned error: {}",
+                    price.currency(),
+                    price.source(),
+                    e
+                );
+            }
+        }
+        // Update the cache with the result even if there was an error.
+        self.global_cache
+            .remove_fiat_price_request(price.source(), price.currency());
+        self.global_cache.insert_fiat_price(price);
+        Task::none()
+    }
+
+    fn apply_fiat_currencies_result(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        source: PriceSource,
+        instant: Instant,
+        res: Result<ListCurrenciesResult, PriceApiError>,
+    ) -> Task<Message> {
+        if let Ok(list) = res.as_ref() {
+            self.global_cache
+                .insert_currencies(source, instant, list.currencies.clone());
+        }
+        // Return the result to the tab even if there was an error.
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            pane.update_tab_with_app_msg(
+                tab_id,
+                AppFiatMessage::ListCurrenciesResult(source, res),
+                &self.config,
+            )
+            .map(move |msg| Message::Pane(pane_id, msg))
+        } else {
+            Task::none()
+        }
+    }
+
+    fn refresh_open_connect_sessions(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for (&pane_id, pane) in self.panes.iter() {
+            for tab in &pane.tabs {
+                if matches!(&tab.state, tab::State::App(_)) {
+                    let tab_id = tab.id;
+                    tasks.push(
+                        tab.emit_app_task(Task::done(AppMessage::View(
+                            crate::app::view::Message::ConnectAccount(
+                                crate::app::view::ConnectAccountMessage::Init,
+                            ),
+                        )))
+                        .map(move |message| {
+                            Message::Pane(pane_id, pane::Message::tab(tab_id, message))
+                        }),
+                    );
                 }
             }
-            Message::KeyPressed(Key::Escape) => {
-                if self.preferences_sheet.is_some() {
-                    return self.close_preferences_sheet();
-                }
-                if self.connect_sheet.is_some() {
-                    return self.close_connect_sheet();
-                }
-                let Some((pane_id, tab_id, generation, intent)) = self.focus.and_then(|pane_id| {
-                    let pane = self.panes.get(pane_id)?;
-                    let tab = pane.tabs.get(pane.focused_tab)?;
-                    let tab::State::App(app) = &tab.state else {
-                        return None;
-                    };
-                    Some((
-                        pane_id,
-                        tab.id,
-                        tab.app_generation_token()?,
-                        app.shell_escape_intent()?,
-                    ))
-                }) else {
-                    return Task::none();
-                };
-                self.update(Message::Pane(
+        }
+        Task::batch(tasks)
+    }
+
+    fn open_app_connect_sign_in(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+    ) -> Task<Message> {
+        let refresh = self.overlay_origin(None).is_some_and(|origin| {
+            origin.pane == pane_id
+                && origin.tab_id == tab_id
+                && self.connect_panel(&origin).is_some_and(|account| {
+                    !account.is_authenticated() && !account.is_checking_session()
+                })
+        });
+        // The Connect control opened it, directly or from its panel.
+        let source_id = crate::app::view::nav::shell::CONNECTION_ID;
+        let open = self.open_connect_sheet_from(
+            pane_id,
+            tab_id,
+            ConnectSheetSection::Account,
+            Some(iced::advanced::widget::Id::new(source_id)),
+        );
+        if refresh {
+            Task::batch([
+                open,
+                Task::done(Message::Pane(
                     pane_id,
                     pane::Message::tab(
                         tab_id,
-                        tab::Message::AppAsync(
-                            generation,
-                            Box::new(tab::Message::Run(AppMessage::View(intent))),
-                        ),
+                        tab::Message::Run(AppMessage::View(
+                            crate::app::view::Message::ConnectAccount(
+                                crate::app::view::ConnectAccountMessage::Init,
+                            ),
+                        )),
                     ),
-                ))
+                )),
+            ])
+        } else {
+            open
+        }
+    }
+
+    fn open_launcher_connect_section(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        sub: crate::app::menu::ConnectSubMenu,
+    ) -> Task<Message> {
+        let Some(origin_focus) = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .and_then(|tab| match &tab.state {
+                tab::State::Home(home) => Some(home.connect_sheet_origin_id()),
+                _ => None,
+            })
+        else {
+            return Task::none();
+        };
+        let section = match sub {
+            crate::app::menu::ConnectSubMenu::Overview => ConnectSheetSection::Account,
+            crate::app::menu::ConnectSubMenu::PlanBilling => ConnectSheetSection::PlanBilling,
+            crate::app::menu::ConnectSubMenu::Security => ConnectSheetSection::DevicesSecurity,
+            crate::app::menu::ConnectSubMenu::Contacts => ConnectSheetSection::Contacts,
+            crate::app::menu::ConnectSubMenu::Duress => ConnectSheetSection::Duress,
+        };
+        let signed_out_launcher = section == ConnectSheetSection::Account
+            && self.overlay_origin(None).is_some_and(|origin| {
+                origin.pane == pane_id
+                    && origin.tab_id == tab_id
+                    && matches!(origin.source, tab::PreferencesSource::Home)
+                    && self
+                        .connect_panel(&origin)
+                        .is_some_and(|account| !account.is_authenticated())
+            });
+        let open = self.open_connect_sheet_from(pane_id, tab_id, section, Some(origin_focus));
+        if signed_out_launcher {
+            if let Some(sheet) = &mut self.connect_sheet {
+                sheet.page = ConnectSheetPage::Authentication;
             }
-            Message::Fiat(FiatMessage::GetPriceResult(price)) => {
-                if price.request.origin.is_some() {
-                    return Task::none();
+            Task::batch([
+                open,
+                iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(
+                    iced::advanced::widget::Id::new(crate::app::view::connect::EMAIL_INPUT_ID),
+                )),
+            ])
+        } else {
+            open
+        }
+    }
+
+    fn open_app_preferences(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        source: tab::PreferencesSource,
+    ) -> Task<Message> {
+        let current_source = self.panes.get(pane_id).and_then(|pane| {
+            pane.tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .and_then(tab::Tab::preferences_source)
+        });
+        if current_source != Some(source) {
+            return Task::none();
+        }
+        let focus = Some(iced::advanced::widget::Id::new(match source {
+            tab::PreferencesSource::Home => "tenshu.launcher.catalog:control:settings",
+            tab::PreferencesSource::App(_) => crate::app::view::nav::shell::APP_PREFERENCES_ID,
+        }));
+        let Some(origin) = self.overlay_origin(focus) else {
+            return Task::none();
+        };
+        if origin.pane != pane_id || origin.tab_id != tab_id || origin.source != source {
+            return Task::none();
+        }
+        self.preferences_sheet = Some(PreferencesSheet {
+            origin,
+            page: PreferencesPageState::default(),
+            worldview_changed: None,
+            about: about::AboutState::default(),
+            diagnostics: diagnostics::DiagnosticsState::load(&self.config.coincube_directory),
+        });
+        self.connect_sheet = None;
+        self.publish_preferences_sheet();
+        Task::batch([
+            iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(
+                iced::advanced::widget::Id::new("tenshu.preferences.close"),
+            )),
+            self.worldview_action(worldview::Action::Refresh),
+        ])
+    }
+
+    fn handle_duress_lock(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        inner: Box<tab::Message>,
+    ) -> Task<Message> {
+        let remote = matches!(
+            inner.as_ref(),
+            tab::Message::Run(AppMessage::View(
+                crate::app::view::Message::DuressLockRemote
+            ))
+        );
+        let result = {
+            let Some(pane) = self.panes.get_mut(pane_id) else {
+                return Task::none();
+            };
+            let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) else {
+                return Task::none();
+            };
+            if remote && !matches!(pane.tabs[index].state, tab::State::App(_)) {
+                return Task::none();
+            }
+            pane.tabs[index].stop();
+            pane.update(pane::Message::Tab(tab_id, inner), &self.config)
+        };
+        // The wipe is complete: do not leave a Launcher or another
+        // Cube surface visible above the cryptic duress state.
+        for (&other_id, other_pane) in self.panes.iter_mut() {
+            other_pane.close_tabs_matching(|tab| other_id != pane_id || tab.id != tab_id);
+        }
+        crate::app::session::close();
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            pane.focused_tab = pane
+                .tabs
+                .iter()
+                .position(|tab| tab.id == tab_id)
+                .unwrap_or(0);
+        }
+        self.focus = Some(pane_id);
+        result.map(move |message| Message::Pane(pane_id, message))
+    }
+
+    fn close_pane_tab(&mut self, pane_id: pane_grid::Pane, i: usize) -> Task<Message> {
+        if let Some(pane) = self.panes.get_mut(pane_id) {
+            if pane.tabs.get(i).is_some_and(|tab| tab.id == usize::MAX) {
+                return Task::none();
+            }
+            let pending_seed_trials = pane
+                .tabs
+                .get(i)
+                .map_or(0, tab::Tab::pending_seed_export_trials);
+            let closed_tab_id = pane.tabs.get(i).map(|tab| tab.id);
+            let _ = pane
+                .update(
+                    pane::Message::View(pane::ViewMessage::CloseTab(i)),
+                    &self.config,
+                )
+                .map(move |msg| Message::Pane(pane_id, msg));
+            if pane.tabs.is_empty() && pending_seed_trials > 0 {
+                // Closing the final tab must not close the Iced runtime
+                // before a submitted PIN can classify as Duress. Keep
+                // a neutral tab alive; a non-duress result closes it.
+                let (home, startup) =
+                    home::Home::new(self.config.coincube_directory.clone(), self.config.network);
+                drop(startup);
+                let mut placeholder = tab::Tab::new(usize::MAX, tab::State::Home(home));
+                placeholder.hold_closed_seed_export_trials(
+                    closed_tab_id.expect("closed tab existed"),
+                    pending_seed_trials,
+                );
+                pane.tabs.push(placeholder);
+                pane.focused_tab = 0;
+                self.focus = Some(pane_id);
+            }
+            if pane.tabs.is_empty() {
+                self.panes.close(pane_id);
+                if self.focus == Some(pane_id) {
+                    self.focus = None;
                 }
-                if self
-                    .global_cache
-                    .pending_fiat_price_request(price.source(), price.currency())
-                    != Some(&price.request)
+            }
+        }
+        if !self.panes.iter().any(|(_, p)| !p.tabs.is_empty()) {
+            return iced::window::latest().and_then(iced::window::close);
+        }
+        Task::none()
+    }
+
+    fn handle_launcher_message(
+        &mut self,
+        p: pane_grid::Pane,
+        t: usize,
+        msg: home::Message,
+    ) -> Task<Message> {
+        let mut tasks = Vec::new();
+        let public_exit = matches!(
+            msg,
+            home::Message::Run(..)
+                | home::Message::RunFromFloor(..)
+                | home::Message::RunToRecovery(..)
+                | home::Message::Install(..)
+        );
+        if public_exit {
+            let admission = self
+                .panes
+                .get(p)
+                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == t))
+                .map_or_else(
+                    || Err("The Launcher destination closed.".to_string()),
+                    |tab| tab.validate_home_exit(&msg),
+                );
+            if let Err(error) = admission {
+                if let Some(tab::State::Home(home)) = self
+                    .panes
+                    .get_mut(p)
+                    .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == t))
+                    .map(|tab| &mut tab.state)
                 {
-                    tracing::debug!(
-                        "Ignoring fiat price result for {} from {} as it is not the last request",
-                        price.currency(),
-                        price.source(),
-                    );
+                    home.set_error(error);
+                }
+                return Task::none();
+            }
+        }
+        if let Some(task) = self.resume_live_launcher_cube(&msg) {
+            return task;
+        }
+        if public_exit {
+            self.retire_public_owners();
+        }
+        if let home::Message::View(home::ViewMessage::DeleteCube(
+            home::DeleteCubeMessage::Confirm(..),
+        )) = &msg
+        {
+            self.retire_public_owners();
+            self.close_deleted_cube_surfaces(&mut tasks);
+        }
+
+        if let Some(pane) = self.panes.get_mut(p) {
+            tasks.push(
+                pane.update(
+                    pane::Message::tab(t, tab::Message::Launch(msg)),
+                    &self.config,
+                )
+                .map(move |msg| Message::Pane(p, msg)),
+            );
+        }
+
+        Task::batch(tasks)
+    }
+
+    fn resume_live_launcher_cube(&mut self, msg: &home::Message) -> Option<Task<Message>> {
+        let (root, chain, cube) = match msg {
+            home::Message::Run(root, _, chain, cube)
+            | home::Message::RunFromFloor(root, _, chain, cube, _)
+            | home::Message::RunToRecovery(root, _, chain, cube) => (root, chain, cube),
+            _ => return None,
+        };
+        // Opening the same Cube from the Launcher resumes its live
+        // App. In particular this must not ask for its PIN again.
+        let secret_owners = self
+            .panes
+            .iter()
+            .flat_map(|(_, pane)| pane.tabs.iter())
+            .filter(|tab| {
+                matches!(
+                    tab.state,
+                    tab::State::App(_)
+                        | tab::State::Loader(_)
+                        | tab::State::Installer(_)
+                        | tab::State::PinEntry(_)
+                        | tab::State::PasskeyUnlock(_)
+                )
+            })
+            .count();
+        // A retained App can resume only while it is the sole
+        // public owner of the exact live process session. Legacy
+        // duplicate tabs, or an App outliving its session, go
+        // through the normal close-then-unlock admission instead.
+        let existing = (secret_owners == 1
+            && crate::app::session::current_cube_id().as_deref() == Some(cube.id.as_str()))
+        .then(|| {
+            self.panes.iter().find_map(|(&pane_id, pane)| {
+                pane.tabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, tab)| match &tab.state {
+                        tab::State::App(app)
+                            if app.datadir() == root
+                                && app.cube_settings().network == *chain
+                                && app.cube_settings().id == cube.id =>
+                        {
+                            Some((pane_id, index))
+                        }
+                        _ => None,
+                    })
+            })
+        })
+        .flatten();
+        if let Some((pane_id, index)) = existing {
+            self.focus = Some(pane_id);
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                if matches!(msg, home::Message::RunToRecovery(..)) {
+                    let tab_id = pane.tabs[index].id;
+                    let focus = pane
+                        .update(
+                            pane::Message::View(pane::ViewMessage::FocusTab(index)),
+                            &self.config,
+                        )
+                        .map(move |message| Message::Pane(pane_id, message));
+                    let recovery = pane.tabs[index]
+                        .emit_app_task(Task::done(AppMessage::View(
+                            crate::app::view::Message::Menu(crate::app::menu::Menu::Cube(
+                                crate::app::menu::CubeSubMenu::Settings(
+                                    crate::app::menu::CubeSettingsOption::Recovery,
+                                ),
+                            )),
+                        )))
+                        .map(move |message| {
+                            Message::Pane(pane_id, pane::Message::tab(tab_id, message))
+                        });
+                    return Some(Task::batch([focus, recovery]));
+                }
+                return Some(
+                    pane.update(
+                        pane::Message::View(pane::ViewMessage::FocusTab(index)),
+                        &self.config,
+                    )
+                    .map(move |message| Message::Pane(pane_id, message)),
+                );
+            }
+        }
+        None
+    }
+
+    fn close_deleted_cube_surfaces(&mut self, tasks: &mut Vec<Task<Message>>) {
+        // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
+        let mut panes_to_close = Vec::<pane_grid::Pane>::new();
+        for (id, pane) in self.panes.iter_mut() {
+            pane.close_tabs_matching(|tab| {
+                matches!(tab.state, tab::State::App(_) | tab::State::Loader(_))
+            });
+            if pane.tabs.is_empty() {
+                panes_to_close.push(*id);
+            }
+        }
+        for id in panes_to_close {
+            self.panes.close(id);
+        }
+        for (&id, pane) in self.panes.iter() {
+            for tab in &pane.tabs {
+                if let tab::State::Home(l) = &tab.state {
+                    let tab_id = tab.id;
+                    tasks.push(l.reload().map(move |msg| {
+                        Message::Pane(id, pane::Message::tab(tab_id, tab::Message::Launch(msg)))
+                    }));
+                }
+            }
+        }
+    }
+
+    fn cube_lock_requires_launcher(&self, pane_id: pane_grid::Pane, tab_id: usize) -> bool {
+        self.panes.get(pane_id).is_some_and(|pane| {
+            let owner = pane
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .and_then(|tab| match &tab.state {
+                    tab::State::App(app) => Some(app.cache().app_generation),
+                    _ => None,
+                });
+            matches!(
+                pane.tabs.get(pane.focused_tab).map(|tab| &tab.state),
+                Some(tab::State::Home(_))
+            ) || owner
+                .is_some_and(|owner| pane.tabs.iter().any(|tab| tab.copy_owner() == Some(owner)))
+        })
+    }
+
+    fn handle_cube_lock(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        message: tab::Message,
+    ) -> Task<Message> {
+        let delete = matches!(message, tab::Message::LockCubeToDelete);
+        let to_launcher = delete
+            || matches!(message, tab::Message::LockCubeToLauncher)
+            || self.cube_lock_requires_launcher(pane_id, tab_id);
+        let identity = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .and_then(|tab| match &tab.state {
+                tab::State::App(app) => Some((
+                    app.cache().app_generation,
+                    app.datadir().clone(),
+                    app.cube_settings().network,
+                    app.cube_settings().id.clone(),
+                )),
+                _ => None,
+            });
+        let Some((owner, root, chain, cube_id)) = identity else {
+            return Task::none();
+        };
+        // Locking must not wait on daemon shutdowns: each poller first
+        // finishes its in-flight network request. Those daemons stop on
+        // their own threads; only the watch-only daemon outlives this
+        // update, while the signer and wallet clients go with the tabs.
+        let mut empty_panes = Vec::new();
+        for (&other_id, pane) in self.panes.iter_mut() {
+            pane.close_tabs_matching_in_background(|sibling| {
+                !(other_id == pane_id && sibling.id == tab_id)
+                    && (sibling.copy_owner() == Some(owner)
+                        || sibling.matches_cube_identity(&root, chain, &cube_id)
+                        || matches!(
+                            sibling.state,
+                            tab::State::App(_)
+                                | tab::State::Loader(_)
+                                | tab::State::Installer(_)
+                                | tab::State::PinEntry(_)
+                                | tab::State::PasskeyUnlock(_)
+                        ))
+            });
+            if pane.tabs.is_empty() {
+                empty_panes.push(other_id);
+            }
+        }
+        for empty in empty_panes {
+            self.panes.close(empty);
+            if self.focus == Some(empty) {
+                self.focus = Some(pane_id);
+            }
+        }
+        let Some(pane) = self.panes.get_mut(pane_id) else {
+            return Task::none();
+        };
+        let Some(index) = pane
+            .tabs
+            .iter()
+            .position(|tab| tab.id == tab_id)
+            .filter(|&index| matches!(pane.tabs[index].state, tab::State::App(_)))
+        else {
+            return Task::none();
+        };
+        if !to_launcher {
+            crate::app::session::close();
+            self.focus = Some(pane_id);
+            return pane
+                .update(pane::Message::tab(tab_id, message), &self.config)
+                .map(move |message| Message::Pane(pane_id, message));
+        }
+        pane.close_tab_in_background(index);
+        crate::app::session::close(); // zeroizes signer/PIN
+        self.focus = Some(pane_id);
+        let task = if delete {
+            pane.focus_launcher_to_delete(cube_id, chain, &self.config)
+        } else {
+            pane.focus_launcher(&self.config)
+        };
+        Self::make_launcher_primary(pane);
+        task.map(move |message| Message::Pane(pane_id, message))
+    }
+
+    fn make_launcher_primary(pane: &mut pane::Pane) {
+        // Lock makes the Launcher the primary tab even if
+        // a legacy layout retained an unrelated Cube.
+        if pane.focused_tab > 0 {
+            let launcher = pane.tabs.remove(pane.focused_tab);
+            pane.tabs.insert(0, launcher);
+            pane.focused_tab = 0;
+        }
+    }
+
+    fn handle_tick(&mut self) -> Task<Message> {
+        if self
+            .zoom
+            .notice_until
+            .is_some_and(|until| Instant::now() >= until)
+        {
+            self.zoom.notice_until = None;
+        }
+        let system_reduces_motion = crate::app::settings::system_accessibility::reduces_motion();
+        self.system_reduces_motion = system_reduces_motion;
+        for (_, pane) in self.panes.iter_mut() {
+            for tab in &mut pane.tabs {
+                tab.set_system_reduces_motion(system_reduces_motion);
+            }
+        }
+        let privacy_refresh = self
+            .preferences
+            .begin_refresh_if_due()
+            .map(|request| self.run_preferences(request));
+        if privacy_refresh.is_some() {
+            self.publish_balance_privacy();
+        }
+        let mut tasks = vec![];
+        tasks.extend(privacy_refresh);
+
+        // These are the required (source, currency) pairs for which the global price is stale.
+        let mut stale_pairs = HashSet::<(PriceSource, Currency)>::new();
+        // These are the tabs that need the cached global price.
+        let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
+        // Tabs that need a fresh USD price for USDt→sats conversion.
+        let mut need_usd_cached: Vec<(pane_grid::Pane, usize, FiatPrice)> = Vec::new();
+        for (&pane_id, pane) in self.panes.iter() {
+            for tab in pane.tabs.iter() {
+                self.collect_tab_fiat_prices(
+                    pane_id,
+                    tab,
+                    &mut stale_pairs,
+                    &mut need_cached,
+                    &mut need_usd_cached,
+                );
+            }
+        }
+        for (source, currency) in stale_pairs {
+            let request = FiatPriceRequest::new(source, currency);
+            // Store request immediately to avoid multiple requests for the same pair.
+            self.global_cache.insert_fiat_price_request(request);
+            tasks.push(Task::perform(request.send_default(), |res| {
+                FiatMessage::GetPriceResult(res).into()
+            }));
+        }
+        for ((pane_id, tab_id), global_price) in need_cached {
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                // Return the cached global price to the tab.
+                tracing::debug!(
+                    "Updating tab {} in pane {:?} with cached fiat price {:?}",
+                    tab_id,
+                    pane_id,
+                    global_price
+                );
+                tasks.push(
+                    pane.update_tab_with_app_msg(
+                        tab_id,
+                        AppFiatMessage::GetPriceResult(global_price),
+                        &self.config,
+                    )
+                    .map(move |msg| Message::Pane(pane_id, msg)),
+                );
+            }
+        }
+        // Distribute fresh USD prices for USDt→sats conversion.
+        for (pane_id, tab_id, usd_price) in need_usd_cached {
+            if let Some(pane) = self.panes.get_mut(pane_id) {
+                tasks.push(
+                    pane.update_tab_with_app_msg(
+                        tab_id,
+                        AppFiatMessage::GetPriceResult(usd_price),
+                        &self.config,
+                    )
+                    .map(move |msg| Message::Pane(pane_id, msg)),
+                );
+            }
+        }
+        tasks.extend(
+            self.panes
+                .iter_mut()
+                .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
+        );
+
+        Task::batch(tasks)
+    }
+
+    fn collect_tab_fiat_prices(
+        &self,
+        pane_id: pane_grid::Pane,
+        tab: &tab::Tab,
+        stale_pairs: &mut HashSet<(PriceSource, Currency)>,
+        need_cached: &mut HashMap<(pane_grid::Pane, usize), FiatPrice>,
+        need_usd_cached: &mut Vec<(pane_grid::Pane, usize, FiatPrice)>,
+    ) {
+        // BTCB2 has an authenticated, generation-bound poll in App.
+        // Never insert its requests into the shared Bitcoin cache.
+        if tab
+            .cube_settings()
+            .is_some_and(|cube| cube.network.is_blake2b())
+        {
+            return;
+        }
+        let fiat_sett = tab.cube_settings().and_then(|cs| cs.fiat_price.as_ref());
+
+        // When fiat display is enabled, fetch the user's selected currency.
+        if let Some(sett) = fiat_sett.filter(|s| s.is_enabled) {
+            if let Some(fresh_price) = self
+                .global_cache
+                .fresh_fiat_price(sett.source, sett.currency)
+            {
+                if !tab
+                    .cache()
+                    .and_then(|c| c.fiat_price.as_ref())
+                    .is_some_and(|tab_price| tab_price.request == fresh_price.request)
+                {
+                    need_cached.insert((pane_id, tab.id), fresh_price.clone());
+                }
+            } else if self
+                .global_cache
+                .pending_fiat_price_request(sett.source, sett.currency)
+                .is_none()
+            {
+                stale_pairs.insert((sett.source, sett.currency));
+            }
+        }
+
+        // Always fetch BTC/USD for USDt→sats conversion, even when
+        // fiat display is disabled. Use the configured source if
+        // available, otherwise fall back to the default source.
+        let usd_source = fiat_sett.map(|s| s.source).unwrap_or_default();
+        if let Some(fresh_usd) = self
+            .global_cache
+            .fresh_fiat_price(usd_source, Currency::USD)
+        {
+            if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
+                need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
+            }
+        } else if self
+            .global_cache
+            .pending_fiat_price_request(usd_source, Currency::USD)
+            .is_none()
+        {
+            stale_pairs.insert((usd_source, Currency::USD));
+        }
+    }
+
+    fn complete_preferences_save(
+        &mut self,
+        request: SaveRequest,
+        result: Result<PreferencesReceipt, String>,
+    ) -> Task<Message> {
+        let before = self
+            .preferences
+            .accepted()
+            .map(|accepted| accepted.preferences);
+        let outcome = self.preferences.complete(&request, result);
+        let applied = matches!(outcome, SaveOutcome::Applied(_));
+        let failed = matches!(outcome, SaveOutcome::Failed(_));
+        self.publish_balance_privacy();
+        let mut tasks = Vec::new();
+        if applied {
+            let after = self
+                .preferences
+                .accepted()
+                .map(|accepted| accepted.preferences);
+            if before.map(|prefs| prefs.theme) != after.map(|prefs| prefs.theme) {
+                self.publish_appearance();
+            }
+            if let (
+                Operation::Save(crate::app::settings::preferences::PreferenceChange::Worldview(
+                    mode,
+                )),
+                Some(sheet),
+            ) = (request.operation, &mut self.preferences_sheet)
+            {
+                if before.is_some_and(|prefs| prefs.worldview != mode)
+                    && after.is_some_and(|prefs| prefs.worldview == mode)
+                {
+                    sheet.worldview_changed = Some(mode);
+                }
+            }
+            if launcher_presentation_changed(before, after) {
+                self.refresh_all_launcher_modes();
+            }
+            if needs_global_settings_reload(before, after) {
+                tasks.push(self.reload_all_global_settings());
+            }
+        }
+        self.worldview_saved(&request, applied, before);
+        if let Some(next) = self.preferences.begin_next_queued_save() {
+            self.worldview_start_queued_save(&next);
+            self.publish_balance_privacy();
+            tasks.push(self.run_preferences(next));
+        }
+        self.discard_failed_zoom(request.operation, failed);
+        tasks.push(self.save_pending_zoom());
+        tasks.push(self.worldview_automatic());
+        Task::batch(tasks)
+    }
+
+    fn discard_failed_zoom(&mut self, operation: Operation, failed: bool) {
+        // A zoom that failed to save goes back to the saved one, like
+        // every other choice ("Your previous settings remain active").
+        // A newer step pressed during the save is kept and saved next.
+        if let Operation::Save(crate::app::settings::preferences::PreferenceChange::Zoom(zoom)) =
+            operation
+        {
+            if failed && self.zoom.pending == Some(zoom) {
+                self.zoom.pending = None;
+            }
+        }
+    }
+
+    fn handle_pane_message(&mut self, i: pane_grid::Pane, msg: pane::Message) -> Task<Message> {
+        match msg {
+            // Handle ListCurrencies requests separately.
+            pane::Message::Tab(tab_id, inner)
+                if matches!(
+                    inner.as_ref(),
+                    tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(_)))
+                ) =>
+            {
+                let tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(source))) =
+                    *inner
+                else {
+                    tracing::error!("Unexpected message type after unboxing");
+                    return Task::none();
+                };
+                // BTCB2 uses only Connect pricing. Currency preferences do not
+                // authorize a Bitcoin/aggregator currency-list request either.
+                let btcb2 = self
+                    .panes
+                    .get(i)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+                    .and_then(|tab| tab.cube_settings())
+                    .is_some_and(|cube| cube.network.is_blake2b());
+                if btcb2 {
+                    if let Some(pane) = self.panes.get_mut(i) {
+                        return pane
+                            .update_tab_with_app_msg(
+                                tab_id,
+                                AppFiatMessage::ListCurrenciesResult(
+                                    source,
+                                    Ok(ListCurrenciesResult {
+                                        currencies: Currency::ALL.to_vec(),
+                                    }),
+                                ),
+                                &self.config,
+                            )
+                            .map(move |msg| Message::Pane(i, msg));
+                    }
                     return Task::none();
                 }
-                match price.res.as_ref() {
-                    Ok(res) => {
-                        tracing::debug!(
-                            "Fiat price request for {} from {} completed successfully: {:?}",
-                            price.currency(),
-                            price.source(),
-                            res,
-                        );
+                // If we already have a fresh list of currencies for this source, return it directly to the tab.
+                if let Some(fresh_list) = self.global_cache.fresh_currencies(source) {
+                    tracing::debug!("Using cached currencies list for {}", source,);
+                    if let Some(pane) = self.panes.get_mut(i) {
+                        return pane
+                            .update_tab_with_app_msg(
+                                tab_id,
+                                AppFiatMessage::ListCurrenciesResult(
+                                    source,
+                                    Ok(ListCurrenciesResult {
+                                        currencies: fresh_list.clone(),
+                                    }),
+                                ),
+                                &self.config,
+                            )
+                            .map(move |msg| Message::Pane(i, msg));
                     }
-                    Err(e) => {
-                        tracing::error!(
-                            "Fiat price request for {} from {} returned error: {}",
-                            price.currency(),
-                            price.source(),
-                            e
-                        );
-                    }
+                } else {
+                    tracing::debug!("Requesting list of currencies from {}", source);
+                    return Task::perform(
+                        async move {
+                            let client = PriceClient::default_from_source(source);
+                            (
+                                tab_id,
+                                source,
+                                Instant::now(),
+                                client.list_currencies().await,
+                            )
+                        },
+                        move |(tab_id, source, now, res)| {
+                            FiatMessage::ListCurrenciesResult(i, tab_id, source, now, res).into()
+                        },
+                    );
                 }
-                // Update the cache with the result even if there was an error.
-                self.global_cache
-                    .remove_fiat_price_request(price.source(), price.currency());
-                self.global_cache.insert_fiat_price(price);
-                Task::none()
+            }
+            _ => {
+                if let Some(pane) = self.panes.get_mut(i) {
+                    return pane
+                        .update(msg, &self.config)
+                        .map(move |msg| Message::Pane(i, msg));
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn update_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            // we get this message only once at startup
+            Message::Window(id) => self.initialize_window(id),
+            Message::ScreenSize(size, zoom) => self.apply_screen_size(size, zoom),
+            Message::WindowSize(monitor_size) => self.apply_window_size(monitor_size),
+            Message::WindowMoved => self.query_screen_size(),
+            Message::CtrlC
+            | Message::Event(iced::Event::Window(iced::window::Event::CloseRequested)) => {
+                self.close_window()
+            }
+            Message::KeyPressed(Key::Tab(shift)) => self.move_keyboard_focus(shift),
+            Message::KeyPressed(Key::Zoom(step)) => self.apply_zoom_shortcut(step),
+            Message::KeyPressed(Key::Escape) => self.apply_escape_shortcut(),
+            Message::Fiat(FiatMessage::GetPriceResult(price)) => {
+                self.apply_fiat_price_result(price)
             }
             Message::Fiat(FiatMessage::ListCurrenciesResult(
                 pane_id,
@@ -3241,23 +4198,7 @@ impl GUI {
                 source,
                 instant,
                 res,
-            )) => {
-                if let Ok(list) = res.as_ref() {
-                    self.global_cache
-                        .insert_currencies(source, instant, list.currencies.clone());
-                }
-                // Return the result to the tab even if there was an error.
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    pane.update_tab_with_app_msg(
-                        tab_id,
-                        AppFiatMessage::ListCurrenciesResult(source, res),
-                        &self.config,
-                    )
-                    .map(move |msg| Message::Pane(pane_id, msg))
-                } else {
-                    Task::none()
-                }
-            }
+            )) => self.apply_fiat_currencies_result(pane_id, tab_id, source, instant, res),
             Message::Pane(_, pane::Message::View(pane::ViewMessage::GlobalSettingsChanged)) => {
                 self.reload_all_global_settings()
             }
@@ -3265,25 +4206,7 @@ impl GUI {
             // in every pane: a split-off Cube is still an open Cube. Each Init
             // re-enters `update`, so it may adopt the verified sibling client.
             Message::Pane(_, pane::Message::View(pane::ViewMessage::ConnectSignedIn)) => {
-                let mut tasks = Vec::new();
-                for (&pane_id, pane) in self.panes.iter() {
-                    for tab in &pane.tabs {
-                        if matches!(&tab.state, tab::State::App(_)) {
-                            let tab_id = tab.id;
-                            tasks.push(
-                                tab.emit_app_task(Task::done(AppMessage::View(
-                                    crate::app::view::Message::ConnectAccount(
-                                        crate::app::view::ConnectAccountMessage::Init,
-                                    ),
-                                )))
-                                .map(move |message| {
-                                    Message::Pane(pane_id, pane::Message::tab(tab_id, message))
-                                }),
-                            );
-                        }
-                    }
-                }
-                Task::batch(tasks)
+                self.refresh_open_connect_sessions()
             }
             // Fork tabs wrap task outputs with their session generation.
             // After validation/unwrapping, global intents can arrive directly
@@ -3312,39 +4235,7 @@ impl GUI {
                     ))
                 ) && self.connect_overlay_eligible(pane_id) =>
             {
-                let refresh = self.overlay_origin(None).is_some_and(|origin| {
-                    origin.pane == pane_id
-                        && origin.tab_id == tab_id
-                        && self.connect_panel(&origin).is_some_and(|account| {
-                            !account.is_authenticated() && !account.is_checking_session()
-                        })
-                });
-                // The Connect control opened it, directly or from its panel.
-                let source_id = crate::app::view::nav::shell::CONNECTION_ID;
-                let open = self.open_connect_sheet_from(
-                    pane_id,
-                    tab_id,
-                    ConnectSheetSection::Account,
-                    Some(iced::advanced::widget::Id::new(source_id)),
-                );
-                if refresh {
-                    Task::batch([
-                        open,
-                        Task::done(Message::Pane(
-                            pane_id,
-                            pane::Message::tab(
-                                tab_id,
-                                tab::Message::Run(AppMessage::View(
-                                    crate::app::view::Message::ConnectAccount(
-                                        crate::app::view::ConnectAccountMessage::Init,
-                                    ),
-                                )),
-                            ),
-                        )),
-                    ])
-                } else {
-                    open
-                }
+                self.open_app_connect_sign_in(pane_id, tab_id)
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
@@ -3388,56 +4279,7 @@ impl GUI {
                 else {
                     unreachable!();
                 };
-                let Some(origin_focus) = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .and_then(|tab| match &tab.state {
-                        tab::State::Home(home) => Some(home.connect_sheet_origin_id()),
-                        _ => None,
-                    })
-                else {
-                    return Task::none();
-                };
-                let section = match sub {
-                    crate::app::menu::ConnectSubMenu::Overview => ConnectSheetSection::Account,
-                    crate::app::menu::ConnectSubMenu::PlanBilling => {
-                        ConnectSheetSection::PlanBilling
-                    }
-                    crate::app::menu::ConnectSubMenu::Security => {
-                        ConnectSheetSection::DevicesSecurity
-                    }
-                    crate::app::menu::ConnectSubMenu::Contacts => ConnectSheetSection::Contacts,
-                    crate::app::menu::ConnectSubMenu::Duress => ConnectSheetSection::Duress,
-                };
-                let signed_out_launcher = section == ConnectSheetSection::Account
-                    && self.overlay_origin(None).is_some_and(|origin| {
-                        origin.pane == pane_id
-                            && origin.tab_id == tab_id
-                            && matches!(origin.source, tab::PreferencesSource::Home)
-                            && self
-                                .connect_panel(&origin)
-                                .is_some_and(|account| !account.is_authenticated())
-                    });
-                let open =
-                    self.open_connect_sheet_from(pane_id, tab_id, section, Some(origin_focus));
-                if signed_out_launcher {
-                    if let Some(sheet) = &mut self.connect_sheet {
-                        sheet.page = ConnectSheetPage::Authentication;
-                    }
-                    Task::batch([
-                        open,
-                        iced_runtime::task::widget(
-                            iced::advanced::widget::operation::focusable::focus(
-                                iced::advanced::widget::Id::new(
-                                    crate::app::view::connect::EMAIL_INPUT_ID,
-                                ),
-                            ),
-                        ),
-                    ])
-                } else {
-                    open
-                }
+                self.open_launcher_connect_section(pane_id, tab_id, sub)
             }
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::OpenConnectSignIn))
                 if self.connect_overlay_eligible(pane_id) =>
@@ -3458,46 +4300,7 @@ impl GUI {
                 let tab::Message::OpenAppPreferences(source) = *inner else {
                     unreachable!();
                 };
-                let current_source = self.panes.get(pane_id).and_then(|pane| {
-                    pane.tabs
-                        .iter()
-                        .find(|tab| tab.id == tab_id)
-                        .and_then(tab::Tab::preferences_source)
-                });
-                if current_source != Some(source) {
-                    return Task::none();
-                }
-                let focus = Some(iced::advanced::widget::Id::new(match source {
-                    tab::PreferencesSource::Home => "tenshu.launcher.catalog:control:settings",
-                    tab::PreferencesSource::App(_) => {
-                        crate::app::view::nav::shell::APP_PREFERENCES_ID
-                    }
-                }));
-                let Some(origin) = self.overlay_origin(focus) else {
-                    return Task::none();
-                };
-                if origin.pane != pane_id || origin.tab_id != tab_id || origin.source != source {
-                    return Task::none();
-                }
-                self.preferences_sheet = Some(PreferencesSheet {
-                    origin,
-                    page: PreferencesPageState::default(),
-                    worldview_changed: None,
-                    about: about::AboutState::default(),
-                    diagnostics: diagnostics::DiagnosticsState::load(
-                        &self.config.coincube_directory,
-                    ),
-                });
-                self.connect_sheet = None;
-                self.publish_preferences_sheet();
-                Task::batch([
-                    iced_runtime::task::widget(
-                        iced::advanced::widget::operation::focusable::focus(
-                            iced::advanced::widget::Id::new("tenshu.preferences.close"),
-                        ),
-                    ),
-                    self.worldview_action(worldview::Action::Refresh),
-                ])
+                self.open_app_preferences(pane_id, tab_id, source)
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
@@ -3507,99 +4310,7 @@ impl GUI {
                         | tab::Message::LockCubeToDelete
                 ) =>
             {
-                let delete = matches!(inner.as_ref(), tab::Message::LockCubeToDelete);
-                let to_launcher = delete
-                    || matches!(inner.as_ref(), tab::Message::LockCubeToLauncher)
-                    || self.panes.get(pane_id).is_some_and(|pane| {
-                        let owner =
-                            pane.tabs.iter().find(|tab| tab.id == tab_id).and_then(
-                                |tab| match &tab.state {
-                                    tab::State::App(app) => Some(app.cache().app_generation),
-                                    _ => None,
-                                },
-                            );
-                        matches!(
-                            pane.tabs.get(pane.focused_tab).map(|tab| &tab.state),
-                            Some(tab::State::Home(_))
-                        ) || owner.is_some_and(|owner| {
-                            pane.tabs.iter().any(|tab| tab.copy_owner() == Some(owner))
-                        })
-                    });
-                let identity = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .and_then(|tab| match &tab.state {
-                        tab::State::App(app) => Some((
-                            app.cache().app_generation,
-                            app.datadir().clone(),
-                            app.cube_settings().network,
-                            app.cube_settings().id.clone(),
-                        )),
-                        _ => None,
-                    });
-                let Some((owner, root, chain, cube_id)) = identity else {
-                    return Task::none();
-                };
-                // Locking must not wait on daemon shutdowns: each poller first
-                // finishes its in-flight network request. Those daemons stop on
-                // their own threads; only the watch-only daemon outlives this
-                // update, while the signer and wallet clients go with the tabs.
-                let mut empty_panes = Vec::new();
-                for (&other_id, pane) in self.panes.iter_mut() {
-                    pane.close_tabs_matching_in_background(|sibling| {
-                        !(other_id == pane_id && sibling.id == tab_id)
-                            && (sibling.copy_owner() == Some(owner)
-                                || sibling.matches_cube_identity(&root, chain, &cube_id)
-                                || matches!(
-                                    sibling.state,
-                                    tab::State::App(_)
-                                        | tab::State::Loader(_)
-                                        | tab::State::Installer(_)
-                                        | tab::State::PinEntry(_)
-                                        | tab::State::PasskeyUnlock(_)
-                                ))
-                    });
-                    if pane.tabs.is_empty() {
-                        empty_panes.push(other_id);
-                    }
-                }
-                for empty in empty_panes {
-                    self.panes.close(empty);
-                    if self.focus == Some(empty) {
-                        self.focus = Some(pane_id);
-                    }
-                }
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    if let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) {
-                        if matches!(pane.tabs[index].state, tab::State::App(_)) {
-                            if !to_launcher {
-                                crate::app::session::close();
-                                self.focus = Some(pane_id);
-                                return pane
-                                    .update(pane::Message::tab(tab_id, *inner), &self.config)
-                                    .map(move |message| Message::Pane(pane_id, message));
-                            }
-                            pane.close_tab_in_background(index);
-                            crate::app::session::close(); // zeroizes signer/PIN
-                            self.focus = Some(pane_id);
-                            let task = if delete {
-                                pane.focus_launcher_to_delete(cube_id, chain, &self.config)
-                            } else {
-                                pane.focus_launcher(&self.config)
-                            };
-                            // Lock makes the Launcher the primary tab even if
-                            // a legacy layout retained an unrelated Cube.
-                            if pane.focused_tab > 0 {
-                                let launcher = pane.tabs.remove(pane.focused_tab);
-                                pane.tabs.insert(0, launcher);
-                                pane.focused_tab = 0;
-                            }
-                            return task.map(move |message| Message::Pane(pane_id, message));
-                        }
-                    }
-                }
-                Task::none()
+                self.handle_cube_lock(pane_id, tab_id, *inner)
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(inner.as_ref(), tab::Message::DuressActivated { .. })
@@ -3610,87 +4321,11 @@ impl GUI {
                         ))
                     ) =>
             {
-                let remote = matches!(
-                    inner.as_ref(),
-                    tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::DuressLockRemote
-                    ))
-                );
-                let result = {
-                    let Some(pane) = self.panes.get_mut(pane_id) else {
-                        return Task::none();
-                    };
-                    let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) else {
-                        return Task::none();
-                    };
-                    if remote && !matches!(pane.tabs[index].state, tab::State::App(_)) {
-                        return Task::none();
-                    }
-                    pane.tabs[index].stop();
-                    pane.update(pane::Message::Tab(tab_id, inner), &self.config)
-                };
-                // The wipe is complete: do not leave a Launcher or another
-                // Cube surface visible above the cryptic duress state.
-                for (&other_id, other_pane) in self.panes.iter_mut() {
-                    other_pane.close_tabs_matching(|tab| other_id != pane_id || tab.id != tab_id);
-                }
-                crate::app::session::close();
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    pane.focused_tab = pane
-                        .tabs
-                        .iter()
-                        .position(|tab| tab.id == tab_id)
-                        .unwrap_or(0);
-                }
-                self.focus = Some(pane_id);
-                result.map(move |message| Message::Pane(pane_id, message))
+                self.handle_duress_lock(pane_id, tab_id, inner)
             }
             Message::Pane(_, pane::Message::View(pane::ViewMessage::SplitTab(_))) => Task::none(),
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::CloseTab(i))) => {
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    if pane.tabs.get(i).is_some_and(|tab| tab.id == usize::MAX) {
-                        return Task::none();
-                    }
-                    let pending_seed_trials = pane
-                        .tabs
-                        .get(i)
-                        .map_or(0, tab::Tab::pending_seed_export_trials);
-                    let closed_tab_id = pane.tabs.get(i).map(|tab| tab.id);
-                    let _ = pane
-                        .update(
-                            pane::Message::View(pane::ViewMessage::CloseTab(i)),
-                            &self.config,
-                        )
-                        .map(move |msg| Message::Pane(pane_id, msg));
-                    if pane.tabs.is_empty() && pending_seed_trials > 0 {
-                        // Closing the final tab must not close the Iced runtime
-                        // before a submitted PIN can classify as Duress. Keep
-                        // a neutral tab alive; a non-duress result closes it.
-                        let (home, startup) = home::Home::new(
-                            self.config.coincube_directory.clone(),
-                            self.config.network,
-                        );
-                        drop(startup);
-                        let mut placeholder = tab::Tab::new(usize::MAX, tab::State::Home(home));
-                        placeholder.hold_closed_seed_export_trials(
-                            closed_tab_id.expect("closed tab existed"),
-                            pending_seed_trials,
-                        );
-                        pane.tabs.push(placeholder);
-                        pane.focused_tab = 0;
-                        self.focus = Some(pane_id);
-                    }
-                    if pane.tabs.is_empty() {
-                        self.panes.close(pane_id);
-                        if self.focus == Some(pane_id) {
-                            self.focus = None;
-                        }
-                    }
-                }
-                if !self.panes.iter().any(|(_, p)| !p.tabs.is_empty()) {
-                    return iced::window::latest().and_then(iced::window::close);
-                }
-                Task::none()
+                self.close_pane_tab(pane_id, i)
             }
             // In case of cube deletion, remove any tab where the cube/wallet is currently running.
             Message::Pane(p, pane::Message::Tab(t, inner))
@@ -3699,318 +4334,16 @@ impl GUI {
                 let tab::Message::Launch(msg) = *inner else {
                     unreachable!();
                 };
-                let mut tasks = Vec::new();
-                let public_exit = matches!(
-                    msg,
-                    home::Message::Run(..)
-                        | home::Message::RunFromFloor(..)
-                        | home::Message::RunToRecovery(..)
-                        | home::Message::Install(..)
-                );
-                if public_exit {
-                    let admission = self
-                        .panes
-                        .get(p)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == t))
-                        .map_or_else(
-                            || Err("The Launcher destination closed.".to_string()),
-                            |tab| tab.validate_home_exit(&msg),
-                        );
-                    if let Err(error) = admission {
-                        if let Some(tab::State::Home(home)) = self
-                            .panes
-                            .get_mut(p)
-                            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == t))
-                            .map(|tab| &mut tab.state)
-                        {
-                            home.set_error(error);
-                        }
-                        return Task::none();
-                    }
-                }
-                if let Some((root, chain, cube)) = match &msg {
-                    home::Message::Run(root, _, chain, cube)
-                    | home::Message::RunFromFloor(root, _, chain, cube, _)
-                    | home::Message::RunToRecovery(root, _, chain, cube) => {
-                        Some((root, chain, cube))
-                    }
-                    _ => None,
-                } {
-                    // Opening the same Cube from the Launcher resumes its live
-                    // App. In particular this must not ask for its PIN again.
-                    let secret_owners = self
-                        .panes
-                        .iter()
-                        .flat_map(|(_, pane)| pane.tabs.iter())
-                        .filter(|tab| {
-                            matches!(
-                                tab.state,
-                                tab::State::App(_)
-                                    | tab::State::Loader(_)
-                                    | tab::State::Installer(_)
-                                    | tab::State::PinEntry(_)
-                                    | tab::State::PasskeyUnlock(_)
-                            )
-                        })
-                        .count();
-                    // A retained App can resume only while it is the sole
-                    // public owner of the exact live process session. Legacy
-                    // duplicate tabs, or an App outliving its session, go
-                    // through the normal close-then-unlock admission instead.
-                    let existing = (secret_owners == 1
-                        && crate::app::session::current_cube_id().as_deref()
-                            == Some(cube.id.as_str()))
-                    .then(|| {
-                        self.panes.iter().find_map(|(&pane_id, pane)| {
-                            pane.tabs
-                                .iter()
-                                .enumerate()
-                                .find_map(|(index, tab)| match &tab.state {
-                                    tab::State::App(app)
-                                        if app.datadir() == root
-                                            && app.cube_settings().network == *chain
-                                            && app.cube_settings().id == cube.id =>
-                                    {
-                                        Some((pane_id, index))
-                                    }
-                                    _ => None,
-                                })
-                        })
-                    })
-                    .flatten();
-                    if let Some((pane_id, index)) = existing {
-                        self.focus = Some(pane_id);
-                        if let Some(pane) = self.panes.get_mut(pane_id) {
-                            if matches!(&msg, home::Message::RunToRecovery(..)) {
-                                let tab_id = pane.tabs[index].id;
-                                let focus = pane
-                                    .update(
-                                        pane::Message::View(pane::ViewMessage::FocusTab(index)),
-                                        &self.config,
-                                    )
-                                    .map(move |message| Message::Pane(pane_id, message));
-                                let recovery = pane.tabs[index]
-                                    .emit_app_task(Task::done(AppMessage::View(
-                                        crate::app::view::Message::Menu(
-                                            crate::app::menu::Menu::Cube(
-                                                crate::app::menu::CubeSubMenu::Settings(
-                                                    crate::app::menu::CubeSettingsOption::Recovery,
-                                                ),
-                                            ),
-                                        ),
-                                    )))
-                                    .map(move |message| {
-                                        Message::Pane(pane_id, pane::Message::tab(tab_id, message))
-                                    });
-                                return Task::batch([focus, recovery]);
-                            }
-                            return pane
-                                .update(
-                                    pane::Message::View(pane::ViewMessage::FocusTab(index)),
-                                    &self.config,
-                                )
-                                .map(move |message| Message::Pane(pane_id, message));
-                        }
-                    }
-                }
-                if public_exit {
-                    self.retire_public_owners();
-                }
-                if let home::Message::View(home::ViewMessage::DeleteCube(
-                    home::DeleteCubeMessage::Confirm(..),
-                )) = &msg
-                {
-                    self.retire_public_owners();
-                    // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
-                    let mut panes_to_close = Vec::<pane_grid::Pane>::new();
-                    for (id, pane) in self.panes.iter_mut() {
-                        pane.close_tabs_matching(|tab| {
-                            matches!(tab.state, tab::State::App(_) | tab::State::Loader(_))
-                        });
-                        if pane.tabs.is_empty() {
-                            panes_to_close.push(*id);
-                        }
-                    }
-                    for id in panes_to_close {
-                        self.panes.close(id);
-                    }
-                    for (&id, pane) in self.panes.iter() {
-                        for tab in &pane.tabs {
-                            if let tab::State::Home(l) = &tab.state {
-                                let tab_id = tab.id;
-                                tasks.push(l.reload().map(move |msg| {
-                                    Message::Pane(
-                                        id,
-                                        pane::Message::tab(tab_id, tab::Message::Launch(msg)),
-                                    )
-                                }));
-                            }
-                        }
-                    }
-                }
-
-                if let Some(pane) = self.panes.get_mut(p) {
-                    tasks.push(
-                        pane.update(
-                            pane::Message::tab(t, tab::Message::Launch(msg)),
-                            &self.config,
-                        )
-                        .map(move |msg| Message::Pane(p, msg)),
-                    );
-                }
-
-                Task::batch(tasks)
+                self.handle_launcher_message(p, t, msg)
             }
-            Message::Pane(i, msg) => {
-                match msg {
-                    // Handle ListCurrencies requests separately.
-                    pane::Message::Tab(tab_id, inner)
-                        if matches!(
-                            inner.as_ref(),
-                            tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(_)))
-                        ) =>
-                    {
-                        let tab::Message::Run(AppMessage::Fiat(AppFiatMessage::ListCurrencies(
-                            source,
-                        ))) = *inner
-                        else {
-                            tracing::error!("Unexpected message type after unboxing");
-                            return Task::none();
-                        };
-                        // BTCB2 uses only Connect pricing. Currency preferences do not
-                        // authorize a Bitcoin/aggregator currency-list request either.
-                        let btcb2 = self
-                            .panes
-                            .get(i)
-                            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                            .and_then(|tab| tab.cube_settings())
-                            .is_some_and(|cube| cube.network.is_blake2b());
-                        if btcb2 {
-                            if let Some(pane) = self.panes.get_mut(i) {
-                                return pane
-                                    .update_tab_with_app_msg(
-                                        tab_id,
-                                        AppFiatMessage::ListCurrenciesResult(
-                                            source,
-                                            Ok(ListCurrenciesResult {
-                                                currencies: Currency::ALL.to_vec(),
-                                            }),
-                                        ),
-                                        &self.config,
-                                    )
-                                    .map(move |msg| Message::Pane(i, msg));
-                            }
-                            return Task::none();
-                        }
-                        // If we already have a fresh list of currencies for this source, return it directly to the tab.
-                        if let Some(fresh_list) = self.global_cache.fresh_currencies(source) {
-                            tracing::debug!("Using cached currencies list for {}", source,);
-                            if let Some(pane) = self.panes.get_mut(i) {
-                                return pane
-                                    .update_tab_with_app_msg(
-                                        tab_id,
-                                        AppFiatMessage::ListCurrenciesResult(
-                                            source,
-                                            Ok(ListCurrenciesResult {
-                                                currencies: fresh_list.clone(),
-                                            }),
-                                        ),
-                                        &self.config,
-                                    )
-                                    .map(move |msg| Message::Pane(i, msg));
-                            }
-                        } else {
-                            tracing::debug!("Requesting list of currencies from {}", source);
-                            return Task::perform(
-                                async move {
-                                    let client = PriceClient::default_from_source(source);
-                                    (
-                                        tab_id,
-                                        source,
-                                        Instant::now(),
-                                        client.list_currencies().await,
-                                    )
-                                },
-                                move |(tab_id, source, now, res)| {
-                                    FiatMessage::ListCurrenciesResult(i, tab_id, source, now, res)
-                                        .into()
-                                },
-                            );
-                        }
-                    }
-                    _ => {
-                        if let Some(pane) = self.panes.get_mut(i) {
-                            return pane
-                                .update(msg, &self.config)
-                                .map(move |msg| Message::Pane(i, msg));
-                        }
-                    }
-                }
-                Task::none()
-            }
+            Message::Pane(i, msg) => self.handle_pane_message(i, msg),
             Message::Clicked(pane) => {
                 self.focus = Some(pane);
                 Task::none()
             }
             Message::Resized(_) | Message::Dragged(_) => Task::none(),
             Message::Preferences(request, result) => {
-                let before = self
-                    .preferences
-                    .accepted()
-                    .map(|accepted| accepted.preferences);
-                let outcome = self.preferences.complete(&request, result);
-                let applied = matches!(outcome, SaveOutcome::Applied(_));
-                let failed = matches!(outcome, SaveOutcome::Failed(_));
-                self.publish_balance_privacy();
-                let mut tasks = Vec::new();
-                if applied {
-                    let after = self
-                        .preferences
-                        .accepted()
-                        .map(|accepted| accepted.preferences);
-                    if before.map(|prefs| prefs.theme) != after.map(|prefs| prefs.theme) {
-                        self.publish_appearance();
-                    }
-                    if let (
-                        Operation::Save(
-                            crate::app::settings::preferences::PreferenceChange::Worldview(mode),
-                        ),
-                        Some(sheet),
-                    ) = (request.operation, &mut self.preferences_sheet)
-                    {
-                        if before.is_some_and(|prefs| prefs.worldview != mode)
-                            && after.is_some_and(|prefs| prefs.worldview == mode)
-                        {
-                            sheet.worldview_changed = Some(mode);
-                        }
-                    }
-                    if launcher_presentation_changed(before, after) {
-                        self.refresh_all_launcher_modes();
-                    }
-                    if needs_global_settings_reload(before, after) {
-                        tasks.push(self.reload_all_global_settings());
-                    }
-                }
-                self.worldview_saved(&request, applied, before);
-                if let Some(next) = self.preferences.begin_next_queued_save() {
-                    self.worldview_start_queued_save(&next);
-                    self.publish_balance_privacy();
-                    tasks.push(self.run_preferences(next));
-                }
-                // A zoom that failed to save goes back to the saved one, like
-                // every other choice ("Your previous settings remain active").
-                // A newer step pressed during the save is kept and saved next.
-                if let Operation::Save(crate::app::settings::preferences::PreferenceChange::Zoom(
-                    zoom,
-                )) = request.operation
-                {
-                    if failed && self.zoom.pending == Some(zoom) {
-                        self.zoom.pending = None;
-                    }
-                }
-                tasks.push(self.save_pending_zoom());
-                tasks.push(self.worldview_automatic());
-                Task::batch(tasks)
+                self.complete_preferences_save(request, result)
             }
             Message::ToggleTheme => {
                 use crate::app::settings::preferences::{PreferenceChange, ThemePreference};
@@ -4041,142 +4374,7 @@ impl GUI {
                 Task::none()
             }
             Message::ConnectSheet(message) => self.connect_sheet_message(message),
-            Message::Tick => {
-                if self
-                    .zoom
-                    .notice_until
-                    .is_some_and(|until| Instant::now() >= until)
-                {
-                    self.zoom.notice_until = None;
-                }
-                let system_reduces_motion =
-                    crate::app::settings::system_accessibility::reduces_motion();
-                self.system_reduces_motion = system_reduces_motion;
-                for (_, pane) in self.panes.iter_mut() {
-                    for tab in &mut pane.tabs {
-                        tab.set_system_reduces_motion(system_reduces_motion);
-                    }
-                }
-                let privacy_refresh = self
-                    .preferences
-                    .begin_refresh_if_due()
-                    .map(|request| self.run_preferences(request));
-                if privacy_refresh.is_some() {
-                    self.publish_balance_privacy();
-                }
-                let mut tasks = vec![];
-                if let Some(refresh) = privacy_refresh {
-                    tasks.push(refresh);
-                }
-
-                // These are the required (source, currency) pairs for which the global price is stale.
-                let mut stale_pairs = HashSet::<(PriceSource, Currency)>::new();
-                // These are the tabs that need the cached global price.
-                let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
-                // Tabs that need a fresh USD price for USDt→sats conversion.
-                let mut need_usd_cached: Vec<(pane_grid::Pane, usize, FiatPrice)> = Vec::new();
-                for (&pane_id, pane) in self.panes.iter() {
-                    for tab in pane.tabs.iter() {
-                        // BTCB2 has an authenticated, generation-bound poll in App.
-                        // Never insert its requests into the shared Bitcoin cache.
-                        if tab
-                            .cube_settings()
-                            .is_some_and(|cube| cube.network.is_blake2b())
-                        {
-                            continue;
-                        }
-                        let fiat_sett = tab.cube_settings().and_then(|cs| cs.fiat_price.as_ref());
-
-                        // When fiat display is enabled, fetch the user's selected currency.
-                        if let Some(sett) = fiat_sett.filter(|s| s.is_enabled) {
-                            if let Some(fresh_price) = self
-                                .global_cache
-                                .fresh_fiat_price(sett.source, sett.currency)
-                            {
-                                if !tab.cache().and_then(|c| c.fiat_price.as_ref()).is_some_and(
-                                    |tab_price| tab_price.request == fresh_price.request,
-                                ) {
-                                    need_cached.insert((pane_id, tab.id), fresh_price.clone());
-                                }
-                            } else if self
-                                .global_cache
-                                .pending_fiat_price_request(sett.source, sett.currency)
-                                .is_none()
-                            {
-                                stale_pairs.insert((sett.source, sett.currency));
-                            }
-                        }
-
-                        // Always fetch BTC/USD for USDt→sats conversion, even when
-                        // fiat display is disabled. Use the configured source if
-                        // available, otherwise fall back to the default source.
-                        let usd_source = fiat_sett
-                            .map(|s| s.source)
-                            .unwrap_or(PriceSource::default());
-                        if let Some(fresh_usd) = self
-                            .global_cache
-                            .fresh_fiat_price(usd_source, Currency::USD)
-                        {
-                            if tab.cache().and_then(|c| c.btc_usd_price).is_none() {
-                                need_usd_cached.push((pane_id, tab.id, fresh_usd.clone()));
-                            }
-                        } else if self
-                            .global_cache
-                            .pending_fiat_price_request(usd_source, Currency::USD)
-                            .is_none()
-                        {
-                            stale_pairs.insert((usd_source, Currency::USD));
-                        }
-                    }
-                }
-                for (source, currency) in stale_pairs {
-                    let request = FiatPriceRequest::new(source, currency);
-                    // Store request immediately to avoid multiple requests for the same pair.
-                    self.global_cache.insert_fiat_price_request(request);
-                    tasks.push(Task::perform(request.send_default(), |res| {
-                        FiatMessage::GetPriceResult(res).into()
-                    }));
-                }
-                for ((pane_id, tab_id), global_price) in need_cached {
-                    if let Some(pane) = self.panes.get_mut(pane_id) {
-                        // Return the cached global price to the tab.
-                        tracing::debug!(
-                            "Updating tab {} in pane {:?} with cached fiat price {:?}",
-                            tab_id,
-                            pane_id,
-                            global_price
-                        );
-                        tasks.push(
-                            pane.update_tab_with_app_msg(
-                                tab_id,
-                                AppFiatMessage::GetPriceResult(global_price),
-                                &self.config,
-                            )
-                            .map(move |msg| Message::Pane(pane_id, msg)),
-                        );
-                    }
-                }
-                // Distribute fresh USD prices for USDt→sats conversion.
-                for (pane_id, tab_id, usd_price) in need_usd_cached {
-                    if let Some(pane) = self.panes.get_mut(pane_id) {
-                        tasks.push(
-                            pane.update_tab_with_app_msg(
-                                tab_id,
-                                AppFiatMessage::GetPriceResult(usd_price),
-                                &self.config,
-                            )
-                            .map(move |msg| Message::Pane(pane_id, msg)),
-                        );
-                    }
-                }
-                tasks.extend(
-                    self.panes
-                        .iter_mut()
-                        .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
-                );
-
-                Task::batch(tasks)
-            }
+            Message::Tick => self.handle_tick(),
             _ => Task::none(),
         }
     }
@@ -6325,180 +6523,32 @@ mod fork_auth_dispatch_tests {
                 let _enter = runtime.enter();
                 let server = httpmock::MockServer::start();
                 let user = server.mock(|when, then| {
-                    when.method(httpmock::Method::GET).path("/api/v1/user")
+                    when.method(httpmock::Method::GET)
+                        .path("/api/v1/user")
                         .header("authorization", "Bearer direct-session");
                     then.status(200).json_body(serde_json::json!({
                         "id":8,"email":"other@example.invalid","email_verified":true
                     }));
                 });
                 let feature = server.mock(|when, then| {
-                    when.method(httpmock::Method::GET).path("/api/v1/connect/features");
-                    then.status(200).json_body(serde_json::json!({"data":{"plans":[],"bitcoin_blake2b_enabled":true}}));
+                    when.method(httpmock::Method::GET)
+                        .path("/api/v1/connect/features");
+                    then.status(200).json_body(
+                        serde_json::json!({"data":{"plans":[],"bitcoin_blake2b_enabled":true}}),
+                    );
                 });
                 let provider_url = server.base_url();
                 for case in [
-                    "direct", "checking", "active", "same",
+                    "direct",
+                    "checking",
+                    "active",
+                    "same",
                     "wrong-root",
                     "wrong-provider",
                     "account-conflict",
                     "token-conflict",
                 ] {
-                    let path = std::env::temp_dir()
-                        .join(format!("cold-home-pin-{}", uuid::Uuid::new_v4()));
-                    let root = CoincubeDirectory::new(path.clone());
-                    std::fs::create_dir_all(&path).unwrap();
-                    crate::app::settings::global::GlobalSettings::update_bitcoin_blake2b_beta(
-                        &crate::app::settings::global::GlobalSettings::path(&root),
-                        true,
-                    )
-                    .unwrap();
-                    let provider = provider_url.as_str();
-                    let ready =
-                        |source_root: CoincubeDirectory, provider: &str, id: u32, token: &str| {
-                            let (mut home, task) = home::Home::new_for_chain(source_root, None);
-                            drop(task);
-                            home.connect_account.client =
-                                crate::services::coincube::CoincubeClient::for_test(provider);
-                            home.connect_account.client.set_token(token);
-                            home.connect_account.user = Some(User {
-                                id,
-                                email: "fixture@example.invalid".into(),
-                                email_verified: Some(true),
-                            });
-                            home.connect_account.step =
-                                crate::app::state::connect::account::ConnectFlowStep::Dashboard;
-                            home
-                        };
-                    let source_root = if case == "wrong-root" {
-                        CoincubeDirectory::new(path.join("other"))
-                    } else {
-                        root.clone()
-                    };
-                    let source_provider = if case == "wrong-provider" {
-                        "http://127.0.0.1:2"
-                    } else {
-                        provider
-                    };
-                    let first = ready(source_root, source_provider, 7, "current-session");
-                    let (mut cold, task) =
-                        home::Home::new_for_chain(root.clone(), Some(ChainId::BitcoinBlake2b));
-                    drop(task);
-                    cold.connect_account.client =
-                        crate::services::coincube::CoincubeClient::for_test(provider);
-                    drop(cold.update(home::Message::GlobalFeatureLoaded(0, true)));
-                    if matches!(case, "direct" | "checking" | "active") {
-                        cold.connect_account.client.set_token("direct-session");
-                        cold.connect_account.user = Some(User {
-                            id:7,email:"fixture@example.invalid".into(),email_verified:Some(true),
-                        });
-                        cold.connect_account.step = match case {
-                            "direct" => crate::app::state::connect::account::ConnectFlowStep::Dashboard,
-                            "checking" => crate::app::state::connect::account::ConnectFlowStep::CheckingDuress {
-                                status: crate::app::state::connect::account::DuressGateStatus::Checking,
-                            },
-                            _ => crate::app::state::connect::account::ConnectFlowStep::DuressRecovery {
-                                unlock_at:None,passphrase:String::new(),submitting:false,cleared:false,
-                            },
-                        };
-                        assert!(cold.connect_account.authenticated_client().is_some(),
-                            "raw client presence is not completed account admission");
-                    }
-
-                    let mut pane = pane::Pane::new_with_tab(tab::State::Home(first));
-                    pane.tabs.push(tab::Tab::new(2, tab::State::Home(cold)));
-                    if case.ends_with("conflict") {
-                        pane.tabs.push(tab::Tab::new(
-                            3,
-                            tab::State::Home(ready(
-                                root.clone(),
-                                provider,
-                                if case == "account-conflict" { 8 } else { 7 },
-                                "other-session",
-                            )),
-                        ));
-                    }
-                    let (panes, pane_id) = pane_grid::State::new(pane);
-                    let mut gui = GUI {
-                        panes,
-                        focus: Some(pane_id),
-                        config: Config::new(root.clone(), None),
-                        window_id: None,
-                        window_init: None,
-                        window_config: None,
-                        global_cache: GlobalCache::default(),
-                        theme_mode: Default::default(),
-            system_theme: None,
-            system_reduces_motion: None,
-            preferences_sheet: None,
-            connect_sheet: None,
-            preferences: unresolved_test_preferences(),
-            zoom: ZoomState::default(),
-                worldview_sharing: worldview::Sharing::default(),
-                    };
-                    let mut cube = crate::app::settings::CubeSettings::new(
-                        "Cold fork".into(),
-                        ChainId::BitcoinBlake2b,
-                    );
-                    cube.created_at = 0;
-                    drop(gui.update(Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            2,
-                            tab::Message::Launch(home::Message::Run(
-                                root,
-                                crate::app::Config::new(false),
-                                ChainId::BitcoinBlake2b,
-                                cube,
-                            )),
-                        ),
-                    )));
-                    let pending = &mut gui.panes.get_mut(pane_id).unwrap().tabs[1];
-                    let tab::State::PinEntry(pin) = &mut pending.state else {
-                        panic!("{} must reach PIN", case)
-                    };
-                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
-                        &pin.on_success;
-                    assert_eq!(
-                        connect_client.as_ref().and_then(|client| client.token()),
-                        if case == "direct" {
-                            Some("direct-session")
-                        } else if case == "same" {
-                            Some("current-session")
-                        } else {
-                            None
-                        },
-                        "{}",
-                        case
-                    );
-                    assert!(pin.take_fork_signer().is_none());
-                    if case == "direct" {
-                        // Exercise the actual Home -> PIN candidate. A changed
-                        // server identity must be refused before feature/decrypt work.
-                        assert_eq!(user.hits(), 0);
-                        for (index, digit) in "1234".chars().enumerate() {
-                            drop(pin.update(crate::pin_entry::Message::PinInput(
-                                crate::pin_input::Message::DigitChanged(index,digit.to_string()))));
-                        }
-                        let task = pin.update(crate::pin_entry::Message::Submit);
-                        let messages = runtime.block_on(async {
-                            use iced::futures::StreamExt;
-                            let mut messages = Vec::new();
-                            if let Some(mut stream) = iced_runtime::task::into_stream(task) {
-                                while let Some(action) = stream.next().await {
-                                    if let iced_runtime::Action::Output(message) = action {
-                                        messages.push(message);
-                                    }
-                                }
-                            }
-                            messages
-                        });
-                        for message in messages { drop(pin.update(message)); }
-                        user.assert_hits(1);
-                        feature.assert_hits(0);
-                        assert!(pin.take_fork_signer().is_none());
-                    }
-                    drop(gui);
-                    std::fs::remove_dir_all(path).unwrap();
+                    assert_scoped_home_unlock(&runtime, &provider_url, &user, &feature, case);
                 }
             })
             .unwrap()
@@ -6506,6 +6556,185 @@ mod fork_auth_dispatch_tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    fn assert_scoped_home_unlock(
+        runtime: &tokio::runtime::Runtime,
+        provider: &str,
+        user: &httpmock::Mock<'_>,
+        feature: &httpmock::Mock<'_>,
+        case: &str,
+    ) {
+        let path = std::env::temp_dir().join(format!("cold-home-pin-{}", uuid::Uuid::new_v4()));
+        let root = CoincubeDirectory::new(path.clone());
+        std::fs::create_dir_all(&path).unwrap();
+        crate::app::settings::global::GlobalSettings::update_bitcoin_blake2b_beta(
+            &crate::app::settings::global::GlobalSettings::path(&root),
+            true,
+        )
+        .unwrap();
+        let ready = |source_root: CoincubeDirectory, provider: &str, id: u32, token: &str| {
+            let (mut home, task) = home::Home::new_for_chain(source_root, None);
+            drop(task);
+            home.connect_account.client =
+                crate::services::coincube::CoincubeClient::for_test(provider);
+            home.connect_account.client.set_token(token);
+            home.connect_account.user = Some(User {
+                id,
+                email: "fixture@example.invalid".into(),
+                email_verified: Some(true),
+            });
+            home.connect_account.step =
+                crate::app::state::connect::account::ConnectFlowStep::Dashboard;
+            home
+        };
+        let source_root = if case == "wrong-root" {
+            CoincubeDirectory::new(path.join("other"))
+        } else {
+            root.clone()
+        };
+        let source_provider = if case == "wrong-provider" {
+            "http://127.0.0.1:2"
+        } else {
+            provider
+        };
+        let first = ready(source_root, source_provider, 7, "current-session");
+        let (mut cold, task) =
+            home::Home::new_for_chain(root.clone(), Some(ChainId::BitcoinBlake2b));
+        drop(task);
+        cold.connect_account.client = crate::services::coincube::CoincubeClient::for_test(provider);
+        drop(cold.update(home::Message::GlobalFeatureLoaded(0, true)));
+        if matches!(case, "direct" | "checking" | "active") {
+            cold.connect_account.client.set_token("direct-session");
+            cold.connect_account.user = Some(User {
+                id: 7,
+                email: "fixture@example.invalid".into(),
+                email_verified: Some(true),
+            });
+            cold.connect_account.step = match case {
+                "direct" => crate::app::state::connect::account::ConnectFlowStep::Dashboard,
+                "checking" => {
+                    crate::app::state::connect::account::ConnectFlowStep::CheckingDuress {
+                        status: crate::app::state::connect::account::DuressGateStatus::Checking,
+                    }
+                }
+                _ => crate::app::state::connect::account::ConnectFlowStep::DuressRecovery {
+                    unlock_at: None,
+                    passphrase: String::new(),
+                    submitting: false,
+                    cleared: false,
+                },
+            };
+            assert!(
+                cold.connect_account.authenticated_client().is_some(),
+                "raw client presence is not completed account admission"
+            );
+        }
+
+        let mut pane = pane::Pane::new_with_tab(tab::State::Home(first));
+        pane.tabs.push(tab::Tab::new(2, tab::State::Home(cold)));
+        if case.ends_with("conflict") {
+            pane.tabs.push(tab::Tab::new(
+                3,
+                tab::State::Home(ready(
+                    root.clone(),
+                    provider,
+                    if case == "account-conflict" { 8 } else { 7 },
+                    "other-session",
+                )),
+            ));
+        }
+        let (panes, pane_id) = pane_grid::State::new(pane);
+        let mut gui = GUI {
+            panes,
+            focus: Some(pane_id),
+            config: Config::new(root.clone(), None),
+            window_id: None,
+            window_init: None,
+            window_config: None,
+            global_cache: GlobalCache::default(),
+            theme_mode: Default::default(),
+            system_theme: None,
+            system_reduces_motion: None,
+            preferences_sheet: None,
+            connect_sheet: None,
+            preferences: unresolved_test_preferences(),
+            zoom: ZoomState::default(),
+            worldview_sharing: worldview::Sharing::default(),
+        };
+        let mut cube =
+            crate::app::settings::CubeSettings::new("Cold fork".into(), ChainId::BitcoinBlake2b);
+        cube.created_at = 0;
+        drop(gui.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(
+                2,
+                tab::Message::Launch(home::Message::Run(
+                    root,
+                    crate::app::Config::new(false),
+                    ChainId::BitcoinBlake2b,
+                    cube,
+                )),
+            ),
+        )));
+        let pending = &mut gui.panes.get_mut(pane_id).unwrap().tabs[1];
+        let tab::State::PinEntry(pin) = &mut pending.state else {
+            panic!("{} must reach PIN", case)
+        };
+        let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } = &pin.on_success;
+        assert_eq!(
+            connect_client.as_ref().and_then(|client| client.token()),
+            if case == "direct" {
+                Some("direct-session")
+            } else if case == "same" {
+                Some("current-session")
+            } else {
+                None
+            },
+            "{}",
+            case
+        );
+        assert!(pin.take_fork_signer().is_none());
+        if case == "direct" {
+            assert_changed_user_is_refused(runtime, user, feature, pin);
+        }
+        drop(gui);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    fn assert_changed_user_is_refused(
+        runtime: &tokio::runtime::Runtime,
+        user: &httpmock::Mock<'_>,
+        feature: &httpmock::Mock<'_>,
+        pin: &mut crate::pin_entry::PinEntry,
+    ) {
+        // Exercise the actual Home -> PIN candidate. A changed
+        // server identity must be refused before feature/decrypt work.
+        assert_eq!(user.hits(), 0);
+        for (index, digit) in "1234".chars().enumerate() {
+            drop(pin.update(crate::pin_entry::Message::PinInput(
+                crate::pin_input::Message::DigitChanged(index, digit.to_string()),
+            )));
+        }
+        let task = pin.update(crate::pin_entry::Message::Submit);
+        let messages = runtime.block_on(async {
+            use iced::futures::StreamExt;
+            let mut messages = Vec::new();
+            if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+                while let Some(action) = stream.next().await {
+                    if let iced_runtime::Action::Output(message) = action {
+                        messages.push(message);
+                    }
+                }
+            }
+            messages
+        });
+        for message in messages {
+            drop(pin.update(message));
+        }
+        user.assert_hits(1);
+        feature.assert_hits(0);
+        assert!(pin.take_fork_signer().is_none());
     }
 
     #[test]
@@ -6696,6 +6925,31 @@ mod fork_auth_dispatch_tests {
         }
     }
 
+    async fn apply_installer_probe_results(
+        gui: &mut GUI,
+        task: Task<Message>,
+    ) -> HashSet<(pane_grid::Pane, usize)> {
+        let mut checked = HashSet::new();
+        if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    if !matches!(&message, Message::Pane(_, pane::Message::Tab(_, inner))
+                        if matches!(inner.as_ref(), tab::Message::Launch(home::Message::Checked { .. })))
+                    {
+                        continue;
+                    }
+                    if let Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) = &message {
+                        checked.insert((*pane_id, *tab_id));
+                    }
+                    // Apply the real directory-probe completion through the
+                    // same GUI seam. Do not execute emitted account Init.
+                    let _ = gui.update(message);
+                }
+            }
+        }
+        checked
+    }
+
     async fn check_auth_dispatch() {
         use crate::app::view::ConnectAccountMessage;
         for auth in [
@@ -6763,24 +7017,7 @@ mod fork_auth_dispatch_tests {
                 source,
                 pane::Message::tab(1, account_message),
             ));
-            let mut checked = HashSet::new();
-            if let Some(mut stream) = iced_runtime::task::into_stream(task) {
-                while let Some(action) = stream.next().await {
-                    if let iced_runtime::Action::Output(message) = action {
-                        if !matches!(&message, Message::Pane(_, pane::Message::Tab(_, inner))
-                            if matches!(inner.as_ref(), tab::Message::Launch(home::Message::Checked { .. })))
-                        {
-                            continue;
-                        }
-                        if let Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) = &message {
-                            checked.insert((*pane_id, *tab_id));
-                        }
-                        // Apply the real directory-probe completion through the
-                        // same GUI seam. Do not execute emitted account Init.
-                        let _ = gui.update(message);
-                    }
-                }
-            }
+            let checked = apply_installer_probe_results(&mut gui, task).await;
             assert_eq!(
                 checked.len(),
                 3,

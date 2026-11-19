@@ -380,24 +380,28 @@ pub fn master_seed_path(loc: &CubeLocation) -> Option<PathBuf> {
             continue;
         }
 
-        // No recorded fingerprint: fall back to "a master-seed file stamped
-        // within the Cube's creation window", the same rule the backfill uses.
-        let Some((checksum, ts)) = parsed.descriptor_info else {
+        // No recorded fingerprint: use the same creation window as backfill.
+        let Some(delta) = master_seed_creation_distance(parsed, loc.cube_created_at) else {
             continue;
         };
-        if !checksum.starts_with(MASTER_SEED_LABEL) {
-            continue;
-        }
-        let delta = (ts - loc.cube_created_at).abs();
-        if delta > MASTER_SEED_CREATION_WINDOW_SECS {
-            continue;
-        }
         if best.as_ref().map(|(_, d)| delta < *d).unwrap_or(true) {
             best = Some((entry.path(), delta));
         }
     }
 
     best.map(|(p, _)| p)
+}
+
+fn master_seed_creation_distance(
+    parsed: coincube_core::signer::MnemonicFileName,
+    created_at: i64,
+) -> Option<i64> {
+    let (checksum, timestamp) = parsed.descriptor_info?;
+    if !checksum.starts_with(MASTER_SEED_LABEL) {
+        return None;
+    }
+    let distance = (timestamp - created_at).abs();
+    (distance <= MASTER_SEED_CREATION_WINDOW_SECS).then_some(distance)
 }
 
 /// Tolerance between a master-seed file's timestamp and its Cube's
@@ -1150,59 +1154,15 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
     let saw_seed_file = own_seed.is_some();
 
     for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if Some(name.as_str()) == marker_name || name.ends_with(".tmp") {
-            continue;
-        }
-
-        let Ok(data) = std::fs::read(&path) else {
-            continue;
-        };
-        let version = seed_crypt::format_version(&data);
-        if version == Some(target_version) {
-            continue;
-        }
-
-        // `mnemonics/` is per-**network**, so it holds every Cube's seeds — and
-        // this pass runs with one Cube's PIN, id and device secret.
-        //
-        // For v2 and v3 that is safe by construction: the Cube id is in the
-        // AAD, so another Cube's file fails to open and lands in
-        // `skipped_foreign`. v1 and plaintext have no such binding. `decrypt_v1`
-        // ignores `cube_id` entirely, so a foreign v1 file opens whenever the
-        // two Cubes share a PIN — and four digits collide often. A plaintext
-        // file is worse: `rewrite_file` re-seals it after a BIP39 parse and no
-        // PIN check at all, so *every* legacy plaintext seed in the folder gets
-        // sealed under whichever Cube migrates first.
-        //
-        // Either way the owning Cube can never open its own seed again — wrong
-        // AAD, wrong device secret — and this pass would count the theft as a
-        // successful migration. So an unbound file is touched only when the
-        // name says it is this Cube's master seed, using the same
-        // fingerprint/creation-window rule the rest of the module classifies
-        // with. Leaving someone else's legacy file at v1 costs them nothing;
-        // re-sealing it costs them the wallet.
-        let bound_to_a_cube = matches!(
-            version,
-            Some(seed_crypt::SEED_FILE_VERSION_V2) | Some(seed_crypt::SEED_FILE_VERSION_V3)
+        migrate_seed_entry(
+            entry,
+            loc,
+            pin,
+            secret.as_ref(),
+            target_version,
+            own_seed.as_deref(),
+            &mut outcome,
         );
-        if !bound_to_a_cube && own_seed.as_deref() != Some(path.as_path()) {
-            tracing::debug!("migration: skipping {name}: unbound and not this Cube's seed");
-            outcome.skipped_foreign += 1;
-            continue;
-        }
-
-        match rewrite_file(&path, data, pin, loc.cube_id, secret.as_ref()) {
-            Ok(true) => outcome.migrated += 1,
-            Ok(false) => {}
-            Err(e) => {
-                // A file we can't open is not ours to touch. Log the *file
-                // name* and the error; never the contents.
-                tracing::debug!("migration: skipping {name}: {e}");
-                outcome.skipped_foreign += 1;
-            }
-        }
     }
 
     outcome.skipped_no_backup = held_back_by_gate && saw_seed_file;
@@ -1251,6 +1211,70 @@ pub fn migrate_seed_files(loc: &CubeLocation, pin: &str) -> Result<MigrationOutc
         );
     }
     Ok(outcome)
+}
+
+fn migrate_seed_entry(
+    entry: std::fs::DirEntry,
+    loc: &CubeLocation,
+    pin: &str,
+    secret: Option<&DeviceSecret>,
+    target_version: u8,
+    own_seed: Option<&Path>,
+    outcome: &mut MigrationOutcome,
+) {
+    let path = entry.path();
+    let name = entry.file_name().to_string_lossy().into_owned();
+    if Some(name.as_str()) == loc.duress_slot_file || name.ends_with(".tmp") {
+        return;
+    }
+
+    let Ok(data) = std::fs::read(&path) else {
+        return;
+    };
+    let version = seed_crypt::format_version(&data);
+    if version == Some(target_version) {
+        return;
+    }
+
+    // `mnemonics/` is per-**network**, so it holds every Cube's seeds — and
+    // this pass runs with one Cube's PIN, id and device secret.
+    //
+    // For v2 and v3 that is safe by construction: the Cube id is in the
+    // AAD, so another Cube's file fails to open and lands in
+    // `skipped_foreign`. v1 and plaintext have no such binding. `decrypt_v1`
+    // ignores `cube_id` entirely, so a foreign v1 file opens whenever the
+    // two Cubes share a PIN — and four digits collide often. A plaintext
+    // file is worse: `rewrite_file` re-seals it after a BIP39 parse and no
+    // PIN check at all, so *every* legacy plaintext seed in the folder gets
+    // sealed under whichever Cube migrates first.
+    //
+    // Either way the owning Cube can never open its own seed again — wrong
+    // AAD, wrong device secret — and this pass would count the theft as a
+    // successful migration. So an unbound file is touched only when the
+    // name says it is this Cube's master seed, using the same
+    // fingerprint/creation-window rule the rest of the module classifies
+    // with. Leaving someone else's legacy file at v1 costs them nothing;
+    // re-sealing it costs them the wallet.
+    let bound_to_a_cube = matches!(
+        version,
+        Some(seed_crypt::SEED_FILE_VERSION_V2) | Some(seed_crypt::SEED_FILE_VERSION_V3)
+    );
+    if !bound_to_a_cube && own_seed != Some(path.as_path()) {
+        tracing::debug!("migration: skipping {name}: unbound and not this Cube's seed");
+        outcome.skipped_foreign += 1;
+        return;
+    }
+
+    match rewrite_file(&path, data, pin, loc.cube_id, secret) {
+        Ok(true) => outcome.migrated += 1,
+        Ok(false) => {}
+        Err(e) => {
+            // A file we can't open is not ours to touch. Log the *file
+            // name* and the error; never the contents.
+            tracing::debug!("migration: skipping {name}: {e}");
+            outcome.skipped_foreign += 1;
+        }
+    }
 }
 
 fn rewrite_file(

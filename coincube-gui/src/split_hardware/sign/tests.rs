@@ -236,6 +236,32 @@ impl HWI for Fake {
             _ => Ok(self.registered(name, policy)),
         }
     }
+    /// A device-stored registry is searched by policy, whatever the name,
+    /// as Jade and Coldcard now do.
+    async fn find_wallet_registration(
+        &self,
+        name: &str,
+        policy: &str,
+    ) -> Result<Option<async_hwi::WalletRegistration>, async_hwi::Error> {
+        match self.registry {
+            Registry::DeviceStored => Ok(self
+                .shared
+                .stored
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, p)| p == policy)
+                .min_by_key(|(n, _)| n != name)
+                .map(|(n, _)| async_hwi::WalletRegistration {
+                    name: Some(n.clone()),
+                })),
+            _ => Ok(self.is_wallet_registered(name, policy).await?.then(|| {
+                async_hwi::WalletRegistration {
+                    name: Some(name.to_string()),
+                }
+            })),
+        }
+    }
     async fn display_address(&self, _: &async_hwi::AddressScript) -> Result<(), async_hwi::Error> {
         Err(async_hwi::Error::UnimplementedMethod)
     }
@@ -497,6 +523,44 @@ async fn split_hw_sign_multisig_registers_then_signs_2_of_3() {
 
         let mut combined = by_ledger;
         combined.finalize_mut(&secp()).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn split_hw_sign_uses_a_registration_another_app_made() {
+    for kind in [DeviceKind::Jade, DeviceKind::Coldcard] {
+        let descriptor = multisig(true);
+        let psbt = spend(&descriptor);
+        let policy = DevicePolicy::new(&descriptor).unwrap();
+
+        // Specter registered the same wallet under its own name.
+        let device = fake(kind, 1);
+        device
+            .shared
+            .stored
+            .lock()
+            .unwrap()
+            .push(("Specter 2of3".to_string(), descriptor.to_string()));
+        let session_binder: Arc<dyn PolicyBinder> = if kind == DeviceKind::Coldcard {
+            binder(&device)
+        } else {
+            no_binder()
+        };
+        let mut session = SigningSession::open(device.arc(), fp(1), policy, session_binder)
+            .await
+            .unwrap();
+        assert_eq!(
+            session.register().await.unwrap(),
+            RegistrationOutcome::AlreadyRegistered,
+            "{kind}"
+        );
+        assert_eq!(
+            device.shared.register_calls.load(Ordering::SeqCst),
+            0,
+            "{kind}"
+        );
+        let signed = session.sign(&psbt).await.unwrap().into_psbt();
+        assert_eq!(sig_count(&signed), 1, "{kind}");
     }
 }
 

@@ -106,19 +106,7 @@ pub fn create_imported_spend(
         return Err(invalid("change must be an owned change-branch address"));
     }
     let change_desc = own_output(wallet, &change_addr)?;
-    let mut seen = BTreeSet::new();
-    for coin in candidate_coins {
-        if !seen.insert(coin.outpoint) {
-            return Err(invalid("duplicate candidate outpoint"));
-        }
-        branch(
-            wallet,
-            AddrInfo {
-                index: coin.deriv_index,
-                is_change: coin.is_change,
-            },
-        )?;
-    }
+    validate_imported_spend_candidates(wallet, candidate_coins)?;
 
     let mut tx = Transaction {
         version: bitcoin::transaction::Version::TWO,
@@ -206,6 +194,42 @@ pub fn create_imported_spend(
                 .map_err(|_| invalid("owned output descriptor does not match"))?;
         }
     }
+    authenticate_imported_spend_inputs(wallet, tx_getter, &selected, is_segwit, &mut psbt)?;
+    verify_imported_spend_before_broadcast(wallet, &psbt)?;
+    Ok(CreateSpendRes {
+        psbt,
+        has_change,
+        warnings,
+    })
+}
+
+fn validate_imported_spend_candidates(
+    wallet: &ImportedWalletDescriptor,
+    candidate_coins: &[CandidateCoin],
+) -> Result<(), SpendCreationError> {
+    let mut seen = BTreeSet::new();
+    for coin in candidate_coins {
+        if !seen.insert(coin.outpoint) {
+            return Err(invalid("duplicate candidate outpoint"));
+        }
+        branch(
+            wallet,
+            AddrInfo {
+                index: coin.deriv_index,
+                is_change: coin.is_change,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn authenticate_imported_spend_inputs(
+    wallet: &ImportedWalletDescriptor,
+    tx_getter: &mut impl TxGetter,
+    selected: &[CandidateCoin],
+    is_segwit: bool,
+    psbt: &mut Psbt,
+) -> Result<(), SpendCreationError> {
     for (i, coin) in selected.iter().enumerate() {
         let definite = branch(
             wallet,
@@ -240,12 +264,7 @@ pub fn create_imported_spend(
         psbt.update_input_with_descriptor(i, &definite)
             .map_err(|_| invalid("input descriptor metadata is invalid"))?;
     }
-    verify_imported_spend_before_broadcast(wallet, &psbt)?;
-    Ok(CreateSpendRes {
-        psbt,
-        has_change,
-        warnings,
-    })
+    Ok(())
 }
 
 /// Recheck every previous transaction, descriptor script, output and fee before

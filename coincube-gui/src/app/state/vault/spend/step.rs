@@ -26,6 +26,15 @@ use iced::{Subscription, Task};
 
 static PREPARATION_ID: AtomicU64 = AtomicU64::new(1);
 static FEE_ESTIMATE_ID: AtomicU64 = AtomicU64::new(1);
+/// Redraft generations are drawn from one process-wide counter, not one per
+/// `DefineSpend`: task results go to whichever panel is on screen, so a draft
+/// started in one spend form (Send, Recovery, or a Send panel since replaced)
+/// must never carry a generation another form could accept.
+static REDRAFT_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn next_redraft_seq() -> u64 {
+    REDRAFT_SEQ.fetch_add(1, AtomicOrdering::Relaxed)
+}
 const TAMPER_WARNING: &str = "This payment request’s address does not match its verification data. Do not send. Return and replace the payment request.";
 const AMOUNT_MISMATCH_WARNING: &str = "The prepared amount does not match the Bitcoin payment request. Return and resolve the amount before sending.";
 
@@ -241,9 +250,10 @@ pub struct DefineSpend {
     unconfirmed_balance: Amount,
     sync_status: SyncStatus,
     bitcoin_unit: BitcoinDisplayUnit,
-    /// Monotonic generation counter for debounced/async redrafts. Bumped
-    /// every time a redraft is scheduled so that stale debounce ticks and
-    /// in-flight coin-selection results can be discarded.
+    /// Generation token for debounced/async redrafts, drawn from the
+    /// process-wide `REDRAFT_SEQ`. Replaced every time a redraft is scheduled
+    /// so that stale debounce ticks and in-flight coin-selection results —
+    /// this form's or another spend form's — are discarded.
     redraft_seq: u64,
     /// A redraft is scheduled or running and its result has not landed yet:
     /// the footer says it is calculating instead of asking for fields the
@@ -310,7 +320,7 @@ impl DefineSpend {
             unconfirmed_balance,
             sync_status,
             bitcoin_unit,
-            redraft_seq: 0,
+            redraft_seq: next_redraft_seq(),
             draft_pending: false,
             preparation_id: PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed),
             lookup_ticket: None,
@@ -347,10 +357,9 @@ impl DefineSpend {
                 self.batch_label.value = label;
             }
             view::CreateSpendMessage::Clear => {
-                // Keep the redraft generation counting up, so a draft or
+                // `Self::new` draws a fresh redraft generation, so a draft or
                 // debounce tick still in flight from before Clear can never
                 // match a generation of the cleared form.
-                let redraft_seq = self.redraft_seq.wrapping_add(1);
                 *self = Self::new(
                     self.network,
                     self.wallet.clone(),
@@ -367,7 +376,6 @@ impl DefineSpend {
                     self.sync_status.clone(),
                     self.bitcoin_unit,
                 );
-                self.redraft_seq = redraft_seq;
                 // A cleared form starts on Normal, as a new one does.
                 return Task::done(Message::View(view::Message::CreateSpend(
                     CreateSpendMessage::FetchFeeEstimate(NORMAL_FEE_TARGET),
@@ -776,7 +784,7 @@ impl DefineSpend {
         self.loading_fee_estimate = Some(block_target);
         self.fee_estimate_request = FEE_ESTIMATE_ID.fetch_add(1, AtomicOrdering::Relaxed);
         self.amount_left_to_select = None;
-        self.redraft_seq = self.redraft_seq.wrapping_add(1);
+        self.redraft_seq = next_redraft_seq();
         self.draft_pending = false;
         let request = self.fee_estimate_request;
         Task::perform(
@@ -826,6 +834,16 @@ impl DefineSpend {
 
     pub fn with_coins_sorted(mut self, blockheight: u32) -> Self {
         self.sort_coins(blockheight);
+        self
+    }
+
+    /// Start the form on Normal (~1h, 6-block target): its estimate is
+    /// fetched on the first message the step receives, i.e. once the step is
+    /// on screen. A recovery spend uses this because it opens on the
+    /// path-selection step, where the panel's `reload` default would be lost.
+    pub fn starting_on_normal_feerate(mut self) -> Self {
+        self.loading_fee_estimate = Some(NORMAL_FEE_TARGET);
+        self.resume_fee_estimate = Some(NORMAL_FEE_TARGET);
         self
     }
 
@@ -909,7 +927,7 @@ impl DefineSpend {
     /// that token. If the user keeps typing, each keystroke bumps the token so
     /// only the final, settled edit actually runs coin selection.
     fn schedule_redraft(&mut self) -> Task<Message> {
-        self.redraft_seq = self.redraft_seq.wrapping_add(1);
+        self.redraft_seq = next_redraft_seq();
         self.draft_pending = true;
         let seq = self.redraft_seq;
         Task::perform(
@@ -1338,6 +1356,9 @@ impl Step for DefineSpend {
             (Some(old_tl), Some(new_tl)) => {
                 if old_tl != new_tl {
                     // If the timelock has changed, reinitialise this step.
+                    // The fresh form starts on Normal, as a new recovery
+                    // does: the step is about to be shown, so the estimate
+                    // goes out with the message that brought it on screen.
                     let new = Self::new(
                         self.network,
                         self.wallet.clone(),
@@ -1349,7 +1370,8 @@ impl Step for DefineSpend {
                         self.unconfirmed_balance,
                         self.sync_status.clone(),
                         self.bitcoin_unit,
-                    );
+                    )
+                    .starting_on_normal_feerate();
                     *self = new;
                     return;
                 } else {
@@ -1452,7 +1474,7 @@ impl Step for DefineSpend {
                     // if all forms are valid (checked in the redraft method). This
                     // is not a keystroke path, so run it immediately (still off the
                     // UI thread) rather than debouncing.
-                    self.redraft_seq = self.redraft_seq.wrapping_add(1);
+                    self.redraft_seq = next_redraft_seq();
                     let seq = self.redraft_seq;
                     let task = self.run_redraft(daemon, seq);
                     self.check_valid();
@@ -3171,6 +3193,267 @@ mod tests {
         assert!(!state.draft_pending);
     }
 
+    /// Drive one debounced redraft through `update` the way the runtime does:
+    /// fire the debounce tick, run the dispatched draft against `daemon`, and
+    /// return its `RedraftResult` for the caller to feed back.
+    async fn land_redraft(
+        state: &mut DefineSpend,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Message {
+        use iced_runtime::futures::futures::StreamExt;
+        let seq = state.redraft_seq;
+        let task = state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::RedraftDebounce(seq),
+        );
+        let mut results: Vec<Message> = iced_runtime::task::into_stream(task)
+            .expect("a dispatched draft")
+            .filter_map(|action| async move {
+                match action {
+                    iced_runtime::Action::Output(message) => Some(message),
+                    _ => None,
+                }
+            })
+            .collect()
+            .await;
+        assert_eq!(results.len(), 1, "one draft result");
+        results.pop().unwrap()
+    }
+
+    fn redraft_message_clone(message: &Message) -> Message {
+        match message {
+            Message::RedraftResult {
+                seq,
+                max_address,
+                recipient_with_max,
+                destinations_is_empty,
+                result: Ok(result),
+            } => Message::RedraftResult {
+                seq: *seq,
+                max_address: max_address.clone(),
+                recipient_with_max: *recipient_with_max,
+                destinations_is_empty: *destinations_is_empty,
+                result: Ok(result.clone()),
+            },
+            other => panic!("expected a successful draft, got {:?}", other),
+        }
+    }
+
+    /// A draft spending exactly `inputs` (outpoint, value) with one 1,000 sat
+    /// payment.
+    fn draft_spending(inputs: &[(OutPoint, u64)]) -> serde_json::Value {
+        use coincube_core::miniscript::bitcoin::{psbt::Input, TxIn, TxOut};
+        let mut psbt = prepared_outputs(&[1_000]);
+        psbt.unsigned_tx.input = inputs
+            .iter()
+            .map(|(outpoint, _)| TxIn {
+                previous_output: *outpoint,
+                ..Default::default()
+            })
+            .collect();
+        psbt.inputs = inputs
+            .iter()
+            .map(|(_, sats)| Input {
+                witness_utxo: Some(TxOut {
+                    value: Amount::from_sat(*sats),
+                    script_pubkey: address().script_pubkey(),
+                }),
+                ..Default::default()
+            })
+            .collect();
+        serde_json::to_value(CreateSpendResult::Success {
+            psbt,
+            warnings: vec![],
+        })
+        .unwrap()
+    }
+
+    /// Automatic, end to end: after the user picked coins, choosing Automatic
+    /// redrafts with an empty outpoint list (the daemon's automatic coin
+    /// selection), and the coins that draft spends replace the user's ticks.
+    #[tokio::test]
+    async fn automatic_redrafts_with_automatic_coin_selection() {
+        use serde_json::json;
+        let mut state = branta_form();
+        state.coins.push((coin(2, 80_000, Some(90)), false));
+        let destinations = json!({ MAINNET_ADDR: 1_000 });
+        let change = state.wallet.preview_change_address();
+        // The user's pick: both coins, by hand.
+        let idle: Arc<dyn Daemon + Sync + Send> = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        drop(state.update(
+            idle.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::SelectCoin(1),
+            )),
+        ));
+        assert!(state.is_user_coin_selection);
+        assert!(state.coins.iter().all(|(_, selected)| *selected));
+
+        drop(state.update(
+            idle,
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::AutomaticCoins,
+            )),
+        ));
+        assert!(state.drafting());
+        // Automatic selection: no outpoints passed, the daemon chooses. It
+        // picks only the second coin.
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(crate::daemon::client::Coincubed::new(
+                crate::utils::mock::Daemon::new(vec![(
+                    Some(json!({"method": "createspend", "params": [destinations, [], 2, change]})),
+                    Ok(draft_spending(&[(outpoint(2), 80_000)])),
+                )])
+                .run(),
+            ));
+        let result = land_redraft(&mut state, daemon.clone()).await;
+        drop(state.update(daemon, &Cache::default(), result));
+
+        assert!(!state.drafting());
+        assert!(!state.coin_list_shown());
+        assert_eq!(
+            state
+                .coins
+                .iter()
+                .map(|(coin, selected)| (coin.outpoint, *selected))
+                .collect::<Vec<_>>(),
+            vec![(outpoint(1), false), (outpoint(2), true)],
+            "the automatic draft's coins replace the user's"
+        );
+        assert_eq!(state.amount_left_to_select, Some(Amount::ZERO));
+        assert!(state.is_valid);
+    }
+
+    /// A draft that was running when the user pressed Clear must not land on
+    /// the cleared form, even once the cleared form has drafted again.
+    #[tokio::test]
+    async fn a_draft_from_before_clear_is_ignored() {
+        use serde_json::json;
+        let mut state = branta_form();
+        state.coins.push((coin(2, 80_000, Some(90)), false));
+        let destinations = json!({ MAINNET_ADDR: 1_000 });
+        let change = state.wallet.preview_change_address();
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(crate::daemon::client::Coincubed::new(
+                crate::utils::mock::Daemon::new(vec![(
+                    Some(json!({"method": "createspend", "params": [destinations, [], 2, change]})),
+                    Ok(draft_spending(&[(outpoint(2), 80_000)])),
+                )])
+                .run(),
+            ));
+        drop(state.schedule_redraft());
+        let stale = land_redraft(&mut state, daemon.clone()).await;
+
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Clear)),
+        ));
+        let selection = |state: &DefineSpend| -> Vec<bool> {
+            state.coins.iter().map(|(_, selected)| *selected).collect()
+        };
+        let cleared_coins = selection(&state);
+        // The cleared form schedules a draft of its own. Before Clear kept the
+        // generation counting, this first post-Clear draft reused the old
+        // draft's seq, so the old result landed on the cleared form.
+        drop(state.schedule_redraft());
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            redraft_message_clone(&stale),
+        ));
+        assert_eq!(state.fee_amount, None, "no fee from the old draft");
+        assert_eq!(state.amount_left_to_select, None);
+        assert_eq!(
+            selection(&state),
+            cleared_coins,
+            "the old draft's coins are not applied"
+        );
+        // Nor does its debounce tick redraft the cleared form.
+        let Message::RedraftResult { seq, .. } = &stale else {
+            unreachable!()
+        };
+        let task = state.update(daemon, &Cache::default(), Message::RedraftDebounce(*seq));
+        assert_eq!(task.units(), 0, "a pre-Clear debounce tick does nothing");
+    }
+
+    /// Two spend forms (Send and Recovery, or a Send panel and the one that
+    /// replaced it) never share a redraft generation: results are delivered
+    /// to whichever panel is on screen, so a per-form counter let one form's
+    /// draft be accepted by another.
+    #[test]
+    fn spend_forms_never_share_a_redraft_generation() {
+        let mut send = branta_form();
+        let mut recovery = branta_form();
+        let mut seen = std::collections::HashSet::new();
+        assert!(seen.insert(send.redraft_seq));
+        assert!(seen.insert(recovery.redraft_seq));
+        for _ in 0..8 {
+            drop(send.schedule_redraft());
+            assert!(seen.insert(send.redraft_seq), "send reused a generation");
+            drop(recovery.schedule_redraft());
+            assert!(
+                seen.insert(recovery.redraft_seq),
+                "recovery reused a generation"
+            );
+        }
+    }
+
+    /// A draft started in one spend form must not land on another form that
+    /// is on screen when it completes, even on that form's first draft.
+    #[tokio::test]
+    async fn a_draft_from_another_spend_form_is_ignored() {
+        use serde_json::json;
+        let mut old_send = branta_form();
+        old_send.coins.push((coin(2, 80_000, Some(90)), false));
+        let destinations = json!({ MAINNET_ADDR: 1_000 });
+        let change = old_send.wallet.preview_change_address();
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(crate::daemon::client::Coincubed::new(
+                crate::utils::mock::Daemon::new(vec![(
+                    Some(json!({"method": "createspend", "params": [destinations, [], 2, change]})),
+                    Ok(draft_spending(&[(outpoint(2), 80_000)])),
+                )])
+                .run(),
+            ));
+        drop(old_send.schedule_redraft());
+        let stale = land_redraft(&mut old_send, daemon.clone()).await;
+
+        // A fresh form (the panel that replaced Send, or Recovery) schedules
+        // its own first draft. With per-form counters both drafts were seq 1.
+        let mut other = branta_form();
+        other.coins.push((coin(2, 80_000, Some(90)), false));
+        let selection = |state: &DefineSpend| -> Vec<bool> {
+            state.coins.iter().map(|(_, selected)| *selected).collect()
+        };
+        let coins_before = selection(&other);
+        drop(other.schedule_redraft());
+        drop(other.update(
+            daemon.clone(),
+            &Cache::default(),
+            redraft_message_clone(&stale),
+        ));
+        assert_eq!(other.fee_amount, None, "no fee from the other form's draft");
+        assert_eq!(other.amount_left_to_select, None);
+        assert!(other.draft_pending, "its own draft is still pending");
+        assert_eq!(
+            selection(&other),
+            coins_before,
+            "the other form's coins are not applied"
+        );
+        // Nor does the other form's debounce tick redraft this one.
+        let Message::RedraftResult { seq, .. } = &stale else {
+            unreachable!()
+        };
+        let task = other.update(daemon, &Cache::default(), Message::RedraftDebounce(*seq));
+        assert_eq!(task.units(), 0, "another form's debounce tick does nothing");
+    }
+
     /// Automatic hands the choice back: Prepare waits for the automatic
     /// draft instead of building from the coins the user had ticked.
     #[tokio::test]
@@ -3504,6 +3787,66 @@ mod tests {
             baseline,
             "and only once"
         );
+    }
+
+    /// A recovery's DefineSpend starts on Normal once shown, keeps the rate
+    /// the user set when Back/Next returns to the same path, and starts on
+    /// Normal again when another path (timelock) re-creates it.
+    #[tokio::test]
+    async fn recovery_form_starts_on_normal_again_after_a_path_change() {
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        let coins = [coin(1, 50_000, Some(50))];
+        let mut state = DefineSpend::new(
+            Network::Bitcoin,
+            wallet(),
+            &coins,
+            100,
+            Some(10),
+            false,
+            Amount::from_sat(50_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        )
+        .starting_on_normal_feerate();
+        // The panel's Next loads and resumes the newly visible step.
+        let next = |state: &mut DefineSpend, timelock: u16| {
+            state.load(
+                &coins,
+                100,
+                &TransactionDraft::new(Network::Bitcoin, Some(timelock)),
+            );
+            state.resume()
+        };
+
+        // First shown: Normal is fetched.
+        drop(next(&mut state, 10));
+        assert_eq!(state.loading_fee_estimate, Some(NORMAL_FEE_TARGET));
+
+        // The user types their own rate, goes Back and Next on the same path:
+        // the rate is kept, nothing is fetched.
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FeerateEdited("12".into()),
+            )),
+        ));
+        assert_eq!(state.loading_fee_estimate, None);
+        state.interrupt();
+        drop(next(&mut state, 10));
+        assert_eq!(state.feerate.value, "12");
+        assert_eq!(state.loading_fee_estimate, None);
+        assert_eq!(state.resume_fee_estimate, None);
+
+        // Back, another path, Next: the re-created form starts on Normal.
+        state.interrupt();
+        drop(next(&mut state, 20));
+        assert_eq!(state.timelock(), Some(20));
+        assert_eq!(state.loading_fee_estimate, Some(NORMAL_FEE_TARGET));
+        assert_eq!(state.resume_fee_estimate, None);
     }
 
     /// Fee segments map to rates: a preset fetches its block target's

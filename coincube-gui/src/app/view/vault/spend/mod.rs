@@ -508,6 +508,16 @@ fn section_label<'a>(label: &'static str) -> coincube_ui::widget::Text<'a> {
     text(label).size(P2_SIZE).font(font::SEMIBOLD)
 }
 
+fn spend_compose_title(recovery_timelock: Option<u16>, is_self_send: bool) -> &'static str {
+    if recovery_timelock.is_some() {
+        localized_copy("Recovery")
+    } else if is_self_send {
+        localized_copy("Self-transfer")
+    } else {
+        localized_copy("Send")
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend_tx<'a>(
     balance: &'a Amount,
@@ -588,13 +598,7 @@ pub fn create_spend_tx<'a>(
         )
     };
 
-    let title = if recovery_timelock.is_some() {
-        localized_copy("Recovery")
-    } else if is_self_send {
-        localized_copy("Self-transfer")
-    } else {
-        localized_copy("Send")
-    };
+    let title = spend_compose_title(recovery_timelock, is_self_send);
     let balance_context = Column::new()
         .spacing(10)
         .push(spend_available_balance(

@@ -640,6 +640,115 @@ pub enum RestoredKitSource {
     OwnerKeychain,
 }
 
+fn validate_kit_signer_metadata(
+    settings: &Settings,
+    blob: &crate::services::recovery::ImportedDescriptorBlob,
+    wallet: &ImportedWalletAttachment,
+) -> Result<(), SettingsError> {
+    if let Some(metadata) = &blob.signer_metadata {
+        let matches = settings
+            .wallets
+            .iter()
+            .filter(|w| w.wallet_id() == wallet.wallet_id)
+            .collect::<Vec<_>>();
+        if matches.len() > 1 {
+            return Err(SettingsError::WritingFile(
+                "Duplicate restored wallet identity.".into(),
+            ));
+        }
+        if let Some(prior) = matches.first() {
+            let prior_signers = serde_json::to_value((
+                &prior.keys,
+                &prior.hardware_wallets,
+                prior.keychain_keys_recorded,
+            ))
+            .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
+            let restored_signers = serde_json::to_value((
+                &metadata.keys,
+                &metadata.hardware_wallets,
+                metadata.keychain_keys_recorded,
+            ))
+            .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
+            if (!prior.keys.is_empty()
+                || !prior.hardware_wallets.is_empty()
+                || prior.keychain_keys_recorded)
+                && prior_signers != restored_signers
+            {
+                return Err(SettingsError::WritingFile(
+                    "Existing imported signer metadata conflicts with this Recovery Kit.".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prepare_kit_restore_settings(
+    mut settings: Settings,
+    cube_id: &str,
+    chain: crate::chain::ChainId,
+    blob: &crate::services::recovery::ImportedDescriptorBlob,
+    wallet: &ImportedWalletAttachment,
+) -> Result<Option<Settings>, SettingsError> {
+    if settings
+        .cubes
+        .iter()
+        .filter(|cube| cube.id == cube_id)
+        .count()
+        != 1
+    {
+        return Err(SettingsError::WritingFile(
+            "Duplicate or missing restore Cube identity.".into(),
+        ));
+    }
+    validate_kit_signer_metadata(&settings, blob, wallet)?;
+    let cube = settings
+        .cubes
+        .iter_mut()
+        .find(|cube| cube.id == cube_id)
+        .ok_or_else(|| {
+            SettingsError::WritingFile("The Cube to restore no longer exists.".into())
+        })?;
+    if cube.network != chain || cube.vault_wallet_id.is_some() {
+        return Err(SettingsError::WritingFile(
+            "This Cube already has a Vault or belongs to another chain.".into(),
+        ));
+    }
+    if cube.imported_claim_source.is_some()
+        && cube.imported_claim_source != blob.imported_claim_source
+    {
+        return Err(SettingsError::WritingFile(
+            "This Cube already has another imported Claim source.".into(),
+        ));
+    }
+    cube.imported_claim_source = blob.imported_claim_source.clone();
+    match &cube.bitcoin_import {
+        Some(intent)
+            if blob
+                .import_operation_id
+                .is_some_and(|id| id != intent.operation_id) =>
+        {
+            return Err(SettingsError::WritingFile(
+                "This Cube already belongs to another import operation.".into(),
+            ));
+        }
+        Some(intent) if intent.attachment().is_some_and(|present| present != wallet) => {
+            return Err(SettingsError::WritingFile(
+                "This Cube is already importing another Bitcoin wallet.".into(),
+            ));
+        }
+        None => {
+            let mut intent = settings::BitcoinImport::pending();
+            if let Some(operation_id) = blob.import_operation_id {
+                intent.operation_id = operation_id;
+            }
+            cube.bitcoin_import = Some(Box::new(intent));
+        }
+        _ => (),
+    }
+    Ok(Some(settings))
+}
+
 /// Restore the public-wallet half of an authenticated Recovery Kit into its
 /// exact Cube. The caller restores/unlocks the Cube seed through the normal
 /// installer; it is never supplied to this wallet's spending code.
@@ -663,103 +772,8 @@ pub async fn restore_from_kit(
         blob.wallet.birthday,
         blob.wallet.initial_lookahead,
     )?;
-    settings::update_settings_file_checked(directory, |mut settings| {
-        if settings
-            .cubes
-            .iter()
-            .filter(|cube| cube.id == cube_id)
-            .count()
-            != 1
-        {
-            return Err(SettingsError::WritingFile(
-                "Duplicate or missing restore Cube identity.".into(),
-            ));
-        }
-        if let Some(metadata) = &blob.signer_metadata {
-            let matches = settings
-                .wallets
-                .iter()
-                .filter(|w| w.wallet_id() == wallet.wallet_id)
-                .collect::<Vec<_>>();
-            if matches.len() > 1 {
-                return Err(SettingsError::WritingFile(
-                    "Duplicate restored wallet identity.".into(),
-                ));
-            }
-            if let Some(prior) = matches.first() {
-                let prior_signers = serde_json::to_value((
-                    &prior.keys,
-                    &prior.hardware_wallets,
-                    prior.keychain_keys_recorded,
-                ))
-                .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
-                let restored_signers = serde_json::to_value((
-                    &metadata.keys,
-                    &metadata.hardware_wallets,
-                    metadata.keychain_keys_recorded,
-                ))
-                .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
-                if (!prior.keys.is_empty()
-                    || !prior.hardware_wallets.is_empty()
-                    || prior.keychain_keys_recorded)
-                    && prior_signers != restored_signers
-                {
-                    return Err(SettingsError::WritingFile(
-                        "Existing imported signer metadata conflicts with this Recovery Kit."
-                            .into(),
-                    ));
-                }
-            }
-        }
-        let cube = settings
-            .cubes
-            .iter_mut()
-            .find(|cube| cube.id == cube_id)
-            .ok_or_else(|| {
-                SettingsError::WritingFile("The Cube to restore no longer exists.".into())
-            })?;
-        if cube.network != chain || cube.vault_wallet_id.is_some() {
-            return Err(SettingsError::WritingFile(
-                "This Cube already has a Vault or belongs to another chain.".into(),
-            ));
-        }
-        if cube.imported_claim_source.is_some()
-            && cube.imported_claim_source != blob.imported_claim_source
-        {
-            return Err(SettingsError::WritingFile(
-                "This Cube already has another imported Claim source.".into(),
-            ));
-        }
-        cube.imported_claim_source = blob.imported_claim_source.clone();
-        match &cube.bitcoin_import {
-            Some(intent)
-                if blob
-                    .import_operation_id
-                    .is_some_and(|id| id != intent.operation_id) =>
-            {
-                return Err(SettingsError::WritingFile(
-                    "This Cube already belongs to another import operation.".into(),
-                ));
-            }
-            Some(intent)
-                if intent
-                    .attachment()
-                    .is_some_and(|present| present != &wallet) =>
-            {
-                return Err(SettingsError::WritingFile(
-                    "This Cube is already importing another Bitcoin wallet.".into(),
-                ));
-            }
-            None => {
-                let mut intent = settings::BitcoinImport::pending();
-                if let Some(operation_id) = blob.import_operation_id {
-                    intent.operation_id = operation_id;
-                }
-                cube.bitcoin_import = Some(Box::new(intent));
-            }
-            _ => (),
-        }
-        Ok(Some(settings))
+    settings::update_settings_file_checked(directory, |settings| {
+        prepare_kit_restore_settings(settings, cube_id, chain, blob, &wallet)
     })
     .await
     .map_err(|e| e.to_string())?;

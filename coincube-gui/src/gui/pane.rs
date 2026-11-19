@@ -606,6 +606,84 @@ impl Pane {
         self.update(Message::tab(tab_id, tab::Message::Run(app_msg.into())), cfg)
     }
 
+    fn update_owned_tab(&mut self, id: usize, msg: tab::Message) -> Task<Message> {
+        let owner = self.tabs.iter().find(|tab| tab.id == id).and_then(|tab| {
+            let tab::State::App(app) = &tab.state else {
+                return None;
+            };
+            Some(app.cache().app_generation)
+        });
+        let task = self
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == id)
+            .map(|tab| tab.update(msg));
+        if let Some(owner) = owner {
+            let retained = self.tabs.iter().any(|tab| {
+                tab.id == id
+                    && matches!(&tab.state, tab::State::App(app) if app.cache().app_generation == owner)
+            });
+            if !retained {
+                self.close_tabs_matching(|tab| tab.copy_owner() == Some(owner));
+            }
+        }
+        task.map(|task| {
+            task.then(move |msg| match msg {
+                // Bubble ToggleTheme up to pane level as a ViewMessage
+                tab::Message::GlobalSettingsChanged => {
+                    Task::done(Message::View(ViewMessage::GlobalSettingsChanged))
+                }
+                tab::Message::ToggleTheme => Task::done(Message::View(ViewMessage::ToggleTheme)),
+                tab::Message::StartClaimInstaller => Task::done(Message::StartClaimInstaller(id)),
+                tab::Message::CopyInstallFinished { owner, created } => {
+                    Task::done(Message::CopyInstallFinished {
+                        tab: id,
+                        owner,
+                        created,
+                    })
+                }
+                tab::Message::OpenConnectSignIn => {
+                    Task::done(Message::View(ViewMessage::OpenConnectSignIn))
+                }
+                tab::Message::OpenLauncher => Task::done(Message::View(ViewMessage::OpenLauncher)),
+                tab::Message::OpenPlanBilling => {
+                    Task::done(Message::View(ViewMessage::OpenPlanBilling))
+                }
+                tab::Message::ConnectSignedIn => {
+                    Task::done(Message::View(ViewMessage::ConnectSignedIn))
+                }
+                other => Task::done(Message::tab(id, other)),
+            })
+        })
+        .unwrap_or(Task::none())
+    }
+
+    fn focus_tab(&mut self, i: usize) -> Task<Message> {
+        if i < self.tabs.len() {
+            self.focused_tab = i;
+            let tab = &self.tabs[i];
+            if let tab::State::App(app) = &tab.state {
+                if app.can_adopt_shared_connect_session() {
+                    let id = tab.id;
+                    return tab
+                        .emit_app_task(Task::done(app::Message::View(
+                            app::view::Message::ConnectAccount(
+                                app::view::ConnectAccountMessage::Init,
+                            ),
+                        )))
+                        .map(move |message| Message::tab(id, message));
+                }
+            }
+            if let tab::State::Home(home) = &tab.state {
+                let id = tab.id;
+                return home
+                    .on_focus()
+                    .map(move |message| Message::tab(id, tab::Message::Launch(message)));
+            }
+        }
+        Task::none()
+    }
+
     pub fn update(&mut self, message: Message, cfg: &Config) -> Task<Message> {
         match message {
             Message::StartClaimInstaller(source_tab) => {
@@ -640,88 +718,8 @@ impl Pane {
                     cfg,
                 );
             }
-            Message::Tab(id, msg) => {
-                let owner = self.tabs.iter().find(|tab| tab.id == id).and_then(|tab| {
-                    let tab::State::App(app) = &tab.state else {
-                        return None;
-                    };
-                    Some(app.cache().app_generation)
-                });
-                let task = self
-                    .tabs
-                    .iter_mut()
-                    .find(|tab| tab.id == id)
-                    .map(|tab| tab.update(*msg));
-                if let Some(owner) = owner {
-                    let retained = self.tabs.iter().any(|tab| {
-                        tab.id == id
-                            && matches!(&tab.state, tab::State::App(app) if app.cache().app_generation == owner)
-                    });
-                    if !retained {
-                        self.close_tabs_matching(|tab| tab.copy_owner() == Some(owner));
-                    }
-                }
-                return task
-                    .map(|task| {
-                        task.then(move |msg| match msg {
-                            // Bubble ToggleTheme up to pane level as a ViewMessage
-                            tab::Message::GlobalSettingsChanged => {
-                                Task::done(Message::View(ViewMessage::GlobalSettingsChanged))
-                            }
-                            tab::Message::ToggleTheme => {
-                                Task::done(Message::View(ViewMessage::ToggleTheme))
-                            }
-                            tab::Message::StartClaimInstaller => {
-                                Task::done(Message::StartClaimInstaller(id))
-                            }
-                            tab::Message::CopyInstallFinished { owner, created } => {
-                                Task::done(Message::CopyInstallFinished {
-                                    tab: id,
-                                    owner,
-                                    created,
-                                })
-                            }
-                            tab::Message::OpenConnectSignIn => {
-                                Task::done(Message::View(ViewMessage::OpenConnectSignIn))
-                            }
-                            tab::Message::OpenLauncher => {
-                                Task::done(Message::View(ViewMessage::OpenLauncher))
-                            }
-                            tab::Message::OpenPlanBilling => {
-                                Task::done(Message::View(ViewMessage::OpenPlanBilling))
-                            }
-                            tab::Message::ConnectSignedIn => {
-                                Task::done(Message::View(ViewMessage::ConnectSignedIn))
-                            }
-                            other => Task::done(Message::tab(id, other)),
-                        })
-                    })
-                    .unwrap_or(Task::none());
-            }
-            Message::View(ViewMessage::FocusTab(i)) => {
-                if i < self.tabs.len() {
-                    self.focused_tab = i;
-                    let tab = &self.tabs[i];
-                    if let tab::State::App(app) = &tab.state {
-                        if app.can_adopt_shared_connect_session() {
-                            let id = tab.id;
-                            return tab
-                                .emit_app_task(Task::done(app::Message::View(
-                                    app::view::Message::ConnectAccount(
-                                        app::view::ConnectAccountMessage::Init,
-                                    ),
-                                )))
-                                .map(move |message| Message::tab(id, message));
-                        }
-                    }
-                    if let tab::State::Home(home) = &tab.state {
-                        let id = tab.id;
-                        return home
-                            .on_focus()
-                            .map(move |message| Message::tab(id, tab::Message::Launch(message)));
-                    }
-                }
-            }
+            Message::Tab(id, msg) => return self.update_owned_tab(id, *msg),
+            Message::View(ViewMessage::FocusTab(i)) => return self.focus_tab(i),
             // The public tab strip is gone. Home is created only by the
             // explicit Launcher/Account/Plan routes above.
             Message::View(ViewMessage::AddTab) => {}
@@ -787,34 +785,36 @@ impl Pane {
         self.tabs.iter_mut().for_each(|t| t.stop());
     }
 
+    fn tabs_menu_title(title: &str) -> Row<'_, ViewMessage> {
+        if title.len() < 20 {
+            Row::new().push(p1_regular(title)).push(p1_regular(
+                "                     "[..21 - title.len()].to_string(),
+            ))
+        } else {
+            Row::new()
+                .push(p1_regular(&title[..17]))
+                .push(p1_regular("..."))
+        }
+    }
+
     pub fn tabs_menu_view(&self) -> Element<Message> {
         let mut menu = Row::new().spacing(3);
         let tabs_len = self.tabs.len();
         for (i, tab) in self.tabs.iter().enumerate() {
-            let title = tab.title();
-            let title_row = if title.len() < 20 {
-                Row::new().push(p1_regular(title)).push(p1_regular(
-                    "                     "[..21 - title.len()].to_string(),
-                ))
-            } else {
-                Row::new()
-                    .push(p1_regular(&title[..17]))
-                    .push(p1_regular("..."))
-            };
+            let title_row = Self::tabs_menu_title(tab.title());
 
+            let focus_button = Button::new(title_row)
+                .style(if i == self.focused_tab {
+                    theme::button::tab_liquid
+                } else {
+                    theme::button::tab
+                })
+                .on_press(ViewMessage::FocusTab(i));
             let tab_content: Element<ViewMessage> = if tabs_len > 1 {
                 // Show close button when more than one tab
                 Row::new()
                     .align_y(iced::Alignment::Center)
-                    .push(
-                        Button::new(title_row)
-                            .style(if i == self.focused_tab {
-                                theme::button::tab_liquid
-                            } else {
-                                theme::button::tab
-                            })
-                            .on_press(ViewMessage::FocusTab(i)),
-                    )
+                    .push(focus_button)
                     .push(
                         Button::new(
                             iced::widget::Container::new(cross_icon().size(14))
@@ -839,14 +839,7 @@ impl Pane {
                     .into()
             } else {
                 // Single tab — no close button
-                Button::new(title_row)
-                    .style(if i == self.focused_tab {
-                        theme::button::tab_liquid
-                    } else {
-                        theme::button::tab
-                    })
-                    .on_press(ViewMessage::FocusTab(i))
-                    .into()
+                focus_button.into()
             };
 
             menu = menu.push(ContextMenu::new(tab_content, move || {

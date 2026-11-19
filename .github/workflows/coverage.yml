@@ -76,11 +76,17 @@ jobs:
       # Ubuntu leg. Provision its default collection before starting the daemon.
       # The fixture checks that the original bus owner survives until coverage
       # completes and reports a disconnect as infrastructure failure.
+      # Keep in step with main.yml's Ubuntu leg: run the fixture's self-tests
+      # first, and keep the daemon log. The device-secret backend serialises
+      # keystore calls because gnome-keyring 50 aborts under concurrent
+      # client churn (see `backend::serialised`).
       - name: Generate coverage
         run: |
           mkdir -p ~/.local/share/keyrings
           printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' > ~/.local/share/keyrings/login.keyring
           printf 'login' > ~/.local/share/keyrings/default
+          python3 contrib/test_keyring_supervision.py
+          python3 contrib/test_keyring_supervision.py --live-kill
           dbus-run-session -- python3 contrib/with_test_keyring.py -- ./contrib/coverage.sh
 
       - name: Upload coverage artifacts
@@ -91,6 +97,14 @@ jobs:
           path: |
             target/coverage/lcov.info
             target/coverage/summary.json
+
+      - name: Preserve Secret Service fixture diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: keyring-fixture-coverage
+          path: test-logs/gnome-keyring.log
+          if-no-files-found: ignore
 
   spark-bridge-coverage:
     if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.action != 'edited' || github.event.changes.base != null))) }}

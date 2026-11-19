@@ -5743,6 +5743,10 @@ impl Home {
             layout
         };
 
+        self.launcher_modal(layout)
+    }
+
+    fn launcher_modal<'a>(&'a self, layout: Element<'a, Message>) -> Element<'a, Message> {
         if let Some(modal) = &self.delete_cube_modal {
             Modal::new(Container::new(layout).height(Length::Fill), modal.view())
                 .on_blur(Some(Message::View(ViewMessage::DeleteCube(
@@ -5764,44 +5768,7 @@ impl Home {
                 .on_blur(Some(Message::View(ViewMessage::CloseRecoveryMethodPicker)))
                 .into()
         } else if let Some((_, ref name_input)) = self.rename_cube_modal {
-            use coincube_ui::widget::TextInput;
-            let modal_content = Container::new(
-                Column::new()
-                    .spacing(15)
-                    .padding(20)
-                    .width(Length::Fixed(400.0))
-                    .push(h4_bold("Rename Cube"))
-                    .push(
-                        TextInput::new("Cube Name", name_input)
-                            .on_input(|s| Message::View(ViewMessage::RenameCubeNameEdited(s)))
-                            .padding(10)
-                            .size(16),
-                    )
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .push(
-                                button::secondary(
-                                    Some(icon::cross_icon()),
-                                    localized_copy("Cancel"),
-                                )
-                                .on_press(Message::View(ViewMessage::RenameCubeCancel))
-                                .width(Length::Fill),
-                            )
-                            .push(if name_input.trim().is_empty() {
-                                button::primary(Some(icon::check_icon()), localized_copy("Save"))
-                                    .width(Length::Fill)
-                            } else {
-                                button::primary(Some(icon::check_icon()), localized_copy("Save"))
-                                    .on_press(Message::View(ViewMessage::RenameCubeConfirm))
-                                    .width(Length::Fill)
-                            }),
-                    ),
-            )
-            .style(theme::card::simple);
-            Modal::new(Container::new(layout).height(Length::Fill), modal_content)
-                .on_blur(Some(Message::View(ViewMessage::RenameCubeCancel)))
-                .into()
+            Self::rename_cube_overlay(layout, name_input)
         } else if let Some(advisory) = self.advisory_notice {
             // Last in the chain: every other modal is something the user just
             // asked for, and this one waits its turn. No `on_blur` — it is
@@ -5814,6 +5781,47 @@ impl Home {
         } else {
             layout
         }
+    }
+
+    fn rename_cube_overlay<'a>(
+        layout: Element<'a, Message>,
+        name_input: &str,
+    ) -> Element<'a, Message> {
+        use coincube_ui::widget::TextInput;
+        let modal_content = Container::new(
+            Column::new()
+                .spacing(15)
+                .padding(20)
+                .width(Length::Fixed(400.0))
+                .push(h4_bold("Rename Cube"))
+                .push(
+                    TextInput::new("Cube Name", name_input)
+                        .on_input(|s| Message::View(ViewMessage::RenameCubeNameEdited(s)))
+                        .padding(10)
+                        .size(16),
+                )
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .push(
+                            button::secondary(Some(icon::cross_icon()), localized_copy("Cancel"))
+                                .on_press(Message::View(ViewMessage::RenameCubeCancel))
+                                .width(Length::Fill),
+                        )
+                        .push(if name_input.trim().is_empty() {
+                            button::primary(Some(icon::check_icon()), localized_copy("Save"))
+                                .width(Length::Fill)
+                        } else {
+                            button::primary(Some(icon::check_icon()), localized_copy("Save"))
+                                .on_press(Message::View(ViewMessage::RenameCubeConfirm))
+                                .width(Length::Fill)
+                        }),
+                ),
+        )
+        .style(theme::card::simple);
+        Modal::new(Container::new(layout).height(Length::Fill), modal_content)
+            .on_blur(Some(Message::View(ViewMessage::RenameCubeCancel)))
+            .into()
     }
 
     #[cfg(test)]
@@ -5902,7 +5910,42 @@ impl Home {
             ),
         );
 
-        let body: Element<ViewMessage> = if hub {
+        let body: Element<ViewMessage> = self.create_journey_body(hub, restoring);
+        let body: Element<ViewMessage> =
+            // Every step's column is centred in the sheet, so a narrow form
+            // does not leave a dead gutter on its right.
+            scrollable(Container::new(body).padding(28).center_x(Length::Fill))
+                .id(Id::new(CREATE_BODY_SCROLL_ID))
+                .height(Length::Fill)
+                .into();
+
+        // The Overview has no steps. The backup hub has a footer; the
+        // method screens it opens carry their own actions.
+        let rail = (!hub || phone).then(|| restore_frame::step_rail(steps, active_step));
+        let on_backup_hub = matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::Choice)
+        );
+        let footer: Option<Element<ViewMessage>> =
+            self.create_journey_footer(on_backup_hub, hub, backing_up);
+        let region = restore_frame::region(rail, body, footer);
+        // Import or restore: its path list beside the path.
+        let content = if restoring {
+            restore_frame::with_nav(self.restore_nav(backing_up), region)
+        } else {
+            region
+        };
+        let menu = menu_open.then(|| {
+            (
+                restore_frame::network_menu(title, self.create_network_menu_rows(light)),
+                ViewMessage::CreateNetworkMenu(false),
+            )
+        });
+        restore_frame::sheet(header, content, menu)
+    }
+
+    fn create_journey_body(&self, hub: bool, restoring: bool) -> Element<ViewMessage> {
+        if hub {
             if self.restore_phone {
                 self.restore_phone_view()
             } else {
@@ -5947,23 +5990,16 @@ impl Home {
             } else {
                 form
             }
-        };
-        let body: Element<ViewMessage> =
-            // Every step's column is centred in the sheet, so a narrow form
-            // does not leave a dead gutter on its right.
-            scrollable(Container::new(body).padding(28).center_x(Length::Fill))
-                .id(Id::new(CREATE_BODY_SCROLL_ID))
-                .height(Length::Fill)
-                .into();
+        }
+    }
 
-        // The Overview has no steps. The backup hub has a footer; the
-        // method screens it opens carry their own actions.
-        let rail = (!hub || phone).then(|| restore_frame::step_rail(steps, active_step));
-        let on_backup_hub = matches!(
-            self.state,
-            State::CreationBackup(CreationBackupStep::Choice)
-        );
-        let footer: Option<Element<ViewMessage>> = if on_backup_hub {
+    fn create_journey_footer(
+        &self,
+        on_backup_hub: bool,
+        hub: bool,
+        backing_up: bool,
+    ) -> Option<Element<ViewMessage>> {
+        if on_backup_hub {
             Some(creation_choice_footer(
                 self.creating_cube,
                 self.creation_backup_hub(),
@@ -5997,21 +6033,7 @@ impl Home {
                     )
                     .into()
             })
-        };
-        let region = restore_frame::region(rail, body, footer);
-        // Import or restore: its path list beside the path.
-        let content = if restoring {
-            restore_frame::with_nav(self.restore_nav(backing_up), region)
-        } else {
-            region
-        };
-        let menu = menu_open.then(|| {
-            (
-                restore_frame::network_menu(title, self.create_network_menu_rows(light)),
-                ViewMessage::CreateNetworkMenu(false),
-            )
-        });
-        restore_frame::sheet(header, content, menu)
+        }
     }
 
     /// The header's network menu is open to changes on Create's first step
@@ -6026,83 +6048,6 @@ impl Home {
     /// The network menu's rows, as the Network step listed them: Live
     /// networks, then Test networks while Developer mode is on.
     fn create_network_menu_rows(&self, light: bool) -> Element<ViewMessage> {
-        let network_row = |chain: ChainId| -> Element<ViewMessage> {
-            let available = self.chain_availability(chain).is_available();
-            let selected = chain == self.network;
-            let subtitle = if chain.is_blake2b() && !available {
-                localized_copy("Bitcoin Blake2b availability could not be verified. Vault creation is disabled.")
-            } else {
-                match chain {
-                    ChainId::Bitcoin => "Spark · Vault",
-                    ChainId::Regtest => "Spark · Vault",
-                    ChainId::BitcoinBlake2b => {
-                        localized_copy("Vault only. Spark isn't available on Bitcoin Blake2b.")
-                    }
-                    ChainId::BitcoinBlake2bTestnet4 => localized_copy(
-                        "Vault only. Spark isn't available on Bitcoin Blake2b Testnet4.",
-                    ),
-                    ChainId::Testnet => {
-                        localized_copy("Vault only. Spark isn't available on Testnet.")
-                    }
-                    ChainId::Testnet4 => {
-                        localized_copy("Vault only. Spark isn't available on Testnet4.")
-                    }
-                    ChainId::Signet => {
-                        localized_copy("Vault only. Spark isn't available on Signet.")
-                    }
-                }
-            };
-            let id = create_network_row_id(chain);
-            let mut name = Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(create_journey_coin(chain, light, 18.0))
-                .push(p2_regular(chain.label()));
-            if chain.is_blake2b() && !launcher_coin::is_test_network(chain) {
-                name = name.push(create_journey_tag("Blake2b", true));
-            }
-            if launcher_coin::is_test_network(chain) {
-                name = name.push(create_journey_tag(chain.label(), false));
-            }
-            let row = FocusableAction::new(
-                id.clone(),
-                Row::new()
-                    .spacing(12)
-                    .align_y(Alignment::Center)
-                    .push(
-                        Container::new(selected.then(icon::check_icon)).width(Length::Fixed(16.0)),
-                    )
-                    .push(
-                        Column::new()
-                            .spacing(3)
-                            .push(name)
-                            .push(p2_regular(subtitle).size(12).style(theme::text::secondary)),
-                    ),
-                create_journey_focus,
-            )
-            .width(Length::Fill)
-            .padding([8, 10])
-            .style(move |theme, status| {
-                // A selected option stays at normal contrast even though
-                // activating it only closes the menu.
-                let mut style = theme::button::transparent(
-                    theme,
-                    if selected {
-                        iced::widget::button::Status::Active
-                    } else {
-                        status
-                    },
-                );
-                if selected {
-                    style.background = Some(iced::Background::Color(theme.colors.shell.selected));
-                    style.text_color = theme.colors.shell.ink;
-                }
-                style.border.radius = 6.0.into();
-                style
-            });
-            row.on_press_maybe(create_network_row_action(chain, available, selected))
-                .into()
-        };
         let mut live = self
             .displayed_networks
             .iter()
@@ -6130,12 +6075,12 @@ impl Home {
             .spacing(2)
             .push(restore_frame::menu_heading("Live networks"));
         for chain in live {
-            rows = rows.push(network_row(chain));
+            rows = rows.push(self.create_network_menu_row(chain, light));
         }
         if self.developer_mode {
             rows = rows.push(restore_frame::menu_heading("Test networks"));
             for chain in test {
-                rows = rows.push(network_row(chain));
+                rows = rows.push(self.create_network_menu_row(chain, light));
             }
         } else {
             rows = rows.push(
@@ -6166,6 +6111,80 @@ impl Home {
             );
         }
         rows.into()
+    }
+
+    fn create_network_menu_row(&self, chain: ChainId, light: bool) -> Element<ViewMessage> {
+        let available = self.chain_availability(chain).is_available();
+        let selected = chain == self.network;
+        let subtitle = if chain.is_blake2b() && !available {
+            localized_copy(
+                "Bitcoin Blake2b availability could not be verified. Vault creation is disabled.",
+            )
+        } else {
+            match chain {
+                ChainId::Bitcoin => "Spark · Vault",
+                ChainId::Regtest => "Spark · Vault",
+                ChainId::BitcoinBlake2b => {
+                    localized_copy("Vault only. Spark isn't available on Bitcoin Blake2b.")
+                }
+                ChainId::BitcoinBlake2bTestnet4 => {
+                    localized_copy("Vault only. Spark isn't available on Bitcoin Blake2b Testnet4.")
+                }
+                ChainId::Testnet => localized_copy("Vault only. Spark isn't available on Testnet."),
+                ChainId::Testnet4 => {
+                    localized_copy("Vault only. Spark isn't available on Testnet4.")
+                }
+                ChainId::Signet => localized_copy("Vault only. Spark isn't available on Signet."),
+            }
+        };
+        let id = create_network_row_id(chain);
+        let mut name = Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(create_journey_coin(chain, light, 18.0))
+            .push(p2_regular(chain.label()));
+        if chain.is_blake2b() && !launcher_coin::is_test_network(chain) {
+            name = name.push(create_journey_tag("Blake2b", true));
+        }
+        if launcher_coin::is_test_network(chain) {
+            name = name.push(create_journey_tag(chain.label(), false));
+        }
+        let row = FocusableAction::new(
+            id.clone(),
+            Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(Container::new(selected.then(icon::check_icon)).width(Length::Fixed(16.0)))
+                .push(
+                    Column::new()
+                        .spacing(3)
+                        .push(name)
+                        .push(p2_regular(subtitle).size(12).style(theme::text::secondary)),
+                ),
+            create_journey_focus,
+        )
+        .width(Length::Fill)
+        .padding([8, 10])
+        .style(move |theme, status| {
+            // A selected option stays at normal contrast even though
+            // activating it only closes the menu.
+            let mut style = theme::button::transparent(
+                theme,
+                if selected {
+                    iced::widget::button::Status::Active
+                } else {
+                    status
+                },
+            );
+            if selected {
+                style.background = Some(iced::Background::Color(theme.colors.shell.selected));
+                style.text_color = theme.colors.shell.ink;
+            }
+            style.border.radius = 6.0.into();
+            style
+        });
+        row.on_press_maybe(create_network_row_action(chain, available, selected))
+            .into()
     }
 
     /// Import Bitcoin wallet is open while Bitcoin mainnet is current and
@@ -6311,79 +6330,11 @@ impl Home {
             ))
             .into()
         };
-        // A closed path is greyed, with its reason (and remedy) under it.
-        let path = |title: &'static str,
-                    line: &'static str,
-                    why: Option<Element<'static, ViewMessage>>,
-                    tag: Element<'static, ViewMessage>,
-                    start: Option<ViewMessage>,
-                    start_id: &'static str|
-         -> Element<ViewMessage> {
-            let open = start.is_some();
-            let muted = move |theme: &theme::Theme| {
-                if open {
-                    theme::text::primary(theme)
-                } else {
-                    theme::text::secondary(theme)
-                }
-            };
-            Row::new()
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .padding([14, 0])
-                .push(
-                    Column::new()
-                        .spacing(3)
-                        .width(Length::Fill)
-                        .push(p1_regular(title).style(muted))
-                        .push(p2_regular(line).style(theme::text::secondary))
-                        .push_maybe(why),
-                )
-                .push(tag)
-                .push(
-                    button::secondary_action(
-                        start_id,
-                        None,
-                        coincube_ui::locale::copy("Start"),
-                        create_journey_focus,
-                    )
-                    .width(Length::Shrink)
-                    .on_press_maybe(start),
-                )
-                .into()
-        };
-        let pill = |label: String, ok: bool| -> Element<'static, ViewMessage> {
-            Container::new(
-                p2_regular(label)
-                    .size(12)
-                    .style(move |theme: &theme::Theme| iced::widget::text::Style {
-                        color: Some(if ok {
-                            theme.colors.shell.good
-                        } else {
-                            theme.colors.shell.muted
-                        }),
-                    }),
-            )
-            .padding([2, 8])
-            .style(move |theme: &theme::Theme| iced::widget::container::Style {
-                border: iced::Border {
-                    color: if ok {
-                        theme.colors.shell.good
-                    } else {
-                        theme.colors.shell.line
-                    },
-                    width: 1.0,
-                    radius: 10.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
-        };
         // Counts only Connect Cubes missing from this device, so say so:
         // a bare "N Cubes" reads as the whole account.
         let connected = |phone: bool| -> Element<'static, ViewMessage> {
             let count = self.restorable_here(phone);
-            pill(
+            Self::restore_hub_pill(
                 format!(
                     "Connected · {count} {} not on this device",
                     if count == 1 { "Cube" } else { "Cubes" },
@@ -6411,11 +6362,11 @@ impl Home {
                     .into()
             });
         let import_tag = if self.bitcoin_import_network_reason().is_some() {
-            pill(format!("Not on {}", self.network.label()), false)
+            Self::restore_hub_pill(format!("Not on {}", self.network.label()), false)
         } else {
-            pill("No sign-in".to_string(), false)
+            Self::restore_hub_pill("No sign-in".to_string(), false)
         };
-        let mut paths = Column::new().push(rule()).push(path(
+        let mut paths = Column::new().push(rule()).push(Self::restore_hub_path(
             "Import Bitcoin wallet",
             "A recovery phrase, descriptor or hardware wallet, as a new Cube's Vault.",
             import_why,
@@ -6433,7 +6384,7 @@ impl Home {
             }
         };
         let connect_open = self.connect_restore_reason().is_none();
-        paths = paths.push(rule()).push(path(
+        paths = paths.push(rule()).push(Self::restore_hub_path(
             "Restore from Recovery Kit",
             "Your Recovery Kit from Connect and its recovery password.",
             None,
@@ -6442,7 +6393,7 @@ impl Home {
             RESTORE_START_KIT_ID,
         ));
         if feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED {
-            paths = paths.push(rule()).push(path(
+            paths = paths.push(rule()).push(Self::restore_hub_path(
                 "Recover with phone",
                 "Approve on the phone that holds the Cube's backup.",
                 None,
@@ -6452,11 +6403,11 @@ impl Home {
             ));
         }
         if self.recover_vault_offered() {
-            paths = paths.push(rule()).push(path(
+            paths = paths.push(rule()).push(Self::restore_hub_path(
                 "Recover a Vault",
                 "Vaults you're a keyholder for.",
                 None,
-                pill("Connect".to_string(), true),
+                Self::restore_hub_pill("Connect".to_string(), true),
                 Some(ViewMessage::GoToSection(HomeSection::RecoverVault)),
                 RESTORE_START_RECOVER_VAULT_ID,
             ));
@@ -6536,6 +6487,77 @@ impl Home {
             );
         }
         content.into()
+    }
+
+    // A closed path is greyed, with its reason (and remedy) under it.
+    fn restore_hub_path(
+        title: &'static str,
+        line: &'static str,
+        why: Option<Element<'static, ViewMessage>>,
+        tag: Element<'static, ViewMessage>,
+        start: Option<ViewMessage>,
+        start_id: &'static str,
+    ) -> Element<'static, ViewMessage> {
+        let open = start.is_some();
+        let muted = move |theme: &theme::Theme| {
+            if open {
+                theme::text::primary(theme)
+            } else {
+                theme::text::secondary(theme)
+            }
+        };
+        Row::new()
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .padding([14, 0])
+            .push(
+                Column::new()
+                    .spacing(3)
+                    .width(Length::Fill)
+                    .push(p1_regular(title).style(muted))
+                    .push(p2_regular(line).style(theme::text::secondary))
+                    .push_maybe(why),
+            )
+            .push(tag)
+            .push(
+                button::secondary_action(
+                    start_id,
+                    None,
+                    coincube_ui::locale::copy("Start"),
+                    create_journey_focus,
+                )
+                .width(Length::Shrink)
+                .on_press_maybe(start),
+            )
+            .into()
+    }
+
+    fn restore_hub_pill(label: String, ok: bool) -> Element<'static, ViewMessage> {
+        Container::new(
+            p2_regular(label)
+                .size(12)
+                .style(move |theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(if ok {
+                        theme.colors.shell.good
+                    } else {
+                        theme.colors.shell.muted
+                    }),
+                }),
+        )
+        .padding([2, 8])
+        .style(move |theme: &theme::Theme| iced::widget::container::Style {
+            border: iced::Border {
+                color: if ok {
+                    theme.colors.shell.good
+                } else {
+                    theme.colors.shell.line
+                },
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
     }
 
     /// Recover with phone's Cube step: the Connect Cubes on this network
@@ -6726,7 +6748,60 @@ impl Home {
                 )
                 .into()
         });
-        let content = Into::<Element<ViewMessage>>::into(scrollable(
+        let content = self.legacy_cube_content();
+
+        // If active section is Connect, show the account panel instead of cube list
+        let main_content: Element<Message> = if matches!(self.active_section, HomeSection::Settings)
+        {
+            global_settings_view(self)
+        } else if let HomeSection::Connect(_) = &self.active_section {
+            // Render Connect account panel view
+            let connect_view: Element<ConnectAccountMessage> =
+                crate::app::view::connect::connect_account_panel(&self.connect_account);
+            connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
+        } else if matches!(self.active_section, HomeSection::RecoverVault) {
+            // Heir "Recover a Vault" discovery surface (COIN-377 / PR 1).
+            recover_vault::view(&self.recover_vault)
+                .map(|msg| Message::View(ViewMessage::RecoverVault(msg)))
+        } else {
+            unavailable_content.unwrap_or(content)
+        };
+
+        // Build the sidebar
+        let sidebar = home_sidebar(self);
+
+        // Wrap sidebar + content in a Row
+        Row::new()
+            .push(
+                Container::new(sidebar)
+                    .height(Length::Fill)
+                    .width(Length::Fixed(190.0))
+                    .style(coincube_ui::theme::container::foreground),
+            )
+            .push(
+                Container::new(scrollable(
+                    Row::new()
+                        .push(Space::new().width(Length::FillPortion(1)))
+                        .push(
+                            Column::new()
+                                .push(Space::new().height(Length::Fixed(30.0)))
+                                .push(main_content)
+                                .width(Length::FillPortion(8))
+                                .max_width(1500),
+                        )
+                        .push(Space::new().width(Length::FillPortion(1))),
+                ))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(coincube_ui::theme::container::background),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn legacy_cube_content(&self) -> Element<Message> {
+        Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
                 // Network selection — right-aligned at top
                 .push(
@@ -6791,148 +6866,99 @@ impl Home {
                                     None
                                 }
                             })
-                            .push(match &self.state {
-                                State::RecoveryInput => recovery_input_view(
-                                    &self.recovery_words,
-                                    self.recovery_active_index,
-                                    self.creating_cube,
-                                ),
-                                State::CreationBackup(step) => {
-                                    let view = creation_backup_view(
-                                        step,
-                                        self.creation_backup_words.as_ref().map(|w| w.as_slice()),
-                                        self.creating_cube,
-                                        self.creating_passkey_cube(),
-                                        &self.creation_kit_password,
-                                        &self.creation_kit_confirm,
-                                        self.creation_kit_acknowledged,
-                                        self.creation_kit_error.as_deref(),
-                                        self.can_create_recovery_kit(),
-                                        self.creation_backup_hub(),
-                                        self.network,
-                                    );
-                                    // No sheet footer here, so the hub's
-                                    // actions sit under it.
-                                    if matches!(step, CreationBackupStep::Choice) {
-                                        Column::new()
-                                            .spacing(24)
-                                            .push(view)
-                                            .push(creation_choice_footer(
-                                                self.creating_cube,
-                                                self.creation_backup_hub(),
-                                            ))
-                                            .into()
-                                    } else {
-                                        view
-                                    }
-                                }
-                                State::Cubes { create_cube, .. } => {
-                                    if *create_cube {
-                                        self.creation_form(true)
-                                    } else {
-                                        launcher_catalog::catalog_view(self)
-                                    }
-                                }
-                                State::NoCube { .. } | State::Unchecked => {
-                                    let current_net_str =
-                                        settings::network_to_api_string(self.network);
-                                    let remote_for_net: Vec<_> = self
-                                        .remote_cubes
-                                        .iter()
-                                        .filter(|rc| rc.network == current_net_str)
-                                        .collect();
-                                    let total_count = self.total_cube_count();
-                                    let at_limit = total_count >= self.cube_limit();
-
-                                    // Center the children: the create form is a
-                                    // `center_x(Fill)` container, so without this
-                                    // the form spans/centers full width while the
-                                    // shrink-width remote-cube rows default to the
-                                    // left edge — leaving the list and form
-                                    // misaligned.
-                                    let mut col =
-                                        Column::new().spacing(20).align_x(Alignment::Center);
-
-                                    // The form owns the whole screen when it is
-                                    // shown — never stacked under the remote-Cube
-                                    // list, which is what made this screen read as
-                                    // two pages crammed into one.
-                                    if self.showing_create_form() {
-                                        if at_limit && !remote_for_net.is_empty() {
-                                            col = col.push(
-                                                Container::new(
-                                                    p1_regular(
-                                                        self.create_form_remote_limit_copy(),
-                                                    )
-                                                    .style(theme::text::secondary),
-                                                )
-                                                .max_width(500),
-                                            );
-                                        } else {
-                                            col = col.push(self.creation_form(true));
-                                        }
-                                        col.into()
-                                    } else {
-                                        launcher_catalog::catalog_view(self)
-                                    }
-                                }
-                            })
+                            .push(self.legacy_cube_body())
                             .align_x(Alignment::Center),
                     )
                     .center_x(Length::Fill),
                 )
                 .push(Space::new().height(Length::Fixed(40.0))),
         ))
-        .map(Message::View);
+        .map(Message::View)
+    }
 
-        // If active section is Connect, show the account panel instead of cube list
-        let main_content: Element<Message> = if matches!(self.active_section, HomeSection::Settings)
-        {
-            global_settings_view(self)
-        } else if let HomeSection::Connect(_) = &self.active_section {
-            // Render Connect account panel view
-            let connect_view: Element<ConnectAccountMessage> =
-                crate::app::view::connect::connect_account_panel(&self.connect_account);
-            connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
-        } else if matches!(self.active_section, HomeSection::RecoverVault) {
-            // Heir "Recover a Vault" discovery surface (COIN-377 / PR 1).
-            recover_vault::view(&self.recover_vault)
-                .map(|msg| Message::View(ViewMessage::RecoverVault(msg)))
-        } else {
-            unavailable_content.unwrap_or(content)
-        };
+    fn legacy_cube_body(&self) -> Element<ViewMessage> {
+        match &self.state {
+            State::RecoveryInput => recovery_input_view(
+                &self.recovery_words,
+                self.recovery_active_index,
+                self.creating_cube,
+            ),
+            State::CreationBackup(step) => {
+                let view = creation_backup_view(
+                    step,
+                    self.creation_backup_words.as_ref().map(|w| w.as_slice()),
+                    self.creating_cube,
+                    self.creating_passkey_cube(),
+                    &self.creation_kit_password,
+                    &self.creation_kit_confirm,
+                    self.creation_kit_acknowledged,
+                    self.creation_kit_error.as_deref(),
+                    self.can_create_recovery_kit(),
+                    self.creation_backup_hub(),
+                    self.network,
+                );
+                // No sheet footer here, so the hub's
+                // actions sit under it.
+                if matches!(step, CreationBackupStep::Choice) {
+                    Column::new()
+                        .spacing(24)
+                        .push(view)
+                        .push(creation_choice_footer(
+                            self.creating_cube,
+                            self.creation_backup_hub(),
+                        ))
+                        .into()
+                } else {
+                    view
+                }
+            }
+            State::Cubes { create_cube, .. } => {
+                if *create_cube {
+                    self.creation_form(true)
+                } else {
+                    launcher_catalog::catalog_view(self)
+                }
+            }
+            State::NoCube { .. } | State::Unchecked => {
+                let current_net_str = settings::network_to_api_string(self.network);
+                let remote_for_net: Vec<_> = self
+                    .remote_cubes
+                    .iter()
+                    .filter(|rc| rc.network == current_net_str)
+                    .collect();
+                let total_count = self.total_cube_count();
+                let at_limit = total_count >= self.cube_limit();
 
-        // Build the sidebar
-        let sidebar = home_sidebar(self);
+                // Center the children: the create form is a
+                // `center_x(Fill)` container, so without this
+                // the form spans/centers full width while the
+                // shrink-width remote-cube rows default to the
+                // left edge — leaving the list and form
+                // misaligned.
+                let mut col = Column::new().spacing(20).align_x(Alignment::Center);
 
-        // Wrap sidebar + content in a Row
-        Row::new()
-            .push(
-                Container::new(sidebar)
-                    .height(Length::Fill)
-                    .width(Length::Fixed(190.0))
-                    .style(coincube_ui::theme::container::foreground),
-            )
-            .push(
-                Container::new(scrollable(
-                    Row::new()
-                        .push(Space::new().width(Length::FillPortion(1)))
-                        .push(
-                            Column::new()
-                                .push(Space::new().height(Length::Fixed(30.0)))
-                                .push(main_content)
-                                .width(Length::FillPortion(8))
-                                .max_width(1500),
-                        )
-                        .push(Space::new().width(Length::FillPortion(1))),
-                ))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(coincube_ui::theme::container::background),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+                // The form owns the whole screen when it is
+                // shown — never stacked under the remote-Cube
+                // list, which is what made this screen read as
+                // two pages crammed into one.
+                if self.showing_create_form() {
+                    if at_limit && !remote_for_net.is_empty() {
+                        col = col.push(
+                            Container::new(
+                                p1_regular(self.create_form_remote_limit_copy())
+                                    .style(theme::text::secondary),
+                            )
+                            .max_width(500),
+                        );
+                    } else {
+                        col = col.push(self.creation_form(true));
+                    }
+                    col.into()
+                } else {
+                    launcher_catalog::catalog_view(self)
+                }
+            }
+        }
     }
 }
 
@@ -7195,66 +7221,14 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
     }
 
     if home.connect_expanded && is_authenticated {
-        use app::menu::ConnectSubMenu;
-        let mut items: Vec<(&str, ConnectSubMenu)> = vec![
-            ("Overview", ConnectSubMenu::Overview),
-            ("Contacts", ConnectSubMenu::Contacts),
-            ("Plan & Billing", ConnectSubMenu::PlanBilling),
-            ("Security", ConnectSubMenu::Security),
-        ];
-        // Duress (Phase 9) is a launch kill-switch: shown only when the account
-        // is entitled AND the launch gate is on (server `duressEnabled`, or this
-        // account is already enrolled — the grandfather case). Hidden, not
-        // greyed, when off — like Marketplace. See
-        // `ConnectAccountPanel::show_duress`.
-        if home.connect_account.show_duress() {
-            items.push(("Duress", ConnectSubMenu::Duress));
-        }
-        for (label, sub) in &items {
-            let is_active = matches!(
-                &home.active_section,
-                HomeSection::Connect(s) if *s == *sub
-            );
-            let item = if is_active {
-                Row::new()
-                    .push(btn::menu_active(None, label).width(Length::Fill))
-                    .width(Length::Fill)
-            } else {
-                Row::new()
-                    .push(
-                        btn::menu(None, label)
-                            .on_press(msg(ViewMessage::GoToSection(HomeSection::Connect(
-                                sub.clone(),
-                            ))))
-                            .width(Length::Fill),
-                    )
-                    .width(Length::Fill)
-            };
-            col = col.push(item);
-        }
+        col = legacy_connect_submenu(home, col);
     }
 
     // Heir "Recover a Vault" — global discovery surface (COIN-377 / PR 1).
     // Gated behind the capability flag (dark until the API's `recoverable`
     // endpoint + COIN-376 sweep ship) and only shown to a signed-in account.
     if is_authenticated && !home.network.is_blake2b() && feature_flags::RECOVER_VAULT_ENABLED {
-        let is_active = matches!(home.active_section, HomeSection::RecoverVault);
-        let recover_button = if is_active {
-            Row::new()
-                .push(
-                    btn::menu_active(Some(ic::cube_icon()), "Recover a Vault").width(Length::Fill),
-                )
-                .width(Length::Fill)
-        } else {
-            Row::new()
-                .push(
-                    btn::menu(Some(ic::cube_icon()), "Recover a Vault")
-                        .on_press(msg(ViewMessage::GoToSection(HomeSection::RecoverVault)))
-                        .width(Length::Fill),
-                )
-                .width(Length::Fill)
-        };
-        col = col.push(recover_button);
+        col = col.push(legacy_recover_vault_button(&home.active_section));
     }
 
     // Bottom-pinned utilities: Settings and theme.
@@ -7309,6 +7283,69 @@ fn home_sidebar<'a>(home: &'a Home) -> Element<'a, Message> {
         .push(bottom_col)
         .height(Length::Fill)
         .into()
+}
+
+fn legacy_recover_vault_button(section: &HomeSection) -> Element<'static, Message> {
+    use coincube_ui::{component::button as btn, icon as ic};
+    let is_active = matches!(section, HomeSection::RecoverVault);
+    let recover_button = if is_active {
+        Row::new()
+            .push(btn::menu_active(Some(ic::cube_icon()), "Recover a Vault").width(Length::Fill))
+            .width(Length::Fill)
+    } else {
+        Row::new()
+            .push(
+                btn::menu(Some(ic::cube_icon()), "Recover a Vault")
+                    .on_press(Message::View(ViewMessage::GoToSection(
+                        HomeSection::RecoverVault,
+                    )))
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+    };
+    recover_button.into()
+}
+
+fn legacy_connect_submenu<'a>(home: &'a Home, mut col: Column<'a, Message>) -> Column<'a, Message> {
+    use app::menu::ConnectSubMenu;
+    use coincube_ui::component::button as btn;
+    let mut items: Vec<(&str, ConnectSubMenu)> = vec![
+        ("Overview", ConnectSubMenu::Overview),
+        ("Contacts", ConnectSubMenu::Contacts),
+        ("Plan & Billing", ConnectSubMenu::PlanBilling),
+        ("Security", ConnectSubMenu::Security),
+    ];
+    // Duress (Phase 9) is a launch kill-switch: shown only when the account
+    // is entitled AND the launch gate is on (server `duressEnabled`, or this
+    // account is already enrolled — the grandfather case). Hidden, not
+    // greyed, when off — like Marketplace. See
+    // `ConnectAccountPanel::show_duress`.
+    if home.connect_account.show_duress() {
+        items.push(("Duress", ConnectSubMenu::Duress));
+    }
+    for (label, sub) in &items {
+        let is_active = matches!(
+            &home.active_section,
+            HomeSection::Connect(s) if *s == *sub
+        );
+        let item = if is_active {
+            Row::new()
+                .push(btn::menu_active(None, label).width(Length::Fill))
+                .width(Length::Fill)
+        } else {
+            Row::new()
+                .push(
+                    btn::menu(None, label)
+                        .on_press(Message::View(ViewMessage::GoToSection(
+                            HomeSection::Connect(sub.clone()),
+                        )))
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+        };
+        col = col.push(item);
+    }
+    col
 }
 
 /// Connect session indicator for an authenticated or pending session. It
@@ -7400,26 +7437,7 @@ fn create_cube_form<'a>(
         submit_in_form,
     } = options;
 
-    let mut column = Column::new()
-        .spacing(20)
-        .align_x(if importing_bitcoin { Alignment::Center } else { Alignment::Start })
-        .width(Length::Fill)
-        .max_width(if importing_bitcoin { 500.0 } else { 640.0 })
-        .push(h4_bold(if importing_bitcoin {
-            localized_copy("Create a Cube for your Bitcoin wallet")
-        } else {
-            localized_copy("Create a new Cube")
-        }))
-        .push(
-            p1_regular(if importing_bitcoin {
-                localized_copy("Create and back up your Cube first, then import the public descriptors for your existing Bitcoin wallet. Your original wallet signers remain necessary to spend.")
-            } else if spark_available {
-                localized_copy("A Cube is an account. It holds a Spark wallet and a Vault.")
-            } else {
-                localized_copy("A Cube is an account. On this network it holds a Vault.")
-            })
-            .style(theme::text::secondary),
-        );
+    let mut column = create_cube_form_intro(importing_bitcoin, spark_available);
 
     // Unlock-method toggle — hidden entirely when the passkey feature is off,
     // and on every platform but macOS regardless. The Windows Hello and
@@ -7464,67 +7482,7 @@ fn create_cube_form<'a>(
         .width(Length::Fill),
     );
 
-    // PIN or passkey info section
-    if passkey_mode {
-        // Passkey mode: no PIN needed — biometric auth replaces it
-        let description = if cfg!(target_os = "macos") {
-            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
-             you'll use Touch ID to unlock it."
-        } else if cfg!(target_os = "windows") {
-            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
-             you'll use Windows Hello to unlock it."
-        } else {
-            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
-             you'll use a FIDO2 security key to unlock it."
-        };
-        column = column.push(p1_regular(description).style(theme::text::secondary));
-    } else {
-        // Enter and Confirm sit side by side, using the Launcher unlock
-        // face's compact row (276px each), and wrap onto two lines where
-        // the form is narrower than both — the 500px Bitcoin-import form.
-        let pin_field = |label: &'static str, input: Element<'a, ViewMessage>| {
-            Column::new()
-                .spacing(8)
-                .width(Length::Fixed(276.0))
-                .push(p1_regular(label).style(theme::text::secondary))
-                .push(input)
-        };
-        column = column.push(
-            Row::new()
-                .spacing(32)
-                .push(pin_field(
-                    "Enter PIN:",
-                    pin.face_view().map(ViewMessage::PinInput),
-                ))
-                .push(pin_field(
-                    "Confirm PIN:",
-                    pin_confirm.face_view().map(ViewMessage::PinConfirmInput),
-                ))
-                .wrap()
-                .vertical_spacing(20),
-        );
-        // The status line keeps its height while empty so the form doesn't
-        // shift when the result appears.
-        let status: Element<'a, ViewMessage> = match create_cube_pin_match(pin, pin_confirm) {
-            CreatePinMatch::Mismatch => Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(icon::cross_icon().style(theme::text::error))
-                .push(
-                    p2_regular(localized_copy("Doesn't match the PIN you entered."))
-                        .style(theme::text::error),
-                )
-                .into(),
-            CreatePinMatch::Match => Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(icon::check_icon().style(theme::text::success))
-                .push(p2_regular("PINs match").style(theme::text::success))
-                .into(),
-            CreatePinMatch::Pending => Space::new().into(),
-        };
-        column = column.push(Container::new(status).height(Length::Fixed(20.0)));
-    }
+    column = create_cube_auth_fields(column, pin, pin_confirm, passkey_mode);
 
     column = column.push(Space::new().height(Length::Fixed(10.0)));
 
@@ -7604,6 +7562,102 @@ fn create_cube_form<'a>(
         .padding(if importing_bitcoin { 20 } else { 0 })
         .center_x(Length::Fill)
         .into()
+}
+
+fn create_cube_form_intro<'a>(
+    importing_bitcoin: bool,
+    spark_available: bool,
+) -> Column<'a, ViewMessage> {
+    Column::new()
+        .spacing(20)
+        .align_x(if importing_bitcoin { Alignment::Center } else { Alignment::Start })
+        .width(Length::Fill)
+        .max_width(if importing_bitcoin { 500.0 } else { 640.0 })
+        .push(h4_bold(if importing_bitcoin {
+            localized_copy("Create a Cube for your Bitcoin wallet")
+        } else {
+            localized_copy("Create a new Cube")
+        }))
+        .push(
+            p1_regular(if importing_bitcoin {
+                localized_copy("Create and back up your Cube first, then import the public descriptors for your existing Bitcoin wallet. Your original wallet signers remain necessary to spend.")
+            } else if spark_available {
+                localized_copy("A Cube is an account. It holds a Spark wallet and a Vault.")
+            } else {
+                localized_copy("A Cube is an account. On this network it holds a Vault.")
+            })
+            .style(theme::text::secondary),
+        )
+}
+
+fn create_cube_auth_fields<'a>(
+    mut column: Column<'a, ViewMessage>,
+    pin: &'a pin_input::PinInput,
+    pin_confirm: &'a pin_input::PinInput,
+    passkey_mode: bool,
+) -> Column<'a, ViewMessage> {
+    // PIN or passkey info section
+    if passkey_mode {
+        // Passkey mode: no PIN needed — biometric auth replaces it
+        let description = if cfg!(target_os = "macos") {
+            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
+             you'll use Touch ID to unlock it."
+        } else if cfg!(target_os = "windows") {
+            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
+             you'll use Windows Hello to unlock it."
+        } else {
+            "Your Cube will be secured with a passkey. No PIN is needed \u{2014} \
+             you'll use a FIDO2 security key to unlock it."
+        };
+        column = column.push(p1_regular(description).style(theme::text::secondary));
+    } else {
+        // Enter and Confirm sit side by side, using the Launcher unlock
+        // face's compact row (276px each), and wrap onto two lines where
+        // the form is narrower than both — the 500px Bitcoin-import form.
+        let pin_field = |label: &'static str, input: Element<'a, ViewMessage>| {
+            Column::new()
+                .spacing(8)
+                .width(Length::Fixed(276.0))
+                .push(p1_regular(label).style(theme::text::secondary))
+                .push(input)
+        };
+        column = column.push(
+            Row::new()
+                .spacing(32)
+                .push(pin_field(
+                    "Enter PIN:",
+                    pin.face_view().map(ViewMessage::PinInput),
+                ))
+                .push(pin_field(
+                    "Confirm PIN:",
+                    pin_confirm.face_view().map(ViewMessage::PinConfirmInput),
+                ))
+                .wrap()
+                .vertical_spacing(20),
+        );
+        // The status line keeps its height while empty so the form doesn't
+        // shift when the result appears.
+        let status: Element<'a, ViewMessage> = match create_cube_pin_match(pin, pin_confirm) {
+            CreatePinMatch::Mismatch => Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(icon::cross_icon().style(theme::text::error))
+                .push(
+                    p2_regular(localized_copy("Doesn't match the PIN you entered."))
+                        .style(theme::text::error),
+                )
+                .into(),
+            CreatePinMatch::Match => Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(icon::check_icon().style(theme::text::success))
+                .push(p2_regular("PINs match").style(theme::text::success))
+                .into(),
+            CreatePinMatch::Pending => Space::new().into(),
+        };
+        column = column.push(Container::new(status).height(Length::Fixed(20.0)));
+    }
+    column
 }
 
 /// The Vault line under a Cube's name on the Cubes list.
@@ -8799,47 +8853,7 @@ impl DeleteRemoteCubeModal {
             .push(consequences);
 
         if holds_backup {
-            // Only where this build can restore the Cube is there anything to
-            // restore instead.
-            let restore_btn = restorable.then(|| {
-                button::secondary_compact_action(
-                    DELETE_REMOTE_RESTORE_ID,
-                    None,
-                    "Restore instead",
-                    delete_modal_focus,
-                )
-                .on_press_maybe((!self.deleting).then(|| {
-                    ViewMessage::DeleteCube(DeleteCubeMessage::RestoreInstead(
-                        self.cube.uuid.clone(),
-                    ))
-                }))
-            });
-            col = col.push(Space::new().height(18.0)).push(
-                Container::new(
-                    Row::new()
-                        .spacing(12)
-                        .align_y(Alignment::Center)
-                        .push(icon::warning_icon().style(delete_modal_warn_icon))
-                        .push(
-                            Column::new()
-                                .width(Length::Fill)
-                                .spacing(2)
-                                .push(p1_bold(localized_copy("Is Connect its only backup?")))
-                                .push(p2_regular(localized_copy(if restorable {
-                                    "Without its recovery phrase or another device, any funds \
-                                     in this Cube will be lost. Restore it first if you\u{2019}re \
-                                     not sure."
-                                } else {
-                                    "Without its recovery phrase or another device, any funds \
-                                     in this Cube will be lost."
-                                }))),
-                        )
-                        .push(restore_btn),
-                )
-                .padding([12, 14])
-                .width(Length::Fill)
-                .style(delete_modal_callout),
-            );
+            col = self.add_backup_warning(col, restorable);
         }
 
         col = col.push(Space::new().height(12.0)).push(
@@ -8934,6 +8948,52 @@ impl DeleteRemoteCubeModal {
                 .style(delete_modal_card),
         )
         .map(Message::View)
+    }
+
+    fn add_backup_warning<'a>(
+        &self,
+        col: Column<'a, ViewMessage>,
+        restorable: bool,
+    ) -> Column<'a, ViewMessage> {
+        // Only where this build can restore the Cube is there anything to
+        // restore instead.
+        let restore_btn = restorable.then(|| {
+            button::secondary_compact_action(
+                DELETE_REMOTE_RESTORE_ID,
+                None,
+                "Restore instead",
+                delete_modal_focus,
+            )
+            .on_press_maybe((!self.deleting).then(|| {
+                ViewMessage::DeleteCube(DeleteCubeMessage::RestoreInstead(self.cube.uuid.clone()))
+            }))
+        });
+        col.push(Space::new().height(18.0)).push(
+            Container::new(
+                Row::new()
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .push(icon::warning_icon().style(delete_modal_warn_icon))
+                    .push(
+                        Column::new()
+                            .width(Length::Fill)
+                            .spacing(2)
+                            .push(p1_bold(localized_copy("Is Connect its only backup?")))
+                            .push(p2_regular(localized_copy(if restorable {
+                                "Without its recovery phrase or another device, any funds \
+                                 in this Cube will be lost. Restore it first if you\u{2019}re \
+                                 not sure."
+                            } else {
+                                "Without its recovery phrase or another device, any funds \
+                                 in this Cube will be lost."
+                            }))),
+                    )
+                    .push(restore_btn),
+            )
+            .padding([12, 14])
+            .width(Length::Fill)
+            .style(delete_modal_callout),
+        )
     }
 }
 
@@ -9082,25 +9142,7 @@ impl DeleteCubeModal {
         // the ownership-checked removal path rather than the generic
         // wallet deletion below.
         if self.cube.bitcoin_import.is_some() {
-            if let Err(error) =
-                Handle::current().block_on(crate::services::bitcoin_import::remove_cube_import(
-                    &self.network_directory,
-                    &self.cube,
-                ))
-            {
-                if error == crate::daemon::stopping::STILL_STOPPING {
-                    self.stop_refused = true;
-                } else {
-                    self.warning = Some(DeleteError::Settings(
-                        settings::SettingsError::WritingFile(error),
-                    ));
-                }
-                return Task::none();
-            }
-            self.deleted = true;
-            return Task::perform(async {}, |_| {
-                Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted))
-            });
+            return self.delete_imported_cube();
         }
 
         // Delete vault if it exists
@@ -9117,6 +9159,10 @@ impl DeleteCubeModal {
             }
         }
 
+        self.delete_cube_settings()
+    }
+
+    fn delete_cube_settings(&mut self) -> Task<Message> {
         // Delete the cube from settings
         let network_dir = self.network_directory.clone();
         let cube_id = self.cube.id.clone();
@@ -9142,99 +9188,32 @@ impl DeleteCubeModal {
         Task::none()
     }
 
+    fn delete_imported_cube(&mut self) -> Task<Message> {
+        if let Err(error) =
+            Handle::current().block_on(crate::services::bitcoin_import::remove_cube_import(
+                &self.network_directory,
+                &self.cube,
+            ))
+        {
+            if error == crate::daemon::stopping::STILL_STOPPING {
+                self.stop_refused = true;
+            } else {
+                self.warning = Some(DeleteError::Settings(settings::SettingsError::WritingFile(
+                    error,
+                )));
+            }
+            return Task::none();
+        }
+        self.deleted = true;
+        Task::perform(async {}, |_| {
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted))
+        })
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Confirm(cube_id))) => {
-                if cube_id != self.cube.id {
-                    return Task::none();
-                }
-
-                // Verify the PIN before proceeding with deletion. There is no
-                // stored PIN hash any more: the check is a trial decryption of
-                // this Cube's seed file, which costs ~831 ms. That is a
-                // blocking call on the UI thread, consistent with the
-                // `block_on(delete_wallet(...))` in `delete` below — this modal
-                // has always been synchronous. A confirm dialog that takes a
-                // beat to answer is acceptable; a cheap verifier next to an
-                // expensive one is not (I1).
-                if self.cube.has_pin(&self.datadir_root) {
-                    let pin = self.pin_input.value();
-                    let loc =
-                        crate::services::unlock::CubeLocation::new(&self.datadir_root, &self.cube);
-                    // The generic unlock refuses a Bitcoin Blake2b Cube before
-                    // it reads the PIN (the chain is dormant to it), which
-                    // left these Cubes undeletable behind an "update Tenshu"
-                    // notice. Check their PIN with the fork's own trial, as
-                    // the PIN screen does. Deleting runs nothing on the fork,
-                    // so the PIN is the whole admission; the fork trial has no
-                    // duress outcome, so a duress PIN is a wrong PIN here too.
-                    let attempt = if self.cube.network.is_blake2b() {
-                        crate::services::unlock::throttle::classify_connect_fork(
-                            &self.datadir_root,
-                            &loc,
-                            &pin,
-                        )
-                    } else {
-                        crate::services::unlock::throttle::classify_regular_pin(
-                            &self.datadir_root,
-                            &loc,
-                            &pin,
-                        )
-                    };
-                    match attempt {
-                        Ok(crate::services::unlock::throttle::PinAttempt::Classified(
-                            crate::services::unlock::PinOutcome::Unlock(_),
-                        )) => {}
-                        Ok(crate::services::unlock::throttle::PinAttempt::Locked(remaining)) => {
-                            self.pin_error = Some(
-                                crate::services::unlock::throttle::lockout_message(remaining),
-                            );
-                            self.pin_input.clear();
-                            return Task::none();
-                        }
-                        // A duress PIN must not delete the Cube here — that
-                        // would be a quieter, unlogged wipe than the duress
-                        // path itself, and would confirm to an observer that
-                        // the PIN meant something. Treat it as a wrong PIN.
-                        Ok(_) => {
-                            self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
-                            self.pin_input.clear();
-                            return Task::none();
-                        }
-                        Err(e) => {
-                            // Keystore failures are not wrong PINs (I7).
-                            self.pin_error = Some(e.to_string());
-                            self.pin_input.clear();
-                            return Task::none();
-                        }
-                    }
-                }
-
-                // Deleting a Cube right after locking it: its daemon may still
-                // be stopping in the directories removed below. Wait for that in
-                // a task, not in `delete_wallet` on the UI thread.
-                self.stop_refused = false;
-                let directories = self.daemon_directories();
-                if crate::daemon::stopping::any_stopping(&directories) {
-                    self.waiting_for_stop = true;
-                    return Task::perform(
-                        async move {
-                            // A wait that runs out is caught by `delete`,
-                            // which refuses while the stop is registered.
-                            for dir in directories {
-                                if !crate::daemon::stopping::wait_for_async(dir).await {
-                                    break;
-                                }
-                            }
-                        },
-                        move |_| {
-                            Message::View(ViewMessage::DeleteCube(
-                                DeleteCubeMessage::DaemonStopped(cube_id),
-                            ))
-                        },
-                    );
-                }
-                return self.delete();
+                return self.confirm_delete(cube_id);
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DaemonStopped(cube_id))) => {
                 if cube_id == self.cube.id && self.waiting_for_stop {
@@ -9256,6 +9235,98 @@ impl DeleteCubeModal {
             _ => {}
         }
         Task::none()
+    }
+
+    fn confirm_delete(&mut self, cube_id: String) -> Task<Message> {
+        if cube_id != self.cube.id {
+            return Task::none();
+        }
+
+        // Verify the PIN before proceeding with deletion. There is no
+        // stored PIN hash any more: the check is a trial decryption of
+        // this Cube's seed file, which costs ~831 ms. That is a
+        // blocking call on the UI thread, consistent with the
+        // `block_on(delete_wallet(...))` in `delete` below — this modal
+        // has always been synchronous. A confirm dialog that takes a
+        // beat to answer is acceptable; a cheap verifier next to an
+        // expensive one is not (I1).
+        if self.cube.has_pin(&self.datadir_root) {
+            let pin = self.pin_input.value();
+            let loc = crate::services::unlock::CubeLocation::new(&self.datadir_root, &self.cube);
+            // The generic unlock refuses a Bitcoin Blake2b Cube before
+            // it reads the PIN (the chain is dormant to it), which
+            // left these Cubes undeletable behind an "update Tenshu"
+            // notice. Check their PIN with the fork's own trial, as
+            // the PIN screen does. Deleting runs nothing on the fork,
+            // so the PIN is the whole admission; the fork trial has no
+            // duress outcome, so a duress PIN is a wrong PIN here too.
+            let attempt = if self.cube.network.is_blake2b() {
+                crate::services::unlock::throttle::classify_connect_fork(
+                    &self.datadir_root,
+                    &loc,
+                    &pin,
+                )
+            } else {
+                crate::services::unlock::throttle::classify_regular_pin(
+                    &self.datadir_root,
+                    &loc,
+                    &pin,
+                )
+            };
+            match attempt {
+                Ok(crate::services::unlock::throttle::PinAttempt::Classified(
+                    crate::services::unlock::PinOutcome::Unlock(_),
+                )) => {}
+                Ok(crate::services::unlock::throttle::PinAttempt::Locked(remaining)) => {
+                    self.pin_error = Some(crate::services::unlock::throttle::lockout_message(
+                        remaining,
+                    ));
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+                // A duress PIN must not delete the Cube here — that
+                // would be a quieter, unlogged wipe than the duress
+                // path itself, and would confirm to an observer that
+                // the PIN meant something. Treat it as a wrong PIN.
+                Ok(_) => {
+                    self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+                Err(e) => {
+                    // Keystore failures are not wrong PINs (I7).
+                    self.pin_error = Some(e.to_string());
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+            }
+        }
+
+        // Deleting a Cube right after locking it: its daemon may still
+        // be stopping in the directories removed below. Wait for that in
+        // a task, not in `delete_wallet` on the UI thread.
+        self.stop_refused = false;
+        let directories = self.daemon_directories();
+        if crate::daemon::stopping::any_stopping(&directories) {
+            self.waiting_for_stop = true;
+            return Task::perform(
+                async move {
+                    // A wait that runs out is caught by `delete`,
+                    // which refuses while the stop is registered.
+                    for dir in directories {
+                        if !crate::daemon::stopping::wait_for_async(dir).await {
+                            break;
+                        }
+                    }
+                },
+                move |_| {
+                    Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DaemonStopped(
+                        cube_id,
+                    )))
+                },
+            );
+        }
+        self.delete()
     }
 
     fn view(&self) -> Element<Message> {
@@ -9331,26 +9402,7 @@ impl DeleteCubeModal {
             .push(Row::new().push(text(help_text_3)));
 
         // Option to also delete the Connect API backup (only when relevant)
-        if self.can_delete_backup {
-            col = col.push(Space::new().height(Length::Fixed(5.0))).push(
-                CheckBox::new(self.delete_connect_backup)
-                    .label(localized_copy(
-                        "Also delete Connect backup (frees a Cube slot)",
-                    ))
-                    .on_toggle(|checked| {
-                        ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
-                    }),
-            );
-            if self.delete_connect_backup {
-                col = col.push(
-                    p1_regular(localized_copy(
-                        "The Connect backup will be permanently deleted. \
-                         This frees a Cube slot on your account.",
-                    ))
-                    .style(theme::text::warning),
-                );
-            }
-        }
+        col = self.add_connect_backup_option(col);
 
         // PIN entry section
         if self.cube.has_pin(&self.datadir_root) {
@@ -9441,6 +9493,33 @@ impl DeleteCubeModal {
         )
         .map(Message::View)
     }
+
+    fn add_connect_backup_option<'a>(
+        &self,
+        mut col: Column<'a, ViewMessage>,
+    ) -> Column<'a, ViewMessage> {
+        if self.can_delete_backup {
+            col = col.push(Space::new().height(Length::Fixed(5.0))).push(
+                CheckBox::new(self.delete_connect_backup)
+                    .label(localized_copy(
+                        "Also delete Connect backup (frees a Cube slot)",
+                    ))
+                    .on_toggle(|checked| {
+                        ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
+                    }),
+            );
+            if self.delete_connect_backup {
+                col = col.push(
+                    p1_regular(localized_copy(
+                        "The Connect backup will be permanently deleted. \
+                         This frees a Cube slot on your account.",
+                    ))
+                    .style(theme::text::warning),
+                );
+            }
+        }
+        col
+    }
 }
 
 /// Probe the selected network's directory and report through
@@ -9529,8 +9608,32 @@ async fn check_network_datadir(
     let mut daemon_config_path = path.clone().path().to_path_buf();
     daemon_config_path.push("daemon.toml");
 
+    validate_existing_network_daemon_config(&daemon_config_path)?;
+
+    // Try to load cubes from settings
+    match settings::Settings::from_file(&path) {
+        Ok(s) => {
+            // All cubes are required to have PINs
+            if s.cubes.is_empty() {
+                Ok(State::NoCube { create_cube: false })
+            } else {
+                Ok(State::Cubes {
+                    cubes: s.cubes,
+                    create_cube: false,
+                    source,
+                })
+            }
+        }
+        Err(settings::SettingsError::NotFound) => Ok(State::NoCube { create_cube: false }),
+        Err(e) => Err(format!("Failed to read settings: {}", e)),
+    }
+}
+
+fn validate_existing_network_daemon_config(
+    daemon_config_path: &std::path::Path,
+) -> Result<(), String> {
     if daemon_config_path.exists() {
-        coincubed::config::Config::from_file(Some(daemon_config_path.clone())).map_err(
+        coincubed::config::Config::from_file(Some(daemon_config_path.to_path_buf())).map_err(
             |e| match e {
                 ConfigError::FileNotFound | ConfigError::DatadirNotFound => {
                     format!(
@@ -9557,24 +9660,7 @@ async fn check_network_datadir(
             },
         )?;
     }
-
-    // Try to load cubes from settings
-    match settings::Settings::from_file(&path) {
-        Ok(s) => {
-            // All cubes are required to have PINs
-            if s.cubes.is_empty() {
-                Ok(State::NoCube { create_cube: false })
-            } else {
-                Ok(State::Cubes {
-                    cubes: s.cubes,
-                    create_cube: false,
-                    source,
-                })
-            }
-        }
-        Err(settings::SettingsError::NotFound) => Ok(State::NoCube { create_cube: false }),
-        Err(e) => Err(format!("Failed to read settings: {}", e)),
-    }
+    Ok(())
 }
 
 #[cfg(all(test, feature = "mcp-proposals"))]
@@ -10280,9 +10366,7 @@ mod tests {
     #[test]
     #[ignore = "writes PNG frames; needs a headless renderer"]
     fn create_journey_capture_1024() {
-        use iced::advanced::{
-            layout, mouse, renderer::Headless, widget::Tree, Layout, Renderer as _, Shell,
-        };
+        use iced::advanced::renderer::Headless;
 
         let Ok(directory) = std::env::var("CREATE_CAPTURE_DIR") else {
             return;
@@ -10303,12 +10387,7 @@ mod tests {
         let size = iced::Size::new(1024.0, 768.0);
 
         for light in [false, true] {
-            let appearance = if light { "light" } else { "dark" };
-            let palette = if light {
-                theme::Theme::light()
-            } else {
-                theme::Theme::dark()
-            };
+            let (appearance, palette, theme_mode) = create_capture_appearance(light);
             let mut home = home();
             home.state = State::NoCube { create_cube: true };
             home.developer_mode = true;
@@ -10318,11 +10397,7 @@ mod tests {
                 ChainId::Signet,
                 ChainId::Regtest,
             ];
-            home.theme_mode = if light {
-                coincube_ui::theme::palette::ThemeMode::Light
-            } else {
-                coincube_ui::theme::palette::ThemeMode::Dark
-            };
+            home.theme_mode = theme_mode;
             let words: Vec<String> = MasterSigner::generate(Network::Bitcoin)
                 .unwrap()
                 .words()
@@ -10398,58 +10473,12 @@ mod tests {
                     Some(step) => State::CreationBackup(step),
                     None => State::NoCube { create_cube: true },
                 };
-                let mut element = home.create_journey_view();
-                let mut tree = Tree::new(element.as_widget());
-                let node = element.as_widget_mut().layout(
-                    &mut tree,
-                    &renderer,
-                    &layout::Limits::new(iced::Size::ZERO, size),
-                );
-                if bottom {
-                    let mut snap = iced::advanced::widget::operation::scrollable::snap_to(
-                        Id::new(CREATE_BODY_SCROLL_ID),
-                        iced::widget::scrollable::RelativeOffset {
-                            x: None,
-                            y: Some(1.0),
-                        },
-                    );
-                    element.as_widget_mut().operate(
-                        &mut tree,
-                        Layout::new(&node),
-                        &renderer,
-                        &mut snap,
-                    );
-                }
-                let viewport = iced::Rectangle::with_size(size);
-                renderer.reset(viewport);
-                let mut messages = Vec::new();
-                element.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        std::time::Instant::now(),
-                    )),
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut Shell::new(&mut messages),
-                    &viewport,
-                );
-                element.as_widget().draw(
-                    &tree,
+                let pixels = render_create_journey_capture(
+                    home.create_journey_view(),
                     &mut renderer,
                     &palette,
-                    &iced::advanced::renderer::Style {
-                        text_color: palette.colors.shell.ink,
-                    },
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &viewport,
-                );
-                let pixels = renderer.screenshot(
-                    iced::Size::new(1024, 768),
-                    1.0,
-                    palette.colors.shell.background,
+                    size,
+                    bottom,
                 );
                 ::image::save_buffer(
                     format!("{directory}/{appearance}-{name}-1024x768.png"),
@@ -10461,6 +10490,83 @@ mod tests {
                 .unwrap();
             }
         }
+    }
+
+    fn create_capture_appearance(
+        light: bool,
+    ) -> (
+        &'static str,
+        theme::Theme,
+        coincube_ui::theme::palette::ThemeMode,
+    ) {
+        use coincube_ui::theme::palette::ThemeMode;
+        if light {
+            ("light", theme::Theme::light(), ThemeMode::Light)
+        } else {
+            ("dark", theme::Theme::dark(), ThemeMode::Dark)
+        }
+    }
+
+    fn render_create_journey_capture(
+        mut element: Element<Message>,
+        renderer: &mut iced::Renderer,
+        palette: &theme::Theme,
+        size: iced::Size,
+        bottom: bool,
+    ) -> Vec<u8> {
+        use iced::advanced::{
+            layout, mouse, renderer::Headless, widget::Tree, Layout, Renderer as _, Shell,
+        };
+
+        let mut tree = Tree::new(element.as_widget());
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        if bottom {
+            let mut snap = iced::advanced::widget::operation::scrollable::snap_to(
+                Id::new(CREATE_BODY_SCROLL_ID),
+                iced::widget::scrollable::RelativeOffset {
+                    x: None,
+                    y: Some(1.0),
+                },
+            );
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), renderer, &mut snap);
+        }
+        let viewport = iced::Rectangle::with_size(size);
+        renderer.reset(viewport);
+        let mut messages = Vec::new();
+        element.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Window(iced::window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            )),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut Shell::new(&mut messages),
+            &viewport,
+        );
+        element.as_widget().draw(
+            &tree,
+            renderer,
+            palette,
+            &iced::advanced::renderer::Style {
+                text_color: palette.colors.shell.ink,
+            },
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        renderer.screenshot(
+            iced::Size::new(1024, 768),
+            1.0,
+            palette.colors.shell.background,
+        )
     }
 
     #[test]
@@ -15610,85 +15716,87 @@ mod tests {
     fn backup_hub_requires_the_kits_registering_account() {
         for passkey in [false, true] {
             for switch_during_upload in [false, true] {
-                let dir = tmp_datadir("hub-kit-account");
-                let mut home = signed_in_home_with_datadir(&dir);
-                if passkey {
-                    passkey_create_form(&mut home, "AccountBound");
-                    let _ = drain(webview_registration(&mut home, "cred", 19));
-                } else {
-                    enter_backup_step(&mut home, "AccountBound", "4321");
-                }
-                confirm_seed_from_hub(&mut home);
-                home.state = State::CreationBackup(CreationBackupStep::KitUploading);
-                if switch_during_upload {
-                    home.connect_account.user.as_mut().unwrap().id = 8;
-                }
-                let _ = drain(
-                    home.update(Message::View(ViewMessage::CreationKitUploaded(Ok((
-                        7,
-                        kit_evidence(42),
-                    ))))),
-                );
-                assert_eq!(
-                    home.creation_kit_evidence.as_ref().map(|(id, _)| *id),
-                    Some(7)
-                );
-                home.connect_account.user.as_mut().unwrap().id = 8;
-                let pending_id = home.pending_cube_id;
-
-                for signed_out in [false, true] {
-                    if signed_out {
-                        home.connect_account.user = None;
-                        assert_eq!(home.connect_account_id(), None);
-                    }
-                    assert!(
-                        drain(home.update(Message::View(ViewMessage::CreationBackupContinue)))
-                            .is_empty()
-                    );
-                    assert_eq!(step(&home), CreationBackupStep::Choice);
-                    assert!(home.error.as_deref().unwrap().contains("Sign back in"));
-                    assert!(!home.creating_cube);
-                    assert_eq!(home.pending_cube_id, pending_id);
-                    assert!(home.creation_kit_evidence.is_some());
-                    assert!(home.creation_backup_words.is_some());
-                    assert!(cubes_on_disk(&dir).is_empty());
-                }
-
-                // Signing back in to the registering account can finish the
-                // same Cube with both backups and the correct Connect owner.
-                if passkey {
-                    home.connect_account.step = ConnectFlowStep::Dashboard;
-                    home.connect_account.user = Some(User {
-                        id: 7,
-                        email: "founder@example.com".to_string(),
-                        email_verified: Some(true),
-                    });
-                    let out =
-                        drain(home.update(Message::View(ViewMessage::CreationBackupContinue)));
-                    let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
-                        panic!("expected one successful CubeCreated, got {:?}", out);
-                    };
-                    assert!(cube.remote_synced);
-                    assert!(cube.backed_up);
-                    assert_eq!(
-                        cube.connect_owner.as_ref().map(|owner| owner.user_id),
-                        Some(7)
-                    );
-                    assert_eq!(
-                        cube.creation_recovery_kit.as_ref().map(|kit| kit.cube_id),
-                        Some(42)
-                    );
-                    let _ = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
-                } else {
-                    let _ = home.update(Message::View(ViewMessage::CancelCreationBackup));
-                }
-                assert!(
-                    home.creation_kit_evidence.is_none(),
-                    "the registering account is cleared too"
-                );
-                let _ = std::fs::remove_dir_all(&dir);
+                check_backup_hub_account_binding(passkey, switch_during_upload);
             }
         }
+    }
+
+    fn check_backup_hub_account_binding(passkey: bool, switch_during_upload: bool) {
+        let dir = tmp_datadir("hub-kit-account");
+        let mut home = signed_in_home_with_datadir(&dir);
+        if passkey {
+            passkey_create_form(&mut home, "AccountBound");
+            let _ = drain(webview_registration(&mut home, "cred", 19));
+        } else {
+            enter_backup_step(&mut home, "AccountBound", "4321");
+        }
+        confirm_seed_from_hub(&mut home);
+        home.state = State::CreationBackup(CreationBackupStep::KitUploading);
+        if switch_during_upload {
+            home.connect_account.user.as_mut().unwrap().id = 8;
+        }
+        let _ = drain(
+            home.update(Message::View(ViewMessage::CreationKitUploaded(Ok((
+                7,
+                kit_evidence(42),
+            ))))),
+        );
+        assert_eq!(
+            home.creation_kit_evidence.as_ref().map(|(id, _)| *id),
+            Some(7)
+        );
+        home.connect_account.user.as_mut().unwrap().id = 8;
+        let pending_id = home.pending_cube_id;
+
+        for signed_out in [false, true] {
+            if signed_out {
+                home.connect_account.user = None;
+                assert_eq!(home.connect_account_id(), None);
+            }
+            assert!(
+                drain(home.update(Message::View(ViewMessage::CreationBackupContinue))).is_empty()
+            );
+            assert_eq!(step(&home), CreationBackupStep::Choice);
+            assert!(home.error.as_deref().unwrap().contains("Sign back in"));
+            assert!(!home.creating_cube);
+            assert_eq!(home.pending_cube_id, pending_id);
+            assert!(home.creation_kit_evidence.is_some());
+            assert!(home.creation_backup_words.is_some());
+            assert!(cubes_on_disk(&dir).is_empty());
+        }
+
+        // Signing back in to the registering account can finish the
+        // same Cube with both backups and the correct Connect owner.
+        if passkey {
+            home.connect_account.step = ConnectFlowStep::Dashboard;
+            home.connect_account.user = Some(User {
+                id: 7,
+                email: "founder@example.com".to_string(),
+                email_verified: Some(true),
+            });
+            let out = drain(home.update(Message::View(ViewMessage::CreationBackupContinue)));
+            let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+                panic!("expected one successful CubeCreated, got {:?}", out);
+            };
+            assert!(cube.remote_synced);
+            assert!(cube.backed_up);
+            assert_eq!(
+                cube.connect_owner.as_ref().map(|owner| owner.user_id),
+                Some(7)
+            );
+            assert_eq!(
+                cube.creation_recovery_kit.as_ref().map(|kit| kit.cube_id),
+                Some(42)
+            );
+            let _ = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
+        } else {
+            let _ = home.update(Message::View(ViewMessage::CancelCreationBackup));
+        }
+        assert!(
+            home.creation_kit_evidence.is_none(),
+            "the registering account is cleared too"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test(flavor = "multi_thread")]
