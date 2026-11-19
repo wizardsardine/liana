@@ -9799,6 +9799,65 @@ pub enum DaemonRestart {
 /// finishes a slow scan, and `EmbeddedDaemon::start` is synchronous, so running
 /// this inline froze the app. On a start failure the previous daemon is brought
 /// back so the app is never left without one.
+fn start_daemon_for_restart(
+    config: DaemonConfig,
+    connect_client: Option<&crate::services::coincube::CoincubeClient>,
+    local_root: Option<&CoincubeDirectory>,
+) -> Result<EmbeddedDaemon, DaemonError> {
+    if !config.bitcoin_config.chain.is_blake2b() {
+        EmbeddedDaemon::start(config)
+    } else if matches!(
+        config.bitcoin_backend,
+        Some(coincubed::config::BitcoinBackend::Bitcoind(_))
+    ) {
+        let root = local_root
+            .ok_or_else(|| DaemonError::Unexpected("Managed local node required".into()))?;
+        if !crate::chain::is_managed_local_fork(&config, root) {
+            return Err(DaemonError::Unexpected(
+                "Managed local node required".into(),
+            ));
+        }
+        Handle::current()
+            .block_on(crate::chain::require_local_feature(
+                config.bitcoin_config.chain,
+                connect_client.cloned(),
+                root,
+            ))
+            .map_err(DaemonError::Unexpected)?;
+        EmbeddedDaemon::start_local_fork(config)
+    } else {
+        Handle::current().block_on(EmbeddedDaemon::start_authenticated(
+            config,
+            connect_client.cloned().expect("fork session checked"),
+        ))
+    }
+}
+
+fn verify_daemon_restart_backend(
+    cfg: &DaemonConfig,
+    connect_client: Option<&crate::services::coincube::CoincubeClient>,
+    local_root: Option<&CoincubeDirectory>,
+) -> Result<(), String> {
+    if cfg.bitcoin_config.chain.is_blake2b()
+        && matches!(
+            cfg.bitcoin_backend,
+            Some(coincubed::config::BitcoinBackend::Bitcoind(_))
+        )
+    {
+        let admitted = local_root.filter(|root| crate::chain::is_managed_local_fork(cfg, root));
+        let check = match admitted {
+            Some(root) => Handle::current().block_on(crate::chain::require_local_feature(
+                cfg.bitcoin_config.chain,
+                connect_client.cloned(),
+                root,
+            )),
+            None => Err("Reopen this Cube through its managed local node".into()),
+        };
+        check?;
+    }
+    Ok(())
+}
+
 fn restart_daemon_blocking_guarded(
     old_daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     cfg: DaemonConfig,
@@ -9823,60 +9882,16 @@ fn restart_daemon_blocking_guarded(
             recovered: old_daemon,
         };
     }
-    if cfg.bitcoin_config.chain.is_blake2b()
-        && matches!(
-            cfg.bitcoin_backend,
-            Some(coincubed::config::BitcoinBackend::Bitcoind(_))
-        )
+    if let Err(error) =
+        verify_daemon_restart_backend(&cfg, connect_client.as_ref(), local_root.as_ref())
     {
-        let admitted = local_root
-            .as_ref()
-            .filter(|root| crate::chain::is_managed_local_fork(&cfg, root));
-        let check = match admitted {
-            Some(root) => Handle::current().block_on(crate::chain::require_local_feature(
-                cfg.bitcoin_config.chain,
-                connect_client.clone(),
-                root,
-            )),
-            None => Err("Reopen this Cube through its managed local node".into()),
+        return DaemonRestart::Failed {
+            error: Error::Daemon(DaemonError::Unexpected(error)),
+            recovered: old_daemon,
         };
-        if let Err(error) = check {
-            return DaemonRestart::Failed {
-                error: Error::Daemon(DaemonError::Unexpected(error)),
-                recovered: old_daemon,
-            };
-        }
     }
-    let start = |config: DaemonConfig| {
-        if !config.bitcoin_config.chain.is_blake2b() {
-            EmbeddedDaemon::start(config)
-        } else if matches!(
-            config.bitcoin_backend,
-            Some(coincubed::config::BitcoinBackend::Bitcoind(_))
-        ) {
-            let root = local_root
-                .as_ref()
-                .ok_or_else(|| DaemonError::Unexpected("Managed local node required".into()))?;
-            if !crate::chain::is_managed_local_fork(&config, root) {
-                return Err(DaemonError::Unexpected(
-                    "Managed local node required".into(),
-                ));
-            }
-            Handle::current()
-                .block_on(crate::chain::require_local_feature(
-                    config.bitcoin_config.chain,
-                    connect_client.clone(),
-                    root,
-                ))
-                .map_err(DaemonError::Unexpected)?;
-            EmbeddedDaemon::start_local_fork(config)
-        } else {
-            Handle::current().block_on(EmbeddedDaemon::start_authenticated(
-                config,
-                connect_client.clone().expect("fork session checked"),
-            ))
-        }
-    };
+    let start =
+        |config| start_daemon_for_restart(config, connect_client.as_ref(), local_root.as_ref());
 
     if let Some(daemon) = &old_daemon {
         if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
