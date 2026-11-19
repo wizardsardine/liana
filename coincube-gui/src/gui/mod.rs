@@ -3408,6 +3408,55 @@ impl GUI {
         }
     }
 
+    fn open_launcher_connect_section(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        sub: crate::app::menu::ConnectSubMenu,
+    ) -> Task<Message> {
+        let Some(origin_focus) = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .and_then(|tab| match &tab.state {
+                tab::State::Home(home) => Some(home.connect_sheet_origin_id()),
+                _ => None,
+            })
+        else {
+            return Task::none();
+        };
+        let section = match sub {
+            crate::app::menu::ConnectSubMenu::Overview => ConnectSheetSection::Account,
+            crate::app::menu::ConnectSubMenu::PlanBilling => ConnectSheetSection::PlanBilling,
+            crate::app::menu::ConnectSubMenu::Security => ConnectSheetSection::DevicesSecurity,
+            crate::app::menu::ConnectSubMenu::Contacts => ConnectSheetSection::Contacts,
+            crate::app::menu::ConnectSubMenu::Duress => ConnectSheetSection::Duress,
+        };
+        let signed_out_launcher = section == ConnectSheetSection::Account
+            && self.overlay_origin(None).is_some_and(|origin| {
+                origin.pane == pane_id
+                    && origin.tab_id == tab_id
+                    && matches!(origin.source, tab::PreferencesSource::Home)
+                    && self
+                        .connect_panel(&origin)
+                        .is_some_and(|account| !account.is_authenticated())
+            });
+        let open = self.open_connect_sheet_from(pane_id, tab_id, section, Some(origin_focus));
+        if signed_out_launcher {
+            if let Some(sheet) = &mut self.connect_sheet {
+                sheet.page = ConnectSheetPage::Authentication;
+            }
+            Task::batch([
+                open,
+                iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(
+                    iced::advanced::widget::Id::new(crate::app::view::connect::EMAIL_INPUT_ID),
+                )),
+            ])
+        } else {
+            open
+        }
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3512,56 +3561,7 @@ impl GUI {
                 else {
                     unreachable!();
                 };
-                let Some(origin_focus) = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .and_then(|tab| match &tab.state {
-                        tab::State::Home(home) => Some(home.connect_sheet_origin_id()),
-                        _ => None,
-                    })
-                else {
-                    return Task::none();
-                };
-                let section = match sub {
-                    crate::app::menu::ConnectSubMenu::Overview => ConnectSheetSection::Account,
-                    crate::app::menu::ConnectSubMenu::PlanBilling => {
-                        ConnectSheetSection::PlanBilling
-                    }
-                    crate::app::menu::ConnectSubMenu::Security => {
-                        ConnectSheetSection::DevicesSecurity
-                    }
-                    crate::app::menu::ConnectSubMenu::Contacts => ConnectSheetSection::Contacts,
-                    crate::app::menu::ConnectSubMenu::Duress => ConnectSheetSection::Duress,
-                };
-                let signed_out_launcher = section == ConnectSheetSection::Account
-                    && self.overlay_origin(None).is_some_and(|origin| {
-                        origin.pane == pane_id
-                            && origin.tab_id == tab_id
-                            && matches!(origin.source, tab::PreferencesSource::Home)
-                            && self
-                                .connect_panel(&origin)
-                                .is_some_and(|account| !account.is_authenticated())
-                    });
-                let open =
-                    self.open_connect_sheet_from(pane_id, tab_id, section, Some(origin_focus));
-                if signed_out_launcher {
-                    if let Some(sheet) = &mut self.connect_sheet {
-                        sheet.page = ConnectSheetPage::Authentication;
-                    }
-                    Task::batch([
-                        open,
-                        iced_runtime::task::widget(
-                            iced::advanced::widget::operation::focusable::focus(
-                                iced::advanced::widget::Id::new(
-                                    crate::app::view::connect::EMAIL_INPUT_ID,
-                                ),
-                            ),
-                        ),
-                    ])
-                } else {
-                    open
-                }
+                self.open_launcher_connect_section(pane_id, tab_id, sub)
             }
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::OpenConnectSignIn))
                 if self.connect_overlay_eligible(pane_id) =>
