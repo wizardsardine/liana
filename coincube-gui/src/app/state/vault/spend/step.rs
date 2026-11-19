@@ -297,6 +297,423 @@ impl DefineSpend {
         }
     }
 
+    fn update_spend_form(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        msg: view::CreateSpendMessage,
+    ) -> Task<Message> {
+        // Opening the coin list changes nothing the draft depends on.
+        if let view::CreateSpendMessage::ChooseCoins = msg {
+            self.coins_shown = true;
+            return Task::none();
+        }
+        if self.is_stale_fee_estimate(&msg) {
+            return Task::none();
+        }
+        if !matches!(msg, view::CreateSpendMessage::Generate) {
+            self.invalidate_preparation();
+        }
+        match msg {
+            view::CreateSpendMessage::BatchLabelEdited(label) => {
+                self.batch_label.valid = label.len() <= 100;
+                self.batch_label.value = label;
+            }
+            view::CreateSpendMessage::Clear => {
+                *self = Self::new(
+                    self.network,
+                    self.wallet.clone(),
+                    self.coins
+                        .iter()
+                        .map(|(c, _)| c.clone())
+                        .collect::<Vec<ListCoinsEntry>>()
+                        .as_slice(),
+                    self.tip_height,
+                    self.recovery_timelock,
+                    self.is_first_step,
+                    self.balance,
+                    self.unconfirmed_balance,
+                    self.sync_status.clone(),
+                    self.bitcoin_unit,
+                );
+                return Task::none();
+            }
+            view::CreateSpendMessage::AddRecipient => {
+                self.recipients.push(Recipient::default());
+            }
+            view::CreateSpendMessage::DeleteRecipient(i) => self.delete_recipient(i),
+            view::CreateSpendMessage::RecipientEdited(i, _, _)
+            | view::CreateSpendMessage::RecipientFiatAmountEdited(i, _, _) => {
+                self.recipients
+                    .get_mut(i)
+                    .unwrap()
+                    .update(cache.network, self.bitcoin_unit, msg);
+            }
+            view::CreateSpendMessage::FeerateEdited(s) => {
+                // A typed rate: no preset is selected, and a preset
+                // fetch still in flight is dropped when it lands.
+                self.set_feerate(s);
+                self.custom_feerate_value = Some(self.feerate.value.clone());
+                self.selected_feerate_target = None;
+                self.loading_fee_estimate = None;
+                // A feerate change must re-run coin selection: it
+                // changes the fee and therefore `amount_left_to_select`
+                // (which gates "Next"). Falling through to the
+                // debounced redraft recomputes `fee_amount` too, so we
+                // no longer clear it here or skip the redraft — doing
+                // so left the form stuck on "Enter recipient address
+                // and amount" whenever the feerate was edited last.
+            }
+            view::CreateSpendMessage::SessionError(error) => {
+                let err: Error = error.into();
+                let err_msg = crate::user_error::report(&err);
+                self.warning = Some(err);
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+            view::CreateSpendMessage::CustomFeerate => {
+                self.custom_feerate = true;
+                self.selected_feerate_target = None;
+                // A preset fetch still in flight would replace the
+                // custom rate when it lands: drop it.
+                self.loading_fee_estimate = None;
+                if let Some(value) = self
+                    .custom_feerate_value
+                    .clone()
+                    .filter(|value| *value != self.feerate.value)
+                {
+                    return Task::done(Message::View(view::Message::CreateSpend(
+                        CreateSpendMessage::FeerateEdited(value),
+                    )));
+                }
+                return Task::none();
+            }
+            view::CreateSpendMessage::FeeEstimated { feerate, .. } => {
+                // The pending preset's estimate (stale ones returned
+                // above): it fills the field and stays selected.
+                self.selected_feerate_target = self.loading_fee_estimate.take();
+                match feerate {
+                    Some(fee) => {
+                        self.set_feerate(fee.to_string());
+                        // Falls through to the redraft, as a typed
+                        // rate does.
+                    }
+                    None => {
+                        self.selected_feerate_target = None;
+                        let err: Error = SpendCreationError::FeeEstimationFailed.into();
+                        let err_msg = crate::user_error::report(&err);
+                        self.warning = Some(err);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
+                }
+            }
+            view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
+                self.custom_feerate = false;
+                self.loading_fee_estimate = Some(block_target);
+                self.fee_estimate_request = FEE_ESTIMATE_ID.fetch_add(1, AtomicOrdering::Relaxed);
+                let request = self.fee_estimate_request;
+                return Task::perform(
+                    async move {
+                        let fee_estimator = FeeEstimator::new();
+                        let feerate = match block_target {
+                            1 => fee_estimator.get_high_priority_rate().await,
+                            6 => fee_estimator.get_mid_priority_rate().await,
+                            _ => fee_estimator.get_low_priority_rate().await,
+                        };
+
+                        feerate
+                    },
+                    move |feerate| {
+                        Message::View(view::Message::CreateSpend(
+                            CreateSpendMessage::FeeEstimated {
+                                request,
+                                feerate: feerate.ok(),
+                            },
+                        ))
+                    },
+                );
+            }
+            view::CreateSpendMessage::Generate => return self.prepare_spend(daemon),
+            view::CreateSpendMessage::SelectCoin(i) => {
+                if let Some(coin) = self.coins.get_mut(i) {
+                    coin.1 = !coin.1;
+                    // Once user edits selection, auto-selection can no longer be used.
+                    self.is_user_coin_selection = true;
+                }
+            }
+            view::CreateSpendMessage::SendMaxToRecipient(i) => self.toggle_send_max(i),
+            _ => {}
+        }
+
+        // Re-run coin selection after every form edit (as the
+        // pre-refactor code did unconditionally). Coin selection /
+        // `create_spend_tx` is async and potentially a network
+        // round-trip, so we schedule it debounced and off the UI
+        // thread rather than blocking on every keystroke.
+        self.tampered = self
+            .recipients
+            .iter()
+            .filter_map(|recipient| destination_binding(&recipient.address.value))
+            .any(|destination| self.tampered_destinations.contains(&destination));
+        if !self.tampered
+            && self
+                .warning
+                .as_ref()
+                .is_some_and(|warning| warning.to_string().contains(TAMPER_WARNING))
+        {
+            self.warning = None;
+        }
+        let redraft_task = self.schedule_redraft();
+        self.check_valid();
+        redraft_task
+    }
+
+    fn prepare_spend(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        if self.generating
+            || self.tampered
+            || !self.form_values_are_valid(false)
+            || self.exists_duplicate()
+        {
+            return Task::none();
+        }
+        let inputs: Vec<OutPoint> = self
+            .coins
+            .iter()
+            .filter_map(|(coin, selected)| selected.then_some(coin.outpoint))
+            .collect();
+        let outputs: HashMap<_, _> = self
+            .recipients
+            .iter()
+            .map(|recipient| {
+                (
+                    recipient.destination().expect("validated destination"),
+                    recipient.amount().expect("validated amount"),
+                )
+            })
+            .collect();
+        let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
+        self.warning = None;
+        self.generating = true;
+        self.preparation_id = PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed);
+        let generation = self.preparation_id;
+        self.lookup_ticket = if self.recipients.is_empty() {
+            None
+        } else {
+            branta::begin(self.network)
+        };
+        let ticket = self.lookup_ticket.clone();
+        let recipients = self.recipients.clone();
+        // A Vault or an imported wallet: both say which outputs are their own.
+        let descriptor = self.wallet.main_descriptor.clone();
+        let requests: Vec<_> = self
+            .recipients
+            .iter()
+            .enumerate()
+            .filter_map(|(row, recipient)| {
+                let address = recipient
+                    .destination()
+                    .ok()?
+                    .require_network(self.network)
+                    .ok()?;
+                LookupRequest::bitcoin(&recipient.address.value, &address)
+                    .map(|request| (row, request))
+            })
+            .collect();
+        let recovery = self.recovery_timelock.map(|timelock| {
+            (
+                timelock,
+                self.recipients[0]
+                    .destination()
+                    .expect("validated recovery address"),
+            )
+        });
+        Task::perform(
+            async move {
+                let prepare = async {
+                    if let Some((timelock, address)) = recovery {
+                        daemon
+                            .create_recovery(address, &inputs, feerate_vb, Some(timelock))
+                            .await
+                            .map(|psbt| (psbt, vec![]))
+                            .map_err(Error::from)
+                    } else {
+                        daemon
+                            .create_spend_tx(&inputs, &outputs, feerate_vb, None)
+                            .await
+                            .map_err(Error::from)
+                            .and_then(|result| match result {
+                                CreateSpendResult::Success { psbt, warnings } => {
+                                    Ok((psbt, warnings))
+                                }
+                                CreateSpendResult::InsufficientFunds { missing } => {
+                                    Err(SpendCreationError::CoinSelection(
+                                        coincube_core::spend::InsufficientFunds { missing },
+                                    )
+                                    .into())
+                                }
+                            })
+                    }
+                };
+                let result = prepare.await.and_then(|(psbt, warnings)| {
+                    validate_requested_amounts(&recipients, &psbt)?;
+                    Ok((psbt, warnings))
+                });
+                let identities = if let (Ok((psbt, _)), Some(ticket)) = (&result, ticket) {
+                    let Some(association) = associate_recipients(&recipients, psbt) else {
+                        // Identity metadata is optional. A recovery/send-max output
+                        // can legitimately differ from the earlier redraft snapshot.
+                        return (result, Vec::new());
+                    };
+                    let owned: HashSet<_> = descriptor
+                        .spend_change_indexes(psbt, &secp256k1::Secp256k1::verification_only())
+                        .into_iter()
+                        .collect();
+                    let requests = requests
+                        .into_iter()
+                        .filter(|(row, _)| {
+                            association
+                                .get(*row)
+                                .is_some_and(|output| !owned.contains(output))
+                        })
+                        .collect();
+                    ticket.lookup_many(requests).await
+                } else {
+                    Vec::new()
+                };
+                (result, identities)
+            },
+            move |(result, identities)| Message::VaultSpendPrepared {
+                generation,
+                result,
+                identities,
+            },
+        )
+    }
+
+    fn apply_prepared_spend(
+        &mut self,
+        generation: u64,
+        result: Result<(Psbt, Vec<String>), Error>,
+        identities: Vec<(usize, LookupResult)>,
+    ) -> Task<Message> {
+        if !self.generating || generation != self.preparation_id {
+            return Task::none();
+        }
+        self.generating = false;
+        let identities = if self
+            .lookup_ticket
+            .as_ref()
+            .is_some_and(LookupTicket::is_current)
+        {
+            identities
+        } else {
+            Vec::new()
+        };
+        if identities
+            .iter()
+            .any(|(_, result)| matches!(result, LookupResult::Tampered))
+        {
+            self.record_tampered_destinations(&identities);
+            return Task::none();
+        }
+        match result {
+            Ok((psbt, warnings)) => {
+                // Explicit BIP21 amounts are payment instructions, independent of
+                // optional identity association and the privacy preference.
+                if let Err(error) = validate_requested_amounts(&self.recipients, &psbt) {
+                    self.warning = Some(error);
+                    return Task::none();
+                }
+                let association = associate_recipients(&self.recipients, &psbt).unwrap_or_default();
+                let bound = identities
+                    .into_iter()
+                    .filter_map(|(row, result)| association.get(row).map(|vout| (*vout, result)))
+                    .collect();
+                self.recipient_identities =
+                    self.lookup_ticket
+                        .clone()
+                        .map(|ticket| psbt::RecipientIdentities {
+                            ticket,
+                            transaction_id: psbt.unsigned_tx.compute_txid(),
+                            results: bound,
+                        });
+                self.generated = Some((psbt, warnings));
+                Task::done(Message::View(view::Message::Next))
+            }
+            // Shown as the compose hint; the generic error toast would
+            // hide why, and preparing again cannot change the outcome.
+            Err(e) if is_amount_mismatch(&e) => {
+                self.warning = Some(e);
+                Task::none()
+            }
+            Err(e) => {
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                Task::done(Message::View(view::Message::ShowError(err_msg)))
+            }
+        }
+    }
+
+    fn delete_recipient(&mut self, i: usize) {
+        self.recipients.remove(i);
+        if self.recipients.len() < 2 {
+            self.batch_label.valid = true;
+            self.batch_label.value = "".to_string();
+        }
+        if let Some(j) = self.send_max_to_recipient {
+            match j.cmp(&i) {
+                Ordering::Equal => {
+                    self.send_max_to_recipient = None;
+                }
+                Ordering::Greater => {
+                    self.send_max_to_recipient = Some(
+                        j.checked_sub(1)
+                            .expect("j must be greater than 0 in this case"),
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn toggle_send_max(&mut self, i: usize) {
+        if let Some(recipient) = self.recipients.get_mut(i) {
+            if self.send_max_to_recipient == Some(i) {
+                // If already set to this recipient, then unset it.
+                self.send_max_to_recipient = None;
+                recipient.dust_warning = None;
+                recipient.estimated_max = None;
+            } else {
+                // Either it's set to some other recipient or not at all.
+                self.send_max_to_recipient = Some(i);
+            }
+        }
+    }
+
+    fn is_stale_fee_estimate(&self, message: &view::CreateSpendMessage) -> bool {
+        match message {
+            view::CreateSpendMessage::FeeEstimated { request, .. } => {
+                self.loading_fee_estimate.is_none() || *request != self.fee_estimate_request
+            }
+            _ => false,
+        }
+    }
+
+    fn record_tampered_destinations(&mut self, identities: &[(usize, LookupResult)]) {
+        self.tampered = true;
+        for (row, result) in identities {
+            if matches!(result, LookupResult::Tampered) {
+                if let Some(recipient) = self.recipients.get(*row) {
+                    if let Some(destination) = destination_binding(&recipient.address.value) {
+                        self.tampered_destinations.insert(destination);
+                    }
+                }
+            }
+        }
+        self.generated = None;
+        self.warning = Some(Error::Unexpected(TAMPER_WARNING.to_string()));
+        self.check_valid();
+    }
+
     fn invalidate_preparation(&mut self) {
         self.preparation_id = PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed);
         self.generating = false;
@@ -900,310 +1317,10 @@ impl Step for DefineSpend {
                 self.invalidate_preparation();
             }
             Message::View(view::Message::CreateSpend(msg)) => {
-                // Opening the coin list changes nothing the draft depends on.
-                if let view::CreateSpendMessage::ChooseCoins = msg {
-                    self.coins_shown = true;
-                    return Task::none();
-                }
-                if let view::CreateSpendMessage::FeeEstimated { request, .. } = &msg {
-                    if self.loading_fee_estimate.is_none()
-                        || *request != self.fee_estimate_request
-                    {
-                        return Task::none();
-                    }
-                }
-                if !matches!(msg, view::CreateSpendMessage::Generate) {
-                    self.invalidate_preparation();
-                }
-                match msg {
-                    view::CreateSpendMessage::BatchLabelEdited(label) => {
-                        self.batch_label.valid = label.len() <= 100;
-                        self.batch_label.value = label;
-                    }
-                    view::CreateSpendMessage::Clear => {
-                        *self = Self::new(
-                            self.network,
-                            self.wallet.clone(),
-                            self.coins
-                                .iter()
-                                .map(|(c, _)| c.clone())
-                                .collect::<Vec<ListCoinsEntry>>()
-                                .as_slice(),
-                            self.tip_height,
-                            self.recovery_timelock,
-                            self.is_first_step,
-                            self.balance,
-                            self.unconfirmed_balance,
-                            self.sync_status.clone(),
-                            self.bitcoin_unit,
-                        );
-                        return Task::none();
-                    }
-                    view::CreateSpendMessage::AddRecipient => {
-                        self.recipients.push(Recipient::default());
-                    }
-                    view::CreateSpendMessage::DeleteRecipient(i) => {
-                        self.recipients.remove(i);
-                        if self.recipients.len() < 2 {
-                            self.batch_label.valid = true;
-                            self.batch_label.value = "".to_string();
-                        }
-                        if let Some(j) = self.send_max_to_recipient {
-                            match j.cmp(&i) {
-                                Ordering::Equal => {
-                                    self.send_max_to_recipient = None;
-                                }
-                                Ordering::Greater => {
-                                    self.send_max_to_recipient = Some(
-                                        j.checked_sub(1)
-                                            .expect("j must be greater than 0 in this case"),
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    view::CreateSpendMessage::RecipientEdited(i, _, _)
-                    | view::CreateSpendMessage::RecipientFiatAmountEdited(i, _, _) => {
-                        self.recipients.get_mut(i).unwrap().update(
-                            cache.network,
-                            self.bitcoin_unit,
-                            msg,
-                        );
-                    }
-                    view::CreateSpendMessage::FeerateEdited(s) => {
-                        // A typed rate: no preset is selected, and a preset
-                        // fetch still in flight is dropped when it lands.
-                        self.set_feerate(s);
-                        self.custom_feerate_value = Some(self.feerate.value.clone());
-                        self.selected_feerate_target = None;
-                        self.loading_fee_estimate = None;
-                        // A feerate change must re-run coin selection: it
-                        // changes the fee and therefore `amount_left_to_select`
-                        // (which gates "Next"). Falling through to the
-                        // debounced redraft recomputes `fee_amount` too, so we
-                        // no longer clear it here or skip the redraft — doing
-                        // so left the form stuck on "Enter recipient address
-                        // and amount" whenever the feerate was edited last.
-                    }
-                    view::CreateSpendMessage::SessionError(error) => {
-                        let err: Error = error.into();
-                        let err_msg = crate::user_error::report(&err);
-                        self.warning = Some(err);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                    }
-                    view::CreateSpendMessage::CustomFeerate => {
-                        self.custom_feerate = true;
-                        self.selected_feerate_target = None;
-                        // A preset fetch still in flight would replace the
-                        // custom rate when it lands: drop it.
-                        self.loading_fee_estimate = None;
-                        if let Some(value) = self
-                            .custom_feerate_value
-                            .clone()
-                            .filter(|value| *value != self.feerate.value)
-                        {
-                            return Task::done(Message::View(view::Message::CreateSpend(
-                                CreateSpendMessage::FeerateEdited(value),
-                            )));
-                        }
-                        return Task::none();
-                    }
-                    view::CreateSpendMessage::FeeEstimated { feerate, .. } => {
-                        // The pending preset's estimate (stale ones returned
-                        // above): it fills the field and stays selected.
-                        self.selected_feerate_target = self.loading_fee_estimate.take();
-                        match feerate {
-                            Some(fee) => {
-                                self.set_feerate(fee.to_string());
-                                // Falls through to the redraft, as a typed
-                                // rate does.
-                            }
-                            None => {
-                                self.selected_feerate_target = None;
-                                let err: Error = SpendCreationError::FeeEstimationFailed.into();
-                                let err_msg = crate::user_error::report(&err);
-                                self.warning = Some(err);
-                                return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                            }
-                        }
-                    }
-                    view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
-                        self.custom_feerate = false;
-                        self.loading_fee_estimate = Some(block_target);
-                        self.fee_estimate_request = FEE_ESTIMATE_ID.fetch_add(1, AtomicOrdering::Relaxed);
-                        let request = self.fee_estimate_request;
-                        return Task::perform(
-                            async move {
-                                let fee_estimator = FeeEstimator::new();
-                                let feerate = match block_target {
-                                    1 => fee_estimator.get_high_priority_rate().await,
-                                    6 => fee_estimator.get_mid_priority_rate().await,
-                                    _ => fee_estimator.get_low_priority_rate().await,
-                                };
-
-                                feerate
-                            },
-                            move |feerate| {
-                                Message::View(view::Message::CreateSpend(
-                                    CreateSpendMessage::FeeEstimated {
-                                        request,
-                                        feerate: feerate.ok(),
-                                    },
-                                ))
-                            },
-                        );
-                    }
-                    view::CreateSpendMessage::Generate => {
-                        if self.generating || self.tampered || !self.form_values_are_valid(false)
-                            || self.exists_duplicate() {
-                            return Task::none();
-                        }
-                        let inputs: Vec<OutPoint> = self.coins.iter()
-                            .filter_map(|(coin, selected)| selected.then_some(coin.outpoint)).collect();
-                        let outputs: HashMap<_, _> = self.recipients.iter().map(|recipient|
-                            (recipient.destination().expect("validated destination"), recipient.amount().expect("validated amount"))
-                        ).collect();
-                        let feerate_vb = self.feerate.value.parse::<u64>().unwrap_or(0);
-                        self.warning = None;
-                        self.generating = true;
-                        self.preparation_id = PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed);
-                        let generation = self.preparation_id;
-                        self.lookup_ticket = if self.recipients.is_empty() { None } else { branta::begin(self.network) };
-                        let ticket = self.lookup_ticket.clone();
-                        let recipients = self.recipients.clone();
-                        // A Vault or an imported wallet: both say which outputs are their own.
-                        let descriptor = self.wallet.main_descriptor.clone();
-                        let requests: Vec<_> = self.recipients.iter().enumerate().filter_map(|(row, recipient)| {
-                            let address = recipient.destination().ok()?.require_network(self.network).ok()?;
-                            LookupRequest::bitcoin(&recipient.address.value, &address).map(|request| (row, request))
-                        }).collect();
-                        let recovery = self.recovery_timelock.map(|timelock|
-                            (timelock, self.recipients[0].destination().expect("validated recovery address")));
-                        return Task::perform(async move {
-                            let prepare = async {
-                                if let Some((timelock, address)) = recovery {
-                                    daemon.create_recovery(address, &inputs, feerate_vb, Some(timelock)).await
-                                        .map(|psbt| (psbt, vec![])).map_err(Error::from)
-                                } else {
-                                    daemon.create_spend_tx(&inputs, &outputs, feerate_vb, None).await
-                                        .map_err(Error::from).and_then(|result| match result {
-                                            CreateSpendResult::Success { psbt, warnings } => Ok((psbt, warnings)),
-                                            CreateSpendResult::InsufficientFunds { missing } => Err(SpendCreationError::CoinSelection(
-                                                coincube_core::spend::InsufficientFunds { missing }).into()),
-                                        })
-                                }
-                            };
-                            let result = prepare.await.and_then(|(psbt, warnings)| {
-                                validate_requested_amounts(&recipients, &psbt)?;
-                                Ok((psbt, warnings))
-                            });
-                            let identities = if let (Ok((psbt, _)), Some(ticket)) = (&result, ticket) {
-                                let Some(association) = associate_recipients(&recipients, psbt) else {
-                                    // Identity metadata is optional. A recovery/send-max output
-                                    // can legitimately differ from the earlier redraft snapshot.
-                                    return (result, Vec::new());
-                                };
-                                let owned: HashSet<_> = descriptor.spend_change_indexes(psbt, &secp256k1::Secp256k1::verification_only())
-                                    .into_iter().collect();
-                                let requests = requests.into_iter().filter(|(row, _)|
-                                    association.get(*row).is_some_and(|output| !owned.contains(output))).collect();
-                                ticket.lookup_many(requests).await
-                            } else { Vec::new() };
-                            (result, identities)
-                        }, move |(result, identities)| Message::VaultSpendPrepared { generation, result, identities });
-                    }
-                    view::CreateSpendMessage::SelectCoin(i) => {
-                        if let Some(coin) = self.coins.get_mut(i) {
-                            coin.1 = !coin.1;
-                            // Once user edits selection, auto-selection can no longer be used.
-                            self.is_user_coin_selection = true;
-                        }
-                    }
-                    view::CreateSpendMessage::SendMaxToRecipient(i) => {
-                        if let Some(recipient) = self.recipients.get_mut(i) {
-                            if self.send_max_to_recipient == Some(i) {
-                                // If already set to this recipient, then unset it.
-                                self.send_max_to_recipient = None;
-                                recipient.dust_warning = None;
-                                recipient.estimated_max = None;
-                            } else {
-                                // Either it's set to some other recipient or not at all.
-                                self.send_max_to_recipient = Some(i);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-
-                // Re-run coin selection after every form edit (as the
-                // pre-refactor code did unconditionally). Coin selection /
-                // `create_spend_tx` is async and potentially a network
-                // round-trip, so we schedule it debounced and off the UI
-                // thread rather than blocking on every keystroke.
-                self.tampered = self.recipients.iter()
-                    .filter_map(|recipient| destination_binding(&recipient.address.value))
-                    .any(|destination| self.tampered_destinations.contains(&destination));
-                if !self.tampered && self.warning.as_ref().is_some_and(|warning| warning.to_string().contains(TAMPER_WARNING)) {
-                    self.warning = None;
-                }
-                let redraft_task = self.schedule_redraft();
-                self.check_valid();
-                return redraft_task;
+                return self.update_spend_form(daemon, cache, msg);
             }
             Message::VaultSpendPrepared { generation, result, identities } => {
-                if !self.generating || generation != self.preparation_id {
-                    return Task::none();
-                }
-                self.generating = false;
-                let identities = if self.lookup_ticket.as_ref().is_some_and(LookupTicket::is_current) {
-                    identities
-                } else { Vec::new() };
-                if identities.iter().any(|(_, result)| matches!(result, LookupResult::Tampered)) {
-                    self.tampered = true;
-                    for (row, result) in &identities {
-                        if matches!(result, LookupResult::Tampered) {
-                            if let Some(recipient) = self.recipients.get(*row) {
-                                if let Some(destination) = destination_binding(&recipient.address.value) {
-                                    self.tampered_destinations.insert(destination);
-                                }
-                            }
-                        }
-                    }
-                    self.generated = None;
-                    self.warning = Some(Error::Unexpected(TAMPER_WARNING.to_string()));
-                    self.check_valid();
-                    return Task::none();
-                }
-                match result {
-                    Ok((psbt, warnings)) => {
-                        // Explicit BIP21 amounts are payment instructions, independent of
-                        // optional identity association and the privacy preference.
-                        if let Err(error) = validate_requested_amounts(&self.recipients, &psbt) {
-                            self.warning = Some(error);
-                            return Task::none();
-                        }
-                        let association = associate_recipients(&self.recipients, &psbt).unwrap_or_default();
-                        let bound = identities.into_iter().filter_map(|(row, result)|
-                            association.get(row).map(|vout| (*vout, result))).collect();
-                        self.recipient_identities = self.lookup_ticket.clone().map(|ticket| psbt::RecipientIdentities {
-                            ticket, transaction_id: psbt.unsigned_tx.compute_txid(), results: bound,
-                        });
-                        self.generated = Some((psbt, warnings));
-                        return Task::done(Message::View(view::Message::Next));
-                    }
-                    // Shown as the compose hint; the generic error toast would
-                    // hide why, and preparing again cannot change the outcome.
-                    Err(e) if is_amount_mismatch(&e) => {
-                        self.warning = Some(e);
-                        return Task::none();
-                    }
-                    Err(e) => {
-                        let err_msg = crate::user_error::report(&e);
-                        self.warning = Some(e);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                    }
-                }
+                return self.apply_prepared_spend(generation, result, identities);
             }
             Message::Labels(res) => match res {
                 Ok(labels) => {
