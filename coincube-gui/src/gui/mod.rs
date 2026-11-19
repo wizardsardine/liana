@@ -2015,6 +2015,16 @@ impl GUI {
         task.map(move |message| Message::Pane(pane_id, pane::Message::tab(tab_id, message)))
     }
 
+    fn select_preferences_section(&mut self, section: PreferencesSection) -> Task<Message> {
+        if let Some(sheet) = &mut self.preferences_sheet {
+            sheet.page.select(section);
+        }
+        if section == PreferencesSection::About {
+            return self.load_about_versions();
+        }
+        Task::none()
+    }
+
     fn preferences_sheet_message(&mut self, message: preferences_view::Message) -> Task<Message> {
         if !self
             .preferences_sheet
@@ -2028,15 +2038,7 @@ impl GUI {
             ViewMessage::FocusAction(id) => {
                 iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(id))
             }
-            ViewMessage::SelectSection(section) => {
-                if let Some(sheet) = &mut self.preferences_sheet {
-                    sheet.page.select(section);
-                }
-                if section == PreferencesSection::About {
-                    return self.load_about_versions();
-                }
-                Task::none()
-            }
+            ViewMessage::SelectSection(section) => self.select_preferences_section(section),
             ViewMessage::BackToAbout => {
                 if let Some(sheet) = &mut self.preferences_sheet {
                     sheet.page.open_about_page(AboutPage::Main);
