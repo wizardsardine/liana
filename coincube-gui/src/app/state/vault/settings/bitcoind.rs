@@ -2410,6 +2410,25 @@ impl BitcoindSettings {
         }
     }
 
+    fn confirmed_rpc_auth(&mut self) -> Option<BitcoindRpcAuth> {
+        match self.selected_auth_type {
+            RpcAuthType::CookieFile => {
+                let new_path = PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value);
+                match new_path {
+                    Ok(path) => {
+                        self.rpc_auth_vals.cookie_path.valid = true;
+                        Some(BitcoindRpcAuth::CookieFile(path))
+                    }
+                    Err(_) => None,
+                }
+            }
+            RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(
+                self.rpc_auth_vals.user.value.clone(),
+                self.rpc_auth_vals.password.value.clone(),
+            )),
+        }
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -2447,22 +2466,7 @@ impl BitcoindSettings {
             view::SettingsEditMessage::Confirm => {
                 let new_addr = SocketAddr::from_str(&self.addr.value);
                 self.addr.valid = new_addr.is_ok();
-                let rpc_auth = match self.selected_auth_type {
-                    RpcAuthType::CookieFile => {
-                        let new_path = PathBuf::from_str(&self.rpc_auth_vals.cookie_path.value);
-                        match new_path {
-                            Ok(path) => {
-                                self.rpc_auth_vals.cookie_path.valid = true;
-                                Some(BitcoindRpcAuth::CookieFile(path))
-                            }
-                            Err(_) => None,
-                        }
-                    }
-                    RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(
-                        self.rpc_auth_vals.user.value.clone(),
-                        self.rpc_auth_vals.password.value.clone(),
-                    )),
-                };
+                let rpc_auth = self.confirmed_rpc_auth();
 
                 if let (true, Some(rpc_auth)) = (self.addr.valid, rpc_auth) {
                     let mut daemon_config = daemon.config().cloned().unwrap();
@@ -2655,6 +2659,25 @@ impl RescanSetting {
     }
 }
 
+fn rescan_timestamp(network: Network, date: i64) -> i64 {
+    let genesis = match network {
+        Network::Testnet => TESTNET3_GENESIS_BLOCK_TIMESTAMP,
+        Network::Testnet4 => TESTNET4_GENESIS_BLOCK_TIMESTAMP,
+        Network::Signet => SIGNET_GENESIS_BLOCK_TIMESTAMP,
+        // Regtest uses the mainnet floor, as do other network variants.
+        _ => MAINNET_GENESIS_BLOCK_TIMESTAMP,
+    };
+    if date < genesis {
+        info!(
+            "Date {} prior to genesis block, using genesis block timestamp {}",
+            date, genesis
+        );
+        genesis
+    } else {
+        date
+    }
+}
+
 impl RescanSetting {
     fn edited(&mut self, success: bool) {
         self.processing = false;
@@ -2690,52 +2713,7 @@ impl RescanSetting {
                 .and_then(|d| d.and_hms_opt(0, 0, 0))
                 .map(|d| d.and_utc().timestamp())
                 {
-                    match cache.network {
-                        Network::Bitcoin => {
-                            if date < MAINNET_GENESIS_BLOCK_TIMESTAMP {
-                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, MAINNET_GENESIS_BLOCK_TIMESTAMP);
-
-                                MAINNET_GENESIS_BLOCK_TIMESTAMP
-                            } else {
-                                date
-                            }
-                        }
-                        Network::Testnet => {
-                            if date < TESTNET3_GENESIS_BLOCK_TIMESTAMP {
-                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, TESTNET3_GENESIS_BLOCK_TIMESTAMP);
-                                TESTNET3_GENESIS_BLOCK_TIMESTAMP
-                            } else {
-                                date
-                            }
-                        }
-                        Network::Testnet4 => {
-                            if date < TESTNET4_GENESIS_BLOCK_TIMESTAMP {
-                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, TESTNET4_GENESIS_BLOCK_TIMESTAMP);
-                                TESTNET4_GENESIS_BLOCK_TIMESTAMP
-                            } else {
-                                date
-                            }
-                        }
-                        Network::Signet => {
-                            if date < SIGNET_GENESIS_BLOCK_TIMESTAMP {
-                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, SIGNET_GENESIS_BLOCK_TIMESTAMP);
-                                SIGNET_GENESIS_BLOCK_TIMESTAMP
-                            } else {
-                                date
-                            }
-                        }
-                        // We expect regtest user to not use genesis block timestamp inferior to
-                        // the mainnet one.
-                        // Network is a non exhaustive enum, that is why the _.
-                        _ => {
-                            if date < MAINNET_GENESIS_BLOCK_TIMESTAMP {
-                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, MAINNET_GENESIS_BLOCK_TIMESTAMP);
-                                MAINNET_GENESIS_BLOCK_TIMESTAMP
-                            } else {
-                                date
-                            }
-                        }
-                    }
+                    rescan_timestamp(cache.network, date)
                 } else {
                     self.invalid_date = true;
                     return Task::none();
