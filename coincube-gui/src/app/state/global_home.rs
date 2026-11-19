@@ -1197,46 +1197,9 @@ impl State for GlobalHome {
                         direction,
                         feerate_vb,
                         result,
-                    } => {
-                        if !self.vault_available(cache) {
-                            return Task::none();
-                        }
-                        if !self.destination_response_is_current(generation, direction)
-                            || !self.destination_is_ready()
-                        {
-                            return Task::none();
-                        }
-                        // Drop late results: if the user has since edited the
-                        // feerate, `self.transfer_feerate.value` won't parse to
-                        // the feerate this preview was built against. Keeping
-                        // only the latest-feerate result prevents the Fees row
-                        // flickering to out-of-order values during fast typing.
-                        let current_feerate =
-                            self.transfer_feerate.value.trim().parse::<u64>().ok();
-                        if current_feerate != Some(feerate_vb) {
-                            return Task::none();
-                        }
-                        match result {
-                            Ok((fees, received)) => {
-                                self.spend_tx_fees = Some(fees);
-                                // A sweep's output is the balance less this fee.
-                                if self.sends_max() {
-                                    self.set_entered_amount(received);
-                                }
-                            }
-                            Err(e) => {
-                                // Quiet failure: the user sees blank Fees/Total,
-                                // and the real `SignVaultTransferTx` path will
-                                // surface any error (insufficient funds etc.)
-                                // if they click through. Logging only.
-                                log::debug!(
-                                    "Vault transfer PSBT preview failed at feerate {feerate_vb}: {e}"
-                                );
-                                self.spend_tx_fees = None;
-                            }
-                        }
-                        Task::none()
-                    }
+                    } => self.on_transfer_psbt_preview_ready(
+                        cache, generation, direction, feerate_vb, result,
+                    ),
                 }
             }
             // Transfer destination fetches use TransferDestinationReady with a
@@ -1292,6 +1255,51 @@ type VaultTransferPsbtResult = Result<
 >;
 
 impl GlobalHome {
+    fn on_transfer_psbt_preview_ready(
+        &mut self,
+        cache: &Cache,
+        generation: u64,
+        direction: TransferDirection,
+        feerate_vb: u64,
+        result: Result<(Amount, Amount), String>,
+    ) -> Task<Message> {
+        if !self.vault_available(cache) {
+            return Task::none();
+        }
+        if !self.destination_response_is_current(generation, direction)
+            || !self.destination_is_ready()
+        {
+            return Task::none();
+        }
+        // Drop late results: if the user has since edited the
+        // feerate, `self.transfer_feerate.value` won't parse to
+        // the feerate this preview was built against. Keeping
+        // only the latest-feerate result prevents the Fees row
+        // flickering to out-of-order values during fast typing.
+        let current_feerate = self.transfer_feerate.value.trim().parse::<u64>().ok();
+        if current_feerate != Some(feerate_vb) {
+            return Task::none();
+        }
+        match result {
+            Ok((fees, received)) => {
+                self.spend_tx_fees = Some(fees);
+                // A sweep's output is the balance less this fee.
+                if self.sends_max() {
+                    self.set_entered_amount(received);
+                }
+            }
+            Err(e) => {
+                // Quiet failure: the user sees blank Fees/Total,
+                // and the real `SignVaultTransferTx` path will
+                // surface any error (insufficient funds etc.)
+                // if they click through. Logging only.
+                log::debug!("Vault transfer PSBT preview failed at feerate {feerate_vb}: {e}");
+                self.spend_tx_fees = None;
+            }
+        }
+        Task::none()
+    }
+
     fn on_transfer_broadcast(
         &mut self,
         cache: &Cache,
