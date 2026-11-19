@@ -577,6 +577,7 @@ pub fn create_spend_tx<'a>(
             amount_left,
             draft_warning,
             drafting,
+            loading_fee_estimate.is_some(),
         )
     };
 
@@ -1064,8 +1065,13 @@ fn incomplete_spend_hint(
     amount_left: Option<&Amount>,
     draft_warning: Option<String>,
     drafting: bool,
+    loading_fee_estimate: bool,
 ) -> Option<String> {
-    if feerate.value.is_empty() {
+    if feerate.value.is_empty() && loading_fee_estimate {
+        // A preset's estimate is on its way (a new or cleared form starts on
+        // Normal): nothing for the user to set.
+        Some(FETCHING_FEE_HINT.to_string())
+    } else if feerate.value.is_empty() {
         Some("Please set a feerate.".to_string())
     } else if !feerate.valid {
         Some("Invalid feerate.".to_string())
@@ -1074,7 +1080,7 @@ fn incomplete_spend_hint(
     } else if drafting {
         // The form is complete and its draft is still being built: neither
         // "select a coin" nor "enter recipient and amount" is true yet.
-        Some("Calculating…".to_string())
+        Some(CALCULATING_HINT.to_string())
     } else if coins.iter().all(|(_, selected)| !selected) {
         Some("Please select at least one coin.".to_string())
     } else if !is_self_send && recovery_timelock.is_none() {
@@ -1622,6 +1628,11 @@ fn spend_coin_scroll<'a>(
     .max_height(300)
 }
 
+/// Footer hints that report progress rather than a problem: drawn quiet,
+/// without the warning icon.
+const CALCULATING_HINT: &str = "Calculating…";
+const FETCHING_FEE_HINT: &str = "Fetching the fee estimate…";
+
 fn spend_compose_footer<'a>(
     disabled_hint: Option<String>,
     generating: bool,
@@ -1629,7 +1640,17 @@ fn spend_compose_footer<'a>(
     is_first_step: bool,
     can_proceed: bool,
 ) -> coincube_ui::widget::Container<'a, Message> {
-    let hint: Element<'a, Message> = if let Some(hint) = disabled_hint {
+    let progress: Option<&'static str> = match disabled_hint.as_deref() {
+        Some(CALCULATING_HINT) => Some(CALCULATING_HINT),
+        Some(FETCHING_FEE_HINT) => Some(FETCHING_FEE_HINT),
+        _ => None,
+    };
+    let hint: Element<'a, Message> = if let Some(progress) = progress {
+        text(localized_copy(progress))
+            .size(P2_SIZE)
+            .style(theme::text::secondary)
+            .into()
+    } else if let Some(hint) = disabled_hint {
         Row::new()
             .spacing(6)
             .align_y(Alignment::Center)
@@ -2896,6 +2917,23 @@ mod tests {
         let probe = Harness::new(compose(&fixture, &self_send), TALL).probe();
         assert!(probe.contains("Coin selection"));
         assert!(!probe.contains(AUTOMATIC_COINS));
+    }
+
+    /// While a preset's estimate is on its way (a new or cleared form), the
+    /// footer says so instead of asking the user to set a feerate.
+    #[test]
+    fn a_loading_fee_estimate_is_not_asked_for() {
+        let empty = value("", true);
+        assert_eq!(
+            incomplete_spend_hint(&empty, false, &[], false, None, None, None, false, true)
+                .as_deref(),
+            Some(FETCHING_FEE_HINT)
+        );
+        assert_eq!(
+            incomplete_spend_hint(&empty, false, &[], false, None, None, None, false, false)
+                .as_deref(),
+            Some("Please set a feerate.")
+        );
     }
 
     #[test]

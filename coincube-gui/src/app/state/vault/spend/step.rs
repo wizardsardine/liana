@@ -316,6 +316,10 @@ impl DefineSpend {
             self.coins_shown = true;
             return Task::none();
         }
+        // Automatic while already automatic: nothing to redraft.
+        if matches!(msg, view::CreateSpendMessage::AutomaticCoins) && !self.coin_list_shown() {
+            return Task::none();
+        }
         if self.is_stale_fee_estimate(&msg) {
             return Task::none();
         }
@@ -359,6 +363,9 @@ impl DefineSpend {
                 // below picks the coins again.
                 self.coins_shown = false;
                 self.is_user_coin_selection = false;
+                // The ticked coins were the user's: until the automatic draft
+                // lands, Prepare must not build from them.
+                self.amount_left_to_select = None;
             }
             view::CreateSpendMessage::AddRecipient => {
                 self.recipients.push(Recipient::default());
@@ -1418,6 +1425,11 @@ impl Step for DefineSpend {
                     );
                     self.check_valid();
                 }
+            // Preparation took over while this draft ran: it is dropped, so
+            // it is no longer pending.
+            Message::RedraftResult { seq, .. } if seq == self.redraft_seq => {
+                self.draft_pending = false;
+            }
             _ => {}
         }
         Task::none()
@@ -1562,9 +1574,6 @@ impl DefineSpend {
         self.warning = None;
     }
 
-    /// The coin list is open: Choose coins was pressed, the user already
-    /// picked coins, or the spend has no automatic selection (a self-transfer
-    /// or a recovery spends the coins chosen for it).
     /// The form is complete and its draft has not landed yet.
     fn drafting(&self) -> bool {
         self.draft_pending
@@ -1573,6 +1582,9 @@ impl DefineSpend {
             && !self.exists_duplicate()
     }
 
+    /// The coin list is open: Choose coins was pressed, the user already
+    /// picked coins, or the spend has no automatic selection (a self-transfer
+    /// or a recovery spends the coins chosen for it).
     pub(crate) fn coin_list_shown(&self) -> bool {
         self.coins_shown
             || self.is_user_coin_selection
@@ -3059,14 +3071,51 @@ mod tests {
 
     /// While a complete form's draft is pending the footer says it is
     /// calculating; the draft landing (or the form going incomplete) ends it.
-    #[test]
-    fn a_pending_draft_reads_as_drafting_only_while_the_form_is_complete() {
+    #[tokio::test]
+    async fn a_pending_draft_reads_as_drafting_only_while_the_form_is_complete() {
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
         let mut state = branta_form();
         assert!(state.form_values_are_valid(true), "fixture is complete");
         drop(state.schedule_redraft());
         assert!(state.drafting());
         state.feerate.value.clear();
         assert!(!state.drafting(), "an incomplete form is not drafting");
+        // The debounce firing on the incomplete form ends the pending draft.
+        let seq = state.redraft_seq;
+        drop(state.run_redraft(daemon, seq));
+        assert!(!state.draft_pending);
+    }
+
+    /// Automatic hands the choice back: Prepare waits for the automatic
+    /// draft instead of building from the coins the user had ticked.
+    #[tokio::test]
+    async fn automatic_waits_for_the_automatic_draft() {
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        let mut state = branta_form();
+        let send = |state: &mut DefineSpend, message: view::CreateSpendMessage| {
+            state.update(
+                daemon.clone(),
+                &Cache::default(),
+                Message::View(view::Message::CreateSpend(message)),
+            )
+        };
+        let seq = state.redraft_seq;
+        assert_eq!(
+            send(&mut state, view::CreateSpendMessage::AutomaticCoins).units(),
+            0,
+            "already automatic: nothing to redraft"
+        );
+        assert_eq!(state.redraft_seq, seq);
+
+        drop(send(&mut state, view::CreateSpendMessage::SelectCoin(0)));
+        state.amount_left_to_select = Some(Amount::ZERO);
+        drop(send(&mut state, view::CreateSpendMessage::AutomaticCoins));
+        assert_eq!(state.amount_left_to_select, None);
+        assert!(state.drafting());
     }
 
     /// Fee segments map to rates: a preset fetches its block target's
