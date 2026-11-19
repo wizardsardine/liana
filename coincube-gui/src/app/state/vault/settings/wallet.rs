@@ -304,19 +304,9 @@ impl State for WalletSettingsState {
                 }
                 Task::none()
             }
-            Message::View(view::Message::ImportExport(m)) => {
-                if let Modal::ImportExport(modal) = &mut self.modal {
-                    modal.update(m)
-                } else {
-                    Task::none()
-                }
-            }
-            Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
-                if let Modal::ImportExport(modal) = &mut self.modal {
-                    modal.update(m)
-                } else {
-                    Task::none()
-                }
+            Message::View(view::Message::ImportExport(m))
+            | Message::View(view::Message::Settings(view::SettingsMessage::ImportExport(m))) => {
+                self.update_import_export_modal(m)
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ExportEncryptedDescriptor,
@@ -354,6 +344,14 @@ impl State for WalletSettingsState {
 }
 
 impl WalletSettingsState {
+    fn update_import_export_modal(&mut self, message: ImportExportMessage) -> Task<Message> {
+        if let Modal::ImportExport(modal) = &mut self.modal {
+            modal.update(message)
+        } else {
+            Task::none()
+        }
+    }
+
     fn apply_wallet_update(
         &mut self,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
