@@ -2569,91 +2569,9 @@ impl ConnectAccountPanel {
                 _ => {}
             },
 
-            ConnectAccountMessage::SubmitLogin => {
-                self.error = None;
-                // A login must never redeem a code stashed for a (different)
-                // new account during an abandoned signup. See `Init`.
-                self.pending_campaign_code = None;
+            ConnectAccountMessage::SubmitLogin => return self.submit_connect_login(),
 
-                let ConnectFlowStep::Login { email, loading } = &mut self.step else {
-                    return iced::Task::none();
-                };
-                *loading = true;
-                let email_val = email.clone();
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        let result = client
-                            .login_send_otp(OtpRequest {
-                                email: email_val.clone(),
-                            })
-                            .await;
-                        (email_val, result)
-                    },
-                    |(email, res)| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpRequested {
-                                email,
-                                is_signup: false,
-                            },
-                        )),
-                        Err(e) => {
-                            let is_unverified = matches!(
-                                &e,
-                                crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                    if info.status_code == 401
-                                        && info.text.contains("Email not verified")
-                            );
-                            if is_unverified {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::EmailNotVerified { email },
-                                ))
-                            } else {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Error((&e).into()),
-                                ))
-                            }
-                        }
-                    },
-                );
-            }
-
-            ConnectAccountMessage::SubmitRegistration => {
-                // Stash any account-creation promo/referral code now; it's
-                // redeemed once the new session authenticates (the redeem
-                // endpoint requires a token). Empty → nothing to redeem.
-                self.pending_campaign_code = {
-                    let trimmed = self.register_campaign_code.trim();
-                    (!trimmed.is_empty()).then(|| trimmed.to_string())
-                };
-                let ConnectFlowStep::Register { email, loading } = &mut self.step else {
-                    return iced::Task::none();
-                };
-                *loading = true;
-                let email_val = email.clone();
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .signup_send_otp(OtpRequest {
-                                email: email_val.clone(),
-                            })
-                            .await
-                            .map(|()| email_val)
-                    },
-                    |res| match res {
-                        Ok(email) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpRequested {
-                                email,
-                                is_signup: true,
-                            },
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Error((&e).into()),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::SubmitRegistration => return self.submit_connect_registration(),
 
             ConnectAccountMessage::CreateAccount => {
                 self.step = ConnectFlowStep::Register {
@@ -2663,21 +2581,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::OtpRequested { email, is_signup } => {
-                self.error = None;
-                self.signing_in_with_authenticator = false;
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-
-                self.step = ConnectFlowStep::OtpVerification {
-                    email,
-                    otp: String::new(),
-                    sending: false,
-                    is_signup,
-                    cooldown: 60,
-                };
-                return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::OtpCooldownTick(attempt),
-                )));
+                return self.apply_requested_otp(email, is_signup)
             }
 
             ConnectAccountMessage::OtpChanged(otp) => {
@@ -2686,123 +2590,15 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ConnectAccountMessage::BackToEmail => {
-                // "Start over" from the authenticator step: its challenge
-                // can't be reused, so a new email code is needed.
-                if let ConnectFlowStep::TwoFactor {
-                    email,
-                    code,
-                    sending: false,
-                    ..
-                } = &mut self.step
-                {
-                    zeroize::Zeroize::zeroize(&mut code.0);
-                    self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                    self.signing_in_with_authenticator = false;
-                    self.step = ConnectFlowStep::Login {
-                        email: std::mem::take(email),
-                        loading: false,
-                    };
-                    self.error = None;
-                    return iced::Task::none();
-                }
-                if let ConnectFlowStep::OtpVerification {
-                    email, is_signup, ..
-                } = &self.step
-                {
-                    self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                    self.step = if *is_signup {
-                        ConnectFlowStep::Register {
-                            email: email.clone(),
-                            loading: false,
-                        }
-                    } else {
-                        ConnectFlowStep::Login {
-                            email: email.clone(),
-                            loading: false,
-                        }
-                    };
-                    self.error = None;
-                }
-            }
+            ConnectAccountMessage::BackToEmail => return self.return_to_connect_email(),
 
             ConnectAccountMessage::OtpCooldownTick(attempt) => {
-                if attempt != self.otp_attempt_generation {
-                    return iced::Task::none();
-                }
-                if let ConnectFlowStep::OtpVerification { cooldown, .. } = &mut self.step {
-                    if *cooldown > 0 {
-                        *cooldown -= 1;
-                        return iced::Task::perform(
-                            async { tokio::time::sleep(std::time::Duration::from_secs(1)).await },
-                            move |_| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::OtpCooldownTick(attempt),
-                                ))
-                            },
-                        );
-                    }
-                }
+                return self.tick_otp_cooldown(attempt)
             }
 
-            ConnectAccountMessage::ResendOtp => {
-                let ConnectFlowStep::OtpVerification {
-                    email,
-                    sending,
-                    is_signup,
-                    cooldown,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *cooldown > 0 || *sending {
-                    return iced::Task::none();
-                }
-                *sending = true;
-                let attempt = self.otp_attempt_generation;
-                let email_val = email.clone();
-                let is_signup = *is_signup;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        if is_signup {
-                            client.resend_signup_otp(&email_val).await
-                        } else {
-                            client.login_send_otp(OtpRequest { email: email_val }).await
-                        }
-                    },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResent(attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::ResendOtp => return self.resend_connect_otp(),
 
-            ConnectAccountMessage::OtpResent(attempt) => {
-                if attempt != self.otp_attempt_generation {
-                    return iced::Task::none();
-                }
-                if let ConnectFlowStep::OtpVerification {
-                    otp,
-                    sending,
-                    cooldown,
-                    ..
-                } = &mut self.step
-                {
-                    *otp = String::new();
-                    *sending = false;
-                    *cooldown = 60;
-                    self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::OtpCooldownTick(self.otp_attempt_generation),
-                    )));
-                }
-            }
+            ConnectAccountMessage::OtpResent(attempt) => return self.apply_resent_otp(attempt),
 
             ConnectAccountMessage::OtpResendFailed(error, attempt) => {
                 if attempt == self.otp_attempt_generation
@@ -2812,76 +2608,10 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ConnectAccountMessage::VerifyOtp => {
-                let ConnectFlowStep::OtpVerification {
-                    email,
-                    otp,
-                    sending,
-                    is_signup,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *sending {
-                    return iced::Task::none();
-                }
-                *sending = true;
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-                let req = OtpVerifyRequest {
-                    email: email.clone(),
-                    otp: otp.clone(),
-                };
-                let is_signup = *is_signup;
-                let client = self.client.clone();
-                let epoch = self.auth_epoch;
-                return iced::Task::perform(
-                    async move {
-                        if is_signup {
-                            client.signup_verify_otp(req).await
-                        } else {
-                            client.login_verify_otp(req).await
-                        }
-                    },
-                    move |res| match res {
-                        Ok(login) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpVerified(login, epoch, attempt),
-                        )),
-                        Err(crate::services::coincube::CoincubeError::SecondFactorRequired(
-                            challenge,
-                        )) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::TwoFactorRequired(challenge, epoch, attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpVerifyFailed((&e).into(), epoch, attempt),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::VerifyOtp => return self.verify_connect_otp(),
 
             ConnectAccountMessage::EmailNotVerified { email } => {
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-                self.step = ConnectFlowStep::OtpVerification {
-                    email: email.clone(),
-                    otp: String::new(),
-                    sending: true,
-                    is_signup: true,
-                    cooldown: 0,
-                };
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.resend_signup_otp(&email).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResent(attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
-                        )),
-                    },
-                );
+                return self.apply_unverified_connect_email(email)
             }
             _ => {}
         }
@@ -2913,55 +2643,11 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::DeleteVerifiedDevice(id) => {
-                if self.review_device_removal != Some(id) {
-                    return iced::Task::none();
-                }
-                self.review_device_removal = None;
-                self.verified_devices_state.deleting_ids.insert(id);
-
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                let id_for_result = id;
-
-                return iced::Task::perform(
-                    async move { client.delete_verified_device(id).await },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::VerifiedDeviceDeleted(
-                                id_for_result,
-                                gen,
-                                res.map_err(|e| e.to_string()),
-                            ),
-                        ))
-                    },
-                );
+                return self.remove_verified_connect_device(id)
             }
 
             ConnectAccountMessage::VerifiedDeviceDeleted(id, gen, result) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-
-                self.verified_devices_state.deleting_ids.remove(&id);
-
-                match result {
-                    Ok(()) => {
-                        if let Some(devices) = self.verified_devices.as_mut() {
-                            devices.retain(|d| d.id != id);
-                        }
-                    }
-                    Err(err) => {
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Error(UserError::logged(
-                                "Couldn't remove that device",
-                                "Try again. If it keeps failing, contact support and quote the reference below.",
-                                crate::user_error::CC_API_BADRESP,
-                                true,
-                                err,
-                            )),
-                        )));
-                    }
-                }
+                return self.apply_verified_device_removal(id, gen, result)
             }
 
             ConnectAccountMessage::CopyToClipboard(text) => {
@@ -2998,283 +2684,21 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::ReviewPlanChange(tier) => {
-                // Review is the step before any invoice exists. It is only
-                // reachable while purchasing is open, like StartCheckout, so
-                // a stale message never shows a "Create invoice" the API
-                // would reject.
-                // Switching to Free buys nothing, so its Review is shown
-                // even while purchasing is closed.
-                if tier != PlanTier::Free && !self.purchasing_enabled() {
-                    log::warn!("[CONNECT] ReviewPlanChange ignored — purchasing disabled");
-                    return iced::Task::none();
-                }
-                // Never replace an invoice that is already out for payment.
-                if self
-                    .checkout
-                    .as_ref()
-                    .is_some_and(|cs| !matches!(cs.phase, CheckoutPhase::Review))
-                {
-                    return iced::Task::none();
-                }
-                self.active_sub = ConnectSubMenu::PlanBilling;
-                self.show_billing_history = false;
-                self.show_plan_comparison = false;
-                // Back from Review lands on the same picked row.
-                self.selected_plan_tier = Some(tier.clone());
-                self.checkout_seq += 1;
-                let id = self.checkout_seq;
-                let card_change = self.card_change_route(&tier, self.selected_billing_cycle);
-                let mut checkout = CheckoutState::new(
-                    id,
-                    tier.clone(),
-                    self.selected_billing_cycle,
-                    self.plan.clone(),
-                );
-                if card_change {
-                    // A card that renews by itself changes plan through the
-                    // card (bitcoin is refused then, decision 15): fetch
-                    // Stripe's preview first.
-                    checkout.phase = CheckoutPhase::ChangePreviewing;
-                    checkout.pay_with = PayWith::Card;
-                    self.checkout = Some(checkout);
-                    let gen = self.session_generation;
-                    let client = self.client.clone();
-                    let req = PlanChangeRequest {
-                        plan: tier,
-                        billing_cycle: self.selected_billing_cycle,
-                        proration_date: None,
-                    };
-                    return iced::Task::perform(
-                        async move { client.preview_plan_change(req).await.map_err(refusal) },
-                        move |result| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::ChangePreviewLoaded(result, gen, id),
-                            ))
-                        },
-                    );
-                }
-                self.checkout = Some(checkout);
+                return self.review_connect_plan_change(tier)
             }
 
             ConnectAccountMessage::StartCheckout(tier) => {
-                // Defense-in-depth (PLAN-estate-promo PR2): the picker hides
-                // upgrade CTAs and the renewal banner is suppressed while
-                // purchasing is disabled, but this is the single chokepoint
-                // every checkout flows through — never open one the API would
-                // reject even if a stale message slips through.
-                if !self.purchasing_enabled() {
-                    log::warn!("[CONNECT] StartCheckout ignored — purchasing disabled");
-                    return iced::Task::none();
-                }
-                // Never replace an invoice that is out for payment (a double
-                // press, or a stale message): only Review, Expired and Failed
-                // may start a new one.
-                if self.checkout.as_ref().is_some_and(|cs| {
-                    !matches!(
-                        cs.phase,
-                        CheckoutPhase::Review
-                            | CheckoutPhase::Expired
-                            | CheckoutPhase::Failed { .. }
-                    )
-                }) {
-                    log::warn!("[CONNECT] StartCheckout ignored — an invoice is in progress");
-                    return iced::Task::none();
-                }
-                // The cycle reviewed for this tier wins over the picker's
-                // current toggle, so a retry after expiry re-issues the same
-                // plan the user confirmed.
-                let cycle = self
-                    .checkout
-                    .as_ref()
-                    .filter(|cs| cs.tier == tier)
-                    .map(|cs| cs.cycle)
-                    .unwrap_or(self.selected_billing_cycle);
-                // A new generation: anything still in flight for the
-                // previous invoice (an expired one, a failed create) is
-                // dropped when it lands.
-                self.checkout_seq += 1;
-                let id = self.checkout_seq;
-                // Keep the plan snapshot taken when Review opened.
-                let snapshot = self
-                    .checkout
-                    .as_ref()
-                    .filter(|cs| cs.tier == tier)
-                    .and_then(|cs| cs.plan.clone())
-                    .or_else(|| self.plan.clone());
-                let opened_at = self
-                    .checkout
-                    .as_ref()
-                    .filter(|cs| cs.tier == tier)
-                    .map(|cs| cs.opened_at);
-                let mut checkout = CheckoutState::new(id, tier.clone(), cycle, snapshot);
-                if let Some(opened_at) = opened_at {
-                    checkout.opened_at = opened_at;
-                }
-                checkout.phase = CheckoutPhase::Creating;
-                self.checkout = Some(checkout);
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                let req = CheckoutRequest {
-                    plan: tier,
-                    billing_cycle: cycle,
-                };
-                return iced::Task::perform(
-                    async move {
-                        client.create_checkout(req).await.map_err(|e| {
-                            use crate::services::coincube::CoincubeError;
-                            let refused = matches!(
-                                &e,
-                                CoincubeError::Unsuccessful(info)
-                                    if (400..500).contains(&info.status_code)
-                                        && info.status_code != 401
-                                        && info.status_code != 408
-                                        && info.status_code != 429
-                            );
-                            (e.to_string(), refused)
-                        })
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CheckoutCreated(result, gen, id),
-                        ))
-                    },
-                );
+                return self.start_lightning_checkout(tier)
             }
 
             ConnectAccountMessage::CheckoutCreated(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(resp) => {
-                        let qr = qr_code::Data::new(&resp.lightning_invoice).ok();
-                        let onchain =
-                            qr_code::Data::new(bip21_uri(&resp.on_chain_address, resp.amount_sats))
-                                .ok();
-                        let cs = self.checkout.as_mut().expect("checked above");
-                        cs.phase = CheckoutPhase::AwaitingPayment;
-                        cs.checkout = Some(resp);
-                        cs.lightning_qr = qr;
-                        cs.onchain_qr = onchain;
-                        cs.poll_errors = 0;
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PollChargeStatus(id),
-                        )));
-                    }
-                    Err((message, refused)) => {
-                        if let Some(cs) = &mut self.checkout {
-                            cs.phase = CheckoutPhase::Failed { message, refused };
-                        }
-                    }
-                }
+                return self.apply_lightning_checkout(result, gen, id)
             }
 
-            ConnectAccountMessage::PollChargeStatus(id) => {
-                let should_poll = self
-                    .checkout
-                    .as_ref()
-                    .is_some_and(|cs| cs.id == id && cs.phase.polls());
-                if !should_poll {
-                    return iced::Task::none();
-                }
-                let charge_id = self
-                    .checkout
-                    .as_ref()
-                    .and_then(|cs| cs.checkout.as_ref())
-                    .map(|c| c.charge_id.clone())
-                    .unwrap_or_default();
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        client.get_charge_status(&charge_id).await.map_err(|e| {
-                            use crate::services::coincube::CoincubeError;
-                            match &e {
-                                // 4xx errors are terminal — don't retry
-                                CoincubeError::Unsuccessful(info)
-                                    if (400..500).contains(&info.status_code) =>
-                                {
-                                    (e.to_string(), true)
-                                }
-                                _ => (e.to_string(), false),
-                            }
-                        })
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::ChargeStatusUpdated(result, gen, id),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::PollChargeStatus(id) => return self.poll_lightning_charge(id),
 
             ConnectAccountMessage::ChargeStatusUpdated(result, gen, id) => {
-                // Only the current checkout's poll chain may move it: a poll
-                // in flight from a dismissed or replaced invoice is dropped.
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::PollChargeStatus(id),
-                )));
-                let cs = self.checkout.as_mut().expect("checked above");
-                if !cs.phase.polls() {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(status) => {
-                        cs.poll_errors = 0;
-                        let (phase, keep_polling, paid) = next_checkout_phase(&cs.phase, &status);
-                        if let CheckoutPhase::PartlyPaid { due_sats, .. } = &phase {
-                            // Same address, the remaining amount.
-                            if let Some(resp) = cs.checkout.as_ref() {
-                                cs.onchain_qr = qr_code::Data::new(bip21_uri(
-                                    &resp.on_chain_address,
-                                    *due_sats,
-                                ))
-                                .ok();
-                            }
-                            cs.network = PaymentNetwork::OnChain;
-                        }
-                        cs.phase = phase;
-                        cs.last_status = Some(status);
-                        if paid {
-                            // Refresh the plan and the history the receipt
-                            // lands in.
-                            self.billing_history = None;
-                            return self.reload_plan_billing();
-                        }
-                        if keep_polling {
-                            return poll;
-                        }
-                    }
-                    Err((e, terminal)) => {
-                        if terminal {
-                            log::error!("[CONNECT] Charge poll terminal error: {}", e);
-                            cs.resume_phase = Some(cs.phase.clone());
-                            cs.phase = CheckoutPhase::PollFailed(e);
-                        } else {
-                            cs.poll_errors += 1;
-                            if cs.poll_errors >= 3 {
-                                log::error!(
-                                    "[CONNECT] Charge poll failed after {} retries: {}",
-                                    cs.poll_errors,
-                                    e
-                                );
-                                cs.resume_phase = Some(cs.phase.clone());
-                                cs.phase = CheckoutPhase::PollFailed(e);
-                            } else {
-                                log::warn!(
-                                    "[CONNECT] Charge poll error ({}/3): {}",
-                                    cs.poll_errors,
-                                    e
-                                );
-                                return poll;
-                            }
-                        }
-                    }
-                }
+                return self.apply_lightning_charge_status(result, gen, id)
             }
             _ => {}
         }
@@ -3284,197 +2708,23 @@ impl ConnectAccountPanel {
     fn dispatch_card_checkout(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
         match message {
             ConnectAccountMessage::SetReviewCycle(cycle) => {
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::Review)
-                {
-                    cs.cycle = cycle;
-                    self.selected_billing_cycle = cycle;
-                    // Monthly → annual on a card is a card upgrade even with
-                    // auto-renewal off: switch to the card change preview
-                    // instead of a bitcoin invoice the API would refuse.
-                    let tier = cs.tier.clone();
-                    if self.card_change_route(&tier, cycle) {
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::ReviewPlanChange(tier),
-                        )));
-                    }
-                }
+                return self.set_checkout_review_cycle(cycle)
             }
 
             ConnectAccountMessage::SelectPayWith(pay_with) => {
-                let card_ok = self.card_payments_enabled()
-                    && !self.plan.as_ref().is_some_and(|p| p.is_card());
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::Review)
-                {
-                    cs.pay_with = if pay_with == PayWith::Card && !card_ok {
-                        PayWith::Bitcoin
-                    } else {
-                        pay_with
-                    };
-                }
+                return self.set_checkout_payment_method(pay_with)
             }
 
-            ConnectAccountMessage::StartCardCheckout => {
-                if !self.purchasing_enabled() || !self.card_payments_enabled() {
-                    return iced::Task::none();
-                }
-                let Some(cs) = self.checkout.as_mut().filter(|cs| {
-                    matches!(
-                        cs.phase,
-                        CheckoutPhase::Review
-                            | CheckoutPhase::CardCancelled
-                            | CheckoutPhase::CardFailed { .. }
-                    ) && cs.tier != PlanTier::Free
-                }) else {
-                    return iced::Task::none();
-                };
-                self.checkout_seq += 1;
-                let id = self.checkout_seq;
-                cs.id = id;
-                cs.pay_with = PayWith::Card;
-                cs.phase = CheckoutPhase::CardOpening;
-                cs.card_session = None;
-                cs.browser_polls = 0;
-                cs.poll_errors = 0;
-                let req = PlanChangeRequest {
-                    plan: cs.tier.clone(),
-                    billing_cycle: cs.cycle,
-                    proration_date: None,
-                };
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.create_card_checkout(req).await.map_err(refusal) },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardCheckoutCreated(result, gen, id),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::StartCardCheckout => return self.start_connect_card_checkout(),
 
             ConnectAccountMessage::CardCheckoutCreated(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let cs = self.checkout.as_mut().expect("checked above");
-                if cs.phase != CheckoutPhase::CardOpening {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(session) => {
-                        let url = session.url.clone();
-                        cs.card_session = Some(session);
-                        cs.phase = CheckoutPhase::CardInBrowser;
-                        // Card details are entered on Stripe's page only (I1).
-                        return iced::Task::batch([
-                            iced::Task::done(Message::View(view::Message::OpenUrl(url))),
-                            iced::Task::done(Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::PollCardPlan(id),
-                            ))),
-                        ]);
-                    }
-                    Err((message, refused)) => {
-                        cs.phase = CheckoutPhase::CardFailed { message, refused };
-                    }
-                }
+                return self.apply_card_checkout(result, gen, id)
             }
 
-            ConnectAccountMessage::PollCardPlan(id) => {
-                if !self
-                    .checkout
-                    .as_ref()
-                    .is_some_and(|cs| cs.id == id && cs.phase.polls_plan())
-                {
-                    return iced::Task::none();
-                }
-                let gen = self.session_generation;
-                // Sequenced when sent, like every other plan fetch, so it
-                // never outranks a reload sent after it.
-                self.plan_seq = self.plan_seq.wrapping_add(1);
-                let seq = self.plan_seq;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        client.get_connect_plan().await.map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardPlanPolled(result, gen, id, seq),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::PollCardPlan(id) => return self.poll_connect_card_plan(id),
 
             ConnectAccountMessage::CardPlanPolled(result, gen, id, seq) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::PollCardPlan(id),
-                )));
-                let now = chrono::Utc::now();
-                let cs = self.checkout.as_mut().expect("checked above");
-                if !cs.phase.polls_plan() {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(plan) => {
-                        cs.poll_errors = 0;
-                        cs.browser_polls = cs.browser_polls.saturating_add(1);
-                        let next = next_card_phase(&cs.phase, cs, &plan, now);
-                        let done = next != cs.phase;
-                        cs.phase = next;
-                        if done && !cs.phase.polls_plan() {
-                            if matches!(
-                                cs.phase,
-                                CheckoutPhase::CardActive | CheckoutPhase::ChangeDone { .. }
-                            ) {
-                                self.billing_history = None;
-                                let history = self.reload_billing_history();
-                                // Same ordering rule as `PlanReloaded`: a
-                                // newer answer already shown wins.
-                                if seq > self.applied_plan_seq {
-                                    self.applied_plan_seq = seq;
-                                    self.apply_loaded_plan(Some(plan));
-                                }
-                                // The poll waits before it reads, so a fetch
-                                // sent after it may have read the server
-                                // first, whichever response lands first.
-                                // Fetch once more so the screen settles on
-                                // the current plan.
-                                if self.plan_seq != seq {
-                                    let fresh = self.plan_fetch_task();
-                                    return iced::Task::batch([history, fresh]);
-                                }
-                                return history;
-                            }
-                            return iced::Task::none();
-                        }
-                        if cs.browser_polls >= MAX_BROWSER_POLLS {
-                            cs.phase = CheckoutPhase::PollFailed(
-                                "Still waiting after 30 minutes".to_string(),
-                            );
-                            return iced::Task::none();
-                        }
-                        return poll;
-                    }
-                    Err(e) => {
-                        cs.poll_errors += 1;
-                        if cs.poll_errors >= 3 {
-                            log::error!("[CONNECT] Card plan poll failed: {}", e);
-                            cs.phase = CheckoutPhase::PollFailed(e);
-                        } else {
-                            return poll;
-                        }
-                    }
-                }
+                return self.apply_polled_card_plan(result, gen, id, seq)
             }
 
             ConnectAccountMessage::ReopenCardPage => {
@@ -3488,25 +2738,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::BackToReview { pay_with } => {
-                // "Cancel" on the browser screen, "Try card again" and "Pay
-                // with bitcoin instead" (C2, C4, C5): back to Review with a
-                // new generation, so a late poll can't move it.
-                if let Some(cs) = self.checkout.as_mut().filter(|cs| {
-                    matches!(
-                        cs.phase,
-                        CheckoutPhase::CardInBrowser
-                            | CheckoutPhase::CardCancelled
-                            | CheckoutPhase::CardFailed { .. }
-                    )
-                }) {
-                    self.checkout_seq += 1;
-                    cs.id = self.checkout_seq;
-                    cs.phase = CheckoutPhase::Review;
-                    cs.pay_with = pay_with;
-                    cs.card_session = None;
-                    cs.browser_polls = 0;
-                    cs.poll_errors = 0;
-                }
+                return self.return_to_checkout_review(pay_with)
             }
             _ => {}
         }
@@ -3516,110 +2748,13 @@ impl ConnectAccountPanel {
     fn dispatch_plan_management(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
         match message {
             ConnectAccountMessage::ChangePreviewLoaded(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let cs = self.checkout.as_mut().expect("checked above");
-                if cs.phase != CheckoutPhase::ChangePreviewing {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(preview) => {
-                        cs.preview = Some(preview);
-                        cs.phase = CheckoutPhase::ChangeReview;
-                    }
-                    Err((message, refused)) => {
-                        cs.phase = CheckoutPhase::ChangeFailed { message, refused };
-                    }
-                }
+                return self.apply_plan_change_preview(result, gen, id)
             }
 
-            ConnectAccountMessage::ConfirmPlanChange => {
-                let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::ChangeReview)
-                else {
-                    return iced::Task::none();
-                };
-                cs.phase = CheckoutPhase::ChangeApplying;
-                let id = cs.id;
-                let req = PlanChangeRequest {
-                    plan: cs.tier.clone(),
-                    billing_cycle: cs.cycle,
-                    proration_date: cs.preview.as_ref().and_then(|p| p.proration_date.clone()),
-                };
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.change_plan(req).await.map_err(refusal) },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PlanChangeApplied(result, gen, id),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::ConfirmPlanChange => return self.confirm_connect_plan_change(),
 
             ConnectAccountMessage::PlanChangeApplied(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let cs = self.checkout.as_mut().expect("checked above");
-                if cs.phase != CheckoutPhase::ChangeApplying {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(change) => match change.status.as_str() {
-                        "requires_action" => match change.url.filter(|u| !u.is_empty()) {
-                            Some(url) => {
-                                cs.action_url = Some(url.clone());
-                                cs.phase = CheckoutPhase::ChangeInBrowser;
-                                return iced::Task::batch([
-                                    iced::Task::done(Message::View(view::Message::OpenUrl(url))),
-                                    iced::Task::done(Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::PollCardPlan(id),
-                                    ))),
-                                ]);
-                            }
-                            // Nothing says whether the change took effect:
-                            // never claim it failed with nothing charged.
-                            None => {
-                                return self.enter_change_unconfirmed(
-                                    "Your bank asked to confirm the payment, but Connect \
-                                     sent no page to confirm it on"
-                                        .to_string(),
-                                );
-                            }
-                        },
-                        "paid" | "scheduled" => {
-                            cs.phase = CheckoutPhase::ChangeDone {
-                                scheduled: change.status == "scheduled",
-                            };
-                            return self.reload_plan_billing();
-                        }
-                        other => {
-                            log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
-                            let message = format!(
-                                "Connect returned \"{other}\", which this version of COINCUBE Desktop \
-                                 doesn't know"
-                            );
-                            return self.enter_change_unconfirmed(message);
-                        }
-                    },
-                    // A refusal changed nothing. Anything else (no answer, a
-                    // 5xx) may have applied the change and charged the card:
-                    // say so and reload the plan.
-                    Err((message, true)) => {
-                        cs.phase = CheckoutPhase::ChangeFailed {
-                            message,
-                            refused: true,
-                        };
-                    }
-                    Err((message, false)) => {
-                        return self.enter_change_unconfirmed(message);
-                    }
-                }
+                return self.apply_connect_plan_change(result, gen, id)
             }
 
             ConnectAccountMessage::RetryPlanRefresh => {
@@ -3648,51 +2783,10 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::SetAutoRenew(enabled) => {
-                if self.card_request_busy {
-                    return iced::Task::none();
-                }
-                self.card_request_busy = true;
-                self.card_request_error = None;
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .set_auto_renew(enabled)
-                            .await
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardRequestDone(result.map(|_| None), gen),
-                        ))
-                    },
-                );
+                return self.set_connect_auto_renew(enabled)
             }
 
-            ConnectAccountMessage::OpenCardPortal => {
-                if self.card_request_busy {
-                    return iced::Task::none();
-                }
-                self.card_request_busy = true;
-                self.card_request_error = None;
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .create_card_portal()
-                            .await
-                            .map(|p| Some(p.url))
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardRequestDone(result, gen),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::OpenCardPortal => return self.open_connect_card_portal(),
 
             ConnectAccountMessage::KeepCurrentPlan => {
                 if self.card_request_busy {
@@ -3713,23 +2807,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::CardRequestDone(result, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.card_request_busy = false;
-                match result {
-                    // The portal: open Stripe's page (update card only, I1).
-                    Ok(Some(url)) => {
-                        return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
-                    }
-                    Ok(None) => {
-                        self.confirm_auto_renew_off = false;
-                        return self.reload_plan_billing();
-                    }
-                    Err(e) => {
-                        self.card_request_error = Some(e);
-                    }
-                }
+                return self.apply_connect_card_request(result, gen)
             }
             _ => {}
         }
@@ -3755,36 +2833,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::ResumeChargePolling => {
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| matches!(cs.phase, CheckoutPhase::PollFailed(_)))
-                {
-                    cs.poll_errors = 0;
-                    cs.browser_polls = 0;
-                    let id = cs.id;
-                    // Resume whichever chain stopped: the card checkout or
-                    // 3-D Secure confirmation polls the plan; an invoice
-                    // polls its charge.
-                    let msg = if cs.action_url.is_some() {
-                        cs.phase = CheckoutPhase::ChangeInBrowser;
-                        ConnectAccountMessage::PollCardPlan(id)
-                    } else if cs.card_session.is_some() {
-                        cs.phase = CheckoutPhase::CardInBrowser;
-                        ConnectAccountMessage::PollCardPlan(id)
-                    } else {
-                        // Back to the phase polling stopped in (never a
-                        // fresh "send the full amount" after a partial
-                        // payment).
-                        cs.phase = cs
-                            .resume_phase
-                            .take()
-                            .filter(CheckoutPhase::polls)
-                            .unwrap_or(CheckoutPhase::AwaitingPayment);
-                        ConnectAccountMessage::PollChargeStatus(id)
-                    };
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(msg)));
-                }
+                return self.resume_lightning_charge_polling()
             }
 
             ConnectAccountMessage::DismissCheckout => {
@@ -3792,16 +2841,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::OpenCheckoutUrl(url) => {
-                // B4: the BTCPay page is open. The poll chain keeps running
-                // (PayingInBrowser polls), so this screen still updates.
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::AwaitingPayment)
-                {
-                    cs.phase = CheckoutPhase::PayingInBrowser;
-                }
-                return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+                return self.open_connect_checkout_url(url)
             }
 
             ConnectAccountMessage::DismissRenewalBanner => {
@@ -3836,60 +2876,10 @@ impl ConnectAccountPanel {
                 self.show_campaign_redeem = show;
             }
 
-            ConnectAccountMessage::RenewCurrentPlan => {
-                // D1 banner CTA: jump to Plan & Billing and open checkout
-                // pre-selected to the user's current tier + cycle.
-                let Some(plan) = self.plan.as_ref() else {
-                    return iced::Task::none();
-                };
-                let tier = plan.plan.clone();
-                let cycle = plan.billing_cycle;
-                self.active_sub = ConnectSubMenu::PlanBilling;
-                // Same routing concern as OpenPlanBilling: a stale history
-                // toggle would mask the picker on the Free/lapsed fallback
-                // path below (where no checkout is started).
-                self.show_billing_history = false;
-                self.show_plan_comparison = false;
-                // A Free/lapsed plan has no tier to pre-fill an invoice for
-                // — fall back to the picker.
-                if matches!(tier, PlanTier::Free) {
-                    self.show_plan_comparison = true;
-                    return iced::Task::none();
-                }
-                if let Some(cycle) = cycle {
-                    self.selected_billing_cycle = cycle;
-                }
-                // Renew goes through Review (board 1 "Renew Pro" → board 3)
-                // so the amount and covered dates are shown before an
-                // invoice is created.
-                return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::ReviewPlanChange(tier),
-                )));
-            }
+            ConnectAccountMessage::RenewCurrentPlan => return self.renew_connect_plan(),
 
             ConnectAccountMessage::ToggleBillingHistory => {
-                self.show_billing_history = !self.show_billing_history;
-                if self.show_billing_history {
-                    self.show_plan_comparison = false;
-                    let gen = self.session_generation;
-                    let c2 = self.client.clone();
-                    return iced::Task::batch([
-                        self.reload_billing_history(),
-                        iced::Task::perform(
-                            async move {
-                                match c2.get_user().await {
-                                    Ok(u) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileLoaded(u, gen),
-                                    )),
-                                    Err(e) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
-                                    )),
-                                }
-                            },
-                            |m| m,
-                        ),
-                    ]);
-                }
+                return self.toggle_connect_billing_history()
             }
             ConnectAccountMessage::Contacts(contacts_msg) => {
                 return self.update_contacts(contacts_msg);
@@ -3922,24 +2912,7 @@ impl ConnectAccountPanel {
                 }
             }
             ConnectAccountMessage::BillingHistoryLoaded(result, gen) => {
-                if gen == self.session_generation {
-                    match result {
-                        Ok(history) => {
-                            self.billing_history = Some(history);
-                            self.error = None;
-                        }
-                        Err(user) => {
-                            // Retryability and the `Ref:` come from the error
-                            // itself. Hardcoding them meant a 401 or a plan-gate
-                            // 403 — both perfectly likely on a *billing* screen —
-                            // rendered "check your internet connection" over a
-                            // "Try again" button that could only ever reproduce
-                            // the same refusal.
-                            self.error =
-                                Some(PanelError::retryable(user, RetryAction::BillingHistory));
-                        }
-                    }
-                }
+                return self.apply_loaded_billing_history(result, gen)
             }
             ConnectAccountMessage::UserProfileLoaded(user, gen) => {
                 // Non-auth profile refresh - only update user, no step/session changes
@@ -3969,55 +2942,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::Retry(action) => {
-                // The card is gone the moment its button is pressed: leaving it
-                // up while the retry runs makes a working retry look like a
-                // dead button.
-                self.error = None;
-                return match action {
-                    RetryAction::Session => {
-                        // `Init` re-reads the keyring session and re-fires the
-                        // refresh, and already guards against re-entry while one
-                        // is in flight.
-                        self.update_message(ConnectAccountMessage::Init)
-                    }
-                    RetryAction::SecurityData => self.reload_security(),
-                    RetryAction::DeletionStatus => self.load_deletion_status(),
-                    RetryAction::UserProfile => {
-                        let gen = self.session_generation;
-                        let client = self.client.clone();
-                        iced::Task::perform(
-                            async move {
-                                match client.get_user().await {
-                                    Ok(u) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileLoaded(u, gen),
-                                    )),
-                                    Err(e) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
-                                    )),
-                                }
-                            },
-                            |m| m,
-                        )
-                    }
-                    RetryAction::BillingHistory => {
-                        let gen = self.session_generation;
-                        let client = self.client.clone();
-                        iced::Task::perform(
-                            async move { client.get_billing_history().await },
-                            move |res| match res {
-                                Ok(history) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::BillingHistoryLoaded(
-                                        Err((&e).into()),
-                                        gen,
-                                    ),
-                                )),
-                            },
-                        )
-                    }
-                };
+                return self.retry_connect_account_action(action)
             }
 
             // ── Campaign code redemption (v2 campaign engine) ─────────────
@@ -4104,179 +3029,7 @@ impl ConnectAccountPanel {
     fn dispatch_sign_in_duress(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
         match message {
             ConnectAccountMessage::DuressStateChecked(outcome, gen, attempt) => {
-                // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
-                // this resolves, so the dashboard is never shown to a possibly-
-                // in-duress account.
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                match outcome {
-                    DuressCheckOutcome::Ok(s) if s.active => {
-                        // This signed-in device is the trusted recovery vehicle:
-                        // show the all-clear entry. Do NOT persist
-                        // DuressLocalState.active here — the launch reconcile
-                        // keys off that flag and would route this device into the
-                        // cryptic dead-end (which has no all-clear entry) on the
-                        // next restart, making recovery impossible. The flag is
-                        // owned by the paths that actually lock this device: the
-                        // local duress PIN and the in-Cube gRPC remote handler.
-                        self.step = ConnectFlowStep::DuressRecovery {
-                            unlock_at: s.unlock_at,
-                            passphrase: String::new(),
-                            submitting: false,
-                            cleared: false,
-                        };
-                        // Cache the authoritative state we just fetched so the
-                        // Duress tab paints from it immediately instead of
-                        // flashing the setup flow while a fresh fetch is in
-                        // flight (see `duress_ux`).
-                        self.duress_state = Some(s);
-                    }
-                    // Confirmed not in duress — NOW reveal the dashboard.
-                    DuressCheckOutcome::Ok(s) => {
-                        self.step = ConnectFlowStep::Dashboard;
-                        self.signing_in_with_authenticator = false;
-                        self.signed_out_by = None;
-                        self.unverified = None;
-                        // Plan & billing opened while the session was still
-                        // being checked loaded nothing; load its history now,
-                        // on every return path below.
-                        let billing = self.billing_history_if_open();
-                        // Cache the fetched state before any early return, so the
-                        // Duress tab reflects the enabled state on its first paint
-                        // rather than briefly showing enrollment CTAs.
-                        let needs_device_register = s.enrolled && !s.this_device_registered;
-                        let server_enrolled = s.enrolled;
-                        self.duress_state = Some(s);
-                        // Phase 0: a signed-in device on an already-enrolled
-                        // account that isn't yet registered server-side mints +
-                        // registers its OWN duress code (per-device, never
-                        // shared), so it can fire trigger-with-code on its own
-                        // activation. Fire-and-forget; idempotent (skips if this
-                        // device already holds a code).
-                        if needs_device_register {
-                            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                                return iced::Task::batch([
-                                    billing,
-                                    register_device_duress_task(self.client.clone(), account_id),
-                                ]);
-                            }
-                        }
-                        // Launch reconcile (Issue 2, PR 4): bring this device's
-                        // local duress state in line with the server's, catching
-                        // a disable missed while offline AND an orphaned device
-                        // (Cubes armed while the local state never finished, e.g.
-                        // a crash mid-enroll) whose duress PIN would otherwise
-                        // still trip a wipe behind a UI that reports it inert.
-                        //
-                        // `reconcile_duress_disarm` (server says NOT enrolled)
-                        // disarms a matching local enrollment or any orphaned
-                        // armed Cubes; `reconcile_duress_orphan` (server says
-                        // STILL enrolled — reached only with this device already
-                        // registered) disarms ONLY an orphan, never a healthy
-                        // enrollment. Both no-op cheaply for a consistent device.
-                        if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
-                                let gen = self.session_generation;
-                                let task = if server_enrolled {
-                                    iced::Task::perform(
-                                        async move { crate::app::reconcile_duress_orphan(dir).await },
-                                        move |res| {
-                                            Message::View(view::Message::ConnectAccount(
-                                                ConnectAccountMessage::Duress(
-                                                    DuressMessage::DisarmComplete(res, gen),
-                                                ),
-                                            ))
-                                        },
-                                    )
-                                } else {
-                                    iced::Task::perform(
-                                        async move {
-                                            crate::app::reconcile_duress_disarm(dir, account_id)
-                                                .await
-                                        },
-                                        move |res| {
-                                            Message::View(view::Message::ConnectAccount(
-                                                ConnectAccountMessage::Duress(
-                                                    DuressMessage::DisarmComplete(res, gen),
-                                                ),
-                                            ))
-                                        },
-                                    )
-                                };
-                                return iced::Task::batch([billing, task]);
-                            }
-                        }
-                        return billing;
-                    }
-                    // Transient (network / 5xx / rate-limit) — retry with
-                    // backoff while attempts remain.
-                    DuressCheckOutcome::Unreachable if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
-                        return duress_state_check_task(self.client.clone(), gen, attempt + 1);
-                    }
-                    // Retries exhausted. Fail CLOSED: do not reveal the
-                    // dashboard. Show an error + Retry on the checking screen.
-                    // (The dashboard is server-backed anyway, so it would be
-                    // non-functional during this outage.)
-                    DuressCheckOutcome::Unreachable => {
-                        log::warn!(
-                            "[CONNECT] duress state check unreachable after {} attempts; \
-                             holding at the verification gate",
-                            attempt + 1
-                        );
-                        self.step = ConnectFlowStep::CheckingDuress {
-                            status: DuressGateStatus::Unreachable,
-                        };
-                    }
-                    // The server returned a body we can't decode. Auto-retrying
-                    // is futile (it'll mismatch every time), so DON'T loop —
-                    // hold closed with distinct copy + an update hint. The body
-                    // was already logged in `get_duress_state`. A manual Retry
-                    // is still offered in case it's a server bug being hotfixed.
-                    DuressCheckOutcome::Incompatible => {
-                        log::error!(
-                            "[CONNECT] duress state response is undecodable (contract \
-                             mismatch); holding the gate closed — app may need updating"
-                        );
-                        self.step = ConnectFlowStep::CheckingDuress {
-                            status: DuressGateStatus::Incompatible,
-                        };
-                    }
-                    // The session was rejected mid-gate. Sitting on the duress
-                    // gate would loop forever; drop to login instead.
-                    DuressCheckOutcome::Unauthorized => {
-                        log::warn!(
-                            "[CONNECT] duress gate: session rejected (401); returning to login"
-                        );
-                        let was_logged_in = self.user.is_some();
-                        // The session is dead — tear it all down (bumps
-                        // session_generation so stale async results are ignored,
-                        // drops the JWT client, keyring session, and cached
-                        // user/plan) so the next Init doesn't restore it.
-                        self.clear_session();
-                        // Settled, not retryable: the session is gone, so the
-                        // card offers no "Try again" — signing in is the only
-                        // way forward.
-                        self.error = Some(PanelError::settled(UserError::new(
-                            "Your session has expired",
-                            "Sign in again to continue.",
-                            crate::user_error::CC_AUTH_EXPIRED,
-                            false,
-                        )));
-                        self.step = ConnectFlowStep::Login {
-                            email: String::new(),
-                            loading: false,
-                        };
-                        // Mirror the normal LogOut path: Buy/Sell shares this
-                        // session, so it must drop its stale in-memory token too
-                        // rather than keep showing a logged-in state.
-                        if was_logged_in {
-                            return iced::Task::done(Message::View(view::Message::BuySell(
-                                view::BuySellMessage::LogOut,
-                            )));
-                        }
-                    }
-                }
+                return self.apply_sign_in_duress_check(outcome, gen, attempt)
             }
             ConnectAccountMessage::RetryDuressCheck => {
                 // From the CheckingDuress error screen (either failure mode).
@@ -4933,6 +3686,1455 @@ impl ConnectAccountPanel {
             });
         }
         self.post_login_tasks(StoredSession { login }, epoch, true)
+    }
+
+    fn submit_connect_login(&mut self) -> iced::Task<Message> {
+        self.error = None;
+        // A login must never redeem a code stashed for a (different)
+        // new account during an abandoned signup. See `Init`.
+        self.pending_campaign_code = None;
+
+        let ConnectFlowStep::Login { email, loading } = &mut self.step else {
+            return iced::Task::none();
+        };
+        *loading = true;
+        let email_val = email.clone();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                let result = client
+                    .login_send_otp(OtpRequest {
+                        email: email_val.clone(),
+                    })
+                    .await;
+                (email_val, result)
+            },
+            |(email, res)| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpRequested {
+                        email,
+                        is_signup: false,
+                    },
+                )),
+                Err(e) => {
+                    let is_unverified = matches!(
+                        &e,
+                        crate::services::coincube::CoincubeError::Unsuccessful(info)
+                            if info.status_code == 401
+                                && info.text.contains("Email not verified")
+                    );
+                    if is_unverified {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::EmailNotVerified { email },
+                        ))
+                    } else {
+                        Message::View(view::Message::ConnectAccount(ConnectAccountMessage::Error(
+                            (&e).into(),
+                        )))
+                    }
+                }
+            },
+        )
+    }
+
+    fn submit_connect_registration(&mut self) -> iced::Task<Message> {
+        // Stash any account-creation promo/referral code now; it's
+        // redeemed once the new session authenticates (the redeem
+        // endpoint requires a token). Empty → nothing to redeem.
+        self.pending_campaign_code = {
+            let trimmed = self.register_campaign_code.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        };
+        let ConnectFlowStep::Register { email, loading } = &mut self.step else {
+            return iced::Task::none();
+        };
+        *loading = true;
+        let email_val = email.clone();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .signup_send_otp(OtpRequest {
+                        email: email_val.clone(),
+                    })
+                    .await
+                    .map(|()| email_val)
+            },
+            |res| match res {
+                Ok(email) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpRequested {
+                        email,
+                        is_signup: true,
+                    },
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Error((&e).into()),
+                )),
+            },
+        )
+    }
+
+    fn apply_requested_otp(&mut self, email: String, is_signup: bool) -> iced::Task<Message> {
+        self.error = None;
+        self.signing_in_with_authenticator = false;
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+
+        self.step = ConnectFlowStep::OtpVerification {
+            email,
+            otp: String::new(),
+            sending: false,
+            is_signup,
+            cooldown: 60,
+        };
+        iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::OtpCooldownTick(attempt),
+        )))
+    }
+
+    fn return_to_connect_email(&mut self) -> iced::Task<Message> {
+        // "Start over" from the authenticator step: its challenge
+        // can't be reused, so a new email code is needed.
+        if let ConnectFlowStep::TwoFactor {
+            email,
+            code,
+            sending: false,
+            ..
+        } = &mut self.step
+        {
+            zeroize::Zeroize::zeroize(&mut code.0);
+            self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+            self.signing_in_with_authenticator = false;
+            self.step = ConnectFlowStep::Login {
+                email: std::mem::take(email),
+                loading: false,
+            };
+            self.error = None;
+            return iced::Task::none();
+        }
+        if let ConnectFlowStep::OtpVerification {
+            email, is_signup, ..
+        } = &self.step
+        {
+            self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+            self.step = if *is_signup {
+                ConnectFlowStep::Register {
+                    email: email.clone(),
+                    loading: false,
+                }
+            } else {
+                ConnectFlowStep::Login {
+                    email: email.clone(),
+                    loading: false,
+                }
+            };
+            self.error = None;
+        }
+        iced::Task::none()
+    }
+
+    fn tick_otp_cooldown(&mut self, attempt: u64) -> iced::Task<Message> {
+        if attempt != self.otp_attempt_generation {
+            return iced::Task::none();
+        }
+        if let ConnectFlowStep::OtpVerification { cooldown, .. } = &mut self.step {
+            if *cooldown > 0 {
+                *cooldown -= 1;
+                return iced::Task::perform(
+                    async { tokio::time::sleep(std::time::Duration::from_secs(1)).await },
+                    move |_| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::OtpCooldownTick(attempt),
+                        ))
+                    },
+                );
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn resend_connect_otp(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::OtpVerification {
+            email,
+            sending,
+            is_signup,
+            cooldown,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *cooldown > 0 || *sending {
+            return iced::Task::none();
+        }
+        *sending = true;
+        let attempt = self.otp_attempt_generation;
+        let email_val = email.clone();
+        let is_signup = *is_signup;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                if is_signup {
+                    client.resend_signup_otp(&email_val).await
+                } else {
+                    client.login_send_otp(OtpRequest { email: email_val }).await
+                }
+            },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResent(attempt),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
+                )),
+            },
+        )
+    }
+
+    fn apply_resent_otp(&mut self, attempt: u64) -> iced::Task<Message> {
+        if attempt != self.otp_attempt_generation {
+            return iced::Task::none();
+        }
+        if let ConnectFlowStep::OtpVerification {
+            otp,
+            sending,
+            cooldown,
+            ..
+        } = &mut self.step
+        {
+            *otp = String::new();
+            *sending = false;
+            *cooldown = 60;
+            self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::OtpCooldownTick(self.otp_attempt_generation),
+            )));
+        }
+        iced::Task::none()
+    }
+
+    fn verify_connect_otp(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::OtpVerification {
+            email,
+            otp,
+            sending,
+            is_signup,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *sending {
+            return iced::Task::none();
+        }
+        *sending = true;
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+        let req = OtpVerifyRequest {
+            email: email.clone(),
+            otp: otp.clone(),
+        };
+        let is_signup = *is_signup;
+        let client = self.client.clone();
+        let epoch = self.auth_epoch;
+        iced::Task::perform(
+            async move {
+                if is_signup {
+                    client.signup_verify_otp(req).await
+                } else {
+                    client.login_verify_otp(req).await
+                }
+            },
+            move |res| match res {
+                Ok(login) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpVerified(login, epoch, attempt),
+                )),
+                Err(crate::services::coincube::CoincubeError::SecondFactorRequired(challenge)) => {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::TwoFactorRequired(challenge, epoch, attempt),
+                    ))
+                }
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpVerifyFailed((&e).into(), epoch, attempt),
+                )),
+            },
+        )
+    }
+
+    fn apply_unverified_connect_email(&mut self, email: String) -> iced::Task<Message> {
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+        self.step = ConnectFlowStep::OtpVerification {
+            email: email.clone(),
+            otp: String::new(),
+            sending: true,
+            is_signup: true,
+            cooldown: 0,
+        };
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.resend_signup_otp(&email).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResent(attempt),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
+                )),
+            },
+        )
+    }
+
+    fn remove_verified_connect_device(&mut self, id: u32) -> iced::Task<Message> {
+        if self.review_device_removal != Some(id) {
+            return iced::Task::none();
+        }
+        self.review_device_removal = None;
+        self.verified_devices_state.deleting_ids.insert(id);
+
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        let id_for_result = id;
+
+        iced::Task::perform(
+            async move { client.delete_verified_device(id).await },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::VerifiedDeviceDeleted(
+                        id_for_result,
+                        gen,
+                        res.map_err(|e| e.to_string()),
+                    ),
+                ))
+            },
+        )
+    }
+
+    fn apply_verified_device_removal(
+        &mut self,
+        id: u32,
+        gen: u64,
+        result: Result<(), String>,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+
+        self.verified_devices_state.deleting_ids.remove(&id);
+
+        match result {
+            Ok(()) => {
+                if let Some(devices) = self.verified_devices.as_mut() {
+                    devices.retain(|d| d.id != id);
+                }
+            }
+            Err(err) => {
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Error(UserError::logged(
+                        "Couldn't remove that device",
+                        "Try again. If it keeps failing, contact support and quote the reference below.",
+                        crate::user_error::CC_API_BADRESP,
+                        true,
+                        err,
+                    )),
+                )));
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn review_connect_plan_change(
+        &mut self,
+        tier: crate::services::coincube::PlanTier,
+    ) -> iced::Task<Message> {
+        // Review is the step before any invoice exists. It is only
+        // reachable while purchasing is open, like StartCheckout, so
+        // a stale message never shows a "Create invoice" the API
+        // would reject.
+        // Switching to Free buys nothing, so its Review is shown
+        // even while purchasing is closed.
+        if tier != PlanTier::Free && !self.purchasing_enabled() {
+            log::warn!("[CONNECT] ReviewPlanChange ignored — purchasing disabled");
+            return iced::Task::none();
+        }
+        // Never replace an invoice that is already out for payment.
+        if self
+            .checkout
+            .as_ref()
+            .is_some_and(|cs| !matches!(cs.phase, CheckoutPhase::Review))
+        {
+            return iced::Task::none();
+        }
+        self.active_sub = ConnectSubMenu::PlanBilling;
+        self.show_billing_history = false;
+        self.show_plan_comparison = false;
+        // Back from Review lands on the same picked row.
+        self.selected_plan_tier = Some(tier.clone());
+        self.checkout_seq += 1;
+        let id = self.checkout_seq;
+        let card_change = self.card_change_route(&tier, self.selected_billing_cycle);
+        let mut checkout = CheckoutState::new(
+            id,
+            tier.clone(),
+            self.selected_billing_cycle,
+            self.plan.clone(),
+        );
+        if card_change {
+            // A card that renews by itself changes plan through the
+            // card (bitcoin is refused then, decision 15): fetch
+            // Stripe's preview first.
+            checkout.phase = CheckoutPhase::ChangePreviewing;
+            checkout.pay_with = PayWith::Card;
+            self.checkout = Some(checkout);
+            let gen = self.session_generation;
+            let client = self.client.clone();
+            let req = PlanChangeRequest {
+                plan: tier,
+                billing_cycle: self.selected_billing_cycle,
+                proration_date: None,
+            };
+            return iced::Task::perform(
+                async move { client.preview_plan_change(req).await.map_err(refusal) },
+                move |result| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::ChangePreviewLoaded(result, gen, id),
+                    ))
+                },
+            );
+        }
+        self.checkout = Some(checkout);
+        iced::Task::none()
+    }
+
+    fn start_lightning_checkout(
+        &mut self,
+        tier: crate::services::coincube::PlanTier,
+    ) -> iced::Task<Message> {
+        // Defense-in-depth (PLAN-estate-promo PR2): the picker hides
+        // upgrade CTAs and the renewal banner is suppressed while
+        // purchasing is disabled, but this is the single chokepoint
+        // every checkout flows through — never open one the API would
+        // reject even if a stale message slips through.
+        if !self.purchasing_enabled() {
+            log::warn!("[CONNECT] StartCheckout ignored — purchasing disabled");
+            return iced::Task::none();
+        }
+        // Never replace an invoice that is out for payment (a double
+        // press, or a stale message): only Review, Expired and Failed
+        // may start a new one.
+        if self.checkout.as_ref().is_some_and(|cs| {
+            !matches!(
+                cs.phase,
+                CheckoutPhase::Review | CheckoutPhase::Expired | CheckoutPhase::Failed { .. }
+            )
+        }) {
+            log::warn!("[CONNECT] StartCheckout ignored — an invoice is in progress");
+            return iced::Task::none();
+        }
+        // The cycle reviewed for this tier wins over the picker's
+        // current toggle, so a retry after expiry re-issues the same
+        // plan the user confirmed.
+        let cycle = self
+            .checkout
+            .as_ref()
+            .filter(|cs| cs.tier == tier)
+            .map(|cs| cs.cycle)
+            .unwrap_or(self.selected_billing_cycle);
+        // A new generation: anything still in flight for the
+        // previous invoice (an expired one, a failed create) is
+        // dropped when it lands.
+        self.checkout_seq += 1;
+        let id = self.checkout_seq;
+        // Keep the plan snapshot taken when Review opened.
+        let snapshot = self
+            .checkout
+            .as_ref()
+            .filter(|cs| cs.tier == tier)
+            .and_then(|cs| cs.plan.clone())
+            .or_else(|| self.plan.clone());
+        let opened_at = self
+            .checkout
+            .as_ref()
+            .filter(|cs| cs.tier == tier)
+            .map(|cs| cs.opened_at);
+        let mut checkout = CheckoutState::new(id, tier.clone(), cycle, snapshot);
+        if let Some(opened_at) = opened_at {
+            checkout.opened_at = opened_at;
+        }
+        checkout.phase = CheckoutPhase::Creating;
+        self.checkout = Some(checkout);
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        let req = CheckoutRequest {
+            plan: tier,
+            billing_cycle: cycle,
+        };
+        iced::Task::perform(
+            async move {
+                client.create_checkout(req).await.map_err(|e| {
+                    use crate::services::coincube::CoincubeError;
+                    let refused = matches!(
+                        &e,
+                        CoincubeError::Unsuccessful(info)
+                            if (400..500).contains(&info.status_code)
+                                && info.status_code != 401
+                                && info.status_code != 408
+                                && info.status_code != 429
+                    );
+                    (e.to_string(), refused)
+                })
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CheckoutCreated(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_lightning_checkout(
+        &mut self,
+        result: Result<crate::services::coincube::CheckoutResponse, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(resp) => {
+                let qr = qr_code::Data::new(&resp.lightning_invoice).ok();
+                let onchain =
+                    qr_code::Data::new(bip21_uri(&resp.on_chain_address, resp.amount_sats)).ok();
+                let cs = self.checkout.as_mut().expect("checked above");
+                cs.phase = CheckoutPhase::AwaitingPayment;
+                cs.checkout = Some(resp);
+                cs.lightning_qr = qr;
+                cs.onchain_qr = onchain;
+                cs.poll_errors = 0;
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PollChargeStatus(id),
+                )));
+            }
+            Err((message, refused)) => {
+                if let Some(cs) = &mut self.checkout {
+                    cs.phase = CheckoutPhase::Failed { message, refused };
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn poll_lightning_charge(&mut self, id: u64) -> iced::Task<Message> {
+        let should_poll = self
+            .checkout
+            .as_ref()
+            .is_some_and(|cs| cs.id == id && cs.phase.polls());
+        if !should_poll {
+            return iced::Task::none();
+        }
+        let charge_id = self
+            .checkout
+            .as_ref()
+            .and_then(|cs| cs.checkout.as_ref())
+            .map(|c| c.charge_id.clone())
+            .unwrap_or_default();
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                client.get_charge_status(&charge_id).await.map_err(|e| {
+                    use crate::services::coincube::CoincubeError;
+                    match &e {
+                        // 4xx errors are terminal — don't retry
+                        CoincubeError::Unsuccessful(info)
+                            if (400..500).contains(&info.status_code) =>
+                        {
+                            (e.to_string(), true)
+                        }
+                        _ => (e.to_string(), false),
+                    }
+                })
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::ChargeStatusUpdated(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_lightning_charge_status(
+        &mut self,
+        result: Result<crate::services::coincube::ChargeStatusResponse, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        // Only the current checkout's poll chain may move it: a poll
+        // in flight from a dismissed or replaced invoice is dropped.
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::PollChargeStatus(id),
+        )));
+        let cs = self.checkout.as_mut().expect("checked above");
+        if !cs.phase.polls() {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(status) => {
+                cs.poll_errors = 0;
+                let (phase, keep_polling, paid) = next_checkout_phase(&cs.phase, &status);
+                if let CheckoutPhase::PartlyPaid { due_sats, .. } = &phase {
+                    // Same address, the remaining amount.
+                    if let Some(resp) = cs.checkout.as_ref() {
+                        cs.onchain_qr =
+                            qr_code::Data::new(bip21_uri(&resp.on_chain_address, *due_sats)).ok();
+                    }
+                    cs.network = PaymentNetwork::OnChain;
+                }
+                cs.phase = phase;
+                cs.last_status = Some(status);
+                if paid {
+                    // Refresh the plan and the history the receipt
+                    // lands in.
+                    self.billing_history = None;
+                    return self.reload_plan_billing();
+                }
+                if keep_polling {
+                    return poll;
+                }
+            }
+            Err((e, terminal)) => {
+                if Self::should_retry_lightning_poll(cs, e, terminal) {
+                    return poll;
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn should_retry_lightning_poll(cs: &mut CheckoutState, e: String, terminal: bool) -> bool {
+        if terminal {
+            log::error!("[CONNECT] Charge poll terminal error: {}", e);
+            cs.resume_phase = Some(cs.phase.clone());
+            cs.phase = CheckoutPhase::PollFailed(e);
+        } else {
+            cs.poll_errors += 1;
+            if cs.poll_errors >= 3 {
+                log::error!(
+                    "[CONNECT] Charge poll failed after {} retries: {}",
+                    cs.poll_errors,
+                    e
+                );
+                cs.resume_phase = Some(cs.phase.clone());
+                cs.phase = CheckoutPhase::PollFailed(e);
+            } else {
+                log::warn!("[CONNECT] Charge poll error ({}/3): {}", cs.poll_errors, e);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn set_checkout_review_cycle(
+        &mut self,
+        cycle: crate::services::coincube::BillingCycle,
+    ) -> iced::Task<Message> {
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::Review)
+        {
+            cs.cycle = cycle;
+            self.selected_billing_cycle = cycle;
+            // Monthly → annual on a card is a card upgrade even with
+            // auto-renewal off: switch to the card change preview
+            // instead of a bitcoin invoice the API would refuse.
+            let tier = cs.tier.clone();
+            if self.card_change_route(&tier, cycle) {
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::ReviewPlanChange(tier),
+                )));
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn set_checkout_payment_method(
+        &mut self,
+        pay_with: crate::app::state::connect::account::PayWith,
+    ) -> iced::Task<Message> {
+        let card_ok =
+            self.card_payments_enabled() && !self.plan.as_ref().is_some_and(|p| p.is_card());
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::Review)
+        {
+            cs.pay_with = if pay_with == PayWith::Card && !card_ok {
+                PayWith::Bitcoin
+            } else {
+                pay_with
+            };
+        }
+        iced::Task::none()
+    }
+
+    fn start_connect_card_checkout(&mut self) -> iced::Task<Message> {
+        if !self.purchasing_enabled() || !self.card_payments_enabled() {
+            return iced::Task::none();
+        }
+        let Some(cs) = self.checkout.as_mut().filter(|cs| {
+            matches!(
+                cs.phase,
+                CheckoutPhase::Review
+                    | CheckoutPhase::CardCancelled
+                    | CheckoutPhase::CardFailed { .. }
+            ) && cs.tier != PlanTier::Free
+        }) else {
+            return iced::Task::none();
+        };
+        self.checkout_seq += 1;
+        let id = self.checkout_seq;
+        cs.id = id;
+        cs.pay_with = PayWith::Card;
+        cs.phase = CheckoutPhase::CardOpening;
+        cs.card_session = None;
+        cs.browser_polls = 0;
+        cs.poll_errors = 0;
+        let req = PlanChangeRequest {
+            plan: cs.tier.clone(),
+            billing_cycle: cs.cycle,
+            proration_date: None,
+        };
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.create_card_checkout(req).await.map_err(refusal) },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardCheckoutCreated(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_card_checkout(
+        &mut self,
+        result: Result<crate::services::coincube::CardCheckoutSession, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let cs = self.checkout.as_mut().expect("checked above");
+        if cs.phase != CheckoutPhase::CardOpening {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(session) => {
+                let url = session.url.clone();
+                cs.card_session = Some(session);
+                cs.phase = CheckoutPhase::CardInBrowser;
+                // Card details are entered on Stripe's page only (I1).
+                return iced::Task::batch([
+                    iced::Task::done(Message::View(view::Message::OpenUrl(url))),
+                    iced::Task::done(Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::PollCardPlan(id),
+                    ))),
+                ]);
+            }
+            Err((message, refused)) => {
+                cs.phase = CheckoutPhase::CardFailed { message, refused };
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn poll_connect_card_plan(&mut self, id: u64) -> iced::Task<Message> {
+        if !self
+            .checkout
+            .as_ref()
+            .is_some_and(|cs| cs.id == id && cs.phase.polls_plan())
+        {
+            return iced::Task::none();
+        }
+        let gen = self.session_generation;
+        // Sequenced when sent, like every other plan fetch, so it
+        // never outranks a reload sent after it.
+        self.plan_seq = self.plan_seq.wrapping_add(1);
+        let seq = self.plan_seq;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                client.get_connect_plan().await.map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardPlanPolled(result, gen, id, seq),
+                ))
+            },
+        )
+    }
+
+    fn apply_polled_card_plan(
+        &mut self,
+        result: Result<crate::services::coincube::ConnectPlan, String>,
+        gen: u64,
+        id: u64,
+        seq: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::PollCardPlan(id),
+        )));
+        let now = chrono::Utc::now();
+        let cs = self.checkout.as_mut().expect("checked above");
+        if !cs.phase.polls_plan() {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(plan) => {
+                cs.poll_errors = 0;
+                cs.browser_polls = cs.browser_polls.saturating_add(1);
+                let next = next_card_phase(&cs.phase, cs, &plan, now);
+                let done = next != cs.phase;
+                cs.phase = next;
+                if done && !cs.phase.polls_plan() {
+                    if matches!(
+                        cs.phase,
+                        CheckoutPhase::CardActive | CheckoutPhase::ChangeDone { .. }
+                    ) {
+                        return self.apply_settled_card_plan(plan, seq);
+                    }
+                    return iced::Task::none();
+                }
+                if cs.browser_polls >= MAX_BROWSER_POLLS {
+                    cs.phase =
+                        CheckoutPhase::PollFailed("Still waiting after 30 minutes".to_string());
+                    return iced::Task::none();
+                }
+                return poll;
+            }
+            Err(e) => {
+                cs.poll_errors += 1;
+                if cs.poll_errors >= 3 {
+                    log::error!("[CONNECT] Card plan poll failed: {}", e);
+                    cs.phase = CheckoutPhase::PollFailed(e);
+                } else {
+                    return poll;
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_settled_card_plan(&mut self, plan: ConnectPlan, seq: u64) -> iced::Task<Message> {
+        self.billing_history = None;
+        let history = self.reload_billing_history();
+        // Same ordering rule as `PlanReloaded`: a
+        // newer answer already shown wins.
+        if seq > self.applied_plan_seq {
+            self.applied_plan_seq = seq;
+            self.apply_loaded_plan(Some(plan));
+        }
+        // The poll waits before it reads, so a fetch
+        // sent after it may have read the server
+        // first, whichever response lands first.
+        // Fetch once more so the screen settles on
+        // the current plan.
+        if self.plan_seq != seq {
+            let fresh = self.plan_fetch_task();
+            return iced::Task::batch([history, fresh]);
+        }
+        history
+    }
+
+    fn return_to_checkout_review(
+        &mut self,
+        pay_with: crate::app::state::connect::account::PayWith,
+    ) -> iced::Task<Message> {
+        // "Cancel" on the browser screen, "Try card again" and "Pay
+        // with bitcoin instead" (C2, C4, C5): back to Review with a
+        // new generation, so a late poll can't move it.
+        if let Some(cs) = self.checkout.as_mut().filter(|cs| {
+            matches!(
+                cs.phase,
+                CheckoutPhase::CardInBrowser
+                    | CheckoutPhase::CardCancelled
+                    | CheckoutPhase::CardFailed { .. }
+            )
+        }) {
+            self.checkout_seq += 1;
+            cs.id = self.checkout_seq;
+            cs.phase = CheckoutPhase::Review;
+            cs.pay_with = pay_with;
+            cs.card_session = None;
+            cs.browser_polls = 0;
+            cs.poll_errors = 0;
+        }
+        iced::Task::none()
+    }
+
+    fn apply_plan_change_preview(
+        &mut self,
+        result: Result<crate::services::coincube::PlanChangePreview, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let cs = self.checkout.as_mut().expect("checked above");
+        if cs.phase != CheckoutPhase::ChangePreviewing {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(preview) => {
+                cs.preview = Some(preview);
+                cs.phase = CheckoutPhase::ChangeReview;
+            }
+            Err((message, refused)) => {
+                cs.phase = CheckoutPhase::ChangeFailed { message, refused };
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn confirm_connect_plan_change(&mut self) -> iced::Task<Message> {
+        let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::ChangeReview)
+        else {
+            return iced::Task::none();
+        };
+        cs.phase = CheckoutPhase::ChangeApplying;
+        let id = cs.id;
+        let req = PlanChangeRequest {
+            plan: cs.tier.clone(),
+            billing_cycle: cs.cycle,
+            proration_date: cs.preview.as_ref().and_then(|p| p.proration_date.clone()),
+        };
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.change_plan(req).await.map_err(refusal) },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PlanChangeApplied(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_connect_plan_change(
+        &mut self,
+        result: Result<crate::services::coincube::PlanChangeResult, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let cs = self.checkout.as_mut().expect("checked above");
+        if cs.phase != CheckoutPhase::ChangeApplying {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(change) => match change.status.as_str() {
+                "requires_action" => match change.url.filter(|u| !u.is_empty()) {
+                    Some(url) => {
+                        cs.action_url = Some(url.clone());
+                        cs.phase = CheckoutPhase::ChangeInBrowser;
+                        return iced::Task::batch([
+                            iced::Task::done(Message::View(view::Message::OpenUrl(url))),
+                            iced::Task::done(Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::PollCardPlan(id),
+                            ))),
+                        ]);
+                    }
+                    // Nothing says whether the change took effect:
+                    // never claim it failed with nothing charged.
+                    None => {
+                        return self.enter_change_unconfirmed(
+                            "Your bank asked to confirm the payment, but Connect \
+                             sent no page to confirm it on"
+                                .to_string(),
+                        );
+                    }
+                },
+                "paid" | "scheduled" => {
+                    cs.phase = CheckoutPhase::ChangeDone {
+                        scheduled: change.status == "scheduled",
+                    };
+                    return self.reload_plan_billing();
+                }
+                other => {
+                    log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
+                    let message = format!(
+                        "Connect returned \"{other}\", which this version of COINCUBE Desktop \
+                         doesn't know"
+                    );
+                    return self.enter_change_unconfirmed(message);
+                }
+            },
+            // A refusal changed nothing. Anything else (no answer, a
+            // 5xx) may have applied the change and charged the card:
+            // say so and reload the plan.
+            Err((message, true)) => {
+                cs.phase = CheckoutPhase::ChangeFailed {
+                    message,
+                    refused: true,
+                };
+            }
+            Err((message, false)) => {
+                return self.enter_change_unconfirmed(message);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn set_connect_auto_renew(&mut self, enabled: bool) -> iced::Task<Message> {
+        if self.card_request_busy {
+            return iced::Task::none();
+        }
+        self.card_request_busy = true;
+        self.card_request_error = None;
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .set_auto_renew(enabled)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardRequestDone(result.map(|_| None), gen),
+                ))
+            },
+        )
+    }
+
+    fn open_connect_card_portal(&mut self) -> iced::Task<Message> {
+        if self.card_request_busy {
+            return iced::Task::none();
+        }
+        self.card_request_busy = true;
+        self.card_request_error = None;
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .create_card_portal()
+                    .await
+                    .map(|p| Some(p.url))
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardRequestDone(result, gen),
+                ))
+            },
+        )
+    }
+
+    fn apply_connect_card_request(
+        &mut self,
+        result: Result<Option<String>, String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        self.card_request_busy = false;
+        match result {
+            // The portal: open Stripe's page (update card only, I1).
+            Ok(Some(url)) => {
+                return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+            }
+            Ok(None) => {
+                self.confirm_auto_renew_off = false;
+                return self.reload_plan_billing();
+            }
+            Err(e) => {
+                self.card_request_error = Some(e);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn resume_lightning_charge_polling(&mut self) -> iced::Task<Message> {
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| matches!(cs.phase, CheckoutPhase::PollFailed(_)))
+        {
+            cs.poll_errors = 0;
+            cs.browser_polls = 0;
+            let id = cs.id;
+            // Resume whichever chain stopped: the card checkout or
+            // 3-D Secure confirmation polls the plan; an invoice
+            // polls its charge.
+            let msg = if cs.action_url.is_some() {
+                cs.phase = CheckoutPhase::ChangeInBrowser;
+                ConnectAccountMessage::PollCardPlan(id)
+            } else if cs.card_session.is_some() {
+                cs.phase = CheckoutPhase::CardInBrowser;
+                ConnectAccountMessage::PollCardPlan(id)
+            } else {
+                // Back to the phase polling stopped in (never a
+                // fresh "send the full amount" after a partial
+                // payment).
+                cs.phase = cs
+                    .resume_phase
+                    .take()
+                    .filter(CheckoutPhase::polls)
+                    .unwrap_or(CheckoutPhase::AwaitingPayment);
+                ConnectAccountMessage::PollChargeStatus(id)
+            };
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(msg)));
+        }
+        iced::Task::none()
+    }
+
+    fn open_connect_checkout_url(&mut self, url: String) -> iced::Task<Message> {
+        // B4: the BTCPay page is open. The poll chain keeps running
+        // (PayingInBrowser polls), so this screen still updates.
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::AwaitingPayment)
+        {
+            cs.phase = CheckoutPhase::PayingInBrowser;
+        }
+        iced::Task::done(Message::View(view::Message::OpenUrl(url)))
+    }
+
+    fn renew_connect_plan(&mut self) -> iced::Task<Message> {
+        // D1 banner CTA: jump to Plan & Billing and open checkout
+        // pre-selected to the user's current tier + cycle.
+        let Some(plan) = self.plan.as_ref() else {
+            return iced::Task::none();
+        };
+        let tier = plan.plan.clone();
+        let cycle = plan.billing_cycle;
+        self.active_sub = ConnectSubMenu::PlanBilling;
+        // Same routing concern as OpenPlanBilling: a stale history
+        // toggle would mask the picker on the Free/lapsed fallback
+        // path below (where no checkout is started).
+        self.show_billing_history = false;
+        self.show_plan_comparison = false;
+        // A Free/lapsed plan has no tier to pre-fill an invoice for
+        // — fall back to the picker.
+        if matches!(tier, PlanTier::Free) {
+            self.show_plan_comparison = true;
+            return iced::Task::none();
+        }
+        if let Some(cycle) = cycle {
+            self.selected_billing_cycle = cycle;
+        }
+        // Renew goes through Review (board 1 "Renew Pro" → board 3)
+        // so the amount and covered dates are shown before an
+        // invoice is created.
+        iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::ReviewPlanChange(tier),
+        )))
+    }
+
+    fn toggle_connect_billing_history(&mut self) -> iced::Task<Message> {
+        self.show_billing_history = !self.show_billing_history;
+        if self.show_billing_history {
+            self.show_plan_comparison = false;
+            let gen = self.session_generation;
+            let c2 = self.client.clone();
+            return iced::Task::batch([
+                self.reload_billing_history(),
+                iced::Task::perform(
+                    async move {
+                        match c2.get_user().await {
+                            Ok(u) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileLoaded(u, gen),
+                            )),
+                            Err(e) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
+                            )),
+                        }
+                    },
+                    |m| m,
+                ),
+            ]);
+        }
+        iced::Task::none()
+    }
+
+    fn apply_loaded_billing_history(
+        &mut self,
+        result: Result<Vec<crate::services::coincube::BillingHistoryEntry>, UserError>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            match result {
+                Ok(history) => {
+                    self.billing_history = Some(history);
+                    self.error = None;
+                }
+                Err(user) => {
+                    // Retryability and the `Ref:` come from the error
+                    // itself. Hardcoding them meant a 401 or a plan-gate
+                    // 403 — both perfectly likely on a *billing* screen —
+                    // rendered "check your internet connection" over a
+                    // "Try again" button that could only ever reproduce
+                    // the same refusal.
+                    self.error = Some(PanelError::retryable(user, RetryAction::BillingHistory));
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn retry_connect_account_action(&mut self, action: RetryAction) -> iced::Task<Message> {
+        // The card is gone the moment its button is pressed: leaving it
+        // up while the retry runs makes a working retry look like a
+        // dead button.
+        self.error = None;
+        match action {
+            RetryAction::Session => {
+                // `Init` re-reads the keyring session and re-fires the
+                // refresh, and already guards against re-entry while one
+                // is in flight.
+                self.update_message(ConnectAccountMessage::Init)
+            }
+            RetryAction::SecurityData => self.reload_security(),
+            RetryAction::DeletionStatus => self.load_deletion_status(),
+            RetryAction::UserProfile => {
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                iced::Task::perform(
+                    async move {
+                        match client.get_user().await {
+                            Ok(u) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileLoaded(u, gen),
+                            )),
+                            Err(e) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
+                            )),
+                        }
+                    },
+                    |m| m,
+                )
+            }
+            RetryAction::BillingHistory => {
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                iced::Task::perform(
+                    async move { client.get_billing_history().await },
+                    move |res| match res {
+                        Ok(history) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::BillingHistoryLoaded(Err((&e).into()), gen),
+                        )),
+                    },
+                )
+            }
+        }
+    }
+
+    fn apply_sign_in_duress_check(
+        &mut self,
+        outcome: crate::services::coincube::DuressCheckOutcome,
+        gen: u64,
+        attempt: u8,
+    ) -> iced::Task<Message> {
+        // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
+        // this resolves, so the dashboard is never shown to a possibly-
+        // in-duress account.
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        match outcome {
+            DuressCheckOutcome::Ok(s) if s.active => {
+                // This signed-in device is the trusted recovery vehicle:
+                // show the all-clear entry. Do NOT persist
+                // DuressLocalState.active here — the launch reconcile
+                // keys off that flag and would route this device into the
+                // cryptic dead-end (which has no all-clear entry) on the
+                // next restart, making recovery impossible. The flag is
+                // owned by the paths that actually lock this device: the
+                // local duress PIN and the in-Cube gRPC remote handler.
+                self.step = ConnectFlowStep::DuressRecovery {
+                    unlock_at: s.unlock_at,
+                    passphrase: String::new(),
+                    submitting: false,
+                    cleared: false,
+                };
+                // Cache the authoritative state we just fetched so the
+                // Duress tab paints from it immediately instead of
+                // flashing the setup flow while a fresh fetch is in
+                // flight (see `duress_ux`).
+                self.duress_state = Some(s);
+            }
+            // Confirmed not in duress — NOW reveal the dashboard.
+            DuressCheckOutcome::Ok(s) => {
+                return self.admit_sign_in_after_duress_check(s, gen);
+            }
+            // Transient (network / 5xx / rate-limit) — retry with
+            // backoff while attempts remain.
+            DuressCheckOutcome::Unreachable if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
+                return duress_state_check_task(self.client.clone(), gen, attempt + 1);
+            }
+            // Retries exhausted. Fail CLOSED: do not reveal the
+            // dashboard. Show an error + Retry on the checking screen.
+            // (The dashboard is server-backed anyway, so it would be
+            // non-functional during this outage.)
+            DuressCheckOutcome::Unreachable => {
+                log::warn!(
+                    "[CONNECT] duress state check unreachable after {} attempts; \
+                     holding at the verification gate",
+                    attempt + 1
+                );
+                self.step = ConnectFlowStep::CheckingDuress {
+                    status: DuressGateStatus::Unreachable,
+                };
+            }
+            // The server returned a body we can't decode. Auto-retrying
+            // is futile (it'll mismatch every time), so DON'T loop —
+            // hold closed with distinct copy + an update hint. The body
+            // was already logged in `get_duress_state`. A manual Retry
+            // is still offered in case it's a server bug being hotfixed.
+            DuressCheckOutcome::Incompatible => {
+                log::error!(
+                    "[CONNECT] duress state response is undecodable (contract \
+                     mismatch); holding the gate closed — app may need updating"
+                );
+                self.step = ConnectFlowStep::CheckingDuress {
+                    status: DuressGateStatus::Incompatible,
+                };
+            }
+            // The session was rejected mid-gate. Sitting on the duress
+            // gate would loop forever; drop to login instead.
+            DuressCheckOutcome::Unauthorized => {
+                log::warn!("[CONNECT] duress gate: session rejected (401); returning to login");
+                let was_logged_in = self.user.is_some();
+                // The session is dead — tear it all down (bumps
+                // session_generation so stale async results are ignored,
+                // drops the JWT client, keyring session, and cached
+                // user/plan) so the next Init doesn't restore it.
+                self.clear_session();
+                // Settled, not retryable: the session is gone, so the
+                // card offers no "Try again" — signing in is the only
+                // way forward.
+                self.error = Some(PanelError::settled(UserError::new(
+                    "Your session has expired",
+                    "Sign in again to continue.",
+                    crate::user_error::CC_AUTH_EXPIRED,
+                    false,
+                )));
+                self.step = ConnectFlowStep::Login {
+                    email: String::new(),
+                    loading: false,
+                };
+                // Mirror the normal LogOut path: Buy/Sell shares this
+                // session, so it must drop its stale in-memory token too
+                // rather than keep showing a logged-in state.
+                if was_logged_in {
+                    return iced::Task::done(Message::View(view::Message::BuySell(
+                        view::BuySellMessage::LogOut,
+                    )));
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn admit_sign_in_after_duress_check(
+        &mut self,
+        s: crate::services::coincube::DuressState,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        self.step = ConnectFlowStep::Dashboard;
+        self.signing_in_with_authenticator = false;
+        self.signed_out_by = None;
+        self.unverified = None;
+        // Plan & billing opened while the session was still
+        // being checked loaded nothing; load its history now,
+        // on every return path below.
+        let billing = self.billing_history_if_open();
+        // Cache the fetched state before any early return, so the
+        // Duress tab reflects the enabled state on its first paint
+        // rather than briefly showing enrollment CTAs.
+        let needs_device_register = s.enrolled && !s.this_device_registered;
+        let server_enrolled = s.enrolled;
+        self.duress_state = Some(s);
+        // Phase 0: a signed-in device on an already-enrolled
+        // account that isn't yet registered server-side mints +
+        // registers its OWN duress code (per-device, never
+        // shared), so it can fire trigger-with-code on its own
+        // activation. Fire-and-forget; idempotent (skips if this
+        // device already holds a code).
+        if needs_device_register {
+            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
+                return iced::Task::batch([
+                    billing,
+                    register_device_duress_task(self.client.clone(), account_id),
+                ]);
+            }
+        }
+        // Launch reconcile (Issue 2, PR 4): bring this device's
+        // local duress state in line with the server's, catching
+        // a disable missed while offline AND an orphaned device
+        // (Cubes armed while the local state never finished, e.g.
+        // a crash mid-enroll) whose duress PIN would otherwise
+        // still trip a wipe behind a UI that reports it inert.
+        //
+        // `reconcile_duress_disarm` (server says NOT enrolled)
+        // disarms a matching local enrollment or any orphaned
+        // armed Cubes; `reconcile_duress_orphan` (server says
+        // STILL enrolled — reached only with this device already
+        // registered) disarms ONLY an orphan, never a healthy
+        // enrollment. Both no-op cheaply for a consistent device.
+        if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
+            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
+                let gen = self.session_generation;
+                let task = if server_enrolled {
+                    iced::Task::perform(
+                        async move { crate::app::reconcile_duress_orphan(dir).await },
+                        move |res| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(
+                                    res, gen,
+                                )),
+                            ))
+                        },
+                    )
+                } else {
+                    iced::Task::perform(
+                        async move { crate::app::reconcile_duress_disarm(dir, account_id).await },
+                        move |res| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(
+                                    res, gen,
+                                )),
+                            ))
+                        },
+                    )
+                };
+                return iced::Task::batch([billing, task]);
+            }
+        }
+        billing
     }
 
     /// Starts (or restarts) the Delete account page's status load.
