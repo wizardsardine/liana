@@ -1489,38 +1489,48 @@ fn validate_requested_amounts(recipients: &[Recipient], psbt: &Psbt) -> Result<(
 fn parse_payment_request(
     raw: &str,
 ) -> Result<(Address<address::NetworkUnchecked>, Option<Amount>), Error> {
-    let invalid = || Error::Unexpected("Invalid Bitcoin payment request".to_string());
     let raw = raw.trim();
     if raw
         .get(..8)
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("bitcoin:"))
     {
-        let uri = reqwest::Url::parse(raw).map_err(|_| invalid())?;
+        let uri = reqwest::Url::parse(raw).map_err(|_| invalid_payment_request())?;
         if uri.host_str().is_some() || uri.fragment().is_some() {
-            return Err(invalid());
+            return Err(invalid_payment_request());
         }
-        let address = Address::from_str(uri.path()).map_err(|_| invalid())?;
-        let mut amount = None;
-        for (key, value) in uri.query_pairs() {
-            if key.starts_with("req-") {
-                return Err(invalid());
-            }
-            if key == "amount" {
-                if amount.is_some() {
-                    return Err(invalid());
-                }
-                let parsed =
-                    Amount::from_str_in(&value, Denomination::Bitcoin).map_err(|_| invalid())?;
-                if parsed == Amount::ZERO {
-                    return Err(invalid());
-                }
-                amount = Some(parsed);
-            }
-        }
-        Ok((address, amount))
+        let address = Address::from_str(uri.path()).map_err(|_| invalid_payment_request())?;
+        Ok((address, payment_request_amount(&uri)?))
     } else {
-        Ok((Address::from_str(raw).map_err(|_| invalid())?, None))
+        Ok((
+            Address::from_str(raw).map_err(|_| invalid_payment_request())?,
+            None,
+        ))
     }
+}
+
+fn invalid_payment_request() -> Error {
+    Error::Unexpected("Invalid Bitcoin payment request".to_string())
+}
+
+fn payment_request_amount(uri: &reqwest::Url) -> Result<Option<Amount>, Error> {
+    let mut amount = None;
+    for (key, value) in uri.query_pairs() {
+        if key.starts_with("req-") {
+            return Err(invalid_payment_request());
+        }
+        if key == "amount" {
+            if amount.is_some() {
+                return Err(invalid_payment_request());
+            }
+            let parsed = Amount::from_str_in(&value, Denomination::Bitcoin)
+                .map_err(|_| invalid_payment_request())?;
+            if parsed == Amount::ZERO {
+                return Err(invalid_payment_request());
+            }
+            amount = Some(parsed);
+        }
+    }
+    Ok(amount)
 }
 
 #[derive(Default, Clone)]
