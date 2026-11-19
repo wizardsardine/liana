@@ -2942,6 +2942,201 @@ impl SignModal {
             move |result| Message::Signed(fingerprint, result),
         )
     }
+
+    fn select_hardware_wallet_index(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        i: usize,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+            return refused;
+        }
+        if let Some(fingerprint) = self.hws.list.get(i).and_then(HardwareWallet::fingerprint) {
+            return self.update(
+                daemon,
+                Message::View(view::Message::SelectPsbtHardwareWallet(fingerprint)),
+                tx,
+            );
+        }
+        let reason =
+            "This signing device is no longer ready. Reconnect or unlock it, then try again.";
+        self.signer_notice = Some(reason.to_string());
+        Task::done(Message::View(view::Message::ShowError(reason.to_string())))
+    }
+
+    fn select_hardware_signer(
+        &mut self,
+        requested_fp: Fingerprint,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+            return refused;
+        }
+        self.error = None;
+        self.signer_notice = None;
+        // An imported wallet signs on a hardware wallet through its
+        // device policy; a paired phone over the local network signs
+        // on the same path as for any Vault.
+        if let Some(imported) = self.wallet.main_descriptor.as_imported().cloned() {
+            let on_device = self
+                .hws
+                .list
+                .iter()
+                .any(|hw| hw.fingerprint() == Some(requested_fp) && !hw.is_lan_phone());
+            if on_device {
+                return self.sign_imported_with_device(&imported, requested_fp, tx);
+            }
+        }
+        let selected = self
+            .hws
+            .list
+            .iter()
+            .find(|hw| hw.fingerprint() == Some(requested_fp) && !hw.is_lan_phone())
+            .or_else(|| {
+                self.hws
+                    .list
+                    .iter()
+                    .find(|hw| hw.fingerprint() == Some(requested_fp))
+            })
+            .and_then(|hw| match hw {
+                HardwareWallet::Supported {
+                    fingerprint,
+                    device,
+                    ..
+                } => Some((*fingerprint, device.clone(), hw.is_lan_phone())),
+                _ => None,
+            });
+        if let Some((fingerprint, device, over_lan)) = selected {
+            // A fresh attempt over the local network supersedes the
+            // last failure; the row goes back to "Signing…". Recorded
+            // here rather than looked up when the result lands: a
+            // phone whose connection died has usually left the device
+            // list by then, and its failure is still a Wi-Fi one.
+            if over_lan {
+                self.lan_failures.remove(&fingerprint);
+                self.lan_signing.insert(fingerprint);
+            }
+            // Keep the modal open (as the master-signer path below
+            // does) so the selected device shows its "Processing… /
+            // Please check your device" state while we wait for the
+            // signature, rather than the modal vanishing with no
+            // indication that the device is awaiting confirmation.
+            self.signing.insert(fingerprint);
+            let psbt = tx.psbt.clone();
+            return Task::perform(sign_psbt(self.wallet.clone(), device, psbt), move |res| {
+                Message::Signed(fingerprint, res)
+            });
+        }
+        let reason =
+            "This signing device is no longer ready. Reconnect or unlock it, then try again.";
+        self.signer_notice = Some(reason.to_string());
+        Task::done(Message::View(view::Message::ShowError(reason.to_string())))
+    }
+
+    fn select_stored_cube_key(&mut self, fingerprint: Fingerprint, tx: &SpendTx) -> Task<Message> {
+        if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+            return refused;
+        }
+        let Some(records) = self.cube_keys.get(&fingerprint).cloned() else {
+            return Task::none();
+        };
+        self.signing.insert(fingerprint);
+        let (datadir, chain, psbt) = (self.datadir.clone(), self.wallet.chain, tx.psbt.clone());
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::services::imported_signer::sign_with_cube_keys(
+                        &datadir, chain, &records, &psbt,
+                    )
+                })
+                .await
+                .unwrap_or_else(|_| Err("Signing stopped unexpectedly.".into()))
+                .map_err(|error| Error::from(WalletError::MasterSigner(error)))
+            },
+            move |result| Message::Signed(fingerprint, result),
+        )
+    }
+
+    fn select_master_signer(&mut self, tx: &SpendTx) -> Task<Message> {
+        if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+            return refused;
+        }
+        if let Some(fingerprint) = self.wallet.signer.as_ref().map(|s| s.fingerprint()) {
+            self.signing.insert(fingerprint);
+        }
+        Task::perform(
+            sign_psbt_with_master_signer(self.wallet.clone(), tx.psbt.clone()),
+            |(fg, res)| Message::Signed(fg, res),
+        )
+    }
+
+    fn select_border_signer(&mut self, fg: Fingerprint, tx: &SpendTx) -> Task<Message> {
+        if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+            return refused;
+        }
+        let network = self.network;
+        let mut recon = BorderWalletReconstructionState::new(fg, network);
+        // Offered only when this machine still holds the seed this key
+        // was actually enrolled from — never from whichever hot signer
+        // happens to be loaded, which can be a different seed entirely.
+        if let Some(phrase) = self.border_wallet_grid_phrase(&fg) {
+            recon.prefill_phrase(&phrase);
+        }
+        self.border_wallet_recon = Some(recon);
+        // Keep modal displayed but now showing the reconstruction wizard
+        Task::none()
+    }
+
+    fn update_border_reconstruction(
+        &mut self,
+        msg: BorderWalletReconMessage,
+        tx: &SpendTx,
+    ) -> Task<Message> {
+        let is_cancel = matches!(msg, BorderWalletReconMessage::Cancel);
+        let is_previous_on_phrase = matches!(msg, BorderWalletReconMessage::Previous)
+            && self
+                .border_wallet_recon
+                .as_ref()
+                .is_some_and(|r| r.step == ReconStep::RecoveryPhrase);
+
+        if is_cancel || is_previous_on_phrase {
+            self.border_wallet_recon = None;
+            return Task::none();
+        }
+
+        if let Some(recon) = &mut self.border_wallet_recon {
+            if let Some((fingerprint, mnemonic)) = recon.update(msg) {
+                let network = recon.network;
+                let unified = uses_unified_signatures(&self.wallet);
+                let psbt = tx.psbt.clone();
+                // Clear reconstruction state (zeroizes phrase words via Drop).
+                self.border_wallet_recon = None;
+                self.display_modal = false;
+                self.signing.insert(fingerprint);
+                return Task::perform(
+                    async move {
+                        let result = sign_border_wallet_for_chain(
+                            unified,
+                            mnemonic,
+                            fingerprint,
+                            network,
+                            psbt,
+                        );
+                        match result {
+                            Ok((fg, signed_psbt)) => (fg, Ok(signed_psbt)),
+                            Err(e) => (
+                                fingerprint,
+                                Err(Error::Wallet(WalletError::BorderWallet(e.to_string()))),
+                            ),
+                        }
+                    },
+                    |(fg, res)| Message::Signed(fg, res),
+                );
+            }
+        }
+        Task::none()
+    }
 }
 
 impl Modal for SignModal {
@@ -2982,85 +3177,10 @@ impl Modal for SignModal {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::SelectHardwareWallet(i)) => {
-                if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
-                    return refused;
-                }
-                if let Some(fingerprint) =
-                    self.hws.list.get(i).and_then(HardwareWallet::fingerprint)
-                {
-                    return self.update(
-                        daemon,
-                        Message::View(view::Message::SelectPsbtHardwareWallet(fingerprint)),
-                        tx,
-                    );
-                }
-                let reason = "This signing device is no longer ready. Reconnect or unlock it, then try again.";
-                self.signer_notice = Some(reason.to_string());
-                return Task::done(Message::View(view::Message::ShowError(reason.to_string())));
+                return self.select_hardware_wallet_index(daemon, i, tx)
             }
             Message::View(view::Message::SelectPsbtHardwareWallet(requested_fp)) => {
-                if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
-                    return refused;
-                }
-                self.error = None;
-                self.signer_notice = None;
-                // An imported wallet signs on a hardware wallet through its
-                // device policy; a paired phone over the local network signs
-                // on the same path as for any Vault.
-                if let Some(imported) = self.wallet.main_descriptor.as_imported().cloned() {
-                    let on_device = self
-                        .hws
-                        .list
-                        .iter()
-                        .any(|hw| hw.fingerprint() == Some(requested_fp) && !hw.is_lan_phone());
-                    if on_device {
-                        return self.sign_imported_with_device(&imported, requested_fp, tx);
-                    }
-                }
-                let selected = self
-                    .hws
-                    .list
-                    .iter()
-                    .find(|hw| hw.fingerprint() == Some(requested_fp) && !hw.is_lan_phone())
-                    .or_else(|| {
-                        self.hws
-                            .list
-                            .iter()
-                            .find(|hw| hw.fingerprint() == Some(requested_fp))
-                    })
-                    .and_then(|hw| match hw {
-                        HardwareWallet::Supported {
-                            fingerprint,
-                            device,
-                            ..
-                        } => Some((*fingerprint, device.clone(), hw.is_lan_phone())),
-                        _ => None,
-                    });
-                if let Some((fingerprint, device, over_lan)) = selected {
-                    // A fresh attempt over the local network supersedes the
-                    // last failure; the row goes back to "Signing…". Recorded
-                    // here rather than looked up when the result lands: a
-                    // phone whose connection died has usually left the device
-                    // list by then, and its failure is still a Wi-Fi one.
-                    if over_lan {
-                        self.lan_failures.remove(&fingerprint);
-                        self.lan_signing.insert(fingerprint);
-                    }
-                    // Keep the modal open (as the master-signer path below
-                    // does) so the selected device shows its "Processing… /
-                    // Please check your device" state while we wait for the
-                    // signature, rather than the modal vanishing with no
-                    // indication that the device is awaiting confirmation.
-                    self.signing.insert(fingerprint);
-                    let psbt = tx.psbt.clone();
-                    return Task::perform(
-                        sign_psbt(self.wallet.clone(), device, psbt),
-                        move |res| Message::Signed(fingerprint, res),
-                    );
-                }
-                let reason = "This signing device is no longer ready. Reconnect or unlock it, then try again.";
-                self.signer_notice = Some(reason.to_string());
-                return Task::done(Message::View(view::Message::ShowError(reason.to_string())));
+                return self.select_hardware_signer(requested_fp, tx)
             }
             Message::CubeKeys(result) => match result {
                 Ok(records) => self.cube_keys = cube_keys_by_fingerprint(records),
@@ -3069,102 +3189,15 @@ impl Modal for SignModal {
             },
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectCubeKey(
                 fingerprint,
-            ))) => {
-                if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
-                    return refused;
-                }
-                let Some(records) = self.cube_keys.get(&fingerprint).cloned() else {
-                    return Task::none();
-                };
-                self.signing.insert(fingerprint);
-                let (datadir, chain, psbt) =
-                    (self.datadir.clone(), self.wallet.chain, tx.psbt.clone());
-                return Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::services::imported_signer::sign_with_cube_keys(
-                                &datadir, chain, &records, &psbt,
-                            )
-                        })
-                        .await
-                        .unwrap_or_else(|_| Err("Signing stopped unexpectedly.".into()))
-                        .map_err(|error| Error::from(WalletError::MasterSigner(error)))
-                    },
-                    move |result| Message::Signed(fingerprint, result),
-                );
-            }
+            ))) => return self.select_stored_cube_key(fingerprint, tx),
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectMasterSigner)) => {
-                if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
-                    return refused;
-                }
-                if let Some(fingerprint) = self.wallet.signer.as_ref().map(|s| s.fingerprint()) {
-                    self.signing.insert(fingerprint);
-                }
-                return Task::perform(
-                    sign_psbt_with_master_signer(self.wallet.clone(), tx.psbt.clone()),
-                    |(fg, res)| Message::Signed(fg, res),
-                );
+                return self.select_master_signer(tx)
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectBorderWallet(fg))) => {
-                if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
-                    return refused;
-                }
-                let network = self.network;
-                let mut recon = BorderWalletReconstructionState::new(fg, network);
-                // Offered only when this machine still holds the seed this key
-                // was actually enrolled from — never from whichever hot signer
-                // happens to be loaded, which can be a different seed entirely.
-                if let Some(phrase) = self.border_wallet_grid_phrase(&fg) {
-                    recon.prefill_phrase(&phrase);
-                }
-                self.border_wallet_recon = Some(recon);
-                // Keep modal displayed but now showing the reconstruction wizard
+                return self.select_border_signer(fg, tx)
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::BorderWalletRecon(msg))) => {
-                let is_cancel = matches!(msg, BorderWalletReconMessage::Cancel);
-                let is_previous_on_phrase = matches!(msg, BorderWalletReconMessage::Previous)
-                    && self
-                        .border_wallet_recon
-                        .as_ref()
-                        .is_some_and(|r| r.step == ReconStep::RecoveryPhrase);
-
-                if is_cancel || is_previous_on_phrase {
-                    self.border_wallet_recon = None;
-                    return Task::none();
-                }
-
-                if let Some(recon) = &mut self.border_wallet_recon {
-                    if let Some((fingerprint, mnemonic)) = recon.update(msg) {
-                        let network = recon.network;
-                        let unified = uses_unified_signatures(&self.wallet);
-                        let psbt = tx.psbt.clone();
-                        // Clear reconstruction state (zeroizes phrase words via Drop).
-                        self.border_wallet_recon = None;
-                        self.display_modal = false;
-                        self.signing.insert(fingerprint);
-                        return Task::perform(
-                            async move {
-                                let result = sign_border_wallet_for_chain(
-                                    unified,
-                                    mnemonic,
-                                    fingerprint,
-                                    network,
-                                    psbt,
-                                );
-                                match result {
-                                    Ok((fg, signed_psbt)) => (fg, Ok(signed_psbt)),
-                                    Err(e) => (
-                                        fingerprint,
-                                        Err(Error::Wallet(WalletError::BorderWallet(
-                                            e.to_string(),
-                                        ))),
-                                    ),
-                                }
-                            },
-                            |(fg, res)| Message::Signed(fg, res),
-                        );
-                    }
-                }
+                return self.update_border_reconstruction(msg, tx)
             }
             Message::Signed(fingerprint, res) => {
                 self.signing.remove(&fingerprint);
