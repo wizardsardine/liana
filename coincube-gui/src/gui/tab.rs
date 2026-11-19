@@ -7627,22 +7627,7 @@ mod loader_unlock_gate_tests {
                         )
                     }
                 };
-                let mut queue = vec![message];
-                // Synced/App(Ok) hand off through WalletsLoaded; follow it.
-                while let Some(message) = queue.pop() {
-                    let task = tab.update(message);
-                    if matches!(tab.state, State::Loader(_)) {
-                        if let Some(stream) = iced_runtime::task::into_stream(task) {
-                            use iced_runtime::futures::futures::StreamExt;
-                            let mut stream = std::pin::pin!(stream);
-                            while let Some(action) = runtime.block_on(stream.next()) {
-                                if let iced_runtime::Action::Output(message) = action {
-                                    queue.push(message);
-                                }
-                            }
-                        }
-                    }
-                }
+                drain_loader_gate(&mut tab, message, &runtime);
                 let state = match &tab.state {
                     State::App(_) => "App",
                     State::PinEntry(_) => "PinEntry",
@@ -7659,6 +7644,25 @@ mod loader_unlock_gate_tests {
             .unwrap()
             .join()
             .unwrap()
+    }
+
+    fn drain_loader_gate(tab: &mut Tab, message: Message, runtime: &tokio::runtime::Runtime) {
+        let mut queue = vec![message];
+        // Synced/App(Ok) hand off through WalletsLoaded; follow it.
+        while let Some(message) = queue.pop() {
+            let task = tab.update(message);
+            if matches!(tab.state, State::Loader(_)) {
+                if let Some(stream) = iced_runtime::task::into_stream(task) {
+                    use iced_runtime::futures::futures::StreamExt;
+                    let mut stream = std::pin::pin!(stream);
+                    while let Some(action) = runtime.block_on(stream.next()) {
+                        if let iced_runtime::Action::Output(message) = action {
+                            queue.push(message);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn seed_backed(cube: CubeSettings, fp: Fingerprint, _: &std::path::Path) -> CubeSettings {
@@ -9503,6 +9507,33 @@ mod lock_to_delete_tests {
 mod unfinished_cube_funds_tests {
     use super::*;
 
+    fn deletion_outputs(tab: &mut Tab, runtime: &tokio::runtime::Runtime) -> Vec<Message> {
+        let task = tab.update(Message::Run(app::Message::View(
+            app::view::Message::DeleteUnfinishedCube,
+        )));
+        let mut outputs = Vec::new();
+        if let Some(stream) = iced_runtime::task::into_stream(task) {
+            use iced_runtime::futures::futures::StreamExt;
+            let mut stream = Box::pin(stream);
+            let _ = runtime.block_on(tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                async {
+                    while let Some(action) = stream.next().await {
+                        // App-bound output is tagged with the
+                        // App's generation.
+                        if let iced_runtime::Action::Output(message) = action {
+                            outputs.push(match message {
+                                Message::AppAsync(_, inner) => *inner,
+                                message => message,
+                            });
+                        }
+                    }
+                },
+            ));
+        }
+        outputs
+    }
+
     /// A Cube whose loaded Spark balance is not zero stays open: Delete
     /// this Cube, or Close on an abandoned import, says why instead of
     /// locking it for deletion.
@@ -9520,37 +9551,10 @@ mod unfinished_cube_funds_tests {
                 let _enter = runtime.enter();
                 let path = std::env::temp_dir()
                     .join(format!("unfinished-cube-funds-{}", uuid::Uuid::new_v4()));
-                let outputs = |tab: &mut Tab| {
-                    let task = tab.update(Message::Run(app::Message::View(
-                        app::view::Message::DeleteUnfinishedCube,
-                    )));
-                    let mut outputs = Vec::new();
-                    if let Some(stream) = iced_runtime::task::into_stream(task) {
-                        use iced_runtime::futures::futures::StreamExt;
-                        let mut stream = Box::pin(stream);
-                        let _ = runtime.block_on(tokio::time::timeout(
-                            std::time::Duration::from_secs(10),
-                            async {
-                                while let Some(action) = stream.next().await {
-                                    // App-bound output is tagged with the
-                                    // App's generation.
-                                    if let iced_runtime::Action::Output(message) = action {
-                                        outputs.push(match message {
-                                            Message::AppAsync(_, inner) => *inner,
-                                            message => message,
-                                        });
-                                    }
-                                }
-                            },
-                        ));
-                    }
-                    outputs
-                };
-
                 let (mut app, _) = crate::app::shell_tests::bitcoin_app(&path);
                 app.set_loaded_spark_balance_for_test(1_000);
                 let mut tab = Tab::new(1, State::App(app));
-                let sent = outputs(&mut tab);
+                let sent = deletion_outputs(&mut tab, &runtime);
                 assert!(matches!(tab.state, State::App(_)));
                 assert!(!sent
                     .iter()
@@ -9566,7 +9570,7 @@ mod unfinished_cube_funds_tests {
                 let unloaded = path.join("unloaded");
                 let (app, _) = crate::app::shell_tests::bitcoin_app(&unloaded);
                 let mut tab = Tab::new(2, State::App(app));
-                let sent = outputs(&mut tab);
+                let sent = deletion_outputs(&mut tab, &runtime);
                 assert!(sent
                     .iter()
                     .any(|message| matches!(message, Message::LockCubeToDelete)));
