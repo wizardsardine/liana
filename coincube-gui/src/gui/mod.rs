@@ -2360,6 +2360,30 @@ impl GUI {
         None
     }
 
+    fn discard_stale_tab_callback(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        message: tab::Message,
+    ) -> Task<Message> {
+        let closed_trial_finished = is_seed_export_trial_result(&message);
+        tab::discard_closed_loader_result(message);
+        if closed_trial_finished {
+            if let Some(tab) = self
+                .panes
+                .get_mut(pane_id)
+                .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
+            {
+                tab.finish_stale_seed_export_trial();
+                Task::none()
+            } else {
+                self.finish_closed_seed_export_trial(pane_id, tab_id)
+            }
+        } else {
+            Task::none()
+        }
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         if self
             .preferences_sheet
@@ -2446,22 +2470,7 @@ impl GUI {
                     .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
                     .is_some_and(|tab| tab.accepts_app_generation(generation));
                 if !current {
-                    let closed_trial_finished = is_seed_export_trial_result(message.as_ref());
-                    tab::discard_closed_loader_result(*message);
-                    return if closed_trial_finished {
-                        if let Some(tab) = self
-                            .panes
-                            .get_mut(pane_id)
-                            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
-                        {
-                            tab.finish_stale_seed_export_trial();
-                            Task::none()
-                        } else {
-                            self.finish_closed_seed_export_trial(pane_id, tab_id)
-                        }
-                    } else {
-                        Task::none()
-                    };
+                    return self.discard_stale_tab_callback(pane_id, tab_id, *message);
                 }
                 route_guarded_tab_result(pane_id, tab_id, *message)
             }
@@ -2489,22 +2498,7 @@ impl GUI {
                     .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
                     .is_some_and(|tab| tab.accepts_fork_generation(generation));
                 if !current {
-                    let closed_trial_finished = is_seed_export_trial_result(message.as_ref());
-                    tab::discard_closed_loader_result(*message);
-                    return if closed_trial_finished {
-                        if let Some(tab) = self
-                            .panes
-                            .get_mut(pane_id)
-                            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
-                        {
-                            tab.finish_stale_seed_export_trial();
-                            Task::none()
-                        } else {
-                            self.finish_closed_seed_export_trial(pane_id, tab_id)
-                        }
-                    } else {
-                        Task::none()
-                    };
+                    return self.discard_stale_tab_callback(pane_id, tab_id, *message);
                 }
                 route_guarded_tab_result(pane_id, tab_id, *message)
             }
