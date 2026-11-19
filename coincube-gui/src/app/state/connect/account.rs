@@ -6511,70 +6511,55 @@ impl ConnectAccountPanel {
     fn update_contacts(&mut self, msg: ContactsMessage) -> iced::Task<Message> {
         match msg {
             ContactsMessage::ContactsLoaded(contacts, gen) => {
-                if gen == self.session_generation {
-                    self.contacts_state.contacts = Some(contacts);
-                    // Clear loading only when all three sibling fetches
-                    // (contacts, sent invites, received invites) have
-                    // landed; otherwise the view flips from spinner to
-                    // empty-state before the late arrival paints.
-                    if self.contacts_state.invites.is_some()
-                        && self.contacts_state.received_invites.is_some()
-                    {
-                        self.contacts_state.loading = false;
-                    }
-                }
+                return self.apply_contacts_loaded(contacts, gen)
             }
 
+            message @ (ContactsMessage::InvitesLoaded(_, _)
+            | ContactsMessage::ReceivedInvitesLoaded(_, _)
+            | ContactsMessage::AcceptReceivedInvite(_)
+            | ContactsMessage::ReceivedInviteAccepted(_)
+            | ContactsMessage::AcceptReceivedInviteFailed(_, _)
+            | ContactsMessage::ShowInviteForm
+            | ContactsMessage::InviteCubesAvailable(_, _)
+            | ContactsMessage::ToggleInviteCube(_)
+            | ContactsMessage::BackToList
+            | ContactsMessage::ShowDetail(_)
+            | ContactsMessage::InviteEmailChanged(_)
+            | ContactsMessage::SubmitInvite
+            | ContactsMessage::InviteCubeForbidden(_)
+            | ContactsMessage::InviteCreated
+            | ContactsMessage::ResendInvite(_)
+            | ContactsMessage::InviteResent(_)
+            | ContactsMessage::RevokeInvite(_)
+            | ContactsMessage::InviteRevoked(_)) => self.update_contact_invites(message),
+            message @ (ContactsMessage::ContactCubesLoaded(_, _, _)
+            | ContactsMessage::ContactCubesFailed(_, _)
+            | ContactsMessage::OpenAddToCubeDialog(_)
+            | ContactsMessage::AddToCubeCandidatesLoaded(_, _, _)
+            | ContactsMessage::ToggleAddToCubeSelection(_)
+            | ContactsMessage::ConfirmAddToCube
+            | ContactsMessage::AddToCubeResult(_, _, _)
+            | ContactsMessage::CloseAddToCubeDialog
+            | ContactsMessage::AddContactToCurrentCube(_)
+            | ContactsMessage::AddContactToCurrentCubeResult(_, _)) => {
+                self.update_contact_membership(message)
+            }
+            ContactsMessage::Error(e) => self.apply_contact_error(e),
+        }
+    }
+
+    fn update_contact_invites(&mut self, message: ContactsMessage) -> iced::Task<Message> {
+        match message {
             ContactsMessage::InvitesLoaded(invites, gen) => {
-                if gen == self.session_generation {
-                    self.contacts_state.invites = Some(invites);
-                    if self.contacts_state.contacts.is_some()
-                        && self.contacts_state.received_invites.is_some()
-                    {
-                        self.contacts_state.loading = false;
-                    }
-                }
+                self.apply_contact_invites(invites, gen)
             }
 
             ContactsMessage::ReceivedInvitesLoaded(received, gen) => {
-                if gen == self.session_generation {
-                    self.contacts_state.received_invites = Some(received);
-                    if self.contacts_state.contacts.is_some()
-                        && self.contacts_state.invites.is_some()
-                    {
-                        self.contacts_state.loading = false;
-                    }
-                }
+                self.apply_received_contact_invites(received, gen)
             }
 
             ContactsMessage::AcceptReceivedInvite(invite_id) => {
-                // Guard against double-tap. The button is disabled
-                // while the id is in-flight, but the message can still
-                // arrive twice via keyboard activation; we drop the
-                // second silently.
-                if !self.contacts_state.accepting_invite_ids.insert(invite_id) {
-                    return iced::Task::none();
-                }
-                self.contacts_state.error = None;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.accept_invite_by_id(invite_id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::ReceivedInviteAccepted(invite_id),
-                            ),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::AcceptReceivedInviteFailed(
-                                    invite_id,
-                                    e.to_string(),
-                                ),
-                            ),
-                        )),
-                    },
-                );
+                return self.accept_received_invite(invite_id)
             }
 
             ContactsMessage::ReceivedInviteAccepted(invite_id) => {
@@ -6593,42 +6578,10 @@ impl ConnectAccountPanel {
                 self.contacts_state.error = Some(msg);
             }
 
-            ContactsMessage::ShowInviteForm => {
-                self.contacts_state.step = ContactsStep::InviteForm;
-                self.contacts_state.invite_email.clear();
-                self.contacts_state.invite_role = ContactRole::Keyholder;
-                self.contacts_state.invite_sending = false;
-                self.contacts_state.error = None;
-                self.contacts_state.invite_cube_selections.clear();
-                self.contacts_state.invite_cube_error = None;
-                // Drop the prior cube list so re-opens don't briefly
-                // render stale checkboxes from a previous session while
-                // the fresh `list_cubes()` call is in flight. The view
-                // hides the "Also add to Cube(s)" section entirely when
-                // this is `None`.
-                self.contacts_state.invite_available_cubes = None;
-                // Load the user's cubes for the "Also add to Cube(s)"
-                // multi-select (W12). Hidden in the view until this
-                // resolves; empty Vec renders as "no cubes section".
-                return load_invite_cubes(
-                    &self.client,
-                    self.session_generation,
-                    self.contacts_state.active_network.clone(),
-                );
-            }
+            ContactsMessage::ShowInviteForm => return self.show_contact_invite_form(),
 
             ContactsMessage::InviteCubesAvailable(cubes, gen) => {
-                if gen == self.session_generation {
-                    // Drop any prior selection that's no longer in the
-                    // authoritative list (e.g. after a 403 reload where
-                    // the user lost access to a cube mid-form).
-                    let valid_ids: std::collections::HashSet<u64> =
-                        cubes.iter().map(|c| c.id).collect();
-                    self.contacts_state
-                        .invite_cube_selections
-                        .retain(|id| valid_ids.contains(id));
-                    self.contacts_state.invite_available_cubes = Some(cubes);
-                }
+                return self.apply_invite_cubes(cubes, gen)
             }
 
             ContactsMessage::ToggleInviteCube(cube_id) => {
@@ -6664,78 +6617,10 @@ impl ConnectAccountPanel {
                 self.contacts_state.error = None;
             }
 
-            ContactsMessage::SubmitInvite => {
-                if self.contacts_state.invite_sending {
-                    return iced::Task::none();
-                }
-                let email = self.contacts_state.invite_email.trim().to_string();
-                let valid = email_address::EmailAddress::parse_with_options(
-                    &email,
-                    email_address::Options::default().with_required_tld(),
-                )
-                .is_ok();
-                if !valid {
-                    self.contacts_state.error = Some("Please enter a valid email address".into());
-                    return iced::Task::none();
-                }
-                self.contacts_state.invite_sending = true;
-                self.contacts_state.error = None;
-                self.contacts_state.invite_cube_error = None;
-                let client = self.client.clone();
-                let role = self.contacts_state.invite_role;
-                let cube_ids = self.contacts_state.invite_cube_selections.clone();
-                let had_cubes = !cube_ids.is_empty();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .create_invite(CreateInviteRequest {
-                                email,
-                                role,
-                                cube_ids,
-                            })
-                            .await
-                    },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
-                        )),
-                        // A 403 when cubes were attached almost always means
-                        // the caller is no longer a member of one of them
-                        // (the per-cube membership check failed). Route to
-                        // the dedicated handler so the form stays open with
-                        // a clear "some cubes are no longer available" msg.
-                        Err(e)
-                            if had_cubes
-                                && matches!(
-                                    &e,
-                                    crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                        if info.status_code == 403
-                                ) =>
-                        {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::Contacts(
-                                    ContactsMessage::InviteCubeForbidden(e.to_string()),
-                                ),
-                            ))
-                        }
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
-                        )),
-                    },
-                );
-            }
+            ContactsMessage::SubmitInvite => return self.submit_contact_invite(),
 
             ContactsMessage::InviteCubeForbidden(msg) => {
-                self.contacts_state.invite_sending = false;
-                self.contacts_state.invite_cube_error = Some(msg);
-                // Refresh the cube list so the checkboxes reflect the
-                // user's current memberships. We stay on the form so
-                // the user can adjust and retry.
-                return load_invite_cubes(
-                    &self.client,
-                    self.session_generation,
-                    self.contacts_state.active_network.clone(),
-                );
+                return self.recover_unavailable_invite_cubes(msg)
             }
 
             ContactsMessage::InviteCreated => {
@@ -6744,45 +6629,13 @@ impl ConnectAccountPanel {
             }
 
             ContactsMessage::ResendInvite(invite_id) => {
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.resend_invite(invite_id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::InviteResent(
-                                invite_id,
-                            )),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
-                        )),
-                    },
-                );
+                return self.resend_contact_invite(invite_id)
             }
 
-            ContactsMessage::InviteResent(_invite_id) => {
-                log::info!("[CONTACTS] Invite resent successfully");
-                self.contacts_state.error = None;
-                return iced::Task::done(Message::View(view::Message::ShowSuccess(
-                    "Invite resent".to_string(),
-                )));
-            }
+            ContactsMessage::InviteResent(_invite_id) => return self.show_contact_invite_resent(),
 
             ContactsMessage::RevokeInvite(invite_id) => {
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.revoke_invite(invite_id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::InviteRevoked(
-                                invite_id,
-                            )),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
-                        )),
-                    },
-                );
+                return self.revoke_contact_invite(invite_id)
             }
 
             ContactsMessage::InviteRevoked(invite_id) => {
@@ -6791,6 +6644,88 @@ impl ConnectAccountPanel {
                 }
             }
 
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn apply_contact_invites(&mut self, invites: Vec<crate::services::coincube::Invite>, gen: u64) {
+        if gen == self.session_generation {
+            self.contacts_state.invites = Some(invites);
+            if self.contacts_state.contacts.is_some()
+                && self.contacts_state.received_invites.is_some()
+            {
+                self.contacts_state.loading = false;
+            }
+        }
+    }
+
+    fn apply_received_contact_invites(
+        &mut self,
+        received: Vec<crate::services::coincube::ReceivedInvite>,
+        gen: u64,
+    ) {
+        if gen == self.session_generation {
+            self.contacts_state.received_invites = Some(received);
+            if self.contacts_state.contacts.is_some() && self.contacts_state.invites.is_some() {
+                self.contacts_state.loading = false;
+            }
+        }
+    }
+
+    fn resend_contact_invite(&mut self, invite_id: u64) -> iced::Task<Message> {
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.resend_invite(invite_id).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteResent(invite_id)),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        )
+    }
+
+    fn revoke_contact_invite(&mut self, invite_id: u64) -> iced::Task<Message> {
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.revoke_invite(invite_id).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteRevoked(invite_id)),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        )
+    }
+
+    fn recover_unavailable_invite_cubes(&mut self, msg: String) -> iced::Task<Message> {
+        self.contacts_state.invite_sending = false;
+        self.contacts_state.invite_cube_error = Some(msg);
+        // Refresh the cube list so the checkboxes reflect the
+        // user's current memberships. We stay on the form so
+        // the user can adjust and retry.
+        load_invite_cubes(
+            &self.client,
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
+    }
+
+    fn show_contact_invite_resent(&mut self) -> iced::Task<Message> {
+        log::info!("[CONTACTS] Invite resent successfully");
+        self.contacts_state.error = None;
+        iced::Task::done(Message::View(view::Message::ShowSuccess(
+            "Invite resent".to_string(),
+        )))
+    }
+
+    fn update_contact_membership(&mut self, message: ContactsMessage) -> iced::Task<Message> {
+        match message {
             ContactsMessage::ContactCubesLoaded(contact_id, cubes, gen) => {
                 // Only store if session is current and we're still viewing this contact
                 if gen == self.session_generation
@@ -6810,58 +6745,11 @@ impl ConnectAccountPanel {
 
             // ── W14: Add-existing-contact-to-Cube ─────────────────────
             ContactsMessage::OpenAddToCubeDialog(contact_id) => {
-                let Some(contact) = self
-                    .contacts_state
-                    .contacts
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| c.id == contact_id)
-                    .cloned()
-                else {
-                    log::warn!("[CONTACTS] OpenAddToCubeDialog: contact {contact_id} not found");
-                    return iced::Task::none();
-                };
-                let email = match contact.contact_user.as_ref() {
-                    Some(u) if !u.email.is_empty() => u.email.clone(),
-                    _ => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .insert(contact_id, "Contact has no linked user".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                self.contacts_state
-                    .add_to_current_cube_errors
-                    .remove(&contact_id);
-                self.contacts_state.add_to_cube_target = Some(AddToCubeDialog {
-                    contact_id,
-                    contact_email: email,
-                    candidate_cubes: None,
-                    selections: Vec::new(),
-                    submitting: false,
-                    failures: std::collections::HashMap::new(),
-                });
-                return load_add_to_cube_candidates(
-                    &self.client,
-                    contact_id,
-                    contact.effective_contact_user_id(),
-                    self.session_generation,
-                    self.contacts_state.active_network.clone(),
-                );
+                return self.open_add_contact_dialog(contact_id)
             }
 
             ContactsMessage::AddToCubeCandidatesLoaded(contact_id, cubes, gen) => {
-                // Stale-guard: session turnover OR a different contact's
-                // dialog opened in the meantime.
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                if let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() {
-                    if dialog.contact_id == contact_id {
-                        dialog.candidate_cubes = Some(cubes);
-                    }
-                }
+                return self.apply_add_contact_candidates(contact_id, cubes, gen)
             }
 
             ContactsMessage::ToggleAddToCubeSelection(cube_id) => {
@@ -6875,82 +6763,10 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ContactsMessage::ConfirmAddToCube => {
-                let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
-                    return iced::Task::none();
-                };
-                if dialog.submitting || dialog.selections.is_empty() {
-                    return iced::Task::none();
-                }
-                dialog.submitting = true;
-                dialog.failures.clear();
-                let email = dialog.contact_email.clone();
-                let cube_ids = dialog.selections.clone();
-                let contact_id = dialog.contact_id;
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        // Sequential per-cube calls — N is small and
-                        // sequential keeps the result order deterministic
-                        // for the failures map.
-                        let mut results = Vec::with_capacity(cube_ids.len());
-                        for cube_id in cube_ids {
-                            let r = client.create_cube_invite(cube_id, &email).await;
-                            results.push((cube_id, r.map(|_| ()).map_err(|e| e.to_string())));
-                        }
-                        results
-                    },
-                    move |results| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::AddToCubeResult(
-                                contact_id, gen, results,
-                            )),
-                        ))
-                    },
-                );
-            }
+            ContactsMessage::ConfirmAddToCube => return self.confirm_add_contact(),
 
             ContactsMessage::AddToCubeResult(contact_id, gen, results) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
-                    return iced::Task::none();
-                };
-                if dialog.contact_id != contact_id {
-                    return iced::Task::none();
-                }
-                dialog.submitting = false;
-                let mut failures = std::collections::HashMap::new();
-                let mut succeeded_ids: Vec<u64> = Vec::new();
-                for (cube_id, r) in results {
-                    match r {
-                        Ok(()) => succeeded_ids.push(cube_id),
-                        Err(msg) => {
-                            failures.insert(cube_id, msg);
-                        }
-                    }
-                }
-                if failures.is_empty() {
-                    // Full success: close the dialog and refresh the
-                    // Associated-Cubes section so the UI reflects the
-                    // new memberships.
-                    let contact_id = dialog.contact_id;
-                    self.contacts_state.add_to_cube_target = None;
-                    if matches!(
-                        self.contacts_state.step,
-                        ContactsStep::Detail(id) if id == contact_id
-                    ) {
-                        return self.fetch_contact_cubes(contact_id);
-                    }
-                    return iced::Task::none();
-                }
-                // Partial / full failure: keep the dialog open and surface
-                // per-cube messages. Drop succeeded selections so the user
-                // can't re-submit them (re-submit would 409 on duplicate).
-                dialog.selections.retain(|id| !succeeded_ids.contains(id));
-                dialog.failures = failures;
+                return self.apply_add_contact_result(contact_id, gen, results)
             }
 
             ContactsMessage::CloseAddToCubeDialog => {
@@ -6958,120 +6774,429 @@ impl ConnectAccountPanel {
             }
 
             ContactsMessage::AddContactToCurrentCube(contact_id) => {
-                if self
-                    .contacts_state
-                    .add_to_current_cube_pending
-                    .contains(&contact_id)
-                {
-                    return iced::Task::none();
-                }
-                let Some(contact) = self
-                    .contacts_state
-                    .contacts
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| c.id == contact_id)
-                    .cloned()
-                else {
-                    log::warn!(
-                        "[CONTACTS] AddContactToCurrentCube: contact {contact_id} not found"
-                    );
-                    return iced::Task::none();
-                };
-                let email = match contact.contact_user.as_ref() {
-                    Some(u) if !u.email.is_empty() => u.email.clone(),
-                    _ => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .insert(contact_id, "Contact has no linked user".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                // Target the server-side id of the cube the user is
-                // actually loaded into. This works regardless of how
-                // many other cubes the user owns on the same network —
-                // the prior "match-by-network" heuristic broke when
-                // there were multiple mainnet cubes.
-                let Some(cube_id) = self.contacts_state.active_cube_server_id else {
-                    self.contacts_state.add_to_current_cube_errors.insert(
-                        contact_id,
-                        "Current cube isn't registered yet — please retry in a moment.".to_string(),
-                    );
-                    return iced::Task::none();
-                };
-                // Clear any prior error for this contact so retries show
-                // fresh state.
-                self.contacts_state
-                    .add_to_current_cube_errors
-                    .remove(&contact_id);
-                self.contacts_state
-                    .add_to_current_cube_pending
-                    .insert(contact_id);
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .create_cube_invite(cube_id, &email)
-                            .await
-                            .map(|_| cube_id)
-                            .map_err(|e| e.to_string())
-                    },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::AddContactToCurrentCubeResult(contact_id, res),
-                            ),
-                        ))
-                    },
-                );
+                return self.add_contact_to_current_cube(contact_id)
             }
 
             ContactsMessage::AddContactToCurrentCubeResult(contact_id, res) => {
-                self.contacts_state
-                    .add_to_current_cube_pending
-                    .remove(&contact_id);
-                match res {
-                    Ok(_cube_id) => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .remove(&contact_id);
-                        // Refresh the Associated Cubes section if we're on
-                        // that contact's detail view.
-                        if matches!(
-                            self.contacts_state.step,
-                            ContactsStep::Detail(id) if id == contact_id
-                        ) {
-                            return self.fetch_contact_cubes(contact_id);
-                        }
-                    }
-                    Err(msg) => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .insert(contact_id, msg);
-                    }
-                }
+                return self.apply_add_to_current_cube_result(contact_id, res)
             }
 
-            ContactsMessage::Error(e) => {
-                log::error!("[CONTACTS] Error: {}", e);
-                // Determine which operation failed based on current state,
-                // and only reset the relevant flag.
-                if self.contacts_state.invite_sending {
-                    // Error from SubmitInvite
-                    self.contacts_state.invite_sending = false;
-                    self.contacts_state.error = Some(e);
-                } else if self.contacts_state.loading {
-                    // Error from initial load (contacts/invites fetch)
-                    self.contacts_state.loading = false;
-                    // Don't display load errors — the empty state is shown instead
-                } else {
-                    // Error from resend/revoke/cubes fetch — display inline
-                    self.contacts_state.error = Some(e);
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn apply_contacts_loaded(
+        &mut self,
+        contacts: Vec<crate::services::coincube::Contact>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            self.contacts_state.contacts = Some(contacts);
+            // Clear loading only when all three sibling fetches
+            // (contacts, sent invites, received invites) have
+            // landed; otherwise the view flips from spinner to
+            // empty-state before the late arrival paints.
+            if self.contacts_state.invites.is_some()
+                && self.contacts_state.received_invites.is_some()
+            {
+                self.contacts_state.loading = false;
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn accept_received_invite(&mut self, invite_id: u64) -> iced::Task<Message> {
+        // Guard against double-tap. The button is disabled
+        // while the id is in-flight, but the message can still
+        // arrive twice via keyboard activation; we drop the
+        // second silently.
+        if !self.contacts_state.accepting_invite_ids.insert(invite_id) {
+            return iced::Task::none();
+        }
+        self.contacts_state.error = None;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.accept_invite_by_id(invite_id).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ReceivedInviteAccepted(
+                        invite_id,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::AcceptReceivedInviteFailed(
+                        invite_id,
+                        e.to_string(),
+                    )),
+                )),
+            },
+        )
+    }
+
+    fn show_contact_invite_form(&mut self) -> iced::Task<Message> {
+        self.contacts_state.step = ContactsStep::InviteForm;
+        self.contacts_state.invite_email.clear();
+        self.contacts_state.invite_role = ContactRole::Keyholder;
+        self.contacts_state.invite_sending = false;
+        self.contacts_state.error = None;
+        self.contacts_state.invite_cube_selections.clear();
+        self.contacts_state.invite_cube_error = None;
+        // Drop the prior cube list so re-opens don't briefly
+        // render stale checkboxes from a previous session while
+        // the fresh `list_cubes()` call is in flight. The view
+        // hides the "Also add to Cube(s)" section entirely when
+        // this is `None`.
+        self.contacts_state.invite_available_cubes = None;
+        // Load the user's cubes for the "Also add to Cube(s)"
+        // multi-select (W12). Hidden in the view until this
+        // resolves; empty Vec renders as "no cubes section".
+        load_invite_cubes(
+            &self.client,
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
+    }
+
+    fn apply_invite_cubes(
+        &mut self,
+        cubes: Vec<InviteCubeOption>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            // Drop any prior selection that's no longer in the
+            // authoritative list (e.g. after a 403 reload where
+            // the user lost access to a cube mid-form).
+            let valid_ids: std::collections::HashSet<u64> = cubes.iter().map(|c| c.id).collect();
+            self.contacts_state
+                .invite_cube_selections
+                .retain(|id| valid_ids.contains(id));
+            self.contacts_state.invite_available_cubes = Some(cubes);
+        }
+        iced::Task::none()
+    }
+
+    fn submit_contact_invite(&mut self) -> iced::Task<Message> {
+        if self.contacts_state.invite_sending {
+            return iced::Task::none();
+        }
+        let email = self.contacts_state.invite_email.trim().to_string();
+        let valid = email_address::EmailAddress::parse_with_options(
+            &email,
+            email_address::Options::default().with_required_tld(),
+        )
+        .is_ok();
+        if !valid {
+            self.contacts_state.error = Some("Please enter a valid email address".into());
+            return iced::Task::none();
+        }
+        self.contacts_state.invite_sending = true;
+        self.contacts_state.error = None;
+        self.contacts_state.invite_cube_error = None;
+        let client = self.client.clone();
+        let role = self.contacts_state.invite_role;
+        let cube_ids = self.contacts_state.invite_cube_selections.clone();
+        let had_cubes = !cube_ids.is_empty();
+        iced::Task::perform(
+            async move {
+                client
+                    .create_invite(CreateInviteRequest {
+                        email,
+                        role,
+                        cube_ids,
+                    })
+                    .await
+            },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
+                )),
+                // A 403 when cubes were attached almost always means
+                // the caller is no longer a member of one of them
+                // (the per-cube membership check failed). Route to
+                // the dedicated handler so the form stays open with
+                // a clear "some cubes are no longer available" msg.
+                Err(e)
+                    if had_cubes
+                        && matches!(
+                            &e,
+                            crate::services::coincube::CoincubeError::Unsuccessful(info)
+                                if info.status_code == 403
+                        ) =>
+                {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::Contacts(ContactsMessage::InviteCubeForbidden(
+                            e.to_string(),
+                        )),
+                    ))
+                }
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        )
+    }
+
+    fn open_add_contact_dialog(&mut self, contact_id: u64) -> iced::Task<Message> {
+        let Some(contact) = self
+            .contacts_state
+            .contacts
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|c| c.id == contact_id)
+            .cloned()
+        else {
+            log::warn!("[CONTACTS] OpenAddToCubeDialog: contact {contact_id} not found");
+            return iced::Task::none();
+        };
+        let email = match contact.contact_user.as_ref() {
+            Some(u) if !u.email.is_empty() => u.email.clone(),
+            _ => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .insert(contact_id, "Contact has no linked user".to_string());
+                return iced::Task::none();
+            }
+        };
+        self.contacts_state
+            .add_to_current_cube_errors
+            .remove(&contact_id);
+        self.contacts_state.add_to_cube_target = Some(AddToCubeDialog {
+            contact_id,
+            contact_email: email,
+            candidate_cubes: None,
+            selections: Vec::new(),
+            submitting: false,
+            failures: std::collections::HashMap::new(),
+        });
+        load_add_to_cube_candidates(
+            &self.client,
+            contact_id,
+            contact.effective_contact_user_id(),
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
+    }
+
+    fn apply_add_contact_candidates(
+        &mut self,
+        contact_id: u64,
+        cubes: Vec<InviteCubeOption>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        // Stale-guard: session turnover OR a different contact's
+        // dialog opened in the meantime.
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        if let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() {
+            if dialog.contact_id == contact_id {
+                dialog.candidate_cubes = Some(cubes);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn confirm_add_contact(&mut self) -> iced::Task<Message> {
+        let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
+            return iced::Task::none();
+        };
+        if dialog.submitting || dialog.selections.is_empty() {
+            return iced::Task::none();
+        }
+        dialog.submitting = true;
+        dialog.failures.clear();
+        let email = dialog.contact_email.clone();
+        let cube_ids = dialog.selections.clone();
+        let contact_id = dialog.contact_id;
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                // Sequential per-cube calls — N is small and
+                // sequential keeps the result order deterministic
+                // for the failures map.
+                let mut results = Vec::with_capacity(cube_ids.len());
+                for cube_id in cube_ids {
+                    let r = client.create_cube_invite(cube_id, &email).await;
+                    results.push((cube_id, r.map(|_| ()).map_err(|e| e.to_string())));
+                }
+                results
+            },
+            move |results| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::AddToCubeResult(
+                        contact_id, gen, results,
+                    )),
+                ))
+            },
+        )
+    }
+
+    fn apply_add_contact_result(
+        &mut self,
+        contact_id: u64,
+        gen: u64,
+        results: Vec<(u64, Result<(), String>)>,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
+            return iced::Task::none();
+        };
+        if dialog.contact_id != contact_id {
+            return iced::Task::none();
+        }
+        dialog.submitting = false;
+        let mut failures = std::collections::HashMap::new();
+        let mut succeeded_ids: Vec<u64> = Vec::new();
+        for (cube_id, r) in results {
+            match r {
+                Ok(()) => succeeded_ids.push(cube_id),
+                Err(msg) => {
+                    failures.insert(cube_id, msg);
                 }
             }
         }
+        if failures.is_empty() {
+            // Full success: close the dialog and refresh the
+            // Associated-Cubes section so the UI reflects the
+            // new memberships.
+            let contact_id = dialog.contact_id;
+            self.contacts_state.add_to_cube_target = None;
+            if matches!(
+                self.contacts_state.step,
+                ContactsStep::Detail(id) if id == contact_id
+            ) {
+                return self.fetch_contact_cubes(contact_id);
+            }
+            return iced::Task::none();
+        }
+        // Partial / full failure: keep the dialog open and surface
+        // per-cube messages. Drop succeeded selections so the user
+        // can't re-submit them (re-submit would 409 on duplicate).
+        dialog.selections.retain(|id| !succeeded_ids.contains(id));
+        dialog.failures = failures;
+        iced::Task::none()
+    }
 
+    fn add_contact_to_current_cube(&mut self, contact_id: u64) -> iced::Task<Message> {
+        if self
+            .contacts_state
+            .add_to_current_cube_pending
+            .contains(&contact_id)
+        {
+            return iced::Task::none();
+        }
+        let Some(contact) = self
+            .contacts_state
+            .contacts
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|c| c.id == contact_id)
+            .cloned()
+        else {
+            log::warn!("[CONTACTS] AddContactToCurrentCube: contact {contact_id} not found");
+            return iced::Task::none();
+        };
+        let email = match contact.contact_user.as_ref() {
+            Some(u) if !u.email.is_empty() => u.email.clone(),
+            _ => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .insert(contact_id, "Contact has no linked user".to_string());
+                return iced::Task::none();
+            }
+        };
+        // Target the server-side id of the cube the user is
+        // actually loaded into. This works regardless of how
+        // many other cubes the user owns on the same network —
+        // the prior "match-by-network" heuristic broke when
+        // there were multiple mainnet cubes.
+        let Some(cube_id) = self.contacts_state.active_cube_server_id else {
+            self.contacts_state.add_to_current_cube_errors.insert(
+                contact_id,
+                "Current cube isn't registered yet — please retry in a moment.".to_string(),
+            );
+            return iced::Task::none();
+        };
+        // Clear any prior error for this contact so retries show
+        // fresh state.
+        self.contacts_state
+            .add_to_current_cube_errors
+            .remove(&contact_id);
+        self.contacts_state
+            .add_to_current_cube_pending
+            .insert(contact_id);
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .create_cube_invite(cube_id, &email)
+                    .await
+                    .map(|_| cube_id)
+                    .map_err(|e| e.to_string())
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(
+                        ContactsMessage::AddContactToCurrentCubeResult(contact_id, res),
+                    ),
+                ))
+            },
+        )
+    }
+
+    fn apply_add_to_current_cube_result(
+        &mut self,
+        contact_id: u64,
+        res: Result<u64, String>,
+    ) -> iced::Task<Message> {
+        self.contacts_state
+            .add_to_current_cube_pending
+            .remove(&contact_id);
+        match res {
+            Ok(_cube_id) => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .remove(&contact_id);
+                // Refresh the Associated Cubes section if we're on
+                // that contact's detail view.
+                if matches!(
+                    self.contacts_state.step,
+                    ContactsStep::Detail(id) if id == contact_id
+                ) {
+                    return self.fetch_contact_cubes(contact_id);
+                }
+            }
+            Err(msg) => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .insert(contact_id, msg);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_contact_error(&mut self, e: String) -> iced::Task<Message> {
+        log::error!("[CONTACTS] Error: {}", e);
+        // Determine which operation failed based on current state,
+        // and only reset the relevant flag.
+        if self.contacts_state.invite_sending {
+            // Error from SubmitInvite
+            self.contacts_state.invite_sending = false;
+            self.contacts_state.error = Some(e);
+        } else if self.contacts_state.loading {
+            // Error from initial load (contacts/invites fetch)
+            self.contacts_state.loading = false;
+            // Don't display load errors — the empty state is shown instead
+        } else {
+            // Error from resend/revoke/cubes fetch — display inline
+            self.contacts_state.error = Some(e);
+        }
         iced::Task::none()
     }
 }
