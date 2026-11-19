@@ -980,23 +980,24 @@ fn append_marketplace_rows<'a>(
 ) -> Column<'a, Message> {
     let show_marketplace = (ctx.has_p2p && ctx.marketplace_flags.p2p_on())
         || (ctx.has_vault && ctx.marketplace_flags.buy_sell_on());
-    if show_marketplace {
-        middle = middle.push(nav_row(
-            "Marketplace",
-            Some(NavIcon::Font(shop_icon())),
-            matches!(menu, Menu::Marketplace(_)),
-            Some(Message::Menu(super::primary::marketplace_landing_menu(ctx))),
-            false,
-            None,
-        ));
-        if matches!(menu, Menu::Marketplace(_)) {
-            for item in marketplace_children(menu, ctx) {
-                middle = middle.push(item);
-            }
-            if let Some(subpages) = super::tertiary::items_for(menu, ctx) {
-                for item in subpages {
-                    middle = middle.push(subitem(menu, item, None));
-                }
+    if !show_marketplace {
+        return middle;
+    }
+    middle = middle.push(nav_row(
+        "Marketplace",
+        Some(NavIcon::Font(shop_icon())),
+        matches!(menu, Menu::Marketplace(_)),
+        Some(Message::Menu(super::primary::marketplace_landing_menu(ctx))),
+        false,
+        None,
+    ));
+    if matches!(menu, Menu::Marketplace(_)) {
+        for item in marketplace_children(menu, ctx) {
+            middle = middle.push(item);
+        }
+        if let Some(subpages) = super::tertiary::items_for(menu, ctx) {
+            for item in subpages {
+                middle = middle.push(subitem(menu, item, None));
             }
         }
     }
