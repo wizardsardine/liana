@@ -824,40 +824,50 @@ async fn rbf(
     };
 
     if !is_cancel {
-        let mut labels = HashMap::<LabelItem, Option<String>>::new();
-        let new_txid = psbt.unsigned_tx.compute_txid();
-        for item in previous_tx.labelled() {
-            if let Some(label) = previous_tx.labels.get(&item.to_string()) {
-                match item {
-                    LabelItem::Txid(_) => {
-                        labels.insert(new_txid.into(), Some(label.to_string()));
-                    }
-                    LabelItem::OutPoint(o) => {
-                        if let Some(previous_output) = previous_tx.tx.output.get(o.vout as usize) {
-                            for (vout, output) in psbt.unsigned_tx.output.iter().enumerate() {
-                                if output.script_pubkey == previous_output.script_pubkey {
-                                    labels.insert(
-                                        LabelItem::OutPoint(OutPoint {
-                                            txid: new_txid,
-                                            vout: vout as u32,
-                                        }),
-                                        Some(label.to_string()),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    // Address label is already in database
-                    LabelItem::Address(_) => {}
-                }
-            }
-        }
-
+        let labels = replacement_transaction_labels(&previous_tx, &psbt.unsigned_tx);
         daemon.update_labels(&labels).await?;
     }
 
     daemon.update_spend_tx(&psbt).await?;
     Ok(psbt.unsigned_tx.compute_txid())
+}
+
+fn replacement_transaction_labels(
+    previous_tx: &model::HistoryTransaction,
+    replacement: &model::Transaction,
+) -> HashMap<LabelItem, Option<String>> {
+    let mut labels = HashMap::new();
+    let new_txid = replacement.compute_txid();
+    for item in previous_tx.labelled() {
+        let Some(label) = previous_tx.labels.get(&item.to_string()) else {
+            continue;
+        };
+        match item {
+            LabelItem::Txid(_) => {
+                labels.insert(new_txid.into(), Some(label.to_string()));
+            }
+            LabelItem::OutPoint(outpoint) => {
+                let Some(previous_output) = previous_tx.tx.output.get(outpoint.vout as usize)
+                else {
+                    continue;
+                };
+                for (vout, output) in replacement.output.iter().enumerate() {
+                    if output.script_pubkey == previous_output.script_pubkey {
+                        labels.insert(
+                            LabelItem::OutPoint(OutPoint {
+                                txid: new_txid,
+                                vout: vout as u32,
+                            }),
+                            Some(label.to_string()),
+                        );
+                    }
+                }
+            }
+            // Address label is already in database.
+            LabelItem::Address(_) => {}
+        }
+    }
+    labels
 }
 
 #[cfg(test)]
